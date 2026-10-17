@@ -1,4 +1,8 @@
 import type { SupplyPathRequest, RegistrySupplyPathResult } from '../supply-path/types';
+import { validatePublisherDomain, IdentifierValidationError } from '../identifiers';
+export * from '../identifiers';
+export type { ResolveIdentifiersAllOptions, ResolveIdentifierOutcome } from './types';
+import type { ResolveIdentifiersAllOptions, ResolveIdentifierOutcome } from './types';
 import { validateSupplyPathRequest, assertRegistrySupplyPathResult } from '../supply-path/validation';
 import type {
   ResolvedBrand,
@@ -285,6 +289,9 @@ const ERROR_BODY_PREVIEW_CHARS = 200;
 const MAX_BRAND_BULK_DOMAINS = 25;
 const MAX_BULK_DOMAINS = 100;
 const MAX_CHECK_DOMAINS = 10000; // per OpenAPI spec maxItems
+const MAX_RESOLVE_IDENTIFIERS = 10_000;
+const DEFAULT_RESOLVE_REQUEST_BYTES = 1024 * 1024;
+const DEFAULT_RESOLVE_RESPONSE_BYTES = 16 * 1024 * 1024;
 const COMMUNITY_MIRROR_PLATFORM_RE = /^[a-z0-9_-]{1,64}$/;
 const MAX_REGISTRY_ERROR_DETAILS_BYTES = 64 * 1024;
 const MAX_RETRY_AFTER_MS = 2_147_483_647;
@@ -622,7 +629,15 @@ export class RegistryClient {
 
   /** Save or update a hosted property. Requires authentication. */
   async saveProperty(property: SavePropertyRequest): Promise<SavePropertyResponse> {
-    if (!property?.publisher_domain?.trim()) throw new Error('publisher_domain is required');
+    if (typeof property?.publisher_domain !== 'string' || !property.publisher_domain.trim()) {
+      throw new IdentifierValidationError(
+        'invalid_publisher_domain',
+        'publisher_domain',
+        'publisher_domain is required'
+      );
+    }
+    const domain = validatePublisherDomain(property.publisher_domain);
+    if (!domain.ok) throw domain.error;
     if (!this.apiKey) throw new Error('apiKey is required for save operations');
     const payload = this.normalizeSavePropertyRequest(property);
     return this.post(`${this.baseUrl}/api/properties/save`, payload);
@@ -658,19 +673,24 @@ export class RegistryClient {
   async saveProperties(
     properties: SavePropertyRequest[],
     options?: { concurrency?: number }
-  ): Promise<Record<string, SavePropertyResponse | { error: string }>> {
+  ): Promise<Record<string, SavePropertyResponse | { error: string; cause?: Error }>> {
     const concurrency = options?.concurrency ?? 5;
-    const results: Record<string, SavePropertyResponse | { error: string }> = {};
+    if (!Number.isSafeInteger(concurrency) || concurrency < 1)
+      throw new RangeError('concurrency must be a positive integer');
+    const results: Record<string, SavePropertyResponse | { error: string; cause?: Error }> = Object.create(null);
     for (let i = 0; i < properties.length; i += concurrency) {
       const batch = properties.slice(i, i + concurrency);
       const settled = await Promise.allSettled(batch.map(p => this.saveProperty(p)));
       for (let j = 0; j < batch.length; j++) {
         const domain = batch[j]!.publisher_domain;
         const s = settled[j]!;
-        results[domain] = s.status === 'fulfilled' ? s.value : { error: String(s.reason) };
+        results[domain] =
+          s.status === 'fulfilled'
+            ? s.value
+            : { error: String(s.reason), ...(s.reason instanceof Error ? { cause: s.reason } : {}) };
       }
     }
-    return results;
+    return Object.fromEntries(Object.entries(results));
   }
 
   /**
@@ -680,10 +700,174 @@ export class RegistryClient {
    */
   async resolveIdentifiers(request: ResolveIdentifiersRequest): Promise<ResolveIdentifiersResponse> {
     if (!request?.identifiers?.length) throw new Error('identifiers are required');
+    if (request.identifiers.length > MAX_RESOLVE_IDENTIFIERS) {
+      throw new RangeError('At most 10,000 identifiers are allowed; use resolveIdentifiersAll for larger lists');
+    }
     if ((request.mode ?? 'resolve') !== 'lookup' && !this.apiKey) {
       throw new Error('apiKey is required for resolveIdentifiers in resolve mode');
     }
     return this.post(`${this.baseUrl}/api/registry/resolve`, request);
+  }
+
+  /**
+   * Bulk catalog registration (`resolve`, the default) or read-only `lookup`.
+   * Splits by identifier count and UTF-8 request bytes, bounds concurrency,
+   * and honors Retry-After on 429. Results retain input order and duplicates.
+   * Network/5xx failures are not retried: resolve contributions have additive
+   * activity logs even though identifier-to-RID mapping is idempotent.
+   */
+  async resolveIdentifiersAll(
+    request: ResolveIdentifiersRequest,
+    options: ResolveIdentifiersAllOptions = {}
+  ): Promise<ResolveIdentifierOutcome[]> {
+    const {
+      batchSize = MAX_RESOLVE_IDENTIFIERS,
+      maxRequestBytes = DEFAULT_RESOLVE_REQUEST_BYTES,
+      concurrency = 2,
+      maxRetries = 3,
+      maxRetryDelayMs = 60_000,
+    } = options;
+    for (const [name, value, minimum] of [
+      ['batchSize', batchSize, 1],
+      ['maxRequestBytes', maxRequestBytes, 1],
+      ['concurrency', concurrency, 1],
+      ['maxRetries', maxRetries, 0],
+      ['maxRetryDelayMs', maxRetryDelayMs, 0],
+    ] as const) {
+      if (!Number.isSafeInteger(value) || value < minimum)
+        throw new RangeError(`${name} must be an integer >= ${minimum}`);
+    }
+    if (batchSize > MAX_RESOLVE_IDENTIFIERS) throw new RangeError('batchSize must not exceed 10,000');
+    if (!Array.isArray(request?.identifiers)) throw new TypeError('identifiers are required');
+    if ((request.mode ?? 'resolve') !== 'lookup' && !this.apiKey)
+      throw new Error('apiKey is required for resolveIdentifiers in resolve mode');
+    const { identifiers, ...envelope } = request;
+    const envelopeBytes = Buffer.byteLength(JSON.stringify({ ...envelope, identifiers: [] }), 'utf8');
+    const outcomes: ResolveIdentifierOutcome[] = new Array(identifiers.length);
+    const batches: Array<{ indexes: number[]; identifiers: ResolveIdentifiersRequest['identifiers'] }> = [];
+    let batch = { indexes: [] as number[], identifiers: [] as ResolveIdentifiersRequest['identifiers'] };
+    let bytes = envelopeBytes;
+    for (const [index, identifier] of identifiers.entries()) {
+      if (
+        !identifier ||
+        typeof identifier !== 'object' ||
+        typeof identifier.type !== 'string' ||
+        typeof identifier.value !== 'string'
+      ) {
+        outcomes[index] = {
+          index,
+          identifier,
+          success: false,
+          error: new TypeError('Identifier must contain string type and value'),
+        };
+        continue;
+      }
+      const size = Buffer.byteLength(JSON.stringify(identifier), 'utf8');
+      if (envelopeBytes + size > maxRequestBytes) {
+        outcomes[index] = {
+          index,
+          identifier,
+          success: false,
+          error: new RangeError('Identifier and provenance exceed maxRequestBytes'),
+        };
+        continue;
+      }
+      if (batch.indexes.length && (batch.indexes.length >= batchSize || bytes + size + 1 > maxRequestBytes)) {
+        batches.push(batch);
+        batch = { indexes: [], identifiers: [] };
+        bytes = envelopeBytes;
+      }
+      bytes += size + (batch.indexes.length ? 1 : 0);
+      batch.indexes.push(index);
+      batch.identifiers.push(identifier);
+    }
+    if (batch.indexes.length) batches.push(batch);
+    let nextBatch = 0;
+    let retryNotBefore = 0;
+    let rateLimitFailure: RegistryRequestError | undefined;
+    const worker = async () => {
+      while (nextBatch < batches.length) {
+        const current = batches[nextBatch++]!;
+        let response: ResolveIdentifiersResponse | undefined;
+        let failure: Error | undefined;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          if (rateLimitFailure) {
+            failure = rateLimitFailure;
+            break;
+          }
+          while (!rateLimitFailure && retryNotBefore > Date.now())
+            await new Promise(resolve =>
+              setTimeout(resolve, Math.min(retryNotBefore - Date.now(), MAX_RETRY_AFTER_MS))
+            );
+          if (rateLimitFailure) {
+            failure = rateLimitFailure;
+            break;
+          }
+          try {
+            response = await this.resolveIdentifiers({ ...envelope, identifiers: current.identifiers });
+            if (!response || !Array.isArray(response.resolved)) {
+              throw new TypeError('Registry returned an invalid identifier resolution response');
+            }
+            break;
+          } catch (error) {
+            response = undefined;
+            failure = error instanceof Error ? error : new Error('Registry resolution failed');
+            if (!isRegistryRequestError(error) || error.status !== 429) break;
+            const delay =
+              typeof error.retryAfterMs === 'number' && Number.isFinite(error.retryAfterMs) && error.retryAfterMs >= 0
+                ? error.retryAfterMs
+                : Math.min(1000 * 2 ** attempt, 30_000);
+            if (delay > maxRetryDelayMs) {
+              rateLimitFailure = error;
+              break;
+            }
+            retryNotBefore = Math.max(retryNotBefore, Date.now() + delay);
+            if (attempt === maxRetries) break;
+          }
+        }
+        // Match by identity rather than response order; registries may reorder results.
+        const entries = new Map<string, ResolveIdentifiersResponse['resolved']>();
+        let malformedEntries = false;
+        for (const entry of response?.resolved ?? []) {
+          if (
+            !entry ||
+            typeof entry !== 'object' ||
+            !entry.identifier ||
+            typeof entry.identifier.type !== 'string' ||
+            typeof entry.identifier.value !== 'string' ||
+            (entry.property_rid !== null && typeof entry.property_rid !== 'string') ||
+            !['existing', 'created', 'excluded'].includes(entry.status)
+          ) {
+            malformedEntries = true;
+            continue;
+          }
+          const key = JSON.stringify([entry.identifier.type, entry.identifier.value]);
+          const group = entries.get(key) ?? [];
+          group.push(entry);
+          entries.set(key, group);
+        }
+        for (const index of current.indexes) {
+          const identifier = identifiers[index]!;
+          const group = entries.get(JSON.stringify([identifier.type, identifier.value]));
+          // A server may deduplicate repeated input identifiers.
+          const entry = group && (group.length > 1 ? group.shift() : group[0]);
+          outcomes[index] = entry
+            ? { index, identifier, success: true, result: entry }
+            : {
+                index,
+                identifier,
+                success: false,
+                error: response
+                  ? malformedEntries
+                    ? new TypeError('Registry returned an invalid identifier resolution response')
+                    : new Error('Registry response omitted identifier')
+                  : failure!,
+              };
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, worker));
+    return outcomes;
   }
 
   /** File a catalog fact dispute. Requires authentication. */
@@ -1624,6 +1808,7 @@ export class RegistryClient {
     if (this.hasCustomMaxBodyBytes) return this.maxBodyBytes;
 
     const path = new URL(url).pathname;
+    if (path === '/api/registry/resolve') return DEFAULT_RESOLVE_RESPONSE_BYTES;
     if (
       path === '/api/brands/registry' ||
       path === '/api/brands/resolve/bulk' ||

@@ -1,4 +1,6 @@
 // AdCP Client Library - Main Exports
+export * from './identifiers';
+export type { ResolveIdentifiersAllOptions, ResolveIdentifierOutcome } from './registry';
 // A comprehensive type-safe client library for the AdContext Protocol
 
 // ====== REGISTRY LOOKUPS ======
@@ -803,6 +805,8 @@ export type {
   BuyerPropertyPolicy,
   NormalizedPolicyDomain,
   ProductPolicyProductLike,
+  ProductPolicyResolvedProperty,
+  ProductPropertyPolicyIdentifier,
   ProductPropertyPolicyDiagnostic,
   ProductPropertyPolicyDiagnosticCode,
   ProductPropertyPolicyDiagnosticSeverity,

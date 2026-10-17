@@ -1,3 +1,9 @@
+import { PropertyIdentifierTypesValues } from '../types/enums.generated';
+
+export function isSupportedPropertyIdentifierType(type: string): boolean {
+  return (PropertyIdentifierTypesValues as readonly string[]).includes(type);
+}
+
 export type ProductPropertyPolicyMode = 'audit' | 'filter' | 'reject_response';
 
 export type ProductPropertyPolicySelectorBehavior = 'allow' | 'flag' | 'reject';
@@ -12,6 +18,13 @@ export interface BuyerPropertyPolicy {
    * `*.example.com` matches subdomains only).
    */
   allowedPropertyIdentifiers?: readonly ProductPropertyPolicyIdentifier[];
+  /**
+   * Complete publisher catalogs, keyed by canonical publisher domain. Enables
+   * app/CTV identifier matching for all/by_id/by_tag selectors. Omitted keys
+   * mean unresolved metadata; an empty array means a known empty catalog.
+   * Property IDs remain publisher-scoped and are never treated as app IDs.
+   */
+  publisherProperties?: Readonly<Record<string, readonly ProductPolicyResolvedProperty[] | undefined>>;
   /**
    * Require products to match the allowed domain/identifier set even when that
    * set is empty. Used when a request property_list resolves successfully to
@@ -62,6 +75,12 @@ export interface ProductPropertyPolicyIdentifier {
   value: string;
 }
 
+export interface ProductPolicyResolvedProperty {
+  property_id?: string;
+  identifiers: readonly ProductPropertyPolicyIdentifier[];
+  tags?: readonly string[];
+}
+
 export type ProductPropertyPolicyDiagnosticCode =
   | 'outside_property_list'
   | 'excluded_domain'
@@ -69,7 +88,9 @@ export type ProductPropertyPolicyDiagnosticCode =
   | 'missing_publisher_properties'
   | 'unresolved_tag_selector'
   | 'unknown_selector'
-  | 'malformed_publisher_domain';
+  | 'malformed_publisher_domain'
+  | 'unresolved_property_identifiers'
+  | 'excluded_resolved_property';
 
 export type ProductPropertyPolicyDiagnosticSeverity = 'rejected' | 'flagged';
 
@@ -90,6 +111,7 @@ export interface ProductPropertyPolicyDiagnostic {
   matched_excluded_domain?: string;
   property_ids?: string[];
   matched_property_ids?: string[];
+  identifier_types?: string[];
 }
 
 export interface ProductPropertyPolicyValidationResult<TProduct extends ProductPolicyProductLike> {
@@ -126,6 +148,7 @@ export class ProductPropertyPolicyError<TProduct extends ProductPolicyProductLik
 }
 
 interface CompiledPropertyPolicy {
+  publisherCatalogsConfigured: boolean;
   allowedDomains: NormalizedPolicyDomain[];
   allowedPropertyIdentifiers: ProductPropertyPolicyIdentifier[];
   requireAllowedPropertyMatch: boolean;
@@ -133,6 +156,7 @@ interface CompiledPropertyPolicy {
   excludedPropertyIds: Set<string>;
   unknownSelectorBehavior: ProductPropertyPolicySelectorBehavior;
   missingPublisherPropertiesBehavior: ProductPropertyPolicySelectorBehavior;
+  publisherProperties: NonNullable<BuyerPropertyPolicy['publisherProperties']>;
 }
 
 interface ProductPublisherPropertySelectorLike {
@@ -140,6 +164,7 @@ interface ProductPublisherPropertySelectorLike {
   publisher_domain?: unknown;
   publisher_domains?: unknown;
   property_ids?: unknown;
+  property_tags?: unknown;
 }
 
 interface PublisherDomainCandidate {
@@ -208,6 +233,8 @@ function compilePolicy(policy: BuyerPropertyPolicy): CompiledPropertyPolicy {
 
   return {
     allowedDomains,
+    publisherCatalogsConfigured: policy.publisherProperties !== undefined,
+    publisherProperties: policy.publisherProperties ?? {},
     allowedPropertyIdentifiers: [...(policy.allowedPropertyIdentifiers ?? [])],
     requireAllowedPropertyMatch:
       policy.requireAllowedPropertyMatch ??
@@ -252,6 +279,20 @@ function diagnosticsForProduct(
       hasEligibleSubsetSelector = true;
     }
   });
+  if (requiresSubsetMatch) {
+    const scopes = publisherProperties.flatMap(selector =>
+      selector && typeof selector === 'object' && !Array.isArray(selector)
+        ? [identifierScopeForSelector(selector, policy)]
+        : []
+    );
+    if (scopes.some(scope => scope?.hasNonMatch) && !scopes.some(scope => scope?.hasMatch))
+      hasEligibleSubsetSelector = false;
+  }
+  if (requiresSubsetMatch && hasEligibleSubsetSelector) {
+    for (const diagnostic of diagnostics) {
+      if (diagnostic.code === 'unresolved_property_identifiers') diagnostic.severity = 'flagged';
+    }
+  }
   if (requiresSubsetMatch && !hasEligibleSubsetSelector) {
     diagnostics.push({
       code: 'outside_property_list',
@@ -286,6 +327,7 @@ function diagnosticsForSelector(
   }
 
   const selector = rawSelector as ProductPublisherPropertySelectorLike;
+  const identifierScope = identifierScopeForSelector(selector, policy);
   const selectionType = typeof selector.selection_type === 'string' ? selector.selection_type : undefined;
   const domainCandidates = publisherDomainCandidates(selector, path);
   const normalizedDomains = domainCandidates
@@ -345,7 +387,32 @@ function diagnosticsForSelector(
 
   for (const { candidate, normalized: normalizedDomain } of normalizedDomains) {
     const matchedAllowedDomain = matchedAllowedDomainForCandidate(normalizedDomain, policy);
-    if (options.enforceEveryDomainInAllowedScope && hasAllowedPropertyScope(policy) && !matchedAllowedDomain) {
+    if ((hasAllowedPropertyScope(policy) || selectionType === 'by_tag') && identifierScope?.unknown) {
+      diagnostics.push(
+        ...diagnosticForBehavior(policy.unknownSelectorBehavior, {
+          code: 'unresolved_property_identifiers',
+          identifier_types: [
+            ...new Set(
+              policy.allowedPropertyIdentifiers
+                .filter(identifier => identifier.type !== 'domain' && identifier.type !== 'subdomain')
+                .map(identifier => identifier.type)
+            ),
+          ],
+          message: 'Publisher property identifiers could not be resolved; property-list membership is unknown.',
+          product_index: productIndex,
+          product_id: productId,
+          path,
+          publisher_property_index: selectorIndex,
+          selection_type: selectionType,
+          publisher_domain: candidate.raw,
+        })
+      );
+    }
+    if (
+      options.enforceEveryDomainInAllowedScope &&
+      hasAllowedPropertyScope(policy) &&
+      (identifierScope ? identifierScope.hasNonMatch : !matchedAllowedDomain)
+    ) {
       diagnostics.push({
         code: 'outside_property_list',
         severity: 'rejected',
@@ -382,6 +449,20 @@ function diagnosticsForSelector(
     }
   }
 
+  if (options.enforceExclusions && identifierScope?.hasExcludedProperty) {
+    diagnostics.push({
+      code: 'excluded_resolved_property',
+      severity: 'rejected',
+      message: 'Resolved publisher properties include a buyer-excluded property.',
+      product_index: productIndex,
+      product_id: productId,
+      path,
+      publisher_property_index: selectorIndex,
+      selection_type: selectionType,
+      publisher_domain: domainCandidates[0]?.raw,
+    });
+  }
+
   if (selectionType === 'by_id') {
     const propertyIds = stringArray(selector.property_ids);
     const matchedPropertyIds = propertyIds.filter(id => policy.excludedPropertyIds.has(id));
@@ -403,7 +484,7 @@ function diagnosticsForSelector(
         matched_property_ids: matchedPropertyIds,
       });
     }
-  } else if (selectionType === 'by_tag') {
+  } else if (selectionType === 'by_tag' && !identifierScope) {
     diagnostics.push(
       ...diagnosticForBehavior(policy.unknownSelectorBehavior, {
         code: 'unresolved_tag_selector',
@@ -420,7 +501,7 @@ function diagnosticsForSelector(
         normalized_domains: normalizedDomains.map(entry => entry.normalized.host),
       })
     );
-  } else if (selectionType !== 'all') {
+  } else if (selectionType !== 'all' && selectionType !== 'by_tag') {
     diagnostics.push(
       ...diagnosticForBehavior(policy.unknownSelectorBehavior, {
         code: 'unknown_selector',
@@ -455,6 +536,24 @@ function selectorIsEligibleForSubsetTargeting(
   if (!rawSelector || typeof rawSelector !== 'object' || Array.isArray(rawSelector)) return false;
   const selector = rawSelector as ProductPublisherPropertySelectorLike;
   if (selector.publisher_domains !== undefined) return false;
+  const identifierScope = identifierScopeForSelector(selector, policy);
+  if (identifierScope) {
+    const domain =
+      typeof selector.publisher_domain === 'string'
+        ? normalizeDomainForPropertyPolicy(selector.publisher_domain)
+        : undefined;
+    if (!domain || policy.excludedDomainsByComparable.has(domain.comparable)) return false;
+    if (
+      selector.selection_type !== 'all' &&
+      selector.selection_type !== 'by_id' &&
+      selector.selection_type !== 'by_tag'
+    )
+      return false;
+    return (
+      identifierScope.hasMatch ||
+      (identifierScope.unknown && !identifierScope.hasNonMatch && policy.unknownSelectorBehavior !== 'reject')
+    );
+  }
   if (selector.selection_type === 'by_tag') return false;
   if (selector.selection_type !== 'all' && selector.selection_type !== 'by_id') return false;
 
@@ -487,6 +586,122 @@ function matchedAllowedDomainForCandidate(
     }
   }
   return undefined;
+}
+
+/** Use supplied catalogs for identifiers and exclusions; policies without catalogs retain domain shortcuts. */
+function identifierScopeForSelector(
+  selector: ProductPublisherPropertySelectorLike,
+  policy: CompiledPropertyPolicy
+):
+  | { allMatch: boolean; hasMatch: boolean; hasNonMatch: boolean; unknown: boolean; hasExcludedProperty?: boolean }
+  | undefined {
+  if (
+    !policy.allowedPropertyIdentifiers.some(id => id.type !== 'domain' && id.type !== 'subdomain') &&
+    !policy.publisherCatalogsConfigured
+  )
+    return undefined;
+  const propertyIds = selector.selection_type === 'by_id' ? stringArray(selector.property_ids) : [];
+  const hasExcludedId = propertyIds.some(id => policy.excludedPropertyIds.has(id));
+  const allIdsExcluded = propertyIds.length > 0 && propertyIds.every(id => policy.excludedPropertyIds.has(id));
+  if (allIdsExcluded) return { allMatch: false, hasMatch: false, hasNonMatch: true, unknown: false };
+  const domain =
+    typeof selector.publisher_domain === 'string'
+      ? normalizeDomainForPropertyPolicy(selector.publisher_domain)
+      : undefined;
+  if (!domain) return { allMatch: false, hasMatch: false, hasNonMatch: hasExcludedId, unknown: true };
+  if (policy.excludedDomainsByComparable.has(domain.comparable))
+    return { allMatch: false, hasMatch: false, hasNonMatch: true, unknown: false };
+  const properties = Object.hasOwn(policy.publisherProperties, domain.host)
+    ? policy.publisherProperties[domain.host]
+    : undefined;
+  if (!properties && policy.publisherCatalogsConfigured)
+    return { allMatch: false, hasMatch: false, hasNonMatch: hasExcludedId, unknown: true };
+  if (!properties) {
+    // Existing domain rules can still positively judge a selector in a mixed list.
+    const matchedDomain = !allIdsExcluded && Boolean(matchedAllowedDomainForCandidate(domain, policy));
+    const unknown = (!matchedDomain && !allIdsExcluded) || selector.selection_type === 'by_tag';
+    return {
+      allMatch: matchedDomain && !unknown && !hasExcludedId,
+      hasMatch: matchedDomain && !unknown,
+      hasNonMatch: hasExcludedId,
+      unknown,
+    };
+  }
+  if (
+    !Array.isArray(properties) ||
+    (properties as readonly ProductPolicyResolvedProperty[]).some(
+      property =>
+        !property ||
+        typeof property !== 'object' ||
+        !Array.isArray(property.identifiers) ||
+        property.identifiers.some(
+          (identifier: ProductPropertyPolicyIdentifier) =>
+            !identifier || typeof identifier.type !== 'string' || typeof identifier.value !== 'string'
+        ) ||
+        (property.tags !== undefined &&
+          (!Array.isArray(property.tags) || property.tags.some((tag: unknown) => typeof tag !== 'string')))
+    )
+  ) {
+    return { allMatch: false, hasMatch: false, hasNonMatch: hasExcludedId, unknown: true };
+  }
+  let selected: ProductPolicyResolvedProperty[] = [...properties];
+  let missingIds = false;
+  if (selector.selection_type === 'by_id') {
+    const ids = stringArray(selector.property_ids);
+    missingIds = !ids.length || ids.some(id => !properties.some(property => property.property_id === id));
+    selected = selected.filter(property => property.property_id && ids.includes(property.property_id));
+  } else if (selector.selection_type === 'by_tag') {
+    const tags = stringArray(selector.property_tags);
+    if (!tags.length) return { allMatch: false, hasMatch: false, hasNonMatch: false, unknown: true };
+    selected = selected.filter(property => property.tags?.some(tag => tags.includes(tag)));
+  } else if (selector.selection_type !== 'all') {
+    return { allMatch: false, hasMatch: false, hasNonMatch: false, unknown: true };
+  }
+  const excluded = selected.map(
+    property =>
+      policy.excludedPropertyIds.has(property.property_id ?? '') ||
+      property.identifiers.some(
+        identifier =>
+          (identifier.type === 'domain' || identifier.type === 'subdomain') &&
+          policy.excludedDomainsByComparable.has(normalizeDomainForPropertyPolicy(identifier.value)?.comparable ?? '')
+      )
+  );
+  const matches = selected.map(
+    (property, index) =>
+      !excluded[index] &&
+      (!hasAllowedPropertyScope(policy) ||
+        property.identifiers.some(
+          candidate =>
+            policy.allowedPropertyIdentifiers.some(allowed =>
+              allowed.type === 'domain' || allowed.type === 'subdomain'
+                ? (candidate.type === 'domain' || candidate.type === 'subdomain') &&
+                  propertyListDomainMatches(candidate.value, allowed.value, allowed.type)
+                : isSupportedPropertyIdentifierType(allowed.type) &&
+                  candidate.type === allowed.type &&
+                  candidate.value === allowed.value
+            ) ||
+            ((candidate.type === 'domain' || candidate.type === 'subdomain') &&
+              policy.allowedDomains.some(allowed => propertyListDomainMatches(candidate.value, allowed.input)))
+        ))
+  );
+  const undecidable = selected.map(
+    (property, index) =>
+      !excluded[index] &&
+      (property.identifiers.length === 0 ||
+        property.identifiers.some(
+          candidate =>
+            !isSupportedPropertyIdentifierType(candidate.type) &&
+            policy.allowedPropertyIdentifiers.some(allowed => allowed.type === candidate.type)
+        ))
+  );
+  const unknown = matches.some((match, index) => !match && undecidable[index]);
+  return {
+    allMatch: matches.length > 0 && matches.every(Boolean) && !unknown,
+    hasMatch: matches.some(Boolean),
+    hasNonMatch: missingIds || !selected.length || matches.some((match, index) => !match && !undecidable[index]),
+    hasExcludedProperty: excluded.some(Boolean),
+    unknown,
+  };
 }
 
 function publisherDomainCandidates(

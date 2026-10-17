@@ -117,6 +117,8 @@ export const DEFAULT_TOOLS_WITH_UPDATES: readonly ConformanceToolName[] = [
 ] as const;
 
 export interface RunConformanceOptions {
+  /** Buyer-issued references to certify through the seller MCP resolution path (without cached results). */
+  propertyListReferences?: readonly import('../types/tools.generated').PropertyListReference[];
   /** Seed for reproducible runs. Omit for a random seed. */
   seed?: number;
   /** Subset of tools to fuzz. Defaults to the full stateless tier. */
@@ -302,6 +304,7 @@ export interface ConformanceToolStats {
 }
 
 export interface ConformanceReport {
+  propertyLists?: import('./property-lists').PropertyListConformanceReport;
   agentUrl: string;
   seed: number;
   /** Schema version the fuzzer loaded. Pinned so a report is replayable. */

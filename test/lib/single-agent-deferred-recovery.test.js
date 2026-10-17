@@ -1748,22 +1748,21 @@ test('durable clients reject authenticated property-list verification before sel
       validateFeatures: false,
       validation: { requests: 'off', responses: 'off' },
     });
-    await assert.rejects(
-      client.getProducts({
-        buying_mode: 'brief',
-        brief: 'Find private inventory',
-        property_list: {
-          agent_url: 'https://property-lists.example/mcp',
-          list_id: 'private-list',
-          auth_token: 'private-list-secret',
-        },
-      }),
-      error => {
-        assert.match(error.message, /cannot persist property_list\.auth_token/);
-        assert.doesNotMatch(error.message, /private-list-secret/);
-        return true;
-      }
-    );
+    const reference = {
+      agent_url: 'https://property-lists.example/mcp',
+      list_id: 'private-list',
+      auth_token: 'private-list-secret',
+    };
+    for (const location of [{ property_list: reference }, { filters: { property_list: reference } }]) {
+      await assert.rejects(
+        client.getProducts({ buying_mode: 'brief', brief: 'Find private inventory', ...location }),
+        error => {
+          assert.match(error.message, /cannot persist property_list\.auth_token/);
+          assert.doesNotMatch(error.message, /private-list-secret/);
+          return true;
+        }
+      );
+    }
     assert.equal(protocolCalls, 0);
   } finally {
     ProtocolClient.callTool = originalCallTool;
