@@ -248,7 +248,12 @@ export { runAgainstLocalAgent } from './local-agent-runner';
 export type { LocalAgentRunResult, PerStoryboardOverride, RunAgainstLocalAgentOptions } from './local-agent-runner';
 
 // External schema bundles for hosted compliance/certification runs.
-export { registerExternalSchemaRoot, unregisterExternalSchemaRoot, withExternalSchemaRoot } from '../validation';
+export {
+  registerExternalSchemaRoot,
+  unregisterExternalSchemaRoot,
+  withExternalSchemaRoot,
+  withServedReleaseSchemaRoots,
+} from '../validation';
 
 // Storyboard-driven testing
 export {

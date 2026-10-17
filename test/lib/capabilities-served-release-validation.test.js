@@ -106,55 +106,63 @@ async function withSeller(t, options) {
 const stepNamed = (steps, name) => steps.find(step => step.step === name);
 const failedSteps = steps => steps.filter(step => !step.passed && !step.skipped);
 
+/** An echo of `release` that the response also lists in `supported_versions`. */
+const echo = (release, supported = ['3.0', '3.1', '3.2', release]) => ({
+  adcp_version: release,
+  adcp: { supported_versions: [...new Set(supported)] },
+});
+
 describe('resolveServedValidationVersion', () => {
-  test('uses a bundled same-major echo instead of the pin', () => {
-    assert.equal(resolveServedValidationVersion({ adcp_version: '3.2' }, '3.0'), '3.2');
-    assert.equal(resolveServedValidationVersion({ adcp_version: '3.1' }, '3.0.25'), '3.1');
-    assert.equal(resolveServedValidationVersion({ adcp_version: '3.0' }, '3.2'), '3.0');
+  test('uses a bundled same-major echo listed in supported_versions instead of the pin', () => {
+    assert.equal(resolveServedValidationVersion(echo('3.2'), '3.0'), '3.2');
+    assert.equal(resolveServedValidationVersion(echo('3.1'), '3.0.25'), '3.1');
+    assert.equal(resolveServedValidationVersion(echo('3.0'), '3.2'), '3.0');
   });
 
   test('keeps the exact pin when the echo is the pinned release', () => {
     // Preserves a patch-precise pin (and any external schema root bound to it).
-    assert.equal(resolveServedValidationVersion({ adcp_version: '3.0' }, '3.0.25'), '3.0.25');
-    assert.equal(resolveServedValidationVersion({ adcp_version: '3.2' }, '3.2'), '3.2');
+    assert.equal(resolveServedValidationVersion(echo('3.0'), '3.0.25'), '3.0.25');
+    assert.equal(resolveServedValidationVersion(echo('3.2'), '3.2'), '3.2');
   });
 
   test('falls back to the pin when there is no usable echo', () => {
     assert.equal(resolveServedValidationVersion({}, '3.0'), '3.0', 'no echo');
     assert.equal(resolveServedValidationVersion(undefined, '3.0'), '3.0', 'no payload');
-    assert.equal(resolveServedValidationVersion({ adcp_version: 3.2 }, '3.0'), '3.0', 'non-string echo');
-    assert.equal(resolveServedValidationVersion({ adcp_version: '3.2.4' }, '3.0'), '3.0', 'not release precision');
-    assert.equal(resolveServedValidationVersion({ adcp_version: '../3.2' }, '3.0'), '3.0', 'garbage');
-    assert.equal(resolveServedValidationVersion({ adcp_version: '4.0' }, '3.0'), '3.0', 'different major');
-    assert.equal(resolveServedValidationVersion({ adcp_version: '2.5' }, '3.0'), '3.0', 'older major');
-    assert.equal(resolveServedValidationVersion({ adcp_version: '3.99' }, '3.0'), '3.0', 'no bundled schema');
-    assert.equal(resolveServedValidationVersion({ adcp_version: '3.2' }, 'v2.5'), 'v2.5', 'legacy v2 pin');
+    assert.equal(resolveServedValidationVersion({ ...echo('3.2'), adcp_version: 3.2 }, '3.0'), '3.0', 'non-string');
+    assert.equal(resolveServedValidationVersion(echo('3.2.4'), '3.0'), '3.0', 'not release precision');
+    assert.equal(resolveServedValidationVersion(echo('../3.2'), '3.0'), '3.0', 'garbage');
+    assert.equal(resolveServedValidationVersion(echo('4.0'), '3.0'), '3.0', 'different major');
+    assert.equal(resolveServedValidationVersion(echo('2.5'), '3.0'), '3.0', 'older major');
+    assert.equal(resolveServedValidationVersion(echo('3.99'), '3.0'), '3.0', 'no bundled schema');
+    assert.equal(resolveServedValidationVersion(echo('3.2'), 'v2.5'), 'v2.5', 'legacy v2 pin');
   });
 
-  test('does not consult supported_versions', () => {
-    // Spec: with no echo, validate against the pin.
+  test('requires the echo to be listed in supported_versions', () => {
+    assert.equal(resolveServedValidationVersion({ adcp_version: '3.2' }, '3.0'), '3.0', 'no supported_versions');
+    assert.equal(resolveServedValidationVersion(echo('3.2', ['3.0', '3.1']), '3.0'), '3.0', 'not listed');
+    assert.equal(
+      resolveServedValidationVersion({ adcp_version: '3.2', adcp: { supported_versions: '3.2' } }, '3.0'),
+      '3.0',
+      'malformed supported_versions'
+    );
+    // supported_versions alone never moves validation off the pin.
     assert.equal(resolveServedValidationVersion({ adcp: { supported_versions: ['3.0', '3.2'] } }, '3.0'), '3.0');
   });
 
   test('handles prerelease and legacy pins', () => {
-    assert.equal(resolveServedValidationVersion({ adcp_version: '3.2' }, '3.1-beta'), '3.2', 'stable echo, beta pin');
-    assert.equal(resolveServedValidationVersion({ adcp_version: '3.1-beta.1' }, '3.1.0-beta.1'), '3.1.0-beta.1');
-    assert.equal(
-      resolveServedValidationVersion({ adcp_version: '3.4-rc.1' }, '3.0'),
-      '3.0',
-      'unbundled prerelease echo'
-    );
-    assert.equal(resolveServedValidationVersion({ adcp_version: '3.2' }, 'v3'), 'v3', 'legacy alias pin');
+    assert.equal(resolveServedValidationVersion(echo('3.2'), '3.1-beta'), '3.2', 'stable echo, beta pin');
+    assert.equal(resolveServedValidationVersion(echo('3.1-beta.1'), '3.1.0-beta.1'), '3.1.0-beta.1');
+    assert.equal(resolveServedValidationVersion(echo('3.4-rc.1'), '3.0'), '3.0', 'unbundled prerelease echo');
+    assert.equal(resolveServedValidationVersion(echo('3.2'), 'v3'), 'v3', 'legacy alias pin');
   });
 
-  test('an external schema root bound to the pin wins over the echo', () => {
-    // Same precedence as the storyboard runner's response_schema check.
+  test('an external schema root bound to the pin does not override a usable echo', () => {
+    // Hosted compliance always runs with one (adcp-client#3320).
     const root = path.join(__dirname, '../../dist/lib/schemas-data/3.0');
-    const selected = withExternalSchemaRoot('3.0', root, () =>
-      resolveServedValidationVersion({ adcp_version: '3.2' }, '3.0')
-    );
-    assert.equal(selected, '3.0');
-    assert.equal(resolveServedValidationVersion({ adcp_version: '3.2' }, '3.0'), '3.2', 'scope ended');
+    const selected = withExternalSchemaRoot('3.0', root, () => resolveServedValidationVersion(echo('3.2'), '3.0'));
+    assert.equal(selected, '3.2');
+    const pinnedEcho = withExternalSchemaRoot('3.0', root, () => resolveServedValidationVersion(echo('3.0'), '3.0'));
+    assert.equal(pinnedEcho, '3.0', 'an echo of the pinned release keeps the pin and its root');
   });
 });
 
