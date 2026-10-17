@@ -94,3 +94,10 @@ An explicit legacy selector recipe is also supported on newer versions that reta
 `canonical_formats_only: true` or contradict an advertised `v1_format_ref` pairing.
 Reference agent URLs use existing canonicalization, and declared dimensions/duration
 must agree. Incompatible pairs are unavailable; continue to another usable route.
+
+
+Resolution certifies preparation of the selected route/input, not complete catalog
+conformance. Unknown legacy kinds remain unvalidated local unsupported routes;
+the consuming storyboard must retain its required whole-response discovery schema
+validation. A standalone boundary step grades its selected probe, not unrelated
+catalog metadata. The evaluator storyboard keeps that independent required check.
