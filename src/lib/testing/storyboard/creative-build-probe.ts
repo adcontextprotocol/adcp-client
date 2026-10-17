@@ -368,8 +368,10 @@ export function resolveCreativeBuildProbe(
           typeof ref.agent_url === 'string' &&
           typeof target.agent_url === 'string' &&
           canonicalizeAgentUrl(ref.agent_url) === targetUrl &&
-          legacyDimensions.every(
-            key => ref[key] === undefined || ref[key] === (key === 'pixel_ratio' ? (target[key] ?? 1) : target[key])
+          legacyDimensions.every(key =>
+            key === 'pixel_ratio'
+              ? (ref[key] ?? 1) === (target[key] ?? 1)
+              : ref[key] === undefined || ref[key] === target[key]
           )
       );
     };

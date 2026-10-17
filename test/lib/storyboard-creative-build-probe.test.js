@@ -705,25 +705,22 @@ test('3.2 permits an explicitly provisioned legacy selector without requiring a 
   assert.deepEqual(result.context.evaluator_build_target_format_id, legacyTarget);
 });
 
-test('explicit legacy density agreement follows the selected FormatID contract', () => {
+test('legacy density defaults agree in both directions only where selected schema defines them', () => {
   const r = route('build', ['build']);
-  const id = { ...legacyTarget, width: 300, height: 250, pixel_ratio: 2 };
-  r.format.v1_format_ref = [id];
+  const baseId = { ...legacyTarget, width: 300, height: 250 };
   const caps = { supports_transformation: true, supported_formats: [r] };
-  for (const [pixel_ratio, expected] of [
-    [undefined, 'unsatisfied'],
-    [1, 'unsatisfied'],
-    [2, 'resolved'],
-  ]) {
-    const target = { ...id };
-    if (pixel_ratio === undefined) delete target.pixel_ratio;
-    else target.pixel_ratio = pixel_ratio;
-    const kit = { creative_build_probes: [{ ...recipe, input: { ...recipe.input, target_format_id: target } }] };
-    assert.equal(resolveCreativeBuildProbe(caps, spec, kit, '3.2.5').status, expected);
-    // 3.1 does not assign semantics to this extension field.
-    assert.equal(resolveCreativeBuildProbe(caps, spec, kit, '3.1.29').status, 'resolved');
-  }
+  for (const refRatio of [undefined, 1, 2])
+    for (const targetRatio of [undefined, 1, 2]) {
+      r.format.v1_format_ref = [{ ...baseId, ...(refRatio !== undefined && { pixel_ratio: refRatio }) }];
+      const target = { ...baseId, ...(targetRatio !== undefined && { pixel_ratio: targetRatio }) };
+      const kit = { creative_build_probes: [{ ...recipe, input: { ...recipe.input, target_format_id: target } }] };
+      const expected = (refRatio ?? 1) === (targetRatio ?? 1) ? 'resolved' : 'unsatisfied';
+      assert.equal(resolveCreativeBuildProbe(caps, spec, kit, '3.2.5').status, expected);
+      // The older schema assigns no semantics to this extension.
+      assert.equal(resolveCreativeBuildProbe(caps, spec, kit, '3.1.29').status, 'resolved');
+    }
 });
+
 test('unsupported legacy canonical kinds name the actual schema bundle in the fixture gap', () => {
   const result = resolveCreativeBuildProbe(
     creative(route('future', undefined, 'audio_vast')),
