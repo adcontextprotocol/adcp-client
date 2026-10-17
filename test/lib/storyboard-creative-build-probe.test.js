@@ -49,12 +49,12 @@ test('no image/video/custom source assets are fabricated when fixture informatio
 });
 
 test('rejects malformed catalogs, duplicate IDs and malformed operation declarations', () => {
-  assert.throws(() => resolveCreativeBuildProbe({ supported_formats: 'invalid' }, spec), /malformed/);
-  assert.throws(() => resolveCreativeBuildProbe(creative(route('same', ['build']), route('same', ['preview'])), spec), /unique/);
-  assert.throws(() => resolveCreativeBuildProbe(creative(route('x', [])), spec), /operations/);
+  assert.equal(resolveCreativeBuildProbe({ supported_formats: 'invalid' }, spec).status, 'failed');
+  assert.match(resolveCreativeBuildProbe(creative(route('same', ['build']), route('same', ['preview'])), spec).detail, /unique/);
+  assert.match(resolveCreativeBuildProbe(creative(route('x', [])), spec).detail, /operations/);
   for (const format of [{ format_kind: 'bogus', params: {} },
     { format_kind: 'image', params: {}, technical_requirements_complete: 'true' }]) {
-    assert.throws(() => resolveCreativeBuildProbe(creative({ capability_id: 'x', format }), spec), /malformed/);
+    assert.equal(resolveCreativeBuildProbe(creative({ capability_id: 'x', format }), spec).status, 'failed');
   }
 });
 
@@ -186,11 +186,7 @@ test('generation alone never proves missing input constraints absent', () => {
     r => r.format.macro_resolution_capabilities = [], r => r.format.format_schema = {},
     r => r.format.unknown_extension = {}]) {
     const r = route('build'); change(r);
-    try {
-      assert.equal(resolveCreativeBuildProbe(creative(r), spec).status, 'unsatisfied');
-    } catch (error) {
-      assert.match(error.message, /malformed format declaration/, 'invalid declarations are errors, never auto input');
-    }
+    assert.notEqual(resolveCreativeBuildProbe(creative(r), spec).status, 'resolved');
   }
 });
 
@@ -236,11 +232,53 @@ test('credential fields, credential URLs and invalid automatic manifests are nev
     assert.throws(() => resolveCreativeBuildProbe(creative(route('build')), spec, { creative_build_probes: [{ ...recipe,
       input: { transformer_id: 'provisioned-transformer', config, message: 'Render' } }] }), /credential/);
   }
-  assert.throws(() => resolveCreativeBuildProbe(creative(route('build', ['build'], 'coordinated_placements')), spec), /malformed/);
+  assert.notEqual(resolveCreativeBuildProbe(creative(route('build', ['build'], 'coordinated_placements')), spec).status, 'resolved');
 });
 test('operator manifest recipe is preserved without adding a brief', () => {
   const result = resolveCreativeBuildProbe({ supports_transformation: true, supported_formats: [route('build')] }, spec,
     { creative_build_probes: [recipe] });
   assert.equal(result.status, 'resolved');
   assert.equal(result.context.evaluator_build_message, undefined);
+});
+
+test('inert descriptive metadata does not remove applicable security coverage', async () => {
+  const r = route('build'); Object.assign(r.format, { seller_preference: 'preferred', experimental: false,
+    sample_render_url: 'https://agent.example/sample', applies_to_channels: ['display'], canonical_formats_only: true });
+  assert.equal(resolveCreativeBuildProbe(creative(r), spec).status, 'resolved');
+  const result = await runStoryboard('https://agent.example/mcp', storyboard(), options(creative(r), []));
+  assert.equal(result.overall_passed, true);
+  assert.equal(result.passed_count, 2);
+});
+test('malformed producer catalog is a graded failure, never an uncaught crash or unavailable fixture', async () => {
+  const r = route('build'); r.format.seller_preference = 'NOT_AN_ENUM_VALUE';
+  const caps = creative(r); const calls = [];
+  const result = await runStoryboard('https://agent.example/mcp', storyboard(), options(caps, calls));
+  assert.equal(result.overall_passed, false);
+  assert.equal(result.failed_count, 1);
+  assert.equal(result.fixture_resolutions[0].status, 'failed');
+  assert.match(result.phases[0].steps[0].validations[0].error, /supported_formats\[0\]/);
+  assert.deepEqual(calls, []);
+  const step = await runStoryboardStep('https://agent.example/mcp', storyboard(), 'reject_nested', options(caps, calls));
+  assert.equal(step.passed, false);
+  assert.equal(step.validations[0].passed, false);
+});
+test('no-phases fixture gap replaces the sentinel and counts once', async () => {
+  const sb = storyboard(); sb.phases = [];
+  const result = await runStoryboard('https://agent.example/mcp', sb, options({ supported_formats: [] }, []));
+  assert.equal(result.skipped_count, 1);
+  assert.equal(result.passed_count, 0);
+  assert.equal(result.phases.some(phase => phase.phase_id === 'no_phases'), false);
+});
+
+test('replicated multi-pass preparation is one explicit gap before seeding', { timeout: 5000 }, async () => {
+  const opts = options(creative(route('build')), []); delete opts._client;
+  opts.multi_instance_strategy = 'multi-pass';
+  opts._controllerCapabilities = { detected: false, scenarios: [] };
+  const result = await runStoryboard(['https://first.example/mcp', 'https://second.example/mcp'], storyboard(), opts);
+  assert.equal(result.passed_count, 0);
+  assert.equal(result.failed_count, 0);
+  assert.equal(result.skipped_count, 1);
+  assert.match(result.coverage_gaps[0].detail, /independent fixture/);
+  await assert.rejects(runStoryboard(['https://first.example/mcp', 'https://second.example/mcp'], storyboard(),
+    { ...opts, webhook_receiver: {} }), /incompatible/);
 });

@@ -23,7 +23,7 @@ transformers, source asset URLs, and account authorization are operator fixtures
 
 The automatic generation path requires a unique advertised build route,
 supports_generation, technical_requirements_complete, a known non-custom kind,
-empty params, and no unhandled declaration metadata (only display_name is inert).
+empty params, and no unhandled declaration metadata (descriptive identity/preference/channel metadata is inert).
 It supplies the brief and `{format_kind: selectedKind, assets: {}}`. Otherwise a
 matched recipe is required; omitted catalog operations still mean build and
 missing legacy IDs remain discoverable but unaddressable. Non-build entries and
@@ -34,7 +34,7 @@ matched requirements, and seller_ids.capability_id. Unsatisfied whole runs have 
 fixture_unsatisfied coverage gap and zero executed security validations; standalone
 steps use skip_reason fixture_unsatisfied and canonical not_applicable, with detail
 naming creative_format:<prefix>. This does not establish producer nonconformance
-or passing security coverage. Malformed declarations/recipes throw. Routed and
+or passing security coverage. Malformed catalogs produce a structured failed validation; malformed operator recipes throw authoring errors. Routed and
 replicated runs currently report an explicit gap before seeding; run each agent
 independently. Unopted storyboards retain their existing behavior and counters.
 
@@ -49,3 +49,12 @@ build_creative signed_context enforcement claim and reports fixture_unsatisfied
 with zero security credit; static recipes cannot pre-sign the fresh request.
 Other governed tasks do not disable this build probe. Preparing fresh governed
 probe authorizations is a separate runner integration, not a protocol decision.
+
+Recipe fields stay exactly as provisioned: omitting message does not add the
+storyboard's generation brief. The automatic source manifest is validated too.
+Descriptive metadata (display_name, seller_preference, experimental,
+sample_render_url, format_option_id, publisher_domain, applies_to_channels,
+canonical_formats_only) does not remove security coverage. Unknown metadata and
+constraint-bearing extensions require an operator recipe. The probe-local
+unambiguous-source/config rules do not add restrictions to build_creative wire
+requests in other modes, including refinement.

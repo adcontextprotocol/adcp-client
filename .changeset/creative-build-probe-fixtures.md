@@ -1,5 +1,5 @@
 ---
-"@adcp/sdk": patch
+"@adcp/sdk": minor
 ---
 
 Resolve an evaluator storyboard's build route and valid input atomically using

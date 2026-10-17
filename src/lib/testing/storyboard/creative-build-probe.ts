@@ -20,7 +20,8 @@ export interface CreativeBuildProbeInputFixture {
 
 export type CreativeBuildProbeResolution =
   | { status: 'resolved'; capabilityId: string; context: StoryboardContext; source: 'generation' | 'test_kit'; requirements: FixtureMatchClause[] }
-  | { status: 'unsatisfied'; detail: string };
+  | { status: 'unsatisfied'; detail: string }
+  | { status: 'failed'; detail: string };
 
 const INPUT_FIELDS = new Set(['message', 'creative_manifest', 'creative_id', 'transformer_id', 'config']);
 const TRUST_FIELDS = /^(auth|private[_-]?key|bearer[_-]?token|id[_-]?token|jwk|jwks|jwks_uri)$/i;
@@ -62,8 +63,8 @@ function validateInput(value: unknown, location: string, adcpVersion?: string): 
       throw new Error(`${location}: ${key} must be a nonempty string`);
     }
   }
-  if (value.config !== undefined && (!isRecord(value.config) || !value.transformer_id)) throw new Error(`${location}: config requires a provisioned transformer_id and must be an object`);
-  if (value.creative_id && value.creative_manifest) throw new Error(`${location}: provision exactly one source, not both creative_id and creative_manifest`);
+  if (value.config !== undefined && (!isRecord(value.config) || !value.transformer_id)) throw new Error(`${location}: this probe contract requires config to be an object bound to a provisioned transformer_id`);
+  if (value.creative_id && value.creative_manifest) throw new Error(`${location}: this probe contract requires one unambiguous source, not both creative_id and creative_manifest`);
   if (value.creative_manifest !== undefined) {
     const manifest = value.creative_manifest;
     const validate = getSchemaValidatorByRef('core/creative-manifest.json', adcpVersion);
@@ -93,7 +94,7 @@ export function resolveCreativeBuildProbe(
 ): CreativeBuildProbeResolution {
   validateCreativeBuildProbeSpec(spec);
   if (isRecord(creative) && creative.supported_formats !== undefined && !Array.isArray(creative.supported_formats)) {
-    throw new Error('creative_build_probe: malformed supported_formats catalog');
+    return { status: 'failed', detail: 'creative.supported_formats: malformed catalog (expected array)' };
   }
   if (!isRecord(creative) || !Array.isArray(creative.supported_formats)) {
     return { status: 'unsatisfied', detail: `fixture_unsatisfied: creative_format:${spec.context_prefix}: no advertised creative build catalog` };
@@ -113,10 +114,12 @@ export function resolveCreativeBuildProbe(
   });
   const ids = new Set<string>();
   const buildRoutes: Record<string, unknown>[] = [];
-  for (const entry of creative.supported_formats) {
-    if (!isRecord(entry)) throw new Error('creative_build_probe: malformed catalog entry');
+  for (const [index, entry] of creative.supported_formats.entries()) {
+    const location = `creative.supported_formats[${index}]`;
+    const invalid = (detail: string): CreativeBuildProbeResolution => ({ status: 'failed', detail: `${location}: ${detail}` });
+    if (!isRecord(entry)) return invalid('malformed catalog entry (expected object)');
     if (!isRecord(entry.format) || typeof entry.format.format_kind !== 'string' || !isRecord(entry.format.params)) {
-      throw new Error('creative_build_probe: catalog format must declare format_kind and params');
+      return invalid('format must declare format_kind and params');
     }
     const validateFormat = getSchemaValidatorByRef('core/creative-operation-format-declaration.json', adcpVersion);
     const validateKind = getSchemaValidatorByRef('core/canonical-format-kind.json', adcpVersion);
@@ -124,18 +127,18 @@ export function resolveCreativeBuildProbe(
     if ((validateParams && !validateParams(entry.format.params)) || (validateFormat && !validateFormat(entry.format)) ||
         (validateKind && !validateKind(entry.format.format_kind)) ||
         (entry.format.technical_requirements_complete !== undefined && typeof entry.format.technical_requirements_complete !== 'boolean')) {
-      throw new Error('creative_build_probe: malformed format declaration');
+      return invalid(`malformed format declaration: ${[...(validateParams?.errors ?? []), ...(validateFormat?.errors ?? []), ...(validateKind?.errors ?? [])].map(error => `${error.instancePath || '/'} ${error.message}`).join('; ')}`);
     }
     if (entry.capability_id !== undefined) {
       if (typeof entry.capability_id !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(entry.capability_id) || ids.has(entry.capability_id)) {
-        throw new Error('creative_build_probe: capability identifiers must be usable and unique');
+        return invalid('capability_id must be usable and unique within the catalog');
       }
       ids.add(entry.capability_id);
     }
     const operations = entry.operations;
     if (operations !== undefined && (!Array.isArray(operations) || operations.length === 0 ||
         operations.some((operation, index) => typeof operation !== 'string' || !['build', 'validate', 'preview'].includes(operation) || operations.indexOf(operation) !== index))) {
-      throw new Error('creative_build_probe: malformed operations declaration');
+      return invalid('operations must be a nonempty unique array of build, validate or preview');
     }
     if (entry.operations === undefined || (entry.operations as unknown[]).includes('build')) buildRoutes.push(entry);
   }
@@ -160,7 +163,7 @@ export function resolveCreativeBuildProbe(
     const emptyCompleteFormat = format.technical_requirements_complete === true &&
       format.format_kind !== 'custom' && kindValidator?.(format.format_kind) === true &&
       Object.keys(format.params as Record<string, unknown>).length === 0 &&
-      Object.keys(format).every(key => ['format_kind', 'params', 'technical_requirements_complete', 'display_name'].includes(key)) &&
+      Object.keys(format).every(key => ['format_kind', 'params', 'technical_requirements_complete', 'display_name', 'seller_preference', 'experimental', 'sample_render_url', 'format_option_id', 'publisher_domain', 'applies_to_channels', 'canonical_formats_only'].includes(key)) &&
       Object.keys(route).every(key => ['capability_id', 'operations', 'format'].includes(key));
     if (!input && creative.supports_generation === true && buildRoutes.length === 1 && emptyCompleteFormat) {
       source = 'generation';
@@ -170,8 +173,6 @@ export function resolveCreativeBuildProbe(
       input = { message: spec.message, creative_manifest: manifest };
     }
     if (!input) continue;
-    if (input.transformer_id && creative.supports_transformers !== true) continue;
-    if (!input.creative_manifest && !input.creative_id && !input.transformer_id && creative.supports_generation !== true) continue;
     const context: StoryboardContext = {
       [`${spec.context_prefix}_capability_id`]: route.capability_id,
     };

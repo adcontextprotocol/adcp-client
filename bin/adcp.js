@@ -4222,7 +4222,7 @@ function printFixtureResolution(records, coverageGaps) {
     const scope = record.product_handle ? `${record.product_handle}/` : '';
     if (record.status === 'resolved') {
       const ids = record.seller_ids || {};
-      const sellerId = ids.pricing_option_id || ids.product_id || '?';
+      const sellerId = ids.pricing_option_id || ids.product_id || ids.capability_id || '?';
       console.log(`  ✅ ${record.fixture_type} ${scope}${record.handle} → ${sellerId} (${record.strategy})`);
     } else if (record.status === 'unsatisfied') {
       continue;
