@@ -77,6 +77,10 @@ root. Invalid, missing, unlisted or unavailable echoes retain the pin. Supplied
 servedReleaseSchemaRoots apply to the catalog only. The runner captures build
 request, source-manifest and target-FormatID validators from the pin before
 activating any served catalog root, including overlapping version aliases.
+The public five-argument resolveCreativeBuildProbe works on an already selected
+creative catalog and uses its supplied pin only; it has no full capabilities
+response from which to select an echo. Full and standalone runners use the
+internal preparation path for guarded served-release selection.
 
 Catalog kind, parameter, ID and operation semantics follow that served release;
 build selectors and source inputs retain the request pin. Canonical route IDs
@@ -86,6 +90,18 @@ named format or upgrade the request. An advertised 3.2 legacy reference's densit
 constraints still apply when a 3.1 request treats pixel_ratio as an opaque
 extension: the old request cannot establish a 2x parameterized binding by adding
 that field. An incompatible binding is a fixture gap, not producer failure.
+
+The reverse direction retains the older catalog's parameter rules. In 3.1 an
+unspecified legacy reference parameter accepts any value, and pixel_ratio has
+no defined semantics or default. A provisioned, live-valid 3.2 target at 2x can
+therefore match a 3.1 reference with no ratio, even if the old payload carries
+an opaque ratio extension. The resolver does not union property sets or invent
+a 1x default for that older catalog. The operator must still provision a valid
+named-format mapping and input for the selected account.
+
+Local schema diagnostics display at most eight AJV error entries and 2048
+escaped characters. Control characters are escaped for display; producer
+catalogs and failed validation outcomes remain unchanged.
 
 Read the selected capabilities schema's format reference and selected build request
 selector. A 3.2 recipe normally binds the advertised capability ID; a provisioned legacy selector remains supported when the selected request declares it. A 3.1 recipe must supply

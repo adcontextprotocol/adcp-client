@@ -153,6 +153,73 @@ async function run({
 }
 
 for (const standalone of [false, true]) {
+  for (const legacyRatio of [undefined, 3]) {
+    for (const form of ['direct', 'nested']) {
+      for (const [attack, expectedPassed] of [
+        [undefined, true],
+        ['outbound', false],
+        ['accept', false],
+      ]) {
+        test(`provisioned 2x target respects old unspecified parameters: standalone=${standalone}, oldRatio=${legacyRatio}, ${form}, ${attack ?? 'good'}`, async () => {
+          const target = {
+            agent_url: 'https://formats.example',
+            id: 'display_image',
+            width: 300,
+            height: 250,
+            pixel_ratio: 2,
+          };
+          const legacyRef = {
+            agent_url: target.agent_url,
+            id: target.id,
+            width: 300,
+            height: 250,
+            ...(legacyRatio !== undefined && { pixel_ratio: legacyRatio }),
+          };
+          const { result, calls } = await run({
+            standalone,
+            form,
+            attack,
+            pin: '3.2.5',
+            echo: '3.1',
+            target,
+            manifest: {
+              format_kind: 'image',
+              assets: {
+                image_main: {
+                  asset_type: 'image',
+                  url: 'https://test-assets.example/source-2x.jpg',
+                  width: 600,
+                  height: 500,
+                  pixel_ratio: 2,
+                },
+              },
+            },
+            entries: [
+              {
+                capability_id: 'seller.route:density',
+                format: { format_kind: 'image', params: {}, v1_format_ref: [legacyRef] },
+              },
+            ],
+          });
+          assert.equal(standalone ? result.passed : result.overall_passed, expectedPassed, JSON.stringify(result));
+          assert.ok(calls.length > 0, 'the provisioned 2x boundary must execute');
+          if (!standalone) assert.equal(result.fixture_resolutions[0].status, 'resolved');
+          if (attack) {
+            const step = standalone
+              ? result
+              : result.phases.flatMap(phase => phase.steps).find(step => step.step_id === `reject_${form}`);
+            assert.ok(
+              step.validations.some(
+                validation =>
+                  validation.check === (attack === 'outbound' ? 'upstream_traffic' : 'error_code') &&
+                  validation.passed === false
+              )
+            );
+          }
+        });
+      }
+    }
+  }
   for (const form of ['direct', 'nested']) {
     for (const attack of [undefined, 'outbound', 'accept']) {
       test(`served 3.2 audio catalog with pinned 3.1 input: standalone=${standalone}, ${form}, ${attack ?? 'good'}`, async () => {

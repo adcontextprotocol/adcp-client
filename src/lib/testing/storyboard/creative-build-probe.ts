@@ -54,12 +54,29 @@ function at(value: unknown, ...keys: string[]): unknown {
   return value;
 }
 
-// Diagnostic display bounds only: unknown producer values remain intact.
+// Display bounds only. Preserve producer data and the validation disposition.
+function displayDiagnostic(value: string, limit: number): string {
+  let displayed = '';
+  for (const char of value) {
+    const escaped = JSON.stringify(char)
+      .slice(1, -1)
+      .replace(/[\u007f-\u009f\u2028\u2029]/g, control => `\\u${control.charCodeAt(0).toString(16).padStart(4, '0')}`);
+    if (displayed.length + escaped.length > limit - 1) return `${displayed}…`;
+    displayed += escaped;
+  }
+  return displayed;
+}
+
 function displayUnknownKind(kind: string): string {
-  return JSON.stringify(kind.slice(0, 128)).replace(
-    /[\u007f-\u009f\u2028\u2029]/g,
-    char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
-  );
+  return `"${displayDiagnostic(kind.slice(0, 128), 768)}"`;
+}
+
+function displayValidationErrors(errors: ReadonlyArray<{ instancePath: string; message?: string }>): string {
+  const message = errors
+    .slice(0, 8)
+    .map(error => `${(error.instancePath || '/').slice(0, 2048)} ${(error.message ?? '').slice(0, 2048)}`)
+    .join('; ');
+  return displayDiagnostic(message, 2048);
 }
 
 export function validateCreativeBuildProbeSpec(value: unknown): asserts value is CreativeBuildProbeSpec {
@@ -269,6 +286,8 @@ function resolveCreativeBuildProbeWithSchemas(
   const request = requestSchemas.request;
   const canonicalSelector = !!at(request, 'properties', 'target_capability_id');
   const legacySelector = !!at(request, 'properties', 'target_format_id');
+  // This served release's own build contract establishes whether its catalog
+  // IDs are route selectors; a newer request pin cannot supply that meaning.
   const catalogRequest = getSchemaDocumentByRef('media-buy/build-creative-request.json', catalogAdcpVersion)?.schema;
   const canonicalCatalog = !!at(catalogRequest, 'properties', 'target_capability_id');
   const requestIdPattern = at(request, 'properties', 'target_capability_id', 'pattern');
@@ -372,7 +391,7 @@ function resolveCreativeBuildProbeWithSchemas(
     }
     if (!validateFormat(entry.format) || !validateKind(entry.format.format_kind)) {
       return invalid(
-        `malformed format declaration: ${[...(validateFormat.errors ?? []), ...(validateKind.errors ?? [])].map(error => `${error.instancePath || '/'} ${error.message}`).join('; ')}`
+        `malformed format declaration: ${displayValidationErrors([...(validateFormat.errors ?? []), ...(validateKind.errors ?? [])])}`
       );
     }
     const validateParams = getSchemaValidatorByRef(
@@ -390,7 +409,7 @@ function resolveCreativeBuildProbeWithSchemas(
       (validateKind && !validateKind(entry.format.format_kind))
     ) {
       return invalid(
-        `malformed format declaration: ${[...(validateParams?.errors ?? []), ...(validateFormat?.errors ?? []), ...(validateKind?.errors ?? [])].map(error => `${error.instancePath || '/'} ${error.message}`).join('; ')}`
+        `malformed format declaration: ${displayValidationErrors([...(validateParams?.errors ?? []), ...(validateFormat?.errors ?? []), ...(validateKind?.errors ?? [])])}`
       );
     }
     if (isBuildRoute(entry)) buildRoutes.push(entry);
