@@ -41,7 +41,10 @@ test('selects first satisfiable route and binds its provisioned input atomically
 
 test('no image/video/custom source assets are fabricated when fixture information is unavailable', () => {
   for (const kind of ['image', 'video_vast', 'custom']) {
-    const result = resolveCreativeBuildProbe({ supports_transformation: true, supported_formats: [route('transform', ['build'], kind)] }, spec, { assets: {} });
+    const target = route('transform', ['build'], kind);
+    if (kind === 'custom') Object.assign(target.format, { format_shape: 'custom-fixture', canonical_formats_only: true,
+      format_schema: { uri: 'https://agent.example/schema.json', digest: `sha256:${'a'.repeat(64)}` } });
+    const result = resolveCreativeBuildProbe({ supports_transformation: true, supported_formats: [target] }, spec, { assets: {} });
     assert.equal(result.status, 'unsatisfied');
   }
 });
@@ -182,7 +185,11 @@ test('generation alone never proves missing input constraints absent', () => {
     r => r.format.macro_resolution_capabilities = [], r => r.format.format_schema = {},
     r => r.format.unknown_extension = {}]) {
     const r = route('build'); change(r);
-    assert.equal(resolveCreativeBuildProbe(creative(r), spec).status, 'unsatisfied');
+    try {
+      assert.equal(resolveCreativeBuildProbe(creative(r), spec).status, 'unsatisfied');
+    } catch (error) {
+      assert.match(error.message, /malformed format declaration/, 'invalid declarations are errors, never auto input');
+    }
   }
 });
 
