@@ -127,6 +127,42 @@ export interface TestOptions {
    */
   schemaRoot?: string;
   /**
+   * Schema roots for releases the agent may echo in its
+   * `get_adcp_capabilities` response, keyed by AdCP version (`'3.2'`,
+   * `'3.2.5'`, `'3.3.0-beta.1'`). Values are schema-data roots in the same
+   * shape as `schemaRoot`.
+   *
+   * A 3.0 pin sends only `adcp_major_version`, so an agent may serve and echo
+   * a newer release in the same major (versioning spec, "Server echoes").
+   * The SDK validates that capabilities response against the echoed release
+   * when the echo is the pin's major, is listed in the response's
+   * `adcp.supported_versions`, and has a schema root: an entry here, an
+   * external root registered for it, or the SDK's bundled schemas. That
+   * applies to discovery's capability notices, `getAdcpCapabilities()` and
+   * storyboard `response_schema` checks on `get_adcp_capabilities`, including
+   * when `schemaRoot` is set for the pin. Otherwise validation stays on the
+   * pin.
+   *
+   * Entries are used for that capabilities validation only. Every other
+   * task's response, storyboard selection and grading stay on the pin. Each
+   * root is checked against its key once per process; a malformed map throws
+   * before the run starts. Honored by `comply()`, `runStoryboard()` and
+   * `runStoryboardStep()`; other callers can use `withServedReleaseSchemaRoots`.
+   *
+   * @example
+   * ```ts
+   * await comply(agentUrl, {
+   *   complianceDir: hosted30.complianceDir,
+   *   schemaRoot: hosted30.schemaRoot,
+   *   servedReleaseSchemaRoots: {
+   *     '3.1.29': hosted31.schemaRoot,
+   *     '3.2.5': hosted32.schemaRoot,
+   *   },
+   * });
+   * ```
+   */
+  servedReleaseSchemaRoots?: Readonly<Record<string, string>>;
+  /**
    * Whether strict AJV response-schema failures contribute to storyboard
    * grading. Defaults to `true`, matching the hosted compliance grader.
    *

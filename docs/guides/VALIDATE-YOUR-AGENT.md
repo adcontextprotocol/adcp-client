@@ -187,6 +187,40 @@ await comply(agentUrl, {
 });
 ```
 
+**Capabilities served at a newer release.** A 3.0 pin sends only
+`adcp_major_version: 3`, so a conformant agent may serve and echo its highest
+3.x release in `get_adcp_capabilities` (versioning spec, "Server echoes"). The
+runner validates that one response against the echoed release when the echo is
+the pin's major, is listed in the response's own `adcp.supported_versions`, and
+has a schema root. That covers discovery's `capabilities_response_schema_invalid`
+notices, `getAdcpCapabilities()` and every storyboard `response_schema` check on
+`get_adcp_capabilities`, even with `schemaRoot` set for the pin. Otherwise it
+validates strictly against the pin. Every other task's response, storyboard
+selection, the run's `adcp_version` and grading stay on the pin.
+
+The echoed release's schemas come from the SDK's bundle by default. A grader
+that ships its own roots per release can supply them with
+`servedReleaseSchemaRoots` (on `comply()`, `runStoryboard()` and
+`runStoryboardStep()`), keyed by AdCP version:
+
+```ts
+await comply(agentUrl, {
+  version: '3.0.27',
+  complianceDir: '/app/dist/compliance/3.0.27',
+  schemaRoot: '/app/dist/schemas/3.0.27',
+  servedReleaseSchemaRoots: {
+    '3.1.29': '/app/dist/schemas/3.1.29',
+    '3.2.5': '/app/dist/schemas/3.2.5',
+  },
+});
+```
+
+Those roots are used only for that capabilities validation. Each one is checked
+against its key once per process, and a mismatched or missing root throws
+before the run starts. Callers that validate outside `comply()` and the runner
+can scope the same map with `withServedReleaseSchemaRoots(roots, fn)` from
+`@adcp/sdk/testing`.
+
 **Multi-agent storyboards under `comply()`.** `comply()` grades one agent, so
 storyboards that declare `requires: [multi_agent]` (for example the
 governance-aware seller scenarios) skip with `requirement_unmet` and cap their

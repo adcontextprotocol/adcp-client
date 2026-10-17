@@ -28,7 +28,7 @@ import type { AgentRequestSigningConfig } from '../types/adcp';
 import { createHmac, hkdfSync, randomBytes } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { validateIncomingResponse } from '../validation/client-hooks';
-import { resolveServedValidationVersion } from '../validation/schema-loader';
+import { withServedValidationVersion } from '../validation/schema-loader';
 import { extractVersionUnsupportedDetails } from '../utils/error-extraction';
 import { buildAgentSigningContext } from '../signing/client';
 import type { VerifierCapability } from '../signing/types';
@@ -848,13 +848,14 @@ export async function discoverAgentProfile(
         // Validate against the release the seller served (its echoed
         // `adcp_version`), not the pin. A 3.0 pin negotiates major-only, so
         // the seller serves its highest 3.x release (versioning spec,
-        // "Server echoes"). Falls back to the pin when there is no usable echo.
-        const validation = validateIncomingResponse(
-          'get_adcp_capabilities',
+        // "Server echoes"). The echo is used when it is same-major, listed in
+        // the response's `supported_versions` and has a schema root, even
+        // with an external root active for the pin; otherwise the pin.
+        const validation = withServedValidationVersion(
           caps.data,
-          'strict',
-          undefined,
-          resolveServedValidationVersion(caps.data, schemaAdcpVersion ?? client.getAdcpVersion())
+          schemaAdcpVersion ?? client.getAdcpVersion(),
+          validationVersion =>
+            validateIncomingResponse('get_adcp_capabilities', caps.data, 'strict', undefined, validationVersion)
         );
         if (!validation.valid) {
           profile.capabilities_schema_issues = validation.issues.map(issue => ({

@@ -79,6 +79,7 @@ import {
   resolveBundleKey,
   schemaAllowsTopLevelField,
   withExternalSchemaRoot,
+  withServedReleaseSchemaRoots,
 } from '../../validation/schema-loader';
 import { ADCP_VERSION, parseAdcpMajorVersion } from '../../version';
 import {
@@ -1486,12 +1487,14 @@ export async function runStoryboard(
         };
       }
       const schemaRoot = getRunSchemaRoot(options);
-      if (schemaRoot) {
-        return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>
+      const runBody = () =>
+        withServedReleaseSchemaRoots(options.servedReleaseSchemaRoots, () =>
           runStoryboardBody(agentUrlOrUrls, storyboard, options)
         );
+      if (schemaRoot) {
+        return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, runBody);
       }
-      return await runStoryboardBody(agentUrlOrUrls, storyboard, options);
+      return await runBody();
     },
     { isolate: !hasTestClientScope() }
   );
@@ -5489,12 +5492,14 @@ export async function runStoryboardStep(
       options = resolveDeclaredTestKit(storyboard, options);
       options = applyNativeA2AComplianceTransportOptions(options);
       const schemaRoot = getRunSchemaRoot(options);
-      if (schemaRoot) {
-        return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>
+      const runBody = () =>
+        withServedReleaseSchemaRoots(options.servedReleaseSchemaRoots, () =>
           runStoryboardStepBody(agentUrl, storyboard, stepId, options)
         );
+      if (schemaRoot) {
+        return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, runBody);
       }
-      return await runStoryboardStepBody(agentUrl, storyboard, stepId, options);
+      return await runBody();
     },
     { isolate: !hasTestClientScope() }
   );
