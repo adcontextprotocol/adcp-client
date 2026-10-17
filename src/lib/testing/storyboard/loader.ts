@@ -11,6 +11,7 @@ import { parse } from 'yaml';
 import type { Storyboard } from './types';
 import { MUTATING_TASKS } from '../../utils/idempotency';
 import { validateFixtureResolutionDeclarations } from './fixture-resolution';
+import { validateCreativeBuildProbeSpec } from './creative-build-probe';
 import { valid as validSemver } from 'semver';
 import { parsePhaseCondition } from './phase-condition';
 
@@ -98,6 +99,7 @@ export function normalizeValidationOnlyTasks(storyboard: Storyboard): Storyboard
  * already-validated inputs.
  */
 export function validateStoryboardShape(storyboard: Storyboard): void {
+  if (storyboard.creative_build_probe !== undefined) validateCreativeBuildProbeSpec(storyboard.creative_build_probe);
   validateRequires(storyboard);
   validateRequiresAllCapabilities(storyboard);
   validateFixtureResolutionDeclarations(storyboard);

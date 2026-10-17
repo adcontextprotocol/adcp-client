@@ -10,6 +10,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { ACCOUNT_FREE_DISCOVERY_TASKS } from './account-policy';
+import { resolveCreativeBuildProbe } from './creative-build-probe';
 import {
   createTestClient,
   getOrCreateClientResolution,
@@ -1635,7 +1636,7 @@ async function runStoryboardBody(
   }
 
   const requestedStrategy = options.multi_instance_strategy ?? 'round-robin';
-  if (requestedStrategy === 'multi-pass' && isMultiInstance) {
+  if (requestedStrategy === 'multi-pass' && isMultiInstance && !storyboard.creative_build_probe) {
     // Webhook receivers bind a fresh ephemeral port per pass. Each pass would
     // advertise a different URL via `{{runner.webhook_base}}`; agents caching
     // the pass-1 URL would deliver into a dead port in pass 2. Reject rather
@@ -3695,11 +3696,42 @@ async function executeStoryboardPass(
   let fixtureBindings: FixtureBindingRegistry | undefined;
   let fixtureResolutionRecords: FixtureResolutionRecord[] | undefined;
   let fixtureCoverageGap: FixtureResolutionCoverageGap | undefined;
+  if (storyboard.creative_build_probe && !skipControllerSeedingForPhaseGates) {
+    const resolution = routingContext || isMultiInstance
+      ? { status: 'unsatisfied' as const, detail: `fixture_unsatisfied: creative_format:${storyboard.creative_build_probe.context_prefix}: resolve an independent fixture for each routed or replicated agent in a single-agent run` }
+      : resolveCreativeBuildProbe(
+      (profile?.raw_capabilities as Record<string, unknown> | undefined)?.creative,
+      storyboard.creative_build_probe,
+      options.test_kit,
+      options.adcpVersion,
+      (profile?.raw_capabilities as { adcp?: { governance_enforcement?: unknown } } | undefined)?.adcp?.governance_enforcement,
+    );
+    const handle = storyboard.creative_build_probe.context_prefix;
+    fixtureResolutionRecords = [{
+      fixture_type: 'creative_format', handle, requirements: resolution.status === 'resolved' ? resolution.requirements : [], status: resolution.status,
+      ...(resolution.status === 'resolved' ? { seller_ids: { capability_id: resolution.capabilityId } } : {}),
+      strategy: 'discover', strategies_attempted: [{ strategy: 'discover',
+        disposition: resolution.status === 'resolved' ? 'resolved' : 'unavailable',
+        detail: resolution.status === 'resolved' ? `Bound build route using ${resolution.source} input` : resolution.detail }],
+    }];
+    if (resolution.status === 'resolved') {
+      for (const key of ['capability_id', 'message', 'creative_manifest', 'creative_id', 'transformer_id', 'config']) {
+        delete context[`${handle}_${key}`];
+      }
+      Object.assign(context, resolution.context);
+      options = { ...options, contracts: [...new Set([...(options.contracts ?? []), 'creative_build_probe_runner'])] };
+    } else {
+      fixtureUnsatisfied = true;
+      skippedCount += 1;
+      fixtureCoverageGap = { reason: 'fixture_unsatisfied', detail: resolution.detail,
+        fixtures: [{ fixture_type: 'creative_format', handle, requirements: [] }] };
+    }
+  }
   {
     let seeding;
     try {
       seeding =
-        creativeAssetFixtureGap || skipControllerSeedingForPhaseGates
+        creativeAssetFixtureGap || fixtureUnsatisfied || skipControllerSeedingForPhaseGates
           ? null
           : preSeeded !== undefined
             ? preSeeded.result
@@ -3772,7 +3804,9 @@ async function executeStoryboardPass(
         }
       }
       fixtureBindings = seeding.bindings;
-      fixtureResolutionRecords = seeding.resolutionRecords;
+      fixtureResolutionRecords = fixtureResolutionRecords
+        ? [...fixtureResolutionRecords, ...(seeding.resolutionRecords ?? [])]
+        : seeding.resolutionRecords;
       fixtureUnsatisfied = seeding.fixtureUnsatisfied === true && seeding.failedCount === 0;
       if (fixtureUnsatisfied) {
         // Fixture coverage is the more specific storyboard-level reason when
@@ -5576,6 +5610,22 @@ async function runStoryboardStepBody(
       if (!clientResolution.reusedShared) await closeScopedConnections(options.protocol);
       return result;
     }
+  }
+
+  if (storyboard.creative_build_probe) {
+    const resolution = resolveCreativeBuildProbe((profile?.raw_capabilities as Record<string, unknown> | undefined)?.creative, storyboard.creative_build_probe, options.test_kit, options.adcpVersion, (profile?.raw_capabilities as { adcp?: { governance_enforcement?: unknown } } | undefined)?.adcp?.governance_enforcement);
+    if (resolution.status === 'unsatisfied') {
+      if (!clientResolution.reusedShared) await closeScopedConnections(options.protocol);
+      return { storyboard_id: storyboard.id, step_id: found.step.id, phase_id: found.phaseId,
+        title: found.step.title, task: found.step.task, passed: true, skipped: true,
+        skip_reason: 'fixture_unsatisfied', skip: { reason: 'not_applicable', detail: resolution.detail },
+        duration_ms: 0, validations: [], context, error: resolution.detail, extraction: { path: 'none' } };
+    }
+    for (const key of ['capability_id', 'message', 'creative_manifest', 'creative_id', 'transformer_id', 'config']) {
+      delete context[`${storyboard.creative_build_probe.context_prefix}_${key}`];
+    }
+    Object.assign(context, resolution.context);
+    options = { ...options, contracts: [...new Set([...(options.contracts ?? []), 'creative_build_probe_runner'])] };
   }
 
   // Construct runtime adapters only after root applicability has passed.
