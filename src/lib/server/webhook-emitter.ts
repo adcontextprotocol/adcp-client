@@ -1,4 +1,4 @@
-import { signWebBotAuth, type WebBotSigningKey } from '../signing/web-bot-auth';
+import { assertWebBotAuthSigningKey, signWebBotAuth, type WebBotSigningKey } from '../signing/web-bot-auth';
 /**
  * Publisher-side webhook emitter — the symmetric counterpart to PR #629's
  * receiver-side dedup. A seller / governance agent / rights agent building
@@ -532,6 +532,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
   if (options.deliveryStore && options.idempotencyKeyStore) {
     throw new TypeError('createWebhookEmitter: provide deliveryStore, not both deliveryStore and idempotencyKeyStore');
   }
+  if (options.webBotAuth?.key) assertWebBotAuthSigningKey(options.webBotAuth.key);
   const retryHorizonSeconds = resolveRetryHorizonSeconds(options.deliveryRetryHorizonSeconds);
   const explicitStore = options.deliveryStore ?? options.idempotencyKeyStore;
   const store = explicitStore ?? memoryWebhookDeliveryStore({ now: options.now });

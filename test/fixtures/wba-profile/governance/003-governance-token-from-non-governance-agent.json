@@ -23,14 +23,20 @@
   },
   "directories": {
     "https://governance-7k3q.com": {
-      "keys_ref": ["1XlJ3EIte7bPOEqKQtKrKNTNy5hywTyrwFXWrMbXKqE"]
+      "keys_ref": [
+        "1XlJ3EIte7bPOEqKQtKrKNTNy5hywTyrwFXWrMbXKqE"
+      ]
     },
     "https://buyer-7k3q.com": {
-      "keys_ref": ["6WsKMCObba49V3uN0vIENnk1BKAk7c9zjBJcWKyQ9_I"]
+      "keys_ref": [
+        "6WsKMCObba49V3uN0vIENnk1BKAk7c9zjBJcWKyQ9_I"
+      ]
     }
   },
   "role_listing": {
-    "adcp:governance": ["https://governance-7k3q.com"]
+    "adcp:governance": [
+      "https://governance-7k3q.com"
+    ]
   },
   "expected_outcome": {
     "success": false,

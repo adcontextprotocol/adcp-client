@@ -1,14 +1,15 @@
 {
   "repository": "adcontextprotocol/adcp",
   "pr": 7894,
-  "sha": "656bd080f01cc2fca4a1e623af44e96cfd827ba5",
+  "sha": "e24eeb090c4365707641099cbbb45f9945c6d6e0",
   "path": "static/compliance/source/test-vectors/wba-profile",
-  "replay_status": "Ratified R2 defaults to 429; older negative/002 requires explicit replayStatus:403.",
+  "vendored": "Every file under the path at the pinned sha, byte for byte. Graded by test/lib/identity-3.3.test.js.",
+  "replay_status": "negative/002 expects 429 with Accept-Signature carrying a verifier-chosen nonce; the deprecated replayStatus option has no effect.",
   "non_applicable": [
     "governance/001-governance-token.json",
     "governance/002-governance-token-key-not-in-issuer-directory.json",
     "governance/003-governance-token-from-non-governance-agent.json"
   ],
-  "non_applicable_reason": "Ratified R4 retains the RFC 9421 discovery chain for governance, designated-task response and rights JWS through 3.3. These earlier draft vectors propose a superseded JWS migration.",
+  "non_applicable_reason": "Ratified R4 retains the RFC 9421 discovery chain for governance, designated-task response and rights JWS through 3.3, and the profile page leaves document signing to a separate decision (RFC #7878, D11). The SDK does not resolve governance-token keys from key directories, so these vectors are not graded.",
   "test_keys": "Published private seeds are fixtures only; production signing and directory verification reject them."
 }
