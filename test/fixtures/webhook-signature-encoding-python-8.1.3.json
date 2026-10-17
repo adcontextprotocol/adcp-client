@@ -1,0 +1,45 @@
+{
+  "producer": "adcp==8.1.3",
+  "reference_now": 1776520800,
+  "_comment": "Python sign_request(signing_profile_version=\"3.2\", cover_content_digest=True, tag=WEBHOOK_TAG) and adcp.signing.webhook_signer.sign_webhook over the same raw body and URL. Generated with an ephemeral Ed25519 key; only the public key is retained.",
+  "jwk": {
+    "kty": "OKP",
+    "crv": "Ed25519",
+    "alg": "EdDSA",
+    "use": "sig",
+    "key_ops": ["verify"],
+    "adcp_use": "webhook-signing",
+    "kid": "k1",
+    "x": "mXLzNCZ0026lCCFnfWRDdz2lzjj9B3rZfHyLYXH5ZDA"
+  },
+  "requests": [
+    {
+      "kind": "generic-request",
+      "request": {
+        "method": "POST",
+        "url": "https://receiver.example/webhooks/sync_creatives/op-123?route=%7e&encoded=%2f",
+        "body": "{\"operation_id\":\"op-123\",\"status\":\"completed\"}",
+        "headers": {
+          "content-type": "application/json",
+          "signature-input": "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\");created=1776520800;expires=1776521100;nonce=\"0IYhdo0wF1NmhsDCWvpgnw\";keyid=\"k1\";alg=\"ed25519\";tag=\"adcp/webhook-signing/v1\"",
+          "signature": "sig1=:e+iEFG8B27XzBmxYdhAF4SG3oxSYktvQk6945Quvn+oYRqsvzKFt8pfqyuwY0tMq98jA+x9pilauFgVqEkxGAQ==:",
+          "content-digest": "sha-256=:GM7pC7X+xxtRXQl/EBXndmJ79F4N+AVbPvkTKC+Mmtk=:"
+        }
+      }
+    },
+    {
+      "kind": "dedicated-webhook",
+      "request": {
+        "method": "POST",
+        "url": "https://receiver.example/webhooks/sync_creatives/op-123?route=%7e&encoded=%2f",
+        "body": "{\"operation_id\":\"op-123\",\"status\":\"completed\"}",
+        "headers": {
+          "content-type": "application/json",
+          "signature-input": "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\");created=1776520800;expires=1776521100;nonce=\"of9gTy-_VvKZgQ0VGU-hYA\";keyid=\"k1\";alg=\"ed25519\";tag=\"adcp/webhook-signing/v1\"",
+          "signature": "sig1=:1e3x3kr2DM51QfCRrB4_PoRZ4UxtWHK023TUYK4SRVrlxtFaYqEqkJ_UEBTlaedIIjI58TaE4vvOCowhdDXtBw:",
+          "content-digest": "sha-256=:GM7pC7X+xxtRXQl/EBXndmJ79F4N+AVbPvkTKC+Mmtk=:"
+        }
+      }
+    }
+  ]
+}

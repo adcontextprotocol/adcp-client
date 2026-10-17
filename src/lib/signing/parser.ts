@@ -101,21 +101,21 @@ export function parseSignature(
   const rawBytes = headerValue.match(new RegExp(`(?:^|,\\s*)${escapedLabel}\\s*=\\s*:([^:]+):`))?.[1];
   if (!rawBytes) malformed(`Signature header does not contain a byte sequence for label "${expectedLabel}"`);
   if (encoding === 'rfc8941-base64') {
-    // AdCP 3.2: RFC 8941 sf-binary is padded standard Base64. Reject the
+    // RFC 8941 sf-binary is padded standard Base64. Reject the
     // Base64URL alphabet (`-`/`_`) and missing padding here, at step 1, so a
     // legacy token never reaches the window or crypto checks.
     if (!isPaddedStandardBase64(rawBytes)) {
-      malformed('Signature value must use padded standard Base64 for AdCP 3.2+');
+      malformed('Signature value must use padded standard Base64 for the selected signing profile');
     }
   } else if (!/^[A-Za-z0-9_-]+$/.test(rawBytes)) {
-    malformed('Signature value must use unpadded Base64URL for AdCP 3.0/3.1');
+    malformed('Signature value must use unpadded Base64URL for the selected signing profile');
   }
   let dict;
   try {
-    // AdCP 3.2 parses the whole field as a strict RFC 8941 Dictionary, so a
-    // Base64URL byte sequence under any label is malformed. The 3.0/3.1
-    // profile encoded byte sequences as Base64URL (`-`/`_`); translate those
-    // characters inside byte-sequence delimiters before the strict parser.
+    // RFC 8941 mode parses the whole field strictly, so a Base64URL byte
+    // sequence under any label is malformed. Legacy request signing and
+    // webhook-v1 use Base64URL (`-`/`_`); translate those characters inside
+    // byte-sequence delimiters before the strict parser.
     dict = parseDictionary(encoding === 'rfc8941-base64' ? headerValue : normalizeByteSequenceBase64(headerValue));
   } catch (e: unknown) {
     if (e instanceof ParseError) {

@@ -503,6 +503,31 @@ app.post('/webhook', async (req, res) => {
 });
 ```
 
+Webhook-v1 uses unpadded Base64URL for `Signature` throughout AdCP 3.x,
+including 3.2. Its URL canonicalization follows AdCP 3.2 independently of
+that encoding. The 3.2 request-signing migration to padded standard Base64
+does not change the webhook-v1 profile. Python senders should use
+`adcp.signing.webhook_signer.sign_webhook` rather than a generic
+`sign_request` call with `signing_profile_version="3.2"` and the webhook tag.
+See the [protocol's binary-value encoding rules](https://github.com/adcontextprotocol/adcp/blob/v3.2.5/docs/building/by-layer/L1/security.mdx#adcp-rfc-9421-profile).
+
+When a known peer uses a generic RFC 9421 signer that emits standard padded
+Base64, configure that receiver route explicitly:
+
+```typescript
+await verifyWebhookSignature(req, {
+  jwks,
+  replayStore,
+  revocationStore,
+  signatureEncoding: 'rfc8941-base64',
+});
+```
+
+`createWebhookVerifier` accepts the same option. Each mode strictly parses
+its configured encoding; neither retries the other encoding. Select this
+option from trusted integration configuration, independently of incoming
+headers or webhook payloads.
+
 ## Step 6: Sign Outbound Webhooks (Seller)
 
 Configure `createAdcpServerFromPlatform` with a webhook signing key:

@@ -24,7 +24,7 @@
  */
 
 import { buildSignatureBase, canonicalTargetUri, getHeaderValue } from './canonicalize';
-import { contentDigestMatches } from './content-digest';
+import { contentDigestMatches, type SfBinaryEncoding } from './content-digest';
 import { RequestSignatureError, WebhookSignatureError } from './errors';
 import { AgentResolverError } from './agent-resolver/errors';
 import { BrandJsonResolverError } from './brand-jwks';
@@ -68,6 +68,16 @@ export const WEBHOOK_MANDATORY_COMPONENTS: ReadonlyArray<string> = [
 
 export interface VerifyWebhookOptions {
   jwks: JwksResolver;
+  /**
+   * Trusted receiver configuration for the Signature byte sequence.
+   * Defaults to `legacy-base64url`, as the AdCP webhook-v1 profile requires
+   * throughout 3.x. Set `rfc8941-base64` only for an explicitly configured
+   * peer emitting standard padded Base64 (for example, a generic RFC 9421
+   * request signer with the webhook tag). There is no encoding fallback.
+   * URL canonicalization remains AdCP 3.2 in either mode; Signature encoding
+   * does not identify a webhook's AdCP version.
+   */
+  signatureEncoding?: SfBinaryEncoding;
   /** Applicable publishers from the verifier's own media-buy record. */
   publisherPins?: readonly PublisherSigningKeyPin[];
   /** Log the underlying request_signature_* discovery cause locally. */
@@ -118,6 +128,7 @@ export async function verifyWebhookSignature(
   request: WebhookRequestLike,
   options: VerifyWebhookOptions
 ): Promise<VerifyWebhookResult> {
+  const signatureEncoding = resolveSignatureEncoding(options.signatureEncoding);
   const currentTime = options.now ?? (() => Date.now() / 1000);
   const now = currentTime();
   const requiredTag = options.requiredTag ?? WEBHOOK_SIGNING_TAG;
@@ -137,12 +148,12 @@ export async function verifyWebhookSignature(
   let parsedSig: ReturnType<typeof parseSignature>;
   try {
     parsedInput = parseSignatureInput(sigInputHeader);
-    parsedSig = parseSignature(sigHeader, parsedInput.label);
+    parsedSig = parseSignature(sigHeader, parsedInput.label, signatureEncoding);
   } catch (err) {
     throw new WebhookSignatureError(
       'webhook_signature_header_malformed',
       1,
-      err instanceof Error ? err.message : String(err)
+      `${err instanceof Error ? err.message : String(err)} (webhook signatureEncoding="${signatureEncoding}").`
     );
   }
 
@@ -400,6 +411,13 @@ export async function verifyWebhookSignature(
   };
 }
 
+function resolveSignatureEncoding(encoding: SfBinaryEncoding = 'legacy-base64url'): SfBinaryEncoding {
+  if (encoding !== 'legacy-base64url' && encoding !== 'rfc8941-base64') {
+    throw new TypeError('signatureEncoding must be "legacy-base64url" or "rfc8941-base64".');
+  }
+  return encoding;
+}
+
 function assertDelegatedOperatorAuthorizationActive(validUntil: number | undefined, now: number): void {
   if (validUntil !== undefined && (!Number.isFinite(validUntil) || now >= validUntil)) {
     throw new WebhookSignatureError(
@@ -595,10 +613,12 @@ export interface CreateWebhookVerifierOptions extends Omit<VerifyWebhookOptions,
 export function createWebhookVerifier(
   options: CreateWebhookVerifierOptions
 ): (request: WebhookRequestLike) => Promise<VerifyWebhookResult> {
+  const signatureEncoding = resolveSignatureEncoding(options.signatureEncoding);
   // Instantiate defaults once at creation time so every request handled by
   // this verifier shares the same replay / revocation state. Per-request
   // construction would defeat replay detection entirely.
   const replayStore = options.replayStore ?? new InMemoryReplayStore();
   const revocationStore = options.revocationStore ?? new InMemoryRevocationStore();
-  return (request: WebhookRequestLike) => verifyWebhookSignature(request, { ...options, replayStore, revocationStore });
+  return (request: WebhookRequestLike) =>
+    verifyWebhookSignature(request, { ...options, signatureEncoding, replayStore, revocationStore });
 }

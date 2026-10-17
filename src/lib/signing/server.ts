@@ -22,7 +22,12 @@ export {
   type ResponseLike,
   type SignatureParams,
 } from './canonicalize';
-export { computeContentDigest, contentDigestMatches, parseContentDigest } from './content-digest';
+export {
+  computeContentDigest,
+  contentDigestMatches,
+  parseContentDigest,
+  type SfBinaryEncoding,
+} from './content-digest';
 export {
   requestContextFromExpress,
   requestContextFromFetch,
