@@ -12,7 +12,11 @@ import { prepareResponseForSchemaValidation, TOOL_RESPONSE_SCHEMAS } from '../..
 import { injectLegacyEnvelopeStatus } from '../../utils/envelope-status-compat';
 import { TRANSPORT_SUFFIX_REGEX } from '../../utils/a2a-discovery';
 import { validateResponse, type ValidationIssue } from '../../validation/schema-validator';
-import { hasSchemaBundle, isExternalSchemaRootActive } from '../../validation/schema-loader';
+import {
+  hasSchemaBundle,
+  isExternalSchemaRootActive,
+  withServedValidationVersion,
+} from '../../validation/schema-loader';
 import { ADCP_VERSION, LIBRARY_VERSION } from '../../version';
 import { isPre31AdcpVersion } from '../../utils/adcp-version-config';
 import { gte as semverGte, valid as validSemver } from 'semver';
@@ -537,6 +541,32 @@ function validateResponseSchema(
   ctx: ValidationContext,
   taskResult: TaskResult
 ): ValidationResult {
+  // Capabilities are negotiated before any pin applies: a 3.0 pin is served
+  // the agent's highest release in the major, echoed in `adcp_version`.
+  // Validate against that release (versioning spec, "Server echoes") when it
+  // is same-major, listed in the response's `supported_versions` and has a
+  // schema root, even when an external root is active for the pin. Otherwise
+  // keep the pin. Every other task stays on the pin.
+  const pinnedVersion = ctx.adcpVersion;
+  if (ctx.taskName === 'get_adcp_capabilities' && pinnedVersion !== undefined) {
+    return withServedValidationVersion(taskResult.data, pinnedVersion, validationVersion =>
+      validateResponseSchemaForVersion(
+        validation,
+        validationVersion === pinnedVersion
+          ? ctx
+          : { ...ctx, adcpVersion: validationVersion, responseAdcpVersion: validationVersion },
+        taskResult
+      )
+    );
+  }
+  return validateResponseSchemaForVersion(validation, ctx, taskResult);
+}
+
+function validateResponseSchemaForVersion(
+  validation: StoryboardValidation,
+  ctx: ValidationContext,
+  taskResult: TaskResult
+): ValidationResult {
   const taskName = ctx.taskName;
   const schemaIdentityVersion = ctx.adcpVersion ?? ctx.responseAdcpVersion ?? ADCP_VERSION;
   const { schema_id, schema_url } = resolveSchemaIdentity(ctx.responseSchemaRef, schemaIdentityVersion);
@@ -689,10 +719,21 @@ function validateResponseSchema(
 
 /** @internal Shared with the storyboard runner's Zod-rejection recovery path. */
 export function isExternalResponseSchemaAuthoritative(
-  ctx: Pick<ValidationContext, 'adcpVersion' | 'responseAdcpVersion'>
+  ctx: Pick<ValidationContext, 'adcpVersion' | 'responseAdcpVersion'> &
+    Partial<Pick<ValidationContext, 'taskName' | 'taskResult'>>
 ): boolean {
   const validationVersion = responseSchemaValidationVersion(ctx.adcpVersion, ctx.responseAdcpVersion);
-  return validationVersion !== undefined && isExternalSchemaRootActive(validationVersion);
+  if (validationVersion !== undefined && isExternalSchemaRootActive(validationVersion)) return true;
+  // A capabilities response validated against its echoed release is
+  // authoritative when that release's root is external (registered, or
+  // supplied through servedReleaseSchemaRoots), same as a pinned external root.
+  const pinnedVersion = ctx.adcpVersion;
+  if (ctx.taskName !== 'get_adcp_capabilities' || pinnedVersion === undefined || !ctx.taskResult) return false;
+  return withServedValidationVersion(
+    ctx.taskResult.data,
+    pinnedVersion,
+    version => version !== pinnedVersion && isExternalSchemaRootActive(version)
+  );
 }
 
 function responseSchemaValidationVersion(
