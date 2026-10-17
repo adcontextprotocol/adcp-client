@@ -80,7 +80,7 @@ import { detectController, hasTestController } from '../test-controller';
 import type { ControllerDetection } from '../test-controller';
 import { randomBytes } from 'crypto';
 import { isPre31AdcpVersion } from '../../utils/adcp-version-config';
-import { withExternalSchemaRoot } from '../../validation/schema-loader';
+import { withExternalSchemaRoot, withServedReleaseSchemaRoots } from '../../validation/schema-loader';
 import { redactOAuthUrlForOutput, redactOAuthUrlsInText } from '../storyboard/oauth-metadata-graph';
 import { LIBRARY_VERSION } from '../../version';
 import { validationFailsStep } from '../storyboard/validations';
@@ -2287,7 +2287,13 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
   // not abort discovery or the storyboard currently in flight.
   const signal = externalSignal;
 
-  return await withExternalSchemaRoot(complianceIndex.adcp_version, scopedSchemaRoot, async () => {
+  // `servedReleaseSchemaRoots` stays in `testOptions` so routed and nested
+  // storyboard runs see it too; scoping it here also covers discovery.
+  return await withExternalSchemaRoot(complianceIndex.adcp_version, scopedSchemaRoot, () =>
+    withServedReleaseSchemaRoots(testOptions.servedReleaseSchemaRoots, () => complyInSchemaScope())
+  );
+
+  async function complyInSchemaScope(): Promise<ComplianceResult> {
     let effectiveOptions: TestOptions = applyAdcpVersionRunOptions(complianceIndex.adcp_version, {
       ...testOptions,
       // `comply()` has always defaulted an unset transport to MCP when it built
@@ -2725,7 +2731,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       total_duration_ms: Date.now() - start,
       notices: noticesDedup,
     };
-  });
+  }
 }
 
 function hasComplyTimeoutBudgetExpired(start: number, timeout_ms: number | undefined, now = Date.now()): boolean {

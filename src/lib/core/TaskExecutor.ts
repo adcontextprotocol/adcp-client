@@ -34,7 +34,7 @@ import {
   type ValidationMode,
 } from '../validation/client-hooks';
 import { formatIssues } from '../validation/schema-validator';
-import { resolveServedValidationVersion } from '../validation/schema-loader';
+import { withServedValidationVersion } from '../validation/schema-loader';
 import { ADCP_VERSION } from '../version';
 import { unwrapProtocolResponse, isAdcpOperationSuccess } from '../utils/response-unwrapper';
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
@@ -6125,64 +6125,31 @@ export class TaskExecutor {
       // Normal dispatch uses lastKnownServerVersion; restart recovery passes
       // the persisted continuation version explicitly so concurrent or fresh
       // executors cannot validate the seller's response against another wire.
-      let validationVersion =
+      const pinnedValidationVersion =
         (serverVersion ?? this.lastKnownServerVersion) === 'v2'
           ? 'v2.5'
           : (this.responseAdcpVersionForValidation() ?? this.config.adcpVersion ?? ADCP_VERSION);
       // Capabilities are negotiated before any pin applies: a 3.0 pin (or a
       // major-only envelope) is served the seller's highest release in the
       // major, echoed in `adcp_version`. Validate against that release, as the
-      // versioning spec requires ("Server echoes"), falling back to the pin
-      // when there is no usable echo. Only the validator's version changes;
-      // the unwrapper keeps `effectiveResponseAdcpVersion()`.
-      if (taskName === 'get_adcp_capabilities' && validationVersion !== 'v2.5') {
-        validationVersion = resolveServedValidationVersion(response, validationVersion);
+      // versioning spec requires ("Server echoes"), when it is same-major,
+      // listed in the response's `supported_versions` and has a schema root;
+      // otherwise against the pin. This holds even when an external schema
+      // root is active for the pin. Only the validator's version changes; the
+      // unwrapper keeps `effectiveResponseAdcpVersion()`.
+      if (taskName === 'get_adcp_capabilities' && pinnedValidationVersion !== 'v2.5') {
+        return withServedValidationVersion(response, pinnedValidationVersion, validationVersion =>
+          this.validateResponseSchemaAgainst(response, taskName, debugLogs, mode, logViolations, validationVersion)
+        );
       }
-      const normalizedResponse = this.normalizeResponseForValidation(response, taskName, validationVersion === 'v2.5');
-      // TaskExecutor owns the user-facing log entry below. Passing debugLogs
-      // into the lower-level hook would emit a second, unversioned duplicate.
-      const outcome =
-        (this.config.experimentalIdentity33?.() ||
-          (this.config.identity33SchemaExperiment &&
-            normalizedResponse &&
-            typeof normalizedResponse === 'object' &&
-            isAdcpVersionAtLeast((normalizedResponse as { adcp_version?: string }).adcp_version, '3.3'))) &&
-        mode !== 'off'
-          ? validateIdentity33Payload(taskName, 'response', normalizedResponse, validationVersion)
-          : validateIncomingResponse(taskName, normalizedResponse, mode, undefined, validationVersion);
-      if (outcome.valid) return { valid: true, errors: [] };
-
-      const errorStrings = outcome.issues.map(i => `${i.pointer}: ${i.message}`);
-
-      if (logViolations) {
-        debugLogs.push({
-          timestamp: new Date().toISOString(),
-          type: mode === 'strict' ? 'error' : 'warning',
-          message: `Schema validation ${mode === 'strict' ? 'failed' : 'warning'} for ${taskName}: ${formatIssues(
-            outcome.issues
-          )}`,
-          errors: errorStrings,
-          issues: outcome.issues,
-          schemaVariant: outcome.variant,
-          schemaVersion: validationVersion,
-          mode,
-        });
-      }
-
-      if (mode === 'warn') {
-        if (logViolations) {
-          console.warn(
-            `Schema validation failed for ${taskName} against AdCP ${validationVersion} (non-blocking):`,
-            errorStrings
-          );
-        }
-        return { valid: true, errors: [] };
-      }
-
-      if (logViolations) {
-        console.error(`Schema validation failed for ${taskName} against AdCP ${validationVersion}:`, errorStrings);
-      }
-      return { valid: false, errors: errorStrings };
+      return this.validateResponseSchemaAgainst(
+        response,
+        taskName,
+        debugLogs,
+        mode,
+        logViolations,
+        pinnedValidationVersion
+      );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'unknown error';
       console.error('Error during schema validation:', errorMessage);
@@ -6191,6 +6158,61 @@ export class TaskExecutor {
         errors: mode === 'strict' ? [`Validation error: ${errorMessage}`] : [],
       };
     }
+  }
+
+  private validateResponseSchemaAgainst(
+    response: any,
+    taskName: string,
+    debugLogs: any[],
+    mode: ValidationMode,
+    logViolations: boolean,
+    validationVersion: string
+  ): { valid: boolean; errors: string[] } {
+    const normalizedResponse = this.normalizeResponseForValidation(response, taskName, validationVersion === 'v2.5');
+    // TaskExecutor owns the user-facing log entry below. Passing debugLogs
+    // into the lower-level hook would emit a second, unversioned duplicate.
+    const outcome =
+      (this.config.experimentalIdentity33?.() ||
+        (this.config.identity33SchemaExperiment &&
+          normalizedResponse &&
+          typeof normalizedResponse === 'object' &&
+          isAdcpVersionAtLeast((normalizedResponse as { adcp_version?: string }).adcp_version, '3.3'))) &&
+      mode !== 'off'
+        ? validateIdentity33Payload(taskName, 'response', normalizedResponse, validationVersion)
+        : validateIncomingResponse(taskName, normalizedResponse, mode, undefined, validationVersion);
+    if (outcome.valid) return { valid: true, errors: [] };
+
+    const errorStrings = outcome.issues.map(i => `${i.pointer}: ${i.message}`);
+
+    if (logViolations) {
+      debugLogs.push({
+        timestamp: new Date().toISOString(),
+        type: mode === 'strict' ? 'error' : 'warning',
+        message: `Schema validation ${mode === 'strict' ? 'failed' : 'warning'} for ${taskName}: ${formatIssues(
+          outcome.issues
+        )}`,
+        errors: errorStrings,
+        issues: outcome.issues,
+        schemaVariant: outcome.variant,
+        schemaVersion: validationVersion,
+        mode,
+      });
+    }
+
+    if (mode === 'warn') {
+      if (logViolations) {
+        console.warn(
+          `Schema validation failed for ${taskName} against AdCP ${validationVersion} (non-blocking):`,
+          errorStrings
+        );
+      }
+      return { valid: true, errors: [] };
+    }
+
+    if (logViolations) {
+      console.error(`Schema validation failed for ${taskName} against AdCP ${validationVersion}:`, errorStrings);
+    }
+    return { valid: false, errors: errorStrings };
   }
 
   private responseAdcpVersionForValidation(): string | undefined {
