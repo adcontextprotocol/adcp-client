@@ -414,4 +414,8 @@ export {
 } from './storyboard';
 
 export { resolveCreativeBuildProbe, validateCreativeBuildProbeSpec } from './storyboard';
-export type { CreativeBuildProbeSpec, CreativeBuildProbeInputFixture, CreativeBuildProbeResolution } from './storyboard';
+export type {
+  CreativeBuildProbeSpec,
+  CreativeBuildProbeInputFixture,
+  CreativeBuildProbeResolution,
+} from './storyboard';

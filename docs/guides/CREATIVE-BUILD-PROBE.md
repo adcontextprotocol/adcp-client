@@ -58,3 +58,9 @@ canonical_formats_only) does not remove security coverage. Unknown metadata and
 constraint-bearing extensions require an operator recipe. The probe-local
 unambiguous-source/config rules do not add restrictions to build_creative wire
 requests in other modes, including refinement.
+
+Operator recipe authoring is bounded to 100,000 traversed nodes, 4 MiB of UTF-8
+string/key bytes, and the existing JSON depth bound per recipe. Repeated aliases
+count on every visit, before match normalization. These are harness configuration
+limits, not producer catalog requirements. Missing required selected-version
+validators yield a zero-credit harness gap; they never authorize a dispatch.

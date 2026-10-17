@@ -1,3 +1,4 @@
+import type { CreativeBuildProbeSpec } from './creative-build-probe';
 /**
  * Types for storyboard-driven testing.
  *
@@ -274,7 +275,7 @@ export interface Storyboard {
    */
   fixture_resolution?: StoryboardFixtureResolution;
   /** Opt-in runner preparation; does not add an agent protocol capability. */
-  creative_build_probe?: import("./creative-build-probe").CreativeBuildProbeSpec;
+  creative_build_probe?: CreativeBuildProbeSpec;
   /**
    * Initial context values declared by the storyboard YAML. Runner callers may
    * override these defaults with `StoryboardRunOptions.context`.

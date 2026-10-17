@@ -258,7 +258,8 @@ const MAX_PACKED_FILE_COUNT =
   1 - // Reliable Reporting storage migration guide.
   96 - // 24 storage modules (96 files) now ship in @adcp/reporting-storage.
   1 + // The integrated reporting-service example README now ships with @adcp/reporting-storage.
-  2; // The maintained bundle replacement adds the hosted-grader kit and compact macro-bearing URL schema.
+  2 + // The maintained bundle replacement adds the hosted-grader kit and compact macro-bearing URL schema.
+  5; // Creative build probe: one dual-format runtime/declaration module (+4) and one guide (+1).
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

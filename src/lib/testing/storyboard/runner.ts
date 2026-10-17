@@ -3698,23 +3698,41 @@ async function executeStoryboardPass(
   let fixtureResolutionRecords: FixtureResolutionRecord[] | undefined;
   let fixtureCoverageGap: FixtureResolutionCoverageGap | undefined;
   if (storyboard.creative_build_probe && !skipControllerSeedingForPhaseGates) {
-    const resolution = routingContext || isMultiInstance
-      ? { status: 'unsatisfied' as const, detail: `fixture_unsatisfied: creative_format:${storyboard.creative_build_probe.context_prefix}: resolve an independent fixture for each routed or replicated agent in a single-agent run` }
-      : resolveCreativeBuildProbe(
-      (profile?.raw_capabilities as Record<string, unknown> | undefined)?.creative,
-      storyboard.creative_build_probe,
-      options.test_kit,
-      options.adcpVersion,
-      (profile?.raw_capabilities as { adcp?: { governance_enforcement?: unknown } } | undefined)?.adcp?.governance_enforcement,
-    );
+    const resolution =
+      routingContext || isMultiInstance
+        ? {
+            status: 'unsatisfied' as const,
+            detail: `fixture_unsatisfied: creative_format:${storyboard.creative_build_probe.context_prefix}: resolve an independent fixture for each routed or replicated agent in a single-agent run`,
+          }
+        : resolveCreativeBuildProbe(
+            (profile?.raw_capabilities as Record<string, unknown> | undefined)?.creative,
+            storyboard.creative_build_probe,
+            options.test_kit,
+            options.adcpVersion,
+            (profile?.raw_capabilities as { adcp?: { governance_enforcement?: unknown } } | undefined)?.adcp
+              ?.governance_enforcement
+          );
     const handle = storyboard.creative_build_probe.context_prefix;
-    fixtureResolutionRecords = [{
-      fixture_type: 'creative_format', handle, requirements: resolution.status === 'resolved' ? resolution.requirements : [], status: resolution.status,
-      ...(resolution.status === 'resolved' ? { seller_ids: { capability_id: resolution.capabilityId } } : {}),
-      strategy: 'discover', strategies_attempted: [{ strategy: 'discover',
-        disposition: resolution.status === 'unsatisfied' ? 'unavailable' : resolution.status,
-        detail: resolution.status === 'resolved' ? `Bound build route using ${resolution.source} input` : resolution.detail }],
-    }];
+    fixtureResolutionRecords = [
+      {
+        fixture_type: 'creative_format',
+        handle,
+        requirements: resolution.status === 'resolved' ? resolution.requirements : [],
+        status: resolution.status,
+        ...(resolution.status === 'resolved' ? { seller_ids: { capability_id: resolution.capabilityId } } : {}),
+        strategy: 'discover',
+        strategies_attempted: [
+          {
+            strategy: 'discover',
+            disposition: resolution.status === 'unsatisfied' ? 'unavailable' : resolution.status,
+            detail:
+              resolution.status === 'resolved'
+                ? `Bound build route using ${resolution.source} input`
+                : resolution.detail,
+          },
+        ],
+      },
+    ];
     if (resolution.status !== 'resolved') {
       const noPhasesIndex = phaseResults.findIndex(phase => phase.phase_id === 'no_phases');
       if (noPhasesIndex >= 0) {
@@ -3725,12 +3743,33 @@ async function executeStoryboardPass(
     if (resolution.status === 'failed') {
       seedingFailed = true;
       failedCount += 1;
-      seedingPhaseResult = { phase_id: 'fixture_resolution', phase_title: 'Creative build fixture resolution',
-        passed: false, duration_ms: 0, steps: [{ storyboard_id: storyboard.id, phase_id: 'fixture_resolution',
-          step_id: 'creative_build_catalog', title: 'Validate advertised creative build catalog', task: 'get_adcp_capabilities',
-          passed: false, duration_ms: 0, context: {}, extraction: { path: 'none' },
-          validations: [{ check: 'creative_build_probe_catalog', passed: false,
-            description: 'Advertised creative catalog satisfies its format and routing contract', error: resolution.detail }] }] };
+      seedingPhaseResult = {
+        phase_id: 'fixture_resolution',
+        phase_title: 'Creative build fixture resolution',
+        passed: false,
+        duration_ms: 0,
+        steps: [
+          {
+            storyboard_id: storyboard.id,
+            phase_id: 'fixture_resolution',
+            step_id: 'creative_build_catalog',
+            title: 'Validate advertised creative build catalog',
+            task: 'get_adcp_capabilities',
+            passed: false,
+            duration_ms: 0,
+            context: {},
+            extraction: { path: 'none' },
+            validations: [
+              {
+                check: 'creative_build_probe_catalog',
+                passed: false,
+                description: 'Advertised creative catalog satisfies its format and routing contract',
+                error: resolution.detail,
+              },
+            ],
+          },
+        ],
+      };
     } else if (resolution.status === 'resolved') {
       for (const key of ['capability_id', 'message', 'creative_manifest', 'creative_id', 'transformer_id', 'config']) {
         delete context[`${handle}_${key}`];
@@ -3740,8 +3779,11 @@ async function executeStoryboardPass(
     } else {
       fixtureUnsatisfied = true;
       if (preSeeded === undefined || preSeeded.attach) skippedCount += 1;
-      fixtureCoverageGap = { reason: 'fixture_unsatisfied', detail: resolution.detail,
-        fixtures: [{ fixture_type: 'creative_format', handle, requirements: [] }] };
+      fixtureCoverageGap = {
+        reason: 'fixture_unsatisfied',
+        detail: resolution.detail,
+        fixtures: [{ fixture_type: 'creative_format', handle, requirements: [] }],
+      };
     }
   }
   {
@@ -5630,21 +5672,55 @@ async function runStoryboardStepBody(
   }
 
   if (storyboard.creative_build_probe) {
-    const resolution = resolveCreativeBuildProbe((profile?.raw_capabilities as Record<string, unknown> | undefined)?.creative, storyboard.creative_build_probe, options.test_kit, options.adcpVersion, (profile?.raw_capabilities as { adcp?: { governance_enforcement?: unknown } } | undefined)?.adcp?.governance_enforcement);
+    const resolution = resolveCreativeBuildProbe(
+      (profile?.raw_capabilities as Record<string, unknown> | undefined)?.creative,
+      storyboard.creative_build_probe,
+      options.test_kit,
+      options.adcpVersion,
+      (profile?.raw_capabilities as { adcp?: { governance_enforcement?: unknown } } | undefined)?.adcp
+        ?.governance_enforcement
+    );
     if (resolution.status === 'failed') {
       if (!clientResolution.reusedShared) await closeScopedConnections(options.protocol);
-      return { storyboard_id: storyboard.id, step_id: found.step.id, phase_id: found.phaseId,
-        title: found.step.title, task: found.step.task, passed: false, duration_ms: 0,
-        validations: [{ check: 'creative_build_probe_catalog', passed: false,
-          description: 'Advertised creative catalog satisfies its format and routing contract', error: resolution.detail }],
-        context, extraction: { path: 'none' }, contributions: Array.from(options.contributions ?? []) };
+      return {
+        storyboard_id: storyboard.id,
+        step_id: found.step.id,
+        phase_id: found.phaseId,
+        title: found.step.title,
+        task: found.step.task,
+        passed: false,
+        duration_ms: 0,
+        validations: [
+          {
+            check: 'creative_build_probe_catalog',
+            passed: false,
+            description: 'Advertised creative catalog satisfies its format and routing contract',
+            error: resolution.detail,
+          },
+        ],
+        context,
+        extraction: { path: 'none' },
+        contributions: Array.from(options.contributions ?? []),
+      };
     }
     if (resolution.status === 'unsatisfied') {
       if (!clientResolution.reusedShared) await closeScopedConnections(options.protocol);
-      return { storyboard_id: storyboard.id, step_id: found.step.id, phase_id: found.phaseId,
-        title: found.step.title, task: found.step.task, passed: true, skipped: true,
-        skip_reason: 'fixture_unsatisfied', skip: { reason: 'not_applicable', detail: resolution.detail },
-        duration_ms: 0, validations: [], context, extraction: { path: 'none' }, contributions: Array.from(options.contributions ?? []) };
+      return {
+        storyboard_id: storyboard.id,
+        step_id: found.step.id,
+        phase_id: found.phaseId,
+        title: found.step.title,
+        task: found.step.task,
+        passed: true,
+        skipped: true,
+        skip_reason: 'fixture_unsatisfied',
+        skip: { reason: 'not_applicable', detail: resolution.detail },
+        duration_ms: 0,
+        validations: [],
+        context,
+        extraction: { path: 'none' },
+        contributions: Array.from(options.contributions ?? []),
+      };
     }
     for (const key of ['capability_id', 'message', 'creative_manifest', 'creative_id', 'transformer_id', 'config']) {
       delete context[`${storyboard.creative_build_probe.context_prefix}_${key}`];
