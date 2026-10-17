@@ -835,3 +835,8 @@ Random seed on nightly broadens the surface; fixed seed on per-PR keeps reproduc
 - [`MULTI-INSTANCE-TESTING.md`](./MULTI-INSTANCE-TESTING.md) — horizontal scaling bug hunt
 - [`BUILD-AN-AGENT.md`](./BUILD-AN-AGENT.md) — server-side implementation
 - `skills/build-*-agent/SKILL.md` — per-specialism obligations and storyboard IDs
+
+
+For creative evaluator security fixtures, see
+[Creative evaluator build probes](CREATIVE-BUILD-PROBE.md) for valid route/input
+preparation, provisioned legacy selectors and explicit coverage gaps.

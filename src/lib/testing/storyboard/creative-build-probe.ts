@@ -200,7 +200,9 @@ export function resolveCreativeBuildProbe(
     return { match, input: recipe.input };
   });
   // Follow the catalog's own selected-version declaration, never a newer bundle.
-  const catalog = getSchemaDocumentByRef('protocol/get-adcp-capabilities-response.json', adcpVersion)?.schema;
+  const catalogDocument = getSchemaDocumentByRef('protocol/get-adcp-capabilities-response.json', adcpVersion);
+  const catalog = catalogDocument?.schema;
+  const selectedVersion = catalogDocument?.resolvedVersion ?? adcpVersion ?? 'selected bundle';
   const item = at(catalog, 'properties', 'creative', 'properties', 'supported_formats', 'items');
   const request = getSchemaDocumentByRef('media-buy/build-creative-request.json', adcpVersion)?.schema;
   const canonicalSelector = !!at(request, 'properties', 'target_capability_id');
@@ -243,6 +245,11 @@ export function resolveCreativeBuildProbe(
     !hasOperations ||
     entry.operations === undefined ||
     (Array.isArray(entry.operations) && entry.operations.includes('build'));
+  const selectorProperties = at(getSchemaDocumentByRef('core/format-id.json', adcpVersion)?.schema, 'properties');
+  const legacyDimensions = ['width', 'height', 'duration_ms', 'pixel_ratio'].filter(
+    key => at(selectorProperties, key) !== undefined
+  );
+  const unavailableKinds = new Set<string>();
   const ids = new Set<string>();
   const buildRoutes: Record<string, unknown>[] = [];
   for (const [index, entry] of creative.supported_formats.entries()) {
@@ -284,6 +291,7 @@ export function resolveCreativeBuildProbe(
     // The 3.1 consumer contract retains unknown future kinds as unsupported
     // routes. Do not grade that surrounding payload as producer nonconformance.
     if (!canonicalSelector && !validateKind(entry.format.format_kind)) {
+      unavailableKinds.add(entry.format.format_kind);
       if (isBuildRoute(entry)) buildRoutes.push(entry);
       continue;
     }
@@ -294,6 +302,7 @@ export function resolveCreativeBuildProbe(
     }
     const validateParams = getSchemaValidatorByRef(`formats/canonical/${entry.format.format_kind}.json`, adcpVersion);
     if (entry.format.format_kind !== 'custom' && !validateParams) {
+      unavailableKinds.add(entry.format.format_kind);
       if (isBuildRoute(entry)) buildRoutes.push(entry);
       continue;
     }
@@ -359,7 +368,9 @@ export function resolveCreativeBuildProbe(
           typeof ref.agent_url === 'string' &&
           typeof target.agent_url === 'string' &&
           canonicalizeAgentUrl(ref.agent_url) === targetUrl &&
-          ['width', 'height', 'duration_ms'].every(key => ref[key] === undefined || ref[key] === target[key])
+          legacyDimensions.every(
+            key => ref[key] === undefined || ref[key] === (key === 'pixel_ratio' ? (target[key] ?? 1) : target[key])
+          )
       );
     };
     const selectedRecipe = normalized.find(
@@ -423,6 +434,6 @@ export function resolveCreativeBuildProbe(
   }
   return {
     status: 'unsatisfied',
-    detail: `fixture_unsatisfied: creative_format:${spec.context_prefix}: no routable build entry has a known-valid generation input or a matching provisioned test-kit recipe`,
+    detail: `fixture_unsatisfied: creative_format:${spec.context_prefix}: no routable build entry has a known-valid generation input or a matching provisioned test-kit recipe${unavailableKinds.size ? `; ${unavailableKinds.size} unvalidated kind(s) in schema bundle ${selectedVersion}: ${[...unavailableKinds].slice(0, 8).join(', ')}${unavailableKinds.size > 8 ? ', …' : ''}` : ''}`,
   };
 }

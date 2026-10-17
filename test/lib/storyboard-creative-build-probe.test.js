@@ -704,3 +704,33 @@ test('3.2 permits an explicitly provisioned legacy selector without requiring a 
   assert.equal(result.context.evaluator_build_capability_id, undefined);
   assert.deepEqual(result.context.evaluator_build_target_format_id, legacyTarget);
 });
+
+test('explicit legacy density agreement follows the selected FormatID contract', () => {
+  const r = route('build', ['build']);
+  const id = { ...legacyTarget, width: 300, height: 250, pixel_ratio: 2 };
+  r.format.v1_format_ref = [id];
+  const caps = { supports_transformation: true, supported_formats: [r] };
+  for (const [pixel_ratio, expected] of [
+    [undefined, 'unsatisfied'],
+    [1, 'unsatisfied'],
+    [2, 'resolved'],
+  ]) {
+    const target = { ...id };
+    if (pixel_ratio === undefined) delete target.pixel_ratio;
+    else target.pixel_ratio = pixel_ratio;
+    const kit = { creative_build_probes: [{ ...recipe, input: { ...recipe.input, target_format_id: target } }] };
+    assert.equal(resolveCreativeBuildProbe(caps, spec, kit, '3.2.5').status, expected);
+    // 3.1 does not assign semantics to this extension field.
+    assert.equal(resolveCreativeBuildProbe(caps, spec, kit, '3.1.29').status, 'resolved');
+  }
+});
+test('unsupported legacy canonical kinds name the actual schema bundle in the fixture gap', () => {
+  const result = resolveCreativeBuildProbe(
+    creative(route('future', undefined, 'audio_vast')),
+    spec,
+    undefined,
+    '3.1.29'
+  );
+  assert.equal(result.status, 'unsatisfied');
+  assert.match(result.detail, /unvalidated kind.*3.1.29.*audio_vast/);
+});

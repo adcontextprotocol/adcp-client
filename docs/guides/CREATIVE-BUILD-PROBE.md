@@ -101,3 +101,15 @@ conformance. Unknown legacy kinds remain unvalidated local unsupported routes;
 the consuming storyboard must retain its required whole-response discovery schema
 validation. A standalone boundary step grades its selected probe, not unrelated
 catalog metadata. The evaluator storyboard keeps that independent required check.
+
+
+The provisioned brief is sent as `build_creative.message` to the agent under test,
+where its model may read it as instructions. Author ordinary creative direction;
+do not include instructions about evaluator behavior or expected test verdicts.
+An explicit runner `test_kit` overrides the storyboard's declared kit as a whole:
+include recipes in that override when also supplying auth. Hosted auth defaults
+preserve recipes explicitly supplied by the operator; they do not merge missing
+recipes from a separately declared brand kit.
+
+The normal hosted HTTP/UI flow does not expose arbitrary recipe uploads. Use trusted
+programmatic runner options or the local CLI for operator-provisioned recipes.
