@@ -1,5 +1,32 @@
 # Changelog
 
+## 16.0.0-beta.7
+
+### Minor Changes
+
+- 32f89ff: Experimental AdCP 3.3 identity: align Web Bot Auth with the final profile in adcontextprotocol/adcp#7894 (`wba-profile.mdx` at `e24eeb09`). These are breaking changes to the experimental `@adcp/sdk/identity-3.3` surface only; the RFC 9421 profile is unchanged.
+  - **One signature per request.** Relays are removed. The verifier answers a second signature of any profile, or a second `Signature-Agent` member, with 403. `signWebBotAuth` no longer accepts `relay: true` and refuses a request that already carries signature fields.
+  - **Signed key directories only.** A directory without WBA Appendix B.1 signatures is a discovery failure. `requireSignedDirectories` and `maxUnsignedDirectoryAgeSeconds` are deprecated and have no effect. `verifyKeyDirectory` and `verifySignatureDirectory` now return promises, and `VerifiedSignatureDirectory.signed` is always `true`.
+  - **Algorithms.** Web Bot Auth keys are Ed25519 or RSA-PSS-SHA512 only. P-256 keys are refused for signing, in directories, and for origin revocation lists. Revocation lists are signed with EdDSA, or with PS512 by an RSA directory key, which is new. ES256 stays on the AdCP RFC 9421 profile, including the WebCrypto/workerd path. RSA-PSS now uses WebCrypto where the runtime has it, so it signs and verifies on Cloudflare workerd.
+  - **Parameters.** `alg` is required. The `nonce` must be 64 bytes, as unpadded Base64URL or canonical Base64. A shorter nonce, which the old 16-byte floor accepted, is now a 403. A parameter that parses but has the wrong type is a 403, not a 400. A field member of the wrong shape (a non-string `Signature-Agent` member, a non-byte `Signature` member) is still a 400.
+  - **Errors.** A replay is always 429 with `Accept-Signature` carrying a fresh nonce, and no `Retry-After`. `replayStatus` is deprecated and has no effect. The nonce is recorded before the deprecated in-verifier `isRevoked` check runs, following the page's verification order, so a request retried after a revocation outage gets a 429. `Accept-Signature` now lists `alg`. Load shedding still answers 429 with `Retry-After`.
+  - **Unsigned requests to `required_for` operations.** A verifier that advertises only `web-bot-auth` answers 403 with `Accept-Signature`. One that also advertises the RFC 9421 profile keeps the 401 `request_signature_required` and adds `Accept-Signature`. Both `createAdcpServer` and `requireSignatureWhenPresent` apply this rule. `respondUnauthorized` accepts extra `headers`.
+  - **Library-first verification.** `verifyWebBotAuth` and directory proofs verify with Cloudflare's `http-message-sig`; the SDK applies the profile checks before it and replay state after it. `verifyWebBotAuth` still resolves to an array, which now always holds exactly one signer. A directory proof may cover more than `"@authority";req` and `content-digest`.
+
+  The vendored #7894 vectors are byte-identical to upstream, and every request and directory vector passes. The Cloudflare interop fixtures in `test/fixtures/wba-interop/` are unchanged.
+
+### Patch Changes
+
+- 613aa77: Validate `get_adcp_capabilities` against the release the agent echoed even when an external schema root is active for the pin (#3320). Hosted compliance always runs with one, so a 3.0 target graded a conformant 3.2 capabilities response against 3.0: every storyboard `response_schema` check on that task failed, and discovery raised spurious `capabilities_response_schema_invalid` notices.
+
+  The storyboard `response_schema` check, discovery's capability validation and `getAdcpCapabilities()` now use the echoed `adcp_version` when it is the pin's major, is listed in the response's own `adcp.supported_versions`, and has a schema root: one supplied for that release, an external root registered for it, or the SDK's bundled schemas. Otherwise they validate strictly against the pin. Requiring the `supported_versions` listing is new. Other tasks, storyboard selection, the run's `adcp_version` and grading stay on the pin.
+
+  New `servedReleaseSchemaRoots` option on `comply()`, `runStoryboard()` and `runStoryboardStep()`: a map of AdCP version to schema root (same shape as `schemaRoot`) for releases an agent may echo. Those roots are used only for this capabilities validation. `withServedReleaseSchemaRoots(roots, fn)` from `@adcp/sdk/testing` scopes the same map for other callers.
+
+- 6f491ef: Use the seller-authored index pairing between equally sized `format_options` and `format_ids` lists when projecting canonical creatives to a legacy wire. Preserve these routes through canonical product discovery and serialized route sidecars so selected options work for creative sync and inline media-buy delivery. Explicit declaration and resolver routes take precedence, including restored sidecars. Skip index inference for the entire product when kinds, known dimensions, explicit routes, or canonical-only options contradict the alignment; keep unmapped-reference diagnostics visible. Linked references no longer produce duplicate bare candidates, so canonical package normalization can address the corresponding seller option; stale SDK-generated pins against seller-declared options fail closed. Wire-mode negotiation is unchanged.
+
+  Keep buyer-only inferred routes out of seller response assembly, preserving the seller's authored nested format references and unmapped-reference diagnostics.
+
 ## 16.0.0-beta.6
 
 ### Patch Changes
