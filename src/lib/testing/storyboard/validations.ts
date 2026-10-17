@@ -719,10 +719,21 @@ function validateResponseSchemaForVersion(
 
 /** @internal Shared with the storyboard runner's Zod-rejection recovery path. */
 export function isExternalResponseSchemaAuthoritative(
-  ctx: Pick<ValidationContext, 'adcpVersion' | 'responseAdcpVersion'>
+  ctx: Pick<ValidationContext, 'adcpVersion' | 'responseAdcpVersion'> &
+    Partial<Pick<ValidationContext, 'taskName' | 'taskResult'>>
 ): boolean {
   const validationVersion = responseSchemaValidationVersion(ctx.adcpVersion, ctx.responseAdcpVersion);
-  return validationVersion !== undefined && isExternalSchemaRootActive(validationVersion);
+  if (validationVersion !== undefined && isExternalSchemaRootActive(validationVersion)) return true;
+  // A capabilities response validated against its echoed release is
+  // authoritative when that release's root is external (registered, or
+  // supplied through servedReleaseSchemaRoots), same as a pinned external root.
+  const pinnedVersion = ctx.adcpVersion;
+  if (ctx.taskName !== 'get_adcp_capabilities' || pinnedVersion === undefined || !ctx.taskResult) return false;
+  return withServedValidationVersion(
+    ctx.taskResult.data,
+    pinnedVersion,
+    version => version !== pinnedVersion && isExternalSchemaRootActive(version)
+  );
 }
 
 function responseSchemaValidationVersion(

@@ -148,6 +148,9 @@ export interface TestOptions {
    * root is checked against its key once per process; a malformed map throws
    * before the run starts. Honored by `comply()`, `runStoryboard()` and
    * `runStoryboardStep()`; other callers can use `withServedReleaseSchemaRoots`.
+   * The echo is compared with the run's pin, so storyboard checks apply it
+   * only when the run has one (`adcpVersion`, or the storyboard or compliance
+   * bundle's `adcp_version`); `comply()` always does.
    *
    * @example
    * ```ts

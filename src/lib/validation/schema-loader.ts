@@ -1296,7 +1296,9 @@ const servedReleaseSchemaRootScope = new AsyncLocalStorage<readonly ServedReleas
  * Validated alias sets for served-release roots, keyed by `version\0root`.
  * Checking a root walks every schema file in it (about a second for a full
  * release), so a hosted caller that passes the same roots on every run pays
- * that once per process. Roots are treated as immutable artifacts.
+ * that once per process. Roots are treated as immutable artifacts, and
+ * neither this memo nor the compiled validators for a root are evicted, so
+ * pass stable root paths rather than a fresh extraction per run.
  */
 const servedReleaseRootAliases = new Map<string, ReadonlySet<string>>();
 
@@ -1344,6 +1346,13 @@ export function withServedReleaseSchemaRoots<T>(roots: Readonly<Record<string, s
       }
       aliases = assertSchemaRootMatchesVersion(version, root);
       servedReleaseRootAliases.set(memoKey, aliases);
+    }
+    const conflict = entries.find(entry => entry.root !== root && [...aliases].some(alias => entry.aliases.has(alias)));
+    if (conflict) {
+      throw new Error(
+        `servedReleaseSchemaRoots["${version}"] and servedReleaseSchemaRoots["${conflict.version}"] name the same ` +
+          `release with different schema roots (${root}, ${conflict.root})`
+      );
     }
     entries.push({ version, root, aliases });
   }

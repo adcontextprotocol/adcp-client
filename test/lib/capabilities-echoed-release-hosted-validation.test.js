@@ -32,6 +32,7 @@ const { runValidations } = require('../../dist/lib/testing/storyboard/validation
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 const { closeMCPConnections } = require('../../dist/lib/protocols/mcp.js');
 const {
+  isExternalSchemaRootActive,
   resolveServedValidationVersion,
   withExternalSchemaRoot,
   withServedReleaseSchemaRoots,
@@ -78,6 +79,8 @@ const PIN_30_ISSUE = /must be boolean|must be one of/;
  * test can tell this root apart from the bundled one.
  */
 let hosted32Root;
+/** A root for 3.9, a release the SDK does not bundle (3.2 shapes, 3.9 ids). */
+let unbundled39Root;
 let tmpDir;
 
 before(() => {
@@ -90,6 +93,13 @@ before(() => {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, JSON.stringify(schema));
   }
+  unbundled39Root = path.join(tmpDir, '3.9.0');
+  const capabilities = fs
+    .readFileSync(path.join(SCHEMAS_DATA, '3.2', 'bundled', CAPABILITIES_FILE), 'utf8')
+    .replaceAll('/schemas/3.2.5/', '/schemas/3.9.0/');
+  const target39 = path.join(unbundled39Root, 'bundled', CAPABILITIES_FILE);
+  fs.mkdirSync(path.dirname(target39), { recursive: true });
+  fs.writeFileSync(target39, capabilities);
 });
 
 after(async () => {
@@ -152,17 +162,21 @@ describe('resolveServedValidationVersion with an external root active for the pi
     );
   });
 
-  test('counts a served-release root and an external root registered for the echo', () => {
-    // A release the SDK does not bundle becomes usable once a root is supplied.
-    const payload = withSupportedVersions(capabilities32({ adcp_version: '3.2' }), ['3.0', '3.2']);
+  test('an unbundled echo becomes usable once a served or external root is supplied for it', () => {
+    const payload = withSupportedVersions(capabilities32({ adcp_version: '3.9' }), ['3.0', '3.2', '3.9']);
+    assert.equal(
+      underPinnedRoot(() => resolveServedValidationVersion(payload, '3.0')),
+      '3.0',
+      'no root: pin'
+    );
     const viaServed = underPinnedRoot(() =>
-      withServedReleaseSchemaRoots({ '3.2.5': hosted32Root }, () => resolveServedValidationVersion(payload, '3.0'))
+      withServedReleaseSchemaRoots({ '3.9.0': unbundled39Root }, () => resolveServedValidationVersion(payload, '3.0'))
     );
-    assert.equal(viaServed, '3.2');
+    assert.equal(viaServed, '3.9');
     const viaExternal = underPinnedRoot(() =>
-      withExternalSchemaRoot('3.2.5', hosted32Root, () => resolveServedValidationVersion(payload, '3.0'))
+      withExternalSchemaRoot('3.9.0', unbundled39Root, () => resolveServedValidationVersion(payload, '3.0'))
     );
-    assert.equal(viaExternal, '3.2');
+    assert.equal(viaExternal, '3.9');
   });
 });
 
@@ -181,6 +195,11 @@ describe('withServedReleaseSchemaRoots', () => {
     );
     // A root whose schema ids belong to another release.
     assert.throws(() => withServedReleaseSchemaRoots({ 3.1: hosted32Root }, () => 1), /does not match/);
+    // Two keys for the same release with different roots.
+    assert.throws(
+      () => withServedReleaseSchemaRoots({ '3.2.5': hosted32Root, 3.2: path.join(SCHEMAS_DATA, '3.2') }, () => 1),
+      /same release with different schema roots/
+    );
   });
 
   test('is a no-op without entries', () => {
@@ -243,6 +262,20 @@ describe('storyboard response_schema check on get_adcp_capabilities under an ext
     assert.equal(withMarker.passed, true, withMarker.error);
   });
 
+  test('validates an unbundled echo against the root supplied for it', () => {
+    const payload = withSupportedVersions(capabilities32({ adcp_version: '3.9' }), ['3.0', '3.9']);
+    const unsupplied = underPinnedRoot(() => responseSchemaCheck('get_adcp_capabilities', payload));
+    assert.equal(unsupplied.passed, false, 'no 3.9 schema: strict pin');
+    assert.match(unsupplied.error, PIN_30_ISSUE);
+
+    const supplied = underPinnedRoot(() =>
+      withServedReleaseSchemaRoots({ '3.9.0': unbundled39Root }, () =>
+        responseSchemaCheck('get_adcp_capabilities', payload)
+      )
+    );
+    assert.equal(supplied.passed, true, supplied.error);
+  });
+
   test('does not change other tasks: they validate against the pin and ignore served roots', () => {
     // A get_products response that echoes 3.2 and lists it is still graded
     // against the pinned 3.0 root, never the served 3.2 root.
@@ -258,6 +291,25 @@ describe('storyboard response_schema check on get_adcp_capabilities under an ext
     assert.equal(echoed.passed, baseline.passed, echoed.error);
     assert.equal(echoed.schema_id, baseline.schema_id);
     assert.doesNotMatch(echoed.error ?? '', new RegExp(MARKER));
+  });
+
+  test('served roots never become active for other tasks, even on the served release', () => {
+    // Pin 3.2 with a supplied 3.2.5 root: a get_products response is still
+    // validated against the SDK's bundled 3.2, which has no marker field.
+    const extra = {
+      adcpVersion: '3.2',
+      responseAdcpVersion: '3.2',
+      responseSchemaRef: 'media-buy/get-products-response.json',
+    };
+    const baseline = responseSchemaCheck('get_products', { products: [] }, extra);
+    const scoped = withServedReleaseSchemaRoots({ '3.2.5': hosted32Root }, () => {
+      assert.equal(isExternalSchemaRootActive('3.2'), false, 'scope does not register the root');
+      return responseSchemaCheck('get_products', { products: [] }, extra);
+    });
+    assert.equal(scoped.passed, baseline.passed, scoped.error);
+    assert.ok(scoped.schema_id, 'schema identity resolved');
+    assert.equal(scoped.schema_id, baseline.schema_id);
+    assert.doesNotMatch(scoped.error ?? '', new RegExp(MARKER));
   });
 });
 
@@ -340,6 +392,45 @@ function capabilitiesStoryboard() {
 }
 
 describe('live seller serving 3.2 to a 3.0 pin with an external pin root', () => {
+  test('comply() with a 3.0 compliance cache and pin root grades the echoed 3.2 capabilities', async t => {
+    // Hosted compliance shape: comply() opens the external 3.0 root itself.
+    const seller = await withSeller(t, capabilities32());
+    const run = extra =>
+      testing.comply(seller.url, {
+        version: '3.0.25',
+        schemaRoot: PINNED_30_ROOT,
+        storyboards: ['capability_discovery'],
+        protocol: 'mcp',
+        allow_http: true,
+        ...extra,
+      });
+    const schemaFailures = result => (result.failures ?? []).filter(f => f.validation?.check === 'response_schema');
+    const capabilityNotices = result =>
+      (result.notices ?? []).filter(n => n.code === 'capabilities_response_schema_invalid');
+
+    const result = await run({});
+    assert.deepEqual(schemaFailures(result), [], JSON.stringify(schemaFailures(result), null, 2));
+    assert.deepEqual(capabilityNotices(result), []);
+
+    await closeMCPConnections();
+    const served = await run({ servedReleaseSchemaRoots: { '3.2.5': hosted32Root } });
+    const failures = schemaFailures(served);
+    assert.ok(failures.length > 0, 'the supplied 3.2.5 root grades the capabilities steps');
+    assert.ok(
+      failures.every(f => JSON.stringify(f).includes(MARKER)),
+      JSON.stringify(failures, null, 2)
+    );
+    assert.ok(
+      capabilityNotices(served).some(n => JSON.stringify(n).includes(MARKER)),
+      JSON.stringify(served.notices, null, 2)
+    );
+
+    await assert.rejects(
+      run({ servedReleaseSchemaRoots: { '3.2.5': path.join(tmpDir, 'missing') } }),
+      /not found or empty/
+    );
+  });
+
   test('discovery reports no capability schema issues for a conformant 3.2 response', async t => {
     const seller = await withSeller(t, capabilities32());
     const discovery = await underPinnedRoot(() =>
