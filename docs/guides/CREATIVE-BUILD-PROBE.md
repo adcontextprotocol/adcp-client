@@ -34,7 +34,9 @@ matched requirements, and seller_ids.capability_id or seller_ids.format_id. Unsa
 fixture_unsatisfied coverage gap and zero executed security validations; standalone
 steps use skip_reason fixture_unsatisfied and canonical not_applicable, with detail
 naming creative_format:<prefix>. This does not establish producer nonconformance
-or passing security coverage. Malformed catalogs produce a structured failed validation; malformed operator recipes throw authoring errors. Routed and
+or passing security coverage. Malformed catalogs produce a structured failed validation; malformed operator recipes throw authoring errors during applicable preparation
+with the required schemas available. Unavailable catalog/schema prerequisites
+can return a zero-credit fixture gap before exhaustive recipe diagnostics. Routed and
 replicated runs currently report an explicit gap before seeding; run each agent
 independently. Unopted storyboards retain their existing behavior and counters.
 
@@ -130,3 +132,7 @@ recipes from a separately declared brand kit.
 
 The normal hosted HTTP/UI flow does not expose arbitrary recipe uploads. Use trusted
 programmatic runner options or the local CLI for operator-provisioned recipes.
+
+The preparer checks the selected route/input binding. It does not certify all
+unselected recipe matches or remote account entitlements; narrow the operator
+match predicates when an input is valid for only one route.
