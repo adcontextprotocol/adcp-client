@@ -677,8 +677,13 @@ export function respondUnauthorized(
   if (options.resourceMetadata) parts.push(`resource_metadata="${escapeQuotes(options.resourceMetadata)}"`);
 
   const scheme = useSignatureChallenge ? 'Signature' : 'Bearer';
+  const extra = Object.fromEntries(
+    Object.entries(options.headers ?? {}).filter(
+      ([name]) => !['content-type', 'www-authenticate'].includes(name.toLowerCase())
+    )
+  );
   res.writeHead(options.status ?? 401, {
-    ...options.headers,
+    ...extra,
     'Content-Type': 'application/json',
     'WWW-Authenticate': `${scheme} ${parts.join(', ')}`,
   });

@@ -35,7 +35,7 @@ import { computeContentDigest, contentDigestMatches, contentDigestUsesEncoding }
 import { signWithPrivateJwkAsync, verifySignatureAsync } from './crypto';
 import {
   parseSignature,
-  parseSignatureInput,
+  parseSignatureInputMember,
   rejectDuplicateDictionaryKeys,
   type ParsedSignatureInput,
 } from './parser';
@@ -261,11 +261,13 @@ function signingAlgorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg {
 export function assertWebBotAuthSigningKey(key: WebBotSigningKey): void {
   signingAlgorithm('privateKey' in key ? key.privateKey : key.publicKey);
 }
-function inputs(headers: RequestLike['headers']): ParsedSignatureInput[] {
-  const value = getHeaderValue(headers, 'signature-input');
-  return [...dictionary(value, 'Signature-Input').keys()].map(label => {
+/** Every `Signature-Input` member, parsing the field once. At most `limit` members. */
+function inputs(headers: RequestLike['headers'], limit: number): ParsedSignatureInput[] {
+  const members = dictionary(getHeaderValue(headers, 'signature-input'), 'Signature-Input');
+  if (members.size > limit) bad('signature_input');
+  return [...members].map(([label, member]) => {
     try {
-      return parseSignatureInput(value!, label);
+      return parseSignatureInputMember(label, member);
     } catch {
       return bad('signature_input');
     }
@@ -622,15 +624,13 @@ export async function verifyWebBotAuth(
     const inputMembers = present(inputHeader) ? dictionary(inputHeader, 'Signature-Input') : undefined;
     const signatureMembers = present(signatureHeader) ? dictionary(signatureHeader, 'Signature') : undefined;
     const agents = present(agentHeader) ? dictionary(agentHeader, 'Signature-Agent') : undefined;
+    // Member shapes are part of each field's definition (RFC 9421 §4, WBA
+    // §5.2.1): a member of the wrong shape is a field that does not parse.
     for (const member of inputMembers?.values() ?? [])
       if (!Array.isArray(member[0]) || member[0].some(item => typeof item[0] !== 'string')) bad('signature_input');
-    for (const memberLabel of signatureMembers?.keys() ?? []) {
-      try {
-        parseSignature(signatureHeader!, memberLabel, 'rfc8941-base64');
-      } catch {
-        bad('signature');
-      }
-    }
+    for (const member of signatureMembers?.values() ?? [])
+      if (!(member[0] instanceof ArrayBuffer) || member[1].size !== 0) bad('signature');
+    for (const member of agents?.values() ?? []) if (typeof member[0] !== 'string') bad('signature_agent');
     if (!inputMembers || !signatureMembers) return denied('headers_missing');
 
     // 2. Exactly one signature, tagged web-bot-auth, and exactly one
@@ -638,9 +638,15 @@ export async function verifyWebBotAuth(
     if (inputMembers.size !== 1 || signatureMembers.size !== 1) denied('signature_count');
     label = inputMembers.keys().next().value!;
     if (!signatureMembers.has(label)) denied('signature_label');
+    try {
+      // RFC 8941 sf-binary is padded standard Base64; the parser tolerates less.
+      parseSignature(signatureHeader!, label, 'rfc8941-base64');
+    } catch {
+      return bad('signature');
+    }
     let input: ParsedSignatureInput;
     try {
-      input = parseSignatureInput(inputHeader!, label);
+      input = parseSignatureInputMember(label, inputMembers.get(label));
     } catch {
       // The field parsed; a parameter of the wrong type is a profile failure.
       return denied('parameters');
@@ -653,11 +659,11 @@ export async function verifyWebBotAuth(
     if (agentComponents.length !== 1 || agentComponents[0] !== agentMember) denied('agent_not_covered');
     const member = agents.get(label);
     if (!member) denied('agent_not_covered');
-    if (typeof member[0] !== 'string') denied('signature_agent');
     // A member of another type is ignored (WBA §5.2.1), leaving none to resolve.
     const type = member[1].get('type');
     if (type !== undefined && type !== 'directory') denied('agent_type');
-    const origin = receivedAgentOrigin(member[0]);
+    // Checked in step 1: every Signature-Agent member is an sf-string.
+    const origin = receivedAgentOrigin(member[0] as string);
 
     // Profile parameters, lifetime, and covered components.
     const { created, expires, nonce, keyid, alg } = input.params;
@@ -841,7 +847,8 @@ export async function verifyKeyDirectory(
     }
     const document = parseStrictJson(body, 32) as { keys?: AdcpJsonWebKey[] };
     if (!Array.isArray(document.keys) || !document.keys.length || document.keys.length > 64) denied('directory_keys');
-    const signatures = inputs(response.headers);
+    // One proof per key, at most 64 keys: bound the labels before verifying any.
+    const signatures = inputs(response.headers, 64);
     const kids = new Set<string>();
     const keys: AdcpJsonWebKey[] = [];
     let expires = Infinity;
@@ -874,16 +881,35 @@ export async function verifyKeyDirectory(
       )
         denied('directory_proof');
       const proofComponents = [component('@authority', { req: true }), component('content-digest')];
+      // Appendix B.1 sets the minimum coverage; a proof may cover more.
+      let covered: ComponentDescriptor[];
+      try {
+        covered = proof.components.map(componentDescriptor);
+      } catch {
+        return denied('directory_proof');
+      }
+      const requestHeaders = response.request.headers ?? {};
       await verifyWithLibrary(
         {
           kind: 'response',
           status: response.status,
           fields: [
-            ...coveredFields(proofComponents, response.headers),
+            ...coveredFields(
+              covered.filter(c => c.parameters.req === undefined),
+              response.headers
+            ),
             { name: 'signature-input', value: inputHeader },
             { name: 'signature', value: signatureHeader },
           ],
-          request: { kind: 'request', method: 'GET', targetUri: response.request.url, fields: [] },
+          request: {
+            kind: 'request',
+            method: response.request.method,
+            targetUri: response.request.url,
+            fields: coveredFields(
+              covered.filter(c => c.parameters.req !== undefined),
+              requestHeaders
+            ),
+          },
         },
         proof.label,
         // The library rejects a proof whose `created` is in the future (beyond skew).

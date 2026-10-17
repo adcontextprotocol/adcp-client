@@ -47,7 +47,15 @@ export function parseSignatureInput(headerValue: string, expectedLabel?: string)
   if (dict.size === 0) malformed('Signature-Input header is empty');
   const label = expectedLabel ?? (dict.has('sig1') ? 'sig1' : (dict.keys().next().value as string));
   if (!dict.has(label)) malformed('Signature-Input label is missing');
-  const entry = dict.get(label)!;
+  return parseSignatureInputMember(label, dict.get(label)!);
+}
+
+/**
+ * {@link parseSignatureInput} for one member of an already parsed (and
+ * duplicate-checked) `Signature-Input` dictionary, so a caller that needs
+ * every label parses the field once.
+ */
+export function parseSignatureInputMember(label: string, entry: unknown): ParsedSignatureInput {
   if (!isInnerList(entry)) {
     malformed('Signature-Input value must be a parenthesized component list');
   }

@@ -189,10 +189,15 @@ test('one signature: a second label of any profile, or a second Signature-Agent 
     ),
     rejectedWith(403, 'agent_count')
   );
-  // A Signature-Agent member that is not a string parses, so it is a 403.
+  // Member shapes belong to the field definitions: a non-string Signature-Agent
+  // member or a non-byte Signature member does not parse (400).
   await assert.rejects(
     wba.verifyWebBotAuth({ ...signed, headers: { ...signed.headers, 'signature-agent': 'sig1=42' } }, options),
-    rejectedWith(403)
+    rejectedWith(400, 'signature_agent')
+  );
+  await assert.rejects(
+    wba.verifyWebBotAuth({ ...signed, headers: { ...signed.headers, signature: 'sig1=token' } }, options),
+    rejectedWith(400, 'signature')
   );
 });
 
@@ -333,12 +338,13 @@ test('serve() keeps the RFC 9421 challenge and adds the Accept-Signature header'
   };
   respondUnauthorized({}, res, {
     signatureError: 'request_signature_required',
-    headers: { 'Accept-Signature': 'x', 'WWW-Authenticate': 'Bearer spoofed', 'Content-Type': 'text/plain' },
+    headers: { 'Accept-Signature': 'x', 'www-authenticate': 'Bearer spoofed', 'content-type': 'text/plain' },
   });
   assert.equal(res.status, 401);
   assert.equal(res.headers['Accept-Signature'], 'x');
   assert.match(res.headers['WWW-Authenticate'], /^Signature .*error="request_signature_required"/);
   assert.equal(res.headers['Content-Type'], 'application/json');
+  assert.deepEqual(Object.keys(res.headers).sort(), ['Accept-Signature', 'Content-Type', 'WWW-Authenticate']);
 });
 
 function preTransportServer(profiles) {
@@ -417,4 +423,105 @@ test('createAdcpServer: unsigned required_for calls get the profile-dependent an
     await only.close();
     await both.close();
   }
+});
+
+test('an RSA-only identity signs and verifies its origin revocation list with PS512', async () => {
+  const identity = require('../../dist/lib/identity-3.3');
+  const now = Math.floor(Date.now() / 1000);
+  const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'jwk' });
+  rsa.kid = wba.jwkThumbprint(rsa);
+  const proof = await wba.createSignedSignatureDirectory(ORIGIN, [{ privateKey: rsa }], { now: () => now });
+  const revokedKid = 'r'.repeat(43);
+  const list = await createSignedOriginRevocationList(
+    {
+      issuer: ORIGIN,
+      updated: new Date((now - 1) * 1000).toISOString(),
+      next_update: new Date((now + 300) * 1000).toISOString(),
+      revoked_kids: [revokedKid],
+    },
+    rsa
+  );
+  assert.equal(JSON.parse(Buffer.from(list.split('.')[0], 'base64url')).alg, 'PS512');
+  const resolver = new identity.OriginRevocationResolver({
+    store: new identity.InMemoryOriginRevocationStore(),
+    directory: new wba.SignatureDirectoryResolver({
+      now: () => now,
+      fetchOptions: {
+        trustedFetchFn: async () => new Response(proof.body, { status: 200, headers: proof.headers }),
+      },
+    }),
+    now: () => now,
+    fetchOptions: { trustedFetchFn: async () => new Response(list) },
+  });
+  assert.equal(await resolver.status(ORIGIN, revokedKid), 'revoked');
+  assert.equal(await resolver.status(ORIGIN, rsa.kid), 'current');
+});
+
+test('a directory proof may cover more than the Appendix B.1 minimum', async () => {
+  const key = newKey();
+  const proof = await wba.createSignedSignatureDirectory(ORIGIN, [{ privateKey: key }], { now: () => T });
+  const value = `key1=("@authority";req "content-digest" "content-type");created=${T - 60};expires=${T + 3600};keyid="${key.kid}";alg="ed25519";tag="http-message-signatures-directory"`;
+  const signed = await httpMessageSig.createSignature(
+    {
+      kind: 'response',
+      status: 200,
+      fields: [
+        { name: 'content-digest', value: proof.headers['content-digest'] },
+        { name: 'content-type', value: proof.headers['content-type'] },
+      ],
+      request: { kind: 'request', method: 'GET', targetUri: proof.request.url, fields: [] },
+    },
+    {
+      label: 'key1',
+      components: [httpMessageSig.component('@authority', { req: true }), 'content-digest', 'content-type'],
+      parameters: {
+        created: T - 60,
+        expires: T + 3600,
+        keyid: key.kid,
+        alg: 'ed25519',
+        tag: 'http-message-signatures-directory',
+      },
+      signer: {
+        algorithm: 'ed25519',
+        sign: data => nodeSign(null, Buffer.from(data), createPrivateKey({ key, format: 'jwk' })),
+      },
+    }
+  );
+  assert.equal(signed.signatureInput, value);
+  const response = { ...proof, headers: { ...proof.headers, 'signature-input': value, signature: signed.signature } };
+  assert.equal((await wba.verifyKeyDirectory(response, T)).keys[0].kid, key.kid);
+});
+
+test('many Signature or Signature-Input members are rejected without per-member reparsing', async () => {
+  const key = newKey();
+  const options = await verifierOptions([key]);
+  const many = Array.from({ length: 2000 }, (_, i) => `a${i}=:AA==:`).join(', ');
+  const manyInputs = Array.from({ length: 2000 }, (_, i) => `a${i}=();tag="web-bot-auth"`).join(', ');
+  const started = process.hrtime.bigint();
+  await assert.rejects(
+    wba.verifyWebBotAuth(
+      {
+        ...REQUEST,
+        headers: {
+          ...REQUEST.headers,
+          'signature-agent': 'a="b"',
+          'signature-input': 'sig1=();tag="web-bot-auth"',
+          signature: many,
+        },
+      },
+      options
+    ),
+    rejectedWith(403, 'signature_count')
+  );
+  await assert.rejects(
+    wba.verifyWebBotAuth(
+      {
+        ...REQUEST,
+        headers: { ...REQUEST.headers, 'signature-agent': 'a="b"', 'signature-input': manyInputs, signature: many },
+      },
+      options
+    ),
+    rejectedWith(403, 'signature_count')
+  );
+  assert.ok(Number(process.hrtime.bigint() - started) / 1e6 < 1000, 'linear in the header size');
 });

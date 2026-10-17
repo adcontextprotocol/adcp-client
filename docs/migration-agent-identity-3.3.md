@@ -155,8 +155,8 @@ Serve the exact JWS at `/.well-known/governance-revocations.json` and refresh it
 before `next_update` (the command defaults to five minutes). Pass `--snapshot`
 to sign a list of revoked key thumbprints and optional reasons/dates.
 `createSignedOriginRevocationList` provides the same authoring API. The SDK
-signs and verifies revocation lists with Ed25519 directory keys only (a P-256
-key cannot be published in a key directory). Observed key revocations are permanent;
+signs and verifies revocation lists with directory keys: EdDSA for Ed25519 keys
+and PS512 for RSA keys (a P-256 key cannot be published in a key directory). Observed key revocations are permanent;
 refresh failures use the last verified list only within the published grace
 window. Staleness follows the list's signed `next_update`, never the polling
 interval: the verifier re-polls at least every polling interval (at most 30
