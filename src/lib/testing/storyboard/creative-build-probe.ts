@@ -49,6 +49,14 @@ function at(value: unknown, ...keys: string[]): unknown {
   return value;
 }
 
+// Diagnostic display bounds only: unknown producer values remain intact.
+function displayUnknownKind(kind: string): string {
+  return JSON.stringify(kind.slice(0, 128)).replace(
+    /[\u007f-\u009f\u2028\u2029]/g,
+    char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
+  );
+}
+
 export function validateCreativeBuildProbeSpec(value: unknown): asserts value is CreativeBuildProbeSpec {
   if (
     !isRecord(value) ||
@@ -436,6 +444,6 @@ export function resolveCreativeBuildProbe(
   }
   return {
     status: 'unsatisfied',
-    detail: `fixture_unsatisfied: creative_format:${spec.context_prefix}: no routable build entry has a known-valid generation input or a matching provisioned test-kit recipe${unavailableKinds.size ? `; ${unavailableKinds.size} unvalidated kind(s) in schema bundle ${selectedVersion}: ${[...unavailableKinds].slice(0, 8).join(', ')}${unavailableKinds.size > 8 ? ', …' : ''}` : ''}`,
+    detail: `fixture_unsatisfied: creative_format:${spec.context_prefix}: no routable build entry has a known-valid generation input or a matching provisioned test-kit recipe${unavailableKinds.size ? `; ${unavailableKinds.size} unvalidated kind(s) in schema bundle ${selectedVersion}: ${[...unavailableKinds].slice(0, 8).map(displayUnknownKind).join(', ')}${unavailableKinds.size > 8 ? ', …' : ''}` : ''}`,
   };
 }

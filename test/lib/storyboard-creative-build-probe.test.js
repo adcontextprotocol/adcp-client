@@ -709,16 +709,25 @@ test('legacy density defaults agree in both directions only where selected schem
   const r = route('build', ['build']);
   const baseId = { ...legacyTarget, width: 300, height: 250 };
   const caps = { supports_transformation: true, supported_formats: [r] };
-  for (const refRatio of [undefined, 1, 2])
-    for (const targetRatio of [undefined, 1, 2]) {
-      r.format.v1_format_ref = [{ ...baseId, ...(refRatio !== undefined && { pixel_ratio: refRatio }) }];
-      const target = { ...baseId, ...(targetRatio !== undefined && { pixel_ratio: targetRatio }) };
-      const kit = { creative_build_probes: [{ ...recipe, input: { ...recipe.input, target_format_id: target } }] };
-      const expected = (refRatio ?? 1) === (targetRatio ?? 1) ? 'resolved' : 'unsatisfied';
-      assert.equal(resolveCreativeBuildProbe(caps, spec, kit, '3.2.5').status, expected);
-      // The older schema assigns no semantics to this extension.
-      assert.equal(resolveCreativeBuildProbe(caps, spec, kit, '3.1.29').status, 'resolved');
-    }
+  const cases = [
+    [undefined, undefined, 'resolved'],
+    [undefined, 1, 'resolved'],
+    [undefined, 2, 'unsatisfied'],
+    [1, undefined, 'resolved'],
+    [1, 1, 'resolved'],
+    [1, 2, 'unsatisfied'],
+    [2, undefined, 'unsatisfied'],
+    [2, 1, 'unsatisfied'],
+    [2, 2, 'resolved'],
+  ];
+  for (const [refRatio, targetRatio, expected] of cases) {
+    r.format.v1_format_ref = [{ ...baseId, ...(refRatio !== undefined && { pixel_ratio: refRatio }) }];
+    const target = { ...baseId, ...(targetRatio !== undefined && { pixel_ratio: targetRatio }) };
+    const kit = { creative_build_probes: [{ ...recipe, input: { ...recipe.input, target_format_id: target } }] };
+    assert.equal(resolveCreativeBuildProbe(caps, spec, kit, '3.2.5').status, expected);
+    // The older schema assigns no semantics to this extension.
+    assert.equal(resolveCreativeBuildProbe(caps, spec, kit, '3.1.29').status, 'resolved');
+  }
 });
 
 test('unsupported legacy canonical kinds name the actual schema bundle in the fixture gap', () => {
@@ -730,4 +739,17 @@ test('unsupported legacy canonical kinds name the actual schema bundle in the fi
   );
   assert.equal(result.status, 'unsatisfied');
   assert.match(result.detail, /unvalidated kind.*3.1.29.*audio_vast/);
+});
+
+test('unknown-kind diagnostics escape producer controls and bound display without changing the catalog', () => {
+  const kind = '\x1b[31mspoof\nrow\r\t\u009b\u2028\u2029' + 'x'.repeat(10000);
+  const caps = creative(route('future', undefined, kind));
+  const original = structuredClone(caps);
+  const result = resolveCreativeBuildProbe(caps, spec, undefined, '3.1.29');
+  assert.equal(result.status, 'unsatisfied');
+  assert.doesNotMatch(result.detail, /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/);
+  assert.ok(result.detail.includes('\\u001b'));
+  assert.ok(result.detail.includes('\\n'));
+  assert.ok(result.detail.length < 1200);
+  assert.deepEqual(caps, original);
 });
