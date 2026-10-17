@@ -91,9 +91,11 @@ constraints still apply when a 3.1 request treats pixel_ratio as an opaque
 extension: the old request cannot establish a 2x parameterized binding by adding
 that field. An incompatible binding is a fixture gap, not producer failure.
 
-The reverse direction retains the older catalog's parameter rules. In 3.1 an
-unspecified legacy reference parameter accepts any value, and pixel_ratio has
-no defined semantics or default. A provisioned, live-valid 3.2 target at 2x can
+The reverse direction retains the older catalog's parameter rules. A 3.1
+reference cannot establish density through an omitted or opaque pixel_ratio
+field. Actual named-format requirements still apply: the published 3.1 narrowing
+rule uses an any-value baseline only where the projected legacy requirements
+impose no constraint. A provisioned, live-valid 3.2 target at 2x can
 therefore match a 3.1 reference with no ratio, even if the old payload carries
 an opaque ratio extension. The resolver does not union property sets or invent
 a 1x default for that older catalog. The operator must still provision a valid
