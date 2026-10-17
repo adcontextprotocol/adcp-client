@@ -68,6 +68,23 @@ validators yield a zero-credit harness gap; they never authorize a dispatch.
 
 ## Selected-version routing
 
+The runner uses the existing guarded capabilities-echo authority for catalog
+interpretation. A same-major release-precision echo must be listed in the
+response's supported_versions and have an available bundled or supplied schema
+root. Invalid, missing, unlisted or unavailable echoes retain the pin. Supplied
+servedReleaseSchemaRoots apply to the catalog only. The runner captures build
+request, source-manifest and target-FormatID validators from the pin before
+activating any served catalog root, including overlapping version aliases.
+
+Catalog kind, parameter, ID and operation semantics follow that served release;
+build selectors and source inputs retain the request pin. Canonical route IDs
+and automatic generation require canonical routing in both releases. Otherwise
+use a provisioned legacy selector and pinned-valid input; do not synthesize a
+named format or upgrade the request. An advertised 3.2 legacy reference's density
+constraints still apply when a 3.1 request treats pixel_ratio as an opaque
+extension: the old request cannot establish a 2x parameterized binding by adding
+that field. An incompatible binding is a fixture gap, not producer failure.
+
 Read the selected capabilities schema's format reference and selected build request
 selector. A 3.2 recipe normally binds the advertised capability ID; a provisioned legacy selector remains supported when the selected request declares it. A 3.1 recipe must supply
 an existing schema-valid `target_format_id` and assert that its discovered or

@@ -10,7 +10,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { ACCOUNT_FREE_DISCOVERY_TASKS } from './account-policy';
-import { resolveCreativeBuildProbe } from './creative-build-probe';
+import { prepareCreativeBuildProbe } from './creative-build-probe';
 import {
   createTestClient,
   getOrCreateClientResolution,
@@ -3699,7 +3699,7 @@ async function executeStoryboardPass(
   let fixtureResolutionRecords: FixtureResolutionRecord[] | undefined;
   let fixtureCoverageGap: FixtureResolutionCoverageGap | undefined;
   if (storyboard.creative_build_probe && !skipControllerSeedingForPhaseGates) {
-    let resolution: ReturnType<typeof resolveCreativeBuildProbe>;
+    let resolution: ReturnType<typeof prepareCreativeBuildProbe>;
     try {
       resolution =
         routingContext || isMultiInstance
@@ -3707,13 +3707,11 @@ async function executeStoryboardPass(
               status: 'unsatisfied',
               detail: `fixture_unsatisfied: creative_format:${storyboard.creative_build_probe.context_prefix}: resolve an independent fixture for each routed or replicated agent in a single-agent run`,
             }
-          : resolveCreativeBuildProbe(
-              (profile?.raw_capabilities as Record<string, unknown> | undefined)?.creative,
+          : prepareCreativeBuildProbe(
+              profile?.raw_capabilities,
               storyboard.creative_build_probe,
               options.test_kit,
-              options.adcpVersion,
-              (profile?.raw_capabilities as { adcp?: { governance_enforcement?: unknown } } | undefined)?.adcp
-                ?.governance_enforcement
+              options.adcpVersion
             );
     } catch (error) {
       // Operator fixture errors remain authoring errors, but must release the
@@ -5708,15 +5706,13 @@ async function runStoryboardStepBody(
   }
 
   if (storyboard.creative_build_probe) {
-    let resolution: ReturnType<typeof resolveCreativeBuildProbe>;
+    let resolution: ReturnType<typeof prepareCreativeBuildProbe>;
     try {
-      resolution = resolveCreativeBuildProbe(
-        (profile?.raw_capabilities as Record<string, unknown> | undefined)?.creative,
+      resolution = prepareCreativeBuildProbe(
+        profile?.raw_capabilities,
         storyboard.creative_build_probe,
         options.test_kit,
-        options.adcpVersion,
-        (profile?.raw_capabilities as { adcp?: { governance_enforcement?: unknown } } | undefined)?.adcp
-          ?.governance_enforcement
+        options.adcpVersion
       );
     } catch (error) {
       // No receiver has been created here. In particular the caller's injected
