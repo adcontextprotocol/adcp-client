@@ -61,6 +61,10 @@ export const SLOW_NODE_TESTS = new Set([
   'test/lib/media-buy-lifecycle-release-gate.test.js',
   'test/lib/storyboard-notices.test.js',
   'test/lib/storyboard-requires-gate.test.js',
+  // Sixty full/standalone cases load two real schema authorities. A cold
+  // concurrent CI shard hit the fast lane's exact 60s file limit (no failed
+  // assertion); retain every case in the existing serialized slow lane.
+  'test/lib/storyboard-creative-build-probe-authority.test.js',
   // Boots live MCP agents and loads two real compliance bundles; ~25s standing
   // alone, which leaves no margin under the fast suite's 60s per-test ceiling
   // once a shard runs files concurrently.
