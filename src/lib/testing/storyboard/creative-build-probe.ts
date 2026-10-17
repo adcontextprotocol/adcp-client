@@ -4,6 +4,8 @@
 import { matchesFixtureRequirements, normalizeFixtureMatchExpression } from './fixture-resolution';
 import type { FixtureMatchClause, StoryboardContext } from './types';
 import { getSchemaValidatorByRef } from '../../validation/schema-loader';
+import { SECRET_KEY_PATTERN } from '../../utils/redact-secrets';
+import { MAX_JSON_DEPTH } from '../../utils/json-depth';
 
 export interface CreativeBuildProbeSpec {
   context_prefix: string;
@@ -21,7 +23,7 @@ export type CreativeBuildProbeResolution =
   | { status: 'unsatisfied'; detail: string };
 
 const INPUT_FIELDS = new Set(['message', 'creative_manifest', 'creative_id', 'transformer_id', 'config']);
-const SECRET_FIELDS = new Set(['api_key', 'client_secret', 'authorization', 'jwk', 'jwks', 'jwks_uri']);
+const TRUST_FIELDS = /^(auth|private[_-]?key|bearer[_-]?token|id[_-]?token|jwk|jwks|jwks_uri)$/i;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -33,10 +35,21 @@ export function validateCreativeBuildProbeSpec(value: unknown): asserts value is
   }
 }
 
-function containsSecretField(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(containsSecretField);
-  return isRecord(value) && Object.entries(value).some(([key, item]) =>
-    SECRET_FIELDS.has(key.toLowerCase()) || containsSecretField(item));
+function containsSecretField(value: unknown, depth = 0, seen = new Set<object>()): boolean {
+  if (depth > MAX_JSON_DEPTH) throw new Error('creative_build_probe: fixture nesting exceeds the JSON depth bound');
+  if (typeof value === 'string' && /^https?:\/\//i.test(value)) {
+    let url: URL;
+    try { url = new URL(value); } catch { throw new Error('creative_build_probe: invalid URL in fixture'); }
+    return !!(url.username || url.password) || [...url.searchParams.keys()].some(key => SECRET_KEY_PATTERN.test(key) || TRUST_FIELDS.test(key));
+  }
+  if (!value || typeof value !== 'object') return false;
+  if (seen.has(value)) throw new Error('creative_build_probe: fixture must be acyclic JSON');
+  seen.add(value);
+  const found = Array.isArray(value)
+    ? value.some(item => containsSecretField(item, depth + 1, seen))
+    : Object.entries(value).some(([key, item]) => SECRET_KEY_PATTERN.test(key) || TRUST_FIELDS.test(key) || containsSecretField(item, depth + 1, seen));
+  seen.delete(value);
+  return found;
 }
 
 function validateInput(value: unknown, location: string, adcpVersion?: string): asserts value is Record<string, unknown> {
@@ -107,7 +120,8 @@ export function resolveCreativeBuildProbe(
     }
     const validateFormat = getSchemaValidatorByRef('core/creative-operation-format-declaration.json', adcpVersion);
     const validateKind = getSchemaValidatorByRef('core/canonical-format-kind.json', adcpVersion);
-    if ((validateFormat && !validateFormat(entry.format)) ||
+    const validateParams = getSchemaValidatorByRef(`formats/canonical/${entry.format.format_kind}.json`, adcpVersion);
+    if ((validateParams && !validateParams(entry.format.params)) || (validateFormat && !validateFormat(entry.format)) ||
         (validateKind && !validateKind(entry.format.format_kind)) ||
         (entry.format.technical_requirements_complete !== undefined && typeof entry.format.technical_requirements_complete !== 'boolean')) {
       throw new Error('creative_build_probe: malformed format declaration');
@@ -150,16 +164,18 @@ export function resolveCreativeBuildProbe(
       Object.keys(route).every(key => ['capability_id', 'operations', 'format'].includes(key));
     if (!input && creative.supports_generation === true && buildRoutes.length === 1 && emptyCompleteFormat) {
       source = 'generation';
-      input = { message: spec.message, creative_manifest: { format_kind: format.format_kind, assets: {} } };
+      const manifest = { format_kind: format.format_kind, assets: {} };
+      const validateManifest = getSchemaValidatorByRef('core/creative-manifest.json', adcpVersion);
+      if (!validateManifest?.(manifest)) continue;
+      input = { message: spec.message, creative_manifest: manifest };
     }
     if (!input) continue;
     if (input.transformer_id && creative.supports_transformers !== true) continue;
     if (!input.creative_manifest && !input.creative_id && !input.transformer_id && creative.supports_generation !== true) continue;
     const context: StoryboardContext = {
       [`${spec.context_prefix}_capability_id`]: route.capability_id,
-      [`${spec.context_prefix}_message`]: input.message ?? spec.message,
     };
-    for (const key of ['creative_manifest', 'creative_id', 'transformer_id', 'config']) {
+    for (const key of ['message', 'creative_manifest', 'creative_id', 'transformer_id', 'config']) {
       if (input[key] !== undefined) context[`${spec.context_prefix}_${key}`] = structuredClone(input[key]);
     }
     return { status: 'resolved', capabilityId: route.capability_id, context, source, requirements: selectedRecipe?.match ?? [] };

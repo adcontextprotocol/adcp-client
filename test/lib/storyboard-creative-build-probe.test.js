@@ -1,7 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { resolveCreativeBuildProbe } = require('../../dist/lib/testing/storyboard/creative-build-probe');
-const { parseStoryboard, runStoryboard, runStoryboardStep } = require('../../dist/lib/testing');
+const { resolveCreativeBuildProbe, parseStoryboard, runStoryboard, runStoryboardStep } = require('../../dist/lib/testing');
 
 const spec = { context_prefix: 'evaluator_build', message: 'Create one creative for a sandbox fixture.' };
 const route = (id, operations, kind = 'image') => ({ capability_id: id,
@@ -95,10 +94,11 @@ phases:
         stateful: true
         sample_request:
           target_capability_id: "$context.evaluator_build_capability_id"
-          message: "$context.evaluator_build_message"
           evaluator:
             agent_url: "https://off-list.example/adcp"
         context_inputs:
+          - key: evaluator_build_message
+            inject_at: message
           - key: evaluator_build_creative_manifest
             inject_at: creative_manifest
         validations:
@@ -115,12 +115,13 @@ phases:
         stateful: true
         sample_request:
           target_capability_id: "$context.evaluator_build_capability_id"
-          message: "$context.evaluator_build_message"
           evaluator:
             agent_url: "https://accepted.example/adcp"
             feature_agent:
               agent_url: "https://off-list.example/adcp"
         context_inputs:
+          - key: evaluator_build_message
+            inject_at: message
           - key: evaluator_build_creative_manifest
             inject_at: creative_manifest
         validations:
@@ -227,4 +228,19 @@ test('payload-bound governance requires fresh prepared authorization, never a st
   const enforcement = task => ({ tasks: [{ task, modes: ['signed_context'] }] });
   assert.equal(resolveCreativeBuildProbe(caps, spec, undefined, undefined, enforcement('build_creative')).status, 'unsatisfied');
   assert.equal(resolveCreativeBuildProbe(caps, spec, undefined, undefined, enforcement('create_media_buy')).status, 'resolved');
+});
+
+test('credential fields, credential URLs and invalid automatic manifests are never dispatched', () => {
+  for (const config of [{ token: 'secret' }, { credentials: {} }, { password: 'secret' }, { private_key: 'secret' },
+    { asset_url: 'https://user:password@assets.example/x' }, { asset_url: 'https://assets.example/x?access_token=secret' }]) {
+    assert.throws(() => resolveCreativeBuildProbe(creative(route('build')), spec, { creative_build_probes: [{ ...recipe,
+      input: { transformer_id: 'provisioned-transformer', config, message: 'Render' } }] }), /credential/);
+  }
+  assert.throws(() => resolveCreativeBuildProbe(creative(route('build', ['build'], 'coordinated_placements')), spec), /malformed/);
+});
+test('operator manifest recipe is preserved without adding a brief', () => {
+  const result = resolveCreativeBuildProbe({ supports_transformation: true, supported_formats: [route('build')] }, spec,
+    { creative_build_probes: [recipe] });
+  assert.equal(result.status, 'resolved');
+  assert.equal(result.context.evaluator_build_message, undefined);
 });
