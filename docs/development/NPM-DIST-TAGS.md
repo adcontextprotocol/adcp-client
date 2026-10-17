@@ -111,11 +111,18 @@ package is merged if you can; if it has merged already, the same steps work and 
    npm whoami
    ```
 
-3. Publish once, from your machine, under a throwaway tag. Provenance is off because it needs the GitHub OIDC
-   identity. The package's `prepublishOnly` cleans, rebuilds and re-checks it. Try `npm publish ... --dry-run` first: if
-   npm complains that provenance needs a CI identity (the package's `publishConfig.provenance: true` can outrank the
-   environment variable), remove that one line from `packages/reporting-storage/package.json` in your working tree for
-   the manual publish and do not commit the change.
+3. Publish once, from your machine, under a throwaway tag. Provenance needs the GitHub OIDC identity, so it has to
+   be off for this publish. The package's `publishConfig.provenance: true` outranks `NPM_CONFIG_PROVENANCE=false`, and
+   a real publish with it fails with `EUSAGE Automatic provenance generation not supported for provider: null`.
+   `--dry-run` skips provenance and passes either way, so it cannot tell you whether the line is still there. Remove
+   the line from your working tree before publishing, and do not commit the change:
+
+   ```bash
+   node -e 'const f="packages/reporting-storage/package.json",fs=require("fs"),p=JSON.parse(fs.readFileSync(f));
+     delete p.publishConfig.provenance; fs.writeFileSync(f, JSON.stringify(p, null, 2) + "\n")'
+   ```
+
+   The package's `prepublishOnly` cleans, rebuilds and re-checks it. Then publish:
 
    ```bash
    NPM_CONFIG_PROVENANCE=false npm publish \
@@ -125,7 +132,8 @@ package is merged if you can; if it has merged already, the same steps work and 
    ```
 
    This publishes the version in `packages/reporting-storage/package.json` (`0.0.0` until the release PR bumps it to
-   `0.1.0-beta.0`). Then keep an install of the placeholder from becoming the default:
+   `0.1.0-beta.0`). Restore the line with `git checkout -- packages/reporting-storage/package.json`. Then keep an
+   install of the placeholder from becoming the default:
 
    ```bash
    npm dist-tag ls @adcp/reporting-storage
