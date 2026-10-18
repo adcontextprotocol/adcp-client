@@ -129,10 +129,10 @@ relays were removed from the profile, `signWebBotAuth` throws on `relay: true`
 and on a request that already carries signature fields. The verifier reads
 only the `Signature-Input` member tagged `web-bot-auth` and ignores members
 with other tags, such as a CDN's own signature. It answers a second
-`web-bot-auth` signature or a second `Signature-Agent` member with 403. Signing keys are Ed25519 or RSA-PSS-SHA512 (2048 to 4096
-bits, e = 65537); ES256 stays on the AdCP RFC 9421 profile, and
+`web-bot-auth` signature or a second `Signature-Agent` member with 403.
+Signing keys are Ed25519 only; ES256 stays on the AdCP RFC 9421 profile, and
 `createWebBotAuthFetch`, `createWebhookEmitter` and `createAdcpServer` refuse
-a P-256 Web Bot Auth key at wire-up.
+a P-256 or RSA Web Bot Auth key at wire-up.
 
 `SignatureDirectoryResolver` derives the directory from the covered canonical
 origin. Directories must be signed (WBA Appendix B.1): it validates a
@@ -158,8 +158,7 @@ Serve the exact JWS at `/.well-known/governance-revocations.json` and refresh it
 before `next_update` (the command defaults to five minutes). Pass `--snapshot`
 to sign a list of revoked key thumbprints and optional reasons/dates.
 `createSignedOriginRevocationList` provides the same authoring API. The SDK
-signs and verifies revocation lists with directory keys: EdDSA for Ed25519 keys
-and PS512 for RSA keys (a P-256 key cannot be published in a key directory). Observed key revocations are permanent;
+signs and verifies revocation lists with Ed25519 directory keys, as EdDSA. Observed key revocations are permanent;
 refresh failures use the last verified list only within the published grace
 window. Staleness follows the list's signed `next_update`, never the polling
 interval: the verifier re-polls at least every polling interval (at most 30
@@ -416,7 +415,7 @@ so verification can run in a CDN or middleware in front of the AdCP server.
   reason is logged, never sent. A 429 for local load shedding (directory fetch
   limiter, replay-store `rate_abuse`) carries `Retry-After` instead.
 - Every signed request carries `created`, `expires` (at most 300 seconds
-  later), `keyid`, `alg` (`ed25519` or `rsa-pss-sha512`) and a `nonce` of 64
+  later), `keyid`, `alg` (`ed25519`) and a `nonce` of 64
   bytes, unpadded Base64URL or canonical padded Base64 (Cloudflare's default).
   The former 16-byte floor is gone: a shorter nonce is a 403. Replay state is
   keyed on the nonce bytes, so the two encodings of one nonce collide.
@@ -457,8 +456,7 @@ so verification can run in a CDN or middleware in front of the AdCP server.
   back off on 429 or 503.
 - `@target-uri` and `@authority` are taken from the target URI as received
   (RFC 9421 §2.2.2), never canonicalized; canonical origins identify the signer
-  only. Ed25519 and RSA-PSS-SHA512 keys are supported; RSA-PSS uses WebCrypto
-  where the runtime has it, so it also works on Cloudflare workerd.
+  only. Web Bot Auth is Ed25519 only, and it also works on Cloudflare workerd.
   `test/fixtures/wba-interop/` holds fixtures verified in both directions against
   Cloudflare's `web-bot-auth`; they already used signed directories and are
   unchanged.

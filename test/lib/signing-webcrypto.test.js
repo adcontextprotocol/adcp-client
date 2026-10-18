@@ -136,7 +136,7 @@ export default { async fetch(req) {
 }
 
 test(
-  'RFC 9421 (ES256/Ed25519) and Web Bot Auth (Ed25519/RSA-PSS) sign and verify inside Cloudflare workerd',
+  'RFC 9421 (ES256/Ed25519) and Web Bot Auth (Ed25519) sign and verify inside Cloudflare workerd',
   { timeout: 120_000 },
   async t => {
     const esbuild = require('esbuild');
@@ -206,13 +206,9 @@ test(
         'ecdsa-p256-sha256'
       ),
     ];
+    // Web Bot Auth is Ed25519 only (adcp#7894); ES256 stays on the RFC 9421 profile.
     const wbaKeys = [
       { alg: 'ed25519', privateJwk: generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' }) },
-      // ES256 is not a Web Bot Auth algorithm (adcp#7894); RSA-PSS-SHA512 is.
-      {
-        alg: 'rsa-pss-sha512',
-        privateJwk: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'jwk' }),
-      },
     ];
     const vectors = ['001-basic-post', '003-es256-post'].map(id => ({
       id,
@@ -245,7 +241,6 @@ test(
         'webhook ed25519': 'verified',
         'webhook ecdsa-p256-sha256': 'verified',
         'web-bot-auth ed25519': 'verified',
-        'web-bot-auth rsa-pss-sha512': 'verified',
       });
     } finally {
       worker.stop();

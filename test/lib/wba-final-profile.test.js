@@ -7,7 +7,7 @@ process.env.NODE_ENV = 'test';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { generateKeyPairSync, createPrivateKey, sign: nodeSign } = require('crypto');
+const { generateKeyPairSync, createPrivateKey, sign: nodeSign, constants } = require('crypto');
 const httpMessageSig = require('http-message-sig');
 const wba = require('../../dist/lib/signing/web-bot-auth');
 const { InMemoryReplayStore } = require('../../dist/lib/signing/replay');
@@ -140,17 +140,19 @@ test('nonce: 64 bytes, unpadded Base64URL or canonical Base64; anything shorter 
   );
 });
 
-test('parameters: alg is required and must be ed25519 or rsa-pss-sha512', async () => {
+test('parameters: alg is required and must be ed25519', async () => {
   const key = newKey();
   const options = await verifierOptions([key]);
   await assert.rejects(
     wba.verifyWebBotAuth(await rawSign(key, { parameters: { alg: undefined } }), options),
     rejectedWith(403, 'parameters_missing')
   );
-  await assert.rejects(
-    wba.verifyWebBotAuth(await rawSign(key, { parameters: { alg: 'ecdsa-p256-sha256' } }), options),
-    rejectedWith(403, 'parameters')
-  );
+  for (const alg of ['ecdsa-p256-sha256', 'rsa-pss-sha512'])
+    await assert.rejects(
+      wba.verifyWebBotAuth(await rawSign(key, { parameters: { alg } }), options),
+      rejectedWith(403, 'parameters'),
+      alg
+    );
   // A wrongly typed parameter parses, so it is a profile failure (403), not 400.
   const signed = await rawSign(key);
   const typo = signed.headers['signature-input'].replace(`created=${T}`, 'created="yesterday"');
@@ -247,7 +249,7 @@ test('replay state is keyed on the nonce bytes, not their encoding', async () =>
  * add keys the SDK would never publish or sign with.
  */
 async function directoryResponse(published, signers) {
-  const publicJwk = ({ d, ...rest }) => rest;
+  const publicJwk = ({ d, p, q, dp, dq, qi, ...rest }) => rest;
   const body = JSON.stringify({ keys: published.map(publicJwk) });
   const url = ORIGIN + wba.SIGNATURE_DIRECTORY_PATH;
   const headers = {
@@ -257,7 +259,11 @@ async function directoryResponse(published, signers) {
   const inputs = [];
   const signatures = [];
   for (const [i, key] of signers.entries()) {
-    const algorithm = key.kty === 'EC' ? 'ecdsa-p256-sha256' : 'ed25519';
+    const [algorithm, digest, options] = {
+      EC: ['ecdsa-p256-sha256', 'sha256', { dsaEncoding: 'ieee-p1363' }],
+      RSA: ['rsa-pss-sha512', 'sha512', { padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 64 }],
+      OKP: ['ed25519', null, {}],
+    }[key.kty];
     const signed = await httpMessageSig.createSignature(
       {
         kind: 'response',
@@ -278,10 +284,7 @@ async function directoryResponse(published, signers) {
         signer: {
           algorithm,
           sign: data =>
-            nodeSign(key.kty === 'EC' ? 'sha256' : null, Buffer.from(data), {
-              key: createPrivateKey({ key, format: 'jwk' }),
-              dsaEncoding: 'ieee-p1363',
-            }),
+            nodeSign(digest, Buffer.from(data), { key: createPrivateKey({ key, format: 'jwk' }), ...options }),
         },
       }
     );
@@ -302,11 +305,15 @@ test('directories: keys the profile cannot use are ignored with their signatures
   assert.deepEqual(await kids(await directoryResponse([key, ec], [key])), [key.kid]);
   assert.deepEqual(await kids(await directoryResponse([key, ec], [key, ec])), [key.kid]);
   assert.deepEqual(await kids(await directoryResponse([ec, key], [ec, key])), [key.kid]);
+  // Web Bot Auth is Ed25519 only, so an RSA key is ignored the same way.
+  const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'jwk' });
+  assert.deepEqual(await kids(await directoryResponse([key, rsa], [key, rsa])), [key.kid]);
   // A directory with no usable key, or with a usable key that did not sign, is a discovery failure.
-  await assert.rejects(
-    wba.verifyKeyDirectory(await directoryResponse([ec], [ec]), T),
-    e => e.status === 403 && e.reason === 'directory_keys'
-  );
+  for (const unusable of [ec, rsa])
+    await assert.rejects(
+      wba.verifyKeyDirectory(await directoryResponse([unusable], [unusable]), T),
+      e => e.status === 403 && e.reason === 'directory_keys'
+    );
   await assert.rejects(
     wba.verifyKeyDirectory(await directoryResponse([key, newKey()], [key]), T),
     e => e.status === 403 && e.reason === 'directory_proof'
@@ -341,20 +348,27 @@ test('directories: only the WBA directory media type is accepted (WBA section 5.
     );
 });
 
-test('revocation lists are Ed25519 only', async () => {
-  const ecPrivate = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ format: 'jwk' });
-  await assert.rejects(
-    createSignedOriginRevocationList(
-      {
-        issuer: ORIGIN,
-        updated: new Date(Date.now() - 1000).toISOString(),
-        next_update: new Date(Date.now() + 300_000).toISOString(),
-        revoked_kids: [],
-      },
-      ecPrivate
-    ),
-    /Ed25519/
-  );
+test('revocation lists are signed with EdDSA by an Ed25519 directory key only', async () => {
+  const snapshot = {
+    issuer: ORIGIN,
+    updated: new Date(Date.now() - 1000).toISOString(),
+    next_update: new Date(Date.now() + 300_000).toISOString(),
+    revoked_kids: [],
+  };
+  const list = await createSignedOriginRevocationList(snapshot, newKey());
+  assert.equal(JSON.parse(Buffer.from(list.split('.')[0], 'base64url')).alg, 'EdDSA');
+  for (const [type, options] of [
+    ['ec', { namedCurve: 'prime256v1' }],
+    ['rsa', { modulusLength: 2048 }],
+  ])
+    await assert.rejects(
+      createSignedOriginRevocationList(
+        snapshot,
+        generateKeyPairSync(type, options).privateKey.export({ format: 'jwk' })
+      ),
+      /Ed25519/,
+      type
+    );
 });
 
 // ---------------------------------------------------------------------------
@@ -508,38 +522,6 @@ test('createAdcpServer: unsigned required_for calls get the profile-dependent an
     await only.close();
     await both.close();
   }
-});
-
-test('an RSA-only identity signs and verifies its origin revocation list with PS512', async () => {
-  const identity = require('../../dist/lib/identity-3.3');
-  const now = Math.floor(Date.now() / 1000);
-  const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'jwk' });
-  rsa.kid = wba.jwkThumbprint(rsa);
-  const proof = await wba.createSignedSignatureDirectory(ORIGIN, [{ privateKey: rsa }], { now: () => now });
-  const revokedKid = 'r'.repeat(43);
-  const list = await createSignedOriginRevocationList(
-    {
-      issuer: ORIGIN,
-      updated: new Date((now - 1) * 1000).toISOString(),
-      next_update: new Date((now + 300) * 1000).toISOString(),
-      revoked_kids: [revokedKid],
-    },
-    rsa
-  );
-  assert.equal(JSON.parse(Buffer.from(list.split('.')[0], 'base64url')).alg, 'PS512');
-  const resolver = new identity.OriginRevocationResolver({
-    store: new identity.InMemoryOriginRevocationStore(),
-    directory: new wba.SignatureDirectoryResolver({
-      now: () => now,
-      fetchOptions: {
-        trustedFetchFn: async () => new Response(proof.body, { status: 200, headers: proof.headers }),
-      },
-    }),
-    now: () => now,
-    fetchOptions: { trustedFetchFn: async () => new Response(list) },
-  });
-  assert.equal(await resolver.status(ORIGIN, revokedKid), 'revoked');
-  assert.equal(await resolver.status(ORIGIN, rsa.kid), 'current');
 });
 
 test('a directory proof may cover more than the Appendix B.1 minimum', async () => {

@@ -646,11 +646,11 @@ test('review: a key rotated in during a directory outage is a discovery failure'
   assert.equal((await directory.resolve(oldKey.kid, origin)).kid, oldKey.kid);
 });
 
-test('review: RSA keys outside 2048-4096 bits or e = 65537 are not usable, so such a directory has no key', async () => {
+test('review: RSA keys are not usable under Web Bot Auth, so an RSA-only directory has no key', async () => {
   const { generateKeyPairSync: generate } = require('crypto');
+  const rsa = generate('rsa', { modulusLength: 2048, publicExponent: 0x10001 }).publicKey.export({ format: 'jwk' });
   const small = generate('rsa', { modulusLength: 1024 }).publicKey.export({ format: 'jwk' });
-  const oddExponent = generate('rsa', { modulusLength: 2048, publicExponent: 3 }).publicKey.export({ format: 'jwk' });
-  for (const jwk of [small, oddExponent]) {
+  for (const jwk of [rsa, small]) {
     const body = JSON.stringify({ keys: [jwk] });
     await assert.rejects(
       wba.verifyKeyDirectory(

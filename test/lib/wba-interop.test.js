@@ -54,6 +54,7 @@ async function theirDirectory(entry) {
     { name: 'content-type', value: wba.SIGNATURE_DIRECTORY_MEDIA_TYPE },
     { name: 'content-digest', value: computeContentDigest(body, 'rfc8941-base64') },
   ];
+  const signer = await cloudflareCrypto.signerFromJWK(privateJwk(entry));
   const signature = await httpMessageSig.createSignature(
     {
       kind: 'response',
@@ -68,10 +69,10 @@ async function theirDirectory(entry) {
         created: NOW - 60,
         expires: NOW + 86_400,
         keyid: entry.kid,
-        alg: 'ed25519',
+        alg: signer.algorithm,
         tag: 'http-message-signatures-directory',
       },
-      signer: await cloudflareCrypto.signerFromJWK(privateJwk(entry)),
+      signer,
     }
   );
   return {
@@ -264,14 +265,20 @@ test('directories: Cloudflare verifies ours and we verify theirs', async () => {
   );
 });
 
-test('RSA-PSS-SHA512 keys interoperate in both directions', async () => {
+test('Web Bot Auth is Ed25519 only: RSA-PSS-SHA512 keys are refused in both directions', async () => {
   const url = TARGETS['body-request'];
-  const ours = await ourRequest(RSA, url);
-  assert.match(ours.headers['signature-input'], /alg="rsa-pss-sha512"/);
-  assert.equal((await theirsVerify(ours, RSA)).keyid, RSA.kid);
+  await assert.rejects(ourRequest(RSA, url), /Ed25519 keys only/);
+  await assert.rejects(ourDirectory([RSA]), /Ed25519 keys only/);
+  // Cloudflare signs with RSA-PSS-SHA512: the request's alg is refused before
+  // any directory fetch, and its directory holds no key the profile uses.
   const theirs = await theirRequest(RSA, url);
-  const [signer] = await oursVerify({ request: theirs, directory: await ourDirectory([RSA]) });
-  assert.equal(signer.keyid, RSA.kid);
+  assert.match(theirs.headers['signature-input'], /alg="rsa-pss-sha512"/);
+  const directory = await theirDirectory(RSA);
+  await assert.rejects(oursVerify({ request: theirs, directory }), e => e.status === 403 && e.reason === 'parameters');
+  await assert.rejects(
+    wba.verifyKeyDirectory({ ...directory, request: { method: 'GET', url: directory.url } }, NOW),
+    e => e.status === 403 && e.reason === 'directory_keys'
+  );
 });
 
 test('default nonces are 64 bytes and accepted by Cloudflare', async () => {

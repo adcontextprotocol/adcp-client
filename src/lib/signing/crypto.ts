@@ -1,5 +1,4 @@
 import {
-  constants,
   createPrivateKey,
   createPublicKey,
   sign as nodeSign,
@@ -45,15 +44,6 @@ export function verifySignature(alg: string, publicKey: KeyObject, data: Uint8Ar
         );
       }
     }
-    if (alg === 'rsa-pss-sha512') {
-      // RFC 9421 §3.3.1; used by the Web Bot Auth profile only.
-      return nodeVerify(
-        'sha512',
-        data,
-        { key: publicKey, padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 64 },
-        signature
-      );
-    }
     return false;
   } catch {
     // Malformed signature bytes, mismatched key/alg, etc. — map to a caller-
@@ -92,37 +82,14 @@ export async function verifySignatureAsync(
 ): Promise<boolean> {
   const subtle = subtleCrypto();
   const keyObject = (): KeyObject => (isKeyObject(publicKey) ? publicKey : jwkToPublicKey(publicKey));
-  if ((alg !== 'ecdsa-p256-sha256' && alg !== 'rsa-pss-sha512') || !subtle)
-    return verifySignature(alg, keyObject(), data, signature);
+  if (alg !== 'ecdsa-p256-sha256' || !subtle) return verifySignature(alg, keyObject(), data, signature);
   try {
     const jwk = isKeyObject(publicKey) ? publicKey.export({ format: 'jwk' }) : (publicKey as JsonWebKey);
-    if (alg === 'rsa-pss-sha512') {
-      const key = await importRsaPssVerifyKey(subtle, jwk);
-      return await subtle.verify(RSA_PSS_SHA512_SIGN, key, toArrayBuffer(signature), toArrayBuffer(data));
-    }
     const key = await importP256VerifyKey(subtle, jwk);
     return await subtle.verify(P256_SHA256, key, toArrayBuffer(signature), toArrayBuffer(data));
   } catch {
     return false;
   }
-}
-const RSA_PSS_SHA512 = { name: 'RSA-PSS', hash: 'SHA-512' } as const;
-/** RFC 9421 §3.3.1: RSASSA-PSS with SHA-512 and a 64-byte salt. */
-const RSA_PSS_SHA512_SIGN = { name: 'RSA-PSS', saltLength: 64 } as const;
-/** Imported RSA-PSS verification keys, bounded (Web Bot Auth profile only). */
-const rsaPssVerifyKeys = new Map<string, Promise<CryptoKey>>();
-function importRsaPssVerifyKey(subtle: SubtleCrypto, jwk: JsonWebKey): Promise<CryptoKey> {
-  if (jwk.kty !== 'RSA' || typeof jwk.n !== 'string' || typeof jwk.e !== 'string')
-    return Promise.reject(new TypeError('Not an RSA public key'));
-  const cacheKey = `${jwk.e}.${jwk.n}`;
-  let key = rsaPssVerifyKeys.get(cacheKey);
-  if (!key) {
-    key = subtle.importKey('jwk', { kty: 'RSA', n: jwk.n, e: jwk.e }, RSA_PSS_SHA512, false, ['verify']);
-    key.catch(() => rsaPssVerifyKeys.delete(cacheKey));
-    if (rsaPssVerifyKeys.size >= 256) rsaPssVerifyKeys.delete(rsaPssVerifyKeys.keys().next().value!);
-    rsaPssVerifyKeys.set(cacheKey, key);
-  }
-  return key;
 }
 function isKeyObject(value: unknown): value is KeyObject {
   return typeof (value as KeyObject | undefined)?.export === 'function' && 'asymmetricKeyType' in (value as object);
@@ -152,32 +119,17 @@ export function signWithPrivateJwk(alg: string, privateJwk: AdcpJsonWebKey, data
     return new Uint8Array(nodeSign(null, data, createPrivateKey({ key: privateJwk, format: 'jwk' })));
   if (alg === 'ecdsa-p256-sha256')
     return new Uint8Array(nodeSign('sha256', data, { key: privateJwk, format: 'jwk', dsaEncoding: 'ieee-p1363' }));
-  if (alg === 'rsa-pss-sha512')
-    // RFC 9421 §3.3.1; the Web Bot Auth profile only.
-    return new Uint8Array(
-      nodeSign('sha512', data, {
-        key: createPrivateKey({ key: privateJwk, format: 'jwk' }),
-        padding: constants.RSA_PKCS1_PSS_PADDING,
-        saltLength: 64,
-      })
-    );
   throw new TypeError(`Unsupported signing algorithm: ${alg}`);
 }
 
-/** {@link signWithPrivateJwk}, preferring WebCrypto for ES256 and RSA-PSS when available (workerd, #3243). */
+/** {@link signWithPrivateJwk}, preferring WebCrypto for ES256 when available (workerd, #3243). */
 export async function signWithPrivateJwkAsync(
   alg: string,
   privateJwk: AdcpJsonWebKey,
   data: Uint8Array
 ): Promise<Uint8Array> {
   const subtle = subtleCrypto();
-  if ((alg !== 'ecdsa-p256-sha256' && alg !== 'rsa-pss-sha512') || !subtle)
-    return signWithPrivateJwk(alg, privateJwk, data);
-  if (alg === 'rsa-pss-sha512') {
-    const { kty, n, e, d, p, q, dp, dq, qi } = privateJwk as JsonWebKey;
-    const key = await subtle.importKey('jwk', { kty, n, e, d, p, q, dp, dq, qi }, RSA_PSS_SHA512, false, ['sign']);
-    return new Uint8Array(await subtle.sign(RSA_PSS_SHA512_SIGN, key, toArrayBuffer(data)));
-  }
+  if (alg !== 'ecdsa-p256-sha256' || !subtle) return signWithPrivateJwk(alg, privateJwk, data);
   const key = await subtle.importKey('jwk', privateP256Jwk(privateJwk), P256, false, ['sign']);
   return new Uint8Array(await subtle.sign(P256_SHA256, key, toArrayBuffer(data)));
 }

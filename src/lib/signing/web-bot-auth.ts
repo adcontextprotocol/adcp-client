@@ -48,8 +48,8 @@ export const WEB_BOT_AUTH_PROFILE = 'web-bot-auth' as const;
 export const WEB_BOT_AUTH_DRAFT_REVISION = 'draft-ietf-webbotauth-httpsig-protocol-00' as const;
 export const SIGNATURE_DIRECTORY_PATH = '/.well-known/http-message-signatures-directory';
 export const SIGNATURE_DIRECTORY_MEDIA_TYPE = 'application/http-message-signatures-directory+json';
-/** The profile's signature algorithms (wba-profile.mdx "Profile rules"). ES256 is RFC 9421 profile only. */
-export const WEB_BOT_AUTH_ALGORITHMS = Object.freeze(['ed25519', 'rsa-pss-sha512'] as const);
+/** The profile's signature algorithm: Ed25519 only. ES256 is RFC 9421 profile only. */
+export const WEB_BOT_AUTH_ALGORITHMS = Object.freeze(['ed25519'] as const);
 type WebBotAuthAlg = (typeof WEB_BOT_AUTH_ALGORITHMS)[number];
 const DIRECTORY_TAG = 'http-message-signatures-directory';
 /** Request and directory signatures are verified with this much clock skew. */
@@ -236,13 +236,7 @@ export function jwkThumbprint(
 }
 /** The profile algorithm a key signs with, or undefined for a key the profile cannot use. */
 function keyAlgorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg | undefined {
-  if (jwk.kty === 'OKP' && jwk.crv === 'Ed25519') return 'ed25519';
-  // RSA: 2048–4096-bit moduli and e = 65537 only (bounds verification cost).
-  if (jwk.kty === 'RSA' && typeof jwk.n === 'string' && jwk.e === 'AQAB') {
-    const bytes = Buffer.from(jwk.n, 'base64url').length;
-    if (bytes >= 256 && bytes <= 512) return 'rsa-pss-sha512';
-  }
-  return undefined;
+  return jwk.kty === 'OKP' && jwk.crv === 'Ed25519' ? 'ed25519' : undefined;
 }
 /** {@link keyAlgorithm} for a key that must be usable; any other key is unsupported (403). */
 function algorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg {
@@ -253,9 +247,7 @@ function signingAlgorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg {
   try {
     return algorithm(jwk);
   } catch {
-    throw new TypeError(
-      'Web Bot Auth signs with Ed25519 or RSA-PSS-SHA512 (2048-4096 bit, e=65537) keys only; ES256 remains on the AdCP RFC 9421 profile'
-    );
+    throw new TypeError('Web Bot Auth signs with Ed25519 keys only; ES256 remains on the AdCP RFC 9421 profile');
   }
 }
 /**
@@ -1100,7 +1092,6 @@ function webBotSigner(key: WebBotSigningKey): Signer {
     // a WebCrypto-backed provider may return; the library's copy would not.
     return { algorithm: alg, sign: async data => Buffer.from(await key.provider.sign(Buffer.from(data))) };
   }
-  // WebCrypto for RSA-PSS when available (workerd rejects node:crypto option shapes, #3243).
   return { algorithm: alg, sign: data => signWithPrivateJwkAsync(alg, jwk, Buffer.from(data)) };
 }
 /**
@@ -1204,12 +1195,7 @@ export async function createSignedSignatureDirectory(
   const keys = signingKeys.map(key => {
     const jwk = 'privateKey' in key ? key.privateKey : key.publicKey;
     signingAlgorithm(jwk);
-    return {
-      kty: jwk.kty,
-      ...(jwk.kty === 'RSA' ? { n: jwk.n, e: jwk.e } : { crv: jwk.crv, x: jwk.x }),
-      kid: jwkThumbprint(jwk),
-      use: 'sig',
-    } as AdcpJsonWebKey;
+    return { kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: jwkThumbprint(jwk), use: 'sig' } as AdcpJsonWebKey;
   });
   if (new Set(keys.map(k => k.kid)).size !== keys.length) throw new TypeError('Duplicate directory key');
   const body = JSON.stringify({ keys });

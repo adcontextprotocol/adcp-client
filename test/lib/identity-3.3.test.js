@@ -147,11 +147,8 @@ test('signed directory vector, exact audit bytes, tampering, wrong origin, futur
   assert.equal((await wba.verifySignatureDirectory(response, 1790840940, true)).proof.body, v.response.body);
   await assert.rejects(wba.verifySignatureDirectory(response, 1790841000 - 61, true));
 });
-test('signing and directory authoring roundtrip: ed25519 and rsa-pss-sha512', async () => {
-  for (const pair of [
-    generateKeyPairSync('ed25519'),
-    generateKeyPairSync('rsa', { modulusLength: 2048, publicExponent: 0x10001 }),
-  ]) {
+test('signing and directory authoring roundtrip: ed25519', async () => {
+  for (const pair of [generateKeyPairSync('ed25519')]) {
     const jwk = pair.privateKey.export({ format: 'jwk' });
     jwk.kid = wba.jwkThumbprint(jwk);
     const key = { privateKey: jwk };
@@ -181,20 +178,25 @@ test('signing and directory authoring roundtrip: ed25519 and rsa-pss-sha512', as
     assert.equal(result[0].origin, 'https://agent.example.com');
   }
 });
-test('ES256 is not a Web Bot Auth algorithm: signing, directories and fetch wrappers refuse P-256 keys', async () => {
-  const jwk = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ format: 'jwk' });
-  jwk.kid = wba.jwkThumbprint(jwk);
-  const request = { method: 'GET', url: 'https://seller.example.com/mcp', headers: {} };
-  await assert.rejects(
-    wba.signWebBotAuth(request, { privateKey: jwk }, { origin: 'https://agent.example.com' }),
-    /Ed25519 or RSA-PSS-SHA512/
-  );
-  await assert.rejects(
-    wba.createSignedSignatureDirectory('https://agent.example.com', [{ privateKey: jwk }]),
-    TypeError
-  );
-  assert.throws(() => wba.createWebBotAuthFetch(fetch, { privateKey: jwk }, { origin: 'https://agent.example.com' }));
-  assert.throws(() => wba.assertWebBotAuthSigningKey({ privateKey: jwk }), TypeError);
+test('Web Bot Auth is Ed25519 only: signing, directories and fetch wrappers refuse P-256 and RSA keys', async () => {
+  for (const [type, options] of [
+    ['ec', { namedCurve: 'prime256v1' }],
+    ['rsa', { modulusLength: 2048, publicExponent: 0x10001 }],
+  ]) {
+    const jwk = generateKeyPairSync(type, options).privateKey.export({ format: 'jwk' });
+    jwk.kid = wba.jwkThumbprint(jwk);
+    const request = { method: 'GET', url: 'https://seller.example.com/mcp', headers: {} };
+    await assert.rejects(
+      wba.signWebBotAuth(request, { privateKey: jwk }, { origin: 'https://agent.example.com' }),
+      /Web Bot Auth signs with Ed25519 keys only/
+    );
+    await assert.rejects(
+      wba.createSignedSignatureDirectory('https://agent.example.com', [{ privateKey: jwk }]),
+      TypeError
+    );
+    assert.throws(() => wba.createWebBotAuthFetch(fetch, { privateKey: jwk }, { origin: 'https://agent.example.com' }));
+    assert.throws(() => wba.assertWebBotAuthSigningKey({ privateKey: jwk }), TypeError);
+  }
 });
 test('Signature-Agent forces WBA, including empty or uncovered field; no legacy profile retry', () => {
   assert.equal(wba.selectSignatureProfile({ headers: { 'Signature-Agent': '' } }), 'web-bot-auth');
