@@ -99,11 +99,13 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // current main base measures 20,365,246 bytes packed and 111,595,107 unpacked
 // across 6,556 files. Preserve about 40 KB of compressor margin. The previous
 // corpora are replaced; no duplicate compliance roots or archives are packaged.
-// Combining the creative build probe with the merged property-list surface
-// measures 20,425,538 bytes on Node 20 and 20,425,537 on Node 22 (6,574 files).
-// The prior qualified probe artifact is 20,397,052 bytes; the only new files
-// are the 13 upstream property-list artifacts. Preserve about 24 KB of
-// compressor margin. Unpacked, file-count, schema and declaration limits stay fixed.
+// The property-list reference probe adds one internal dual-format runtime/
+// declaration module set (+4 files) and expands runner evidence handling.
+// The measured tarball is 20,422,982 bytes; allow about 27 KB for compressor
+// variance. Unpacked, schema, and declaration byte budgets stay fixed.
+// With the creative build probe, the combined beta.8 package measures
+// 20,439,714 bytes across 6,578 files. This fits the existing byte cap;
+// retain both probes' additive file allowances and every other guard.
 const MAX_PACKED_TARBALL_BYTES = 20_450_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
@@ -265,6 +267,7 @@ const MAX_PACKED_FILE_COUNT =
   1 + // The integrated reporting-service example README now ships with @adcp/reporting-storage.
   2 + // The maintained bundle replacement adds the hosted-grader kit and compact macro-bearing URL schema.
   13 + // Property-list identifier, server, and certification modules (three dual-format sets) and adoption guide.
+  4 + // Property-list reference probe (one dual-format runtime/declaration module set).
   5; // Creative build probe: one dual-format runtime/declaration module (+4) and one guide (+1).
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;

@@ -60,6 +60,11 @@ import {
   type RateLimitTripObservation,
 } from './rate-limit-trip';
 import { redactSecrets } from '../../utils/redact-secrets';
+import {
+  rememberPropertyListCredentials,
+  verifyPropertyListReference,
+  withPropertyListCredentialRedaction,
+} from './property-list-reference';
 import { ResponseSchemaValidationError } from '../../utils/response-unwrapper';
 import { injectLegacyEnvelopeStatus, normalizeLegacyMediaBuyStatusForReturn } from '../../utils/envelope-status-compat';
 import { queryUpstreamTraffic, type UpstreamTrafficSuccess } from '../test-controller';
@@ -1462,42 +1467,56 @@ export async function runStoryboard(
 ): Promise<StoryboardResult> {
   options = applyReusableProfileOptions(options);
   if (hasTestClientScope() && !options._discoveryPass) options = { ...options, _discoveryPass: {} };
-  return withMCPConnectionScope(
-    async () => {
-      options = applyStoryboardVersionOptions(storyboard, options);
-      options = applyFunctionalRequestSigning(options, {
-        ...(options.complianceDir && { complianceDir: options.complianceDir }),
-        ...(options.adcpVersion && { version: options.adcpVersion }),
-      });
-      // adcp#6735 — a declared prerequisites.test_kit is a loading directive,
-      // not decoration: resolve it into options.test_kit (caller-supplied
-      // kits win) so from_test_kit / $test_kit.* references get the
-      // credential the storyboard was authored against.
-      options = resolveDeclaredTestKit(storyboard, options);
-      options = applyNativeA2AComplianceTransportOptions(options);
-      if (hasTestClientScope() && options._client && !options.agents) {
-        const resolution = getOrCreateClientResolution(
-          typeof agentUrlOrUrls === 'string' ? agentUrlOrUrls : agentUrlOrUrls[0]!,
-          options
-        );
-        const discovered = await getOrDiscoverProfile(resolution.client, options);
-        options = {
-          ...options,
-          _profile: discovered.step.passed ? discovered.profile : undefined,
-          agentTools: discovered.step.passed ? discovered.profile.tools : undefined,
-        };
-      }
-      const schemaRoot = getRunSchemaRoot(options);
-      const runBody = () =>
-        withServedReleaseSchemaRoots(options.servedReleaseSchemaRoots, () =>
-          runStoryboardBody(agentUrlOrUrls, storyboard, options)
-        );
-      if (schemaRoot) {
-        return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, runBody);
-      }
-      return await runBody();
-    },
-    { isolate: !hasTestClientScope() }
+  return withPropertyListCredentialRedaction(() =>
+    withMCPConnectionScope(
+      async () => {
+        options = applyStoryboardVersionOptions(storyboard, options);
+        options = applyFunctionalRequestSigning(options, {
+          ...(options.complianceDir && { complianceDir: options.complianceDir }),
+          ...(options.adcpVersion && { version: options.adcpVersion }),
+        });
+        // adcp#6735 — a declared prerequisites.test_kit is a loading directive,
+        // not decoration: resolve it into options.test_kit (caller-supplied
+        // kits win) so from_test_kit / $test_kit.* references get the
+        // credential the storyboard was authored against.
+        options = resolveDeclaredTestKit(storyboard, options);
+        options = applyNativeA2AComplianceTransportOptions(options);
+        if (
+          storyboard.requires?.[0] === 'property_list_reference_runner' &&
+          storyboardCapabilityPredicates(storyboard).length === 0 &&
+          propertyListReferenceNeedsMcp(options)
+        ) {
+          return buildRequirementUnmetResult(
+            Array.isArray(agentUrlOrUrls) ? agentUrlOrUrls : [agentUrlOrUrls],
+            storyboard,
+            'property_list_reference_runner',
+            'Credential-isolated property-list references currently require MCP; A2A probe coverage is unavailable.'
+          );
+        }
+        if (hasTestClientScope() && options._client && !options.agents) {
+          const resolution = getOrCreateClientResolution(
+            typeof agentUrlOrUrls === 'string' ? agentUrlOrUrls : agentUrlOrUrls[0]!,
+            options
+          );
+          const discovered = await getOrDiscoverProfile(resolution.client, options);
+          options = {
+            ...options,
+            _profile: discovered.step.passed ? discovered.profile : undefined,
+            agentTools: discovered.step.passed ? discovered.profile.tools : undefined,
+          };
+        }
+        const schemaRoot = getRunSchemaRoot(options);
+        const runBody = () =>
+          withServedReleaseSchemaRoots(options.servedReleaseSchemaRoots, () =>
+            runStoryboardBody(agentUrlOrUrls, storyboard, options)
+          );
+        if (schemaRoot) {
+          return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, runBody);
+        }
+        return await runBody();
+      },
+      { isolate: !hasTestClientScope() }
+    )
   );
 }
 
@@ -1880,6 +1899,7 @@ const REQUIREMENT_TO_SKIP_REASON: Record<RequirementName, RunnerSkipReason> = {
   webhook_replay_receiver: 'not_applicable',
   trusted_match_context_router_runner: 'not_applicable',
   trusted_match_publisher_auth_runner: 'requirement_unmet',
+  property_list_reference_runner: 'requirement_unmet',
   request_signer: 'not_applicable',
   multi_agent: 'requirement_unmet',
 };
@@ -2077,6 +2097,12 @@ type PrecomputedRequirementVerdict =
  *     the topology this storyboard actually routes through.
  *     Spec: adcp-client#2281.
  */
+function propertyListReferenceNeedsMcp(options: StoryboardRunOptions): boolean {
+  return options.agents
+    ? Object.values(options.agents).some(agent => (agent.transport ?? options.protocol) === 'a2a')
+    : options.protocol === 'a2a';
+}
+
 async function checkRequires(
   requires: readonly string[],
   storyboard: Storyboard,
@@ -2160,6 +2186,16 @@ async function checkRequires(
       case 'real_wire':
         // Always available — reserved for a future --mock-only mode.
         break;
+      case 'property_list_reference_runner': {
+        if (propertyListReferenceNeedsMcp(options)) {
+          return {
+            requirement,
+            detail:
+              'Credential-isolated property-list references currently require MCP; A2A probe coverage is unavailable.',
+          };
+        }
+        break;
+      }
       case 'webhook_receiver': {
         if (options.webhook_receiver === undefined) {
           return {
@@ -5605,30 +5641,32 @@ export async function runStoryboardStep(
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardStepResult> {
   options = applyReusableProfileOptions(options);
-  return withMCPConnectionScope(
-    async () => {
-      storyboard = normalizeValidationOnlyTasks(storyboard);
-      validateStoryboardShape(storyboard);
-      options = applyStoryboardVersionOptions(storyboard, options);
-      options = applyFunctionalRequestSigning(options, {
-        ...(options.complianceDir && { complianceDir: options.complianceDir }),
-        ...(options.adcpVersion && { version: options.adcpVersion }),
-      });
-      // adcp#6735 — same declared-kit resolution as runStoryboard, so the
-      // printed fix_command path exercises the step with its real credential.
-      options = resolveDeclaredTestKit(storyboard, options);
-      options = applyNativeA2AComplianceTransportOptions(options);
-      const schemaRoot = getRunSchemaRoot(options);
-      const runBody = () =>
-        withServedReleaseSchemaRoots(options.servedReleaseSchemaRoots, () =>
-          runStoryboardStepBody(agentUrl, storyboard, stepId, options)
-        );
-      if (schemaRoot) {
-        return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, runBody);
-      }
-      return await runBody();
-    },
-    { isolate: !hasTestClientScope() }
+  return withPropertyListCredentialRedaction(() =>
+    withMCPConnectionScope(
+      async () => {
+        storyboard = normalizeValidationOnlyTasks(storyboard);
+        validateStoryboardShape(storyboard);
+        options = applyStoryboardVersionOptions(storyboard, options);
+        options = applyFunctionalRequestSigning(options, {
+          ...(options.complianceDir && { complianceDir: options.complianceDir }),
+          ...(options.adcpVersion && { version: options.adcpVersion }),
+        });
+        // adcp#6735 — same declared-kit resolution as runStoryboard, so the
+        // printed fix_command path exercises the step with its real credential.
+        options = resolveDeclaredTestKit(storyboard, options);
+        options = applyNativeA2AComplianceTransportOptions(options);
+        const schemaRoot = getRunSchemaRoot(options);
+        const runBody = () =>
+          withServedReleaseSchemaRoots(options.servedReleaseSchemaRoots, () =>
+            runStoryboardStepBody(agentUrl, storyboard, stepId, options)
+          );
+        if (schemaRoot) {
+          return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, runBody);
+        }
+        return await runBody();
+      },
+      { isolate: !hasTestClientScope() }
+    )
   );
 }
 
@@ -5639,6 +5677,34 @@ async function runStoryboardStepBody(
   options: StoryboardRunOptions
 ): Promise<StoryboardStepResult> {
   validateTestKit(options.test_kit);
+  if (
+    storyboard.requires?.[0] === 'property_list_reference_runner' &&
+    storyboardCapabilityPredicates(storyboard).length === 0 &&
+    propertyListReferenceNeedsMcp(options)
+  ) {
+    const found = flattenSteps(storyboard).find(entry => entry.step.id === stepId);
+    if (!found) throw new Error(`Step "${stepId}" not found in storyboard "${storyboard.id}".`);
+    return {
+      storyboard_id: storyboard.id,
+      step_id: stepId,
+      phase_id: found.phaseId,
+      title: found.step.title,
+      task: found.step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: 'requirement_unmet',
+      skip: {
+        reason: 'requirement_unmet',
+        requirement: 'property_list_reference_runner',
+        detail:
+          'Credential-isolated property-list references currently require MCP; A2A probe coverage is unavailable.',
+      },
+      duration_ms: 0,
+      validations: [],
+      context: { ...storyboard.context, ...options.context },
+      extraction: { path: 'none' },
+    };
+  }
   const clientResolution = getOrCreateClientResolution(agentUrl, options);
   const client = clientResolution.client;
 
@@ -7005,6 +7071,10 @@ async function executeStep(
   }
 
   const effectiveRequestUrl = requestUrl ?? runState.agentUrl;
+  rememberPropertyListCredentials(
+    taskResult?.data ?? (caughtError instanceof ResponseSchemaValidationError ? caughtError.data : undefined),
+    (step.validations ?? []).flatMap(validation => (validation.auth_token_path ? [validation.auth_token_path] : []))
+  );
   const requestRecord: RunnerRequestRecord = {
     transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
     operation: effectiveStep.task,
@@ -7270,6 +7340,10 @@ async function executeStep(
           av => injectContext({ __v: av }, context, runState.runnerVars).__v
         );
       }
+      if (resolved.denied_list_id !== undefined) {
+        resolved.denied_list_id = injectContext({ value: resolved.denied_list_id }, context, runState.runnerVars)
+          .value as string;
+      }
       return resolved;
     });
     // Pre-fetch upstream_traffic data: any `check: upstream_traffic`
@@ -7326,7 +7400,35 @@ async function executeStep(
         };
       })(),
     };
-    validations = runValidations(resolvedValidations, vctx);
+    validations = runValidations(
+      resolvedValidations.filter(validation => validation.check !== 'property_list_reference'),
+      vctx
+    );
+    for (const validation of resolvedValidations.filter(validation => validation.check === 'property_list_reference')) {
+      const result =
+        effectiveStep.task !== 'create_property_list' || !validationTaskResult?.success
+          ? {
+              check: validation.check,
+              passed: false,
+              description: validation.description,
+              error: 'property_list_reference requires a successful create_property_list response.',
+            }
+          : options.protocol === 'a2a'
+            ? {
+                check: validation.check,
+                passed: false,
+                description: validation.description,
+                error: 'Credential-isolated reference resolution requires MCP.',
+              }
+            : await verifyPropertyListReference(validation, validationTaskResult.data, {
+                agentUrl: client.getDiscoveredMcpEndpoint?.() ?? runState.agentUrl,
+                version: options.adcpVersion ?? options._serverAdcpVersion,
+                signal: options.signal,
+                allowHttp: options.allow_http,
+                redactValues: runCredentialValues(options),
+              });
+      validations.push(decorateValidationResult(result, vctx, validation));
+    }
 
     // Parallel-dispatch aggregation: per-response checks (`response_schema`,
     // `field_present`, `error_code`, etc.) declared by the storyboard MUST

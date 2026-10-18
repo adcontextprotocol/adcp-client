@@ -281,6 +281,13 @@ export function decorateValidationResult(
 
 function runValidation(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
   switch (validation.check) {
+    case 'property_list_reference':
+      return {
+        check: validation.check,
+        passed: false,
+        description: validation.description,
+        error: 'property_list_reference requires the asynchronous, credential-isolated storyboard runner.',
+      };
     case 'response_schema':
       return requireTaskResult(ctx, validation, tr => validateResponseSchema(validation, ctx, tr));
     case 'field_present':

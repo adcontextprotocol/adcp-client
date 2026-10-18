@@ -1134,6 +1134,7 @@ export type StoryboardValidationCheck =
    * adcp-client#2060.
    */
   | 'canonical_format_satisfaction'
+  | 'property_list_reference'
   /**
    * Assert the cardinality of the array at `path`. Two configurations are
    * supported: exact-count via `value: N` (passes only when the resolved
@@ -1324,6 +1325,20 @@ export interface RefsResolveScope {
 }
 
 export interface StoryboardValidation {
+  /** Managing endpoint; $agent_url uses the issuer's discovered MCP endpoint (adcp#8289). */
+  agent_url?: string;
+  /** Creation-response path to the issued list ID. Defaults to list.list_id. */
+  list_id_path?: string;
+  /** Creation-response path to the read-only credential. Defaults to auth_token. */
+  auth_token_path?: string;
+  /** Existing owner-created control list; accepts a resolved $context.<key>. */
+  denied_list_id?: string;
+  /** Maximum identifiers requested per page, 1 through 10000. Required by the probe. */
+  page_size?: number;
+  /** Maximum pages to traverse, 1 through 100. Required by the probe. */
+  max_pages?: number;
+  /** Exact unordered snapshot, compared by (type, value). Required by the probe. */
+  expected_identifiers?: Array<{ type: string; value: string }>;
   /** Stable authored validation identifier echoed into runner results when present. */
   id?: string;
   /** Known validation kind, or a future string graded not_applicable by older runners. */
@@ -2408,6 +2423,7 @@ export type RequirementName =
   | 'webhook_replay_receiver'
   | 'trusted_match_context_router_runner'
   | 'trusted_match_publisher_auth_runner'
+  | 'property_list_reference_runner'
   | 'request_signer'
   | 'multi_agent';
 
@@ -2426,6 +2442,7 @@ export const KNOWN_REQUIREMENTS: ReadonlySet<RequirementName> = new Set([
   'webhook_replay_receiver',
   'trusted_match_context_router_runner',
   'trusted_match_publisher_auth_runner',
+  'property_list_reference_runner',
   'request_signer',
   'multi_agent',
 ] as const satisfies readonly RequirementName[]);
