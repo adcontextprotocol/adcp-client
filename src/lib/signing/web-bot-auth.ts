@@ -665,8 +665,9 @@ export async function verifyWebBotAuth(
     const member = agents.get(label);
     if (!member) denied('agent_not_covered');
     // A member of another type is ignored (WBA §5.2.1), leaving none to resolve.
+    // `type` is a Token; the String form is read the same way, as Cloudflare's reference reads it.
     const type = member[1].get('type');
-    if (type !== undefined && type !== 'directory') denied('agent_type');
+    if (type !== undefined && String(type) !== 'directory') denied('agent_type');
     // Checked in step 1: every Signature-Agent member is an sf-string.
     const origin = receivedAgentOrigin(member[0] as string);
 

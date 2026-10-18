@@ -141,6 +141,22 @@ test('Signature-Agent: the member is exactly the canonical https origin string, 
     );
     assert.deepEqual(fetched, [], value);
   }
+  // type is a Token (WBA -00 section 5.2.1), and Cloudflare's reference also takes
+  // the String: directory is accepted either way, and any other type is ignored,
+  // which leaves no member to resolve.
+  for (const type of ['directory', '"directory"']) {
+    const typed = await rawSign(key, { agent: `sig1="${ORIGIN}";type=${type}` });
+    assert.equal((await wba.verifyWebBotAuth(typed, await verifierOptions([key])))[0].origin, ORIGIN, type);
+  }
+  for (const type of ['jwks_uri', 'cimd', '"jwks_uri"'])
+    await assert.rejects(
+      wba.verifyWebBotAuth(
+        await rawSign(key, { agent: `sig1="${ORIGIN}";type=${type}` }),
+        await verifierOptions([key])
+      ),
+      rejectedWith(403, 'agent_type'),
+      type
+    );
   // Rule 4: the covered member must be the one keyed to the signature's label (R19).
   await assert.rejects(
     wba.verifyWebBotAuth(await rawSign(key, { agentKey: 'agent1' }), await verifierOptions([key])),
