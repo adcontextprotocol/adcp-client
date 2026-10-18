@@ -862,6 +862,9 @@ export async function verifyKeyDirectory(
     let expires = Infinity;
     for (const raw of document.keys) {
       if (!raw || typeof raw !== 'object') denied('directory_key');
+      // Published private material is a leak whatever the key type, so it
+      // refuses the directory before an unusable key is skipped.
+      if (raw.d !== undefined || Object.keys(raw).some(k => k.startsWith('_private'))) denied('directory_key');
       // A key the profile cannot use is ignored, and so is any signature it
       // made (RFC 7517 section 5): a WBA directory may list keys of other
       // registered algorithms (WBA section 5.5.1). Every usable key signs.
@@ -872,8 +875,6 @@ export async function verifyKeyDirectory(
       if (
         key.kid !== thumbprint ||
         kids.has(key.kid) ||
-        key.d !== undefined ||
-        Object.keys(key).some(k => k.startsWith('_private')) ||
         key.adcp_use !== undefined ||
         (!testKeysAllowed(options.allowTestKeys) && TEST_KIDS.has(key.kid))
       )

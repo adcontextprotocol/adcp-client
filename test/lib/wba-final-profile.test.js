@@ -335,11 +335,12 @@ test('replay state is keyed on the nonce bytes, not their encoding', async () =>
 /**
  * A key directory that publishes `published` (private JWKs, served public) and
  * carries one WBA Appendix B.1 signature per key in `signers`, so a test can
- * add keys the SDK would never publish or sign with.
+ * add keys the SDK would never publish or sign with. Keys in `leaked` are
+ * served with their private members.
  */
-async function directoryResponse(published, signers) {
+async function directoryResponse(published, signers, { leaked = [] } = {}) {
   const publicJwk = ({ d, p, q, dp, dq, qi, ...rest }) => rest;
-  const body = JSON.stringify({ keys: published.map(publicJwk) });
+  const body = JSON.stringify({ keys: published.map(key => (leaked.includes(key) ? key : publicJwk(key))) });
   const url = ORIGIN + wba.SIGNATURE_DIRECTORY_PATH;
   const headers = {
     'content-type': wba.SIGNATURE_DIRECTORY_MEDIA_TYPE,
@@ -418,6 +419,25 @@ test('directories: keys the profile cannot use are ignored with their signatures
     now: () => T,
   };
   assert.equal((await wba.verifyWebBotAuth(await rawSign(key), options))[0].keyid, key.kid);
+});
+
+test('directories: a key that carries private material is refused, whether or not the profile can use it', async () => {
+  const key = newKey();
+  const ec = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ format: 'jwk' });
+  const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'jwk' });
+  // A published private key is a leak, so the directory is refused rather than
+  // the key ignored, signed or not.
+  for (const [name, published, signers] of [
+    ['Ed25519', [key], [key]],
+    ['P-256', [key, ec], [key]],
+    ['P-256, signed', [key, ec], [key, ec]],
+    ['RSA', [key, rsa], [key]],
+  ])
+    await assert.rejects(
+      wba.verifyKeyDirectory(await directoryResponse(published, signers, { leaked: [published.at(-1)] }), T),
+      e => e.status === 403 && e.reason === 'directory_key',
+      name
+    );
 });
 
 test('directories: only the WBA directory media type is accepted (WBA section 5.5.1)', async () => {
