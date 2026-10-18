@@ -52,8 +52,11 @@ export const SIGNATURE_DIRECTORY_MEDIA_TYPE = 'application/http-message-signatur
 export const WEB_BOT_AUTH_ALGORITHMS = Object.freeze(['ed25519'] as const);
 type WebBotAuthAlg = (typeof WEB_BOT_AUTH_ALGORITHMS)[number];
 const DIRECTORY_TAG = 'http-message-signatures-directory';
-/** JWK private members (RFC 7518 sections 6.2.2, 6.3.2 and 6.4.1; RFC 8037 section 2); a published one is a leak. */
-const PRIVATE_JWK_MEMBERS = ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'] as const;
+/**
+ * JWK private members (RFC 7518 sections 6.2.2, 6.3.2 and 6.4.1; RFC 8037 section 2),
+ * lowercase; a published one is a leak. Matched case-insensitively, as the Go and Python SDKs match them.
+ */
+const PRIVATE_JWK_MEMBERS: ReadonlySet<string> = new Set(['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k']);
 /** Request and directory signatures are verified with this much clock skew. */
 const CLOCK_SKEW_SECONDS = 60;
 /** `expires` is at most this many seconds after `created`. */
@@ -866,7 +869,7 @@ export async function verifyKeyDirectory(
       if (!raw || typeof raw !== 'object') denied('directory_key');
       // Published private material is a leak whatever the key type, so it
       // refuses the directory before an unusable key is skipped.
-      if (PRIVATE_JWK_MEMBERS.some(member => member in raw) || Object.keys(raw).some(k => k.startsWith('_private')))
+      if (Object.keys(raw).some(k => PRIVATE_JWK_MEMBERS.has(k.toLowerCase()) || k.startsWith('_private')))
         denied('directory_key');
       // A key the profile cannot use is ignored, and so is any signature it
       // made (RFC 7517 section 5): a WBA directory may list keys of other

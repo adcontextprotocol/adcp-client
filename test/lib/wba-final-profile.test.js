@@ -441,6 +441,11 @@ test('directories: a key that carries private material is refused, whether or no
     ]),
     ['RSA oth only', [key, { ...rsaPublic, oth: [{ r: rsa.p, d: rsa.dp, t: rsa.qi }] }], [key]],
     ['oct k', [key, { kty: 'oct', k: 'c2VjcmV0' }], [key]],
+    // Member names are matched case-insensitively, as the Go and Python SDKs match them.
+    ['Ed25519 D', [(({ d, ...rest }) => ({ ...rest, D: d }))(key)], [key]],
+    ['P-256 D', [key, (({ d, ...rest }) => ({ ...rest, D: d }))(ec)], [key]],
+    ['RSA P only', [key, { ...rsaPublic, P: rsa.p }], [key]],
+    ['oct K', [key, { kty: 'oct', K: 'c2VjcmV0' }], [key]],
   ])
     await assert.rejects(
       wba.verifyKeyDirectory(await directoryResponse(published, signers, { leaked: [published.at(-1)] }), T),
