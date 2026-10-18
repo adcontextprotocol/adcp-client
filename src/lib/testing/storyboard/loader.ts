@@ -114,6 +114,16 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
           throw new Error(`[${storyboard.id}] phase '${phase.id}' step '${step.id}': missing task and validations`);
         }
       }
+      if (step.validations?.some(validation => validation.check === 'property_list_reference')) {
+        if (storyboard.requires?.[0] !== 'property_list_reference_runner')
+          throw new Error(
+            `[${storyboard.id}] ${step.id}: property_list_reference requires property_list_reference_runner as the first storyboard requirement.`
+          );
+        if (step.parallel_dispatch)
+          throw new Error(
+            `[${storyboard.id}] ${step.id}: property_list_reference requires one issued reference, without parallel_dispatch.`
+          );
+      }
       resolveContributesShorthand(storyboard.id, phase, step);
       validateFixtureForMutatingStep(storyboard.id, phase, step);
       validateOmitFlagCoherence(storyboard.id, phase, step);

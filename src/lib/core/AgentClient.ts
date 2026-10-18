@@ -2015,6 +2015,11 @@ export class AgentClient {
     return this.client.getProtocol();
   }
 
+  /** Resolved MCP endpoint already used by this client; never performs discovery. */
+  getDiscoveredMcpEndpoint(): string | undefined {
+    return this.client.getDiscoveredMcpEndpoint();
+  }
+
   /**
    * Get the canonical base URL for this agent
    *
