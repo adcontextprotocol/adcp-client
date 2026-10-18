@@ -99,7 +99,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // current main base measures 20,365,246 bytes packed and 111,595,107 unpacked
 // across 6,556 files. Preserve about 40 KB of compressor margin. The previous
 // corpora are replaced; no duplicate compliance roots or archives are packaged.
-const MAX_PACKED_TARBALL_BYTES = 20_410_000;
+// The property-list reference probe adds one internal dual-format runtime/
+// declaration module set (+4 files) and expands runner evidence handling.
+// The measured tarball is 20,422,982 bytes; allow about 27 KB for compressor
+// variance. Unpacked, schema, and declaration byte budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_450_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -259,7 +263,8 @@ const MAX_PACKED_FILE_COUNT =
   96 - // 24 storage modules (96 files) now ship in @adcp/reporting-storage.
   1 + // The integrated reporting-service example README now ships with @adcp/reporting-storage.
   2 + // The maintained bundle replacement adds the hosted-grader kit and compact macro-bearing URL schema.
-  13; // Property-list identifier, server, and certification modules (three dual-format sets) and adoption guide.
+  13 + // Property-list identifier, server, and certification modules (three dual-format sets) and adoption guide.
+  4; // Property-list reference probe (one dual-format runtime/declaration module set).
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
