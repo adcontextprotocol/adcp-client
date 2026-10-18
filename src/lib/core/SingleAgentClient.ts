@@ -300,7 +300,6 @@ import {
   type ProductPropertyPolicyValidationResult,
 } from '../media-buy/property-policy';
 import { resolvePropertyList, type ResolveListOptions } from '../server/targeting-helpers';
-import { validatePublisherDomain } from '../identifiers';
 import {
   CreativeFormatCapabilityError,
   CreativeFormatProjectionError,
@@ -6531,6 +6530,7 @@ export class SingleAgentClient {
       ) {
         throw new ConfigurationError('Publisher lookup limits must be positive bounded integers');
       }
+      const { validatePublisherDomain } = await import('../identifiers');
       const catalogs: NonNullable<BuyerPropertyPolicy['publisherProperties']> &
         Record<string, readonly ProductPolicyResolvedProperty[] | undefined> = Object.assign(
         Object.create(null),

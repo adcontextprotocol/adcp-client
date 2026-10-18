@@ -55,7 +55,7 @@ function runColdProbe(moduleFormat) {
         ? ''
         : `
           const eagerFiles = Object.keys(require.cache);
-          for (const excluded of ['schemas.generated.js', 'response-schemas.js', 'tool-request-schemas.js', 'media-buy/compatibility.js']) {
+          for (const excluded of ['schemas.generated.js', 'response-schemas.js', 'tool-request-schemas.js', 'media-buy/compatibility.js', 'dist/lib/identifiers.js', 'dist/lib/registry/index.js']) {
             if (eagerFiles.some(file => file.endsWith(excluded))) throw new Error(excluded + ' loaded eagerly');
           }
         `
@@ -151,6 +151,8 @@ test('@adcp/sdk/client/core keeps heavy generated-schema surfaces out of its eag
     'utils/response-schemas.mjs',
     'utils/tool-request-schemas.mjs',
     'media-buy/compatibility.mjs',
+    'identifiers.mjs',
+    'registry/index.mjs',
   ]) {
     assert.ok(![...visited].some(file => file.endsWith(excluded)), `${excluded} must stay on demand`);
   }

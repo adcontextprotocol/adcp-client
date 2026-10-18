@@ -4,7 +4,6 @@ import {
   expandPublisherPropertySelector,
 } from '../discovery/publisher-property-selector';
 import { domain, records, strings } from './validation';
-import { RegistryClient } from '../registry';
 import { SupplyPathEvidenceSession } from './fetch-evidence';
 import {
   isUnqualifiedPropertySelector,
@@ -63,7 +62,8 @@ export async function verifySupplyPath(
 ): Promise<RegistrySupplyPathResult | AuthoritativeSupplyPathResult> {
   const normalized = validateSupplyPathRequest(request);
   if (options.source === 'registry') {
-    const result = await (options.registry ?? new RegistryClient()).verifySupplyPath(normalized);
+    const registry = options.registry ?? new (await import('../registry')).RegistryClient();
+    const result = await registry.verifySupplyPath(normalized);
     assertRegistrySupplyPathResult(result, normalized);
     return result;
   }
