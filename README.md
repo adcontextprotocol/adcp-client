@@ -808,6 +808,23 @@ Build a registry service that:
 
 Library provides discovery logic - you add persistence layer.
 
+### Property catalog registration and errors
+
+For bulk property catalog registration, use `RegistryClient.resolveIdentifiersAll()`
+in default `resolve` mode (requires an API key and provenance); use `mode: 'lookup'`
+for read-only resolution. It splits by count and request bytes, bounds concurrency,
+honors rate-limit retry delays, and returns per-input outcomes. `saveProperty()`
+updates hosted publisher configuration; `saveProperties()` fans out those updates
+and is intended for one configuration per publisher domain. Both validate
+`publisher_domain` before HTTP. See [the property-list guide](docs/guides/PROPERTY-LISTS.md)
+for identifier validators, mixed app/CTV matching, MCP list serving, signed change
+notifications, and certification.
+
+Registry HTTP errors use `RegistryRequestError` / `isRegistryRequestError` with
+`status`, `method`, `retryAfterMs`, and bounded untrusted `details`. Do not parse
+`error.message` for HTTP status or retry timing. Local identifier validation uses
+`IdentifierValidationError`; bulk resolve failures are available in each outcome.
+
 ### Brand relationship verification
 
 Use `RegistryClient.lookupBrand()` to resolve a domain and verify its relationship to a house. The public v3 registry does not expose an ordered-chain endpoint; v3 hierarchy is one level deep.

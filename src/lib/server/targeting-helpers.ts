@@ -137,6 +137,8 @@ const defaultResolveListCallTool: ResolveListCallTool = (agentUrl, toolName, arg
   callMCPTool(agentUrl, toolName, args, authToken, [], undefined, undefined, defaultResolveListFetch);
 
 export interface ResolveListOptions {
+  /** Require schema-valid property-list pages with identifiers when resolving. Used for certification. */
+  strictResponseValidation?: boolean;
   /** Maximum page size when calling get_property_list / get_collection_list. Defaults to 1000. */
   pageSize?: number;
   /** Maximum number of pages to walk before treating pagination as unsafe. Defaults to 100. */
@@ -169,7 +171,8 @@ export async function resolvePropertyList(
   const cache = cacheForOptions(options);
   const nowMs = nowMsForOptions(options);
   const cacheKey = resolvedListCacheKey('property', structurallyNormalizedRef, options);
-  const cached = cacheKey ? cache?.get<ResolvedPropertyList>(cacheKey, nowMs) : undefined;
+  const cached =
+    cacheKey && !options.strictResponseValidation ? cache?.get<ResolvedPropertyList>(cacheKey, nowMs) : undefined;
   if (cached) return cached;
 
   const normalizedRef = options.callTool
@@ -190,6 +193,7 @@ async function fetchResolvedPropertyList(
   let cacheValidUntil: string | undefined;
   let missingCacheValidUntil = false;
   let cursor: string | undefined;
+  const seenCursors = new Set<string>();
 
   for (let pageIndex = 0; pageIndex < maxPagesForOptions(options); pageIndex += 1) {
     const args = buildResolveListArgs(ref.list_id, pageSizeForOptions(options), cursor);
@@ -200,6 +204,43 @@ async function fetchResolvedPropertyList(
       throw new Error('property_list_invalid_response');
     }
     const response = raw as unknown as GetPropertyListResponse;
+    // Preserve legacy payloads that omit status. Explicit failures always reject;
+    // certification opts into the complete current schema below.
+    if (
+      (response.status !== undefined && response.status !== 'completed') ||
+      (raw.errors !== undefined &&
+        (!Array.isArray(raw.errors) ||
+          raw.errors.some(error => !error || typeof error !== 'object' || error.severity !== 'warning'))) ||
+      raw.adcp_error !== undefined ||
+      !Array.isArray(response.identifiers)
+    ) {
+      throw new Error('property_list_invalid_response');
+    }
+    if (options.strictResponseValidation) {
+      const { GetPropertyListResponseSchema } = await import('../types/schemas.generated');
+      if (
+        !GetPropertyListResponseSchema.safeParse(raw).success ||
+        response.status !== 'completed' ||
+        response.identifiers.length > pageSizeForOptions(options)
+      ) {
+        throw new Error('property_list_invalid_response');
+      }
+    }
+    if (
+      !response.list ||
+      response.list.list_id !== ref.list_id ||
+      (response.identifiers !== undefined &&
+        (!Array.isArray(response.identifiers) ||
+          response.identifiers.some(
+            identifier =>
+              !identifier ||
+              typeof identifier !== 'object' ||
+              typeof identifier.type !== 'string' ||
+              typeof identifier.value !== 'string'
+          )))
+    ) {
+      throw new Error('property_list_invalid_response');
+    }
     listId = response.list.list_id;
     identifiers.push(...(response.identifiers ?? []));
     if (typeof response.cache_valid_until === 'string') {
@@ -223,6 +264,8 @@ async function fetchResolvedPropertyList(
     if (!pagination.cursor) {
       throw new Error('property_list_invalid_pagination');
     }
+    if (seenCursors.has(pagination.cursor)) throw new Error('property_list_invalid_pagination');
+    seenCursors.add(pagination.cursor);
     cursor = pagination.cursor;
   }
 

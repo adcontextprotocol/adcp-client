@@ -1,4 +1,5 @@
 import { AgentClient } from '../core/AgentClient';
+import { runPropertyListConformance } from './property-lists';
 import type { AgentConfig } from '../types';
 import { parseAdcpMajorVersion } from '../version';
 import type {
@@ -164,6 +165,25 @@ export async function runConformance(
     uniformError.push(report);
   }
 
+  const propertyLists = options.propertyListReferences
+    ? await runPropertyListConformance(options.propertyListReferences)
+    : undefined;
+  for (const result of propertyLists?.results ?? []) {
+    if (result.ok) continue;
+    if (failures.length >= maxFailures) {
+      droppedFailures++;
+      continue;
+    }
+    failures.push({
+      tool: 'get_property_list',
+      seed,
+      shrunk: false,
+      input: { propertyListReferenceIndex: result.index },
+      response: null,
+      verdict: 'invalid',
+      invariantFailures: ['Buyer-issued property-list reference could not be resolved.'],
+    });
+  }
   const completedAt = new Date();
   return {
     agentUrl,
@@ -175,8 +195,9 @@ export async function runConformance(
     fixturesUsed: mergedFixtures,
     autoSeeded: !!options.autoSeed,
     seedWarnings,
-    totalRuns,
+    totalRuns: totalRuns + (propertyLists?.totalRuns ?? 0),
     totalFailures: failures.length + droppedFailures,
+    ...(propertyLists ? { propertyLists } : {}),
     droppedFailures,
     perTool,
     failures,

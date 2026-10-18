@@ -21,7 +21,7 @@
  * one-time fetch token sellers store in their secret manager; `delete_*`
  * revokes the token. Tokens are scoped per-seller for revocation.
  *
- * Status: Preview / 6.0.
+ * For standalone list-token reads, use registerPropertyListTool from @adcp/sdk/server.
  *
  * @public
  */
@@ -67,7 +67,7 @@ export type DeleteCollectionListPayload = ServerPayload<DeleteCollectionListResp
 
 export interface PropertyListsPlatform<TCtxMeta = Record<string, unknown>> {
   /**
-   * Create a property list. Returns a `fetch_token` the buyer stores in
+   * Create a property list. Returns an `auth_token` the buyer stores in
    * their secret manager. Token is scoped to this list_id; MUST NOT be
    * reused across lists.
    */
@@ -76,14 +76,14 @@ export interface PropertyListsPlatform<TCtxMeta = Record<string, unknown>> {
   /** Patch an existing property list. */
   updatePropertyList(req: UpdatePropertyListRequest, ctx: Ctx<TCtxMeta>): Promise<UpdatePropertyListPayload>;
 
-  /** Read a property list by id. Sellers call this with the fetch_token. */
+  /** Read a property list by id. Sellers call this with the auth_token. */
   getPropertyList(req: GetPropertyListRequest, ctx: Ctx<TCtxMeta>): Promise<GetPropertyListPayload>;
 
   /** Discover property lists the caller is authorized to read. */
   listPropertyLists(req: ListPropertyListsRequest, ctx: Ctx<TCtxMeta>): Promise<ListPropertyListsPayload>;
 
   /**
-   * Delete a property list. MUST revoke the fetch_token immediately and
+   * Delete a property list. MUST revoke the auth_token immediately and
    * signal cache invalidation to sellers (reduced cache_valid_until or
    * a list-changed webhook). Compromise-driven revocation MUST also
    * trigger this path.

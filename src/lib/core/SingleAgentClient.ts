@@ -290,7 +290,10 @@ import { getV25Adapter } from '../adapters/legacy/v2-5';
 import {
   ProductPropertyPolicyError,
   validateProductsAgainstPropertyPolicy,
+  isSupportedPropertyIdentifierType,
+  normalizeDomainForPropertyPolicy,
   type BuyerPropertyPolicy,
+  type ProductPolicyResolvedProperty,
   type ProductPolicyProductLike,
   type ProductPropertyPolicyDiagnostic,
   type ProductPropertyPolicyMode,
@@ -1174,6 +1177,17 @@ type NormalizedWebhookPayload = {
 };
 
 export interface ClientProductPropertyPolicy extends BuyerPropertyPolicy {
+  /** Resolve a complete publisher catalog for app/CTV selector matching. Failures follow unknownSelectorBehavior. */
+  resolvePublisherProperties?: (
+    publisherDomain: string,
+    options?: { signal?: AbortSignal }
+  ) => Promise<readonly ProductPolicyResolvedProperty[] | undefined>;
+  /** Maximum distinct catalog lookups per response. Overflow follows unknownSelectorBehavior. Default: 100. */
+  maxPublisherLookups?: number;
+  /** Per-catalog timeout. The hook receives an abort signal. Default: 10 seconds. */
+  publisherLookupTimeoutMs?: number;
+  /** Total catalog-lookup budget per response. Unfinished lookups stay unknown. Default: 10 seconds. */
+  publisherLookupBudgetMs?: number;
   /**
    * Enforcement mode for completed `get_products` responses.
    *
@@ -1183,8 +1197,8 @@ export interface ClientProductPropertyPolicy extends BuyerPropertyPolicy {
    */
   mode?: ProductPropertyPolicyMode;
   /**
-   * When true, a `get_products` request carrying `property_list` is resolved
-   * and used as an allow-list for the returned products. Defaults to true.
+   * Resolve `filters.property_list` (AdCP 3.2) or deprecated `property_list`
+   * as an allow-list. Conflicting references fail closed. Defaults to true.
    */
   enforceRequestPropertyList?: boolean;
   /**
@@ -1870,7 +1884,14 @@ function productIdForPricingDiagnostics(product: unknown): string | undefined {
 }
 
 function propertyListReferenceFromRequest(params: Record<string, unknown>): PropertyListReference | undefined {
-  const value = params.property_list;
+  const filters = params.filters;
+  const nested =
+    filters &&
+    typeof filters === 'object' &&
+    !Array.isArray(filters) &&
+    Object.hasOwn(filters, 'property_list') &&
+    (filters as Record<string, unknown>).property_list !== undefined;
+  const value = nested ? (filters as Record<string, unknown>).property_list : params.property_list;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const ref = value as Partial<PropertyListReference>;
   if (typeof ref.agent_url !== 'string' || typeof ref.list_id !== 'string') return undefined;
@@ -1884,10 +1905,41 @@ function propertyListReferenceFromRequest(params: Record<string, unknown>): Prop
 function productPolicyRequestSnapshot(requestParams: Record<string, unknown>): Readonly<Record<string, unknown>> {
   const account = canonicalAccountRoutingSnapshot(requestParams.account);
   const propertyList = propertyListReferenceFromRequest(requestParams);
+  const referenceError = propertyListReferenceError(requestParams);
   return Object.freeze({
     ...(account ? { account } : {}),
     ...(propertyList ? { property_list: Object.freeze(propertyList) } : {}),
+    ...(referenceError ? { property_list_error: referenceError } : {}),
   });
+}
+
+function propertyListReferenceError(params: Record<string, unknown>): string | undefined {
+  if (typeof params.property_list_error === 'string') return params.property_list_error;
+  const filters = params.filters;
+  if (params.property_list !== undefined && !propertyListReferenceFromRequest({ property_list: params.property_list }))
+    return 'property_list_invalid_reference';
+  if (
+    !filters ||
+    typeof filters !== 'object' ||
+    Array.isArray(filters) ||
+    !Object.hasOwn(filters, 'property_list') ||
+    (filters as Record<string, unknown>).property_list === undefined
+  )
+    return undefined;
+  const nested = propertyListReferenceFromRequest(params);
+  if (!nested) return 'property_list_invalid_reference';
+  if (params.property_list !== undefined) {
+    const legacy = propertyListReferenceFromRequest({ property_list: params.property_list });
+    if (
+      !legacy ||
+      nested.agent_url !== legacy.agent_url ||
+      nested.list_id !== legacy.list_id ||
+      nested.auth_token !== legacy.auth_token
+    ) {
+      return 'property_list_conflicting_references';
+    }
+  }
+  return undefined;
 }
 
 function hasProductPropertyPolicyRules(policy: BuyerPropertyPolicy): boolean {
@@ -1903,19 +1955,11 @@ function hasProductPropertyPolicyRules(policy: BuyerPropertyPolicy): boolean {
   );
 }
 
-function comparablePropertyIdentifiers(
-  identifiers: readonly { type: string; value: string }[]
-): Array<{ type: string; value: string }> {
-  return identifiers
-    .filter(identifier => identifier.type === 'domain' || identifier.type === 'subdomain')
-    .map(identifier => ({ type: identifier.type, value: identifier.value }));
-}
-
 function unsupportedPropertyIdentifiers(
   identifiers: readonly { type: string; value: string }[]
 ): Array<{ type: string }> {
   return identifiers
-    .filter(identifier => identifier.type !== 'domain' && identifier.type !== 'subdomain')
+    .filter(identifier => !isSupportedPropertyIdentifierType(identifier.type))
     .map(identifier => ({ type: identifier.type }));
 }
 
@@ -2688,8 +2732,19 @@ export class SingleAgentClient {
 
   private assertDurablePropertyListCredentialSupported(taskType: string, requestParams: Record<string, unknown>): void {
     if (!this.config.deferredStorage || taskType !== 'get_products') return;
-    const propertyList = propertyListReferenceFromRequest(requestParams);
-    if (!propertyList?.auth_token) return;
+    // Inspect both raw locations: selection precedence and malformed references must
+    // never hide a credential that would still be serialized in the original request.
+    const filters = requestParams.filters;
+    const references = [
+      requestParams.property_list,
+      filters && typeof filters === 'object' ? (filters as Record<string, unknown>).property_list : undefined,
+    ];
+    const hasCredential = references.some(reference => {
+      if (!reference || typeof reference !== 'object') return false;
+      const token = (reference as Record<string, unknown>).auth_token;
+      return token !== undefined && token !== null && token !== '';
+    });
+    if (!hasCredential) return;
     const policyConfig = this.config.validation?.productPropertyPolicy;
     if (policyConfig === false || policyConfig?.enforceRequestPropertyList === false) return;
     throw new ConfigurationError(
@@ -6383,6 +6438,10 @@ export class SingleAgentClient {
       message = 'Property list not adhered to',
       enforceRequestPropertyList = true,
       propertyListResolveOptions,
+      resolvePublisherProperties,
+      maxPublisherLookups = 100,
+      publisherLookupTimeoutMs = 10_000,
+      publisherLookupBudgetMs = 10_000,
       ...explicitPolicy
     } = policyConfig || {};
     const policy: BuyerPropertyPolicy = {
@@ -6394,37 +6453,37 @@ export class SingleAgentClient {
           listId: string;
           agentUrl: string;
           identifierCount: number;
+          unsupportedIdentifierTypes: string[];
           cacheValidUntil?: string;
         }
       | undefined;
 
-    if (requestPropertyList && enforceRequestPropertyList) {
+    const referenceError = propertyListReferenceError(requestParams);
+    if ((requestPropertyList || referenceError) && enforceRequestPropertyList) {
       try {
-        const resolved = await resolvePropertyList(requestPropertyList, propertyListResolveOptions);
-        const comparableIdentifiers = comparablePropertyIdentifiers(resolved.identifiers);
+        if (referenceError) throw new Error(referenceError);
+        const resolved = await resolvePropertyList(requestPropertyList!, propertyListResolveOptions);
         const unsupportedIdentifiers = unsupportedPropertyIdentifiers(resolved.identifiers);
-        if (unsupportedIdentifiers.length > 0) {
-          throw new Error('property_list_unsupported_identifier_types');
-        }
-        if (comparableIdentifiers.length > 0 || resolved.identifiers.length === 0) {
-          policy.allowedPropertyIdentifiers = [...(policy.allowedPropertyIdentifiers ?? []), ...comparableIdentifiers];
-          policy.requireAllowedPropertyMatch = true;
-        }
+        policy.allowedPropertyIdentifiers = [...(policy.allowedPropertyIdentifiers ?? []), ...resolved.identifiers];
+        policy.requireAllowedPropertyMatch = true;
         policy.strict = policy.strict ?? true;
         resolvedRequestPropertyList = {
           listId: resolved.listId,
           agentUrl: resolved.agentUrl,
           identifierCount: resolved.identifiers.length,
+          unsupportedIdentifierTypes: [...new Set(unsupportedIdentifiers.map(identifier => identifier.type))],
           ...(resolved.cacheValidUntil ? { cacheValidUntil: resolved.cacheValidUntil } : {}),
         };
       } catch (err) {
         const errorCode = propertyListResolutionErrorCode(err);
-        const diagnosticAgentUrl = sanitizeDiagnosticUrl(requestPropertyList.agent_url);
+        const diagnosticAgentUrl = requestPropertyList
+          ? sanitizeDiagnosticUrl(requestPropertyList.agent_url)
+          : 'invalid_url';
         return attachMatch({
           success: false as const,
           status: 'failed' as const,
           data: response as unknown as T,
-          error: `${message}: could not resolve property_list ${requestPropertyList.list_id}`,
+          error: `${message}: could not resolve property_list`,
           metadata: {
             ...result.metadata,
             status: 'failed',
@@ -6437,7 +6496,7 @@ export class SingleAgentClient {
               message,
               diagnostics: [],
               request_property_list: {
-                list_id: requestPropertyList.list_id,
+                list_id: requestPropertyList?.list_id ?? 'invalid_reference',
                 agent_url: diagnosticAgentUrl,
                 resolution_error: errorCode,
               },
@@ -6452,7 +6511,7 @@ export class SingleAgentClient {
               mode,
               ok: false,
               request_property_list: {
-                list_id: requestPropertyList.list_id,
+                list_id: requestPropertyList?.list_id,
                 agent_url: diagnosticAgentUrl,
                 resolution_error: errorCode,
               },
@@ -6463,6 +6522,84 @@ export class SingleAgentClient {
     }
 
     if (!hasProductPropertyPolicyRules(policy)) return result;
+
+    if (
+      resolvePublisherProperties &&
+      policy.allowedPropertyIdentifiers?.some(
+        identifier => identifier.type !== 'domain' && identifier.type !== 'subdomain'
+      )
+    ) {
+      if (
+        !Number.isSafeInteger(maxPublisherLookups) ||
+        maxPublisherLookups < 1 ||
+        !Number.isSafeInteger(publisherLookupTimeoutMs) ||
+        publisherLookupTimeoutMs < 1 ||
+        publisherLookupTimeoutMs > 2_147_483_647 ||
+        !Number.isSafeInteger(publisherLookupBudgetMs) ||
+        publisherLookupBudgetMs < 1 ||
+        publisherLookupBudgetMs > 2_147_483_647
+      ) {
+        throw new ConfigurationError('Publisher lookup limits must be positive bounded integers');
+      }
+      const { validatePublisherDomain } = await import('../identifiers');
+      const catalogs: NonNullable<BuyerPropertyPolicy['publisherProperties']> &
+        Record<string, readonly ProductPolicyResolvedProperty[] | undefined> = Object.assign(
+        Object.create(null),
+        policy.publisherProperties
+      );
+      const domains = new Set(
+        response.products.flatMap(product =>
+          Array.isArray(product.publisher_properties)
+            ? product.publisher_properties.flatMap(selector =>
+                selector && typeof selector === 'object' && 'publisher_domain' in selector
+                  ? [selector.publisher_domain]
+                  : []
+              )
+            : []
+        )
+      );
+      const hosts = [
+        ...new Set(
+          [...domains].flatMap(domain =>
+            typeof domain === 'string' ? [normalizeDomainForPropertyPolicy(domain)?.host] : []
+          )
+        ),
+      ].filter((host): host is string => typeof host === 'string' && !Object.hasOwn(catalogs, host));
+      for (const host of hosts) catalogs[host] = undefined;
+      const lookupStartedAt = performance.now();
+      // Bound seller-driven fan-out; omitted/failed catalogs stay explicitly unknown.
+      for (const host of hosts.slice(0, maxPublisherLookups)) {
+        throwIfAborted(taskSignal);
+        const remainingBudgetMs = publisherLookupBudgetMs - (performance.now() - lookupStartedAt);
+        if (remainingBudgetMs <= 0) break;
+        if (!validatePublisherDomain(host).ok || isLikelyPrivateUrl(`https://${host}`)) continue;
+        const controller = new AbortController();
+        const signal = taskSignal ? AbortSignal.any([taskSignal, controller.signal]) : controller.signal;
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        let budgetExpired = false;
+        try {
+          catalogs[host] = await Promise.race([
+            resolvePublisherProperties(host, { signal }),
+            new Promise<never>((_, reject) => {
+              timeout = setTimeout(
+                () => {
+                  if (remainingBudgetMs <= publisherLookupTimeoutMs) budgetExpired = true;
+                  controller.abort();
+                  reject(new Error('publisher_catalog_timeout'));
+                },
+                Math.min(publisherLookupTimeoutMs, remainingBudgetMs)
+              );
+            }),
+          ]);
+        } catch {
+          catalogs[host] = undefined;
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+        if (budgetExpired) break;
+      }
+      policy.publisherProperties = catalogs;
+    }
 
     let validation: ProductPropertyPolicyValidationResult<ProductPolicyProductLike>;
     try {
@@ -6489,6 +6626,7 @@ export class SingleAgentClient {
               list_id: resolvedRequestPropertyList.listId,
               agent_url: sanitizeDiagnosticUrl(resolvedRequestPropertyList.agentUrl),
               identifier_count: resolvedRequestPropertyList.identifierCount,
+              unsupported_identifier_types: resolvedRequestPropertyList.unsupportedIdentifierTypes,
               ...(resolvedRequestPropertyList.cacheValidUntil
                 ? { cache_valid_until: resolvedRequestPropertyList.cacheValidUntil }
                 : {}),
