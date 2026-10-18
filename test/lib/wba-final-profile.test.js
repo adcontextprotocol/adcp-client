@@ -207,6 +207,44 @@ test('one signature: only the web-bot-auth member is read; a second one, or a se
   );
 });
 
+test('one signature: member shapes are checked under every label, as Cloudflare http-message-sig checks them', async () => {
+  const key = newKey();
+  const signed = await rawSign(key);
+  const withOther = (input, signature) => ({
+    ...signed,
+    headers: {
+      ...signed.headers,
+      'signature-input': `${signed.headers['signature-input']}, ${input}`,
+      signature: `${signed.headers.signature}, ${signature}`,
+    },
+  });
+  // A well-formed member with another tag is not read.
+  const [signer] = await wba.verifyWebBotAuth(
+    withOther('cdn=("@method");tag="cdn-edge"', 'cdn=:AAAA:'),
+    await verifierOptions([key])
+  );
+  assert.equal(signer.label, 'sig1');
+  // A member of the wrong shape under another label is a field that does not
+  // parse: 400, as the reference's strict parser answers (MalformedField).
+  const options = await verifierOptions([key]);
+  for (const [input, signature, reason] of [
+    ['cdn=("@method");tag="cdn-edge"', 'cdn=token', 'signature'],
+    ['cdn=("@method");tag="cdn-edge"', 'cdn=(1 2)', 'signature'],
+    ['cdn=token;tag="cdn-edge"', 'cdn=:AAAA:', 'signature_input'],
+  ])
+    await assert.rejects(
+      wba.verifyWebBotAuth(withOther(input, signature), options),
+      rejectedWith(400, reason),
+      `${input}, ${signature}`
+    );
+  // The web-bot-auth member's own shape is checked too.
+  const notInnerList = signed.headers['signature-input'].replace(/^sig1=\([^)]*\)/, 'sig1=token');
+  await assert.rejects(
+    wba.verifyWebBotAuth({ ...signed, headers: { ...signed.headers, 'signature-input': notInnerList } }, options),
+    rejectedWith(400, 'signature_input')
+  );
+});
+
 test('replay: 429 with Accept-Signature carrying a fresh 64-byte nonce, never Retry-After', async () => {
   const key = newKey();
   const options = await verifierOptions([key]);
