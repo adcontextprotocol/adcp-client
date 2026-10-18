@@ -324,6 +324,23 @@ test('directories: keys the profile cannot use are ignored with their signatures
   assert.equal((await wba.verifyWebBotAuth(await rawSign(key), options))[0].keyid, key.kid);
 });
 
+test('directories: only the WBA directory media type is accepted (WBA section 5.5.1)', async () => {
+  const key = newKey();
+  const served = async contentType => {
+    const response = await directoryResponse([key], [key]);
+    return { ...response, headers: { ...response.headers, 'content-type': contentType } };
+  };
+  const accepted = [wba.SIGNATURE_DIRECTORY_MEDIA_TYPE, `${wba.SIGNATURE_DIRECTORY_MEDIA_TYPE}; charset=utf-8`];
+  for (const contentType of accepted)
+    assert.equal((await wba.verifyKeyDirectory(await served(contentType), T)).keys[0].kid, key.kid, contentType);
+  for (const contentType of ['application/json', 'application/jwk-set+json', 'text/plain'])
+    await assert.rejects(
+      wba.verifyKeyDirectory(await served(contentType), T),
+      e => e.status === 403 && e.reason === 'directory_response',
+      contentType
+    );
+});
+
 test('revocation lists are Ed25519 only', async () => {
   const ecPrivate = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ format: 'jwk' });
   await assert.rejects(
