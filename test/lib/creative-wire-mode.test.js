@@ -7,6 +7,7 @@ const {
   CreativeFormatProjectionError,
   parseCapabilitiesResponse,
   packageRefsForFormatOptions,
+  toCanonicalOnlyProduct,
 } = require('../../dist/lib/index.js');
 const {
   projectSyncCreativesForDelivery,
@@ -269,4 +270,200 @@ describe('public creative wire mode resolution', () => {
       assert.deepEqual(captured, projected);
     });
   }
+});
+
+describe('request-local 3.1 product creative wire evidence (#3312)', () => {
+  const option = { format_option_id: 'mrec', format_kind: 'image', params: { width: 300, height: 250 } };
+  const creative = {
+    creative_id: 'c1',
+    name: 'Image',
+    format_kind: 'image',
+    format_option_ref: { scope: 'product', format_option_id: 'mrec' },
+    assets: { image: { asset_type: 'image', url: 'https://cdn.example/ad.png', width: 300, height: 250 } },
+  };
+  const baseContainer = { package_id: 'pkg-1', format_options: [option] };
+  const request = { account: { account_id: 'account-1' }, idempotency_key: 'product-wire-001', creatives: [creative] };
+
+  for (const Client of [SingleAgentClient, AgentClient]) {
+    test(`${Client.name} uses seller-authored options without requiring legacy references`, async () => {
+      const client = new Client(AGENT, { wireAdcpVersion: '3.1' });
+      prime(client, { adcp: { major_versions: [3], supported_versions: ['3.1'] } });
+      const single = client instanceof SingleAgentClient ? client : client.client;
+      const sent = [];
+      single.executeAndHandle = async (_task, _handler, params) => {
+        sent.push(params);
+        return { success: true, status: 'completed', data: {} };
+      };
+      await client.syncCreatives(request, undefined, {
+        creativeFormatProjection: { selectorContainers: [baseContainer] },
+      });
+      assert.deepEqual(sent[0].creatives[0], creative);
+      const unpinned = structuredClone(request);
+      delete unpinned.creatives[0].format_option_ref;
+      await client.syncCreatives(unpinned, undefined, {
+        creativeFormatProjection: { selectorContainers: [baseContainer] },
+      });
+      assert.deepEqual(sent[1].creatives[0], unpinned.creatives[0]);
+      assert.equal(await client.resolveCreativeFormatWireMode('sync_creatives'), 'unknown');
+      await assert.rejects(client.syncCreatives(request), CreativeFormatProjectionError);
+      assert.equal(sent.length, 2, 'request evidence is never reused as a global capability');
+    });
+  }
+
+  const refusals = [
+    [
+      'unmatched option',
+      r => {
+        r.creatives[0].format_option_ref.format_option_id = 'missing';
+      },
+    ],
+    [
+      'conflicting kind',
+      r => {
+        r.creatives[0].format_kind = 'html5';
+      },
+    ],
+    [
+      'conflicting dimensions',
+      r => {
+        r.creatives[0].assets.image.width = 728;
+      },
+    ],
+    [
+      'missing dimensions',
+      r => {
+        r.creatives[0].assets = {};
+      },
+    ],
+    [
+      'uncovered batch member',
+      r => {
+        r.creatives.push({ ...structuredClone(creative), creative_id: 'c2', format_kind: 'html5' });
+      },
+    ],
+    [
+      'uncovered assignment',
+      r => {
+        r.assignments = [
+          { creative_id: 'c1', package_id: 'pkg-1' },
+          { creative_id: 'c1', package_id: 'pkg-2' },
+        ];
+      },
+    ],
+    [
+      'assignment to an unrelated package',
+      r => {
+        r.assignments = [{ creative_id: 'c1', package_id: 'pkg-2' }];
+      },
+    ],
+    [
+      'uncovered selected option',
+      (_r, c) => {
+        c.format_option_refs = [{ scope: 'product', format_option_id: 'missing' }];
+      },
+    ],
+    [
+      'experimental declaration',
+      (_r, c) => {
+        c.format_options[0].experimental = true;
+      },
+    ],
+    [
+      'missing required slot',
+      (_r, c) => {
+        c.format_options[0].params.slots = [{ asset_group_id: 'image_main', asset_type: 'image', required: true }];
+      },
+    ],
+    [
+      'slot count below declared minimum',
+      (_r, c) => {
+        c.format_options[0].params.slots = [{ asset_group_id: 'image', asset_type: 'image', min: 2 }];
+      },
+    ],
+    [
+      'slot count above declared maximum',
+      (r, c) => {
+        c.format_options[0].params.slots = [{ asset_group_id: 'image', asset_type: 'image', max: 1 }];
+        r.creatives[0].assets.image = [r.creatives[0].assets.image, structuredClone(r.creatives[0].assets.image)];
+      },
+    ],
+    [
+      'wrong slot asset type',
+      (_r, c) => {
+        c.format_options[0].params.slots = [{ asset_group_id: 'image', asset_type: 'video', required: true }];
+      },
+    ],
+  ];
+  for (const [name, change] of refusals) {
+    test(`does not infer canonical support for ${name}`, async () => {
+      const client = new SingleAgentClient(AGENT, { wireAdcpVersion: '3.1' });
+      prime(client, { adcp: { major_versions: [3], supported_versions: ['3.1'] } });
+      client.executeAndHandle = async () => assert.fail('incompatible product evidence must not dispatch');
+      const input = structuredClone(request);
+      const container = structuredClone(baseContainer);
+      change(input, container);
+      await assert.rejects(
+        client.syncCreatives(input, undefined, {
+          creativeFormatProjection: { selectorContainers: [container] },
+        }),
+        CreativeFormatProjectionError
+      );
+    });
+  }
+
+  for (const wireAdcpVersion of ['3.0', '3.1', '3.2']) {
+    test(`product options do not invent a negotiated release (${wireAdcpVersion} buyer)`, async () => {
+      const client = new SingleAgentClient(AGENT, { wireAdcpVersion });
+      prime(client, {});
+      client.executeAndHandle = async () => assert.fail('missing release evidence must not dispatch');
+      await assert.rejects(
+        client.syncCreatives(request, undefined, {
+          creativeFormatProjection: { selectorContainers: [baseContainer] },
+        }),
+        wireAdcpVersion === '3.2' ? CreativeFormatCapabilityError : CreativeFormatProjectionError
+      );
+    });
+  }
+
+  test('SDK-synthesized options retain legacy delivery, including selections', async () => {
+    const client = new SingleAgentClient(AGENT, { wireAdcpVersion: '3.1' });
+    prime(client, { adcp: { major_versions: [3], supported_versions: ['3.1'] } });
+    const formatId = { agent_url: 'https://creative.adcontextprotocol.org', id: 'display_300x250_image' };
+    const product = toCanonicalOnlyProduct({ product_id: 'legacy', format_ids: [formatId] }).product;
+    const optionId = product.format_options[0].format_option_id;
+    let captured;
+    client.executeAndHandle = async (_task, _handler, params) => {
+      captured = params;
+      return { success: true, status: 'completed', data: {} };
+    };
+    const input = structuredClone(request);
+    input.creatives[0].format_option_ref.format_option_id = optionId;
+    for (const container of [product, packageRefsForFormatOptions(product, [optionId])]) {
+      await client.syncCreatives(input, undefined, { creativeFormatProjection: { selectorContainers: [container] } });
+      assert.equal(captured.creatives[0].format_id.id, formatId.id);
+      assert.equal(captured.creatives[0].format_kind, undefined);
+    }
+  });
+
+  test('required slots and size ranges can establish support without an option pin', async () => {
+    const client = new SingleAgentClient(AGENT, { wireAdcpVersion: '3.1' });
+    prime(client, { adcp: { major_versions: [3], supported_versions: ['3.1'] } });
+    const container = structuredClone(baseContainer);
+    container.format_options[0].params = {
+      min_width: 300,
+      max_width: 400,
+      min_height: 200,
+      max_height: 300,
+      slots: [{ asset_group_id: 'image', asset_type: 'image', required: true, min: 1, max: 1 }],
+    };
+    const input = structuredClone(request);
+    delete input.creatives[0].format_option_ref;
+    let captured;
+    client.executeAndHandle = async (_task, _handler, params) => {
+      captured = params;
+      return { success: true, status: 'completed', data: {} };
+    };
+    await client.syncCreatives(input, undefined, { creativeFormatProjection: { selectorContainers: [container] } });
+    assert.deepEqual(captured.creatives[0], input.creatives[0]);
+  });
 });

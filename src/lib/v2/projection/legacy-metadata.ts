@@ -19,7 +19,7 @@ export type PackageSelectionMetadata = {
 
 const legacyRefsByDeclaration = new WeakMap<object, readonly V1FormatId[]>();
 const selectedOptionsByRefs = new WeakMap<object, readonly DeclarationWithMetadata[]>();
-const sellerDeclaredByDeclaration = new WeakMap<object, boolean>();
+const sellerDeclaredByDeclaration = new WeakMap<object, boolean | 'synthesized'>();
 
 /** Keep seller-origin evidence private while canonical products pass through the cache. */
 export function rememberSellerDeclaredFormatOption(declaration: object, declared: boolean): void {
@@ -27,7 +27,17 @@ export function rememberSellerDeclaredFormatOption(declaration: object, declared
 }
 
 export function sellerDeclaredFormatOption(declaration: object): boolean | undefined {
-  return sellerDeclaredByDeclaration.get(declaration);
+  const origin = sellerDeclaredByDeclaration.get(declaration);
+  return typeof origin === 'boolean' ? origin : undefined;
+}
+
+/** A pure legacy projection cannot establish what the original seller advertised. */
+export function rememberSynthesizedFormatOption(declaration: object): void {
+  sellerDeclaredByDeclaration.set(declaration, 'synthesized');
+}
+
+export function isSynthesizedFormatOption(declaration: object): boolean {
+  return sellerDeclaredByDeclaration.get(declaration) === 'synthesized';
 }
 
 export function concealLegacyFormatRefs(
