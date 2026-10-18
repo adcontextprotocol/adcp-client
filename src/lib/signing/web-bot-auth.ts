@@ -269,8 +269,14 @@ function inputs(headers: RequestLike['headers'], limit: number): ParsedSignature
     }
   });
 }
-/** Reject authority normalization differentials on received identifiers. */
+/**
+ * A received identity origin, which must be exactly the canonical https
+ * origin string (WBA §5.2.1): lowercase host, no default port, and no path,
+ * trailing `/`, query, fragment, or userinfo. The string is compared as
+ * received, never normalized first.
+ */
 export function receivedAgentOrigin(value: string): string {
+  if (!value.startsWith('https://')) return denied('agent_origin');
   try {
     canonicalAgentUrl(value);
     const origin = canonicalAgentOrigin(value);

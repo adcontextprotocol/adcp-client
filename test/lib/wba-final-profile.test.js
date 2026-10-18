@@ -39,7 +39,7 @@ function newKey() {
   jwk.kid = wba.jwkThumbprint(jwk);
   return jwk;
 }
-async function verifierOptions(keys, { origin = ORIGIN, replayStore = new InMemoryReplayStore() } = {}) {
+async function verifierOptions(keys, { origin = ORIGIN, replayStore = new InMemoryReplayStore(), fetched = [] } = {}) {
   const proof = await wba.createSignedSignatureDirectory(
     origin,
     keys.map(privateKey => ({ privateKey })),
@@ -49,10 +49,12 @@ async function verifierOptions(keys, { origin = ORIGIN, replayStore = new InMemo
     directory: new wba.SignatureDirectoryResolver({
       now: () => T,
       fetchOptions: {
-        trustedFetchFn: async url =>
-          new URL(url).origin === origin
+        trustedFetchFn: async url => {
+          fetched.push(url);
+          return new URL(url).origin === origin
             ? new Response(proof.body, { status: 200, headers: proof.headers })
-            : new Response('', { status: 404 }),
+            : new Response('', { status: 404 });
+        },
       },
     }),
     replayStore,
@@ -63,7 +65,10 @@ async function verifierOptions(keys, { origin = ORIGIN, replayStore = new InMemo
  * Sign with http-message-sig directly, so a test can produce what
  * signWebBotAuth refuses to: other parameters, labels or Signature-Agent members.
  */
-async function rawSign(key, { parameters = {}, label = 'sig1', agent = `sig1="${ORIGIN}"` } = {}) {
+async function rawSign(
+  key,
+  { parameters = {}, label = 'sig1', agentKey = label, agent = `${agentKey}="${ORIGIN}"` } = {}
+) {
   const headers = {
     'content-type': 'application/json',
     'content-digest': computeContentDigest(BODY, 'rfc8941-base64'),
@@ -84,7 +89,7 @@ async function rawSign(key, { parameters = {}, label = 'sig1', agent = `sig1="${
         '@authority',
         'content-type',
         'content-digest',
-        httpMessageSig.component('signature-agent', { key: label }),
+        httpMessageSig.component('signature-agent', { key: agentKey }),
       ],
       parameters: {
         created: T,
@@ -111,6 +116,36 @@ test('control: a hand-signed request with the profile parameters verifies', asyn
   const key = newKey();
   const [signer] = await wba.verifyWebBotAuth(await rawSign(key), await verifierOptions([key]));
   assert.equal(signer.origin, ORIGIN);
+});
+
+test('Signature-Agent: the member is exactly the canonical https origin string, refused before any fetch', async () => {
+  const key = newKey();
+  // Every value below names buyer.agency.com, so a verifier that normalized it
+  // first would fetch the directory the test serves.
+  for (const value of [
+    'http://buyer.agency.com',
+    `${ORIGIN}/`,
+    `${ORIGIN}/agents/a`,
+    `${ORIGIN}${wba.SIGNATURE_DIRECTORY_PATH}`,
+    `${ORIGIN}?v=1`,
+    `${ORIGIN}#keys`,
+    'https://user@buyer.agency.com',
+    'https://BUYER.agency.com',
+    'https://buyer.agency.com:443',
+  ]) {
+    const fetched = [];
+    await assert.rejects(
+      wba.verifyWebBotAuth(await rawSign(key, { agent: `sig1="${value}"` }), await verifierOptions([key], { fetched })),
+      rejectedWith(403, 'agent_origin'),
+      value
+    );
+    assert.deepEqual(fetched, [], value);
+  }
+  // Rule 4: the covered member must be the one keyed to the signature's label (R19).
+  await assert.rejects(
+    wba.verifyWebBotAuth(await rawSign(key, { agentKey: 'agent1' }), await verifierOptions([key])),
+    rejectedWith(403, 'agent_not_covered')
+  );
 });
 
 test('nonce: 64 bytes, unpadded Base64URL or canonical Base64; anything shorter or non-canonical is a 403', async () => {
