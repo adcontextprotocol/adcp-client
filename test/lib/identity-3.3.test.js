@@ -51,11 +51,15 @@ const vectorFiles = dir =>
     .readdirSync(path.join(fixtures, dir))
     .filter(name => name.endsWith('.json'))
     .map(name => `${dir}/${name.replace('.json', '')}`);
-test('every vendored WBA vector is graded or recorded as non-applicable', () => {
-  const graded = new Set([...vectorFiles('positive'), ...vectorFiles('negative')]);
-  const nonApplicable = new Set(PINNED.non_applicable.map(name => name.replace('.json', '')));
-  for (const name of ['positive', 'negative', 'governance'].flatMap(vectorFiles))
-    assert.ok(graded.has(name) !== nonApplicable.has(name), `${name} must be graded xor non-applicable`);
+test('every vendored WBA vector is graded, and governance/ is not vendored', () => {
+  // The positive and negative vectors are the graded set; every vendored directory must be one of them.
+  const directories = fs
+    .readdirSync(fixtures, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name);
+  assert.deepEqual(directories.sort(), ['negative', 'positive']);
+  assert.ok(vectorFiles('positive').length > 0 && vectorFiles('negative').length > 0);
+  assert.deepEqual(PINNED.excluded, ['governance/']);
   assert.equal(PINNED.sha, 'e24eeb090c4365707641099cbbb45f9945c6d6e0');
 });
 async function preloadReplay(v, replayStore) {
