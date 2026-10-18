@@ -145,6 +145,58 @@ describe('dual-emitted product format pairing (#3312)', () => {
     );
   });
 
+  for (const params of [
+    { min_width: 700 },
+    { max_width: 200 },
+    { min_height: 300 },
+    { max_height: 100 },
+    { sizes: [{ width: 300, height: 250 }], min_width: 700 },
+  ]) {
+    test(`refuses index pairing that contradicts dimension bounds ${JSON.stringify(params)}`, () => {
+      const selected = product();
+      selected.format_options[0].params = params;
+      assert.throws(() => projectCreativeForDelivery(creative(), selected, 'legacy'), CreativeFormatProjectionError);
+      assert.equal(toCanonicalOnlyProduct(selected).diagnostics.length, 2);
+    });
+  }
+
+  for (const range of [
+    [1000, 5000],
+    [60000, 90000],
+  ]) {
+    test(`refuses index pairing that contradicts duration range ${range}`, () => {
+      const selected = {
+        product_id: 'video',
+        format_ids: [{ agent_url: AGENT, id: 'custom_video', duration_ms: 30000 }],
+        format_options: [
+          { format_option_id: 'video', format_kind: 'video_hosted', params: { duration_ms_range: range } },
+        ],
+      };
+      assert.equal(toCanonicalOnlyProduct(selected).diagnostics.length, 1);
+    });
+  }
+
+  test('compatible bounds preserve pairing and exact duration takes precedence over range', () => {
+    const selected = product();
+    selected.format_options[0].params = { min_width: 300, max_width: 728, min_height: 90, max_height: 250 };
+    assert.deepEqual(projectCreativeForDelivery(creative(), selected, 'legacy').format_id, selected.format_ids[0]);
+    const video = {
+      product_id: 'video',
+      format_ids: [{ agent_url: AGENT, id: 'custom_video', duration_ms: 30000 }],
+      format_options: [
+        {
+          format_option_id: 'video',
+          format_kind: 'video_hosted',
+          params: { duration_ms_exact: 30000, duration_ms_range: [1000, 5000] },
+        },
+      ],
+    };
+    assert.equal(toCanonicalOnlyProduct(video).diagnostics.length, 0);
+    delete video.format_options[0].params.duration_ms_exact;
+    video.format_options[0].params.duration_ms_range = [15000, 60000];
+    assert.equal(toCanonicalOnlyProduct(video).diagnostics.length, 0);
+  });
+
   test('duplicate references linked to distinct options remain ambiguous without a pin', () => {
     const selected = product();
     selected.format_ids[1] = { ...selected.format_ids[0] };

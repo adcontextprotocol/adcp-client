@@ -809,6 +809,25 @@ function compatible(option: Record<string, unknown>, ref: V1FormatId): boolean {
   ) {
     return false;
   }
+  for (const dimension of ['width', 'height'] as const) {
+    const actual = constraints[dimension];
+    const min = params[`min_${dimension}`];
+    const max = params[`max_${dimension}`];
+    if (
+      typeof actual === 'number' &&
+      ((typeof min === 'number' && actual < min) || (typeof max === 'number' && actual > max))
+    )
+      return false;
+  }
+  const duration = constraints.duration_ms_exact;
+  if (
+    typeof duration === 'number' &&
+    typeof params.duration_ms_exact !== 'number' &&
+    Array.isArray(params.duration_ms_range)
+  ) {
+    const [min, max] = params.duration_ms_range;
+    if ((typeof min === 'number' && duration < min) || (typeof max === 'number' && duration > max)) return false;
+  }
   if (Array.isArray(params.sizes) && params.sizes.length > 0) {
     return params.sizes.some(value => {
       const size = record(value);
