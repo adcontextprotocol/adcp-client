@@ -303,6 +303,7 @@ import { resolvePropertyList, type ResolveListOptions } from '../server/targetin
 import {
   CreativeFormatCapabilityError,
   CreativeFormatProjectionError,
+  canUseProductOptionsForCreativeWire,
   projectMediaBuyCreativesForDelivery,
   projectCreativeForDelivery,
   projectSyncCreativesForDelivery,
@@ -341,6 +342,11 @@ import type { CanonicalFormatLegacyResolutionContext, CanonicalFormatLegacyResol
 import { toCanonicalOnlyResponse } from '../v2/projection/augment-response';
 import {
   legacyFormatRefsForDeclaration,
+  isSynthesizedFormatOption,
+  selectedFormatOptions,
+  rememberSellerFormatEvidence,
+  sellerFormatEvidence,
+  type SellerFormatEvidence,
   rememberSellerDeclaredFormatOption,
   sellerDeclaredFormatOption,
   structuredCloneWithLegacyCreativeMetadata,
@@ -553,6 +559,8 @@ type CanonicalLegacyRoute =
       productId: string;
       optionRef: CanonicalLegacyOptionRef;
       refs: readonly V1FormatId[];
+      /** Seller-authored declaration, retained for request-local 3.1 wire selection. */
+      declaration?: Readonly<Record<string, unknown>>;
       /** Present when the seller's own product did not declare this option. */
       undeclaredSelector?: UndeclaredFormatOptionSelector;
     }
@@ -562,6 +570,95 @@ type CanonicalLegacyRoute =
       packageId: string;
       refs: readonly V1FormatId[];
     };
+
+/** Match routing identity/slots and known dimensions; the seller still validates its full creative contract. */
+function creativeMatchesProductOption(
+  creative: Record<string, unknown>,
+  declaration: Readonly<Record<string, unknown>>
+): boolean {
+  const params = isPlainRecord(declaration.params) ? declaration.params : {};
+  const assets = isPlainRecord(creative.assets) ? creative.assets : {};
+  const slots = Array.isArray(params.slots) ? params.slots : [];
+  if (
+    !slots.every(slot => {
+      if (!isPlainRecord(slot) || typeof slot.asset_group_id !== 'string') return false;
+      const value = assets[slot.asset_group_id];
+      const entries = value === undefined ? [] : Array.isArray(value) ? value : [value];
+      const minimum = Math.max(typeof slot.min === 'number' ? slot.min : 0, slot.required === true ? 1 : 0);
+      if (entries.length < minimum || (typeof slot.max === 'number' && entries.length > slot.max)) return false;
+      return entries.every(
+        asset => isPlainRecord(asset) && (typeof slot.asset_type !== 'string' || asset.asset_type === slot.asset_type)
+      );
+    })
+  )
+    return false;
+  const formatParams = isPlainRecord(creative.format_parameters) ? creative.format_parameters : {};
+  const kind = String(creative.format_kind);
+  const mediaType = kind.startsWith('image')
+    ? 'image'
+    : kind.startsWith('video')
+      ? 'video'
+      : kind.startsWith('audio')
+        ? 'audio'
+        : kind === 'html5'
+          ? 'html'
+          : undefined;
+  const assetTypes =
+    mediaType === 'video'
+      ? ['video', 'vast']
+      : mediaType === 'audio'
+        ? ['audio', 'vast', 'daast']
+        : mediaType === 'html'
+          ? ['html', 'zip']
+          : mediaType
+            ? [mediaType]
+            : ['image', 'video', 'audio', 'html', 'zip', 'vast', 'daast'];
+  const requiredMediaSlots = slots.filter(
+    slot =>
+      isPlainRecord(slot) &&
+      (slot.required === true || (typeof slot.min === 'number' && slot.min > 0)) &&
+      assetTypes.includes(String(slot.asset_type))
+  );
+  const preferredGroups = mediaType ? [`${mediaType}_main`, mediaType, kind, ...assetTypes] : [];
+  const primaryGroup =
+    (requiredMediaSlots.length === 1 ? String(requiredMediaSlots[0].asset_group_id) : undefined) ??
+    preferredGroups.find(group => assets[group] !== undefined);
+  const sourceAssets = primaryGroup ? [assets[primaryGroup]] : Object.values(assets);
+  const dimensionalAssets = sourceAssets
+    .flatMap(value => (Array.isArray(value) ? value : [value]))
+    .filter(
+      (value): value is Record<string, unknown> => isPlainRecord(value) && assetTypes.includes(String(value.asset_type))
+    );
+  // Ambiguous multi-asset inputs must all agree; object key order never chooses a rendition.
+  return (dimensionalAssets.length > 0 ? dimensionalAssets : [{}]).every(asset => {
+    const actual = { ...asset, ...formatParams };
+    for (const key of ['width', 'height'] as const) {
+      if (typeof params[key] === 'number' && actual[key] !== params[key]) return false;
+      const min = params[`min_${key}`];
+      const max = params[`max_${key}`];
+      if (typeof min === 'number' && (typeof actual[key] !== 'number' || actual[key] < min)) return false;
+      if (typeof max === 'number' && (typeof actual[key] !== 'number' || actual[key] > max)) return false;
+    }
+    if (
+      Array.isArray(params.sizes) &&
+      !params.sizes.some(size => isPlainRecord(size) && size.width === actual.width && size.height === actual.height)
+    )
+      return false;
+    const duration = actual.duration_ms ?? actual.duration_ms_exact;
+    const exact = params.duration_ms_exact ?? params.duration_ms;
+    if (typeof exact === 'number' && duration !== exact) return false;
+    if (typeof exact !== 'number' && Array.isArray(params.duration_ms_range)) {
+      const [min, max] = params.duration_ms_range;
+      if (
+        typeof duration !== 'number' ||
+        (typeof min === 'number' && duration < min) ||
+        (typeof max === 'number' && duration > max)
+      )
+        return false;
+    }
+    return true;
+  });
+}
 
 interface CanonicalPackageRouteSelectorSnapshot {
   readonly package_id?: string;
@@ -2823,7 +2920,8 @@ export class SingleAgentClient {
   private rememberCanonicalProductRoutes(
     products: readonly unknown[],
     account: unknown,
-    authoritativeProducts?: readonly unknown[]
+    authoritativeProducts?: readonly unknown[],
+    evidence?: Omit<SellerFormatEvidence, 'productId'>
   ): void {
     this.invalidateCanonicalProductRoutes(authoritativeProducts ?? products, account);
     const accountScope = this.canonicalAccountScope(account);
@@ -2853,12 +2951,17 @@ export class SingleAgentClient {
           ? declaredOptions.get(product.product_id)?.some(declaredRef => this.sameCanonicalOptionRef(declaredRef, ref))
           : sellerDeclaredFormatOption(option);
         if (declared !== undefined) rememberSellerDeclaredFormatOption(option, declared);
+        if (declared === true && evidence)
+          rememberSellerFormatEvidence(option, { ...evidence, productId: product.product_id });
         this.rememberCanonicalLegacyRoute(this.canonicalLegacyRouteKey(account, product.product_id, ref), {
           kind: 'product',
           accountScope,
           productId: product.product_id,
           optionRef: ref,
           refs,
+          ...(declared === true && sellerFormatEvidence(option)
+            ? { declaration: structuredCloneWithLegacyCreativeMetadata(option) }
+            : {}),
           ...(declared === false ? { undeclaredSelector: undeclaredFormatOptionSelector(option) } : {}),
         });
       }
@@ -7386,6 +7489,15 @@ export class SingleAgentClient {
       const conditionalSnapshot = skipCacheRead
         ? undefined
         : cache?.read<CanonicalGetProductsResponse>(cacheScope, cacheParams, true);
+      const productEvidence: Omit<SellerFormatEvidence, 'productId'> | undefined = this.usesScopedDiscoveryTransport(
+        effectiveOptions
+      )
+        ? undefined
+        : {
+            scopeKey: this.getCapabilityEvidenceScope().scopeKey,
+            accountScope: this.canonicalAccountScope(account),
+            expiresAt: Date.now() + resolveAgentDiscoveryTtlMs(this.config.discoveryCache?.ttlMs),
+          };
       const result = await this.executeAndHandle<CanonicalGetProductsResponse>(
         'get_products',
         'onGetProductsStatusChange',
@@ -7400,7 +7512,7 @@ export class SingleAgentClient {
           const authoritativeProducts = Array.isArray((data as unknown as { products?: unknown[] }).products)
             ? (data as unknown as { products: unknown[] }).products
             : response.products;
-          this.rememberCanonicalProductRoutes(response.products, account, authoritativeProducts);
+          this.rememberCanonicalProductRoutes(response.products, account, authoritativeProducts, productEvidence);
           const { _message: _dropLegacyMessage, ...canonical } = response as typeof response & { _message?: unknown };
           void _dropLegacyMessage;
           return { ...canonical, projection: { diagnostics } } as CanonicalGetProductsResponse;
@@ -7413,7 +7525,11 @@ export class SingleAgentClient {
         completed: TaskResult<CanonicalGetProductsResponse>
       ): Promise<TaskResult<CanonicalGetProductsResponse>> => {
         if (!cache) return completed;
-        const cachedResult = cache.write(cacheScope, cacheParams, completed, conditionalSnapshot);
+        const cachedResult = cache.write(cacheScope, cacheParams, completed, conditionalSnapshot, materialized => {
+          // The seller confirmed the stored catalog. Renew its private proof
+          // before ProductCache clones the materialized result into storage.
+          this.rememberCanonicalProductRoutes(materialized.data?.products ?? [], account, undefined, productEvidence);
+        });
         if (cachedResult.success && cachedResult.status === 'completed') {
           if (
             !skipCacheRead &&
@@ -7690,7 +7806,9 @@ export class SingleAgentClient {
       this.validateBeforeCreativeCapabilityProbe('create_media_buy', params, taskOptions);
     }
     const wireMode = hasCreativeFormatData
-      ? await this.resolveCreativeFormatWireMode('create_media_buy', taskOptions)
+      ? await this.resolveCreativeWireMode('create_media_buy', taskOptions, true, () =>
+          this.productOptionsSupportCanonicalWire('create_media_buy', params, [], options)
+        )
       : 'canonical';
     const wireParams = params as MutatingRequestInput<CanonicalCreateMediaBuyRequest>;
 
@@ -7804,7 +7922,9 @@ export class SingleAgentClient {
       this.validateBeforeCreativeCapabilityProbe('update_media_buy', params, taskOptions);
     }
     const wireMode = hasCreativeFormatData
-      ? await this.resolveCreativeFormatWireMode('update_media_buy', taskOptions)
+      ? await this.resolveCreativeWireMode('update_media_buy', taskOptions, true, () =>
+          this.productOptionsSupportCanonicalWire('update_media_buy', params, [], options)
+        )
       : 'canonical';
     const result = await this.executeAndHandle<UpdateMediaBuyResponse>(
       'update_media_buy',
@@ -7910,7 +8030,6 @@ export class SingleAgentClient {
       projectionCatalogs ?? this.config.projectionCatalogs
     );
     this.validateBeforeCreativeCapabilityProbe('sync_creatives', params, taskOptions);
-    const wireMode = await this.resolveCreativeFormatWireMode('sync_creatives', taskOptions);
     const configuredSelectorContainers = [
       ...((creativeFormatProjection?.selectorContainers ?? []) as ReadonlyArray<CreativeFormatSelectorContainer>),
     ];
@@ -7926,10 +8045,14 @@ export class SingleAgentClient {
             : []
         )
       : [];
+    const selectorContainers = [...configuredSelectorContainers, ...assignmentPackageContainers];
+    const wireMode = await this.resolveCreativeWireMode('sync_creatives', taskOptions, true, () =>
+      this.productOptionsSupportCanonicalWire('sync_creatives', params, selectorContainers, options)
+    );
     const wireParams = this.projectUndeclaredFormatOptions(
       projectSyncCreativesForDelivery(
         params,
-        [...configuredSelectorContainers, ...assignmentPackageContainers],
+        selectorContainers,
         wireMode,
         effectiveLegacyFormatConverter,
         effectiveCanonicalFormatLegacyResolver
@@ -7975,9 +8098,10 @@ export class SingleAgentClient {
    * sending a mutation. Discovers capabilities and the current tool's input
    * schema, or reuses fresh cached/primed evidence, with this client's wire pin.
    *
-   * `unknown` preserves the conservative legacy projection for older peers
-   * whose capabilities and schema do not establish support. Projection still
-   * requires an unambiguous legacy reference for each creative in that case.
+   * This context-free check returns `unknown` when capabilities and schema do
+   * not establish support. A write to a proven 3.1 seller can still select
+   * canonical delivery from matching seller-advertised product options;
+   * otherwise projection requires an unambiguous legacy reference.
    * Conflicting evidence and unproven support with a 3.2+ buyer pin throw
    * `CreativeFormatCapabilityError`, just as they do during a write.
    */
@@ -7991,7 +8115,8 @@ export class SingleAgentClient {
   private async resolveCreativeWireMode(
     taskType: 'sync_creatives' | 'create_media_buy' | 'update_media_buy',
     options: ReadRequestOptions | undefined,
-    canRediscover: boolean
+    canRediscover: boolean,
+    matchingProductOptions?: () => boolean
   ): Promise<CreativeFormatWireMode> {
     const discoveryContext: CapabilityDiscoveryContext = {};
     const capabilities = await this.getCapabilities({
@@ -8014,7 +8139,14 @@ export class SingleAgentClient {
         `Seller capability and ${taskType} input schema disagree about canonical creative support`
       );
     }
-    const resolved = declared !== 'unknown' ? declared : schema;
+    let resolved = declared !== 'unknown' ? declared : schema;
+    if (
+      resolved === 'unknown' &&
+      canUseProductOptionsForCreativeWire(capabilities, wireRelease) &&
+      matchingProductOptions?.()
+    ) {
+      resolved = 'canonical';
+    }
     const release = /^v?(\d+)\.(\d+)(?:\.|-|$)/.exec(wireRelease.trim());
     const canonicalRequiredByBuyerPin =
       release !== null && (Number(release[1]) > 3 || (Number(release[1]) === 3 && Number(release[2]) >= 2));
@@ -8030,13 +8162,152 @@ export class SingleAgentClient {
         !toolInputSchemasByProperties.has(toolSchemas)
       ) {
         await this.invalidateDiscoveryCache(options);
-        return this.resolveCreativeWireMode(taskType, options, false);
+        return this.resolveCreativeWireMode(taskType, options, false, matchingProductOptions);
       }
       throw new CreativeFormatCapabilityError(
         `Cannot prove which AdCP release the seller serves for ${taskType}; a 3.2+ client will not guess a legacy creative wire shape`
       );
     }
     return resolved;
+  }
+
+  /** Product evidence applies to this request only; it must never prime a tool-wide capability. */
+  private productOptionsSupportCanonicalWire(
+    taskType: 'sync_creatives' | 'create_media_buy' | 'update_media_buy',
+    request: unknown,
+    selectorContainers: readonly CreativeFormatSelectorContainer[] = [],
+    options?: CreativeDeliveryTaskOptions
+  ): boolean {
+    if (!isPlainRecord(request) || this.usesScopedDiscoveryTransport(options)) return false;
+    const scopeKey = this.getCapabilityEvidenceScope().scopeKey;
+    const accountScope = this.canonicalAccountScope(request.account);
+    const optionRef = (value: unknown): CanonicalLegacyOptionRef | undefined => {
+      if (!isPlainRecord(value) || typeof value.format_option_id !== 'string' || !value.format_option_id) {
+        return undefined;
+      }
+      if (typeof value.publisher_domain === 'string') {
+        return {
+          scope: 'publisher',
+          publisher_domain: value.publisher_domain,
+          format_option_id: value.format_option_id,
+        };
+      }
+      if (value.scope !== undefined && value.scope !== 'product') return undefined;
+      return { scope: 'product', format_option_id: value.format_option_id };
+    };
+    const accepts = (container: CreativeFormatSelectorContainer, creative?: unknown, depth = 0): boolean => {
+      if (depth > 32) return false;
+      if (Array.isArray(container.selector_containers)) {
+        return (
+          container.selector_containers.length > 0 &&
+          container.selector_containers.every(nested => accepts(nested, creative, depth + 1))
+        );
+      }
+      const refs = Array.isArray(container.format_option_refs) ? container.format_option_refs.map(optionRef) : [];
+      if (refs.some(ref => ref === undefined)) return false;
+      const creativeRef = isPlainRecord(creative) ? optionRef(creative.format_option_ref) : undefined;
+      if (isPlainRecord(creative) && creative.format_option_ref !== undefined && !creativeRef) return false;
+      const isSellerDeclaration = (value: unknown): value is Readonly<Record<string, unknown>> => {
+        if (!isPlainRecord(value) || sellerDeclaredFormatOption(value) !== true || isSynthesizedFormatOption(value)) {
+          return false;
+        }
+        const evidence = sellerFormatEvidence(value);
+        if (
+          !evidence ||
+          evidence.scopeKey !== scopeKey ||
+          (typeof container.product_id === 'string' && evidence.productId !== container.product_id) ||
+          evidence.expiresAt <= Date.now() ||
+          (evidence.accountScope !== accountScope && evidence.accountScope !== 'none')
+        )
+          return false;
+        const ref = optionRef(value);
+        if (
+          ref &&
+          formatOptionOriginFromRoutes(
+            options?.canonicalFormatLegacyResolver,
+            ref,
+            typeof container.product_id === 'string' ? container.product_id : undefined
+          )?.seller_declared === false
+        )
+          return false;
+        return (
+          !ref ||
+          typeof container.product_id !== 'string' ||
+          this.cachedFormatOptionOrigin(request.account, ref, container.product_id)?.seller_declared !== false
+        );
+      };
+      const declarations: Readonly<Record<string, unknown>>[] = [
+        ...(Array.isArray(container.format_options) ? container.format_options : []).filter(isSellerDeclaration),
+        ...selectedFormatOptions(container).filter(isSellerDeclaration),
+      ];
+      if (typeof container.product_id === 'string') {
+        for (const ref of [...refs, ...(creativeRef ? [creativeRef] : [])]) {
+          if (!ref) continue;
+          const route = this.routeForOption(request.account, container.product_id, ref);
+          if (route?.kind === 'product' && route.declaration && isSellerDeclaration(route.declaration))
+            declarations.push(route.declaration);
+        }
+      }
+      const available = declarations.filter(declaration => declaration.experimental !== true);
+      const matchesRef = (declaration: Readonly<Record<string, unknown>>, ref: CanonicalLegacyOptionRef): boolean => {
+        const declaredRef = optionRef(declaration);
+        return declaredRef !== undefined && sameFormatOptionRef(declaredRef, ref);
+      };
+      if (!refs.every(ref => available.some(declaration => matchesRef(declaration, ref!)))) return false;
+      const selected = available.filter(
+        declaration => refs.length === 0 || refs.some(ref => matchesRef(declaration, ref!))
+      );
+      if (creative === undefined) return refs.length > 0 && selected.length > 0;
+      if (!isPlainRecord(creative) || typeof creative.format_kind !== 'string' || creative.format_id !== undefined)
+        return false;
+      return selected.some(
+        declaration =>
+          declaration.format_kind === creative.format_kind &&
+          (!creativeRef || matchesRef(declaration, creativeRef)) &&
+          creativeMatchesProductOption(creative, declaration)
+      );
+    };
+    if (taskType === 'sync_creatives') {
+      if (!Array.isArray(request.creatives) || request.creatives.length === 0) return false;
+      const assignments = Array.isArray(request.assignments) ? request.assignments : [];
+      return request.creatives.every(creative => {
+        if (!isPlainRecord(creative)) return false;
+        const assigned = new Set(
+          assignments.flatMap(value =>
+            isPlainRecord(value) && value.creative_id === creative.creative_id && typeof value.package_id === 'string'
+              ? [value.package_id]
+              : []
+          )
+        );
+        const relevant =
+          assigned.size === 0
+            ? selectorContainers
+            : selectorContainers.filter(
+                container => typeof container.package_id === 'string' && assigned.has(container.package_id)
+              );
+        return (
+          relevant.length > 0 &&
+          [...assigned].every(id => relevant.some(container => container.package_id === id)) &&
+          relevant.every(container => accepts(container, creative))
+        );
+      });
+    }
+    const packages = ['packages', 'new_packages'].flatMap(key => (Array.isArray(request[key]) ? request[key] : []));
+    let evidence = false;
+    return (
+      packages.length > 0 &&
+      packages.every(pkg => {
+        if (!isPlainRecord(pkg)) return false;
+        const creatives = Array.isArray(pkg.creatives) ? pkg.creatives : [];
+        const hasSelectors = Array.isArray(pkg.format_option_refs) && pkg.format_option_refs.length > 0;
+        if (!hasSelectors && creatives.length === 0) {
+          return pkg.format_kind === undefined && pkg.format_ids === undefined;
+        }
+        evidence = true;
+        return (!hasSelectors || accepts(pkg)) && creatives.every(creative => accepts(pkg, creative));
+      }) &&
+      evidence
+    );
   }
 
   /** Validate malformed creative payloads before capability discovery can perform I/O. */

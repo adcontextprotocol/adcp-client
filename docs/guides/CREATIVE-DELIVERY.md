@@ -131,9 +131,45 @@ checks the explicit `media_buy.features.canonical_creatives` declaration. A
 `unknown` because a 3.1 version claim does not prove the runtime accepts
 canonical creatives. For MCP peers the client then inspects the advertised
 input schema for the current tool only; support advertised by another creative
-tool is never reused. Unknown peers receive a legacy projection only when the
-selected product provides one unambiguous ref. Ambiguous or unavailable mappings throw
-`CreativeFormatProjectionError` before transport.
+tool is never reused.
+
+For a seller proven to serve AdCP 3.1, an otherwise unknown write uses canonical
+delivery when every selected option and creative is covered by the seller's own
+`format_options`. This follows the 3.1 buyer rule to prefer advertised format
+options over dual-emitted legacy IDs. Creative option references and kinds must
+match, including declared slots and dimensions. Sync assignments must all have
+matching selector containers. Explicit legacy capabilities or tool schemas take
+precedence; experimental declarations and options synthesized by the SDK from
+legacy IDs do not establish canonical support. This also works when a 3.2 buyer
+negotiates down to a 3.1 seller.
+
+Supply the selected product or the result of `packageRefsForFormatOptions()` in
+`creativeFormatProjection.selectorContainers`. Include `package_id` when using
+assignments. After serializing a selection, include `product_id` so the same
+client can recover the seller declaration from account-scoped product discovery,
+including product-cache hits. Product evidence applies to that request only.
+The seller remains responsible for full manifest validation.
+
+Canonical fallback requires affirmative evidence from this client's product
+discovery and an advertised `supported_versions` entry proving the seller serves
+3.1. The fallback uses synchronous discovery and successful conditional catalog
+revalidation. A saved product on a fresh client, including one synthesized from
+legacy IDs, cannot establish support by its shape alone. Rediscover the product
+in the current account and authorization scope first. Evidence expires after
+the discovery TTL (five minutes by default); product-cache hits do not extend
+it. Authorization changes and discovery invalidation invalidate the evidence.
+Request-scoped custom transports require explicit capability or tool-schema
+support and do not reuse this inferred product evidence.
+
+Assignment-only sync and updates containing only an existing `package_id` keep
+their existing wire behavior. Pass the matching selectors for this request to
+use the product-based fallback; package IDs alone do not establish support.
+Without assignments, each creative must match every supplied container; use
+assignments or split mixed-format batches when the products accept different kinds.
+
+Without matching product evidence, unknown peers receive a legacy projection
+only when the selected product provides one unambiguous ref. Ambiguous or
+unavailable mappings throw `CreativeFormatProjectionError` before transport.
 
 Schema inspection follows local JSON Pointer `$ref` targets, including `$defs`,
 and retains the complete listed document through shared discovery-cache reuse.
@@ -141,7 +177,7 @@ Unused definitions and annotations do not establish support. External references
 named anchors, and dynamic references are not resolved; inspection never fetches
 schema URLs. Cycles and traversal limits cannot force a guessed wire mode.
 
-Before building creatives, ask the client which mode that write will use:
+Before building creatives, inspect the tool's wire evidence:
 
 ```ts
 const mode = await agent.resolveCreativeFormatWireMode('sync_creatives');
@@ -150,13 +186,16 @@ const mode = await agent.resolveCreativeFormatWireMode('sync_creatives');
 This method is available on `AgentClient` and `SingleAgentClient`, accepts
 `sync_creatives`, `create_media_buy`, or `update_media_buy`, and shares the
 write path's capability discovery, tool-schema fallback, and buyer wire pin.
+This context-free check does not inspect a write's product options, so an
+`unknown` result can still become canonical for a matching 3.1 write as described
+above.
 It reuses fresh cached or primed evidence; cold discovery may make read calls,
 but it sends no mutation. Pass `{ signal, transport }` as the optional second
 argument to use the same cancellation and transport scope as the write.
 
 The result is `canonical`, `legacy`, or `unknown` (`CreativeFormatWireMode`).
-For older peers with insufficient evidence, `unknown` means projection still
-requires one unambiguous legacy reference. It does not promise canonical
+For older peers without matching product evidence, `unknown` means projection
+still requires one unambiguous legacy reference. It does not promise canonical
 support. Conflicting capability/schema evidence or missing release proof with
 a 3.2+ buyer pin throws `CreativeFormatCapabilityError`, as during a write.
 The standalone `resolveCreativeFormatWireMode(capabilities, version)` helper

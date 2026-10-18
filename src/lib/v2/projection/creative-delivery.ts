@@ -659,6 +659,8 @@ export interface CreativeFormatSelectorContainer {
 /** Canonical package/product selectors accepted by the primary sync API. */
 export interface CanonicalCreativeFormatSelectorContainer {
   package_id?: string;
+  /** Target product, used to recover seller declarations after serializing selectors. */
+  product_id?: string;
   format_options?: ReadonlyArray<CanonicalFormatDeclaration>;
   format_option_refs?: ReadonlyArray<FormatOptionReference>;
   format_kind?: CanonicalFormatKind;
@@ -1867,4 +1869,11 @@ export function resolveCreativeFormatWireMode(
   if (explicitCanonical === true) return 'canonical';
   if (explicitCanonical === false) return 'legacy';
   return 'unknown';
+}
+
+/** @internal Product acceptance can refine an unknown wire decision only for a proven 3.1 peer. */
+export function canUseProductOptionsForCreativeWire(capabilities: unknown, requestedVersion: string): boolean {
+  const caps = record(capabilities);
+  const negotiated = mutuallyServedRelease(caps, record(caps?._raw), requestedVersion);
+  return negotiated?.major === 3 && negotiated.minor === 1;
 }

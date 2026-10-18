@@ -68,6 +68,7 @@ import type { CanonicalFormatLegacyRoute } from './legacy-routes';
 import {
   concealLegacyFormatRefs,
   legacyFormatRefsForDeclaration,
+  rememberSynthesizedFormatOption,
   transferLegacyCreativeMetadata,
 } from './legacy-metadata';
 
@@ -605,6 +606,11 @@ export function projectV1ProductToV2(v1: V1ProductInput, options?: V1ToV2Project
     ...(rest as Omit<V1ProductInput, 'format_ids'>),
     format_options,
   } as V2Product;
+
+  // Derived options are buyer-local compatibility data, not seller evidence
+  // that a canonical creative wire is accepted. Carry that fact through all
+  // public projection helpers, including callers outside product discovery.
+  for (const declaration of format_options) rememberSynthesizedFormatOption(declaration);
 
   return { v2: v2Product, diagnostics, legacyRoutes: legacyRoutesForProduct(v1.product_id, format_options) };
 }
