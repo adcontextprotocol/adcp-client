@@ -281,21 +281,16 @@ export class OriginRevocationResolver {
       for (const token of tokens) {
         try {
           const header = decodeProtectedHeader(token);
-          if (
-            header.typ !== 'adcp-gov-revocation+jws' ||
-            typeof header.kid !== 'string' ||
-            // Directory keys are Ed25519 only under the profile (adcp#7894).
-            header.alg !== 'EdDSA'
-          )
-            continue;
+          if (header.typ !== 'adcp-gov-revocation+jws' || typeof header.kid !== 'string') continue;
           await this.options.directory.resolve(header.kid, origin);
           const checked = this.options.directory.getVerifiedDirectory(origin);
           if (!checked || new URL(checked.proof.request.url).origin !== origin || checked.expires <= this.now())
             continue;
           const jwk = checked.keys.find(key => key.kid === header.kid);
           if (!jwk) continue;
-          const result = await compactVerify(token, await importJWK(jwk as JWK, header.alg), {
-            algorithms: [header.alg],
+          // Directory keys are Ed25519 only under the profile (adcp#7894), so a list is EdDSA only.
+          const result = await compactVerify(token, await importJWK(jwk as JWK, 'EdDSA'), {
+            algorithms: ['EdDSA'],
           });
           verifiedPayload = result.payload;
           break;

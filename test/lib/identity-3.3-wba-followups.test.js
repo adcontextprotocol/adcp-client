@@ -712,6 +712,38 @@ test('review: revocation status transitions between absent, unknown and current'
   assert.equal(await resolver.status(origin, key.kid), 'current');
 });
 
+test('review: a revocation list is EdDSA only; a header claiming PS512 or ES256 over an Ed25519 key is refused', async () => {
+  const identity = require('../../dist/lib/identity-3.3');
+  const { createPrivateKey, sign } = require('crypto');
+  const key = newKey();
+  const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: key }], { now: () => T - 60 });
+  const b64url = value => Buffer.from(value).toString('base64url');
+  // Signed with the Ed25519 key whatever `alg` the protected header claims.
+  const listClaiming = alg => {
+    const header = b64url(JSON.stringify({ alg, kid: key.kid, typ: 'adcp-gov-revocation+jws' }));
+    const payload = b64url(
+      JSON.stringify({
+        issuer: origin,
+        updated: new Date(T * 1000).toISOString(),
+        next_update: new Date((T + 300) * 1000).toISOString(),
+        revoked_kids: [],
+      })
+    );
+    const signature = sign(null, Buffer.from(`${header}.${payload}`), createPrivateKey({ key, format: 'jwk' }));
+    return `${header}.${payload}.${b64url(signature)}`;
+  };
+  const statusOf = list =>
+    new identity.OriginRevocationResolver({
+      store: new identity.InMemoryOriginRevocationStore(),
+      directory: directoryFor(proof, () => T),
+      now: () => T,
+      fetchOptions: { trustedFetchFn: async () => new Response(list) },
+    }).status(origin, key.kid);
+  assert.equal(await statusOf(listClaiming('EdDSA')), 'current');
+  // No list verifies, so the status is unknown and spend fails closed.
+  for (const alg of ['PS512', 'ES256']) assert.equal(await statusOf(listClaiming(alg)), 'unknown', alg);
+});
+
 test('review: a saturated directory fetch limiter sheds load with 429, not a re-sign challenge', async () => {
   const key = newKey();
   const releases = [];
