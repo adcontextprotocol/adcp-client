@@ -60,7 +60,7 @@ test('every vendored WBA vector is graded', () => {
   assert.deepEqual(directories.sort(), ['negative', 'positive']);
   assert.ok(vectorFiles('positive').length > 0 && vectorFiles('negative').length > 0);
   assert.equal(PINNED.excluded, undefined);
-  assert.equal(PINNED.sha, '49b3a3157e55a7ec37816908ec28a2e25057fd89');
+  assert.equal(PINNED.sha, '2546cf5f449d6f30f2f4ff5fb27433ddf3986167');
 });
 async function preloadReplay(v, replayStore) {
   for (const entry of v.test_harness_state?.replay_cache_entries ?? [])
