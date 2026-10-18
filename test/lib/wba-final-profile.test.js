@@ -426,12 +426,21 @@ test('directories: a key that carries private material is refused, whether or no
   const ec = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ format: 'jwk' });
   const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'jwk' });
   // A published private key is a leak, so the directory is refused rather than
-  // the key ignored, signed or not.
+  // the key ignored, signed or not. Each RSA private member and an oct `k`
+  // (RFC 7518 section 6) leaks on its own, as does an OKP `d` (RFC 8037).
+  const rsaPublic = { kty: rsa.kty, n: rsa.n, e: rsa.e };
   for (const [name, published, signers] of [
     ['Ed25519', [key], [key]],
     ['P-256', [key, ec], [key]],
     ['P-256, signed', [key, ec], [key, ec]],
     ['RSA', [key, rsa], [key]],
+    ...['p', 'q', 'dp', 'dq', 'qi'].map(member => [
+      `RSA ${member} only`,
+      [key, { ...rsaPublic, [member]: rsa[member] }],
+      [key],
+    ]),
+    ['RSA oth only', [key, { ...rsaPublic, oth: [{ r: rsa.p, d: rsa.dp, t: rsa.qi }] }], [key]],
+    ['oct k', [key, { kty: 'oct', k: 'c2VjcmV0' }], [key]],
   ])
     await assert.rejects(
       wba.verifyKeyDirectory(await directoryResponse(published, signers, { leaked: [published.at(-1)] }), T),
