@@ -7915,8 +7915,21 @@ export class SingleAgentClient {
     };
     if (taskType === 'sync_creatives') {
       if (!Array.isArray(request.creatives) || request.creatives.length === 0) return false;
+      const creatives = request.creatives;
       const assignments = Array.isArray(request.assignments) ? request.assignments : [];
-      return request.creatives.every(creative => {
+      // Existing creatives have no manifest here to compare against the seller's
+      // declarations. They cannot borrow evidence from another uploaded creative.
+      if (
+        !assignments.every(
+          value =>
+            isPlainRecord(value) &&
+            typeof value.package_id === 'string' &&
+            typeof value.creative_id === 'string' &&
+            creatives.some((creative: unknown) => isPlainRecord(creative) && creative.creative_id === value.creative_id)
+        )
+      )
+        return false;
+      return creatives.every(creative => {
         if (!isPlainRecord(creative)) return false;
         const assigned = new Set(
           assignments.flatMap(value =>

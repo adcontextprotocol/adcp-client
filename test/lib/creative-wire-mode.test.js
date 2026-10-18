@@ -378,6 +378,21 @@ describe('request-local 3.1 product creative wire evidence (#3312)', () => {
       },
     ],
     [
+      'assignment of an existing creative alongside a covered upload',
+      r => {
+        r.assignments = [
+          { creative_id: 'c1', package_id: 'pkg-1' },
+          { creative_id: 'existing-creative', package_id: 'pkg-2' },
+        ];
+      },
+    ],
+    [
+      'existing creative without a manifest even in a covered package',
+      r => {
+        r.assignments = [{ creative_id: 'existing-creative', package_id: 'pkg-1' }];
+      },
+    ],
+    [
       'uncovered selected option',
       (_r, c) => {
         c.format_option_refs = [{ scope: 'product', format_option_id: 'missing' }];
