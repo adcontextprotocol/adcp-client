@@ -390,7 +390,7 @@ released schemas:
 
 | PR | Pinned head | Surface |
 | --- | --- | --- |
-| [7894](https://github.com/adcontextprotocol/adcp/pull/7894) | `2546cf5f449d6f30f2f4ff5fb27433ddf3986167` | WBA wire profile (`wba-profile.mdx`), profile selectors, directory and request vectors |
+| [7894](https://github.com/adcontextprotocol/adcp/pull/7894) | `f311e1b567c55c1d0689b2b7fd9b4a35e9ba91fe` | WBA wire profile (`wba-profile.mdx`), profile selectors, directory and request vectors |
 | [8121](https://github.com/adcontextprotocol/adcp/pull/8121) | `f5973ac0267b1b94d714c55fc4e3ad8fc2511350` | Origin identity and key-free trust v1 |
 | [8162](https://github.com/adcontextprotocol/adcp/pull/8162) | `5c9914c5c382cc32f3d2ad7842942e548c414705` | Ratified identity, coexistence, revocation |
 | [8168](https://github.com/adcontextprotocol/adcp/pull/8168) | `45540941dfd61e80ab8a463f780cb147c82a32f0` | Relationship and principal response arms |

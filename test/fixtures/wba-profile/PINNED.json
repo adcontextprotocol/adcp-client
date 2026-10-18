@@ -1,7 +1,7 @@
 {
   "repository": "adcontextprotocol/adcp",
   "pr": 7894,
-  "sha": "2546cf5f449d6f30f2f4ff5fb27433ddf3986167",
+  "sha": "f311e1b567c55c1d0689b2b7fd9b4a35e9ba91fe",
   "path": "static/compliance/source/test-vectors/wba-profile",
   "vendored": "Every file under the path at the pinned sha, byte for byte. test/lib/identity-3.3.test.js grades the positive and negative vectors; the interop harness (adcontextprotocol/adcp#8298) grades scenarios.json through test/wba-interop/adapter.cjs.",
   "replay_status": "negative/002 expects 429 with Accept-Signature carrying a verifier-chosen nonce; the deprecated replayStatus option has no effect.",

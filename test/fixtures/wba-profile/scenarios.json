@@ -364,7 +364,7 @@
       "id": "R18",
       "name": "Signature-Agent member with type=jwks_uri",
       "base": "post",
-      "signature_agent": "sig1=\"https://buyer-7k3q.com/jwks.json\";type=jwks_uri",
+      "signature_agent": "sig1=\"https://buyer-7k3q.com\";type=jwks_uri",
       "expected": {
         "success": false,
         "status": 403
@@ -415,6 +415,26 @@
       },
       "tier": "adcp",
       "basis": "WBA section 5.2.1: the member keyed to the label; the library does not check it"
+    },
+    {
+      "id": "R19b",
+      "name": "Whole Signature-Agent field covered before the member",
+      "base": "post",
+      "components": [
+        "@method",
+        "@target-uri",
+        "@authority",
+        "content-type",
+        "content-digest",
+        "signature-agent",
+        "signature-agent;key=sig1"
+      ],
+      "expected": {
+        "success": true,
+        "identity": "https://buyer-7k3q.com"
+      },
+      "tier": "wba",
+      "basis": "RFC 9421 section 2.1: the field and its member are separate components; WBA section 5.2.1 requires only the member keyed to the label"
     },
     {
       "id": "R20",
@@ -469,6 +489,38 @@
       },
       "tier": "adcp",
       "basis": "Profile: exactly one Signature-Agent member"
+    },
+    {
+      "id": "R21b",
+      "name": "Two web-bot-auth signatures that cover one Signature-Agent member",
+      "base": "post",
+      "extra_signature": {
+        "label": "sig2",
+        "kid": "6WsKMCObba49V3uN0vIENnk1BKAk7c9zjBJcWKyQ9_I",
+        "components": [
+          "@method",
+          "@target-uri",
+          "@authority",
+          "content-type",
+          "content-digest",
+          "signature-agent;key=sig1"
+        ],
+        "parameters": {
+          "created": -5,
+          "expires": 295,
+          "nonce": {
+            "bytes": 64,
+            "encoding": "base64url"
+          },
+          "tag": "web-bot-auth"
+        }
+      },
+      "expected": {
+        "success": false,
+        "status": 403
+      },
+      "tier": "wba",
+      "basis": "Profile: exactly one web-bot-auth signature; WBA section 5.2.2 lets a request carry more"
     },
     {
       "id": "R22",
@@ -550,8 +602,8 @@
       "expected": {
         "success": false
       },
-      "tier": "wba",
-      "basis": "Profile: every Ed25519 key signs (Appendix B.1 recommends it)"
+      "tier": "adcp",
+      "basis": "Profile: every Ed25519 key signs; WBA Appendix B.1 only RECOMMENDS a signature, and a verifier MAY use an unproven key"
     },
     {
       "id": "D04",
@@ -619,6 +671,115 @@
       },
       "tier": "adcp",
       "basis": "WBA section 5.5.1: the well-known directory MUST be served with application/http-message-signatures-directory+json"
+    },
+    {
+      "id": "D09",
+      "name": "Directory served with status 203",
+      "status": 203,
+      "expected": {
+        "success": false
+      },
+      "tier": "adcp",
+      "basis": "WBA section 5.5: a status other than 200 is a discovery failure"
+    },
+    {
+      "id": "D10",
+      "name": "Signed with tag web-bot-auth",
+      "parameters": {
+        "tag": "web-bot-auth"
+      },
+      "expected": {
+        "success": false
+      },
+      "tier": "adcp",
+      "basis": "WBA Appendix B.1: tag=\"http-message-signatures-directory\""
+    },
+    {
+      "id": "D11",
+      "name": "Second Ed25519 key that does not sign",
+      "unsigned_keys": [
+        {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "kid": "hHurKlVBnPJ4AGiPyl6HWMhxgkIcRBzaC8qWwEtnuVI",
+          "x": "JB8XPw49dSvDh0kqkCxtoxiNb_RZFhxPdlc-1GedFSc",
+          "use": "sig"
+        }
+      ],
+      "expected": {
+        "success": false
+      },
+      "tier": "adcp",
+      "basis": "Profile: every Ed25519 key in the directory signs"
+    },
+    {
+      "id": "D12",
+      "name": "Only a P-256 key, unsigned",
+      "keys": [],
+      "unsigned_keys": [
+        {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "ayhQePn14MyJGqrKHsp_A06Z0N6IZoE0-7wbn66qLLc",
+          "y": "k98dk4yymVze93JE_EpboBD6oaZbcII4Lvf_Oqu8kII",
+          "kid": "4rrLPtiRac4zmWwTBQeJlzgNyb5jai8HSOTJONOIKFY",
+          "use": "sig"
+        }
+      ],
+      "expected": {
+        "success": false
+      },
+      "tier": "adcp",
+      "basis": "Profile: the directory is signed, one signature per Ed25519 key"
+    },
+    {
+      "id": "D13",
+      "name": "Extra RSA-PSS key that does not sign",
+      "unsigned_keys": [
+        {
+          "kty": "RSA",
+          "e": "AQAB",
+          "n": "v-QEO4laYaq_rKgLuz0I8hRW_Ig58qmjv_L9cIX_2dCz6pkvMg953c3P3yNtvjl0eLiZNk1tbaWjfdwiMczGUYqhcFutwjbJpny5rMlSOuTkgJEidDpVpsSfa9OwmkRLgn_hjrAkQzKYljsqSN_U9deB6a_NwWiM03MRFLVtcCHJQMEVNCXGvqRIF0MKRVdb3287cgEQ2lvb0g1a84CYzQtbRdWcHnSjhOwF3Y2IH2A2VvQzeCSWWFy2LUr2H09Ce2pvAc-DJX6BdUF5MijFV9SRt4jbPWG28kcrLUEt1GMDynfvMT419dx03kfaZnHkh4I3xXKhcFAIMK4D1WH9bQ",
+          "alg": "PS512",
+          "kid": "ugCZP3qkO8gkwu8s71HuHjbt75oPFuBK0Tgb4WkL37k",
+          "use": "sig"
+        }
+      ],
+      "expected": {
+        "success": true
+      },
+      "tier": "wba",
+      "basis": "Profile: ignore keys the profile does not use (RFC 7517 section 5), including a key the library imports"
+    },
+    {
+      "id": "D14",
+      "name": "Extra P-256 key that carries its private d",
+      "unsigned_keys": [
+        {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "ayhQePn14MyJGqrKHsp_A06Z0N6IZoE0-7wbn66qLLc",
+          "y": "k98dk4yymVze93JE_EpboBD6oaZbcII4Lvf_Oqu8kII",
+          "kid": "4rrLPtiRac4zmWwTBQeJlzgNyb5jai8HSOTJONOIKFY",
+          "use": "sig",
+          "d": "IyiPVggq91xZTs3CxpETaAbK6Qca0DuuD9-DZx7ueHs"
+        }
+      ],
+      "expected": {
+        "success": false
+      },
+      "tier": "adcp",
+      "basis": "Profile: refuse a directory in which any key carries a private member, checked before unused keys are skipped; WBA section 5.5.1: a verifier SHOULD reject malformed entries"
+    },
+    {
+      "id": "D14b",
+      "name": "Signing Ed25519 key published with its private d",
+      "publish_private_members": true,
+      "expected": {
+        "success": false
+      },
+      "tier": "adcp",
+      "basis": "Profile: refuse a directory in which any key carries a private member; WBA section 5.5.1: a verifier SHOULD reject malformed entries"
     }
   ]
 }
