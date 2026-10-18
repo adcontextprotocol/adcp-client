@@ -2732,8 +2732,19 @@ export class SingleAgentClient {
 
   private assertDurablePropertyListCredentialSupported(taskType: string, requestParams: Record<string, unknown>): void {
     if (!this.config.deferredStorage || taskType !== 'get_products') return;
-    const propertyList = propertyListReferenceFromRequest(requestParams);
-    if (!propertyList?.auth_token) return;
+    // Inspect both raw locations: selection precedence and malformed references must
+    // never hide a credential that would still be serialized in the original request.
+    const filters = requestParams.filters;
+    const references = [
+      requestParams.property_list,
+      filters && typeof filters === 'object' ? (filters as Record<string, unknown>).property_list : undefined,
+    ];
+    const hasCredential = references.some(reference => {
+      if (!reference || typeof reference !== 'object') return false;
+      const token = (reference as Record<string, unknown>).auth_token;
+      return token !== undefined && token !== null && token !== '';
+    });
+    if (!hasCredential) return;
     const policyConfig = this.config.validation?.productPropertyPolicy;
     if (policyConfig === false || policyConfig?.enforceRequestPropertyList === false) return;
     throw new ConfigurationError(

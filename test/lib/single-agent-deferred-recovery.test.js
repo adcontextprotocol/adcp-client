@@ -1753,7 +1753,21 @@ test('durable clients reject authenticated property-list verification before sel
       list_id: 'private-list',
       auth_token: 'private-list-secret',
     };
-    for (const location of [{ property_list: reference }, { filters: { property_list: reference } }]) {
+    const tokenlessReference = { agent_url: reference.agent_url, list_id: reference.list_id };
+    for (const location of [
+      { property_list: reference },
+      { filters: { property_list: reference } },
+      { property_list: reference, filters: { property_list: tokenlessReference } },
+      { property_list: tokenlessReference, filters: { property_list: reference } },
+      { property_list: reference, filters: { property_list: null } },
+      { property_list: { auth_token: reference.auth_token }, filters: { property_list: tokenlessReference } },
+      { property_list: tokenlessReference, filters: { property_list: { auth_token: reference.auth_token } } },
+      {
+        property_list: { auth_token: { value: reference.auth_token } },
+        filters: { property_list: tokenlessReference },
+      },
+      { property_list: tokenlessReference, filters: { property_list: { auth_token: 12345 } } },
+    ]) {
       await assert.rejects(
         client.getProducts({ buying_mode: 'brief', brief: 'Find private inventory', ...location }),
         error => {
@@ -1764,9 +1778,58 @@ test('durable clients reject authenticated property-list verification before sel
       );
     }
     assert.equal(protocolCalls, 0);
+    assert.equal(storage.getStats().totalItems, 0, 'rejected references must not create durable records');
   } finally {
     ProtocolClient.callTool = originalCallTool;
     storage.destroy();
+  }
+});
+
+test('durable property-list credential rejection preserves explicit enforcement opt-outs', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  ProtocolClient.callTool = async (_agent, taskName) => {
+    assert.equal(taskName, 'get_products');
+    return {
+      result: {
+        kind: 'task',
+        id: 'opted-out-property-list',
+        status: { state: 'completed' },
+        artifacts: [
+          {
+            artifactId: 'products',
+            parts: [{ kind: 'data', data: { status: 'completed', products: [], cache_scope: 'public' } }],
+          },
+        ],
+      },
+    };
+  };
+  try {
+    for (const productPropertyPolicy of [false, { enforceRequestPropertyList: false }]) {
+      const storage = new MemoryStorage({ autoCleanup: false });
+      try {
+        const client = new SingleAgentClient(agent, {
+          deferredStorage: storage,
+          validateFeatures: false,
+          validation: { requests: 'off', responses: 'off', productPropertyPolicy },
+        });
+        client.validateTaskFeatures = async () => undefined;
+        client.getEarlyResultForUnsupportedFeatures = async () => null;
+        client.ensureEndpointDiscovered = async () => agent;
+        client.detectServerVersion = async () => 'v3';
+        const tokenlessReference = { agent_url: 'https://property-lists.example/mcp', list_id: 'private-list' };
+        const result = await client.getProducts({
+          buying_mode: 'brief',
+          brief: 'Find inventory',
+          property_list: { ...tokenlessReference, auth_token: 'explicitly-opted-out-token' },
+          filters: { property_list: tokenlessReference },
+        });
+        assert.equal(result.success, true);
+      } finally {
+        storage.destroy();
+      }
+    }
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
   }
 });
 
