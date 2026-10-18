@@ -288,6 +288,20 @@ async function generate(): Promise<void> {
   console.log('Generating types from cached spec...');
   const spec: unknown = parseYaml(readFileSync(CACHED_SPEC, 'utf8'));
   const corrections = [...applyUpstreamSpecCorrections(spec), ...applyDeprecatedPropertyCompat(spec)];
+  // openapi-typescript makes defaulted component properties required. This
+  // newly added request flag remains optional for existing SDK callers,
+  // including consumers of the raw components/operations types.
+  const resolveLocation = resolvePointer(spec, '/components/schemas/ResolveRequest');
+  const resolveSchema = resolveLocation?.parent[resolveLocation.key] as MutableSchema | undefined;
+  const sandbox = resolveSchema?.properties?.sandbox as MutableSchema | undefined;
+  if (
+    sandbox?.default === false &&
+    !(Array.isArray(resolveSchema?.required) && resolveSchema.required.includes('sandbox'))
+  ) {
+    delete sandbox.default;
+    sandbox.description = `${sandbox.description ?? ''} Defaults to false when omitted.`;
+    corrections.push('ResolveRequest.sandbox remains optional; omission uses the server default false.');
+  }
   const ast = await openapiTS(spec as Parameters<typeof openapiTS>[0]);
   const rawOutput = astToString(ast);
 

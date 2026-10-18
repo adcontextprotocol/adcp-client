@@ -84,7 +84,9 @@ export class ProductCache {
     scope: string,
     params: Record<string, unknown>,
     result: TaskResult<T>,
-    conditionalSnapshot?: TaskResult<T>
+    conditionalSnapshot?: TaskResult<T>,
+    /** @internal Refresh private discovery evidence before a confirmed snapshot is cloned into storage. */
+    onRevalidated?: (materialized: TaskResult<T>) => void
   ): TaskResult<T> {
     const key = this.key(scope, params);
     if (!key) return result;
@@ -117,6 +119,7 @@ export class ProductCache {
       // Only materialize our own conditional request; caller-owned validators pass through.
       if (params.if_wholesale_feed_version !== undefined || params.if_pricing_version !== undefined) return result;
       completed = { ...result, data: structuredCloneWithLegacyCreativeMetadata(oldData) as T };
+      onRevalidated?.(completed);
     } else if (!Array.isArray(data.products)) return result;
     if (!this.entries.has(key) && this.entries.size >= (this.options.maxEntries ?? 1000))
       this.entries.delete(this.entries.keys().next().value!);

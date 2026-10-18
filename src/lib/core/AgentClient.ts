@@ -1486,8 +1486,10 @@ export class AgentClient {
   /**
    * Resolve the creative wire mode used by canonical writes without sending a
    * mutation. Uses capabilities, this tool's input schema, and the client wire
-   * pin. Older peers with insufficient evidence return `unknown` and require
-   * an unambiguous legacy reference during projection; conflicting evidence
+   * pin. Older peers with insufficient evidence return `unknown`; a matching
+   * seller-advertised product option can establish canonical delivery for an
+   * individual 3.1 write. Otherwise projection requires an unambiguous legacy
+   * reference. Conflicting evidence
    * or unproven support with a 3.2+ buyer pin throws `CreativeFormatCapabilityError`.
    */
   async resolveCreativeFormatWireMode(
