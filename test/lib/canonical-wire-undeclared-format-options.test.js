@@ -291,6 +291,46 @@ describe('canonical wire: format options the seller did not declare', () => {
     }
   });
 
+  for (const revalidate of [true, false]) {
+    test(`${revalidate ? 'seller revalidation renews' : 'local cache hits do not renew'} product evidence`, async t => {
+      let now = Date.now();
+      t.mock.method(Date, 'now', () => now);
+      const sellerProduct = pairedProduct(false);
+      const seller = await canonicalSeller(
+        [sellerProduct],
+        {
+          wireAdcpVersion: '3.1.29',
+          productCache: createProductCache({ accountTtl: revalidate ? 0 : 600_000 }),
+        },
+        { version: '3.1.29', cacheScope: 'account', declareCanonicalCreatives: false, conditional: true }
+      );
+      try {
+        const request = { buying_mode: 'brief', brief: 'Display', account: ACCOUNT };
+        const discovered = await seller.agent.getProducts(request);
+        const product = discovered.data.products[0];
+        const selected = JSON.parse(JSON.stringify(packageRefsForFormatOptions(product, ['mrec'])));
+        const sync = () =>
+          seller.agent.syncCreatives({ account: ACCOUNT, creatives: [pairedCreative()] }, undefined, {
+            creativeFormatProjection: { selectorContainers: [{ product_id: product.product_id, ...selected }] },
+          });
+        await sync();
+        now += 300_001;
+        await assert.rejects(sync(), error => error.code === 'ADCP_CREATIVE_FORMAT_PROJECTION_FAILED');
+        await seller.agent.getProducts(request);
+        assert.strictEqual(seller.captured.productReads.length, revalidate ? 2 : 1);
+        if (revalidate) {
+          assert.strictEqual(seller.captured.productReads[1].if_wholesale_feed_version, 'feed-1');
+          await sync();
+          assert.deepStrictEqual(seller.captured.sync.creatives[0], pairedCreative());
+        } else {
+          await assert.rejects(sync(), error => error.code === 'ADCP_CREATIVE_FORMAT_PROJECTION_FAILED');
+        }
+      } finally {
+        await seller.close();
+      }
+    });
+  }
+
   for (const decision of ['capability', 'schema']) {
     test(`explicit legacy ${decision} overrides matching 3.1 product options`, async () => {
       const sellerProduct = pairedProduct();

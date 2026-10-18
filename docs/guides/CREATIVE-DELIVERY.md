@@ -150,6 +150,23 @@ client can recover the seller declaration from account-scoped product discovery,
 including product-cache hits. Product evidence applies to that request only.
 The seller remains responsible for full manifest validation.
 
+Canonical fallback requires affirmative evidence from this client's product
+discovery and an advertised `supported_versions` entry proving the seller serves
+3.1. The fallback uses synchronous discovery and successful conditional catalog
+revalidation. A saved product on a fresh client, including one synthesized from
+legacy IDs, cannot establish support by its shape alone. Rediscover the product
+in the current account and authorization scope first. Evidence expires after
+the discovery TTL (five minutes by default); product-cache hits do not extend
+it. Authorization changes and discovery invalidation invalidate the evidence.
+Request-scoped custom transports require explicit capability or tool-schema
+support and do not reuse this inferred product evidence.
+
+Assignment-only sync and updates containing only an existing `package_id` keep
+their existing wire behavior. Pass the matching selectors for this request to
+use the product-based fallback; package IDs alone do not establish support.
+Without assignments, each creative must match every supplied container; use
+assignments or split mixed-format batches when the products accept different kinds.
+
 Without matching product evidence, unknown peers receive a legacy projection
 only when the selected product provides one unambiguous ref. Ambiguous or
 unavailable mappings throw `CreativeFormatProjectionError` before transport.

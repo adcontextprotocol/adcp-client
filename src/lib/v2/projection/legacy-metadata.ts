@@ -1,5 +1,6 @@
 import type { ProductFormatDeclaration } from '../../types/tools.generated';
 import type { V1FormatId, V2ProductFormatDeclaration } from './types';
+import { canonicalize } from '../../utils/jcs';
 
 /**
  * SDK-private projection metadata held out-of-band. WeakMaps keep seller
@@ -20,6 +21,34 @@ export type PackageSelectionMetadata = {
 const legacyRefsByDeclaration = new WeakMap<object, readonly V1FormatId[]>();
 const selectedOptionsByRefs = new WeakMap<object, readonly DeclarationWithMetadata[]>();
 const sellerDeclaredByDeclaration = new WeakMap<object, boolean | 'synthesized'>();
+export interface SellerFormatEvidence {
+  scopeKey: string;
+  accountScope: string;
+  productId: string;
+  expiresAt: number;
+}
+const sellerEvidenceByDeclaration = new WeakMap<object, SellerFormatEvidence & { fingerprint: string }>();
+
+/** Positive evidence is client/account-bound and cannot survive a JSON round trip on its own. */
+export function rememberSellerFormatEvidence(declaration: object, evidence: SellerFormatEvidence): void {
+  try {
+    sellerEvidenceByDeclaration.set(
+      declaration,
+      Object.freeze({ ...evidence, fingerprint: canonicalize(declaration) })
+    );
+  } catch {
+    // Malformed declarations cannot establish wire support.
+  }
+}
+
+export function sellerFormatEvidence(declaration: object): SellerFormatEvidence | undefined {
+  const evidence = sellerEvidenceByDeclaration.get(declaration);
+  try {
+    return evidence?.fingerprint === canonicalize(declaration) ? evidence : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Keep seller-origin evidence private while canonical products pass through the cache. */
 export function rememberSellerDeclaredFormatOption(declaration: object, declared: boolean): void {
@@ -48,6 +77,8 @@ export function concealLegacyFormatRefs(
   const refsToConceal = Array.isArray(existingHidden) && existingHidden.length > 0 ? existingHidden : refs;
   const declared = sellerDeclaredByDeclaration.get(declaration as object);
   if (declared !== undefined) sellerDeclaredByDeclaration.set(canonical, declared);
+  const evidence = sellerEvidenceByDeclaration.get(declaration as object);
+  if (evidence) sellerEvidenceByDeclaration.set(canonical, evidence);
   if (Array.isArray(refsToConceal) && refsToConceal.length > 0) {
     legacyRefsByDeclaration.set(
       canonical,
@@ -88,6 +119,8 @@ export function transferLegacyCreativeMetadata(source: object, target: object): 
   if (selected) selectedOptionsByRefs.set(target, selected);
   const declared = sellerDeclaredByDeclaration.get(source);
   if (declared !== undefined) sellerDeclaredByDeclaration.set(target, declared);
+  const evidence = sellerEvidenceByDeclaration.get(source);
+  if (evidence) sellerEvidenceByDeclaration.set(target, evidence);
 }
 
 /**
@@ -105,6 +138,8 @@ export function structuredCloneWithLegacyCreativeMetadata<T>(value: T): T {
   const snapshotMetadata = (source: object, target: object): void => {
     const declared = sellerDeclaredByDeclaration.get(source);
     if (declared !== undefined) sellerDeclaredByDeclaration.set(target, declared);
+    const evidence = sellerEvidenceByDeclaration.get(source);
+    if (evidence) sellerEvidenceByDeclaration.set(target, evidence);
     const refs = legacyRefsByDeclaration.get(source);
     if (refs) legacyRefsByDeclaration.set(target, structuredClone(refs));
     const selected = selectedOptionsByRefs.get(source);
