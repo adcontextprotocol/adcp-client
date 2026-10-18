@@ -864,3 +864,11 @@ export type {
   SellerActionResolutionOptions,
   SellerActionResolution,
 } from './media-buy-action-resolver';
+export * from '../identifiers';
+export { registerPropertyListTool, sendPropertyListChanged } from './property-lists';
+export type {
+  PropertyListPage,
+  PropertyListToolOptions,
+  PropertyListChangedNotification,
+  SendPropertyListChangedOptions,
+} from './property-lists';

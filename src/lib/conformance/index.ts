@@ -20,6 +20,8 @@
  */
 
 export { runConformance } from './runConformance';
+export { runPropertyListConformance } from './property-lists';
+export type { PropertyListConformanceReport } from './property-lists';
 export { runWebhookConformance } from './webhook';
 export { seedFixtures } from './seeder';
 export {

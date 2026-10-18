@@ -30,6 +30,8 @@ export type {
   BuyerPropertyPolicy,
   NormalizedPolicyDomain,
   ProductPolicyProductLike,
+  ProductPolicyResolvedProperty,
+  ProductPropertyPolicyIdentifier,
   ProductPropertyPolicyDiagnostic,
   ProductPropertyPolicyDiagnosticCode,
   ProductPropertyPolicyDiagnosticSeverity,
