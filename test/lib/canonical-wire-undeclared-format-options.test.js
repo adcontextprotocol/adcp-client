@@ -300,7 +300,7 @@ describe('canonical wire: format options the seller did not declare', () => {
         [sellerProduct],
         {
           wireAdcpVersion: '3.1.29',
-          productCache: createProductCache({ accountTtl: revalidate ? 0 : 600_000 }),
+          productCache: createProductCache({ accountTtl: revalidate ? 1_000 : 600_000 }),
         },
         { version: '3.1.29', cacheScope: 'account', declareCanonicalCreatives: false, conditional: true }
       );
@@ -320,6 +320,11 @@ describe('canonical wire: format options the seller did not declare', () => {
         assert.strictEqual(seller.captured.productReads.length, revalidate ? 2 : 1);
         if (revalidate) {
           assert.strictEqual(seller.captured.productReads[1].if_wholesale_feed_version, 'feed-1');
+          await sync();
+          assert.deepStrictEqual(seller.captured.sync.creatives[0], pairedCreative());
+          // A local hit must keep the renewed proof in the stored cache clone.
+          await seller.agent.getProducts(request);
+          assert.strictEqual(seller.captured.productReads.length, 2);
           await sync();
           assert.deepStrictEqual(seller.captured.sync.creatives[0], pairedCreative());
         } else {

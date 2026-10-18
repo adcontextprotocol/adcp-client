@@ -7525,7 +7525,11 @@ export class SingleAgentClient {
         completed: TaskResult<CanonicalGetProductsResponse>
       ): Promise<TaskResult<CanonicalGetProductsResponse>> => {
         if (!cache) return completed;
-        const cachedResult = cache.write(cacheScope, cacheParams, completed, conditionalSnapshot);
+        const cachedResult = cache.write(cacheScope, cacheParams, completed, conditionalSnapshot, materialized => {
+          // The seller confirmed the stored catalog. Renew its private proof
+          // before ProductCache clones the materialized result into storage.
+          this.rememberCanonicalProductRoutes(materialized.data?.products ?? [], account, undefined, productEvidence);
+        });
         if (cachedResult.success && cachedResult.status === 'completed') {
           if (
             !skipCacheRead &&
@@ -7540,14 +7544,7 @@ export class SingleAgentClient {
               [SKIP_PRODUCT_CACHE]: true,
             } as CanonicalReadTaskOptions);
           }
-          // A materialized conditional response is fresh seller confirmation;
-          // ordinary local read() hits above must keep their original lease.
-          this.rememberCanonicalProductRoutes(
-            cachedResult.data.products ?? [],
-            account,
-            undefined,
-            completed.data?.unchanged === true && cachedResult.data.unchanged !== true ? productEvidence : undefined
-          );
+          this.rememberCanonicalProductRoutes(cachedResult.data.products ?? [], account);
         }
         if (cachedResult.submitted) {
           const submitted = cachedResult.submitted;
