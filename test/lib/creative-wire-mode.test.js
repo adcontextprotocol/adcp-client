@@ -325,9 +325,18 @@ describe('request-local 3.1 product creative wire evidence (#3312)', () => {
         creativeFormatProjection: { selectorContainers: [container] },
       });
       assert.deepEqual(sent[1].creatives[0], unpinned.creatives[0]);
+      const assigned = {
+        ...structuredClone(request),
+        assignments: [{ creative_id: 'c1', package_id: 'pkg-1' }],
+      };
+      await client.syncCreatives(assigned, undefined, {
+        creativeFormatProjection: { selectorContainers: [container] },
+      });
+      assert.deepEqual(sent[2].creatives[0], creative);
+      assert.deepEqual(sent[2].assignments, assigned.assignments);
       assert.equal(await client.resolveCreativeFormatWireMode('sync_creatives'), 'unknown');
       await assert.rejects(client.syncCreatives(request), CreativeFormatProjectionError);
-      assert.equal(sent.length, 2, 'request evidence is never reused as a global capability');
+      assert.equal(sent.length, 3, 'request evidence is never reused as a global capability');
     });
   }
 
