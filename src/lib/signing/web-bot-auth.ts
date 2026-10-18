@@ -234,15 +234,19 @@ export function jwkThumbprint(
   else return denied('unsupported_key');
   return createHash('sha256').update(JSON.stringify(fields)).digest('base64url');
 }
-/** The profile algorithm a key signs with; any other key is unsupported (403). */
-function algorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg {
+/** The profile algorithm a key signs with, or undefined for a key the profile cannot use. */
+function keyAlgorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg | undefined {
   if (jwk.kty === 'OKP' && jwk.crv === 'Ed25519') return 'ed25519';
   // RSA: 2048–4096-bit moduli and e = 65537 only (bounds verification cost).
   if (jwk.kty === 'RSA' && typeof jwk.n === 'string' && jwk.e === 'AQAB') {
     const bytes = Buffer.from(jwk.n, 'base64url').length;
     if (bytes >= 256 && bytes <= 512) return 'rsa-pss-sha512';
   }
-  return denied('unsupported_key');
+  return undefined;
+}
+/** {@link keyAlgorithm} for a key that must be usable; any other key is unsupported (403). */
+function algorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg {
+  return keyAlgorithm(jwk) ?? denied('unsupported_key');
 }
 /** {@link algorithm} for signing paths: a caller error, not a verification outcome. */
 function signingAlgorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg {
@@ -814,11 +818,13 @@ export interface VerifiedSignatureDirectory {
 }
 /**
  * Verify a key directory response (wba-profile.mdx "Key directories", WBA
- * Appendix B.1). The response must be signed once per key, each signature
- * covering `"@authority";req` and `content-digest` with `created`, `expires`,
- * the key's thumbprint as `keyid` and `tag="http-message-signatures-directory"`,
- * and verifying under the key the directory itself provides. An unsigned
- * directory is a discovery failure.
+ * Appendix B.1). The response must be signed once per usable key, each
+ * signature covering `"@authority";req` and `content-digest` with `created`,
+ * `expires`, the key's thumbprint as `keyid` and
+ * `tag="http-message-signatures-directory"`, and verifying under the key the
+ * directory itself provides. Keys the profile cannot use, and their
+ * signatures, are ignored. An unsigned directory, or one without a usable
+ * key, is a discovery failure.
  */
 export async function verifyKeyDirectory(
   response: ResponseLike,
@@ -857,6 +863,10 @@ export async function verifyKeyDirectory(
     let expires = Infinity;
     for (const raw of document.keys) {
       if (!raw || typeof raw !== 'object') denied('directory_key');
+      // A key the profile cannot use is ignored, and so is any signature it
+      // made (RFC 7517 section 5): a WBA directory may list keys of other
+      // registered algorithms (WBA section 5.5.1). Every usable key signs.
+      if (!keyAlgorithm(raw)) continue;
       const thumbprint = jwkThumbprint(raw);
       // `kid` may be omitted; when present it must be the thumbprint.
       const key = { ...raw, kid: raw.kid ?? thumbprint } as AdcpJsonWebKey;
@@ -869,7 +879,6 @@ export async function verifyKeyDirectory(
         (!testKeysAllowed(options.allowTestKeys) && TEST_KIDS.has(key.kid))
       )
         denied('directory_key');
-      algorithm(key);
       kids.add(key.kid);
       keys.push(key);
       const proof = signatures.find(input => input.params.keyid === key.kid && input.params.tag === DIRECTORY_TAG);
@@ -921,6 +930,7 @@ export async function verifyKeyDirectory(
       );
       expires = Math.min(expires, proof.params.expires);
     }
+    if (!keys.length) denied('directory_keys');
     return { keys, expires, signed: true, proof: response };
   } catch (error) {
     if (error instanceof WebBotAuthError) {

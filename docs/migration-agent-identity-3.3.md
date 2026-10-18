@@ -136,9 +136,11 @@ a P-256 Web Bot Auth key at wire-up.
 
 `SignatureDirectoryResolver` derives the directory from the covered canonical
 origin. Directories must be signed (WBA Appendix B.1): it validates a
-possession signature for every key, covering `"@authority";req` and
-`content-digest`, and the exact body digest before caching keys. An unsigned
-directory is a discovery failure. Its audit proof retains the signed body and
+possession signature for every key the profile can use, covering
+`"@authority";req` and `content-digest`, and the exact body digest before
+caching keys. It ignores keys the profile cannot use, such as a P-256 key, and
+any signature they made (RFC 7517 section 5). An unsigned directory, or one
+with no usable key, is a discovery failure. Its audit proof retains the signed body and
 headers. Verification requires this resolver so context-free JWKS adapters cannot
 attribute a key to an arbitrary origin. Discovery uses HTTPS, DNS pinning, no redirects, a 256 KiB cap, a
 5-second connect bound and 10-second total bound, at most 64 keys, and bounded

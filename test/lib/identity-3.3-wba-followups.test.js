@@ -646,7 +646,7 @@ test('review: a key rotated in during a directory outage is a discovery failure'
   assert.equal((await directory.resolve(oldKey.kid, origin)).kid, oldKey.kid);
 });
 
-test('review: RSA keys are bounded to 2048-4096 bits with e = 65537', async () => {
+test('review: RSA keys outside 2048-4096 bits or e = 65537 are not usable, so such a directory has no key', async () => {
   const { generateKeyPairSync: generate } = require('crypto');
   const small = generate('rsa', { modulusLength: 1024 }).publicKey.export({ format: 'jwk' });
   const oddExponent = generate('rsa', { modulusLength: 2048, publicExponent: 3 }).publicKey.export({ format: 'jwk' });
@@ -667,7 +667,7 @@ test('review: RSA keys are bounded to 2048-4096 bits with e = 65537', async () =
         },
         T
       ),
-      e => e.status === 403 && e.reason === 'directory_unsupported_key'
+      e => e.status === 403 && e.reason === 'directory_keys'
     );
   }
 });

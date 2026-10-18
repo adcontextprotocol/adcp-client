@@ -241,26 +241,90 @@ test('replay state is keyed on the nonce bytes, not their encoding', async () =>
   );
 });
 
-test('directories with P-256 keys are discovery failures; revocation lists are Ed25519 only', async () => {
-  const ec = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).publicKey.export({ format: 'jwk' });
-  const body = JSON.stringify({ keys: [ec] });
-  await assert.rejects(
-    wba.verifyKeyDirectory(
+/**
+ * A key directory that publishes `published` (private JWKs, served public) and
+ * carries one WBA Appendix B.1 signature per key in `signers`, so a test can
+ * add keys the SDK would never publish or sign with.
+ */
+async function directoryResponse(published, signers) {
+  const publicJwk = ({ d, ...rest }) => rest;
+  const body = JSON.stringify({ keys: published.map(publicJwk) });
+  const url = ORIGIN + wba.SIGNATURE_DIRECTORY_PATH;
+  const headers = {
+    'content-type': wba.SIGNATURE_DIRECTORY_MEDIA_TYPE,
+    'content-digest': computeContentDigest(body, 'rfc8941-base64'),
+  };
+  const inputs = [];
+  const signatures = [];
+  for (const [i, key] of signers.entries()) {
+    const algorithm = key.kty === 'EC' ? 'ecdsa-p256-sha256' : 'ed25519';
+    const signed = await httpMessageSig.createSignature(
       {
+        kind: 'response',
         status: 200,
-        headers: {
-          'content-type': wba.SIGNATURE_DIRECTORY_MEDIA_TYPE,
-          'content-digest': computeContentDigest(body, 'rfc8941-base64'),
-          'signature-input': `key1=("@authority";req "content-digest");created=${T};expires=${T + 60};keyid="${wba.jwkThumbprint(ec)}";tag="http-message-signatures-directory"`,
-          signature: 'key1=:AAAA:',
-        },
-        body,
-        request: { method: 'GET', url: ORIGIN + wba.SIGNATURE_DIRECTORY_PATH },
+        fields: [{ name: 'content-digest', value: headers['content-digest'] }],
+        request: { kind: 'request', method: 'GET', targetUri: url, fields: [] },
       },
-      T
-    ),
-    e => e.status === 403 && e.reason === 'directory_unsupported_key'
+      {
+        label: `key${i + 1}`,
+        components: [httpMessageSig.component('@authority', { req: true }), 'content-digest'],
+        parameters: {
+          created: T - 60,
+          expires: T + 3600,
+          keyid: wba.jwkThumbprint(key),
+          alg: algorithm,
+          tag: 'http-message-signatures-directory',
+        },
+        signer: {
+          algorithm,
+          sign: data =>
+            nodeSign(key.kty === 'EC' ? 'sha256' : null, Buffer.from(data), {
+              key: createPrivateKey({ key, format: 'jwk' }),
+              dsaEncoding: 'ieee-p1363',
+            }),
+        },
+      }
+    );
+    inputs.push(signed.signatureInput);
+    signatures.push(signed.signature);
+  }
+  if (signers.length)
+    Object.assign(headers, { 'signature-input': inputs.join(', '), signature: signatures.join(', ') });
+  return { status: 200, headers, body, request: { method: 'GET', url } };
+}
+
+test('directories: keys the profile cannot use are ignored with their signatures; every usable key signs', async () => {
+  const key = newKey();
+  const ec = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ format: 'jwk' });
+  const kids = async response => (await wba.verifyKeyDirectory(response, T)).keys.map(k => k.kid);
+  // RFC 7517 section 5: a key of a type the verifier does not use is ignored,
+  // whether or not it signed the directory (WBA Appendix B.1 asks every key to).
+  assert.deepEqual(await kids(await directoryResponse([key, ec], [key])), [key.kid]);
+  assert.deepEqual(await kids(await directoryResponse([key, ec], [key, ec])), [key.kid]);
+  assert.deepEqual(await kids(await directoryResponse([ec, key], [ec, key])), [key.kid]);
+  // A directory with no usable key, or with a usable key that did not sign, is a discovery failure.
+  await assert.rejects(
+    wba.verifyKeyDirectory(await directoryResponse([ec], [ec]), T),
+    e => e.status === 403 && e.reason === 'directory_keys'
   );
+  await assert.rejects(
+    wba.verifyKeyDirectory(await directoryResponse([key, newKey()], [key]), T),
+    e => e.status === 403 && e.reason === 'directory_proof'
+  );
+  // A request signed by the usable key verifies through a directory that also lists the P-256 key.
+  const response = await directoryResponse([key, ec], [key, ec]);
+  const options = {
+    directory: new wba.SignatureDirectoryResolver({
+      now: () => T,
+      fetchOptions: { trustedFetchFn: async () => new Response(response.body, { headers: response.headers }) },
+    }),
+    replayStore: new InMemoryReplayStore(),
+    now: () => T,
+  };
+  assert.equal((await wba.verifyWebBotAuth(await rawSign(key), options))[0].keyid, key.kid);
+});
+
+test('revocation lists are Ed25519 only', async () => {
   const ecPrivate = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ format: 'jwk' });
   await assert.rejects(
     createSignedOriginRevocationList(
