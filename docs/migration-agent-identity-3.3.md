@@ -137,7 +137,10 @@ a P-256 or RSA Web Bot Auth key at wire-up.
 The covered `Signature-Agent` member must be exactly the canonical https origin
 string, compared as received: a lowercase host, no default port, and no path
 (not even `/`), query, fragment, or userinfo. Any other value, including an
-`http://` origin, is a 403 before any directory fetch.
+`http://` origin, is a 403 before any directory fetch. The member's `type`
+parameter is a Token (WBA section 5.2.1), and the verifier accepts
+`type=directory` as a Token or as a String. It ignores a member of any other
+type, which leaves no member to resolve (403).
 
 `SignatureDirectoryResolver` derives the directory from the covered canonical
 origin. Directories must be signed (WBA Appendix B.1): it validates a
