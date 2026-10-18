@@ -7813,6 +7813,10 @@ export class SingleAgentClient {
     return resolved;
   }
 
+  private usesScopedDiscoveryTransport(options?: ReadRequestOptions): boolean {
+    return normalizeTransportOptions(options?.transport ?? this.config.transport)?.trustedFetchFn !== undefined;
+  }
+
   /** Product evidence applies to this request only; it must never prime a tool-wide capability. */
   private productOptionsSupportCanonicalWire(
     taskType: 'sync_creatives' | 'create_media_buy' | 'update_media_buy',
@@ -7893,7 +7897,7 @@ export class SingleAgentClient {
       const available = declarations.filter(declaration => declaration.experimental !== true);
       const matchesRef = (declaration: Readonly<Record<string, unknown>>, ref: CanonicalLegacyOptionRef): boolean => {
         const declaredRef = optionRef(declaration);
-        return declaredRef !== undefined && sameFormatOptionRef(declaredRef, ref);
+        return declaredRef !== undefined && this.sameCanonicalOptionRef(declaredRef, ref);
       };
       if (!refs.every(ref => available.some(declaration => matchesRef(declaration, ref!)))) return false;
       const selected = available.filter(
