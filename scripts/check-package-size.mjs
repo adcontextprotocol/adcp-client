@@ -99,7 +99,12 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // current main base measures 20,365,246 bytes packed and 111,595,107 unpacked
 // across 6,556 files. Preserve about 40 KB of compressor margin. The previous
 // corpora are replaced; no duplicate compliance roots or archives are packaged.
-const MAX_PACKED_TARBALL_BYTES = 20_410_000;
+// Combining the creative build probe with the merged property-list surface
+// measures 20,425,538 bytes on Node 20 and 20,425,537 on Node 22 (6,574 files).
+// The prior qualified probe artifact is 20,397,052 bytes; the only new files
+// are the 13 upstream property-list artifacts. Preserve about 24 KB of
+// compressor margin. Unpacked, file-count, schema and declaration limits stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_450_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
