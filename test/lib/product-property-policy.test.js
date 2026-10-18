@@ -33,6 +33,41 @@ describe('normalizeDomainForPropertyPolicy', () => {
 });
 
 describe('validateProductsAgainstPropertyPolicy', () => {
+  test('missing configured catalogs preserve uncertainty for exclusion-only policies', () => {
+    for (const publisherProperties of [{}, { 'publisher.example': undefined }]) {
+      for (const exclusions of [{ excludedPropertyIds: ['blocked'] }, { excludedDomains: ['blocked.example'] }]) {
+        for (const selection_type of ['all', 'by_tag', 'by_id']) {
+          const candidate = product({
+            publisher_properties: [
+              {
+                selection_type,
+                publisher_domain: 'publisher.example',
+                ...(selection_type === 'by_tag' ? { property_tags: ['news'] } : {}),
+                ...(selection_type === 'by_id' ? { property_ids: ['safe'] } : {}),
+              },
+            ],
+          });
+          const policy = { strict: true, publisherProperties, ...exclusions };
+          const checked = validateProductsAgainstPropertyPolicy({ products: [candidate], policy, mode: 'filter' });
+          // Explicit IDs are sufficient to evaluate ID-only exclusions without catalog metadata.
+          const needsCatalog = selection_type !== 'by_id' || Boolean(exclusions.excludedDomains);
+          assert.strictEqual(checked.products.length, needsCatalog ? 0 : 1);
+          assert.strictEqual(
+            checked.diagnostics.some(diagnostic => diagnostic.code === 'unresolved_property_identifiers'),
+            needsCatalog
+          );
+          const flagged = validateProductsAgainstPropertyPolicy({
+            products: [candidate],
+            policy: { ...policy, unknownSelectorBehavior: 'flag' },
+            mode: 'filter',
+          });
+          assert.strictEqual(flagged.products.length, 1);
+          assert.strictEqual(flagged.flaggedProducts.length, needsCatalog ? 1 : 0);
+        }
+      }
+    }
+  });
+
   test('supplied catalogs leave absent publisher hosts unknown instead of falling back to domain aliases', () => {
     const candidate = product({
       publisher_properties: [{ selection_type: 'all', publisher_domain: 'www.publisher.example' }],

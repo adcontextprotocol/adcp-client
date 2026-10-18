@@ -387,7 +387,14 @@ function diagnosticsForSelector(
 
   for (const { candidate, normalized: normalizedDomain } of normalizedDomains) {
     const matchedAllowedDomain = matchedAllowedDomainForCandidate(normalizedDomain, policy);
-    if ((hasAllowedPropertyScope(policy) || selectionType === 'by_tag') && identifierScope?.unknown) {
+    const needsCatalogForExclusions =
+      policy.publisherCatalogsConfigured &&
+      (policy.excludedDomainsByComparable.size > 0 ||
+        (selectionType !== 'by_id' && policy.excludedPropertyIds.size > 0));
+    if (
+      (hasAllowedPropertyScope(policy) || selectionType === 'by_tag' || needsCatalogForExclusions) &&
+      identifierScope?.unknown
+    ) {
       diagnostics.push(
         ...diagnosticForBehavior(policy.unknownSelectorBehavior, {
           code: 'unresolved_property_identifiers',
