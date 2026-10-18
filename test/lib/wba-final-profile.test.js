@@ -160,25 +160,29 @@ test('parameters: alg is required and must be ed25519 or rsa-pss-sha512', async 
   );
 });
 
-test('one signature: a second label of any profile, or a second Signature-Agent member, is a 403', async () => {
+test('one signature: only the web-bot-auth member is read; a second one, or a second Signature-Agent member, is a 403', async () => {
   const key = newKey();
-  const options = await verifierOptions([key]);
   const signed = await rawSign(key);
   const other = await rawSign(key, { label: 'other', agent: `other="${ORIGIN}"` });
-  await assert.rejects(
-    wba.verifyWebBotAuth(
-      {
-        ...signed,
-        headers: {
-          ...signed.headers,
-          'signature-input': `${signed.headers['signature-input']}, ${other.headers['signature-input'].replace('web-bot-auth', 'adcp/request-signing/v1')}`,
-          signature: `${signed.headers.signature}, ${other.headers.signature}`,
-        },
-      },
-      options
-    ),
-    rejectedWith(403, 'signature_count')
-  );
+  const withSecond = (tag, first = true) => {
+    const second = {
+      'signature-input': other.headers['signature-input'].replace('web-bot-auth', tag),
+      signature: other.headers.signature,
+    };
+    const join = name =>
+      (first ? [signed.headers[name], second[name]] : [second[name], signed.headers[name]]).join(', ');
+    return {
+      ...signed,
+      headers: { ...signed.headers, 'signature-input': join('signature-input'), signature: join('signature') },
+    };
+  };
+  // A member with another tag (a CDN's own signature, say) is not read, in either position.
+  for (const first of [true, false]) {
+    const [signer] = await wba.verifyWebBotAuth(withSecond('cdn-edge', first), await verifierOptions([key]));
+    assert.equal(signer.label, 'sig1');
+  }
+  const options = await verifierOptions([key]);
+  await assert.rejects(wba.verifyWebBotAuth(withSecond('web-bot-auth'), options), rejectedWith(403, 'signature_count'));
   await assert.rejects(
     wba.verifyWebBotAuth(
       {
@@ -511,7 +515,8 @@ test('many Signature or Signature-Input members are rejected without per-member 
       },
       options
     ),
-    rejectedWith(403, 'signature_count')
+    // Signature members other than the web-bot-auth label are not read.
+    rejectedWith(403, 'signature_label')
   );
   await assert.rejects(
     wba.verifyWebBotAuth(

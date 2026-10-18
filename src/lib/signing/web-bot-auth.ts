@@ -5,7 +5,7 @@ import { toReleasePrecisionVersion } from '../version';
  *
  * RFC 9421 parsing, signature bases and cryptographic checks run in Cloudflare's
  * `http-message-sig`. This module adds the profile rules the library does not
- * know: one signature and one covered `Signature-Agent` member per request, the
+ * know: one `web-bot-auth` signature and one covered `Signature-Agent` member per request, the
  * nonce and lifetime rules, key lookup by (origin, thumbprint) in the origin's
  * signed key directory, replay state, and the 400/403/429 status vocabulary.
  */
@@ -601,8 +601,9 @@ export interface VerifyWebBotAuthOptions {
 /**
  * Verify a Web Bot Auth request (wba-profile.mdx "Verification"). Resolves to
  * exactly one verified signer: the profile takes one `web-bot-auth` signature
- * and one `Signature-Agent` member per request. The array shape is kept for
- * principal resolvers written against earlier drafts.
+ * and one `Signature-Agent` member per request, and does not read signatures
+ * with other tags. The array shape is kept for principal resolvers written
+ * against earlier drafts.
  */
 export async function verifyWebBotAuth(
   request: RequestLike,
@@ -633,10 +634,13 @@ export async function verifyWebBotAuth(
     for (const member of agents?.values() ?? []) if (typeof member[0] !== 'string') bad('signature_agent');
     if (!inputMembers || !signatureMembers) return denied('headers_missing');
 
-    // 2. Exactly one signature, tagged web-bot-auth, and exactly one
-    //    Signature-Agent member, keyed to that signature's label and covered.
-    if (inputMembers.size !== 1 || signatureMembers.size !== 1) denied('signature_count');
-    label = inputMembers.keys().next().value!;
+    // 2. Exactly one signature tagged web-bot-auth. Members with other tags are
+    //    not read (WBA §5.2.2 allows several signatures per request). Exactly
+    //    one Signature-Agent member, keyed to that signature's label and covered.
+    const tagged = [...inputMembers].filter(([, member]) => member[1].get('tag') === WEB_BOT_AUTH_PROFILE);
+    if (tagged.length === 0) denied('profile');
+    if (tagged.length > 1) denied('signature_count');
+    label = tagged[0]![0];
     if (!signatureMembers.has(label)) denied('signature_label');
     try {
       // RFC 8941 sf-binary is padded standard Base64; the parser tolerates less.
@@ -651,7 +655,6 @@ export async function verifyWebBotAuth(
       // The field parsed; a parameter of the wrong type is a profile failure.
       return denied('parameters');
     }
-    if (input.params.tag !== WEB_BOT_AUTH_PROFILE) denied('profile');
     if (!agents || agents.size !== 1) denied(agents ? 'agent_count' : 'agent_missing');
     const agentMember = `signature-agent;key="${label}"`;
     const agentComponents = input.components.filter(c => c.startsWith('signature-agent;'));

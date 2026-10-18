@@ -126,9 +126,10 @@ final UTF-8 body, covers the selected `Signature-Agent` member and digest,
 uses a fresh 64-byte nonce, and refuses automatic HTTP redirects. A request
 carries exactly one `web-bot-auth` signature and one `Signature-Agent` member:
 relays were removed from the profile, `signWebBotAuth` throws on `relay: true`
-and on a request that already carries signature fields, and the verifier
-answers a second signature (of any profile) or a second `Signature-Agent`
-member with 403. Signing keys are Ed25519 or RSA-PSS-SHA512 (2048 to 4096
+and on a request that already carries signature fields. The verifier reads
+only the `Signature-Input` member tagged `web-bot-auth` and ignores members
+with other tags, such as a CDN's own signature. It answers a second
+`web-bot-auth` signature or a second `Signature-Agent` member with 403. Signing keys are Ed25519 or RSA-PSS-SHA512 (2048 to 4096
 bits, e = 65537); ES256 stays on the AdCP RFC 9421 profile, and
 `createWebBotAuthFetch`, `createWebhookEmitter` and `createAdcpServer` refuse
 a P-256 Web Bot Auth key at wire-up.
