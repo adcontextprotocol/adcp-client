@@ -1,3 +1,4 @@
+import type { CreativeBuildProbeSpec } from './creative-build-probe';
 /**
  * Types for storyboard-driven testing.
  *
@@ -273,6 +274,8 @@ export interface Storyboard {
    * Omitted handles retain the compatibility strategy `["seed"]`.
    */
   fixture_resolution?: StoryboardFixtureResolution;
+  /** Opt-in runner preparation; does not add an agent protocol capability. */
+  creative_build_probe?: CreativeBuildProbeSpec;
   /**
    * Initial context values declared by the storyboard YAML. Runner callers may
    * override these defaults with `StoryboardRunOptions.context`.
@@ -460,7 +463,7 @@ export type FixtureResolutionEvidence = FixtureResolutionAttempt;
 
 /** Machine-readable record emitted exactly once for every fixture handle. */
 export interface FixtureResolutionRecord {
-  fixture_type: 'product' | 'pricing_option';
+  fixture_type: 'product' | 'pricing_option' | 'creative_format';
   handle: string;
   product_handle?: string;
   requirements: FixtureMatchClause[];
@@ -468,8 +471,10 @@ export interface FixtureResolutionRecord {
   status: FixtureResolutionStatus;
   strategy?: FixtureResolutionStrategy;
   seller_ids?: {
-    product_id: string;
+    product_id?: string;
     pricing_option_id?: string;
+    capability_id?: string;
+    format_id?: Record<string, unknown>;
   };
 }
 

@@ -412,3 +412,10 @@ export {
   // magic string operators have to copy (adcp-client#2940).
   MCP_SESSION_PROBE_TASK,
 } from './storyboard';
+
+export { resolveCreativeBuildProbe, validateCreativeBuildProbeSpec } from './storyboard';
+export type {
+  CreativeBuildProbeSpec,
+  CreativeBuildProbeInputFixture,
+  CreativeBuildProbeResolution,
+} from './storyboard';
