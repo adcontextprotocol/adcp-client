@@ -282,6 +282,31 @@ provenance manifest first. Resolve the release tag to its full commit, then use
 file and verify the release bundle's `.tgz.sha256` sidecar before updating the
 manifest. The command never accepts moving branches or unverified content.
 
+## Property-list reference credential isolation
+
+The storyboard runner implements `check: property_list_reference` and the
+`property_list_reference_runner` requirement for MCP. The protocol-authored
+`universal/property-list-reference-resolution` storyboard creates a shared list
+and a control list under the owner identity. Its probe then starts a fresh MCP
+session with only the issued reference Bearer token, follows every page, checks
+the exact identifier set, and requires authorization denials for a cross-list
+read and a name-changing update. Owner credentials, accounts, cookies, and
+signing keys are never forwarded into that session. The check needs no extra
+runner configuration beyond the storyboard's sandbox/controller setup.
+It uses the MCP endpoint already discovered by the owner client, with a fresh
+transport that does not inherit the owner's `transport.trustedFetchFn`.
+
+Evidence includes initialization, each page, and both denial probes; issued
+tokens are redacted from creation responses and diagnostic strings. Explicit
+A2A runs report `requirement_unmet` before fixture setup or task calls because
+the credential-isolated probe currently implements the MCP baseline.
+
+The storyboard is authored for the next AdCP minor release and is not in the
+bundled 3.2.5 compliance cache. Until that release, load its YAML from a local
+copy of spec PR #8289 and use `runStoryboard` with that checkout's schema root.
+
+Upstream contract: [adcp#8289](https://github.com/adcontextprotocol/adcp/pull/8289).
+
 ## Trusted Match Context router replay
 
 Context Match routers expose raw `POST /context`, not an MCP or A2A tool. A

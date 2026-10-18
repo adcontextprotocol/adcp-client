@@ -9563,6 +9563,11 @@ export class SingleAgentClient {
     return this.normalizedAgent.protocol;
   }
 
+  /** Resolved MCP endpoint already used by this client; never performs discovery. */
+  getDiscoveredMcpEndpoint(): string | undefined {
+    return this.discoveredEndpoint;
+  }
+
   /**
    * Get the canonical base URL for this agent
    *
