@@ -1,11 +1,9 @@
 {
   "repository": "adcontextprotocol/adcp",
   "pr": 7894,
-  "sha": "e24eeb090c4365707641099cbbb45f9945c6d6e0",
+  "sha": "49b3a3157e55a7ec37816908ec28a2e25057fd89",
   "path": "static/compliance/source/test-vectors/wba-profile",
-  "vendored": "Every file under the path at the pinned sha, byte for byte, except governance/. Graded by test/lib/identity-3.3.test.js.",
+  "vendored": "Every file under the path at the pinned sha, byte for byte. test/lib/identity-3.3.test.js grades the positive and negative vectors; the interop harness (adcontextprotocol/adcp#8298) grades scenarios.json through test/wba-interop/adapter.cjs.",
   "replay_status": "negative/002 expects 429 with Accept-Signature carrying a verifier-chosen nonce; the deprecated replayStatus option has no effect.",
-  "excluded": ["governance/"],
-  "excluded_reason": "The profile on #7894 drops the governance-token checks and the governance/ vectors from the WBA profile. Governance moves to the AdCP layer under a separate R4 erratum, which moves JWS artifacts to the identity's WBA key directory in 3.3. The vendored README.md still describes governance/, as it does at the pinned sha.",
   "test_keys": "Published private seeds are fixtures only; production signing and directory verification reject them."
 }

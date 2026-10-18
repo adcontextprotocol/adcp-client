@@ -386,7 +386,7 @@ released schemas:
 
 | PR | Pinned head | Surface |
 | --- | --- | --- |
-| [7894](https://github.com/adcontextprotocol/adcp/pull/7894) | `e24eeb090c4365707641099cbbb45f9945c6d6e0` | WBA wire profile (`wba-profile.mdx`), profile selectors, directory and request vectors |
+| [7894](https://github.com/adcontextprotocol/adcp/pull/7894) | `49b3a3157e55a7ec37816908ec28a2e25057fd89` | WBA wire profile (`wba-profile.mdx`), profile selectors, directory and request vectors |
 | [8121](https://github.com/adcontextprotocol/adcp/pull/8121) | `f5973ac0267b1b94d714c55fc4e3ad8fc2511350` | Origin identity and key-free trust v1 |
 | [8162](https://github.com/adcontextprotocol/adcp/pull/8162) | `5c9914c5c382cc32f3d2ad7842942e548c414705` | Ratified identity, coexistence, revocation |
 | [8168](https://github.com/adcontextprotocol/adcp/pull/8168) | `45540941dfd61e80ab8a463f780cb147c82a32f0` | Relationship and principal response arms |
@@ -395,8 +395,9 @@ released schemas:
 | [8177](https://github.com/adcontextprotocol/adcp/pull/8177) | `b663f8e4235fe4276c73fb9bac6db491b2252bbf` | Reporting authentication omission |
 
 The vectors in `test/fixtures/wba-profile/` are byte-identical to #7894 at that
-head, except `governance/`, which #7894 drops from the WBA profile and the SDK
-does not vendor (see `PINNED.json`). Every vendored vector is graded.
+head (see `PINNED.json`). Every vendored request and directory vector is
+graded, and the interop harness (adcontextprotocol/adcp#8298) grades
+`scenarios.json`.
 
 Verification runs in Cloudflare's `http-message-sig` (signature base, coverage,
 window, algorithm and cryptographic checks); the SDK adds the profile rules in
@@ -467,10 +468,9 @@ so verification can run in a CDN or middleware in front of the AdCP server.
   Cloudflare's `web-bot-auth`; they already used signed directories and are
   unchanged.
 #7894 drops the governance-token checks and the `governance/` vectors from the
-WBA profile, and the SDK does not vendor them. Governance moves to the AdCP
-layer under a separate R4 erratum, which moves JWS artifacts, governance
-included, to the identity's WBA key directory in 3.3. This change leaves the
-SDK's governance code as it is. `PINNED.json` records the exclusion.
+WBA profile. Governance moves to the AdCP layer under a separate R4 erratum,
+which moves JWS artifacts, governance included, to the identity's WBA key
+directory in 3.3. This change leaves the SDK's governance code as it is.
 The buyer default onboarding field is `profiles.adcp.onboarding`, matching the
 schema; the design's `record_profiles` wording names the schema definition.
 
