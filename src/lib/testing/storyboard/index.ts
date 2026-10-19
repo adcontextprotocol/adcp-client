@@ -263,3 +263,10 @@ export {
   isSandboxDomain,
   clearSandboxCache,
 } from './sandbox-entities';
+
+export { resolveCreativeBuildProbe, validateCreativeBuildProbeSpec } from './creative-build-probe';
+export type {
+  CreativeBuildProbeSpec,
+  CreativeBuildProbeInputFixture,
+  CreativeBuildProbeResolution,
+} from './creative-build-probe';

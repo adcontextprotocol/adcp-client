@@ -252,9 +252,10 @@ type RegistryResolveIdentifiersRequest = NonNullable<
   operations['resolveIdentifiers']['requestBody']
 >['content']['application/json'];
 
-/** Request body for POST /api/registry/resolve. `mode` defaults to `resolve` server-side. */
-export type ResolveIdentifiersRequest = Omit<RegistryResolveIdentifiersRequest, 'mode'> & {
+/** Request body for POST /api/registry/resolve. Mode and sandbox use the registry's defaults when omitted. */
+export type ResolveIdentifiersRequest = Omit<RegistryResolveIdentifiersRequest, 'mode' | 'sandbox'> & {
   mode?: RegistryResolveIdentifiersRequest['mode'];
+  sandbox?: RegistryResolveIdentifiersRequest['sandbox'];
 };
 
 /** Response from POST /api/registry/resolve (200) */

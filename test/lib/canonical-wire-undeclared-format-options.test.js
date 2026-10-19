@@ -30,7 +30,14 @@ const ACCOUNT = { account_id: 'acct-canonical' };
 async function canonicalSeller(
   products,
   config = {},
-  { cacheScope, conditional = false, version = '3.2.1', declareCanonicalCreatives = true } = {}
+  {
+    cacheScope,
+    conditional = false,
+    version = '3.2.1',
+    declareCanonicalCreatives = true,
+    canonicalCreatives,
+    syncCreativeWire,
+  } = {}
 ) {
   const captured = { productReads: [] };
   const server = new McpServer({ name: 'canonical-seller', version: '1.0.0' });
@@ -38,7 +45,11 @@ async function canonicalSeller(
     const capabilities = {
       adcp: { major_versions: [3], supported_versions: [version] },
       supported_protocols: ['media_buy'],
-      media_buy: { features: declareCanonicalCreatives ? { canonical_creatives: !version.startsWith('3.0') } : {} },
+      media_buy: {
+        features: declareCanonicalCreatives
+          ? { canonical_creatives: canonicalCreatives ?? !version.startsWith('3.0') }
+          : {},
+      },
     };
     return { content: [{ type: 'text', text: '{}' }], structuredContent: capabilities };
   });
@@ -71,7 +82,13 @@ async function canonicalSeller(
   });
   server.registerTool(
     'update_media_buy',
-    { inputSchema: { media_buy_id: z.string(), new_packages: z.array(z.any()).optional() } },
+    {
+      inputSchema: {
+        media_buy_id: z.string(),
+        packages: z.array(z.any()).optional(),
+        new_packages: z.array(z.any()).optional(),
+      },
+    },
     async args => {
       captured.update = args;
       return {
@@ -82,7 +99,18 @@ async function canonicalSeller(
   );
   server.registerTool(
     'sync_creatives',
-    { inputSchema: { creatives: z.array(z.any()), assignments: z.array(z.any()).optional() } },
+    {
+      inputSchema: {
+        creatives: z.array(
+          syncCreativeWire === 'legacy'
+            ? z
+                .object({ creative_id: z.string(), format_id: z.object({ agent_url: z.string(), id: z.string() }) })
+                .passthrough()
+            : z.any()
+        ),
+        assignments: z.array(z.any()).optional(),
+      },
+    },
     async args => {
       captured.sync = args;
       return { content: [{ type: 'text', text: '{}' }], structuredContent: { creatives: [] } };
@@ -123,56 +151,218 @@ function mediaBuy(pkg) {
   };
 }
 
+function pairedProduct(dualEmission = true) {
+  return {
+    ...legacyOnlyProduct(
+      'dual-emitted',
+      dualEmission
+        ? [
+            { agent_url: AAO, id: 'display_300x250_image' },
+            { agent_url: AAO, id: 'display_728x90_image' },
+          ]
+        : undefined
+    ),
+    format_options: [
+      { format_option_id: 'mrec', format_kind: 'image', params: { width: 300, height: 250 } },
+      { format_option_id: 'leaderboard', format_kind: 'image', params: { width: 728, height: 90 } },
+    ],
+  };
+}
+
+function pairedCreative() {
+  return {
+    creative_id: 'paired-image',
+    name: 'Paired image',
+    format_kind: 'image',
+    format_option_ref: { scope: 'product', format_option_id: 'mrec' },
+    assets: { image: { asset_type: 'image', url: 'https://cdn.example/ad.png', width: 300, height: 250 } },
+  };
+}
+
 describe('canonical wire: format options the seller did not declare', () => {
-  test('a 3.1 seller without a creative-wire declaration accepts creatives through its dual-emitted pairing', async () => {
-    const formatIds = [
-      { agent_url: AAO, id: 'display_300x250_image' },
-      { agent_url: AAO, id: 'display_728x90_image' },
-    ];
-    const sellerProduct = {
-      ...legacyOnlyProduct('dual-emitted', formatIds),
-      format_options: [
-        { format_option_id: 'mrec', format_kind: 'image', params: { width: 300, height: 250 } },
-        { format_option_id: 'leaderboard', format_kind: 'image', params: { width: 728, height: 90 } },
-      ],
-    };
+  for (const wireAdcpVersion of ['3.1.29', '3.2.5']) {
+    for (const dualEmission of [true, false]) {
+      test(`3.1 product options select canonical delivery (${wireAdcpVersion} buyer, ${dualEmission ? 'dual' : 'canonical-only'})`, async () => {
+        const sellerProduct = pairedProduct(dualEmission);
+        const seller = await canonicalSeller(
+          [sellerProduct],
+          { productCache: createProductCache(), wireAdcpVersion },
+          { cacheScope: 'account', version: '3.1.29', declareCanonicalCreatives: false }
+        );
+        try {
+          const request = { buying_mode: 'brief', brief: 'Display', account: ACCOUNT };
+          await seller.agent.getProducts(request);
+          const products = await seller.agent.getProducts(request);
+          assert.strictEqual(seller.captured.productReads.length, 1, 'the second discovery uses the product cache');
+          const product = products.data.products[0];
+          // The client retains full seller declarations when a selection loses its WeakMap metadata.
+          const selected = JSON.parse(JSON.stringify(packageRefsForFormatOptions(product, ['mrec'])));
+          const creative = pairedCreative();
+          if (wireAdcpVersion.startsWith('3.1')) {
+            assert.strictEqual(await seller.agent.resolveCreativeFormatWireMode('sync_creatives'), 'unknown');
+          }
+          const synced = await seller.agent.syncCreatives({ account: ACCOUNT, creatives: [creative] }, undefined, {
+            creativeFormatProjection: { selectorContainers: [{ product_id: product.product_id, ...selected }] },
+          });
+          assert.strictEqual(synced.success, true);
+          assert.deepStrictEqual(seller.captured.sync.creatives[0], creative);
+          const created = await seller.agent.createMediaBuy(
+            mediaBuy({ product_id: product.product_id, ...selected, creatives: [creative] })
+          );
+          assert.strictEqual(created.success, true);
+          assert.deepStrictEqual(seller.captured.create.packages[0].format_option_refs, selected.format_option_refs);
+          assert.deepStrictEqual(seller.captured.create.packages[0].creatives[0], creative);
+          assert.strictEqual(seller.captured.create.packages[0].format_ids, undefined);
+          const updated = await seller.agent.updateMediaBuy({
+            account: ACCOUNT,
+            media_buy_id: 'mb-canonical',
+            new_packages: [
+              {
+                product_id: product.product_id,
+                ...selected,
+                creatives: [creative],
+                buyer_ref: 'new',
+                budget: 1000,
+                pricing_option_id: 'po_cpm',
+              },
+            ],
+          });
+          assert.strictEqual(updated.success, true);
+          assert.deepStrictEqual(seller.captured.update.new_packages[0].creatives[0], creative);
+          assert.deepStrictEqual(
+            seller.captured.update.new_packages[0].format_option_refs,
+            selected.format_option_refs
+          );
+          await seller.agent.updateMediaBuy({
+            account: ACCOUNT,
+            media_buy_id: 'mb-canonical',
+            packages: [
+              { package_id: 'pkg-1', ...packageRefsForFormatOptions(product, ['mrec']), creatives: [creative] },
+            ],
+          });
+          assert.deepStrictEqual(seller.captured.update.packages[0].creatives[0], creative);
+          assert.strictEqual(seller.captured.update.packages[0].format_ids, undefined);
+          assert.strictEqual(product.format_ids, undefined);
+          // Product evidence must not become a global canonical capability.
+          if (wireAdcpVersion.startsWith('3.1')) {
+            assert.strictEqual(await seller.agent.resolveCreativeFormatWireMode('sync_creatives'), 'unknown');
+          }
+        } finally {
+          await seller.close();
+        }
+      });
+    }
+  }
+
+  test('3.1 discovery and serialized synthesized options retain legacy delivery', async () => {
+    const formatId = { agent_url: AAO, id: 'display_300x250_image' };
     const seller = await canonicalSeller(
-      [sellerProduct],
-      { productCache: createProductCache(), wireAdcpVersion: '3.1.24' },
-      { cacheScope: 'account', version: '3.1.24', declareCanonicalCreatives: false }
+      [legacyOnlyProduct('legacy-shaped', [formatId])],
+      { wireAdcpVersion: '3.1.29', productCache: createProductCache() },
+      { version: '3.1.29', cacheScope: 'account', declareCanonicalCreatives: false }
     );
     try {
-      const request = { buying_mode: 'brief', brief: 'Display', account: ACCOUNT };
-      await seller.agent.getProducts(request);
-      const products = await seller.agent.getProducts(request);
-      assert.strictEqual(seller.captured.productReads.length, 1, 'the second discovery uses the product cache');
-      const product = products.data.products[0];
-      const selected = packageRefsForFormatOptions(product, ['mrec']);
-      const creative = {
-        creative_id: 'paired-image',
-        name: 'Paired image',
-        format_kind: 'image',
-        format_option_ref: { scope: 'product', format_option_id: 'mrec' },
-        assets: { image: { asset_type: 'image', url: 'https://cdn.example/ad.png', width: 300, height: 250 } },
-      };
-      assert.strictEqual(await seller.agent.resolveCreativeFormatWireMode('sync_creatives'), 'unknown');
-      const synced = await seller.agent.syncCreatives({ account: ACCOUNT, creatives: [creative] }, undefined, {
-        creativeFormatProjection: { selectorContainers: [{ product_id: product.product_id, ...selected }] },
-      });
-      assert.strictEqual(synced.success, true);
-      assert.deepStrictEqual(seller.captured.sync.creatives[0].format_id, formatIds[0]);
-      const created = await seller.agent.createMediaBuy(
-        mediaBuy({ product_id: product.product_id, ...selected, creatives: [creative] })
+      const discovered = await seller.agent.getProducts({ buying_mode: 'brief', brief: 'Display', account: ACCOUNT });
+      const product = discovered.data.products[0];
+      const creative = pairedCreative();
+      creative.format_option_ref.format_option_id = product.format_options[0].format_option_id;
+      const selected = packageRefsForFormatOptions(product, [product.format_options[0].format_option_id]);
+      for (const container of [product, JSON.parse(JSON.stringify(product))]) {
+        await seller.agent.syncCreatives({ account: ACCOUNT, creatives: [creative] }, undefined, {
+          creativeFormatProjection: { selectorContainers: [container] },
+        });
+        assert.deepStrictEqual(seller.captured.sync.creatives[0].format_id, formatId);
+        assert.strictEqual(seller.captured.sync.creatives[0].format_kind, undefined);
+      }
+      // A bare serialized selection has no declarations or legacy routes in
+      // the sync payload. It must retain the existing pre-dispatch refusal.
+      const previousSync = seller.captured.sync;
+      await assert.rejects(
+        seller.agent.syncCreatives({ account: ACCOUNT, creatives: [creative] }, undefined, {
+          creativeFormatProjection: {
+            selectorContainers: [{ product_id: product.product_id, ...JSON.parse(JSON.stringify(selected)) }],
+          },
+        }),
+        error => error.code === 'ADCP_CREATIVE_FORMAT_PROJECTION_FAILED'
       );
-      assert.strictEqual(created.success, true);
-      assert.deepStrictEqual(seller.captured.create.packages[0].format_ids, [formatIds[0]]);
-      assert.deepStrictEqual(seller.captured.create.packages[0].creatives[0].format_id, formatIds[0]);
-      assert.strictEqual(seller.captured.create.packages[0].format_option_refs, undefined);
-      assert.strictEqual(product.format_ids, undefined);
+      assert.strictEqual(seller.captured.sync, previousSync);
     } finally {
       await seller.close();
     }
   });
+
+  for (const revalidate of [true, false]) {
+    test(`${revalidate ? 'seller revalidation renews' : 'local cache hits do not renew'} product evidence`, async t => {
+      let now = Date.now();
+      t.mock.method(Date, 'now', () => now);
+      const sellerProduct = pairedProduct(false);
+      const seller = await canonicalSeller(
+        [sellerProduct],
+        {
+          wireAdcpVersion: '3.1.29',
+          productCache: createProductCache({ accountTtl: revalidate ? 1_000 : 600_000 }),
+        },
+        { version: '3.1.29', cacheScope: 'account', declareCanonicalCreatives: false, conditional: true }
+      );
+      try {
+        const request = { buying_mode: 'brief', brief: 'Display', account: ACCOUNT };
+        const discovered = await seller.agent.getProducts(request);
+        const product = discovered.data.products[0];
+        const selected = JSON.parse(JSON.stringify(packageRefsForFormatOptions(product, ['mrec'])));
+        const sync = () =>
+          seller.agent.syncCreatives({ account: ACCOUNT, creatives: [pairedCreative()] }, undefined, {
+            creativeFormatProjection: { selectorContainers: [{ product_id: product.product_id, ...selected }] },
+          });
+        await sync();
+        now += 300_001;
+        await assert.rejects(sync(), error => error.code === 'ADCP_CREATIVE_FORMAT_PROJECTION_FAILED');
+        await seller.agent.getProducts(request);
+        assert.strictEqual(seller.captured.productReads.length, revalidate ? 2 : 1);
+        if (revalidate) {
+          assert.strictEqual(seller.captured.productReads[1].if_wholesale_feed_version, 'feed-1');
+          await sync();
+          assert.deepStrictEqual(seller.captured.sync.creatives[0], pairedCreative());
+          // A local hit must keep the renewed proof in the stored cache clone.
+          await seller.agent.getProducts(request);
+          assert.strictEqual(seller.captured.productReads.length, 2);
+          await sync();
+          assert.deepStrictEqual(seller.captured.sync.creatives[0], pairedCreative());
+        } else {
+          await assert.rejects(sync(), error => error.code === 'ADCP_CREATIVE_FORMAT_PROJECTION_FAILED');
+        }
+      } finally {
+        await seller.close();
+      }
+    });
+  }
+
+  for (const decision of ['capability', 'schema']) {
+    test(`explicit legacy ${decision} overrides matching 3.1 product options`, async () => {
+      const sellerProduct = pairedProduct();
+      const seller = await canonicalSeller(
+        [sellerProduct],
+        { wireAdcpVersion: '3.1.29' },
+        {
+          version: '3.1.29',
+          declareCanonicalCreatives: decision === 'capability',
+          canonicalCreatives: false,
+          syncCreativeWire: decision === 'schema' ? 'legacy' : undefined,
+        }
+      );
+      try {
+        const products = await seller.agent.getProducts({ buying_mode: 'brief', brief: 'Display', account: ACCOUNT });
+        const product = products.data.products[0];
+        const selected = packageRefsForFormatOptions(product, ['mrec']);
+        await seller.agent.syncCreatives({ account: ACCOUNT, creatives: [pairedCreative()] }, undefined, {
+          creativeFormatProjection: { selectorContainers: [{ product_id: product.product_id, ...selected }] },
+        });
+        assert.deepStrictEqual(seller.captured.sync.creatives[0].format_id, sellerProduct.format_ids[0]);
+        assert.strictEqual(seller.captured.sync.creatives[0].format_kind, undefined);
+      } finally {
+        await seller.close();
+      }
+    });
+  }
 
   test("legacy wire still downgrades selected options to the seller's format_ids", async () => {
     const formatId = { agent_url: AAO, id: 'display_300x250_image' };

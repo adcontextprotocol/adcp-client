@@ -68,6 +68,7 @@ import type { CanonicalFormatLegacyRoute } from './legacy-routes';
 import {
   concealLegacyFormatRefs,
   legacyFormatRefsForDeclaration,
+  rememberSynthesizedFormatOption,
   transferLegacyCreativeMetadata,
 } from './legacy-metadata';
 
@@ -606,6 +607,11 @@ export function projectV1ProductToV2(v1: V1ProductInput, options?: V1ToV2Project
     format_options,
   } as V2Product;
 
+  // Derived options are buyer-local compatibility data, not seller evidence
+  // that a canonical creative wire is accepted. Carry that fact through all
+  // public projection helpers, including callers outside product discovery.
+  for (const declaration of format_options) rememberSynthesizedFormatOption(declaration);
+
   return { v2: v2Product, diagnostics, legacyRoutes: legacyRoutesForProduct(v1.product_id, format_options) };
 }
 
@@ -802,6 +808,25 @@ function compatible(option: Record<string, unknown>, ref: V1FormatId): boolean {
     )
   ) {
     return false;
+  }
+  for (const dimension of ['width', 'height'] as const) {
+    const actual = constraints[dimension];
+    const min = params[`min_${dimension}`];
+    const max = params[`max_${dimension}`];
+    if (
+      typeof actual === 'number' &&
+      ((typeof min === 'number' && actual < min) || (typeof max === 'number' && actual > max))
+    )
+      return false;
+  }
+  const duration = constraints.duration_ms_exact;
+  if (
+    typeof duration === 'number' &&
+    typeof params.duration_ms_exact !== 'number' &&
+    Array.isArray(params.duration_ms_range)
+  ) {
+    const [min, max] = params.duration_ms_range;
+    if ((typeof min === 'number' && duration < min) || (typeof max === 'number' && duration > max)) return false;
   }
   if (Array.isArray(params.sizes) && params.sizes.length > 0) {
     return params.sizes.some(value => {
