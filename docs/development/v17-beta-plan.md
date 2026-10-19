@@ -2,12 +2,14 @@
 
 SDK 16 GA is the stable AdCP 3.2 checkpoint. SDK 17 beta adopts the published AdCP 3.3 beta protocol bundle and publishes under `beta`, leaving `latest` on SDK 16.
 
+The selected first protocol target is **AdCP `3.3.0-beta.0`**, expected October 20, 2026. Integrate that exact published bundle when it becomes available; the first SDK release will be `17.0.0-beta.0`.
+
 This preparation is a draft until the protocol bundle is available. The checkout still pins AdCP 3.2.5; entering Changesets pre-mode reserves the next SDK major without claiming that AdCP 3.3 has been integrated. Do not merge this preparation or publish SDK 17 until the adoption work below is complete.
 
 ## Complete the protocol adoption
 
 1. Verify that SDK 16.0.0 is published on `latest` and preserve its release commit on a stable maintenance branch.
-2. Select the exact published AdCP 3.3 beta bundle. Record its version in `ADCP_VERSION`; for an immutable protocol PR bundle, follow [protocol PR bundle provenance](./PROTOCOL-PR-BUNDLES.md).
+2. Once AdCP `3.3.0-beta.0` is published, record `3.3.0-beta.0` in `ADCP_VERSION` and sync its signed protocol bundle. For the protocol PR bundle provenance mechanism, see [protocol PR bundle provenance](./PROTOCOL-PR-BUNDLES.md); the selected release target remains the published beta.0 bundle.
 3. Extend `scripts/sync-version.ts` for the 3.3 prerelease compatibility policy. Preserve maintained AdCP 3.0, 3.1 and 3.2 stable versions, and advertise only the selected 3.3 prerelease and its release-precision alias. Superseded previews and a moving `3.3-beta` alias must not imply compatibility.
 4. Retain the AdCP 3.2 schema and compliance side bundle in `sync-schemas:all`, `schemas-ensure.ts`, and the publish-artifact check when 3.3 becomes the primary pin. Update [wire compatibility](./WIRE-VERSION-COMPAT.md).
 5. Sync signed bundles, regenerate public types, Zod schemas, tool metadata and documentation, and implement the required adapters and backwards-compatible request normalization. Replace the experimental 3.3 overlays where the official schema now defines those fields; document any remaining experimental surfaces.
