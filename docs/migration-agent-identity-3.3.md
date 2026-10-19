@@ -3,7 +3,7 @@
 The experimental identity rollout is tracked in
 [adcp-client#3233](https://github.com/adcontextprotocol/adcp-client/issues/3233).
 This release implements the rollout behind explicit experimental configuration.
-The SDK's default `ADCP_VERSION` remains **3.2.4**. Experimental client/server
+The SDK's default `ADCP_VERSION` remains **3.2.5**. Experimental client/server
 instances select the 3.3 carrier and apply the pinned draft overlays to the
 released bundle; they do not regenerate or replace the public 3.2 types.
 Upstream PRs remain open, so the experiment can change before graduation.
