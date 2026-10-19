@@ -979,11 +979,12 @@ function validateFieldPresent(validation: StoryboardValidation, taskResult: Task
 
 function validateAllFieldsPresent(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
   const base = { check: validation.check, description: validation.description, path: validation.path };
-  const segments = parsePathWithWildcards(validation.path ?? '');
+  const path = validation.path ?? '';
+  const segments = parsePathWithWildcards(path);
   const wildcardIndex = segments.indexOf(WILDCARD);
-  const match = wildcardIndex > 0 ? validation.path?.match(/^(.+)\[\*\]\.(.+)$/) : null;
+  const wildcardOffset = path.indexOf('[*].');
   if (
-    !match ||
+    wildcardOffset <= 0 ||
     wildcardIndex <= 0 ||
     typeof segments[wildcardIndex + 1] !== 'string' ||
     segments.lastIndexOf(WILDCARD) !== wildcardIndex
@@ -998,8 +999,8 @@ function validateAllFieldsPresent(validation: StoryboardValidation, taskResult: 
     };
   }
 
-  const arrayPath = match[1]!;
-  const fieldPath = match[2]!;
+  const arrayPath = path.slice(0, wildcardOffset);
+  const fieldPath = path.slice(wildcardOffset + '[*].'.length);
   const arrayPointer = toJsonPointer(arrayPath);
   const items = resolvePath(taskResult.data, arrayPath);
   if (items == null || (Array.isArray(items) && items.length === 0)) {
