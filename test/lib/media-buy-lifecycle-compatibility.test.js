@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
 const { AgentClient } = require('../../dist/lib/core/AgentClient');
+const { ConfigurationError } = require('../../dist/lib/errors');
 const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server');
 const { adcpError } = require('../../dist/lib/server/errors');
 const { createIdempotencyStore, memoryBackend } = require('../../dist/lib/server/idempotency');
@@ -610,12 +611,27 @@ for (const adcpVersion of ['3.1.18', '3.0.25']) {
   });
 }
 
+test('retired served release is rejected before dispatch despite a supported major declaration', async () => {
+  await withDualSurfaceSeller('3.2.1', '3.2.1', async ({ buyer, calls }) => {
+    buyer.getCapabilities = async () => ({
+      version: 'v3',
+      majorVersions: [3],
+      servedVersion: '2.5',
+      supportedVersions: ['3.0'],
+      discoveredTools: ['get_products'],
+    });
+    await assert.rejects(buyer.negotiateMediaBuyLifecycle(), ConfigurationError);
+    assert.deepStrictEqual(calls, [], 'retired served-version evidence must not authorize a seller operation');
+  });
+});
+
 for (const lane of [
   {
     name: '3.1 served release',
     negotiatedVersion: '3.1.18',
     capabilities: {
       version: 'v3',
+      majorVersions: [3],
       servedVersion: '3.1.18',
       supportedVersions: ['3.1.18'],
       buyingModes: ['brief', 'wholesale', 'refine'],
@@ -629,6 +645,19 @@ for (const lane of [
     negotiatedVersion: '3.0',
     capabilities: {
       version: 'v3',
+      majorVersions: [3],
+      idempotency: { replayTtlSeconds: 3600 },
+      mediaBuyLifecycleTools: ['get_products'],
+      discoveredTools: ['get_products'],
+    },
+  },
+  {
+    name: 'mixed retired and supported release',
+    negotiatedVersion: '3.0',
+    capabilities: {
+      version: 'v3',
+      majorVersions: [3],
+      supportedVersions: ['2.5', '3.0'],
       idempotency: { replayTtlSeconds: 3600 },
       mediaBuyLifecycleTools: ['get_products'],
       discoveredTools: ['get_products'],

@@ -36,10 +36,8 @@ export function assertValidIdempotencyReplayTtlSeconds(value: unknown): asserts 
   );
 }
 
-/**
- * Detected AdCP major version
- */
-export type AdcpMajorVersion = 2 | 3;
+/** Observed major version, including unsupported past or future declarations. */
+export type AdcpMajorVersion = number;
 
 /**
  * Supported AdCP protocols/domains
@@ -645,9 +643,11 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
   // Release declarations supersede the deprecated major-only field. The
   // capabilities tool was introduced in AdCP 3; omitting version fields is
   // not evidence that an agent speaks the deprecated AdCP 2 protocol.
-  const majorVersions = (
-    releaseMajors.length ? releaseMajors : declaredMajors.length ? declaredMajors : [3]
-  ) as AdcpMajorVersion[];
+  const majorVersions: AdcpMajorVersion[] = releaseMajors.length
+    ? releaseMajors
+    : declaredMajors.length
+      ? declaredMajors
+      : [3];
   const highestVersion = Math.max(...majorVersions);
   const buildVersion = typeof response.adcp?.build_version === 'string' ? response.adcp.build_version : undefined;
   const servedVersion = typeof response.adcp_version === 'string' ? response.adcp_version : undefined;

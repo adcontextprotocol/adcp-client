@@ -8,6 +8,8 @@ The SDK supports AdCP 3. Its primary schema pin lives in `ADCP_VERSION`; maintai
 
 `parseCapabilitiesResponse()` derives major versions from `adcp.supported_versions`, falling back to `adcp.major_versions`. A capability response without either declaration defaults to AdCP 3, because discovery was introduced in AdCP 3. An explicit AdCP 2-only declaration is rejected by client discovery. A failed capability call on an agent advertising the tool can still produce conservative synthetic v3 evidence; it never selects AdCP 2 adapters.
 
+SDK-hosted sellers must advertise only implemented AdCP 3 releases. Server startup rejects any AdCP 2 declaration, including `major_versions: [2, 3]`; external sellers advertising both majors remain callable through AdCP 3. See the [seller migration steps](../migration-drop-adcp-2.md).
+
 `resolveAdcpVersion()` rejects configured AdCP 2 pins, and `resolveBundleKey()` prevents stale local AdCP 2 caches from re-enabling validation support. The protocol dispatch and task executor also reject explicit v2 dispatch requests.
 
 ## AdCP 3 compatibility

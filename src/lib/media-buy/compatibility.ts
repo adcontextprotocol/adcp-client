@@ -248,7 +248,7 @@ const CONTROL_MEDIA_BUY_FIELDS = new Set([
   'revision',
   'total_budget',
 ]);
-const V25_OFFER_FILTER_FIELDS = new Set([
+const V30_OFFER_FILTER_FIELDS = new Set([
   'budget_range',
   'channels',
   'countries',
@@ -258,9 +258,6 @@ const V25_OFFER_FILTER_FIELDS = new Set([
   'min_exposures',
   'standard_formats_only',
   'start_date',
-]);
-const V30_OFFER_FILTER_FIELDS = new Set([
-  ...V25_OFFER_FILTER_FIELDS,
   'exclusivity',
   'required_performance_standards',
   'trusted_match',
@@ -286,15 +283,6 @@ const V30_PURCHASE_FIELDS = new Set([
   'pricing_option_id',
   'product_id',
   'start_time',
-  'targeting_overlay',
-]);
-const V25_PURCHASE_FIELDS = new Set([
-  'budget',
-  'ext',
-  'impressions',
-  'pacing',
-  'pricing_option_id',
-  'product_id',
   'targeting_overlay',
 ]);
 const V31_PURCHASE_FIELDS = new Set([...V30_PURCHASE_FIELDS, 'format_option_refs']);
@@ -373,17 +361,6 @@ const V30_AVAILABLE_METRICS = new Set([
   'quartile_data',
   'dooh_metrics',
   'cost_per_click',
-]);
-const V25_AVAILABLE_METRICS = new Set([
-  'impressions',
-  'spend',
-  'clicks',
-  'ctr',
-  'video_completions',
-  'completion_rate',
-  'conversions',
-  'viewability',
-  'engagement_rate',
 ]);
 const V31_AVAILABLE_METRICS = new Set([
   'impressions',
@@ -716,7 +693,7 @@ export interface MediaBuyLifecycleCoordinatorOptions {
    * Stable, non-secret identity for the authenticated seller/account session.
    * Persist and reuse it when a coordinator is rehydrated. It is required
    * whenever `establishedProposalStore` is configured, and for established
-   * 2.5, 3.0, or 3.1 sellers that provide no server context ID.
+   * 3.0 or 3.1 sellers that provide no server context ID.
    */
   legacyPurchaseSellerSessionScope?: string;
   /** Durable storage for tokenless-catalog and products-only legacy purchase continuations. */
@@ -1040,6 +1017,11 @@ function negotiatedVersion(capabilities: AdcpCapabilities, clientVersion: string
     );
   }
   if (capabilities.servedVersion && parseRelease(capabilities.servedVersion)) {
+    if (parseRelease(capabilities.servedVersion)!.major < 3) {
+      throw new ConfigurationError(
+        'The seller served an unsupported AdCP version. Media-buy lifecycle negotiation requires AdCP 3.'
+      );
+    }
     if (compareRelease(capabilities.servedVersion, clientVersion) > 0) {
       const displayedServedVersion = capabilities.servedVersion.slice(0, 64);
       throw new ConfigurationError(
@@ -1048,7 +1030,10 @@ function negotiatedVersion(capabilities: AdcpCapabilities, clientVersion: string
     }
     return capabilities.servedVersion;
   }
-  const advertisedVersions = capabilities.supportedVersions?.filter(version => parseRelease(version) !== undefined);
+  const advertisedVersions = capabilities.supportedVersions?.filter(version => {
+    const release = parseRelease(version);
+    return release !== undefined && release.major >= 3;
+  });
   const candidates = advertisedVersions?.filter(
     version => parseRelease(version) !== undefined && compareRelease(version, clientVersion) <= 0
   );
@@ -2734,11 +2719,7 @@ export class MediaBuyLifecycleCoordinator {
   private assertLegacyMetrics(operation: string, value: unknown, path: string): void {
     if (value === undefined || isCompactRelease(this.negotiated_version)) return;
     const supported =
-      compareRelease(this.negotiated_version, '3.1') >= 0
-        ? V31_AVAILABLE_METRICS
-        : compareRelease(this.negotiated_version, '3.0') >= 0
-          ? V30_AVAILABLE_METRICS
-          : V25_AVAILABLE_METRICS;
+      compareRelease(this.negotiated_version, '3.1') >= 0 ? V31_AVAILABLE_METRICS : V30_AVAILABLE_METRICS;
     const unsupported = array(value).filter(metric => typeof metric !== 'string' || !supported.has(metric));
     if (unsupported.length === 0) return;
     throw this.unsupported(
@@ -2753,11 +2734,7 @@ export class MediaBuyLifecycleCoordinator {
     this.assertLegacyOfferFilterShapes(operation, offerFilters);
     this.assertLegacyMetrics(operation, offerFilters.required_metrics, 'criteria.offer_filters.required_metrics');
     const legacyOfferFilterFields =
-      compareRelease(this.negotiated_version, '3.1') >= 0
-        ? V31_OFFER_FILTER_FIELDS
-        : compareRelease(this.negotiated_version, '3.0') >= 0
-          ? V30_OFFER_FILTER_FIELDS
-          : V25_OFFER_FILTER_FIELDS;
+      compareRelease(this.negotiated_version, '3.1') >= 0 ? V31_OFFER_FILTER_FIELDS : V30_OFFER_FILTER_FIELDS;
     const unsupportedFields = Object.keys(offerFilters).filter(field => !legacyOfferFilterFields.has(field));
     if (unsupportedFields.length > 0) {
       const paths = unsupportedFields.map(field => `criteria.offer_filters.${field}`);
@@ -9065,9 +9042,7 @@ export class MediaBuyLifecycleCoordinator {
       ? V32_PURCHASE_FIELDS
       : compareRelease(this.negotiated_version, '3.1') >= 0
         ? V31_PURCHASE_FIELDS
-        : compareRelease(this.negotiated_version, '3.0') >= 0
-          ? V30_PURCHASE_FIELDS
-          : V25_PURCHASE_FIELDS;
+        : V30_PURCHASE_FIELDS;
     const packages = purchases.map((value, index) => {
       const purchase = record(value);
       const unsupportedFields = Object.keys(purchase).filter(key => !packageFields.has(key));

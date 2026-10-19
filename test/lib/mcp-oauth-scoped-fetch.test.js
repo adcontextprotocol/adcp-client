@@ -22,6 +22,16 @@ const {
 } = require('../../dist/lib/auth/oauth');
 const { createTestClient } = require('../../dist/lib/testing/client.js');
 
+function capabilitiesResult() {
+  const data = {
+    status: 'completed',
+    adcp_version: '3.2',
+    adcp: { major_versions: [3], idempotency: { supported: false } },
+    supported_protocols: ['media_buy'],
+  };
+  return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data };
+}
+
 function createRefreshProvider(issuer) {
   let tokens = {
     access_token: 'expired-token',
@@ -155,6 +165,7 @@ async function startOAuthServer(era, refreshToken = 'refresh-token') {
           content: [{ type: 'text', text: 'pong' }],
           structuredContent: { ok: true },
         }));
+        mcp.registerTool('get_adcp_capabilities', {}, async () => capabilitiesResult());
         return mcp;
       },
       { legacy: 'reject' }
@@ -244,6 +255,7 @@ async function startOAuthServer(era, refreshToken = 'refresh-token') {
       content: [{ type: 'text', text: 'pong' }],
       structuredContent: { ok: true },
     }));
+    mcp.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => capabilitiesResult());
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     try {
       await mcp.connect(transport);
@@ -265,7 +277,7 @@ async function startOAuthServer(era, refreshToken = 'refresh-token') {
 }
 
 async function startA2AServer() {
-  const state = { origin: '', cardCalls: 0, sendCalls: 0 };
+  const state = { origin: '', cardCalls: 0, sendCalls: 0, capabilityCalls: 0 };
   const server = createServer(async (req, res) => {
     const path = new URL(req.url, state.origin).pathname;
     if (path.endsWith('/.well-known/agent-card.json') || path.endsWith('/.well-known/agent.json')) {
@@ -279,13 +291,18 @@ async function startA2AServer() {
         defaultInputModes: ['application/json'],
         defaultOutputModes: ['application/json'],
         capabilities: { streaming: false, pushNotifications: false },
-        skills: [{ id: 'ping', name: 'ping', description: 'ping', tags: ['test'] }],
+        skills: [
+          { id: 'ping', name: 'ping', description: 'ping', tags: ['test'] },
+          { id: 'get_adcp_capabilities', name: 'get_adcp_capabilities', description: 'caps', tags: ['adcp'] },
+        ],
       });
       return;
     }
     if (path === '/a2a' && req.method === 'POST') {
       const rpc = JSON.parse(await readBody(req));
-      state.sendCalls++;
+      const isCapabilities = rpc.params?.message?.parts?.[0]?.data?.skill === 'get_adcp_capabilities';
+      if (isCapabilities) state.capabilityCalls++;
+      else state.sendCalls++;
       json(res, 200, {
         jsonrpc: '2.0',
         id: rpc.id,
@@ -294,7 +311,12 @@ async function startA2AServer() {
           id: `task-${state.sendCalls}`,
           contextId: 'scoped-fetch-context',
           status: { state: 'completed', timestamp: new Date().toISOString() },
-          artifacts: [{ artifactId: 'result', parts: [{ kind: 'data', data: { ok: true } }] }],
+          artifacts: [
+            {
+              artifactId: 'result',
+              parts: [{ kind: 'data', data: isCapabilities ? capabilitiesResult().structuredContent : { ok: true } }],
+            },
+          ],
         },
       });
       return;
@@ -831,6 +853,7 @@ test('AdCPClient A2A card discovery and message/send use the scoped fetcher', as
       assert.ok(fetchedUrls.some(url => url.endsWith('/a2a')));
     });
     assert.ok(server.state.cardCalls >= 1);
+    assert.equal(server.state.capabilityCalls, 1);
     assert.equal(server.state.sendCalls, 1);
   } finally {
     await server.stop();

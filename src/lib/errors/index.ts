@@ -905,7 +905,7 @@ export class VersionUnsupportedError extends ADCPError {
     switch (reason) {
       case 'version':
         return actualVersion === 'v2'
-          ? 'AdCP 2 reached end of life on 2026-08-01. Upgrade the agent to AdCP 3 or pin an older SDK release.'
+          ? 'AdCP 2 reached end of life on 2026-08-01. Upgrade the agent to AdCP 3. Migration and older SDK pins: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/migration-drop-adcp-2.md'
           : `seller does not support the configured AdCP 3 release.`;
       case 'idempotency':
         return `seller reports v3 but omits adcp.idempotency.replay_ttl_seconds (required by spec).`;

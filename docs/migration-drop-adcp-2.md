@@ -10,9 +10,15 @@ The release removes:
 
 - `allowV2`, `ADCP_ALLOW_V2`, and the CLI `--allow-v2` flag.
 - `SingleAgentClient.isSyntheticV2()` and the v2 `buildSyntheticCapabilities()` helper.
+- The `2` argument to `SingleAgentClient.supportsVersion()` and `AgentClient.supportsVersion()`; the maintained query is `supportsVersion(3)`.
 - The `@adcp/sdk/types/v2-5` export and AdCP 2 schema bundles.
-- AdCP 2 request adapters and creative/format/preview conversion helpers.
+- Outbound AdCP 2 adapters: `adaptGetProductsRequestForV2`, `adaptPricingOptionForV2`, `adaptProductPricingForV2`, `adaptSyncCreativesRequestForV2`, `adaptPackageRequestForV2`, `adaptCreateMediaBuyRequestForV2`, and `adaptUpdateMediaBuyRequestForV2`.
+- AdCP 2 creative/format/preview detectors: `usesV2CreativeIds`, `usesV2Dimensions`, and `usesV2RenderFields`, plus their v2-only structural types (`PackageRequestV2`, `PackageResponseV2`, `PackageAdapterContext`, `FormatV2`, and `PreviewRenderV2`).
 - The `sync-schemas:v2.5` and `generate-types:v2.5` scripts.
+
+Submit canonical AdCP 3 `creative_assignments`, format `renders`, and preview `render_id` / `role` fields. The maintained read helpers (`getCreativeIds`, `getCreativeAssignments`, `getFormatRenders`, `getPrimaryRender`, `getFormatDimensions`, `getRenderId`, `getRenderRole`, and preview URL/HTML accessors) still inspect valid AdCP 3 data. Their normalizers preserve that data; they no longer promote `creative_ids`, top-level format dimensions, or `output_id` into AdCP 3 fields.
+
+Seller applications using `createAdcpServer` or `createAdcpServerFromPlatform` must remove AdCP 2 from `capabilities.major_versions` and `capabilities.supported_versions`. Startup rejects a declaration such as `[2, 3]` because this SDK no longer implements the advertised AdCP 2 surface. A buyer can still call an external agent that genuinely implements both majors: when its discovery includes AdCP 3, the SDK negotiates AdCP 3.
 
 AdCP 3.0 and 3.1 compatibility remains available. Creative-model v2 projections and MCP v2 transport names refer to separate version schemes and remain supported.
 

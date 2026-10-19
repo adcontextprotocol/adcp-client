@@ -39,6 +39,15 @@ describe('capability version declarations', () => {
     assert.equal(capabilities.version, 'v3');
   });
 
+  test('does not infer AdCP 3 support when the release list explicitly advertises only AdCP 2', () => {
+    const capabilities = parseCapabilitiesResponse({
+      adcp: { major_versions: [2, 3], supported_versions: ['2.5'] },
+    });
+
+    assert.deepEqual(capabilities.majorVersions, [2]);
+    assert.equal(supportsV3(capabilities), false);
+  });
+
   for (const adcp of [{ major_versions: [2] }, { supported_versions: ['2.5'] }]) {
     test(`preserves an explicit AdCP 2 declaration: ${JSON.stringify(adcp)}`, () => {
       const capabilities = parseCapabilitiesResponse({ adcp });
@@ -85,6 +94,31 @@ describe('capability version declarations', () => {
 });
 
 describe('buyer discovery without major_versions', () => {
+  test('reuses valid AdCP 3 evidence that also advertises a future major', async () => {
+    const client = new SingleAgentClient({
+      id: 'future-major-test',
+      name: 'Future major test',
+      protocol: 'mcp',
+      agent_uri: 'https://seller.example/mcp',
+    });
+    const capabilities = parseCapabilitiesResponse({ adcp: { supported_versions: ['3.2', '4.0.0-beta.1'] } });
+    assert.deepEqual(capabilities.majorVersions, [3, 4]);
+    assert.equal(
+      client.primeCapabilities({
+        scope: client.getCapabilityEvidenceScope(),
+        capabilities,
+        observedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        toolSchemas: {},
+      }),
+      true
+    );
+    client.getAgentInfo = async () => assert.fail('primed AdCP 3 evidence must be reused');
+    const cached = await client.getCapabilities();
+    assert.deepEqual(cached.majorVersions, [3, 4]);
+    assert.deepEqual(cached.supportedVersions, capabilities.supportedVersions);
+  });
+
   for (const adcp of [{ supported_versions: ['3.0', '3.1'] }, {}]) {
     test(`selects v3 adapters without a v2 sunset warning: ${JSON.stringify(adcp)}`, async t => {
       const agent = {

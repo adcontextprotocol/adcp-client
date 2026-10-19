@@ -59,6 +59,12 @@ async function startA2AAgent(shape) {
           defaultOutputModes: ['application/json'],
           skills: [
             {
+              id: 'get_adcp_capabilities',
+              name: 'get_adcp_capabilities',
+              description: 'Discover AdCP capabilities.',
+              tags: ['adcp'],
+            },
+            {
               id: 'get_property_list',
               name: 'get_property_list',
               description: 'Fetch a property list by id.',
@@ -131,7 +137,14 @@ function dispatchSkill(rpc, token, shape) {
   const parameters = dataPart?.data?.parameters ?? {};
 
   let payload;
-  if (skill === 'get_property_list') {
+  if (skill === 'get_adcp_capabilities') {
+    payload = {
+      status: 'completed',
+      adcp_version: '3.2',
+      adcp: { major_versions: [3], idempotency: { supported: false } },
+      supported_protocols: ['media_buy'],
+    };
+  } else if (skill === 'get_property_list') {
     payload = getPropertyList(parameters, token, shape);
   } else {
     payload = { adcp_error: { code: 'UNKNOWN_TOOL', message: `Unknown skill ${skill}` } };

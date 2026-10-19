@@ -19,7 +19,7 @@ This document contains essential guidelines for AI coding assistants (Claude, Co
 
 **Testing an agent for conformance?** — Read `docs/guides/CONFORMANCE.md` and call `runConformance(agentUrl, opts)` from `@adcp/sdk/conformance`. Property-based fuzzing against the bundled JSON schemas; stateless tier covers 11 discovery tools across every protocol.
 
-**Migration guides** — [Account change feed](docs/migration-account-change-feed.md) (wake-up parsing, guarded bootstrap/drain, subscriber registration and ownership boundaries); `docs/migration-6.6-to-6.7.md` (fifteen adopter recipes; two breaking changes — `'implicit'` enforces inline-`account_id` refusal and `SalesPlatform` split into `SalesCorePlatform & SalesIngestionPlatform`; plus `definePlatform` helpers, `composeMethod`, `accounts.resolve` security presets, `accounts.upsert/list/syncGovernance(ctx)`, typed errors, `issues[].hint`, `BuyerAgentRegistry`, `createTenantRegistry`, `createOAuthPassthroughResolver`, `createRosterAccountStore`, `createTenantStore` w/ built-in tenant gate, `MEDIA_BUY_TRANSITIONS` lifecycle helpers, `createMediaBuyStore` for `targeting_overlay` echo, `NoAccountCtx` narrow, `refAccountId(ref)`); `docs/migration-5.x-to-6.x.md` (5 → 6 framework shape); `docs/migration-4.x-to-5.x.md` (4 → 5); `docs/migration-buyer-agent-registry.md` (registry deep-dive).
+**Migration guides** — [AdCP 2 retirement](docs/migration-drop-adcp-2.md) (AdCP 3-only discovery, removed compatibility APIs, and last supporting SDK pins); [Account change feed](docs/migration-account-change-feed.md) (wake-up parsing, guarded bootstrap/drain, subscriber registration and ownership boundaries); `docs/migration-6.6-to-6.7.md` (fifteen adopter recipes; two breaking changes — `'implicit'` enforces inline-`account_id` refusal and `SalesPlatform` split into `SalesCorePlatform & SalesIngestionPlatform`; plus `definePlatform` helpers, `composeMethod`, `accounts.resolve` security presets, `accounts.upsert/list/syncGovernance(ctx)`, typed errors, `issues[].hint`, `BuyerAgentRegistry`, `createTenantRegistry`, `createOAuthPassthroughResolver`, `createRosterAccountStore`, `createTenantStore` w/ built-in tenant gate, `MEDIA_BUY_TRANSITIONS` lifecycle helpers, `createMediaBuyStore` for `targeting_overlay` echo, `NoAccountCtx` narrow, `refAccountId(ref)`); `docs/migration-5.x-to-6.x.md` (5 → 6 framework shape); `docs/migration-4.x-to-5.x.md` (4 → 5); `docs/migration-buyer-agent-registry.md` (registry deep-dive).
 
 **Putting credentials in `ctx_metadata`?** — Don't. Read `docs/guides/CTX-METADATA-SAFETY.md` — wire-strip protects buyer responses but not log lines / error envelopes / heap dumps / adopter strings. Re-derive bearers per request; embed only non-secret upstream IDs.
 
@@ -317,7 +317,7 @@ The pattern:
 
 - `normalizeRequestParams()` runs before validation, filling in derivable fields
 - `validateRequest()` runs Zod schemas after normalization
-- `adaptRequestForServerVersion()` handles v3→v2 downgrades for older servers
+- `adaptRequestForServerVersion()` adapts requests to maintained AdCP 3 releases; AdCP 2 targets are rejected
 
 **Never add a required field without a backwards-compatible default or inference path.**
 

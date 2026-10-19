@@ -1851,10 +1851,8 @@ export { Render, urlRender, htmlRender, bothRender } from './utils/render-builde
 // Use `parameterizedRender({ role })` (or the alias `templateRender`) so
 // format_id parameters carry duration.
 //
-// `FormatRender` below is the grouped namespace (value export). The v3
-// structural interface by the same name is re-exported from
-// `utils/format-renders` further down — TypeScript keeps type and value
-// namespaces separate, so both are available under the single import.
+// `FormatRender` below is the factory namespace. The structural interface
+// is exported separately as `FormatRenderEntry` further down.
 export {
   FormatRender,
   displayRender,
@@ -2085,6 +2083,43 @@ export type {
   InlineCreativesForPackagesLegacyOptions,
   LegacyInlineCreativePackage,
 } from './utils/creative-delivery';
+
+// AdCP 3 creative assignment helpers
+export {
+  normalizePackageResponse,
+  normalizeMediaBuyResponse,
+  usesV3CreativeAssignments,
+  getCreativeIds,
+  getCreativeAssignments,
+} from './utils/creative-adapter';
+export type { CreativeAssignment } from './utils/creative-adapter';
+
+// AdCP 3 format render helpers
+export {
+  normalizeFormatRenders,
+  normalizeFormatsResponse,
+  getFormatRenders,
+  getPrimaryRender,
+  getCompanionRenders,
+  isMultiRenderFormat,
+  usesV3Renders,
+  getFormatDimensions,
+} from './utils/format-renders';
+export type { FormatRenderEntry, RenderDimensions } from './utils/format-renders';
+
+// AdCP 3 preview render helpers
+export {
+  normalizePreviewRender,
+  normalizePreview,
+  normalizePreviewCreativeResponse,
+  usesV3RenderFields,
+  getRenderId,
+  getRenderRole,
+  getPrimaryPreviewRender,
+  getPreviewUrl,
+  getPreviewHtml,
+} from './utils/preview-normalizer';
+export type { PreviewRendererMetadata, PreviewRenderV3 } from './utils/preview-normalizer';
 
 export {
   resolvePreviewAuthority,

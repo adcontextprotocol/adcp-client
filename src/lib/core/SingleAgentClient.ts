@@ -1,4 +1,6 @@
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
+import { normalizeMediaBuyResponse } from '../utils/creative-adapter';
+import { normalizeFormatsResponse } from '../utils/format-renders';
 import {
   isIdentity33SchemaScope,
   withIdentity33SchemaScope,
@@ -244,7 +246,7 @@ function presentedStaticTransportCredential(
 }
 
 // v3.0 compatibility utilities
-import type { AdcpCapabilities, AdcpMajorVersion, ToolInfo, FeatureName } from '../utils/capabilities';
+import type { AdcpCapabilities, ToolInfo, FeatureName } from '../utils/capabilities';
 import {
   agentDiscoveryCacheKey,
   MAX_AGENT_DISCOVERY_TTL_MS,
@@ -1870,7 +1872,7 @@ function isCapabilityEvidence(value: unknown): value is AdcpCapabilities {
     candidate.version === 'v3' &&
     Array.isArray(candidate.majorVersions) &&
     candidate.majorVersions.includes(3) &&
-    candidate.majorVersions.every(version => version === 2 || version === 3) &&
+    candidate.majorVersions.every(version => Number.isSafeInteger(version) && version > 0) &&
     Array.isArray(candidate.protocols) &&
     candidate.protocols.every(protocol => typeof protocol === 'string') &&
     typeof candidate.features === 'object' &&
@@ -7116,7 +7118,18 @@ export class SingleAgentClient {
   }
 
   private normalizeEstablishedResponse(taskType: string, data: any): any {
-    return taskType === 'get_products' ? normalizeGetProductsResponse(data) : data;
+    if (!data) return data;
+    switch (taskType) {
+      case 'get_products':
+        return normalizeGetProductsResponse(data);
+      case 'create_media_buy':
+      case 'update_media_buy':
+        return normalizeMediaBuyResponse(data);
+      case 'list_creative_formats':
+        return normalizeFormatsResponse(data);
+      default:
+        return data;
+    }
   }
 
   // ====== MEDIA BUY TASKS ======
@@ -10524,30 +10537,21 @@ export class SingleAgentClient {
         if (!advertisesCapabilitiesTool) {
           throw new Error('unadvertised official A2A capability probe was not supported');
         }
-        // Tightened v2 fallback (issue #1189). When `result.success` is false
-        // but `result.data` is structurally v3-shaped, the agent is a v3 agent
-        // with a wire-shape bug — typically a single failed schema validation
-        // on `get_adcp_capabilities`. Falling back to v2 in this case masks
-        // the original bug behind cascading "AdCP schema data for version v2.5
-        // not found" errors that nobody can debug. Parse the data anyway,
-        // surface the validation failure loudly, and continue with the
-        // v3 capabilities the agent actually returned.
-        //
-        // Preserve the v3-shape recovery even if the invalid response carries
-        // a contradictory version declaration. Missing version fields already
-        // default to v3 in parseCapabilitiesResponse.
+        // Recover usable capabilities from a structurally v3-shaped response
+        // that failed validation (issue #1189). Explicit unsupported version
+        // declarations must still be rejected before logging recovery or caching.
         // CodeQL: deliberately omit `result.error` from the log (matches the
         // existing fallback log below) — it can carry transport-level agent
         // identifiers that flow through the clear-text-logging tracker.
         if (result.data && looksLikeV3Capabilities(result.data)) {
+          const capabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
+          this.assertSupportedServer(capabilities);
           console.warn(
             `[AdCP] Agent "${this.agent.id}" returned a get_adcp_capabilities response that ` +
               `failed validation, but the response is structurally v3-shaped. Treating as v3 ` +
               `(the agent has a wire-shape bug — that's the thing to fix).`,
             { hasError: !!result.error, hasData: !!result.data }
           );
-          const capabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
-          this.assertSupportedServer(capabilities);
           if (!usesScopedFetch && !superseded()) {
             this.cachedCapabilities = capabilities;
             this.capabilitiesFromSharedCache = false;
@@ -11794,11 +11798,8 @@ export class SingleAgentClient {
         throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
       }
     } else {
-      // `AdcpMajorVersion` is currently `2 | 3` — cast through `number[]` because
-      // the parsed major is a plain number; a future SDK release that supports
-      // major 4 will widen the union.
       const expectedMajor = parseAdcpMajorVersion(this.resolvedAdcpVersion);
-      const advertisedMajors = capabilities.majorVersions as readonly number[];
+      const advertisedMajors = capabilities.majorVersions;
       if (!Number.isFinite(expectedMajor) || !advertisedMajors.includes(expectedMajor)) {
         throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
       }
