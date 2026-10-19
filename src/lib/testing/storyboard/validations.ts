@@ -38,11 +38,13 @@ import { isJsonContentType } from '../test-controller';
 import { globToRegExp } from '../../utils/glob';
 import {
   parsePath,
+  parsePathWithWildcards,
   resolvePath,
   resolvePathAll,
   resolvePortableIdentifierPathAll,
   toJsonPointer,
   validatePortableIdentifierPath,
+  WILDCARD,
   type PortableIdentifierPathIssue,
 } from './path';
 import { canonicalTargetUri } from '../../signing/canonicalize';
@@ -294,6 +296,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       // field_present runs against either MCP task result data OR an HTTP probe body —
       // the storyboard's probe_protected_resource validates fields in the RFC 9728 JSON.
       return validateFieldPresent(validation, resolveTarget(ctx));
+    case 'all_fields_present':
+      return validateAllFieldsPresent(validation, resolveTarget(ctx));
     case 'field_absent':
       return validateFieldAbsent(validation, resolveTarget(ctx));
     case 'envelope_field_present':
@@ -966,6 +970,70 @@ function validateFieldPresent(validation: StoryboardValidation, taskResult: Task
     json_pointer: pointer,
     expected: validation.path,
     actual: value ?? null,
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// all_fields_present: inspect every item without vacuous passes
+// ────────────────────────────────────────────────────────────
+
+function validateAllFieldsPresent(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
+  const base = { check: validation.check, description: validation.description, path: validation.path };
+  const match = validation.path?.match(/^(.+)\[\*\]\.(.+)$/);
+  const segments = parsePathWithWildcards(validation.path ?? '');
+  const wildcardIndex = segments.indexOf(WILDCARD);
+  if (
+    !match ||
+    wildcardIndex <= 0 ||
+    typeof segments[wildcardIndex + 1] !== 'string' ||
+    segments.lastIndexOf(WILDCARD) !== wildcardIndex
+  ) {
+    return {
+      ...base,
+      passed: false,
+      error: 'all_fields_present requires an array path followed by exactly one [*] and a non-empty field path',
+      json_pointer: null,
+      expected: 'array[*].field',
+      actual: validation.path ?? null,
+    };
+  }
+
+  const arrayPath = match[1]!;
+  const fieldPath = match[2]!;
+  const items = resolvePath(taskResult.data, arrayPath);
+  if (items == null || (Array.isArray(items) && items.length === 0)) {
+    return {
+      ...base,
+      passed: true,
+      not_applicable: true,
+      note: `Array '${arrayPath}' is absent, null, or empty; all_fields_present has no items to inspect`,
+    };
+  }
+  if (!Array.isArray(items)) {
+    return {
+      ...base,
+      passed: false,
+      error: `Expected an array at path: ${arrayPath}`,
+      json_pointer: toJsonPointer(arrayPath),
+      expected: 'array',
+      actual: items,
+    };
+  }
+
+  const missing: string[] = [];
+  for (let index = 0; index < items.length; index++) {
+    if (resolvePath(items[index], fieldPath) == null) {
+      missing.push(toJsonPointer(`${arrayPath}[${index}].${fieldPath}`));
+    }
+  }
+  if (missing.length === 0) return { ...base, passed: true };
+  return {
+    ...base,
+    passed: false,
+    error: `${missing.length} of ${items.length} items lack a non-null '${fieldPath}' (first: ${missing[0]})`,
+    json_pointer: missing[0]!,
+    expected: validation.path,
+    actual: missing,
   };
 }
 

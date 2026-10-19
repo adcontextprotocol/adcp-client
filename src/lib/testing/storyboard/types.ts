@@ -941,6 +941,9 @@ export interface RateLimitTripSpec {
 export type StoryboardValidationCheck =
   | 'response_schema'
   | 'field_present'
+  /** Every item carries a non-null field at `array[*].field`; absent, null,
+   *  or empty arrays grade not_applicable rather than passing vacuously. */
+  | 'all_fields_present'
   | 'field_absent'
   // Envelope-scoped variants — the asserted path lives on the v3 protocol
   // envelope (`status`, `task_id`, `message`, `replayed`, `governance_context`,
@@ -2471,12 +2474,9 @@ export interface SchemaValidationError {
  * a deprecation or future-required advisory is the kind of thing a CI
  * gate or dashboard SHOULD have explicit handling for.
  *
- * Code naming generally follows the dot-namespaced convention `<topic>.<event>`
- * (e.g. `request_signing.required`, `webhook_signing.legacy_hmac_fallback.removed`);
- * prefer the upstream runner-output contract's canonical code when it
- * registers a different spelling. The *when* lives in the `effective_version`
- * field, never in the code. This keeps the surface stable across spec versions
- * — codes don't proliferate `_in_4_0` / `_in_5_0` siblings as the spec evolves.
+ * Use the upstream runner-output contract's canonical codes so consumers can
+ * aggregate the same advisory across runners. Keep each code stable for the
+ * same advisory, including its version suffix where the contract defines one.
  *
  * Adding a new code is a wire-surface change AND a TypeScript breaking
  * change for adopters who narrowed on `code`. Coordinate with the upstream
@@ -2490,10 +2490,10 @@ export type NoticeCode =
   | 'signed_requests_specialism_deprecated'
   /** Agent lacks `request_signing.supported: true`. Required for spend-committing
    *  operations in AdCP 4.0 per `effective_version`. */
-  | 'request_signing.required'
+  | 'request_signing_required_in_4_0'
   /** Agent advertises `webhook_signing.legacy_hmac_fallback: true`. Removed in
    *  AdCP 4.0 per `effective_version`. */
-  | 'webhook_signing.legacy_hmac_fallback.removed'
+  | 'legacy_hmac_fallback_removed_in_4_0'
   /** Runner stripped request fields missing from the agent's advertised tool input schema. */
   | 'input_schema_field_stripped'
   /** The preflight get_adcp_capabilities response failed schema validation. */
