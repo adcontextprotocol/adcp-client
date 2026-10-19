@@ -2708,11 +2708,11 @@ function buildRequiredToolsMissingResult(
  *   true` on the signed_requests storyboard. The enum value is removed in
  *   `effective_version: '4.0'`.
  *
- * - `request_signing.required`: `request_signing.supported` is absent or
+ * - `request_signing_required_in_4_0`: `request_signing.supported` is absent or
  *   false on the signed_requests storyboard. Signing becomes required for
  *   spend-committing operations in `effective_version: '4.0'`.
  *
- * - `webhook_signing.legacy_hmac_fallback.removed`: agent claims
+ * - `legacy_hmac_fallback_removed_in_4_0`: agent claims
  *   `webhook_signing.legacy_hmac_fallback: true`, which is removed in
  *   `effective_version: '4.0'`.
  */
@@ -2767,7 +2767,7 @@ export function collectCapabilityNotices(storyboard: Storyboard, profile: AgentP
     if (requestSigning?.['supported'] !== true) {
       notices.push({
         severity: 'future_required',
-        code: 'request_signing.required',
+        code: 'request_signing_required_in_4_0',
         message:
           'RFC 9421 request signing (`request_signing.supported: true`) is not advertised. ' +
           'Required for spend-committing operations in AdCP 4.0 — declare the capability and ' +
@@ -2798,7 +2798,7 @@ export function collectCapabilityNotices(storyboard: Storyboard, profile: AgentP
     if (webhookSigning?.['legacy_hmac_fallback'] === true) {
       notices.push({
         severity: 'deprecation',
-        code: 'webhook_signing.legacy_hmac_fallback.removed',
+        code: 'legacy_hmac_fallback_removed_in_4_0',
         message:
           '`webhook_signing.legacy_hmac_fallback: true` is deprecated and removed in AdCP 4.0. ' +
           'Migrate webhook signature verification to RFC 9421 before the 4.0 cut.',

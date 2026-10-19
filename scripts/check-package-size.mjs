@@ -106,7 +106,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // With the creative build probe, the combined beta.8 package measures
 // 20,439,714 bytes across 6,578 files. This fits the existing byte cap;
 // retain both probes' additive file allowances and every other guard.
-const MAX_PACKED_TARBALL_BYTES = 20_450_000;
+// The 4.0 compatibility validation and refreshed registry declarations measure
+// 20,452,069 bytes packed in CI. Allow about 28 KB of compressor variance for
+// this additive surface; all unpacked, file-count, schema and declaration
+// budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_480_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
