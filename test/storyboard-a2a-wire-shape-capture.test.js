@@ -229,13 +229,45 @@ describe('runStoryboardStep: A2A wire-shape capture (issue #904)', () => {
         defaultInputModes: ['application/json'],
         defaultOutputModes: ['application/json'],
         capabilities: { streaming: false, pushNotifications: false },
-        skills: [{ id: 'create_media_buy', name: 'create_media_buy', description: 'create', tags: ['adcp'] }],
+        skills: [
+          { id: 'create_media_buy', name: 'create_media_buy', description: 'create', tags: ['adcp'] },
+          { id: 'get_adcp_capabilities', name: 'get_adcp_capabilities', description: 'caps', tags: ['adcp'] },
+        ],
       });
     });
     app.post('/', (req, res) => {
-      const { id, method } = req.body ?? {};
+      const { id, method, params } = req.body ?? {};
       if (method !== 'SendMessage') {
         res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } });
+        return;
+      }
+      if (params?.message?.parts?.[0]?.data?.skill === 'get_adcp_capabilities') {
+        res.json({
+          jsonrpc: '2.0',
+          id,
+          result: {
+            task: {
+              id: 'caps-task',
+              contextId: 'caps-context',
+              status: { state: 'TASK_STATE_COMPLETED', timestamp: new Date().toISOString() },
+              artifacts: [
+                {
+                  artifactId: 'caps-artifact',
+                  parts: [
+                    {
+                      data: {
+                        status: 'completed',
+                        adcp_version: '3.2',
+                        adcp: { major_versions: [3], idempotency: { supported: false } },
+                        supported_protocols: ['media_buy'],
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        });
         return;
       }
       res.json({

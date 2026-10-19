@@ -25,7 +25,22 @@ function installA2AStub() {
   const queue = [];
 
   const stubClient = {
+    getAgentCard: async () => ({
+      skills: [{ id: 'get_adcp_capabilities', name: 'get_adcp_capabilities' }],
+    }),
     sendMessage: async payload => {
+      // Discovery is separate from the queued application turns whose session IDs we inspect.
+      if (payload.message.parts.some(part => part.content?.value?.skill === 'get_adcp_capabilities')) {
+        return taskResponse({
+          status: 'completed',
+          data: {
+            status: 'completed',
+            adcp_version: '3.2',
+            adcp: { major_versions: [3], idempotency: { supported: false } },
+            supported_protocols: ['media_buy'],
+          },
+        });
+      }
       captured.push(payload);
       const next = queue.shift() ?? {
         jsonrpc: '2.0',
