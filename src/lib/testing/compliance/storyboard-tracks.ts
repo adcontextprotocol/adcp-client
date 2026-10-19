@@ -198,11 +198,22 @@ function mapStepToTestStep(stepResult: StoryboardStepResult): TestStepResult {
 
   return {
     step: stepResult.title,
+    step_id: stepResult.step_id,
     task: stepResult.task,
     passed: stepResult.passed,
     duration_ms: stepResult.duration_ms,
     error: stepResult.error,
     details: validationDetails || undefined,
+    validations: stepResult.validations.map(v => ({
+      ...(v.id !== undefined && { id: v.id }),
+      check: v.check,
+      passed: v.passed,
+      ...(v.severity !== undefined && { severity: v.severity }),
+      ...(v.not_applicable !== undefined && { not_applicable: v.not_applicable }),
+      ...(v.severity_promoted_from_advisory !== undefined && {
+        severity_promoted_from_advisory: v.severity_promoted_from_advisory,
+      }),
+    })),
     observation_data: stepResult.response as Record<string, unknown> | undefined,
     warnings: stepResult.skipped
       ? [stepResult.skip?.detail ?? skipReasonLabel(stepResult.skip_reason) ?? 'Step skipped']

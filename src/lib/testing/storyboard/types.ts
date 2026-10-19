@@ -2608,9 +2608,9 @@ export interface ValidationResult {
   /** Optional remediation hint. */
   remediation?: string;
   /**
-   * Marker for an implemented check whose declared applicability conditions
-   * were not met. Unknown authored check kinds fail closed; they never set
-   * this flag or contribute a false green result. Entries carrying this flag
+   * Marker for a check that could not be graded because its applicability
+   * conditions were not met or the runner does not recognize its authored kind.
+   * Entries carrying this flag
    * contribute to `validations_not_applicable` so consumers can distinguish
    * inapplicable coverage from clean passes.
    */
