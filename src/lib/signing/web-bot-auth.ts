@@ -262,6 +262,18 @@ function signingAlgorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg {
 export function assertWebBotAuthSigningKey(key: WebBotSigningKey): void {
   signingAlgorithm('privateKey' in key ? key.privateKey : key.publicKey);
 }
+/**
+ * The canonical origin a signer names in `Signature-Agent`. It must be one
+ * {@link receivedAgentOrigin} accepts (WBA §5.2.1 requires https), so a signer
+ * never emits a request its verifier refuses. There is no http opt-in.
+ */
+function signingOrigin(value: string): string {
+  try {
+    return receivedAgentOrigin(canonicalAgentOrigin(value));
+  } catch {
+    throw new TypeError('Web Bot Auth signs as an https origin only (WBA section 5.2.1)');
+  }
+}
 /** Every `Signature-Input` member, parsing the field once. At most `limit` members. */
 function inputs(headers: RequestLike['headers'], limit: number): ParsedSignatureInput[] {
   const members = dictionary(getHeaderValue(headers, 'signature-input'), 'Signature-Input');
@@ -1135,7 +1147,7 @@ export async function signWebBotAuth(
     throw new TypeError(
       'Web Bot Auth relays were removed from the profile (adcp#7894): an intermediary signs as itself with one signature'
     );
-  const origin = canonicalAgentOrigin(options.origin);
+  const origin = signingOrigin(options.origin);
   const label = options.label ?? 'sig1';
   if (!/^[a-z][a-z0-9_.*-]*$/.test(label)) throw new TypeError('Invalid signature label');
   const jwk = 'privateKey' in key ? key.privateKey : key.publicKey;
@@ -1200,7 +1212,7 @@ export async function createSignedSignatureDirectory(
   signingKeys: WebBotSigningKey[],
   options: { now?: () => number; lifetimeSeconds?: number } = {}
 ): Promise<ResponseLike> {
-  const origin = canonicalAgentOrigin(originUrl);
+  const origin = signingOrigin(originUrl);
   const now = Math.floor((options.now ?? (() => Date.now() / 1000))());
   const lifetime = options.lifetimeSeconds ?? 86_400;
   if (!Number.isFinite(now) || !Number.isSafeInteger(lifetime) || lifetime < 1 || !Number.isSafeInteger(now + lifetime))
@@ -1262,6 +1274,7 @@ export function createWebBotAuthFetch(
   options: WebBotSigningOptions & { shouldSign?: (url: string, init?: RequestInit) => boolean }
 ): typeof fetch {
   assertWebBotAuthSigningKey(key);
+  signingOrigin(options.origin);
   return async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (options.shouldSign && !options.shouldSign(url, init)) return upstream(input, init);

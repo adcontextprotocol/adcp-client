@@ -202,6 +202,22 @@ test('Web Bot Auth is Ed25519 only: signing, directories and fetch wrappers refu
     assert.throws(() => wba.assertWebBotAuthSigningKey({ privateKey: jwk }), TypeError);
   }
 });
+test('Web Bot Auth signers refuse a non-https origin, which their verifier refuses (WBA section 5.2.1)', async () => {
+  const jwk = generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' });
+  jwk.kid = wba.jwkThumbprint(jwk);
+  const key = { privateKey: jwk };
+  const request = { method: 'GET', url: 'https://seller.example.com/mcp', headers: {} };
+  for (const origin of ['http://localhost:3000', 'http://agent.example.com']) {
+    await assert.rejects(wba.signWebBotAuth(request, key, { origin }), /https origin/, origin);
+    await assert.rejects(wba.createSignedSignatureDirectory(origin, [key]), /https origin/, origin);
+    assert.throws(() => wba.createWebBotAuthFetch(fetch, key, { origin }), /https origin/, origin);
+  }
+  // An https origin still signs as its canonical form.
+  for (const origin of ['https://AGENT.example.com/', 'https://agent.example.com:443/mcp']) {
+    const headers = await wba.signWebBotAuth(request, key, { origin, now: () => now });
+    assert.equal(headers['signature-agent'], 'sig1="https://agent.example.com"', origin);
+  }
+});
 test('Signature-Agent forces WBA, including empty or uncovered field; no legacy profile retry', () => {
   assert.equal(wba.selectSignatureProfile({ headers: { 'Signature-Agent': '' } }), 'web-bot-auth');
   assert.equal(
