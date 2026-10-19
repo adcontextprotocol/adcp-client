@@ -1,7 +1,7 @@
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 import { ssrfSafeFetch, type SsrfFetchOptions } from '../net';
-import { canonicalAgentOrigin } from '../signing/agent-resolver/canonicalize';
+import { canonicalAgentOrigin, canonicalizeHost } from '../signing/agent-resolver/canonicalize';
 import { eTldPlusOne } from '../signing/agent-resolver/etld';
 import { parseStrictJson } from '../signing/agent-resolver/strict-json';
 import { parse as parseDomain } from 'tldts';
@@ -82,8 +82,35 @@ export function validateTrustRecord(value: unknown): asserts value is TrustRecor
     origins.add(origin);
   }
 }
+/**
+ * The grantee when it is itself a registrable domain under the pinned PSL
+ * snapshot (ICANN and PRIVATE sections), otherwise undefined. A host below a
+ * registrable domain (`t1.vendor.example`) is not one, and neither is a public
+ * suffix (`github.io`); `alice.github.io` is one. Reducing a host to its
+ * eTLD+1 would broaden the grant to every tenant of that domain, so a grant
+ * whose grantee is not registrable covers no claim (adcp#8169).
+ */
+function registrableGrantee(grantee: string): string | undefined {
+  try {
+    const registrable = eTldPlusOne(grantee);
+    return registrable === canonicalizeHost(grantee) ? registrable : undefined;
+  } catch {
+    return undefined;
+  }
+}
+/**
+ * Validate and copy a trust record for publication. Beyond
+ * {@link validateTrustRecord}, every grant's `grantee` must be a registrable
+ * domain: a relying party ignores any other grant, so publishing one would
+ * grant nothing while still making `grants[]` exhaustive for its scopes.
+ */
 export function createTrustRecord(record: TrustRecord): TrustRecord {
   validateTrustRecord(record);
+  for (const grant of record.grants ?? [])
+    if (registrableGrantee(grant.grantee) === undefined)
+      throw new TypeError(
+        `Grant grantee "${grant.grantee}" is not a registrable domain; name the organization's registrable domain and narrow with agents[]`
+      );
   return structuredClone(record);
 }
 export type TrustFetchResult =
@@ -371,14 +398,15 @@ export interface DemandGrantOptions {
   /** Seller-verified brand identity resolution, including the house's child-brand ID. Never accept a buyer-selected authorizer. */
   resolveBrandHouse?: (brand: DemandGrantClaim['brand']) => Promise<{ domain: string; brand_id: string } | undefined>;
 }
+function grantsScope(grant: TrustGrant, scope: string): boolean {
+  return grant.scopes.some(
+    granted => granted === '*' || granted === scope || (granted === 'adcp:all' && scope.startsWith('adcp:'))
+  );
+}
 function grantMatches(grant: TrustGrant, target: string, claim: DemandGrantClaim, now: number): boolean {
-  if (eTldPlusOne(grant.grantee) !== target) return false;
-  if (
-    !grant.scopes.some(
-      scope => scope === '*' || scope === claim.scope || (scope === 'adcp:all' && claim.scope.startsWith('adcp:'))
-    )
-  )
-    return false;
+  // Exact match on a registrable grantee: never reduce a host grantee to its eTLD+1.
+  if (registrableGrantee(grant.grantee) !== target) return false;
+  if (!grantsScope(grant, claim.scope)) return false;
   if (
     grant.agents &&
     !grant.agents.some(agent => canonicalAgentOrigin(agent.url) === canonicalAgentOrigin(claim.signerOrigin))
@@ -448,13 +476,19 @@ export async function authorizeDemandGrant(
       if (second) return result('trust', [brand, account, operator], [first[0]!, second]);
     }
   }
-  const covered = (record.record.grants ?? []).some(
-    g =>
-      (eTldPlusOne(g.grantee) === account || (selfOperated && eTldPlusOne(g.grantee) === operator)) &&
-      g.scopes.some(
-        scope => scope === '*' || scope === claim.scope || (scope === 'adcp:all' && claim.scope.startsWith('adcp:'))
-      )
-  );
+  // A grant to account.operator (or, self-operated, to the signer's operator)
+  // for this scope that did not match is published narrowing: it blocks the
+  // seller's discretion. A grant whose grantee is not a registrable domain
+  // covers no claim, so it does not count here; its scopes still count for
+  // exclusive_grants, which below refuses every uncovered claim.
+  const covered = (record.record.grants ?? []).some(g => {
+    const grantee = registrableGrantee(g.grantee);
+    return (
+      grantee !== undefined &&
+      (grantee === account || (selfOperated && grantee === operator)) &&
+      grantsScope(g, claim.scope)
+    );
+  });
   if (!covered && !record.record.exclusive_grants && (await options.sellerAuthorization?.(claim)))
     return result('seller', [brand, account, operator]);
   throw new IdentityAuthorizationError('grant_absent');
