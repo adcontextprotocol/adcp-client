@@ -9303,7 +9303,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         ...new Set([
           algorithm,
           // `algorithms` lists AdCP webhook-profile values; a Web Bot Auth key
-          // is Ed25519 or RSA-PSS (adcp#7894), and only Ed25519 has a value here.
+          // is Ed25519 (adcp#7894), which has the value `ed25519` here.
           ...(webhooks.webBotAuth &&
           ('privateKey' in webhooks.webBotAuth.key
             ? webhooks.webBotAuth.key.privateKey.crv

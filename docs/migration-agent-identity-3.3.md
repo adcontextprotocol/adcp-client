@@ -126,18 +126,42 @@ final UTF-8 body, covers the selected `Signature-Agent` member and digest,
 uses a fresh 64-byte nonce, and refuses automatic HTTP redirects. A request
 carries exactly one `web-bot-auth` signature and one `Signature-Agent` member:
 relays were removed from the profile, `signWebBotAuth` throws on `relay: true`
-and on a request that already carries signature fields, and the verifier
-answers a second signature (of any profile) or a second `Signature-Agent`
-member with 403. Signing keys are Ed25519 or RSA-PSS-SHA512 (2048 to 4096
-bits, e = 65537); ES256 stays on the AdCP RFC 9421 profile, and
+and on a request that already carries signature fields. The verifier reads
+only the `Signature-Input` member tagged `web-bot-auth` and ignores members
+with other tags, such as a CDN's own signature. It answers a second
+`web-bot-auth` signature or a second `Signature-Agent` member with 403.
+Signing keys are Ed25519 only; ES256 stays on the AdCP RFC 9421 profile, and
 `createWebBotAuthFetch`, `createWebhookEmitter` and `createAdcpServer` refuse
-a P-256 Web Bot Auth key at wire-up.
+a P-256 or RSA Web Bot Auth key at wire-up.
+
+This also changes two helpers outside the experiment. `verifySignature` and
+`verifySignatureAsync`, which `@adcp/sdk/signing/server` exports, no longer
+verify `rsa-pss-sha512`: they return `false` for it, as for any algorithm they
+don't support. Only Web Bot Auth used it, and the AdCP RFC 9421 profile allows
+only `ed25519` and `ecdsa-p256-sha256`. A caller that verifies RSA-PSS
+signatures with these helpers needs to verify them with `node:crypto` or
+WebCrypto instead.
+
+The covered `Signature-Agent` member must be exactly the canonical https origin
+string, compared as received: a lowercase host, no default port, and no path
+(not even `/`), query, fragment, or userinfo. Any other value, including an
+`http://` origin, is a 403 before any directory fetch. The signers apply the
+same rule: `signWebBotAuth`, `createSignedSignatureDirectory` and
+`createWebBotAuthFetch` canonicalize the agent origin they are given and throw a
+`TypeError` when it is not https, such as `http://localhost:3000`. There is no
+http opt-in. The member's `type`
+parameter is a Token (WBA section 5.2.1), and the verifier accepts
+`type=directory` as a Token or as a String. It ignores a member of any other
+type, which leaves no member to resolve (403).
 
 `SignatureDirectoryResolver` derives the directory from the covered canonical
 origin. Directories must be signed (WBA Appendix B.1): it validates a
-possession signature for every key, covering `"@authority";req` and
-`content-digest`, and the exact body digest before caching keys. An unsigned
-directory is a discovery failure. Its audit proof retains the signed body and
+possession signature for every key the profile can use, covering
+`"@authority";req` and `content-digest`, and the exact body digest before
+caching keys. It ignores keys the profile cannot use, such as a P-256 key, and
+any signature they made (RFC 7517 section 5). An unsigned directory, one
+with no usable key, or one that publishes private key material for any key,
+usable or not, is a discovery failure. Its audit proof retains the signed body and
 headers. Verification requires this resolver so context-free JWKS adapters cannot
 attribute a key to an arbitrary origin. Discovery uses HTTPS, DNS pinning, no redirects, a 256 KiB cap, a
 5-second connect bound and 10-second total bound, at most 64 keys, and bounded
@@ -155,8 +179,7 @@ Serve the exact JWS at `/.well-known/governance-revocations.json` and refresh it
 before `next_update` (the command defaults to five minutes). Pass `--snapshot`
 to sign a list of revoked key thumbprints and optional reasons/dates.
 `createSignedOriginRevocationList` provides the same authoring API. The SDK
-signs and verifies revocation lists with directory keys: EdDSA for Ed25519 keys
-and PS512 for RSA keys (a P-256 key cannot be published in a key directory). Observed key revocations are permanent;
+signs and verifies revocation lists with Ed25519 directory keys, as EdDSA. Observed key revocations are permanent;
 refresh failures use the last verified list only within the published grace
 window. Staleness follows the list's signed `next_update`, never the polling
 interval: the verifier re-polls at least every polling interval (at most 30
@@ -379,7 +402,7 @@ released schemas:
 
 | PR | Pinned head | Surface |
 | --- | --- | --- |
-| [7894](https://github.com/adcontextprotocol/adcp/pull/7894) | `e24eeb090c4365707641099cbbb45f9945c6d6e0` | WBA wire profile (`wba-profile.mdx`), profile selectors, directory and request vectors |
+| [7894](https://github.com/adcontextprotocol/adcp/pull/7894) | `e59294701d733b0ea2a004a2f0c091c8eccdcaae` | WBA wire profile (`wba-profile.mdx`), profile selectors, directory and request vectors |
 | [8121](https://github.com/adcontextprotocol/adcp/pull/8121) | `f5973ac0267b1b94d714c55fc4e3ad8fc2511350` | Origin identity and key-free trust v1 |
 | [8162](https://github.com/adcontextprotocol/adcp/pull/8162) | `5c9914c5c382cc32f3d2ad7842942e548c414705` | Ratified identity, coexistence, revocation |
 | [8168](https://github.com/adcontextprotocol/adcp/pull/8168) | `45540941dfd61e80ab8a463f780cb147c82a32f0` | Relationship and principal response arms |
@@ -388,7 +411,9 @@ released schemas:
 | [8177](https://github.com/adcontextprotocol/adcp/pull/8177) | `b663f8e4235fe4276c73fb9bac6db491b2252bbf` | Reporting authentication omission |
 
 The vectors in `test/fixtures/wba-profile/` are byte-identical to #7894 at that
-head and are all graded except the governance-token vectors (see `PINNED.json`).
+head (see `PINNED.json`). Every vendored request and directory vector is
+graded, and the interop harness (adcontextprotocol/adcp#8298) grades
+`scenarios.json`.
 
 Verification runs in Cloudflare's `http-message-sig` (signature base, coverage,
 window, algorithm and cryptographic checks); the SDK adds the profile rules in
@@ -413,7 +438,7 @@ so verification can run in a CDN or middleware in front of the AdCP server.
   reason is logged, never sent. A 429 for local load shedding (directory fetch
   limiter, replay-store `rate_abuse`) carries `Retry-After` instead.
 - Every signed request carries `created`, `expires` (at most 300 seconds
-  later), `keyid`, `alg` (`ed25519` or `rsa-pss-sha512`) and a `nonce` of 64
+  later), `keyid`, `alg` (`ed25519`) and a `nonce` of 64
   bytes, unpadded Base64URL or canonical padded Base64 (Cloudflare's default).
   The former 16-byte floor is gone: a shorter nonce is a 403. Replay state is
   keyed on the nonce bytes, so the two encodings of one nonce collide.
@@ -454,14 +479,14 @@ so verification can run in a CDN or middleware in front of the AdCP server.
   back off on 429 or 503.
 - `@target-uri` and `@authority` are taken from the target URI as received
   (RFC 9421 §2.2.2), never canonicalized; canonical origins identify the signer
-  only. Ed25519 and RSA-PSS-SHA512 keys are supported; RSA-PSS uses WebCrypto
-  where the runtime has it, so it also works on Cloudflare workerd.
+  only. Web Bot Auth is Ed25519 only, and it also works on Cloudflare workerd.
   `test/fixtures/wba-interop/` holds fixtures verified in both directions against
   Cloudflare's `web-bot-auth`; they already used signed directories and are
   unchanged.
-The #7894 governance-token vectors are vendored but not graded: ratified R4
-keeps the RFC 9421 discovery chain for governance through 3.3, and the profile
-page leaves document signing to a separate decision. `PINNED.json` records this.
+#7894 drops the governance-token checks and the `governance/` vectors from the
+WBA profile. Governance moves to the AdCP layer under a separate R4 erratum,
+which moves JWS artifacts, governance included, to the identity's WBA key
+directory in 3.3. This change leaves the SDK's governance code as it is.
 The buyer default onboarding field is `profiles.adcp.onboarding`, matching the
 schema; the design's `record_profiles` wording names the schema definition.
 

@@ -23,6 +23,7 @@ const consumers = [
   'reporting-storage-tests',
   'eslint-plugin-tests',
   'node-undici-network-matrix',
+  'wba-interop',
 ];
 const download = jobs['library-checks'].steps.find(step => step.name === 'Download library output');
 const verify = jobs['library-checks'].steps.find(step => step.name === 'Verify and extract library output');

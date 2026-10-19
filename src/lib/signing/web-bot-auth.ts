@@ -1,11 +1,11 @@
 import { toReleasePrecisionVersion } from '../version';
 /**
  * Experimental AdCP 3.3 Web Bot Auth profile, pinned to adcontextprotocol/adcp#7894
- * at e24eeb09 (docs/building/by-layer/L1/wba-profile.mdx) and IETF webbotauth-00.
+ * at e5929470 (docs/building/by-layer/L1/wba-profile.mdx) and IETF webbotauth-00.
  *
  * RFC 9421 parsing, signature bases and cryptographic checks run in Cloudflare's
  * `http-message-sig`. This module adds the profile rules the library does not
- * know: one signature and one covered `Signature-Agent` member per request, the
+ * know: one `web-bot-auth` signature and one covered `Signature-Agent` member per request, the
  * nonce and lifetime rules, key lookup by (origin, thumbprint) in the origin's
  * signed key directory, replay state, and the 400/403/429 status vocabulary.
  */
@@ -48,10 +48,15 @@ export const WEB_BOT_AUTH_PROFILE = 'web-bot-auth' as const;
 export const WEB_BOT_AUTH_DRAFT_REVISION = 'draft-ietf-webbotauth-httpsig-protocol-00' as const;
 export const SIGNATURE_DIRECTORY_PATH = '/.well-known/http-message-signatures-directory';
 export const SIGNATURE_DIRECTORY_MEDIA_TYPE = 'application/http-message-signatures-directory+json';
-/** The profile's signature algorithms (wba-profile.mdx "Profile rules"). ES256 is RFC 9421 profile only. */
-export const WEB_BOT_AUTH_ALGORITHMS = Object.freeze(['ed25519', 'rsa-pss-sha512'] as const);
+/** The profile's signature algorithm: Ed25519 only. ES256 is RFC 9421 profile only. */
+export const WEB_BOT_AUTH_ALGORITHMS = Object.freeze(['ed25519'] as const);
 type WebBotAuthAlg = (typeof WEB_BOT_AUTH_ALGORITHMS)[number];
 const DIRECTORY_TAG = 'http-message-signatures-directory';
+/**
+ * JWK private members (RFC 7518 sections 6.2.2, 6.3.2 and 6.4.1; RFC 8037 section 2),
+ * lowercase; a published one is a leak. Matched case-insensitively, as the Go and Python SDKs match them.
+ */
+const PRIVATE_JWK_MEMBERS: ReadonlySet<string> = new Set(['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k']);
 /** Request and directory signatures are verified with this much clock skew. */
 const CLOCK_SKEW_SECONDS = 60;
 /** `expires` is at most this many seconds after `created`. */
@@ -234,24 +239,20 @@ export function jwkThumbprint(
   else return denied('unsupported_key');
   return createHash('sha256').update(JSON.stringify(fields)).digest('base64url');
 }
-/** The profile algorithm a key signs with; any other key is unsupported (403). */
+/** The profile algorithm a key signs with, or undefined for a key the profile cannot use. */
+function keyAlgorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg | undefined {
+  return jwk.kty === 'OKP' && jwk.crv === 'Ed25519' ? 'ed25519' : undefined;
+}
+/** {@link keyAlgorithm} for a key that must be usable; any other key is unsupported (403). */
 function algorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg {
-  if (jwk.kty === 'OKP' && jwk.crv === 'Ed25519') return 'ed25519';
-  // RSA: 2048–4096-bit moduli and e = 65537 only (bounds verification cost).
-  if (jwk.kty === 'RSA' && typeof jwk.n === 'string' && jwk.e === 'AQAB') {
-    const bytes = Buffer.from(jwk.n, 'base64url').length;
-    if (bytes >= 256 && bytes <= 512) return 'rsa-pss-sha512';
-  }
-  return denied('unsupported_key');
+  return keyAlgorithm(jwk) ?? denied('unsupported_key');
 }
 /** {@link algorithm} for signing paths: a caller error, not a verification outcome. */
 function signingAlgorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg {
   try {
     return algorithm(jwk);
   } catch {
-    throw new TypeError(
-      'Web Bot Auth signs with Ed25519 or RSA-PSS-SHA512 (2048-4096 bit, e=65537) keys only; ES256 remains on the AdCP RFC 9421 profile'
-    );
+    throw new TypeError('Web Bot Auth signs with Ed25519 keys only; ES256 remains on the AdCP RFC 9421 profile');
   }
 }
 /**
@@ -260,6 +261,18 @@ function signingAlgorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg {
  */
 export function assertWebBotAuthSigningKey(key: WebBotSigningKey): void {
   signingAlgorithm('privateKey' in key ? key.privateKey : key.publicKey);
+}
+/**
+ * The canonical origin a signer names in `Signature-Agent`. It must be one
+ * {@link receivedAgentOrigin} accepts (WBA §5.2.1 requires https), so a signer
+ * never emits a request its verifier refuses. There is no http opt-in.
+ */
+function signingOrigin(value: string): string {
+  try {
+    return receivedAgentOrigin(canonicalAgentOrigin(value));
+  } catch {
+    throw new TypeError('Web Bot Auth signs as an https origin only (WBA section 5.2.1)');
+  }
 }
 /** Every `Signature-Input` member, parsing the field once. At most `limit` members. */
 function inputs(headers: RequestLike['headers'], limit: number): ParsedSignatureInput[] {
@@ -273,8 +286,14 @@ function inputs(headers: RequestLike['headers'], limit: number): ParsedSignature
     }
   });
 }
-/** Reject authority normalization differentials on received identifiers. */
+/**
+ * A received identity origin, which must be exactly the canonical https
+ * origin string (WBA §5.2.1): lowercase host, no default port, and no path,
+ * trailing `/`, query, fragment, or userinfo. The string is compared as
+ * received, never normalized first.
+ */
 export function receivedAgentOrigin(value: string): string {
+  if (!value.startsWith('https://')) return denied('agent_origin');
   try {
     canonicalAgentUrl(value);
     const origin = canonicalAgentOrigin(value);
@@ -601,8 +620,9 @@ export interface VerifyWebBotAuthOptions {
 /**
  * Verify a Web Bot Auth request (wba-profile.mdx "Verification"). Resolves to
  * exactly one verified signer: the profile takes one `web-bot-auth` signature
- * and one `Signature-Agent` member per request. The array shape is kept for
- * principal resolvers written against earlier drafts.
+ * and one `Signature-Agent` member per request, and does not read signatures
+ * with other tags. The array shape is kept for principal resolvers written
+ * against earlier drafts.
  */
 export async function verifyWebBotAuth(
   request: RequestLike,
@@ -633,10 +653,13 @@ export async function verifyWebBotAuth(
     for (const member of agents?.values() ?? []) if (typeof member[0] !== 'string') bad('signature_agent');
     if (!inputMembers || !signatureMembers) return denied('headers_missing');
 
-    // 2. Exactly one signature, tagged web-bot-auth, and exactly one
-    //    Signature-Agent member, keyed to that signature's label and covered.
-    if (inputMembers.size !== 1 || signatureMembers.size !== 1) denied('signature_count');
-    label = inputMembers.keys().next().value!;
+    // 2. Exactly one signature tagged web-bot-auth. Members with other tags are
+    //    not read (WBA §5.2.2 allows several signatures per request). Exactly
+    //    one Signature-Agent member, keyed to that signature's label and covered.
+    const tagged = [...inputMembers].filter(([, member]) => member[1].get('tag') === WEB_BOT_AUTH_PROFILE);
+    if (tagged.length === 0) denied('profile');
+    if (tagged.length > 1) denied('signature_count');
+    label = tagged[0]![0];
     if (!signatureMembers.has(label)) denied('signature_label');
     try {
       // RFC 8941 sf-binary is padded standard Base64; the parser tolerates less.
@@ -651,7 +674,6 @@ export async function verifyWebBotAuth(
       // The field parsed; a parameter of the wrong type is a profile failure.
       return denied('parameters');
     }
-    if (input.params.tag !== WEB_BOT_AUTH_PROFILE) denied('profile');
     if (!agents || agents.size !== 1) denied(agents ? 'agent_count' : 'agent_missing');
     const agentMember = `signature-agent;key="${label}"`;
     const agentComponents = input.components.filter(c => c.startsWith('signature-agent;'));
@@ -660,8 +682,9 @@ export async function verifyWebBotAuth(
     const member = agents.get(label);
     if (!member) denied('agent_not_covered');
     // A member of another type is ignored (WBA §5.2.1), leaving none to resolve.
+    // `type` is a Token; the String form is read the same way, as Cloudflare's reference reads it.
     const type = member[1].get('type');
-    if (type !== undefined && type !== 'directory') denied('agent_type');
+    if (type !== undefined && String(type) !== 'directory') denied('agent_type');
     // Checked in step 1: every Signature-Agent member is an sf-string.
     const origin = receivedAgentOrigin(member[0] as string);
 
@@ -811,11 +834,13 @@ export interface VerifiedSignatureDirectory {
 }
 /**
  * Verify a key directory response (wba-profile.mdx "Key directories", WBA
- * Appendix B.1). The response must be signed once per key, each signature
- * covering `"@authority";req` and `content-digest` with `created`, `expires`,
- * the key's thumbprint as `keyid` and `tag="http-message-signatures-directory"`,
- * and verifying under the key the directory itself provides. An unsigned
- * directory is a discovery failure.
+ * Appendix B.1). The response must be signed once per usable key, each
+ * signature covering `"@authority";req` and `content-digest` with `created`,
+ * `expires`, the key's thumbprint as `keyid` and
+ * `tag="http-message-signatures-directory"`, and verifying under the key the
+ * directory itself provides. Keys the profile cannot use, and their
+ * signatures, are ignored. An unsigned directory, or one without a usable
+ * key, is a discovery failure.
  */
 export async function verifyKeyDirectory(
   response: ResponseLike,
@@ -854,19 +879,24 @@ export async function verifyKeyDirectory(
     let expires = Infinity;
     for (const raw of document.keys) {
       if (!raw || typeof raw !== 'object') denied('directory_key');
+      // Published private material is a leak whatever the key type, so it
+      // refuses the directory before an unusable key is skipped.
+      if (Object.keys(raw).some(k => PRIVATE_JWK_MEMBERS.has(k.toLowerCase()) || k.startsWith('_private')))
+        denied('directory_key');
+      // A key the profile cannot use is ignored, and so is any signature it
+      // made (RFC 7517 section 5): a WBA directory may list keys of other
+      // registered algorithms (WBA section 5.5.1). Every usable key signs.
+      if (!keyAlgorithm(raw)) continue;
       const thumbprint = jwkThumbprint(raw);
       // `kid` may be omitted; when present it must be the thumbprint.
       const key = { ...raw, kid: raw.kid ?? thumbprint } as AdcpJsonWebKey;
       if (
         key.kid !== thumbprint ||
         kids.has(key.kid) ||
-        key.d !== undefined ||
-        Object.keys(key).some(k => k.startsWith('_private')) ||
         key.adcp_use !== undefined ||
         (!testKeysAllowed(options.allowTestKeys) && TEST_KIDS.has(key.kid))
       )
         denied('directory_key');
-      algorithm(key);
       kids.add(key.kid);
       keys.push(key);
       const proof = signatures.find(input => input.params.keyid === key.kid && input.params.tag === DIRECTORY_TAG);
@@ -918,6 +948,7 @@ export async function verifyKeyDirectory(
       );
       expires = Math.min(expires, proof.params.expires);
     }
+    if (!keys.length) denied('directory_keys');
     return { keys, expires, signed: true, proof: response };
   } catch (error) {
     if (error instanceof WebBotAuthError) {
@@ -1087,7 +1118,6 @@ function webBotSigner(key: WebBotSigningKey): Signer {
     // a WebCrypto-backed provider may return; the library's copy would not.
     return { algorithm: alg, sign: async data => Buffer.from(await key.provider.sign(Buffer.from(data))) };
   }
-  // WebCrypto for RSA-PSS when available (workerd rejects node:crypto option shapes, #3243).
   return { algorithm: alg, sign: data => signWithPrivateJwkAsync(alg, jwk, Buffer.from(data)) };
 }
 /**
@@ -1117,7 +1147,7 @@ export async function signWebBotAuth(
     throw new TypeError(
       'Web Bot Auth relays were removed from the profile (adcp#7894): an intermediary signs as itself with one signature'
     );
-  const origin = canonicalAgentOrigin(options.origin);
+  const origin = signingOrigin(options.origin);
   const label = options.label ?? 'sig1';
   if (!/^[a-z][a-z0-9_.*-]*$/.test(label)) throw new TypeError('Invalid signature label');
   const jwk = 'privateKey' in key ? key.privateKey : key.publicKey;
@@ -1182,7 +1212,7 @@ export async function createSignedSignatureDirectory(
   signingKeys: WebBotSigningKey[],
   options: { now?: () => number; lifetimeSeconds?: number } = {}
 ): Promise<ResponseLike> {
-  const origin = canonicalAgentOrigin(originUrl);
+  const origin = signingOrigin(originUrl);
   const now = Math.floor((options.now ?? (() => Date.now() / 1000))());
   const lifetime = options.lifetimeSeconds ?? 86_400;
   if (!Number.isFinite(now) || !Number.isSafeInteger(lifetime) || lifetime < 1 || !Number.isSafeInteger(now + lifetime))
@@ -1191,12 +1221,7 @@ export async function createSignedSignatureDirectory(
   const keys = signingKeys.map(key => {
     const jwk = 'privateKey' in key ? key.privateKey : key.publicKey;
     signingAlgorithm(jwk);
-    return {
-      kty: jwk.kty,
-      ...(jwk.kty === 'RSA' ? { n: jwk.n, e: jwk.e } : { crv: jwk.crv, x: jwk.x }),
-      kid: jwkThumbprint(jwk),
-      use: 'sig',
-    } as AdcpJsonWebKey;
+    return { kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: jwkThumbprint(jwk), use: 'sig' } as AdcpJsonWebKey;
   });
   if (new Set(keys.map(k => k.kid)).size !== keys.length) throw new TypeError('Duplicate directory key');
   const body = JSON.stringify({ keys });
@@ -1249,6 +1274,7 @@ export function createWebBotAuthFetch(
   options: WebBotSigningOptions & { shouldSign?: (url: string, init?: RequestInit) => boolean }
 ): typeof fetch {
   assertWebBotAuthSigningKey(key);
+  signingOrigin(options.origin);
   return async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (options.shouldSign && !options.shouldSign(url, init)) return upstream(input, init);
