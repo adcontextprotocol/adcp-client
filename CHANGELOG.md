@@ -1,5 +1,17 @@
 # Changelog
 
+## 15.9.6
+
+### Patch Changes
+
+- f660ce1: Reject inferred dual-emission format routes that contradict declared width, height, or duration bounds. Require creative manifests for every assignment before product evidence can select canonical wire delivery for a mixed sync batch.
+- f660ce1: Honor the AdCP 3.1 buyer rule when choosing the creative wire shape. When capabilities and the current tool schema leave support unknown, a request covered by fresh seller-advertised format options now sends canonical format_kind/format_option_refs instead of legacy format_id/format_ids by default, including canonical-only products and 3.2 buyers negotiating down to 3.1. Apply the decision to creative sync and inline create/update media-buy requests, preserve explicit legacy decisions, and require matching evidence for every creative and assignment. Keep SDK-synthesized and experimental options from establishing support. Recover seller declarations through product-cache hits and serialized selectors carrying a product ID, without promoting request-local evidence into a global capability. Require fresh, affirmative client/account/authorization-scoped discovery evidence; JSON round trips cannot invent provenance and cache hits cannot extend its TTL. Match primary-slot dimensions independently of asset key order, including VAST/DAAST durations. Sync and existing-package updates require explicit matching selectors; package IDs alone retain their existing behavior. Completes point 2 of #3312 for synchronous discovery/revalidation and requests carrying those selectors against sellers advertising supported_versions including 3.1; the existing guarded dual-emission pairing continues to handle legacy delivery.
+- f660ce1: Use the seller-authored index pairing between equally sized `format_options` and `format_ids` lists when projecting canonical creatives to a legacy wire. Preserve these routes through canonical product discovery and serialized route sidecars so selected options work for creative sync and inline media-buy delivery. Explicit declaration and resolver routes take precedence, including restored sidecars. Skip index inference for the entire product when kinds, known dimensions, explicit routes, or canonical-only options contradict the alignment; keep unmapped-reference diagnostics visible. Linked references no longer produce duplicate bare candidates, so canonical package normalization can address the corresponding seller option; stale SDK-generated pins against seller-declared options fail closed. Wire-mode negotiation is unchanged.
+
+  Keep buyer-only inferred routes out of seller response assembly, preserving the seller's authored nested format references and unmapped-reference diagnostics.
+
+- f660ce1: Sync the cached registry OpenAPI contract and generated types with the current registry. Keep the new defaulted `sandbox` flag optional on `ResolveIdentifiersRequest`, preserving existing callers that omit it.
+
 ## 15.9.5
 
 ### Patch Changes
