@@ -77,6 +77,7 @@ export interface V1FormatDefinition {
     required?: boolean;
     asset_type?: string;
     requirements?: Record<string, unknown>;
+    event?: string;
   }>;
   /**
    * v2 canonical projection. Always object-shaped per

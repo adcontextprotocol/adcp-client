@@ -42,6 +42,7 @@ import {
 import type { CanonicalFormatDeclaration } from './legacy-metadata';
 import type { UndeclaredFormatOptionSelector } from './legacy-routes';
 import { canonicalize as canonicalizeJson } from '../../utils/jcs';
+import { lookupV1Format, type V1FormatDefinition } from './catalog';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, Extract<keyof T, K>> : never;
 
@@ -1117,11 +1118,61 @@ function selectLegacyRef(
   return matching.length === 1 ? matching[0]!.ref : undefined;
 }
 
-function projectCreative<T extends Record<string, unknown>>(creative: T, formatId: V1FormatId): T {
+function projectLegacyAssetKeys(assetsValue: unknown, definition: V1FormatDefinition | undefined): unknown {
+  const assets = record(assetsValue);
+  if (!assets || !Array.isArray(definition?.assets)) return assetsValue;
+  const declaredIds = new Set(definition.assets.map(slot => slot.asset_id));
+  const availableSlots = definition.assets.filter(
+    slot =>
+      (slot.item_type === undefined || slot.item_type === 'individual') &&
+      typeof slot.asset_id === 'string' &&
+      slot.asset_id.length > 0 &&
+      !Object.hasOwn(assets, slot.asset_id)
+  );
+  const targetBySource = new Map<string, string>();
+  const sourcesByTarget = new Map<string, string[]>();
+  for (const [key, value] of Object.entries(assets)) {
+    if (declaredIds.has(key)) continue;
+    const asset = record(value);
+    if (!asset || typeof asset.asset_type !== 'string') continue;
+    const matches = availableSlots.filter(slot => {
+      if (slot.asset_type !== asset.asset_type) return false;
+      if (asset.asset_type === 'url') {
+        return typeof asset.url_type === 'string' && asset.url_type === slot.requirements?.url_type;
+      }
+      if (asset.asset_type === 'pixel_tracker') {
+        return typeof asset.event === 'string' && asset.event === slot.event;
+      }
+      return true;
+    });
+    if (matches.length !== 1) continue;
+    const target = matches[0]!.asset_id!;
+    targetBySource.set(key, target);
+    const sources = sourcesByTarget.get(target) ?? [];
+    sources.push(key);
+    sourcesByTarget.set(target, sources);
+  }
+  // Resolve against the original keys. Two assets competing for one slot must
+  // both survive, and object insertion order must never choose a winner.
+  for (const sources of sourcesByTarget.values()) {
+    if (sources.length > 1) for (const source of sources) targetBySource.delete(source);
+  }
+  if (targetBySource.size === 0) return assetsValue;
+  return Object.fromEntries(Object.entries(assets).map(([key, value]) => [targetBySource.get(key) ?? key, value]));
+}
+
+function projectCreative<T extends Record<string, unknown>>(
+  creative: T,
+  formatId: V1FormatId,
+  legacyFormatDefinitions?: readonly V1FormatDefinition[]
+): T {
   const next: Record<string, unknown> = { ...creative };
   delete next.format_kind;
   delete next.format_option_ref;
   next.format_id = { ...formatId };
+  const supplied = legacyFormatDefinitions?.filter(definition => sameLegacyIdentity(definition.format_id, formatId));
+  const definition = supplied?.length ? (supplied.length === 1 ? supplied[0] : undefined) : lookupV1Format(formatId);
+  if (Object.hasOwn(creative, 'assets')) next.assets = projectLegacyAssetKeys(creative.assets, definition);
   return next as T;
 }
 
@@ -1398,13 +1449,19 @@ function canonicalizeCreative<T extends Record<string, unknown>>(
   return next as T;
 }
 
+/**
+ * Project identity and asset keys for the selected wire mode. Optional
+ * `legacyFormatDefinitions` override bundled definitions by exact format owner
+ * and ID; ambiguous definitions leave asset keys unchanged.
+ */
 export function projectCreativeForDelivery<T extends CreativeAsset>(
   creative: T,
   selectorContainer: CreativeFormatSelectorContainer,
   wireMode?: 'canonical',
   operation?: string,
   legacyFormatConverter?: LegacyFormatConverter,
-  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
+  legacyFormatDefinitions?: readonly V1FormatDefinition[]
 ): CanonicalProjectedCreative<T>;
 export function projectCreativeForDelivery<T extends CreativeAsset>(
   creative: T,
@@ -1412,7 +1469,8 @@ export function projectCreativeForDelivery<T extends CreativeAsset>(
   wireMode: 'legacy' | 'unknown',
   operation?: string,
   legacyFormatConverter?: LegacyFormatConverter,
-  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
+  legacyFormatDefinitions?: readonly V1FormatDefinition[]
 ): LegacyProjectedCreative<T>;
 export function projectCreativeForDelivery<T extends CreativeAsset>(
   creative: T,
@@ -1420,7 +1478,8 @@ export function projectCreativeForDelivery<T extends CreativeAsset>(
   wireMode: CreativeFormatWireMode,
   operation?: string,
   legacyFormatConverter?: LegacyFormatConverter,
-  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
+  legacyFormatDefinitions?: readonly V1FormatDefinition[]
 ): CanonicalProjectedCreative<T> | LegacyProjectedCreative<T>;
 export function projectCreativeForDelivery<T extends CreativeAsset>(
   creative: T,
@@ -1428,7 +1487,8 @@ export function projectCreativeForDelivery<T extends CreativeAsset>(
   wireMode: CreativeFormatWireMode = 'canonical',
   operation = 'creative_delivery',
   legacyFormatConverter?: LegacyFormatConverter,
-  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
+  legacyFormatDefinitions?: readonly V1FormatDefinition[]
 ): CanonicalProjectedCreative<T> | LegacyProjectedCreative<T> {
   const inputRecord = creative as unknown as Record<string, unknown>;
   const originalLegacyRef = legacyRef(inputRecord.format_id);
@@ -1437,7 +1497,11 @@ export function projectCreativeForDelivery<T extends CreativeAsset>(
   if (originalLegacyRef) {
     const selectedOriginal = selectLegacyRef(inputRecord, selectorContainer, canonicalFormatLegacyResolver, operation);
     if (selectedOriginal) {
-      return projectCreative(creativeRecord, selectedOriginal) as unknown as LegacyProjectedCreative<T>;
+      return projectCreative(
+        creativeRecord,
+        selectedOriginal,
+        legacyFormatDefinitions
+      ) as unknown as LegacyProjectedCreative<T>;
     }
     throw new CreativeFormatProjectionError(
       operation,
@@ -1446,7 +1510,8 @@ export function projectCreativeForDelivery<T extends CreativeAsset>(
     );
   }
   const formatId = selectLegacyRef(creativeRecord, selectorContainer, canonicalFormatLegacyResolver, operation);
-  if (formatId) return projectCreative(creativeRecord, formatId) as unknown as LegacyProjectedCreative<T>;
+  if (formatId)
+    return projectCreative(creativeRecord, formatId, legacyFormatDefinitions) as unknown as LegacyProjectedCreative<T>;
 
   if (typeof creativeRecord.format_kind === 'string') {
     const creativeId = typeof creativeRecord.creative_id === 'string' ? creativeRecord.creative_id : '(unknown)';
@@ -1484,10 +1549,19 @@ export function projectCreativeForDelivery<T extends CreativeAsset>(
         'canonical format legacy resolver returned an invalid or ambiguous creative mapping'
       );
     }
-    if (resolved) return projectCreative(creativeRecord, resolved[0]!) as unknown as LegacyProjectedCreative<T>;
+    if (resolved)
+      return projectCreative(
+        creativeRecord,
+        resolved[0]!,
+        legacyFormatDefinitions
+      ) as unknown as LegacyProjectedCreative<T>;
     const pinned = optionReference(creativeRecord.format_option_ref) !== undefined;
     if (candidates.length === 1 && !pinned) {
-      return projectCreative(creativeRecord, candidates[0]!.ref) as unknown as LegacyProjectedCreative<T>;
+      return projectCreative(
+        creativeRecord,
+        candidates[0]!.ref,
+        legacyFormatDefinitions
+      ) as unknown as LegacyProjectedCreative<T>;
     }
     if (candidates.length > 1) {
       throw new CreativeFormatProjectionError(
@@ -1509,28 +1583,32 @@ export function projectMediaBuyCreativesForDelivery<T>(
   wireMode: 'canonical',
   operation?: 'create_media_buy' | 'update_media_buy',
   legacyFormatConverter?: LegacyFormatConverter,
-  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
+  legacyFormatDefinitions?: readonly V1FormatDefinition[]
 ): ProjectedMediaBuyCreativeRequest<T, 'canonical'>;
 export function projectMediaBuyCreativesForDelivery<T>(
   request: T,
   wireMode: 'legacy' | 'unknown',
   operation?: 'create_media_buy' | 'update_media_buy',
   legacyFormatConverter?: LegacyFormatConverter,
-  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
+  legacyFormatDefinitions?: readonly V1FormatDefinition[]
 ): ProjectedMediaBuyCreativeRequest<T, 'legacy'>;
 export function projectMediaBuyCreativesForDelivery<T>(
   request: T,
   wireMode: CreativeFormatWireMode,
   operation?: 'create_media_buy' | 'update_media_buy',
   legacyFormatConverter?: LegacyFormatConverter,
-  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
+  legacyFormatDefinitions?: readonly V1FormatDefinition[]
 ): ProjectedMediaBuyCreativeRequest<T, 'canonical'> | ProjectedMediaBuyCreativeRequest<T, 'legacy'>;
 export function projectMediaBuyCreativesForDelivery<T>(
   request: T,
   wireMode: CreativeFormatWireMode = 'canonical',
   operation: 'create_media_buy' | 'update_media_buy' = 'create_media_buy',
   legacyFormatConverter?: LegacyFormatConverter,
-  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
+  legacyFormatDefinitions?: readonly V1FormatDefinition[]
 ): ProjectedMediaBuyCreativeRequest<T, 'canonical'> | ProjectedMediaBuyCreativeRequest<T, 'legacy'> {
   const requestRecord = record(request);
   if (!requestRecord) return request as ProjectedMediaBuyCreativeRequest<T, 'canonical'>;
@@ -1552,7 +1630,8 @@ export function projectMediaBuyCreativesForDelivery<T>(
               wireMode,
               operation,
               legacyFormatConverter,
-              canonicalFormatLegacyResolver
+              canonicalFormatLegacyResolver,
+              legacyFormatDefinitions
             );
             if (projected !== creativeValue) changed = true;
             return projected;
@@ -1579,28 +1658,32 @@ export function projectSyncCreativesForDelivery<T>(
   selectorContainers: ReadonlyArray<CreativeFormatSelectorContainer>,
   wireMode: 'canonical',
   legacyFormatConverter?: LegacyFormatConverter,
-  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
+  legacyFormatDefinitions?: readonly V1FormatDefinition[]
 ): ProjectedSyncCreativeRequest<T, 'canonical'>;
 export function projectSyncCreativesForDelivery<T>(
   request: T,
   selectorContainers: ReadonlyArray<CreativeFormatSelectorContainer>,
   wireMode: 'legacy' | 'unknown',
   legacyFormatConverter?: LegacyFormatConverter,
-  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
+  legacyFormatDefinitions?: readonly V1FormatDefinition[]
 ): ProjectedSyncCreativeRequest<T, 'legacy'>;
 export function projectSyncCreativesForDelivery<T>(
   request: T,
   selectorContainers: ReadonlyArray<CreativeFormatSelectorContainer>,
   wireMode: CreativeFormatWireMode,
   legacyFormatConverter?: LegacyFormatConverter,
-  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
+  legacyFormatDefinitions?: readonly V1FormatDefinition[]
 ): ProjectedSyncCreativeRequest<T, 'canonical'> | ProjectedSyncCreativeRequest<T, 'legacy'>;
 export function projectSyncCreativesForDelivery<T>(
   request: T,
   selectorContainers: ReadonlyArray<CreativeFormatSelectorContainer>,
   wireMode: CreativeFormatWireMode = 'canonical',
   legacyFormatConverter?: LegacyFormatConverter,
-  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
+  legacyFormatDefinitions?: readonly V1FormatDefinition[]
 ): ProjectedSyncCreativeRequest<T, 'canonical'> | ProjectedSyncCreativeRequest<T, 'legacy'> {
   const requestRecord = record(request);
   if (!requestRecord || !Array.isArray(requestRecord.creatives)) {
@@ -1633,7 +1716,8 @@ export function projectSyncCreativesForDelivery<T>(
       wireMode,
       'sync_creatives',
       legacyFormatConverter,
-      canonicalFormatLegacyResolver
+      canonicalFormatLegacyResolver,
+      legacyFormatDefinitions
     );
     if (projected !== creativeValue) changed = true;
     return projected;

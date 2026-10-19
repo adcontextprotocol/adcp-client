@@ -51,7 +51,7 @@ describe('dual-emitted product format pairing (#3312)', () => {
         assert.deepEqual(projected.format_id, selected.format_ids[index]);
         assert.equal(projected.format_kind, undefined);
         assert.equal(projected.format_option_ref, undefined);
-        assert.deepEqual(projected.assets, input.assets);
+        assert.deepEqual(projected.assets, { banner_image: input.assets.image });
         assert.deepEqual({ selected, input }, original);
         assert.deepEqual(Reflect.ownKeys(selected.format_options[0]), ['format_option_id', 'format_kind', 'params']);
       });
