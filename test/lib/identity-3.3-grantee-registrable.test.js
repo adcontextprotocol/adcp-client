@@ -173,3 +173,66 @@ test('a fetched record with a non-registrable grantee is still a valid record', 
   assert.equal(result.status, 'present');
   assert.equal(result.record.grants.length, 2);
 });
+
+test('adcp identity trust-validate applies the publication rules, not only the schema', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { handleIdentityCommand } = require('../../bin/adcp-identity.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-trust-'));
+  const file = path.join(dir, 'trust.json');
+  const write = process.stdout.write;
+  try {
+    fs.writeFileSync(file, JSON.stringify({ grants: [grant('media.agency.com')], exclusive_grants: true }));
+    await assert.rejects(handleIdentityCommand(['trust-validate', file]), /not a registrable domain/);
+    fs.writeFileSync(file, JSON.stringify({ grants: [grant('agency.com')] }));
+    let out = '';
+    process.stdout.write = chunk => ((out += chunk), true);
+    await handleIdentityCommand(['trust-validate', file]);
+    process.stdout.write = write;
+    assert.match(out, /Valid/);
+  } finally {
+    process.stdout.write = write;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a grant whose agents[] URL does not parse lists no agent and never breaks the other grants', async () => {
+  const bad = 'https://agency.com:99999/';
+  // Authoring refuses it.
+  assert.throws(
+    () => identity.createTrustRecord({ grants: [grant('agency.com', { agents: [{ url: bad }] })] }),
+    error => error instanceof TypeError && error.message.includes(bad)
+  );
+  // A fetched record carrying it still authorizes through the valid grant, in either order.
+  for (const grants of [
+    [grant('agency.com', { agents: [{ url: bad }] }), grant('agency.com')],
+    [grant('agency.com'), grant('agency.com', { agents: [{ url: bad }] })],
+  ]) {
+    const { run } = await authorize({ grants, exclusive_grants: true });
+    assert.equal((await run).source, 'trust');
+  }
+  // Alone, it covers the signer with nothing.
+  const alone = await authorize({ grants: [grant('agency.com', { agents: [{ url: bad }] })], exclusive_grants: true });
+  await assert.rejects(alone.run, isGrantAbsent);
+});
+
+test('a grantee must equal its registrable domain exactly, even in a record that skipped schema validation', async () => {
+  // A duck-typed evaluator returning unvalidated grants: spellings that only
+  // match after URL parsing are not the registrable domain.
+  for (const grantee of ['AGENCY.COM', 'agency.com:443', 'evil.com@agency.com', '%61gency.com']) {
+    const real = evaluator({ 'agency.com': agent(claim.signerOrigin) });
+    const fake = {
+      match: (...args) => real.match(...args),
+      get: async domain =>
+        domain === 'brand.com'
+          ? { status: 'present', operator: 'brand.com', record: { grants: [grant(grantee)], exclusive_grants: true } }
+          : real.get(domain),
+    };
+    await assert.rejects(
+      identity.authorizeDemandGrant(claim, { evaluator: fake, now: () => now }),
+      isGrantAbsent,
+      grantee
+    );
+  }
+});

@@ -1,7 +1,7 @@
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 import { ssrfSafeFetch, type SsrfFetchOptions } from '../net';
-import { canonicalAgentOrigin, canonicalizeHost } from '../signing/agent-resolver/canonicalize';
+import { canonicalAgentOrigin } from '../signing/agent-resolver/canonicalize';
 import { eTldPlusOne } from '../signing/agent-resolver/etld';
 import { parseStrictJson } from '../signing/agent-resolver/strict-json';
 import { parse as parseDomain } from 'tldts';
@@ -92,25 +92,42 @@ export function validateTrustRecord(value: unknown): asserts value is TrustRecor
  */
 function registrableGrantee(grantee: string): string | undefined {
   try {
-    const registrable = eTldPlusOne(grantee);
-    return registrable === canonicalizeHost(grantee) ? registrable : undefined;
+    // Exact: the schema already requires the canonical lowercase A-label form,
+    // so a grantee that only matches after URL parsing is not a registrable domain.
+    return eTldPlusOne(grantee) === grantee ? grantee : undefined;
+  } catch {
+    return undefined;
+  }
+}
+/** A grant's agents[] URL as a canonical origin, or undefined when it cannot be parsed. */
+function grantAgentOrigin(url: string): string | undefined {
+  try {
+    return canonicalAgentOrigin(url);
   } catch {
     return undefined;
   }
 }
 /**
- * Validate and copy a trust record for publication. Beyond
- * {@link validateTrustRecord}, every grant's `grantee` must be a registrable
- * domain: a relying party ignores any other grant, so publishing one would
- * grant nothing while still making `grants[]` exhaustive for its scopes.
+ * Publication rules beyond the schema: every grant's `grantee` is a
+ * registrable domain and every `agents[].url` parses as an agent origin. A
+ * relying party ignores a grant that breaks either, so publishing one grants
+ * nothing while still making `grants[]` exhaustive for its scopes.
  */
-export function createTrustRecord(record: TrustRecord): TrustRecord {
+export function assertPublishableTrustRecord(record: TrustRecord): void {
   validateTrustRecord(record);
-  for (const grant of record.grants ?? [])
+  for (const grant of record.grants ?? []) {
     if (registrableGrantee(grant.grantee) === undefined)
       throw new TypeError(
         `Grant grantee "${grant.grantee}" is not a registrable domain; name the organization's registrable domain and narrow with agents[]`
       );
+    for (const agent of grant.agents ?? [])
+      if (grantAgentOrigin(agent.url) === undefined)
+        throw new TypeError(`Grant agents[] URL "${agent.url}" is not a valid agent origin`);
+  }
+}
+/** Validate ({@link assertPublishableTrustRecord}) and copy a trust record for publication. */
+export function createTrustRecord(record: TrustRecord): TrustRecord {
+  assertPublishableTrustRecord(record);
   return structuredClone(record);
 }
 export type TrustFetchResult =
@@ -407,9 +424,11 @@ function grantMatches(grant: TrustGrant, target: string, claim: DemandGrantClaim
   // Exact match on a registrable grantee: never reduce a host grantee to its eTLD+1.
   if (registrableGrantee(grant.grantee) !== target) return false;
   if (!grantsScope(grant, claim.scope)) return false;
+  // An agents[] URL that does not parse lists no agent: the grant fails to
+  // match on its own and never throws out of the evaluation of other grants.
   if (
     grant.agents &&
-    !grant.agents.some(agent => canonicalAgentOrigin(agent.url) === canonicalAgentOrigin(claim.signerOrigin))
+    !grant.agents.some(agent => grantAgentOrigin(agent.url) === canonicalAgentOrigin(claim.signerOrigin))
   )
     return false;
   const brands = grant.profiles?.adcp?.brands;

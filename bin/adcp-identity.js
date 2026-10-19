@@ -4,7 +4,7 @@ const { parseStrictJson } = require('../dist/lib/signing/agent-resolver/strict-j
 const {
   createSignedSignatureDirectory,
   createSignedOriginRevocationList,
-  validateTrustRecord,
+  assertPublishableTrustRecord,
 } = require('../dist/lib/identity-3.3/index.js');
 
 async function handleIdentityCommand(args) {
@@ -17,7 +17,8 @@ async function handleIdentityCommand(args) {
     if (!args[1]) throw new Error('Usage: adcp identity trust-validate trust.json');
     const bytes = readFileSync(args[1]);
     if (bytes.length > 2 * 1024 * 1024) throw new Error('trust.json exceeds 2 MiB');
-    validateTrustRecord(parseStrictJson(new TextDecoder('utf-8', { fatal: true }).decode(bytes), 32));
+    // Publication rules, not only the schema: a non-registrable grantee grants nothing.
+    assertPublishableTrustRecord(parseStrictJson(new TextDecoder('utf-8', { fatal: true }).decode(bytes), 32));
     process.stdout.write('Valid experimental trust v1 record\n');
     return;
   }
