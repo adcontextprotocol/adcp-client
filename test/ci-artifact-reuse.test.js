@@ -188,10 +188,13 @@ test('Node floor rebuilds and external runtime compatibility retain every matrix
     "matrix.mode == 'network'"
   );
   for (const job of [packageJob, networkJob]) {
-    assert.ok(
-      job.steps.some(step =>
-        step.run?.includes('npm install --no-save --package-lock=false "undici@${{ matrix.undici }}"')
-      )
+    const install = job.steps.find(step => step.name === 'Install dependencies with tested Undici');
+    assert.ok(install.run.includes('npm ci'));
+    assert.ok(install.run.includes('npm install --no-save "undici@${{ matrix.undici }}"'));
+    assert.doesNotMatch(
+      install.run,
+      /--(?:no-package-lock|package-lock(?:=|\s+)false)\b/,
+      'runtime overrides must retain the locked dependency graph'
     );
     assert.ok(job.steps.some(step => step.run === 'npm run check:runtime-compat'));
   }

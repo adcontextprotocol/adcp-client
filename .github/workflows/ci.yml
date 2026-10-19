@@ -1060,7 +1060,9 @@ jobs:
       - name: Install dependencies with tested Undici
         run: |
           npm ci
-          npm install --no-save --package-lock=false "undici@${{ matrix.undici }}"
+          # Read the locked dependency graph; --no-save already prevents
+          # package.json and package-lock.json changes for this override.
+          npm install --no-save "undici@${{ matrix.undici }}"
 
       - name: Check declared runtime policy
         run: npm run check:runtime-compat
@@ -1112,7 +1114,9 @@ jobs:
       - name: Install dependencies with tested Undici
         run: |
           npm ci
-          npm install --no-save --package-lock=false "undici@${{ matrix.undici }}"
+          # Read the locked dependency graph; --no-save already prevents
+          # package.json and package-lock.json changes for this override.
+          npm install --no-save "undici@${{ matrix.undici }}"
 
       - name: Check declared runtime policy
         run: npm run check:runtime-compat
