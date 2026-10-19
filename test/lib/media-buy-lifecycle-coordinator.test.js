@@ -20,7 +20,6 @@ const {
   proposalTermsDigest,
 } = require('../../dist/lib/index.js');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
-const { normalizeGetProductsResponse } = require('../../dist/lib/utils/pricing-adapter.js');
 
 // The SDK's own default pin, plus a synthetic release one step beyond it.
 // Negotiation fail-closed tests are about the *relationship* between what a
@@ -59,16 +58,6 @@ const AGENT = {
 };
 
 function capabilities({ version = SDK_PIN, tools, discoveredTools, replayTtlSeconds = 3600 } = {}) {
-  if (version === '2.5') {
-    return {
-      version: 'v2',
-      majorVersions: [2],
-      protocols: ['media_buy'],
-      features: {},
-      extensions: [],
-      _synthetic: true,
-    };
-  }
   return {
     version: 'v3',
     majorVersions: [3],
@@ -299,7 +288,6 @@ function seedProposalSnapshot(coordinator, proposal, account = { account_id: 'ac
 
 describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
   for (const lane of [
-    { name: 'v2.5 legacy', caps: capabilities({ version: '2.5' }), expected: 'established' },
     { name: '3.0 legacy', caps: capabilities({ version: '3.0' }), expected: 'established' },
     { name: '3.1 legacy', caps: capabilities({ version: '3.1' }), expected: 'established' },
     {
@@ -331,8 +319,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
       };
 
       const coordinator = await agent.negotiateMediaBuyLifecycle();
-      const isV25 = lane.name === 'v2.5 legacy';
-      const result = await coordinator.listProducts(isV25 ? {} : { max_results: 5 });
+      const result = await coordinator.listProducts({ max_results: 5 });
 
       assert.equal(coordinator.lifecycle, lane.expected);
       assert.equal(result.compatibility.lifecycle, lane.expected);
@@ -343,7 +330,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
       assert.equal(calls.length, 1);
       if (lane.expected === 'established') {
         assert.equal(calls[0][1].buying_mode, 'wholesale');
-        assert.deepEqual(calls[0][1].pagination, isV25 ? undefined : { max_results: 5 });
+        assert.deepEqual(calls[0][1].pagination, { max_results: 5 });
       }
     });
   }
@@ -5127,7 +5114,6 @@ describe('legacy products-only purchase continuations', () => {
     return {
       media_buy_id: `buy-${productId}`,
       packages: [],
-      ...(sourceVersion.startsWith('2.5') && { buyer_ref: request.buyer_ref }),
       ...(sourceVersion.startsWith('3.1') && { confirmed_at: '2099-01-01T00:00:00Z', revision: 1 }),
     };
   }
@@ -5587,28 +5573,19 @@ describe('legacy products-only purchase continuations', () => {
     assert.equal((await pricing.store.get(pricing.token)).operation.state, 'available');
   });
 
-  for (const vector of PRODUCTS_ONLY_BRIEF_VECTORS.cases) {
-    const version = vector.source_version.startsWith('2.5')
-      ? '2.5'
-      : vector.source_version.startsWith('3.0')
-        ? '3.0'
-        : '3.1';
+  for (const vector of PRODUCTS_ONLY_BRIEF_VECTORS.cases.filter(vector => !vector.source_version.startsWith('2.5'))) {
+    const version = vector.source_version.startsWith('3.0') ? '3.0' : '3.1';
     const productId = vector.continuation_input.selected_product_ids[0];
     test(`projects and redeems signed ${vector.source_version} products-only vector`, async () => {
-      const agent = clientWithCaps(capabilities({ version }), version === '2.5' ? undefined : vector.source_version);
+      const agent = clientWithCaps(capabilities({ version }), vector.source_version);
       const creates = [];
-      agent.getProducts = async () =>
-        completed(
-          'get_products',
-          version === '2.5' ? normalizeGetProductsResponse(vector.legacy_response) : vector.legacy_response
-        );
+      agent.getProducts = async () => completed('get_products', vector.legacy_response);
       agent.createMediaBuyLegacy = async request => {
         creates.push(request);
         return completed('create_media_buy', validLegacyCreateResponse(vector.source_version, request, productId));
       };
       const coordinator = await agent.negotiateMediaBuyLifecycle({
         principalScope: 'buyer-acme',
-        ...(version === '2.5' && { legacyPurchaseSellerSessionScope: 'seller-session-acme' }),
       });
       const projected = await coordinator.requestProposals({
         idempotency_key: 'request-proposals-vector-0001',
@@ -5655,43 +5632,6 @@ describe('legacy products-only purchase continuations', () => {
       assert.deepEqual(creates[0], vector.continuation_input.legacy_create_request);
     });
   }
-
-  test('binds a v2.5 continuation to the authenticated seller session at the same endpoint', async () => {
-    const vector = PRODUCTS_ONLY_BRIEF_VECTORS.cases[0];
-    const store = createInMemoryLegacyPurchaseContinuationStore();
-    const firstAgent = clientWithCaps(capabilities({ version: '2.5' }));
-    firstAgent.getProducts = async () =>
-      completed('get_products', normalizeGetProductsResponse(vector.legacy_response));
-    firstAgent.createMediaBuyLegacy = async request =>
-      completed(
-        'create_media_buy',
-        validLegacyCreateResponse(vector.source_version, request, vector.continuation_input.selected_product_ids[0])
-      );
-    const first = await firstAgent.negotiateMediaBuyLifecycle({
-      principalScope: 'buyer-session-bound',
-      legacyPurchaseSellerSessionScope: 'authenticated-session-one',
-      legacyPurchaseContinuationStore: store,
-    });
-    const discovery = await first.requestProposals({
-      account: vector.continuation_input.account,
-      brand: { domain: 'acme.example' },
-      brief: 'A premium display campaign for Acme.',
-    });
-    const input = {
-      ...vector.continuation_input,
-      continuation_token: discovery.data.purchase_continuation.continuation_token,
-    };
-
-    const secondAgent = clientWithCaps(capabilities({ version: '2.5' }));
-    secondAgent.createMediaBuyLegacy = async () => assert.fail('session binding must fail before mutation');
-    const second = await secondAgent.negotiateMediaBuyLifecycle({
-      principalScope: 'buyer-session-bound',
-      legacyPurchaseSellerSessionScope: 'authenticated-session-two',
-      legacyPurchaseContinuationStore: store,
-    });
-    await assert.rejects(second.continueLegacyPurchase(input), error => error.code === 'binding_mismatch');
-    assert.equal((await first.continueLegacyPurchase(input)).success, true);
-  });
 
   test('atomically rejects a concurrent second claim and fails closed after ambiguity', async () => {
     const agent = clientWithCaps(capabilities({ version: '3.1' }), '3.1');
@@ -10079,7 +10019,7 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
   });
 
   test('explicitly accepted direct-buy losses are reported and preserve the retry key', async () => {
-    const agent = clientWithCaps(capabilities({ version: '2.5' }));
+    const agent = clientWithCaps(capabilities({ version: '3.0', replayTtlSeconds: undefined }));
     const calls = [];
     agent.createMediaBuy = async request => {
       calls.push(request);
@@ -10236,152 +10176,6 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
       assert.equal(error.lifecycle, 'established');
       return true;
     });
-    assert.equal(mutations, 0);
-  });
-
-  test('v2.5 products-only proposal reads are supported while proposal mutations remain unsupported', async () => {
-    const agent = clientWithCaps(capabilities({ version: '2.5' }));
-    let reads = 0;
-    const updates = [];
-    agent.getProducts = async () => {
-      reads += 1;
-      return completed('get_products', {});
-    };
-    agent.updateMediaBuy = async request => {
-      updates.push(request);
-      return completed('update_media_buy', { media_buy_id: request.media_buy_id });
-    };
-    const strict = await agent.negotiateMediaBuyLifecycle();
-    const requested = await strict.requestProposals({ brief: 'test' });
-    assert.equal(requested.data.outcome, 'legacy_unavailable');
-    for (const operation of [
-      () => strict.refineProposals({ refinements: [{ proposal_id: 'p1', action: 'revise', ask: 'test' }] }),
-      () => strict.declineProposals({ declines: [{ proposal_id: 'p1', reason: 'other' }] }),
-      () => strict.acceptProposal({ account: { account_id: 'account-1' }, proposal_id: 'p1' }),
-    ]) {
-      await assert.rejects(
-        operation(),
-        error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'proposal_lifecycle'
-      );
-    }
-    await assert.rejects(
-      strict.controlMediaBuy({
-        account: { account_id: 'account-1' },
-        media_buy_id: 'mb-1',
-        revision: 1,
-        paused: true,
-      }),
-      error => error instanceof MediaBuyLifecycleCompatibilityError && error.losses.includes('revision_not_atomic')
-    );
-    const optedIn = await agent.negotiateMediaBuyLifecycle({ allowedLosses: ['revision_not_atomic'] });
-    await assert.rejects(
-      optedIn.controlMediaBuy({
-        account: { account_id: 'account-1' },
-        media_buy_id: 'mb-1',
-        revision: 1,
-        packages: [{ package_id: 'package-1', canceled: true }],
-      }),
-      error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'packages[0].canceled'
-    );
-
-    const result = await optedIn.controlMediaBuy({
-      account: { account_id: 'account-1' },
-      media_buy_id: 'mb-1',
-      revision: 1,
-      paused: true,
-    });
-    assert.equal(reads, 1);
-    assert.equal(updates.length, 1);
-    assert.deepEqual(result.compatibility.losses, ['revision_not_atomic']);
-  });
-
-  test('v2.5 rejects unsupported create and update fields instead of relying on permissive schemas', async () => {
-    const agent = clientWithCaps(capabilities({ version: '2.5' }));
-    let mutations = 0;
-    agent.createMediaBuy = agent.updateMediaBuy = async () => {
-      mutations += 1;
-      return completed('mutation', {});
-    };
-    const coordinator = await agent.negotiateMediaBuyLifecycle({
-      allowedLosses: ['feed_version_not_atomic', 'pricing_version_not_atomic', 'revision_not_atomic'],
-    });
-
-    for (const field of [
-      'context',
-      'start_time',
-      'end_time',
-      'measurement_terms',
-      'performance_standards',
-      'agency_estimate_number',
-    ]) {
-      await assert.rejects(
-        coordinator.buyProducts({
-          ...directIntent,
-          purchases: [
-            {
-              ...directIntent.purchases[0],
-              [field]: field === 'context' ? { buyer_ref: 'line-1' } : directIntent.start_time,
-            },
-          ],
-        }),
-        error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === `purchases[0].${field}`
-      );
-    }
-    for (const field of [
-      'advertiser_industry',
-      'agency_estimate_number',
-      'invoice_recipient',
-      'push_notification_config',
-    ]) {
-      await assert.rejects(
-        coordinator.buyProducts({
-          ...directIntent,
-          [field]: ['invoice_recipient', 'push_notification_config'].includes(field) ? {} : 'unsupported',
-        }),
-        error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === field
-      );
-    }
-    await assert.rejects(
-      coordinator.buyProducts({
-        ...directIntent,
-        purchases: [
-          {
-            ...directIntent.purchases[0],
-            targeting_overlay: { geo_countries: ['US'] },
-          },
-        ],
-      }),
-      error =>
-        error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'purchases[0].targeting_overlay'
-    );
-    await assert.rejects(
-      coordinator.controlMediaBuy({
-        account: { account_id: 'account-1' },
-        media_buy_id: 'mb-1',
-        revision: 1,
-        reporting_webhook: { url: 'https://example.com/report' },
-      }),
-      error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'reporting_webhook'
-    );
-    await assert.rejects(
-      coordinator.buyProducts({
-        ...directIntent,
-        reporting_webhook: { requested_metrics: ['roas'] },
-      }),
-      error =>
-        error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'reporting_webhook.requested_metrics'
-    );
-    await assert.rejects(
-      coordinator.controlMediaBuy({
-        account: { account_id: 'account-1' },
-        media_buy_id: 'mb-1',
-        revision: 1,
-        push_notification_config: { url: 'https://example.com/tasks' },
-      }),
-      error =>
-        error instanceof MediaBuyLifecycleCompatibilityError &&
-        error.feature === 'push_notification_config.authentication'
-    );
     assert.equal(mutations, 0);
   });
 

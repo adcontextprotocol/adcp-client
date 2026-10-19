@@ -365,9 +365,10 @@ function main(): void {
   const currentProtocolVersion = readFileSync(path.join(repoRoot, 'ADCP_VERSION'), 'utf8').trim();
   const publishableCandidates = candidates.filter(
     candidate =>
-      candidate.prerelease === undefined ||
-      candidate.prerelease === 'legacy' ||
-      candidate.version === currentProtocolVersion
+      candidate.major >= 3 &&
+      (candidate.prerelease === undefined ||
+        candidate.prerelease === 'legacy' ||
+        candidate.version === currentProtocolVersion)
   );
   const selected = selectVersionsToCopy(publishableCandidates);
   const collapsed = candidates.filter(c => !selected.some(s => s.source.version === c.version));

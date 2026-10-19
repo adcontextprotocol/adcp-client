@@ -1034,7 +1034,11 @@ function isCompactRelease(value: string): boolean {
 }
 
 function negotiatedVersion(capabilities: AdcpCapabilities, clientVersion: string): string {
-  if (capabilities.version === 'v2') return '2.5';
+  if (capabilities.version === 'v2' || !capabilities.majorVersions.includes(3)) {
+    throw new ConfigurationError(
+      'AdCP 2 reached end of life on 2026-08-01. Media-buy lifecycle negotiation requires AdCP 3.'
+    );
+  }
   if (capabilities.servedVersion && parseRelease(capabilities.servedVersion)) {
     if (compareRelease(capabilities.servedVersion, clientVersion) > 0) {
       const displayedServedVersion = capabilities.servedVersion.slice(0, 64);
@@ -2807,16 +2811,14 @@ export class MediaBuyLifecycleCoordinator {
   private legacyPurchaseSourceVersion(): LegacyPurchaseSourceVersion {
     if (compareRelease(this.negotiated_version, '3.1') >= 0) return '3.1';
     if (compareRelease(this.negotiated_version, '3.0') >= 0) return '3.0';
-    return '2.5';
+    throw new ConfigurationError('Legacy purchase continuations require AdCP 3.0 or 3.1.');
   }
 
   private legacyPurchaseLosses(sourceVersion: LegacyPurchaseSourceVersion): LegacyPurchaseLoss[] {
     return [
       'feed_version_not_atomic',
       'pricing_version_not_atomic',
-      ...(sourceVersion === '2.5' || this.idempotencyReplayTtlMs === undefined
-        ? (['mutation_idempotency_not_guaranteed'] as const)
-        : []),
+      ...(this.idempotencyReplayTtlMs === undefined ? (['mutation_idempotency_not_guaranteed'] as const) : []),
     ];
   }
 
@@ -5680,17 +5682,13 @@ export class MediaBuyLifecycleCoordinator {
         'Every legacy_create_request package pricing_option_id must match an option observed for its selected product.'
       );
     }
-    if (continuation.sourceAdcpVersion !== '2.5' && this.accountScope(legacyRequest.account) !== accountScope) {
+    if (this.accountScope(legacyRequest.account) !== accountScope) {
       throw new LegacyPurchaseContinuationError(
         'binding_mismatch',
         'legacy_create_request.account must match the continuation account.'
       );
     }
-    const validation = validateRequest(
-      'create_media_buy',
-      legacyRequest,
-      continuation.sourceAdcpVersion === '2.5' ? 'v2.5' : continuation.sourceAdcpVersion
-    );
+    const validation = validateRequest('create_media_buy', legacyRequest, continuation.sourceAdcpVersion);
     if (!validation.valid) {
       throw new LegacyPurchaseContinuationError(
         'request_invalid',
@@ -5757,7 +5755,7 @@ export class MediaBuyLifecycleCoordinator {
           'The final seller payload pricing options must match the observed product snapshot.'
         );
       }
-      if (continuation.sourceAdcpVersion !== '2.5' && this.accountScope(finalRequest.account) !== accountScope) {
+      if (this.accountScope(finalRequest.account) !== accountScope) {
         throw new LegacyPurchaseContinuationError(
           'binding_mismatch',
           'The final seller payload account must match the continuation account.'
@@ -6663,11 +6661,7 @@ export class MediaBuyLifecycleCoordinator {
       if (result.data === undefined) {
         throw this.legacyPurchaseAmbiguousError('The seller reported completion without a create_media_buy result.');
       }
-      const validation = validateResponse(
-        'create_media_buy',
-        result.data,
-        sourceVersion === '2.5' ? 'v2.5' : sourceVersion
-      );
+      const validation = validateResponse('create_media_buy', result.data, sourceVersion);
       if (!validation.valid) {
         throw this.legacyPurchaseAmbiguousError(
           `The seller returned an invalid terminal create_media_buy result: ${formatIssues(validation.issues)}`
@@ -9990,7 +9984,7 @@ export class MediaBuyLifecycleCoordinator {
         lifecycle,
         ['update_media_buy'],
         losses,
-        losses.length ? ['The v2.5 update cannot atomically enforce the compact revision token.'] : []
+        losses.length ? ['The established update cannot atomically enforce the compact revision token.'] : []
       ),
       data => data
     );

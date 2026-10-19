@@ -2039,7 +2039,6 @@ export {
 //   - `ADCP_MAJOR_VERSION` / `COMPATIBLE_ADCP_VERSIONS` in version information
 //   - `SingleAgentClient#requireV3()` / `AgentClient#requireV3()` — runtime gate
 export {
-  buildSyntheticCapabilities,
   buildSyntheticV3Capabilities,
   parseCapabilitiesResponse,
   supportsV3,
@@ -2087,53 +2086,6 @@ export type {
   LegacyInlineCreativePackage,
 } from './utils/creative-delivery';
 
-// Creative assignment adapter (v2 creative_ids ↔ v3 creative_assignments)
-export {
-  adaptPackageRequestForV2,
-  adaptCreateMediaBuyRequestForV2,
-  adaptUpdateMediaBuyRequestForV2,
-  normalizePackageResponse,
-  normalizeMediaBuyResponse,
-  usesV2CreativeIds,
-  usesV3CreativeAssignments,
-  getCreativeIds,
-  getCreativeAssignments,
-} from './utils/creative-adapter';
-export type { CreativeAssignment } from './utils/creative-adapter';
-
-// Format renders normalizer (v2 dimensions ↔ v3 renders)
-export {
-  normalizeFormatRenders,
-  normalizeFormatsResponse,
-  getFormatRenders,
-  getPrimaryRender,
-  getCompanionRenders,
-  isMultiRenderFormat,
-  usesV2Dimensions,
-  usesV3Renders,
-  getFormatDimensions,
-} from './utils/format-renders';
-// FormatRender (the v3 structural interface) was renamed to FormatRenderEntry
-// so the `FormatRender` name at the barrel becomes the factory namespace
-// exported from `./utils/format-render-builders` above. The deprecated type
-// alias `FormatRender = FormatRenderEntry` still lives in `utils/format-renders`
-// for callers importing the sub-module directly; it's not re-exported here.
-export type { FormatRenderEntry, RenderDimensions } from './utils/format-renders';
-
-// Preview response normalizer (v2 output_id ↔ v3 render_id)
-export {
-  normalizePreviewRender,
-  normalizePreview,
-  normalizePreviewCreativeResponse,
-  usesV2RenderFields,
-  usesV3RenderFields,
-  getRenderId,
-  getRenderRole,
-  getPrimaryPreviewRender,
-  getPreviewUrl,
-  getPreviewHtml,
-} from './utils/preview-normalizer';
-export type { PreviewRendererMetadata, PreviewRenderV3 } from './utils/preview-normalizer';
 export {
   resolvePreviewAuthority,
   type PlacementPreviewCandidate,

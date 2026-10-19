@@ -159,7 +159,7 @@ describe('beta.6 reporting version gates', () => {
     assert.strictEqual(capabilityCalls, 0);
   });
 
-  test('synthetic v2 capability fallback still rejects beta.6 reporting without dispatch', async () => {
+  test('retired v2 evidence rejects reporting before business dispatch', async () => {
     const client = clientForSellerVersion('3.2.0-beta.6');
     client.getCapabilities = async () => ({
       version: 'v2',
@@ -179,7 +179,7 @@ describe('beta.6 reporting version gates', () => {
     try {
       await assert.rejects(
         client.getProductsLegacy({ filters: { required_metrics: ['viewable_rate'] } }),
-        error => error instanceof ProtocolFeatureUnsupportedError && error.details.required_version === '3.2.0-beta.6'
+        error => error.code === 'VERSION_UNSUPPORTED' && /AdCP 2 reached end of life/.test(error.message)
       );
       assert.strictEqual(calls, 0);
     } finally {

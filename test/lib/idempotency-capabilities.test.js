@@ -126,7 +126,7 @@ describe('SingleAgentClient.getIdempotencyReplayTtlSeconds()', () => {
     );
   });
 
-  it('returns undefined on v2 sellers (pre-idempotency-envelope)', async () => {
+  it('rejects retired v2 sellers instead of returning an unknown replay TTL', async () => {
     const client = new SingleAgentClient(stubAgent);
     client.cachedCapabilities = {
       version: 'v2',
@@ -136,7 +136,7 @@ describe('SingleAgentClient.getIdempotencyReplayTtlSeconds()', () => {
       extensions: [],
       _synthetic: true,
     };
-    assert.equal(await client.getIdempotencyReplayTtlSeconds(), undefined);
+    await assert.rejects(() => client.getIdempotencyReplayTtlSeconds(), /AdCP 2 reached end of life/);
   });
 
   it('returns undefined for an explicit v3 supported:false declaration', async () => {

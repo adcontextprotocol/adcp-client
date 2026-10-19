@@ -1,3 +1,4 @@
+import { VersionUnsupportedError } from '../errors';
 // Unified Protocol Interface for AdCP
 export {
   callMCPTool,
@@ -167,13 +168,13 @@ export function bundleSupportsAdcpVersionField(bundleKey: string): boolean {
  * are explicitly NOT valid wire values per the envelope schema's own
  * normalization rule.
  *
- * Returns `{}` for v2 callers (predates the major-version field entirely).
+ * Rejects retired AdCP 2 dispatch requests.
  */
 function buildVersionEnvelope(
   adcpVersion: string | undefined,
   serverVersion: 'v2' | 'v3' | undefined
 ): Record<string, unknown> {
-  if (serverVersion === 'v2') return {};
+  if (serverVersion === 'v2') throw new VersionUnsupportedError('request', 'version', 'v2');
   const wireMajor = resolveWireMajor(adcpVersion);
   const bundleKey = resolveBundleKey(adcpVersion ?? ADCP_VERSION);
   if (!bundleSupportsAdcpVersionField(bundleKey)) {
@@ -188,35 +189,13 @@ function buildVersionEnvelope(
   return { adcp_major_version: wireMajor, adcp_version: wireValue };
 }
 
-let hasWarnedAboutV2PushNotificationSecret = false;
-
-/**
- * Warn once when an async webhook registration is suppressed for a v2 seller.
- *
- * v2.5's `push-notification-config.json` requires `authentication`, and unlike
- * 3.x it has no RFC 9421 selector semantics — so omitting the block produces a
- * schema-invalid request rather than choosing a signing mode. Without a
- * configured secret there is no honest value to send, and the previous
- * behaviour (a hardcoded placeholder credential) told the seller the channel
- * was authenticated by a constant published in this package.
- */
-function warnV2PushNotificationNeedsSecret(): void {
-  if (hasWarnedAboutV2PushNotificationSecret) return;
-  hasWarnedAboutV2PushNotificationSecret = true;
-  console.warn(
-    '[adcp] Suppressing push_notification_config for a v2 seller: AdCP 2.5 requires an ' +
-      '`authentication` block and no `webhookSecret` is configured. Set `webhookSecret` to register ' +
-      'async task-status webhooks with this agent, or move the agent to an AdCP 3.x pin, where the ' +
-      'RFC 9421 webhook profile needs no shared secret.'
-  );
-}
-
 function buildVersionEnvelopeForMode(
   mode: VersionEnvelopeMode,
   adcpVersion: string | undefined,
   serverVersion: 'v2' | 'v3' | undefined
 ): Record<string, unknown> {
-  if (mode === 'none' || serverVersion === 'v2') return {};
+  if (serverVersion === 'v2') throw new VersionUnsupportedError('request', 'version', 'v2');
+  if (mode === 'none') return {};
   if (mode === 'major-only') return { adcp_major_version: resolveWireMajor(adcpVersion) };
   return buildVersionEnvelope(adcpVersion, serverVersion);
 }
@@ -524,7 +503,7 @@ export function prepareProtocolToolCall(
   applyPublishedSchemaCompatibility(options.toolName, argsWithVersion, args);
   const effectiveBundle =
     typeof argsWithVersion.adcp_version === 'string' ? resolveBundleKey(argsWithVersion.adcp_version) : undefined;
-  const usesApplicationRegistration = options.serverVersion !== 'v2' && isAdcpVersionAtLeast(effectiveBundle, '3.1.0');
+  const usesApplicationRegistration = isAdcpVersionAtLeast(effectiveBundle, '3.1.0');
 
   let pushNotificationConfig: PushNotificationConfig | undefined;
   let applicationPushNotificationConfig: PushNotificationConfig | undefined;
@@ -539,8 +518,6 @@ export function prepareProtocolToolCall(
           credentials: options.webhookSecret,
         },
       };
-    } else if (options.serverVersion === 'v2') {
-      warnV2PushNotificationNeedsSecret();
     } else {
       pushNotificationConfig = {
         url: options.webhookUrl,

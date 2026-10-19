@@ -20,8 +20,7 @@ import { generateIdempotencyKey, requestUsesIdempotency } from './idempotency';
  *
  * Does NOT copy `context.buyer_ref` up to a top-level `buyer_ref`. The top-level
  * field was removed from the package schema in AdCP 3.0 and strict v3 receivers
- * reject it. When a request routes to a v2.5 seller, the v2 adapter in
- * `creative-adapter.ts` derives `buyer_ref` (from a caller-supplied value,
+ * reject it. Historical SDK releases derived `buyer_ref` (from a caller-supplied value,
  * `context.buyer_ref`, `idempotency_key`, or parent/index) — that adapter is
  * gated on `serverVersion !== 'v3'`, so the field only lands on the wire for
  * sellers that still expect it.
@@ -166,8 +165,7 @@ export function normalizeRequestParams(
 
   // Top-level `buyer_ref` on create_media_buy / update_media_buy was removed
   // from the AdCP request schema in 3.0. It is NOT derived from `context.buyer_ref`
-  // here — strict v3 receivers reject it as an unknown field. The v2.5 adapter in
-  // `creative-adapter.ts` performs the derivation for legacy servers only, gated
+  // here — strict v3 receivers reject it as an unknown field. Historical request adaptation performed this derivation, gated
   // on `serverVersion !== 'v3'`.
 
   // ── Package normalization (create_media_buy, update_media_buy) ──

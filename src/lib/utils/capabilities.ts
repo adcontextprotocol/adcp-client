@@ -2,8 +2,7 @@
  * AdCP Capabilities utilities
  *
  * Provides types and helpers for working with agent capabilities,
- * including synthetic capabilities for v2 servers that don't support
- * the get_adcp_capabilities tool.
+ * including conservative synthetic v3 evidence when advertised discovery fails.
  */
 
 import { ConfigurationError } from '../errors';
@@ -182,14 +181,16 @@ export type IdempotencyCapabilities =
     };
 
 /**
- * Normalized capabilities response that works for both v2 and v3 servers
+ * Normalized capability evidence. Retired v2 declarations are retained for rejection.
  */
 export interface AdcpCapabilities {
   /** Detected version ('v2' or 'v3') */
   version: 'v2' | 'v3';
 
   /**
-   * Array of supported major versions (e.g., [2] or [2, 3]).
+   * Array of supported major versions (e.g., [2] or [2, 3]), derived from
+   * supportedVersions when available, otherwise the legacy major_versions
+   * declaration. Capability responses without either declaration default to [3].
    * @deprecated Use {@link supportedVersions} for release-precision negotiation.
    * Removed in AdCP 4.0 per spec PR `adcontextprotocol/adcp#3493`. Continues
    * to be emitted alongside the new field through 3.x.
@@ -507,34 +508,6 @@ export function augmentCapabilitiesFromTools(capabilities: AdcpCapabilities, too
   };
 }
 
-export function buildSyntheticCapabilities(tools: ToolInfo[]): AdcpCapabilities {
-  const toolNames = new Set(tools.map(t => t.name));
-  const protocols = detectProtocolsFromTools(toolNames);
-
-  // Detect features from tool presence
-  const features: MediaBuyFeatures = {
-    // Tool lists do not declare package-scoped inline creative upload support.
-    inlineCreativeManagement: false,
-    // Property list filtering is v3 only
-    propertyListFiltering: false,
-    // Content standards is v3 only
-    contentStandards: false,
-    // Conversion tracking if event tracking tools are available
-    conversionTracking: EVENT_TRACKING_TOOLS.some(t => toolNames.has(t)),
-    // Audience targeting if sync_audiences is available
-    audienceTargeting: toolNames.has('sync_audiences'),
-  };
-
-  return {
-    version: 'v2',
-    majorVersions: [2],
-    protocols,
-    features,
-    extensions: [],
-    _synthetic: true,
-  };
-}
-
 /**
  * Build synthetic v3 capabilities when the agent advertises
  * `get_adcp_capabilities` (a v3-only tool) but the call itself failed —
@@ -640,8 +613,6 @@ function hasContentStandardsSupport(capabilities: Pick<AdcpCapabilities, 'featur
  * Parse a get_adcp_capabilities response into normalized form
  */
 export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
-  const majorVersions = (response.adcp?.major_versions ?? [2]) as AdcpMajorVersion[];
-  const highestVersion = Math.max(...majorVersions) as AdcpMajorVersion;
   const specialisms = Array.isArray(response.specialisms)
     ? response.specialisms.filter((s: unknown): s is string => typeof s === 'string')
     : undefined;
@@ -657,6 +628,27 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
   const supportedVersions = Array.isArray(response.adcp?.supported_versions)
     ? (response.adcp.supported_versions as unknown[]).filter((v): v is string => typeof v === 'string')
     : undefined;
+  const releaseMajors = [
+    ...new Set(
+      (supportedVersions ?? []).flatMap(version => {
+        const match = /^(\d+)\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.exec(version);
+        const major = match ? Number(match[1]) : NaN;
+        return Number.isSafeInteger(major) && major > 0 ? [major] : [];
+      })
+    ),
+  ];
+  const declaredMajors = Array.isArray(response.adcp?.major_versions)
+    ? (response.adcp.major_versions as unknown[]).filter(
+        (major): major is number => typeof major === 'number' && Number.isSafeInteger(major) && major > 0
+      )
+    : [];
+  // Release declarations supersede the deprecated major-only field. The
+  // capabilities tool was introduced in AdCP 3; omitting version fields is
+  // not evidence that an agent speaks the deprecated AdCP 2 protocol.
+  const majorVersions = (
+    releaseMajors.length ? releaseMajors : declaredMajors.length ? declaredMajors : [3]
+  ) as AdcpMajorVersion[];
+  const highestVersion = Math.max(...majorVersions);
   const buildVersion = typeof response.adcp?.build_version === 'string' ? response.adcp.build_version : undefined;
   const servedVersion = typeof response.adcp_version === 'string' ? response.adcp_version : undefined;
 

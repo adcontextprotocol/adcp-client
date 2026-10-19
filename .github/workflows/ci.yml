@@ -77,7 +77,6 @@ jobs:
           generated_paths=(
             schemas/codegen-provenance.json
             ':(glob)src/lib/types/*.generated.ts'
-            src/lib/types/v2-5/tools.generated.ts
             src/lib/agents/index.generated.ts
             src/lib/media-buy/update-fields.generated.ts
             src/lib/media-buy/action-metadata.generated.ts
@@ -122,7 +121,6 @@ jobs:
               exit 1
             fi
             generated_paths=(
-              src/lib/types/v2-5/tools.generated.ts
               src/lib/registry/types.generated.ts
               schemas/registry/registry.yaml
             )
@@ -130,7 +128,6 @@ jobs:
             npm run generate-types
             npm run generate-wellknown-schemas
           fi
-          npm run generate-types:v2.5
           npm run generate-registry-types -- --sync
 
           if ! git diff --exit-code -I '// Generated at:' -- "${generated_paths[@]}" 2>/dev/null; then

@@ -33,7 +33,7 @@ describe('SingleAgentClient.requireV3 — corroborated check', () => {
 
   test('accepts multi-version seller that includes 3', async () => {
     const client = clientWithCapabilities({
-      version: 'v2',
+      version: 'v3',
       majorVersions: [2, 3],
       idempotency,
       _synthetic: false,
@@ -71,20 +71,6 @@ describe('SingleAgentClient.requireV3 — corroborated check', () => {
     // No throw = pass.
   });
 
-  test('accepts synthetic v2 capabilities (no get_adcp_capabilities — routed as v2)', async () => {
-    // A compliant v3 seller would declare itself via get_adcp_capabilities.
-    // Absence of that declaration is read as v2 and routed through the v2
-    // adapter rather than refused. A one-time warning surfaces the routing
-    // decision; idempotency-TTL guarantees are unknown for these sellers.
-    const client = clientWithCapabilities({
-      version: 'v2',
-      majorVersions: [2],
-      _synthetic: true,
-    });
-    await client.requireV3('sync_creatives');
-    // No throw = pass.
-  });
-
   test('rejects v2-only seller', async () => {
     const client = clientWithCapabilities({
       version: 'v2',
@@ -97,11 +83,6 @@ describe('SingleAgentClient.requireV3 — corroborated check', () => {
     );
   });
 
-  test('allowV2: true bypasses the guard without touching env', async () => {
-    const client = clientWithCapabilities({ version: 'v2', majorVersions: [2], _synthetic: false }, { allowV2: true });
-    await client.requireV3('sync_creatives');
-  });
-
   test('allowV2: false overrides ADCP_ALLOW_V2=1', async () => {
     const original = process.env.ADCP_ALLOW_V2;
     process.env.ADCP_ALLOW_V2 = '1';
@@ -111,22 +92,6 @@ describe('SingleAgentClient.requireV3 — corroborated check', () => {
         { allowV2: false }
       );
       await assert.rejects(() => client.requireV3('sync_creatives'), VersionUnsupportedError);
-    } finally {
-      if (original === undefined) delete process.env.ADCP_ALLOW_V2;
-      else process.env.ADCP_ALLOW_V2 = original;
-    }
-  });
-
-  test('ADCP_ALLOW_V2=1 bypasses when allowV2 is undefined', async () => {
-    const original = process.env.ADCP_ALLOW_V2;
-    process.env.ADCP_ALLOW_V2 = '1';
-    try {
-      const client = clientWithCapabilities({
-        version: 'v2',
-        majorVersions: [2],
-        _synthetic: false,
-      });
-      await client.requireV3('sync_creatives');
     } finally {
       if (original === undefined) delete process.env.ADCP_ALLOW_V2;
       else process.env.ADCP_ALLOW_V2 = original;

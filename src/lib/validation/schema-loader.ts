@@ -82,6 +82,12 @@ function isRuntimeSchemaDirectory(name: string): boolean {
  * with a useful field name from `resolveAdcpVersion`.
  */
 export function resolveBundleKey(version: string): string {
+  if (/^v?2(?:\.|$)/.test(version)) {
+    throw new ConfigurationError(
+      'AdCP 2 reached end of life on 2026-08-01; only AdCP 3 schema bundles are supported.',
+      'adcpVersion'
+    );
+  }
   // Bare 'MAJOR.MINOR' (no patch).
   const minorOnly = version.match(/^(\d+)\.(\d+)$/);
   if (minorOnly) return `${minorOnly[1]}.${minorOnly[2]}`;

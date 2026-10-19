@@ -119,7 +119,7 @@ test('init and doctor reject unknown or duplicate options before doing work', ()
     assert.equal(doctorUnknown.status, 1);
     assert.match(doctorUnknown.stderr, /Unknown option: --wat/);
 
-    const globalFlags = run(['doctor', '--allow-v2', '--allow-http', '--help']);
+    const globalFlags = run(['doctor', '--allow-http', '--help']);
     assert.equal(globalFlags.status, 0, globalFlags.stderr || globalFlags.stdout);
   } finally {
     rmSync(dir, { recursive: true, force: true });

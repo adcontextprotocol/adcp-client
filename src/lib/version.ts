@@ -26,8 +26,6 @@ export const ADCP_MAJOR_VERSION = 3;
  * extends it.
  */
 export const COMPATIBLE_ADCP_VERSIONS = [
-  'v2.5',
-  'v2.6',
   'v3',
   '3.0.0',
   '3.0',
@@ -112,7 +110,7 @@ export const VERSION_INFO = {
   library: '16.0.0-beta.8',
   adcp: '3.2.5',
   compatibleVersions: COMPATIBLE_ADCP_VERSIONS,
-  generatedAt: '2026-10-18T01:21:23.594Z',
+  generatedAt: '2026-10-19T08:04:48.679Z',
 } as const;
 
 /**

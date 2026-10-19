@@ -1643,9 +1643,9 @@ describe('webhook registration provenance', () => {
     }
   });
 
-  test('keeps AdCP 3.0 and v2 task registrations free of operation IDs', () => {
+  test('keeps AdCP 3.0 task registrations free of operation IDs', () => {
     for (const target of [agent, { ...agent, protocol: 'a2a' }, { ...agent, _inProcessMcpClient: {} }]) {
-      for (const legacy of [{ adcpVersion: '3.0.25' }, { adcpVersion: '2.5', serverVersion: 'v2' }]) {
+      for (const legacy of [{ adcpVersion: '3.0.25' }]) {
         const prepared = prepareProtocolToolCall(
           target,
           {},
