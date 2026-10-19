@@ -144,7 +144,8 @@ export default { async fetch(req) {
       const token = await new CompactSign(new TextEncoder().encode('{"iss":"https://gov.agency.com"}'))
         .setProtectedHeader({ alg: 'EdDSA', kid: privateKey.kid, typ: 'adcp-gov+jws' })
         .sign(await importJWK(privateKey, 'EdDSA'));
-      const verified = await jwsArtifacts.verifyWebBotAuthJwsArtifact(token, origin, { directory });
+      const verified = await jwsArtifacts.verifyWebBotAuthJwsArtifact(token, origin, {
+        typ: 'adcp-gov+jws', directory, revocation: false });
       return verified.kid === privateKey.kid && verified.keySource === 'directory' ? 'verified' : 'wrong key';
     });
   return Response.json(out);

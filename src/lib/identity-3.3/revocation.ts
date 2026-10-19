@@ -223,6 +223,19 @@ export class OriginRevocationResolver {
     }
     return settled();
   }
+  /**
+   * The most severe detail stored for a revoked key (R9: `keyCompromise` and
+   * the earliest `invalidity_date` win), or undefined when the key is not
+   * revoked. Reads the history store only; call {@link status} first to refresh.
+   * Throws {@link WebBotAuthUnavailableError} when the store fails.
+   */
+  async detail(originUrl: string, keyid: string): Promise<RevocationDetail | undefined> {
+    try {
+      return await this.readStored(canonicalAgentOrigin(originUrl), keyid);
+    } catch (error) {
+      throw new WebBotAuthUnavailableError('revocation_persistence_failed', error);
+    }
+  }
   private async readStored(origin: string, keyid: string): Promise<RevocationDetail | undefined> {
     try {
       return await this.options.store.get(origin, keyid);

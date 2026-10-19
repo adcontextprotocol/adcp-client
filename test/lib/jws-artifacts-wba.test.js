@@ -74,7 +74,9 @@ async function sign(privateKey, kid, body = claims(), header = {}) {
  * and archive, and trust records served by registrable domain. `routes` and
  * `records` stay mutable so a test can change what the origin serves.
  */
-async function world({ records, directoryKeys, revoked, archive, revocationStatus } = {}) {
+async function world({ records, directoryKeys, revoked, revocationDetails, archive, revocationStatus } = {}) {
+  // By default the origin serves a current, signed list that revokes nothing.
+  if (revoked === undefined && revocationStatus === undefined) revoked = [];
   const key = ed25519();
   const keys = directoryKeys ?? [key];
   const proof = await wba.createSignedSignatureDirectory(
@@ -89,7 +91,13 @@ async function world({ records, directoryKeys, revoked, archive, revocationStatu
   if (revoked !== undefined) {
     const list = await new CompactSign(
       Buffer.from(
-        JSON.stringify({ issuer: ORIGIN, updated: iso(T - 10), next_update: iso(T + 900), revoked_kids: revoked })
+        JSON.stringify({
+          issuer: ORIGIN,
+          updated: iso(T - 10),
+          next_update: iso(T + 900),
+          revoked_kids: revoked,
+          ...(revocationDetails ? { revocation_details: revocationDetails } : {}),
+        })
       )
     )
       .setProtectedHeader({ alg: 'EdDSA', kid: keys[0].kid, typ: 'adcp-gov-revocation+jws' })
@@ -127,17 +135,14 @@ async function world({ records, directoryKeys, revoked, archive, revocationStatu
     },
   });
   const directory = new wba.SignatureDirectoryResolver({ now, fetchOptions: { trustedFetchFn: serve } });
-  const revocation =
-    revoked !== undefined || revocationStatus !== undefined
-      ? new identity.OriginRevocationResolver({
-          store: new identity.InMemoryOriginRevocationStore(),
-          directory,
-          now,
-          fetchOptions: { trustedFetchFn: serve },
-        })
-      : undefined;
+  const revocation = new identity.OriginRevocationResolver({
+    store: new identity.InMemoryOriginRevocationStore(),
+    directory,
+    now,
+    fetchOptions: { trustedFetchFn: serve },
+  });
   const archiveResolver = new identity.GovernanceKeyArchiveResolver({ now, fetchOptions: { trustedFetchFn: serve } });
-  const webBotAuth = { trust, directory, ...(revocation ? { revocation } : {}) };
+  const webBotAuth = { trust, directory, revocation };
   return {
     key,
     keys,
@@ -291,6 +296,7 @@ test('a trust-record fetch failure is not absence: it never selects the 3.2 prof
     assert.equal(result.ok, false, String(failure));
     assert.equal(result.error, 'governance_key_unknown');
     assert.match(result.message, /trust record is unavailable/);
+    assert.equal(result.retryable, true);
     assert.equal(legacy.calls(), 0, 'the 3.2 key resolver is never consulted');
     await assert.rejects(
       identity.selectJwsArtifactProfile(ISSUER, w.trust),
@@ -371,9 +377,52 @@ test('kid must be the key JWK thumbprint', async () => {
   const lying = { resolve: async () => ({ kty: 'OKP', crv: 'Ed25519', x: other.privateJwk.x, kid: w.key.kid }) };
   const token = await sign(other.privateKey, w.key.kid);
   await assert.rejects(
-    identity.verifyWebBotAuthJwsArtifact(token, ORIGIN, { directory: lying }),
+    identity.verifyWebBotAuthJwsArtifact(token, ORIGIN, { typ: 'adcp-gov+jws', directory: lying, revocation: false }),
     error => error.code === 'jws_invalid' && /thumbprint/.test(error.message)
   );
+});
+
+test('a kid longer than any thumbprint is refused before any key lookup', async () => {
+  const w = await world();
+  const before = w.fetched.length;
+  const result = await verifyGovernanceAuthorization(w.options(await sign(w.key.privateKey, 'k'.repeat(257))));
+  assert.equal(result.error, 'governance_key_unknown');
+  assert.equal(
+    w.fetched.slice(before).some(url => url.includes('http-message-signatures-directory')),
+    false
+  );
+});
+
+test('the WBA path never skips revocation: without an origin revocation source the token is refused', async () => {
+  const w = await world();
+  const { revocation, ...withoutRevocation } = w.webBotAuth;
+  void revocation;
+  const result = await verifyGovernanceAuthorization(
+    w.options(await sign(w.key.privateKey, w.key.kid), { webBotAuth: withoutRevocation })
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'governance_token_revoked');
+});
+
+test('a listed issuer is not verified from a buyer brand.json JWKS, even one that holds a valid 3.2 key', async () => {
+  const w = await world();
+  const legacy = legacyKey();
+  let jwksFetches = 0;
+  const buyerIdentity = {
+    brandJson: { agents: [{ type: 'governance', url: ISSUER, id: 'gov', jwks_uri: ORIGIN + '/legacy-jwks.json' }] },
+    brandDomain: 'brand.com',
+    jwksForUri: () => {
+      jwksFetches++;
+      return legacy.jwks;
+    },
+  };
+  const result = await verifyGovernanceAuthorization(
+    w.options(await sign(legacy.privateKey, legacy.kid), { buyerIdentity })
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'governance_key_unknown');
+  assert.equal(jwksFetches, 0);
+  assert.equal(legacy.calls(), 0);
 });
 
 test('a token signed by another key under the directory kid fails signature verification', async () => {
@@ -486,21 +535,97 @@ test('history: the archive is read on the WBA rules and an absent archive holds 
   );
 });
 
-test("history: a kid the origin's list revokes is invalid for every token it signed", async () => {
+test("history: a key the origin's list revokes still verifies, and the revocation and its detail are reported", async () => {
   const listSigner = ed25519();
   const retired = ed25519();
   const w = await world({
     directoryKeys: [listSigner],
     revoked: [retired.kid],
+    revocationDetails: { [retired.kid]: { reason: 'keyCompromise', invalidity_date: iso(T - 3600) } },
     archive: { keys: [{ kty: 'OKP', crv: 'Ed25519', x: retired.privateJwk.x }] },
+  });
+  const token = await sign(retired.privateKey, retired.kid);
+  const result = await verifyHistoricalGovernanceContext({
+    token,
+    expectedIssuer: ISSUER,
+    webBotAuth: { ...w.webBotAuth, archive: w.archiveResolver },
+  });
+  assert.equal(result.ok, true, result.message);
+  assert.equal(result.keySource, 'archive');
+  assert.equal(result.revocation, 'revoked');
+  assert.deepEqual(result.revocationDetail, { reason: 'keyCompromise', invalidity_date: iso(T - 3600) });
+  // Online, a key rotated into the archive does not verify at all.
+  assert.equal((await verifyGovernanceAuthorization(w.options(token))).ok, false);
+
+  const current = await verifyHistoricalGovernanceContext({
+    token: await sign(listSigner.privateKey, listSigner.kid),
+    expectedIssuer: ISSUER,
+    webBotAuth: { ...w.webBotAuth, archive: w.archiveResolver },
+  });
+  assert.equal(current.revocation, 'current');
+  assert.equal(current.revocationDetail, undefined);
+});
+
+test('history: an origin with no list is accepted as absent; unknown revocation status is a retryable failure', async () => {
+  const absent = await world({ revocationStatus: 404 });
+  const ok = await verifyHistoricalGovernanceContext({
+    token: await sign(absent.key.privateKey, absent.key.kid),
+    expectedIssuer: ISSUER,
+    webBotAuth: { ...absent.webBotAuth, archive: absent.archiveResolver },
+  });
+  assert.equal(ok.ok, true, ok.message);
+  assert.equal(ok.revocation, 'absent');
+
+  const unknown = await world({ revocationStatus: 500 });
+  const failed = await verifyHistoricalGovernanceContext({
+    token: await sign(unknown.key.privateKey, unknown.key.kid),
+    expectedIssuer: ISSUER,
+    webBotAuth: { ...unknown.webBotAuth, archive: unknown.archiveResolver },
+  });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.error, 'governance_token_revoked');
+  assert.equal(failed.retryable, true);
+});
+
+test('history: the archive still answers while the key directory is down', async () => {
+  const retired = ed25519();
+  const w = await world({ archive: { keys: [{ kty: 'OKP', crv: 'Ed25519', x: retired.privateJwk.x }] } });
+  // Warm the revocation list (it is signed by the directory key), then take the directory down.
+  assert.equal(await w.revocation.status(ORIGIN, w.key.kid), 'current');
+  w.routes[ORIGIN + wba.SIGNATURE_DIRECTORY_PATH] = () => new Response('', { status: 503 });
+  const fresh = new wba.SignatureDirectoryResolver({
+    now: () => T,
+    fetchOptions: { trustedFetchFn: async () => new Response('', { status: 503 }) },
   });
   const result = await verifyHistoricalGovernanceContext({
     token: await sign(retired.privateKey, retired.kid),
     expectedIssuer: ISSUER,
-    webBotAuth: { ...w.webBotAuth, archive: w.archiveResolver },
+    webBotAuth: { ...w.webBotAuth, directory: fresh, archive: w.archiveResolver },
   });
-  assert.equal(result.ok, false);
-  assert.equal(result.error, 'governance_token_revoked');
+  assert.equal(result.ok, true, result.message);
+  assert.equal(result.keySource, 'archive');
+});
+
+test('history: an archive outage is cached for a cooldown and then retried', async () => {
+  let clock = T;
+  let fetches = 0;
+  const archive = new identity.GovernanceKeyArchiveResolver({
+    now: () => clock,
+    fetchOptions: {
+      trustedFetchFn: async () => {
+        fetches++;
+        return new Response('', { status: 503 });
+      },
+    },
+  });
+  const unavailable = error => error instanceof identity.JwsArtifactError && error.code === 'jws_key_unavailable';
+  await assert.rejects(archive.resolve(ORIGIN, 'k'), unavailable);
+  await assert.rejects(archive.resolve(ORIGIN, 'k'), unavailable);
+  assert.equal(fetches, 1);
+  clock = T + 61;
+  await assert.rejects(archive.resolve(ORIGIN, 'k'), unavailable);
+  assert.equal(fetches, 2);
+  assert.throws(() => new identity.GovernanceKeyArchiveResolver({ maxOrigins: 0 }), TypeError);
 });
 
 test('history: an issuer on the 3.2 profile is reported, not verified', async () => {
@@ -526,9 +651,37 @@ test('designated-task responses and rights attestations select and verify on the
       .sign(w.key.privateKey);
     const profile = await identity.selectJwsArtifactProfile(ORIGIN + '/mcp', w.trust);
     assert.equal(profile.profile, 'web-bot-auth');
-    const verified = await identity.verifyWebBotAuthJwsArtifact(token, profile.origin, { directory: w.directory });
+    const verified = await identity.verifyWebBotAuthJwsArtifact(token, profile.origin, {
+      typ,
+      directory: w.directory,
+      revocation: w.revocation,
+    });
     assert.equal(verified.protectedHeader.typ, typ);
     assert.equal(verified.kid, w.key.kid);
     assert.equal(verified.keySource, 'directory');
+    assert.equal(verified.revocation, 'current');
   }
+});
+
+test('purpose separation is by origin, so each surface binds its typ', async () => {
+  // One key at O signs every artifact O issues: O's own revocation list must
+  // never pass as a rights attestation or a governance context.
+  const w = await world();
+  const list = await new CompactSign(Buffer.from(JSON.stringify({ issuer: ORIGIN, revoked_kids: [] })))
+    .setProtectedHeader({ alg: 'EdDSA', kid: w.key.kid, typ: 'adcp-gov-revocation+jws' })
+    .sign(w.key.privateKey);
+  await assert.rejects(
+    identity.verifyWebBotAuthJwsArtifact(list, ORIGIN, {
+      typ: 'adcp-rights-attestation+jws',
+      directory: w.directory,
+      revocation: w.revocation,
+    }),
+    error => error.code === 'jws_invalid' && /typ/.test(error.message)
+  );
+  // The surface must name its typ and make an explicit revocation choice.
+  await assert.rejects(identity.verifyWebBotAuthJwsArtifact(list, ORIGIN, { directory: w.directory }), TypeError);
+  await assert.rejects(
+    identity.verifyWebBotAuthJwsArtifact(list, ORIGIN, { typ: 'adcp-gov-revocation+jws', directory: w.directory }),
+    TypeError
+  );
 });

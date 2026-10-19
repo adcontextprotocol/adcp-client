@@ -385,28 +385,36 @@ from your own context, never from the unverified token.
 
 - `selectJwsArtifactProfile(agentUrl, trust)` derives the trust record from
   `O`. When it lists `O`, the artifact is verified on the WBA path; when the
-  operator has never published a record, or the record does not list `O`, it
+  operator has not published a record, or the record does not list `O`, it
   stays on the 3.2 profile. A trust-record fetch failure throws
   `JwsArtifactError` (`jws_key_unavailable`): it is never absence and never
   selects 3.2. A 404/410 from an operator that once served a record is an
-  outage too.
-- `verifyWebBotAuthJwsArtifact(token, origin, { directory, revocation })`
-  requires `alg` `EdDSA` and a `kid` equal to the key's JWK thumbprint, applies
-  no `use`/`key_ops`/`adcp_use` check, and checks `O`'s revocation list. It
+  outage too, but the evaluator remembers that 200 only in process unless you
+  give it durable `authorityHistory` (`createIdentity33StateStores`). Public,
+  multi-replica and serverless verifiers must, as for grants.
+- `verifyWebBotAuthJwsArtifact(token, origin, { typ, directory, revocation })`
+  requires the `typ` the surface accepts, `alg` `EdDSA` and a `kid` equal to the
+  key's JWK thumbprint, applies no `use`/`key_ops`/`adcp_use` check, and checks
+  `O`'s revocation list. Purpose separation is by origin, so one key at `O` may
+  sign every artifact `O` issues and `typ` tells them apart. `revocation` is
+  required; pass `false` only if you check the returned `kid` yourself. It
   verifies key and signature only; the surface keeps its own claim checks.
 - `verifyGovernanceAuthorization({ ..., webBotAuth: { trust, directory,
   revocation } })` applies the rule to governance contexts. Every other check is
   unchanged, including the `buyerIdentity` cross-check that `iss` is the buyer's
-  governance agent; only the key source moves. An origin that serves no
-  revocation list fails closed, since a governance context authorizes spend.
-  Without `webBotAuth` the verifier is 3.2 only, as before.
+  governance agent; only the key source moves. `revocation` is required, and an
+  origin that serves no list fails closed, since a governance context
+  authorizes spend. Outages (trust record, directory, revocation list) set
+  `retryable: true` on the failure. Without `webBotAuth` the verifier is 3.2
+  only, as before.
 - `verifyHistoricalGovernanceContext({ token, expectedIssuer, webBotAuth: {
   ..., archive } })` verifies a retained governance context for audit. A key
   rotated out of the directory is read from the governance key archive at `O`
   (`/.well-known/jwks-archive.json`, `GovernanceKeyArchiveResolver`), on the
-  same `EdDSA` and thumbprint rules. A `kid` that `O`'s list revokes is invalid
-  for every token it signed. Expiry, audience, replay and the request binding
-  are not checked.
+  same `EdDSA` and thumbprint rules. A revoked key still verifies here: the
+  result reports `revocation: 'revoked'` and the stored R9 detail (`reason`,
+  `invalidity_date`) for the audit to weigh. Expiry, audience, replay and the
+  request binding are not checked.
 
 The SDK has no designated-task response or rights-attestation verifier of its
 own; a verifier for either uses the two primitives above.

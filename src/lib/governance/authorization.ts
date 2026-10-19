@@ -19,6 +19,7 @@ import { canonicalize } from '../utils/jcs';
 import type { JwksResolver } from '../signing/jwks';
 import type { ReplayStore } from '../signing/replay';
 import type { RevocationStore } from '../signing/revocation';
+import type { RevocationDetail } from '../identity-3.3/types';
 import { HttpsJwksResolver, type HttpsJwksResolverOptions } from '../signing/jwks-https';
 import {
   relyingPartyAgentRecord,
@@ -41,6 +42,8 @@ export const GOVERNANCE_AUTHORIZATION_CRITICAL_CLAIMS = Object.freeze([
   'authorized_task',
   'authorized_payload_hash',
 ] as const);
+
+const GOVERNANCE_JWS_TYP = 'adcp-gov+jws';
 
 /** jose `crit` handling for the three governance critical claims. */
 const GOVERNANCE_CRIT: Record<string, boolean> = {
@@ -100,6 +103,12 @@ export interface GovernanceAuthorizationFailure {
   ok: false;
   error: GovernanceAuthorizationErrorCode;
   message: string;
+  /**
+   * Set when the failure is an outage (an issuer trust record, key directory,
+   * archive or revocation list could not be read), not a verdict on the
+   * token: the same token may verify on retry.
+   */
+  retryable?: true;
 }
 
 export type GovernanceAuthorizationResult = GovernanceAuthorizationSuccess | GovernanceAuthorizationFailure;
@@ -571,7 +580,7 @@ function parseGovernanceJws(
   if (alg !== 'EdDSA' && alg !== 'ES256') {
     return reject('governance_token_invalid', 'Unsupported governance JWS algorithm');
   }
-  if (protectedHeader.typ !== 'adcp-gov+jws') {
+  if (protectedHeader.typ !== GOVERNANCE_JWS_TYP) {
     return reject('governance_token_invalid', 'Invalid governance JWS typ');
   }
 
@@ -640,7 +649,7 @@ export async function verifyGovernanceAuthorization(
     try {
       profile = await selectJwsArtifactProfile(options.expectedIssuer, options.webBotAuth.trust);
     } catch {
-      return reject('governance_key_unknown', 'Governance issuer trust record is unavailable');
+      return { ...reject('governance_key_unknown', 'Governance issuer trust record is unavailable'), retryable: true };
     }
   }
 
@@ -870,23 +879,46 @@ export async function verifyGovernanceAuthorization(
 }
 
 function governanceFailureFromJwsArtifact(error: unknown): GovernanceAuthorizationFailure {
-  const code = error instanceof JwsArtifactError ? error.code : 'jws_key_unavailable';
-  if (code === 'jws_key_revoked')
-    return { ok: false, error: 'governance_token_revoked', message: 'Governance signing key is revoked' };
-  if (code === 'jws_invalid')
+  if (!(error instanceof JwsArtifactError))
     return {
       ok: false,
-      error: 'governance_token_invalid',
-      message: `Governance token signature verification failed: ${(error as Error).message}`,
+      error: 'governance_key_unknown',
+      message: 'Governance signing key could not be resolved',
+      retryable: true,
     };
-  if (code === 'jws_revocation_unavailable')
-    return {
-      ok: false,
-      error: 'governance_token_revoked',
-      message: 'Governance revocation status could not be established',
-    };
-  return { ok: false, error: 'governance_key_unknown', message: 'Governance signing key could not be resolved' };
+  switch (error.code) {
+    case 'jws_key_revoked':
+      return { ok: false, error: 'governance_token_revoked', message: 'Governance signing key is revoked' };
+    case 'jws_revocation_unavailable':
+      return {
+        ok: false,
+        error: 'governance_token_revoked',
+        message: 'Governance revocation status could not be established',
+        retryable: true,
+      };
+    case 'jws_invalid':
+      return {
+        ok: false,
+        error: 'governance_token_invalid',
+        message: `Governance token verification failed: ${error.message}`,
+      };
+    case 'jws_key_unavailable':
+      return {
+        ok: false,
+        error: 'governance_key_unknown',
+        message: 'Governance signing key could not be resolved',
+        retryable: true,
+      };
+    default:
+      return { ok: false, error: 'governance_key_unknown', message: 'Governance signing key could not be resolved' };
+  }
 }
+
+const NO_ORIGIN_REVOCATION: GovernanceAuthorizationFailure = Object.freeze({
+  ok: false,
+  error: 'governance_token_revoked',
+  message: 'No origin revocation source is configured for the Web Bot Auth path',
+}) as GovernanceAuthorizationFailure;
 
 /** Key, signature and origin revocation on the issuer's WBA key directory (R4). */
 async function verifyGovernanceJwsOnWebBotAuth(
@@ -894,10 +926,13 @@ async function verifyGovernanceJwsOnWebBotAuth(
   origin: string,
   webBotAuth: JwsArtifactWebBotAuthOptions
 ): Promise<GovernanceAuthorizationFailure | undefined> {
+  // The WBA path never skips revocation, including for untyped JavaScript callers.
+  if (!webBotAuth.revocation) return { ...NO_ORIGIN_REVOCATION };
   try {
     await verifyWebBotAuthJwsArtifact(token, origin, {
+      typ: GOVERNANCE_JWS_TYP,
       directory: webBotAuth.directory,
-      ...(webBotAuth.revocation ? { revocation: webBotAuth.revocation } : {}),
+      revocation: webBotAuth.revocation,
       // A governance context authorizes spend: an origin that serves no list fails closed.
       revocationAbsent: 'reject',
       crit: GOVERNANCE_CRIT,
@@ -927,6 +962,16 @@ export type HistoricalGovernanceContextResult =
       protectedHeader: Record<string, unknown>;
       /** The key was in the issuer's current directory, or only in its archive. */
       keySource: 'directory' | 'archive';
+      /**
+       * The issuer origin's revocation status for the signing key: `current`
+       * (listed, not revoked), `absent` (the origin serves no list) or
+       * `revoked`. Online verification rejects every token a revoked key
+       * signed; an audit decides what a revocation means for a retained token
+       * from its detail (R9: only `keyCompromise` exposes, from its
+       * `invalidity_date`).
+       */
+      revocation: 'current' | 'absent' | 'revoked';
+      revocationDetail?: RevocationDetail;
     }
   | (GovernanceAuthorizationFailure & {
       /** Set when the issuer is on the 3.2 profile, which this function does not verify. */
@@ -937,10 +982,10 @@ export type HistoricalGovernanceContextResult =
  * Historical (audit) verification of a retained governance context from a
  * Web Bot Auth identity (R4): the key comes from the issuer origin's key
  * directory or, once rotated out, from its governance key archive. Checks the
- * token's shape, `typ`, `crit`, issuer, `alg` `EdDSA`, `kid` thumbprint,
- * signature, and the origin's revocation list (a revoked `kid` invalidates
- * every token it signed). It does not check expiry, audience, replay or the
- * request binding, which only an online verification can.
+ * token's shape, `typ`, `crit`, issuer, `alg` `EdDSA`, `kid` thumbprint and
+ * signature, and reports the origin's revocation status and detail for the
+ * key instead of rejecting a revoked one. It does not check expiry, audience,
+ * replay or the request binding, which only an online verification can.
  *
  * Profile selection is the same as online: an issuer whose origin no trust
  * record lists is on the 3.2 profile, reported as `profile: '3.2'`.
@@ -950,11 +995,23 @@ export async function verifyHistoricalGovernanceContext(
 ): Promise<HistoricalGovernanceContextResult> {
   const parsed = parseGovernanceJws(options.token, options.expectedIssuer);
   if (!parsed.ok) return parsed;
+  if (parsed.alg !== 'EdDSA')
+    return {
+      ok: false,
+      error: 'governance_token_invalid',
+      message: 'A Web Bot Auth governance context uses alg EdDSA',
+    };
+  if (!options.webBotAuth.revocation) return { ...NO_ORIGIN_REVOCATION };
   let profile: JwsArtifactProfile;
   try {
     profile = await selectJwsArtifactProfile(options.expectedIssuer, options.webBotAuth.trust);
   } catch {
-    return { ok: false, error: 'governance_key_unknown', message: 'Governance issuer trust record is unavailable' };
+    return {
+      ok: false,
+      error: 'governance_key_unknown',
+      message: 'Governance issuer trust record is unavailable',
+      retryable: true,
+    };
   }
   if (profile.profile !== 'web-bot-auth')
     return {
@@ -965,11 +1022,13 @@ export async function verifyHistoricalGovernanceContext(
     };
   try {
     const verified = await verifyWebBotAuthJwsArtifact(parsed.token, profile.origin, {
+      typ: GOVERNANCE_JWS_TYP,
       directory: options.webBotAuth.directory,
       archive: options.webBotAuth.archive,
-      ...(options.webBotAuth.revocation ? { revocation: options.webBotAuth.revocation } : {}),
+      revocation: options.webBotAuth.revocation,
       // No spend rides on an audit: an origin that serves no list has revoked nothing.
       revocationAbsent: 'accept',
+      revokedKey: 'report',
       crit: GOVERNANCE_CRIT,
     });
     return {
@@ -977,6 +1036,8 @@ export async function verifyHistoricalGovernanceContext(
       claims: parsed.decodedClaims as GovernanceAuthorizationClaims,
       protectedHeader: parsed.protectedHeader,
       keySource: verified.keySource,
+      revocation: verified.revocation!,
+      ...(verified.revocationDetail ? { revocationDetail: verified.revocationDetail } : {}),
     };
   } catch (error) {
     return governanceFailureFromJwsArtifact(error);
