@@ -5658,7 +5658,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   //
   // - **3.1+ canonical (recommended):** `capabilities.request_signing.supported: true`.
   //   The universal signed_requests storyboard runs on this signal alone and
-  //   the runner emits `request_signing.required` notices for buyers.
+  //   the runner emits `request_signing_required_in_4_0` notices for buyers.
   // - **Back-compat:** `specialisms: ['signed-requests']`. The 3.0-era enum
   //   is preserved through the AdCP 4.0 deprecation cycle (adcp#3075). The
   //   runner emits `signed_requests_specialism_deprecated` notice when this
