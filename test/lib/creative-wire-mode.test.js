@@ -5,6 +5,7 @@ const {
   SingleAgentClient,
   CreativeFormatCapabilityError,
   CreativeFormatProjectionError,
+  VersionUnsupportedError,
   parseCapabilitiesResponse,
   packageRefsForFormatOptions,
   toCanonicalOnlyProduct,
@@ -89,13 +90,6 @@ describe('public creative wire mode resolution', () => {
       {},
       CreativeFormatCapabilityError,
     ],
-    [
-      'incompatible seller versions',
-      '3.2',
-      { adcp: { major_versions: [3], supported_versions: ['4.0'] } },
-      canonicalSchema,
-      CreativeFormatCapabilityError,
-    ],
   ];
   for (const [name, wireAdcpVersion, response, schema, expected] of cases) {
     test(name, async () => {
@@ -108,6 +102,28 @@ describe('public creative wire mode resolution', () => {
       }
     });
   }
+
+  test('incompatible seller versions are refused as cached evidence and on rediscovery', async () => {
+    const client = new SingleAgentClient(AGENT, { wireAdcpVersion: '3.2' });
+    const response = { adcp: { major_versions: [3], supported_versions: ['4.0'] } };
+    assert.equal(
+      client.primeCapabilities({
+        scope: client.getCapabilityEvidenceScope(),
+        capabilities: parseCapabilitiesResponse(response),
+        observedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        toolSchemas: { sync_creatives: canonicalSchema },
+      }),
+      false
+    );
+    client.ensureEndpointDiscovered = async () => AGENT;
+    client.getAgentInfo = async () => ({ tools: [{ name: 'get_adcp_capabilities' }] });
+    client.executor.executeTask = async (_agent, tool) => {
+      assert.equal(tool, 'get_adcp_capabilities');
+      return { success: true, data: response };
+    };
+    await assert.rejects(client.resolveCreativeFormatWireMode('sync_creatives'), VersionUnsupportedError);
+  });
 
   test('cold discovery reads capabilities and tool schemas once and honors cancellation', async () => {
     const client = new SingleAgentClient(AGENT, { wireAdcpVersion: '3.1' });

@@ -1,6 +1,6 @@
 {
   "name": "@adcp/sdk",
-  "version": "16.0.0-beta.8",
+  "version": "16.0.0-beta.9",
   "description": "AdCP SDK — client, server, and compliance harnesses for the AdContext Protocol (MCP + A2A)",
   "workspaces": [
     ".",
@@ -79,16 +79,6 @@
       "require": {
         "types": "./dist/lib/enums.d.ts",
         "default": "./dist/lib/enums.js"
-      }
-    },
-    "./types/v2-5": {
-      "import": {
-        "types": "./dist/lib/types/v2-5/index.d.mts",
-        "default": "./dist/lib/types/v2-5/index.mjs"
-      },
-      "require": {
-        "types": "./dist/lib/types/v2-5/index.d.ts",
-        "default": "./dist/lib/types/v2-5/index.js"
       }
     },
     "./types/*": {
@@ -448,9 +438,6 @@
       "types": [
         "dist/lib/types/index.d.ts"
       ],
-      "types/v2-5": [
-        "dist/lib/types/v2-5/index.d.ts"
-      ],
       "wholesale-feed-sync": [
         "dist/lib/wholesale-feed-sync/index.d.ts"
       ],
@@ -652,8 +639,7 @@
     "test:protocol-comparison": "node test/utils/comprehensive-protocol-comparison.js",
     "test:status-report": "node test/utils/final-status-report.js",
     "sync-schemas": "tsx scripts/sync-schemas.ts",
-    "sync-schemas:v2.5": "tsx scripts/sync-v2-5-schemas.ts",
-    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.1.29 && npm run sync-schemas -- 3.0.25 && npm run sync-schemas:v2.5",
+    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.1.29 && npm run sync-schemas -- 3.0.25",
     "sync:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --update",
     "check:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --check",
     "sync-registry-schemas": "tsx scripts/generate-registry-types.ts --sync",
@@ -662,8 +648,7 @@
     "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts && tsx scripts/generate-inline-enum-arrays.ts && tsx scripts/generate-manifest-derived.ts && tsx scripts/generate-entity-hydration.ts && tsx scripts/generate-media-buy-update-fields.ts && tsx scripts/generate-media-buy-action-metadata.ts",
     "generate-manifest-derived": "tsx scripts/generate-manifest-derived.ts",
     "generate-entity-hydration": "tsx scripts/generate-entity-hydration.ts",
-    "generate-types:v2.5": "tsx scripts/generate-v2-5-types.ts",
-    "generate-types:all": "npm run generate-types && npm run generate-types:v2.5",
+    "generate-types:all": "npm run generate-types",
     "generate-registry-types": "tsx scripts/generate-registry-types.ts",
     "generate-enum-arrays": "tsx scripts/generate-enum-arrays.ts",
     "generate-inline-enum-arrays": "tsx scripts/generate-inline-enum-arrays.ts",

@@ -63,10 +63,6 @@ function hasStableV31ComplianceCache(): boolean {
   return existsSync(path.join(COMPLIANCE_CACHE_ROOT, STABLE_3_1_SCHEMA_VERSION));
 }
 
-function hasV25Cache(): boolean {
-  return existsSync(path.join(CACHE_ROOT, 'v2.5'));
-}
-
 function pointLatestAtCurrent(cacheRoot: string, current: string): void {
   if (!existsSync(path.join(cacheRoot, current))) return;
   const latest = path.join(cacheRoot, 'latest');
@@ -82,7 +78,6 @@ const stableV31Ok = hasStableV31Cache();
 const currentComplianceOk = hasCurrentComplianceCache();
 const stableV30ComplianceOk = hasStableV30ComplianceCache();
 const stableV31ComplianceOk = hasStableV31ComplianceCache();
-const v25Ok = hasV25Cache();
 
 const current = currentAdcpVersion();
 if (
@@ -91,8 +86,7 @@ if (
   stableV31Ok &&
   currentComplianceOk &&
   stableV30ComplianceOk &&
-  stableV31ComplianceOk &&
-  v25Ok
+  stableV31ComplianceOk
 ) {
   pointLatestAtCurrent(CACHE_ROOT, current);
   pointLatestAtCurrent(COMPLIANCE_CACHE_ROOT, current);
@@ -105,7 +99,6 @@ const scripts: string[] = [];
 if (!currentV3Ok || !currentComplianceOk) scripts.push('sync-schemas');
 if (!stableV30Ok || !stableV30ComplianceOk) scripts.push(`sync-schemas -- ${STABLE_3_0_SCHEMA_VERSION}`);
 if (!stableV31Ok || !stableV31ComplianceOk) scripts.push(`sync-schemas -- ${STABLE_3_1_SCHEMA_VERSION}`);
-if (!v25Ok) scripts.push('sync-schemas:v2.5');
 
 console.log(`[schemas:ensure] Missing or provenance-stale schema cache; running: ${scripts.join(', ')}`);
 

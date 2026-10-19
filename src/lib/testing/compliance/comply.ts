@@ -1414,25 +1414,16 @@ function inferDiscoveredServerAdcpVersion(profile: AgentProfile, complianceVersi
   }
   if (profile.adcp_build_version) return profile.adcp_build_version;
   if (isLegacyPre31TypescriptSdkProfile(profile)) return '3.0';
-  if (isLegacyV2Profile(profile)) return 'v2.5';
   return undefined;
 }
 
 function negotiateVersionEnvelope(profile: AgentProfile, complianceVersion: string): VersionEnvelopeMode | undefined {
-  if (isLegacyV2Profile(profile)) return 'none';
   const supported = profile.adcp_supported_versions;
   if (supported?.length && supported.every(isPre31AdcpVersion)) return 'major-only';
   if (profile.adcp_build_version && isPre31AdcpVersion(profile.adcp_build_version)) return 'major-only';
   if (isLegacyPre31TypescriptSdkProfile(profile)) return 'major-only';
   if (isPre31AdcpVersion(complianceVersion) && isLegacyV3Profile(profile)) return 'major-only';
   return undefined;
-}
-
-function isLegacyV2Profile(profile: AgentProfile): boolean {
-  if (profile.adcp_version === 'v2') return true;
-  const majors = profile.adcp_major_versions ?? [];
-  if (majors.length > 0) return majors.includes(2) && !majors.includes(3);
-  return !profile.tools.includes('get_adcp_capabilities');
 }
 
 function isLegacyV3Profile(profile: AgentProfile): boolean {

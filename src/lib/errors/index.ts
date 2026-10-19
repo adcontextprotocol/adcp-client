@@ -876,17 +876,9 @@ function buildModeMismatchRecovery(details: ActionNotAllowedErrorDetails): Actio
  * - `version`: seller's `major_versions` does not include 3
  * - `idempotency`: seller reports v3 but omits the required
  *   `adcp.idempotency.replay_ttl_seconds` declaration
- * - `synthetic`: @deprecated — kept in the union for downstream
- *   consumers that pattern-match on the union literal, but the SDK no
- *   longer emits it. Sellers whose capabilities are synthesized from
- *   `tools/list` are routed through the v2 adapter with a one-time
- *   warning; gate retry behavior on `SingleAgentClient.isSyntheticV2()`.
+ * - `synthetic`: agent lacks the required AdCP 3 discovery tool.
  */
-export type VersionUnsupportedReason =
-  | 'version'
-  | 'idempotency'
-  /** @deprecated SDK no longer emits this reason. See union JSDoc. */
-  | 'synthetic';
+export type VersionUnsupportedReason = 'version' | 'idempotency' | 'synthetic';
 
 /**
  * Error thrown when a mutating call would dispatch to a seller whose
@@ -907,20 +899,22 @@ export class VersionUnsupportedError extends ADCPError {
     public readonly agentUrl?: string
   ) {
     super(
-      `Refusing to dispatch mutating task '${taskType}': ` +
-        VersionUnsupportedError.explain(reason, actualVersion) +
-        ` Pass allowV2: true or requireV3ForMutations: false to override.`
+      (taskType === 'get_adcp_capabilities'
+        ? 'Cannot discover supported AdCP capabilities: '
+        : `Refusing to dispatch task '${taskType}': `) + VersionUnsupportedError.explain(reason, actualVersion)
     );
   }
 
   private static explain(reason: VersionUnsupportedReason, actualVersion: 'v2' | 'v3'): string {
     switch (reason) {
       case 'version':
-        return `seller advertises major version '${actualVersion}' but v3 is required.`;
+        return actualVersion === 'v2'
+          ? 'AdCP 2 reached end of life on 2026-08-01. Upgrade the agent to AdCP 3. Migration and older SDK pins: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/migration-drop-adcp-2.md'
+          : `seller does not support the configured AdCP 3 release.`;
       case 'idempotency':
-        return `seller reports v3 but omits adcp.idempotency.replay_ttl_seconds (required by spec).`;
+        return 'seller reports v3 but omits adcp.idempotency.replay_ttl_seconds (required by spec). Upgrade the agent to publish its replay guarantee. If your application does not require this guarantee, configure requireV3ForMutations: false.';
       case 'synthetic':
-        return `capabilities were synthesized from a tool list, v3 claim is unverifiable.`;
+        return 'The agent does not advertise get_adcp_capabilities. AdCP 3 capability discovery is required; AdCP 2 compatibility has been removed.';
     }
   }
 }

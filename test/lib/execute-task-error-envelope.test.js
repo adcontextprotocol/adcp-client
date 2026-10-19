@@ -25,9 +25,9 @@ const {
 } = require('../../dist/lib/index.js');
 
 // Minimal v2-style capabilities that satisfy cachedCapabilities type checks.
-const V2_CAPABILITIES = {
-  version: 'v2',
-  majorVersions: [2],
+const V3_CAPABILITIES = {
+  version: 'v3',
+  majorVersions: [3],
   protocols: ['media_buy'],
   features: {
     inlineCreativeManagement: false,
@@ -54,7 +54,7 @@ function makeAgentClient(agentId = 'wonderstruck') {
   // Skip endpoint discovery — pre-set the state that getCapabilities would normally
   // populate so the test focuses on the executeTask error-envelope path.
   inner.discoveredEndpoint = mockAgent.agent_uri;
-  inner.cachedCapabilities = V2_CAPABILITIES;
+  inner.cachedCapabilities = V3_CAPABILITIES;
 
   return { agent, inner };
 }
@@ -182,7 +182,7 @@ describe('executeTask error envelope (issue #1148)', () => {
 
     const mockAgent = {
       id: 'seller-v2-ok',
-      name: 'Well-behaved v2.5 seller',
+      name: 'Well-behaved AdCP 3 seller',
       agent_uri: 'https://seller.example.com/mcp',
       protocol: 'mcp',
     };
@@ -190,7 +190,7 @@ describe('executeTask error envelope (issue #1148)', () => {
     const agent = client.agent(mockAgent.id);
     const inner = agent.client;
     inner.discoveredEndpoint = mockAgent.agent_uri;
-    inner.cachedCapabilities = V2_CAPABILITIES;
+    inner.cachedCapabilities = V3_CAPABILITIES;
 
     const original = ProtocolClient.callTool;
     ProtocolClient.callTool = async (_cfg, name) => {

@@ -125,7 +125,7 @@ function assertSafeVersion(value: string, source: string): void {
 
 // Legacy wire aliases. Historical protocol previews are intentionally absent:
 // only the exact current prerelease pin is advertised by buildCompatibleVersions.
-const COMPATIBLE_PREFIX = ['v2.5', 'v2.6', 'v3'] as const;
+const COMPATIBLE_PREFIX = ['v3'] as const;
 
 const PRE_3_1_COMPATIBLE_PREFIX = COMPATIBLE_PREFIX.filter(version => !version.startsWith('3.1.')) as string[];
 

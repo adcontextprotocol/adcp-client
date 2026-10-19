@@ -929,10 +929,12 @@ acceptance, caller-supplied budget,
 budget-cap, timezone, or purchase-order values must match any digest-bound
 seller terms; a conflict fails before `create_media_buy`.
 
-For v2.5 specifically, proposal operations, `get_media_buys`, pagination,
-cancellation, and v3-only package controls return typed unsupported errors.
-Supported pause/resume updates require explicit `revision_not_atomic` opt-in
-because v2.5 has no optimistic revision token.
+Historically, the SDK 14 v2.5 lane rejected proposal operations,
+`get_media_buys`, pagination, cancellation, and v3-only package controls with
+typed unsupported errors. Pause/resume updates required explicit
+`revision_not_atomic` opt-in because v2.5 has no optimistic revision token.
+SDK 16 removes that lane and rejects AdCP 2 agents before dispatch; see the
+[AdCP 2 retirement guide](./migration-drop-adcp-2.md).
 
 Run the same compact CLI storyboards against established sellers with
 `--media-buy-lifecycle-compat`. Use `--media-buy-compat-losses` only for the
@@ -1171,18 +1173,20 @@ configuration error; a tool or response variant absent from an installed
 bundle returns `undefined`. Neither case silently falls back to the current
 schema.
 
-Every `TaskResult.metadata` now exposes the selected seller wire generation as
-`serverVersion: 'v2' | 'v3'`. `serverVersionSynthetic` distinguishes an
-authoritative capability declaration (`false`) from the SDK's compatibility
-fallback (`true`). Both fields survive submitted/deferred continuations and
-durable restart recovery. `adcpVersion` remains the distinct, release-precision
-value echoed by a seller response.
+In SDK 14, every `TaskResult.metadata` exposed the selected seller wire
+generation as `serverVersion: 'v2' | 'v3'`. `serverVersionSynthetic`
+distinguishes an authoritative capability declaration (`false`) from the SDK's
+compatibility fallback (`true`). Both fields survive submitted/deferred
+continuations and durable restart recovery. `adcpVersion` remains the distinct,
+release-precision value echoed by a seller response. SDK 16 only dispatches
+AdCP 3 and rejects stored AdCP 2 continuations before resuming them; see the
+[AdCP 2 retirement guide](./migration-drop-adcp-2.md).
 
-The v2.5 `get_products` response adapter also accepts explicitly zoned legacy
-forecast timestamps, including offset variants and single `$date`/`value`
-wrappers. It converts them to UTC RFC 3339 without losing fractional precision;
-ambiguous or unzoned values remain untouched, and the preserved seller wire
-object is not mutated.
+The SDK 14 v2.5 `get_products` response adapter also accepted explicitly zoned
+legacy forecast timestamps, including offset variants and single `$date`/`value`
+wrappers. It converted them to UTC RFC 3339 without losing fractional precision;
+ambiguous or unzoned values remained untouched, and the preserved seller wire
+object was not mutated. That AdCP 2 adapter was removed in SDK 16.
 
 SDK 14 also adds semantic refinements to public object schemas. Behavior when
 composing a refined schema varies across supported Zod 4 releases: `.extend()`

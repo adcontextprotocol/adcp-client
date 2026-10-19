@@ -1,5 +1,40 @@
 # Changelog
 
+## 16.0.0-beta.9
+
+### Major Changes
+
+- 1159cd0: Remove AdCP 2 compatibility following its August 1, 2026 end of life. Agents declaring only AdCP 2, or missing the required AdCP 3 capability discovery tool, now fail with `VERSION_UNSUPPORTED` instead of routing through legacy adapters. Remove the AdCP 2 adapters, type exports, schema bundles, sync/codegen scripts, `allowV2` option, `ADCP_ALLOW_V2` override, and CLI `--allow-v2` flag. Existing AdCP 2 deployments must upgrade their agents or pin an older SDK release.
+
+  Derive agent major versions from `adcp.supported_versions` before consulting the deprecated `adcp.major_versions` field. Capability responses without either version declaration default to AdCP 3. AdCP 3.0 and 3.1 remain supported.
+
+- cf9803b: Implement the storyboard `all_fields_present` check, reporting missing or null fields with RFC 6901 pointers and treating absent, null, or empty arrays as not observable. Emit the canonical `request_signing_required_in_4_0` and `legacy_hmac_fallback_removed_in_4_0` notice codes in place of the dotted spellings, preserving their trigger conditions, severities, and effective version.
+
+  Breaking: `NoticeCode` replaces `request_signing.required` with `request_signing_required_in_4_0` and `webhook_signing.legacy_hmac_fallback.removed` with `legacy_hmac_fallback_removed_in_4_0`. Update TypeScript literal comparisons and dashboard keys to use the canonical codes.
+
+### Minor Changes
+
+- d450b7d: Preserve authored `step_id` and compact per-validation verdicts in `ComplianceResult` steps, including advisory failures, not-applicable results, and advisory promotion flags. Keep existing display details and failure summaries unchanged while omitting request/response payloads and diagnostic values from the new validation list.
+- f8bd48c: Resolve an evaluator storyboard's build route and valid input atomically using
+  advertised operations and matched operator-provisioned fixture recipes. Permit
+  only a narrowly proven empty-source generation recipe; unavailable inputs report
+  fixture_unsatisfied with zero security credit. Apply the same preparation in the
+  full runner and standalone steps without changing other storyboards' accounting.
+
+  Use the selected protocol bundle's catalog declaration and request selectors,
+  including explicitly provisioned legacy FormatIDs and transformer-only recipes.
+  Honor declared legacy projection and density constraints without imposing newer
+  field rules on older bundles. Report unsupported-kind bundle gaps explicitly.
+
+- 10fac80: Implement the property-list reference credential-isolation compliance check over MCP. Use a fresh token-only session for complete pagination, cross-list read denial, and mutation denial, with schema validation and redacted evidence. Recognize the property_list_reference_runner requirement and report it unmet for A2A. Redact issued auth_token credentials throughout runner reports.
+
+### Patch Changes
+
+- 22fe878: Reject inferred dual-emission format routes that contradict declared width, height, or duration bounds. Require creative manifests for every assignment before product evidence can select canonical wire delivery for a mixed sync batch.
+- 61360e4: Honor the AdCP 3.1 buyer rule when choosing the creative wire shape. When capabilities and the current tool schema leave support unknown, a request covered by fresh seller-advertised format options now sends canonical format_kind/format_option_refs instead of legacy format_id/format_ids by default, including canonical-only products and 3.2 buyers negotiating down to 3.1. Apply the decision to creative sync and inline create/update media-buy requests, preserve explicit legacy decisions, and require matching evidence for every creative and assignment. Keep SDK-synthesized and experimental options from establishing support. Recover seller declarations through product-cache hits and serialized selectors carrying a product ID, without promoting request-local evidence into a global capability. Require fresh, affirmative client/account/authorization-scoped discovery evidence; JSON round trips cannot invent provenance and cache hits cannot extend its TTL. Match primary-slot dimensions independently of asset key order, including VAST/DAAST durations. Sync and existing-package updates require explicit matching selectors; package IDs alone retain their existing behavior. Completes point 2 of #3312 for synchronous discovery/revalidation and requests carrying those selectors against sellers advertising supported_versions including 3.1; the existing guarded dual-emission pairing continues to handle legacy delivery.
+- cf9803b: Refresh generated registry API types to match the published OpenAPI schema, including declared agent URL spellings, heartbeat timeout metadata, and not-applicable specialism results.
+- 61360e4: Sync the cached registry OpenAPI contract and generated types with the current registry. Keep the new defaulted `sandbox` flag optional on `ResolveIdentifiersRequest`, preserving existing callers that omit it.
+
 ## 16.0.0-beta.8
 
 ### Minor Changes

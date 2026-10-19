@@ -484,7 +484,7 @@ describe('shared discovery cache', () => {
     assert.equal(tally(pathOf(uri)).capabilityCalls, 2);
   });
 
-  test('synthetic capabilities are never shared', async () => {
+  test('missing AdCP 3 discovery is rejected and its capability evidence is never shared', async () => {
     const uri = freshAgentUri('/v2-only');
     const inner = createInMemoryAgentDiscoveryCache();
     const written = [];
@@ -496,13 +496,18 @@ describe('shared discovery cache', () => {
       },
       delete: key => inner.delete(key),
     };
-    const first = await makeClient(uri, sharing(cache)).getCapabilities();
-    assert.equal(first._synthetic, true);
+    await assert.rejects(
+      () => makeClient(uri, sharing(cache)).getCapabilities(),
+      /does not advertise get_adcp_capabilities/
+    );
     assert.ok(
       written.every(entry => entry.capabilities === undefined && entry.toolSchemas === undefined),
       'no capability evidence is written for synthetic results'
     );
-    await makeClient(uri, sharing(cache)).getCapabilities();
+    await assert.rejects(
+      () => makeClient(uri, sharing(cache)).getCapabilities(),
+      /does not advertise get_adcp_capabilities/
+    );
     assert.equal(tally(pathOf(uri)).lists, 2);
   });
 

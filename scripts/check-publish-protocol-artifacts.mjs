@@ -31,7 +31,7 @@ export function assertPublishProtocolArtifacts({ packageInfo, manifest, currentP
     throw new Error('npm pack did not return package file metadata');
   }
 
-  const allowedSchemaRoots = new Set(['v2.5', '3.0', '3.1', currentBundleKey(currentProtocolVersion)]);
+  const allowedSchemaRoots = new Set(['3.0', '3.1', currentBundleKey(currentProtocolVersion)]);
   const violations = [];
   const schemaRoots = new Set();
   const complianceRoots = new Set();
@@ -54,7 +54,7 @@ export function assertPublishProtocolArtifacts({ packageInfo, manifest, currentP
     }
 
     const typeRoot = /^dist\/lib\/types\/([^/]+)\//.exec(file.path)?.[1];
-    if (typeRoot && PREVIEW_TYPE_BUNDLE.test(typeRoot)) {
+    if (typeRoot && (typeRoot === 'v2-5' || PREVIEW_TYPE_BUNDLE.test(typeRoot))) {
       violations.push(`${file.path} (versioned preview type bundle ${typeRoot})`);
     }
   }
@@ -76,13 +76,16 @@ export function assertPublishProtocolArtifacts({ packageInfo, manifest, currentP
     ...Object.keys(manifest.typesVersions?.['*'] ?? {}),
   ];
   for (const entryPoint of packageEntryPoints) {
-    if (entryPoint.split('/').some(segment => PREVIEW_TYPE_BUNDLE.test(segment))) {
+    if (entryPoint.split('/').some(segment => segment === 'v2-5' || PREVIEW_TYPE_BUNDLE.test(segment))) {
       violations.push(`${entryPoint} (versioned preview package entry point)`);
     }
   }
 
   const allowedPreviews = currentPreviewAliases(currentProtocolVersion);
   for (const version of compatibleVersions ?? []) {
+    if (/^v?2(?:[.-]|$)/.test(version)) {
+      violations.push(`${version} (retired AdCP 2 compatibility alias)`);
+    }
     if (PREVIEW_VERSION.test(version) && !allowedPreviews.has(version)) {
       violations.push(`${version} (superseded advertised protocol preview)`);
     }

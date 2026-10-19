@@ -21,10 +21,7 @@ export interface ValidationHookConfig {
  *
  * Both default to `warn` everywhere — buyers get drift surfaced through
  * `result.debug_logs` without losing the response payload to a strict
- * rejection. v2.5 sellers in particular ship enough legacy drift
- * (envelope nulls, optional-required fields, enum mismatches) that
- * strict-by-default leaves callers staring at "0 products" with no
- * useful signal. Buyers and harnesses that want hard-stop behavior
+ * rejection. Buyers and harnesses that want hard-stop behavior
  * (conformance suites, third-party validators) opt into strict via
  * `validation: { responses: 'strict' }` — explicit config always wins.
  *

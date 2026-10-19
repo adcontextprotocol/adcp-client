@@ -1,7 +1,12 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { SingleAgentClient, ProtocolClient, ProtocolFeatureUnsupportedError } = require('../../dist/lib/index.js');
+const {
+  SingleAgentClient,
+  ProtocolClient,
+  ProtocolFeatureUnsupportedError,
+  VersionUnsupportedError,
+} = require('../../dist/lib/index.js');
 
 const LEGACY_VERSION = '3.1';
 const CURRENT_VERSION = '3.2.1';
@@ -341,7 +346,6 @@ describe('sync_accounts provisioning identity version guards', () => {
     ['missing release metadata', capabilities(undefined, { supportedVersions: undefined })],
     ['synthetic discovery', capabilities(undefined, { supportedVersions: undefined, _synthetic: true })],
     ['malformed release metadata', capabilities('not-a-version')],
-    ['v2 seller', capabilities('2.5', { version: 'v2', majorVersions: [2] })],
   ]) {
     test(`${label} cannot establish support for provisioning identity`, async t => {
       const { client } = makeClient({}, caps);
@@ -359,6 +363,16 @@ describe('sync_accounts provisioning identity version guards', () => {
       assert.equal(calls.length, 0);
     });
   }
+
+  test('retired v2 seller is rejected before provisioning identity checks or dispatch', async t => {
+    const { client } = makeClient({}, capabilities('2.5', { version: 'v2', majorVersions: [2] }));
+    const calls = captureDispatch(t);
+    await assert.rejects(
+      client.executeTask('sync_accounts', request({ ...LEGACY_ACCOUNT, currency: 'USD' })),
+      VersionUnsupportedError
+    );
+    assert.equal(calls.length, 0);
+  });
 
   test('3.2 preserves every identity field using request-scoped support over a stale legacy cache', async t => {
     const { client } = makeClient();

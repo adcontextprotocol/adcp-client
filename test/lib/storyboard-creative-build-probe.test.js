@@ -1,5 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const {
   resolveCreativeBuildProbe,
   createTestClient,
@@ -7,6 +10,16 @@ const {
   runStoryboard,
   runStoryboardStep,
 } = require('../../dist/lib/testing');
+const { withExternalSchemaRoot } = require('../../dist/lib/validation/schema-loader');
+
+function missingCatalogSchemaRoot(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'creative-probe-missing-catalog-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.cpSync(path.join(__dirname, '../../dist/lib/schemas-data/3.2'), root, { recursive: true });
+  // Keep a supported bundle while withholding the catalog contract needed to authorize a probe.
+  fs.rmSync(path.join(root, 'protocol/get-adcp-capabilities-response.json'));
+  return root;
+}
 
 const spec = { context_prefix: 'evaluator_build', message: 'Create one creative for a sandbox fixture.' };
 const route = (id, operations, kind = 'image') => ({
@@ -460,27 +473,34 @@ test('replicated multi-pass preparation is one explicit gap before seeding', { t
   );
 });
 
-test('missing selected-version catalog validators never authorize a probe, including an operator recipe', () => {
-  const result = resolveCreativeBuildProbe(
-    creative(route('build')),
-    spec,
-    {
-      creative_build_probes: [
-        {
-          match: [{ path: '/capability_id', operator: 'equals', value: 'build' }],
-          input: { message: 'Provisioned brief' },
-        },
-      ],
-    },
-    'v2.5'
+test('missing selected-version catalog validators never authorize a probe, including an operator recipe', t => {
+  const root = missingCatalogSchemaRoot(t);
+  const result = withExternalSchemaRoot('3.2.5', root, () =>
+    resolveCreativeBuildProbe(
+      creative(route('build')),
+      spec,
+      {
+        creative_build_probes: [
+          {
+            match: [{ path: '/capability_id', operator: 'equals', value: 'build' }],
+            input: { message: 'Provisioned brief' },
+          },
+        ],
+      },
+      '3.2.5'
+    )
   );
   assert.equal(result.status, 'unsatisfied');
   assert.match(result.detail, /schema validators are unavailable/);
 });
 
-test('missing selected-version validators block full and standalone dispatch with zero credit', async () => {
+test('missing selected-version validators block full and standalone dispatch with zero credit', async t => {
   const calls = [];
-  const opts = { ...options(creative(route('build')), calls), adcpVersion: 'v2.5' };
+  const opts = {
+    ...options(creative(route('build')), calls),
+    adcpVersion: '3.2.5',
+    schemaRoot: missingCatalogSchemaRoot(t),
+  };
   const full = await runStoryboard('https://agent.example/mcp', storyboard(), opts);
   assert.equal(full.passed_count, 0);
   assert.equal(full.failed_count, 0);

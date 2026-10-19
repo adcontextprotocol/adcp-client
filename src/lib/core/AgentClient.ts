@@ -351,7 +351,6 @@ export type InProcessAgentClientConfig = Pick<
   | 'canonicalFormatLegacyResolver'
   | 'validateFeatures'
   | 'requireV3ForMutations'
-  | 'allowV2'
   | 'workingTimeout'
   | 'defaultMaxClarifications'
   | 'persistConversations'
@@ -1523,7 +1522,6 @@ export class AgentClient {
    * Return the seller's declared `adcp.idempotency.replay_ttl_seconds`, or
    * throw when a v3 seller omits the (required) declaration.
    *
-   * Returns `undefined` for v2 agents — v2 pre-dates the idempotency envelope.
    */
   async getIdempotencyReplayTtlSeconds(): Promise<number | undefined> {
     return this.client.getIdempotencyReplayTtlSeconds();
@@ -1532,7 +1530,7 @@ export class AgentClient {
   /**
    * Assert that the seller's capabilities corroborate this client's pinned
    * AdCP major (per `getAdcpVersion()`). Throws `VersionUnsupportedError`
-   * otherwise. Set `ADCP_ALLOW_V2=1` to bypass.
+   * otherwise.
    */
   async requireSupportedMajor(taskType: string = 'request'): Promise<void> {
     return this.client.requireSupportedMajor(taskType);

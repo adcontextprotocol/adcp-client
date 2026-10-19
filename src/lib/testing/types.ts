@@ -102,7 +102,7 @@ export interface TestOptions {
   /**
    * Route compact media-buy storyboard steps through the SDK compatibility
    * coordinator. This lets the same compact-first storyboard exercise native
-   * 3.2 sellers and established v2.5–3.2 sellers without task-name branching.
+   * 3.2 sellers and established AdCP 3.0–3.2 sellers without task-name branching.
    * Mutating guarantee losses remain fail-closed unless named here.
    */
   mediaBuyLifecycleCompatibility?: import('../media-buy/compatibility').MediaBuyLifecycleCoordinatorOptions;
@@ -369,10 +369,24 @@ export interface TestOptions {
 
 export interface TestStepResult {
   step: string;
+  /** Authored storyboard step identifier, independent of the display title. */
+  step_id?: string;
   task?: string;
   passed: boolean;
   duration_ms: number;
   details?: string;
+  /**
+   * Compact runner verdicts; excludes request/response payloads and diagnostic values.
+   * Skipped steps are not observable even when their retained validations have verdicts.
+   */
+  validations?: Array<{
+    id?: string;
+    check: string;
+    passed: boolean;
+    severity?: 'required' | 'advisory';
+    not_applicable?: boolean;
+    severity_promoted_from_advisory?: boolean;
+  }>;
   error?: string;
   response_preview?: string;
   // Structured data for collectObservations() — decoupled from response_preview display

@@ -220,9 +220,7 @@ export {
 
 // Re-export pricing adapter utilities (v3 pricing field compatibility)
 export {
-  adaptGetProductsRequestForV2,
   normalizeProductChannels,
-  adaptPricingOptionForV2,
   normalizePricingOption,
   normalizeProductPricing,
   normalizeGetProductsResponse,
@@ -237,9 +235,6 @@ export {
   type PriceGuidanceV2,
   type PriceGuidanceV3,
 } from './pricing-adapter';
-
-// Re-export sync creatives adapter (v2/v3 compatibility)
-export { adaptSyncCreativesRequestForV2 } from './sync-creatives-adapter';
 
 // Re-export creative delivery helpers for package-scoped inline creatives
 export { inlineCreativesForPackages, inlineCreativesForPackagesLegacy } from './creative-delivery';

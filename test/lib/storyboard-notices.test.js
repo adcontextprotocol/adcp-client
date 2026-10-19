@@ -5,14 +5,18 @@
  * Uses `_profile` injection so tests run without the schema cache or a live agent.
  * These notices are spec-grounded:
  *   - signed_requests_specialism_deprecated: universal/signed-requests.yaml
- *   - request_signing.required: get-adcp-capabilities-response.json:892
- *   - webhook_signing.legacy_hmac_fallback.removed: get-adcp-capabilities-response.json:966
+ *   - request_signing_required_in_4_0: universal/runner-output-contract.yaml > notice.canonical_codes
+ *   - legacy_hmac_fallback_removed_in_4_0: universal/runner-output-contract.yaml > notice.canonical_codes
  */
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
+const path = require('node:path');
+const YAML = require('yaml');
 
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/index.js');
+const { getComplianceCacheDir } = require('../../dist/lib/testing/storyboard/compliance');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Storyboard fixtures
@@ -244,7 +248,7 @@ describe('RunnerNotice: signed_requests_specialism_deprecated (#2082)', () => {
     const sb = buildSignedRequestsStoryboard();
     const result = await runWith(sb, profileWithSignedRequestsSpecialismOnly);
     const deprecation = result.notices.find(n => n.code === 'signed_requests_specialism_deprecated');
-    const required = result.notices.find(n => n.code === 'request_signing.required');
+    const required = result.notices.find(n => n.code === 'request_signing_required_in_4_0');
     assert.equal(deprecation, undefined, 'deprecated specialism is only redundant once request_signing is declared');
     assert.ok(required, 'missing request_signing.supported still emits the future-required notice');
   });
@@ -260,7 +264,7 @@ describe('RunnerNotice: signed_requests_specialism_deprecated (#2082)', () => {
     const sb = buildSigningProbeStoryboard();
     const result = await runWith(sb, profileWithSignedRequestsSpecialism);
     const deprecation = result.notices.find(n => n.code === 'signed_requests_specialism_deprecated');
-    const required = result.notices.find(n => n.code === 'request_signing.required');
+    const required = result.notices.find(n => n.code === 'request_signing_required_in_4_0');
     assert.equal(deprecation, undefined, 'deprecated-specialism notice is scoped to the signed_requests storyboard id');
     assert.equal(
       required,
@@ -294,14 +298,14 @@ describe('RunnerNotice: signed_requests_specialism_deprecated (#2082)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tests: request_signing.required
+// Tests: request_signing_required_in_4_0
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('RunnerNotice: request_signing.required (#1704)', () => {
+describe('RunnerNotice: request_signing_required_in_4_0 (#1704, #3344)', () => {
   test('emits notice on signed_requests storyboard when request_signing.supported absent', async () => {
     const sb = buildSignedRequestsStoryboard();
     const result = await runWith(sb, profileWithoutSigning);
-    const notice = result.notices.find(n => n.code === 'request_signing.required');
+    const notice = result.notices.find(n => n.code === 'request_signing_required_in_4_0');
     assert.ok(notice, 'notice should be present');
     assert.equal(notice.severity, 'future_required');
     assert.equal(notice.effective_version, '4.0');
@@ -314,34 +318,34 @@ describe('RunnerNotice: request_signing.required (#1704)', () => {
   test('emits notice on storyboard with request_signing_probe step', async () => {
     const sb = buildSigningProbeStoryboard();
     const result = await runWith(sb, profileWithoutSigning);
-    const notice = result.notices.find(n => n.code === 'request_signing.required');
+    const notice = result.notices.find(n => n.code === 'request_signing_required_in_4_0');
     assert.ok(notice, 'probe-step storyboard should also trigger the notice');
   });
 
   test('does NOT emit notice when request_signing.supported is true', async () => {
     const sb = buildSignedRequestsStoryboard();
     const result = await runWith(sb, profileWithSigning);
-    const notice = result.notices.find(n => n.code === 'request_signing.required');
+    const notice = result.notices.find(n => n.code === 'request_signing_required_in_4_0');
     assert.equal(notice, undefined, 'no notice when signing is already declared');
   });
 
   test('does NOT emit notice on unrelated storyboard', async () => {
     const sb = buildMinimalStoryboard({ id: 'some_other_storyboard' });
     const result = await runWith(sb, profileWithoutSigning);
-    const notice = result.notices.find(n => n.code === 'request_signing.required');
+    const notice = result.notices.find(n => n.code === 'request_signing_required_in_4_0');
     assert.equal(notice, undefined, 'notice should not fire on unrelated storyboards');
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tests: webhook_signing.legacy_hmac_fallback.removed
+// Tests: legacy_hmac_fallback_removed_in_4_0
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('RunnerNotice: webhook_signing.legacy_hmac_fallback.removed (#1704)', () => {
+describe('RunnerNotice: legacy_hmac_fallback_removed_in_4_0 (#1704)', () => {
   test('emits notice on webhook storyboard when webhook_signing.legacy_hmac_fallback is true', async () => {
     const sb = buildWebhookStoryboard();
     const result = await runWith(sb, profileWithLegacyHmac);
-    const notice = result.notices.find(n => n.code === 'webhook_signing.legacy_hmac_fallback.removed');
+    const notice = result.notices.find(n => n.code === 'legacy_hmac_fallback_removed_in_4_0');
     assert.ok(notice, 'notice should be present on a webhook-scoped storyboard');
     assert.equal(notice.severity, 'deprecation');
     assert.equal(notice.effective_version, '4.0');
@@ -352,23 +356,50 @@ describe('RunnerNotice: webhook_signing.legacy_hmac_fallback.removed (#1704)', (
   test('does NOT emit notice on non-webhook storyboard even when legacy_hmac_fallback is true', async () => {
     const sb = buildMinimalStoryboard();
     const result = await runWith(sb, profileWithLegacyHmac);
-    const notice = result.notices.find(n => n.code === 'webhook_signing.legacy_hmac_fallback.removed');
+    const notice = result.notices.find(n => n.code === 'legacy_hmac_fallback_removed_in_4_0');
     assert.equal(notice, undefined, 'notice is scoped to webhook storyboards only');
   });
 
   test('does NOT emit notice when legacy_hmac_fallback is false', async () => {
     const sb = buildWebhookStoryboard();
     const result = await runWith(sb, profileClean);
-    const notice = result.notices.find(n => n.code === 'webhook_signing.legacy_hmac_fallback.removed');
+    const notice = result.notices.find(n => n.code === 'legacy_hmac_fallback_removed_in_4_0');
     assert.equal(notice, undefined);
   });
 
   test('does NOT emit notice when webhook_signing is absent', async () => {
     const sb = buildWebhookStoryboard();
     const result = await runWith(sb, profileWithoutSigning);
-    const notice = result.notices.find(n => n.code === 'webhook_signing.legacy_hmac_fallback.removed');
+    const notice = result.notices.find(n => n.code === 'legacy_hmac_fallback_removed_in_4_0');
     assert.equal(notice, undefined);
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests: canonical notice codes
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('4.0 notices conform to runner-output-contract canonical_codes (#3344)', async () => {
+  const contract = YAML.parse(
+    readFileSync(path.join(getComplianceCacheDir(), 'universal', 'runner-output-contract.yaml'), 'utf8')
+  );
+  const results = [
+    await runWith(buildSignedRequestsStoryboard(), profileWithoutSigning),
+    await runWith(buildWebhookStoryboard(), profileWithLegacyHmac),
+  ];
+  assert.deepEqual(
+    results.flatMap(result => result.notices.map(notice => notice.code)),
+    ['request_signing_required_in_4_0', 'legacy_hmac_fallback_removed_in_4_0']
+  );
+  for (const result of results) {
+    for (const notice of result.notices) {
+      const canonical = contract.notice.canonical_codes[notice.code];
+      assert.ok(canonical, `${notice.code} must be registered in the output contract`);
+      assert.equal(notice.severity, canonical.severity);
+      assert.equal(notice.effective_version, canonical.effective_version);
+      assert.equal(notice.capability_path, canonical.capability_path);
+    }
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -514,18 +545,18 @@ describe('RunnerNotice — multiple notices (#1704)', () => {
       name: 'Test',
       tools: ['get_adcp_capabilities'],
       raw_capabilities: {
-        // no request_signing — triggers request_signing.required on signed_requests sb
+        // no request_signing — triggers request_signing_required_in_4_0 on signed_requests sb
         webhook_signing: { legacy_hmac_fallback: true }, // triggers legacy_hmac notice on webhook sb
       },
     };
     const signingResult = await runWith(buildSignedRequestsStoryboard(), profile);
     const webhookResult = await runWith(buildWebhookStoryboard(), profile);
     assert.ok(
-      signingResult.notices.some(n => n.code === 'request_signing.required'),
+      signingResult.notices.some(n => n.code === 'request_signing_required_in_4_0'),
       'request_signing notice on signed_requests storyboard'
     );
     assert.ok(
-      webhookResult.notices.some(n => n.code === 'webhook_signing.legacy_hmac_fallback.removed'),
+      webhookResult.notices.some(n => n.code === 'legacy_hmac_fallback_removed_in_4_0'),
       'legacy_hmac notice on webhook storyboard'
     );
   });

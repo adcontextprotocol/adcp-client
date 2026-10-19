@@ -2023,7 +2023,6 @@ OPTIONS:
   --wait            Wait for async/webhook responses
   --json            Raw JSON output
   --debug           Debug output
-  --allow-v2        Suppress the v2-sunset warning (unsupported since 2026-04-20)
   --help, -h        Show help
 
 BUILT-IN AGENTS:
@@ -2121,7 +2120,7 @@ RUN OPTIONS (full assessment):
   --media-buy-lifecycle-compat
                       Route compact media-buy storyboard steps through the
                       SDK compatibility coordinator so the same storyboard can
-                      exercise established v2.5–3.2 sellers.
+                      exercise established AdCP 3.0–3.2 sellers.
   --media-buy-compat-losses LOSSES
                       Comma-separated guarantee losses explicitly accepted by
                       that coordinator (for example feed_version_not_atomic).
@@ -5841,6 +5840,12 @@ function formatVerdict(verdict) {
 
 async function main() {
   const args = process.argv.slice(2);
+  if (args.some(arg => arg === '--allow-v2' || arg.startsWith('--allow-v2='))) {
+    console.error(
+      'ERROR: --allow-v2 has been removed. AdCP 2 reached end of life on 2026-08-01; upgrade the agent to AdCP 3. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/migration-drop-adcp-2.md'
+    );
+    process.exit(2);
+  }
   if (args[0] === 'identity') return require('./adcp-identity.js').handleIdentityCommand(args.slice(1));
 
   // `--version` / `-v` is handled before subcommands and before the
@@ -5859,14 +5864,6 @@ async function main() {
   // skipped in CI, non-TTY, --json, and when ADCP_SKIP_VERSION_CHECK=1.
   scheduleVersionCheck(LIBRARY_VERSION);
 
-  // Global: suppress the v2-sunset warning before any subcommand runs.
-  // v2 went unsupported on 2026-04-20 (AdCP 3.0 GA, adcp#2220) — the library
-  // warns whenever an agent advertises v2 capabilities. The flag is for
-  // legacy holdouts who know what they're doing.
-  if (args.includes('--allow-v2')) {
-    process.env.ADCP_ALLOW_V2 = '1';
-  }
-
   // Handle subcommands before global --help so their own --help works
   if (args[0] === 'registry') {
     const code = await handleRegistryCommand(args.slice(1));
@@ -5877,7 +5874,7 @@ async function main() {
   if (args[0] === 'init') {
     const { handleInitCommand } = require('./adcp-project.js');
     await handleInitCommand(
-      args.slice(1).filter(arg => arg !== '--allow-v2' && arg !== '--allow-http'),
+      args.slice(1).filter(arg => arg !== '--allow-http'),
       { libraryVersion: LIBRARY_VERSION }
     );
     return;
@@ -5886,7 +5883,7 @@ async function main() {
   if (args[0] === 'doctor') {
     const { handleDoctorCommand } = require('./adcp-project.js');
     await handleDoctorCommand(
-      args.slice(1).filter(arg => arg !== '--allow-v2' && arg !== '--allow-http'),
+      args.slice(1).filter(arg => arg !== '--allow-http'),
       {
         libraryVersion: LIBRARY_VERSION,
         adcpVersion: ADCP_VERSION,

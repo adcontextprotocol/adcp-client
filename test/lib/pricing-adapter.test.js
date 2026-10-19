@@ -9,7 +9,6 @@ const {
   isFixedPricing,
   getPrice,
   getFloorPrice,
-  adaptPricingOptionForV2,
   normalizePricingOption,
   normalizeProductPricing,
   normalizeGetProductsResponse,
@@ -121,73 +120,6 @@ describe('pricing adapter utilities', () => {
 
     test('should return undefined when neither field present', () => {
       assert.strictEqual(getFloorPrice({ pricing_model: 'cpm' }), undefined);
-    });
-  });
-
-  describe('adaptPricingOptionForV2', () => {
-    test('should convert v3 fixed_price to v2 rate and is_fixed', () => {
-      const v3Option = {
-        pricing_option_id: 'cpm_fixed',
-        pricing_model: 'cpm',
-        currency: 'USD',
-        fixed_price: 5.0,
-      };
-
-      const v2Option = adaptPricingOptionForV2(v3Option);
-
-      assert.strictEqual(v2Option.rate, 5.0);
-      assert.strictEqual(v2Option.is_fixed, true);
-      assert.strictEqual(v2Option.fixed_price, undefined);
-      assert.strictEqual(v2Option.pricing_option_id, 'cpm_fixed');
-      assert.strictEqual(v2Option.currency, 'USD');
-    });
-
-    test('should convert v3 floor_price to v2 price_guidance.floor', () => {
-      const v3Option = {
-        pricing_option_id: 'cpm_auction',
-        pricing_model: 'cpm',
-        currency: 'USD',
-        floor_price: 1.0,
-        price_guidance: { p50: 2.5 },
-      };
-
-      const v2Option = adaptPricingOptionForV2(v3Option);
-
-      assert.strictEqual(v2Option.is_fixed, false);
-      assert.strictEqual(v2Option.price_guidance.floor, 1.0);
-      assert.strictEqual(v2Option.price_guidance.p50, 2.5);
-      assert.strictEqual(v2Option.floor_price, undefined);
-    });
-
-    test('should pass through v2 options unchanged', () => {
-      const v2Option = {
-        pricing_option_id: 'cpm_fixed',
-        pricing_model: 'cpm',
-        currency: 'USD',
-        rate: 5.0,
-        is_fixed: true,
-      };
-
-      const result = adaptPricingOptionForV2(v2Option);
-
-      assert.strictEqual(result.rate, 5.0);
-      assert.strictEqual(result.is_fixed, true);
-    });
-
-    test('should preserve additional fields', () => {
-      const v3Option = {
-        pricing_option_id: 'cpm_fixed',
-        pricing_model: 'cpm',
-        currency: 'USD',
-        fixed_price: 5.0,
-        min_spend_per_package: 1000,
-        custom_field: 'value',
-      };
-
-      const v2Option = adaptPricingOptionForV2(v3Option);
-
-      assert.strictEqual(v2Option.min_spend_per_package, 1000);
-      assert.strictEqual(v2Option.custom_field, 'value');
     });
   });
 

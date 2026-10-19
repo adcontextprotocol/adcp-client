@@ -280,7 +280,7 @@ authoritative completion reconciliation after restart.
 
 ### Tokenless catalog and products-only legacy continuations
 
-An established 2.5, 3.0, or 3.1 seller may return purchasable catalog products
+An established 3.0 or 3.1 seller may return purchasable catalog products
 without a wholesale feed token, or answer a brief with products but no
 proposal. The SDK never invents a proposal, terms digest, or feed fence. When
 `principalScope`, an account, and stable seller-session binding are available,
@@ -301,7 +301,7 @@ invocation receives a fresh continuation even when the catalog is unchanged:
 const continuations = createInMemoryLegacyPurchaseContinuationStore();
 const lifecycle = await agent.negotiateMediaBuyLifecycle({
   principalScope: authenticatedPrincipalId,
-  // Required for established 2.5, 3.0, and 3.1 sellers that provide no server
+  // Required for established 3.0 and 3.1 sellers that provide no server
   // context ID. Persist this non-secret authenticated session ID across rehydration.
   legacyPurchaseSellerSessionScope: authenticatedSellerSessionId,
   legacyPurchaseContinuationStore: continuations,
@@ -331,9 +331,9 @@ after accepting the exact returned loss set. If the application requires an
 enforceable observed catalog/pricing fence, do not accept the continuation;
 the tokenless catalog is read-only for that policy.
 
-On 2.5 the loss set also includes `mutation_idempotency_not_guaranteed`. On 3.0
-and 3.1 it includes that loss whenever the seller does not advertise a usable
-replay TTL. All tokenless catalog continuations include
+On 3.0 and 3.1 the loss set includes `mutation_idempotency_not_guaranteed`
+whenever the seller does not advertise a usable replay TTL. All tokenless
+catalog continuations include
 `feed_version_not_atomic` and `pricing_version_not_atomic`.
 
 The in-memory store is a single-process reference implementation. Production
@@ -462,13 +462,12 @@ issued. It must be a stable, non-secret ID derived by the application from the
 authenticated seller/account session—not a bearer token. Persist and reuse it
 with the continuation store so a restarted coordinator can redeem or replay
 the same operation without making the token portable to another credentialed
-session. This applies to 2.5, 3.0, and 3.1; endpoint identity is not an
+session. This applies to 3.0 and 3.1; endpoint identity is not an
 authenticated session identity. URL userinfo and presigned URLs are rejected
 before the discovered payload can enter durable storage.
 
-Every 2.5 continuation declares `mutation_idempotency_not_guaranteed`.
-3.0/3.1 continuations declare the same loss whenever the seller does not
-advertise a usable replay TTL; accepting an idempotency key alone is not treated
+3.0/3.1 continuations declare `mutation_idempotency_not_guaranteed` whenever
+the seller does not advertise a usable replay TTL; accepting an idempotency key alone is not treated
 as evidence that a mutation can be replayed safely. Submitted completions are
 accepted only for the exact seller task ID recorded at dispatch. Unstructured
 or SDK-synthetic terminal errors remain ambiguous and retain the durable fence.
@@ -584,15 +583,17 @@ mutating prior state.
 
 ## Buyer projection policy
 
+All compatibility lanes require AdCP 3. AdCP 2 agents are rejected during discovery before a coordinator operation can dispatch; see the [AdCP 2 retirement guide](../migration-drop-adcp-2.md).
+
 | Coordinator operation | Compact tool | Established projection | Boundary |
 |---|---|---|---|
-| `listProducts` | `list_products` | `get_products(buying_mode='wholesale')` | Representable `criteria.offer_filters` map field-by-field through the negotiated legacy offer-filter schema; country remains `filters.countries` and is never recast as delivery targeting. Other structured criteria report their exact unsupported field before dispatch. Actual `wholesale_feed_version` is renamed to `feed_version`; no value is invented. An eligible tokenless catalog may expose the SDK-local `purchase_continuation` described above while `raw` remains the canonical SDK source object. The stable response exposes `next_cursor` and `unchanged` in both lanes. The established request includes `pagination` only when the caller supplies a cursor or `max_results`; the SDK does not fabricate a page-size default. v2.5 pagination/field selection, pre-3.1 conditional feed/pricing reads, and response-field names absent from the negotiated enum are typed unsupported. |
+| `listProducts` | `list_products` | `get_products(buying_mode='wholesale')` | Representable `criteria.offer_filters` map field-by-field through the negotiated legacy offer-filter schema; country remains `filters.countries` and is never recast as delivery targeting. Other structured criteria report their exact unsupported field before dispatch. Actual `wholesale_feed_version` is renamed to `feed_version`; no value is invented. An eligible tokenless catalog may expose the SDK-local `purchase_continuation` described above while `raw` remains the canonical SDK source object. The stable response exposes `next_cursor` and `unchanged` in both lanes. The established request includes `pagination` only when the caller supplies a cursor or `max_results`; the SDK does not fabricate a page-size default. Pre-3.1 conditional feed/pricing reads and response-field names absent from the negotiated enum are typed unsupported. |
 | `requestProposals` | `request_proposals` | `get_products(buying_mode='brief')` | Only offer-filter fields and metric values defined by the negotiated release map field-by-field, plus policy IDs. Compact catalog selection lacks the complete legacy catalog metadata and fails closed. Targeting-overlay requirements are forwarded only to a 3.2 established surface; 3.0/3.1 cannot represent them. Product-ID filters, compact-only offer prerequisites, `ext`, opportunity, and governance context fail preflight. |
 | `refineProposals` | `refine_proposals` | `get_products(buying_mode='refine')` | Ask and product include/omit map for revisions. Finalize maps only when it contains no additional refinement fields. Hard constraints, alternatives, criteria, amendment kinds, and finalize extras fail before dispatch. |
 | `declineProposals` | `decline_proposals` | proposal-scoped legacy omit | Rejected by default because omit is not a terminal decline and cannot carry the required compact reason/detail. Explicit opt-in reports `proposal_decline_not_terminal` and `proposal_decline_reason_not_forwarded`. |
-| `buyProducts` | `buy_products` | `create_media_buy` | Feed/pricing fencing is not atomic. Rejected by default; explicit opt-in names `feed_version_not_atomic` and, when present, `pricing_version_not_atomic`. A missing `feed_version` remains unsupported here; tokenless catalogs use the separate SDK-local `continueLegacyPurchase()` handoff. Shared package fields and nested targeting/reporting enums map against the negotiated schema, including 3.1+ `format_option_refs`; newer targeting, metric, and postal shapes fail closed. v2.5 also rejects non-empty compact targeting and push notification configuration. A direct compact `total_budget` and fields introduced on the 3.2 established surface—including allocation, budget-cap, bidding, governance, opportunity, and newer package controls—map only on a negotiated 3.2 established lane. Compact `catalog_ids` and resolved `pricing` remain typed unsupported. |
+| `buyProducts` | `buy_products` | `create_media_buy` | Feed/pricing fencing is not atomic. Rejected by default; explicit opt-in names `feed_version_not_atomic` and, when present, `pricing_version_not_atomic`. A missing `feed_version` remains unsupported here; tokenless catalogs use the separate SDK-local `continueLegacyPurchase()` handoff. Shared package fields and nested targeting/reporting enums map against the negotiated schema, including 3.1+ `format_option_refs`; newer targeting, metric, and postal shapes fail closed. A direct compact `total_budget` and fields introduced on the 3.2 established surface—including allocation, budget-cap, bidding, governance, opportunity, and newer package controls—map only on a negotiated 3.2 established lane. Compact `catalog_ids` and resolved `pricing` remain typed unsupported. |
 | `acceptProposal` | `accept_proposal` | `create_media_buy(proposal_id=...)` | A compact-shaped proposal retains strict digest, immutable-snapshot, account-scope, kind/status, and expiry checks. Caller values cannot override digest-bound budget, budget-cap, timezone, or purchase-order terms. An honest 3.0/3.1 proposal remains executable with its ordinary `proposal_id` semantics only after explicit opt-in to `proposal_terms_digest_not_enforced`, `proposal_terms_digest_unavailable`, and `proposal_snapshot_not_immutable` (plus `proposal_hold_not_verifiable` when it has no expiry). The caller supplies the original brand/flight as `established_fallback`; the SDK does not claim those values came from the seller or synthesize a digest. |
-| `controlMediaBuy` | `control_media_buy` | `update_media_buy` | Account, media-buy ID, and a positive revision are required. Revision and identically shaped fields present in the negotiated established schema map directly; `name` maps on the 3.2 established surface and fails closed on 3.0/3.1, whose update schemas do not define it. v2.5 requires explicit `revision_not_atomic` opt-in and rejects cancellation plus v3-only package controls. Pre-3.2 lanes reject the broader compact optimization-goal union and nested targeting/keyword shapes they cannot represent. Compact `catalog_ids` cannot be cast to established `catalogs` objects, so it fails closed in every established lane. |
+| `controlMediaBuy` | `control_media_buy` | `update_media_buy` | Account, media-buy ID, and a positive revision are required. Revision and identically shaped fields present in the negotiated established schema map directly; `name` maps on the 3.2 established surface and fails closed on 3.0/3.1, whose update schemas do not define it. Pre-3.2 lanes reject the broader compact optimization-goal union and nested targeting/keyword shapes they cannot represent. Compact `catalog_ids` cannot be cast to established `catalogs` objects, so it fails closed in every established lane. |
 | Readback | shared tools | `get_media_buys`, `get_media_buy_delivery` | Same public calls and canonical creative projection in every lane. Versioned request additions fail closed: webhook-activity and delivery-window/granularity options require 3.1+, while `indicator_types`, demographic breakdowns, and spot breakdowns require 3.2. Native postal reporting shapes require 3.1+. |
 
 Lossy mutations are fail-closed. An adopter may opt into only the exact named
@@ -735,8 +736,7 @@ trusted namespaces, never a buyer-supplied proposal ID alone.
 
 | Buyer surface | Seller surface | Expected path | Guarantee |
 |---|---|---|---|
-| Established `getProducts` / `createMediaBuy` / `updateMediaBuy` | AdCP 2.5–3.1 or a dual-surface 3.2 seller | Established tools are called directly | Existing application behavior remains unchanged; the compact coordinator is not involved. |
-| Compact-first coordinator | AdCP 2.5 | `list_products` → `get_products`; purchase → `create_media_buy`; supported control → `update_media_buy` | The direct common subset remains usable. Proposal objects/binding, media-buy readback, pagination, cancellation, v3-only top-level/package fields, and update reporting-webhook changes are typed unsupported rather than sent into v2.5's permissive additional-properties boundary. Feed fencing and optimistic revision enforcement require their named loss opt-ins. |
+| Established `getProducts` / `createMediaBuy` / `updateMediaBuy` | AdCP 3.0/3.1 or a dual-surface 3.2 seller | Established tools are called directly | Existing application behavior remains unchanged; the compact coordinator is not involved. |
 | Compact-first coordinator | AdCP 3.0, 3.1, or 3.2 legacy-only | `list_products` → `get_products`; proposal discovery/refinement → `get_products`; control → `update_media_buy`; purchase → `create_media_buy` only when its named loss policy permits it | Common-subset reads and control are lossless. Atomic feed/pricing fencing, digest enforcement, and terminal decline are not representable and fail before mutation by default. |
 | Compact-first coordinator | AdCP 3.2 dual-surface | Compact tools are preferred; `preferredLifecycle: 'established'` exercises the compatibility facade | Native by default; the forced established lane has the same explicit boundaries as older sellers. |
 | Compact-first coordinator | AdCP 3.2 compact-only | Compact lifecycle tools | Native compact guarantees. |
@@ -749,7 +749,7 @@ that a 3.0 seller can enforce a 3.2-only atomicity or digest guarantee. The SDK
 must reject that case or report the exact explicitly accepted loss; it must
 never label the weaker mutation as equivalent.
 
-The coordinator test matrix covers SDK 14 compact-first callers against v2.5,
+The coordinator test matrix covers compact-first callers against
 3.0, 3.1, 3.2 legacy-only, 3.2 dual-surface (compact preferred and established
 forced), and 3.2 compact-only discovery. The dual-surface MCP lane also holds
 the maximum at 3.2 while defaulting unversioned discovery and dispatch to 3.1,
@@ -761,9 +761,6 @@ validating every request and response against the corresponding cached wire
 bundle. Those lanes assert canonical format projection, pagination,
 feed/pricing provenance, account/brand/context/currency continuity, exact
 replay, changed-payload conflict, no duplicate mutation, control, and shared
-readback. The honest v2.5 fixture executes its complete representable direct
-subset, validates exact legacy wire, and asserts typed failures for pagination,
-proposals, cancellation, unsupported create/update fields, and media-buy
 readback. Versioned MCP fixtures also preserve submitted and input-required
 proposal states without inventing completed outcomes. A normal 3.2 server
 profile is exercised by 3.0 and 3.1 buyers through hidden established routes,

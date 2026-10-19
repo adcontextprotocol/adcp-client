@@ -27,7 +27,7 @@ function metadata(status) {
 function capabilities(version, synthetic) {
   return {
     version,
-    majorVersions: [version === 'v2' ? 2 : 3],
+    majorVersions: [3],
     protocols: ['media_buy'],
     features: {},
     extensions: [],
@@ -66,11 +66,11 @@ describe('seller-version result provenance', () => {
       const v2Agent = { ...agent, id: 'seller-v2', name: 'Seller v2' };
       const v3Agent = { ...agent, id: 'seller-v3', name: 'Seller v3' };
       const [v2, v3] = await Promise.all([
-        executor.executeTask(v2Agent, 'list_authorized_properties', {}, undefined, {}, 'v2', capabilities('v2', false)),
+        executor.executeTask(v2Agent, 'list_authorized_properties', {}, undefined, {}, 'v3', capabilities('v3', false)),
         executor.executeTask(v3Agent, 'list_authorized_properties', {}, undefined, {}, 'v3', capabilities('v3', true)),
       ]);
 
-      assertProvenance(v2, 'v2', false);
+      assertProvenance(v2, 'v3', false);
       assertProvenance(v3, 'v3', true);
     } finally {
       ProtocolClient.callTool = originalCallTool;
@@ -80,7 +80,7 @@ describe('seller-version result provenance', () => {
   test('surfaces declared and synthetic seller generations on terminal results', async () => {
     for (const [version, synthetic, rawResult] of [
       [
-        'v2',
+        'v3',
         false,
         {
           success: true,
@@ -115,20 +115,6 @@ describe('seller-version result provenance', () => {
     assertProvenance(failed, 'v3', false);
   });
 
-  test('includes provenance on v2 unsupported-feature early results', async () => {
-    const client = makeClient(capabilities('v2', false), async () => {
-      throw new Error('the unsupported-feature result must not dispatch');
-    });
-
-    const result = await client.executeTask('get_products', {
-      filters: { required_features: ['content_standards'] },
-    });
-
-    assert.equal(result.status, 'completed');
-    assert.deepStrictEqual(result.data.products, []);
-    assertProvenance(result, 'v2', false);
-  });
-
   test('preserves provenance through submitted and deferred continuations', async () => {
     const completed = () => ({
       success: true,
@@ -136,7 +122,7 @@ describe('seller-version result provenance', () => {
       data: { properties: [] },
       metadata: metadata('completed'),
     });
-    const client = makeClient(capabilities('v2', true), async () => ({
+    const client = makeClient(capabilities('v3', true), async () => ({
       success: true,
       status: 'submitted',
       metadata: metadata('submitted'),
@@ -157,11 +143,11 @@ describe('seller-version result provenance', () => {
     }));
 
     const submitted = await client.executeTask('list_authorized_properties', {});
-    assertProvenance(submitted, 'v2', true);
+    assertProvenance(submitted, 'v3', true);
     const deferred = await submitted.submitted.waitForCompletion(1);
-    assertProvenance(deferred, 'v2', true);
+    assertProvenance(deferred, 'v3', true);
     const resumed = await deferred.deferred.resume({ approved: true });
-    assertProvenance(resumed, 'v2', true);
+    assertProvenance(resumed, 'v3', true);
   });
 
   test('restores provenance from durable client finalization context after restart', async () => {
@@ -179,13 +165,13 @@ describe('seller-version result provenance', () => {
         kind: 'single-agent',
         taskType: 'list_authorized_properties',
         canonical: false,
-        serverVersion: 'v2',
+        serverVersion: 'v3',
         serverVersionSynthetic: true,
         productPolicyRequest: {},
       },
     });
 
     const resumed = await client.resumeDeferredTask('durable-token', { approved: true });
-    assertProvenance(resumed, 'v2', true);
+    assertProvenance(resumed, 'v3', true);
   });
 });
