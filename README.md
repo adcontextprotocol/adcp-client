@@ -29,14 +29,14 @@ AdCP operations are **distributed and asynchronous by default**. An agent might:
 ## Installation
 
 ```bash
-npm install @adcp/sdk              # 14.x, AdCP 3.2
+npm install @adcp/sdk              # 16.x, AdCP 3.2
 npm install @adcp/sdk@adcp-3.1     # 13.x, maintained AdCP 3.1 line
 npm install @adcp/sdk@adcp-3.0     # 7.11.x, AdCP 3.0
 ```
 
 AdCP 2 reached end of life on August 1, 2026. This checkout supports AdCP 3 agents only; review the [AdCP 2 retirement guide](./docs/migration-drop-adcp-2.md) before upgrading an integration that still calls AdCP 2 sellers.
 
-Upgrading to SDK 14? Read the [release-bound upgrade worksheet](./docs/migration-14.x-rc-worksheet.md), then use the [13-to-14](./docs/migration-13-to-14.md) or [12-to-14](./docs/migration-12-to-14.md) migration guide. The [prerelease history](./docs/releases/14.0.0-beta.0.md) covers changes made during the 14.0 beta cycle. The npm `latest` tag tracks SDK 14 (AdCP 3.2); SDK 13 stays available on `adcp-3.1` as the maintained AdCP 3.1 line. SDK 14 requires Node.js `^20.19.0 || >=22.12.0`. Older paths: [12-to-13](./docs/migration-12-to-13.md), **[MIGRATION-v8.md](./MIGRATION-v8.md)**, and [8.0-to-8.1](./docs/migration-8.0-to-8.1.md).
+Upgrading to SDK 16? Read the [SDK 16 release notes](./docs/releases/16.0.0.md) and [release-bound upgrade worksheet](./docs/migration-14.x-rc-worksheet.md). The npm `latest` tag tracks SDK 16 (AdCP 3.2); SDK 13 stays available on `adcp-3.1` as the maintained AdCP 3.1 line. SDK 16 requires Node.js `^20.19.0 || >=22.12.0`. Earlier migration guides: [SDK 15 OAuth](./docs/migration-oauth-issuer-bindings.md), [13-to-14](./docs/migration-13-to-14.md), [12-to-14](./docs/migration-12-to-14.md), [12-to-13](./docs/migration-12-to-13.md), **[MIGRATION-v8.md](./MIGRATION-v8.md)**, and [8.0-to-8.1](./docs/migration-8.0-to-8.1.md).
 
 ### Narrow type imports (`@adcp/sdk/types/<tool>`)
 

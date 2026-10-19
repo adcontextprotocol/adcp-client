@@ -44,7 +44,7 @@ If you are unsure about a symbol, read its TSDoc. An `@experimental` tag means i
 
 ## How the two packages line up
 
-`@adcp/reporting-storage` declares `@adcp/sdk` as a **peer dependency** (`^16.0.0-beta.0` while SDK 16 is in beta), not a dependency. The store, its errors and the handlers share types and symbol-keyed guards, so the host must hold one copy of `@adcp/sdk`. A change to a storage interface in the SDK ships with a matching storage release; the changeset for each says which pair to install. The cloud SDKs (`@aws-sdk/client-s3`, `@azure/storage-blob`, `@google-cloud/storage`) are optional peers of the storage package. `@adcp/sdk` does not import `@adcp/reporting-storage`, and a test and a lint rule keep it that way.
+`@adcp/reporting-storage` declares `@adcp/sdk` as a **peer dependency** (`^16.0.0` for SDK 16), not a dependency. The store, its errors and the handlers share types and symbol-keyed guards, so the host must hold one copy of `@adcp/sdk`. A change to a storage interface in the SDK ships with a matching storage release; the changeset for each says which pair to install. The cloud SDKs (`@aws-sdk/client-s3`, `@azure/storage-blob`, `@google-cloud/storage`) are optional peers of the storage package. `@adcp/sdk` does not import `@adcp/reporting-storage`, and a test and a lint rule keep it that way.
 
 ## How to pin
 
@@ -53,19 +53,19 @@ Pin the storage package with a tilde range. A caret range on a `0.x` version alr
 ```json
 {
   "dependencies": {
-    "@adcp/sdk": "^16.0.0-beta.0",
-    "@adcp/reporting-storage": "~0.1.0-beta.0"
+    "@adcp/sdk": "^16.0.0",
+    "@adcp/reporting-storage": "~0.1.0"
   }
 }
 ```
 
-Those are the beta pins. A prerelease range such as `~0.1.0` does not match `0.1.0-beta.0`, so use the `-beta.0` form until stable releases exist, then move to `^16.0.0` and `~0.1.0`.
+These pins select SDK 16 and storage 0.1 stable versions. A stable range such as `~0.1.0` does not match `0.1.0-beta.0`; migrate both packages from their beta pins together.
 
-- `~0.1.0` (after the first stable release) takes patches only (recommended).
-- An exact version (`"0.1.0-beta.0"`) is stricter still.
+- `~0.1.0` takes patches only (recommended).
+- An exact version (`"0.1.0"`) is stricter still.
 - Read the changelog before widening to a new minor, and apply any migration it names.
 
-`@adcp/sdk` itself can use a caret range as usual, because the SDK's own surface follows semver. While SDK 16 is in beta, install both packages with the `beta` dist-tag (`npm install @adcp/sdk@beta @adcp/reporting-storage@beta`) until stable releases exist.
+`@adcp/sdk` itself can use a caret range as usual, because the SDK's own surface follows semver. Install the stable pair with `npm install @adcp/sdk@^16.0.0 @adcp/reporting-storage@~0.1.0`. The storage API remains experimental under the policy above.
 
 ## Migrations
 

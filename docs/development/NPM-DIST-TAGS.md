@@ -9,13 +9,12 @@ dist-tag:
 
 | Tag | SDK line | AdCP line | Published from |
 |---|---|---|---|
-| `latest` | 14.x | 3.2 | `main` |
-| `adcp-3.2` | 14.x | 3.2 (current line) | `main`; moved manually after each release (see below) |
+| `latest` | 16.x | 3.2 | `main` |
+| `adcp-3.2` | 16.x | 3.2 (current line) | `main`; moved manually after each release (see below) |
 | `adcp-3.1` | 13.x | 3.1 (maintenance line) | `13.x` branch, with `ADCP_NPM_TAG=adcp-3.1` |
 | `adcp-3.0` | 7.11.x | 3.0 | 7.x maintenance releases, with `ADCP_NPM_TAG=adcp-3.0` |
 
-The `rc` tag still points at the last SDK 14 prerelease (`14.0.0-rc.53`) and is
-no longer maintained. Do not recommend it.
+The `rc` tag is a historical SDK 14 channel and is no longer maintained. Do not recommend it.
 
 Compatibility tags are long-lived CI targets. They should move forward within a
 protocol minor line, but should not move across protocol minor lines. For
@@ -43,7 +42,7 @@ still be repaired manually with `npm dist-tag add`, but normal releases should
 not need a registry token.
 
 The current-line tag is the one exception. A release from `main` publishes with
-`latest`, so OIDC cannot also move `adcp-3.2`. After each 14.x release, a
+`latest`, so OIDC cannot also move `adcp-3.2`. After each stable AdCP 3.2 SDK release, a
 maintainer with registry access moves it by hand:
 
 ```bash
@@ -58,21 +57,29 @@ the semver prerelease identifier. The release wrapper keeps that pre-mode tag
 unless `ADCP_NPM_TAG` is set. That prevents prereleases from moving `latest`
 accidentally.
 
+## SDK 16 and SDK 17 release boundary
+
+SDK 16 is the stable AdCP 3.2 line (`ADCP_VERSION=3.2.5`). Exit Changesets pre-mode and run `npm run version` to produce its GA versions, lockfile, changelogs and generated documentation. Merge and verify the stable npm publication before entering another prerelease cycle.
+
+SDK 17 beta adopts the published AdCP 3.3 beta protocol bundle. Its release preparation enters Changesets pre-mode with `npx changeset pre enter beta` and adds a major SDK changeset. Sync the exact published protocol beta, regenerate its types and schemas, and validate the integration before publishing. Keep `latest` on SDK 16 throughout the SDK 17 beta cycle, and maintain SDK 16 fixes from a stable branch with `ADCP_NPM_TAG=latest`.
+
+The experimental identity preview already shipped in SDK 16 remains explicitly opt-in; SDK 16 GA does not make AdCP 3.3 the default or stabilize that preview. See the [SDK 16 release notes](../releases/16.0.0.md).
+
 ## Workspace packages
 
 The repository publishes more than `@adcp/sdk`. Changesets versions and publishes every non-private workspace
 package in one release, with the same pre-mode tag:
 
-| Package                      | Directory                      | Dist-tag while SDK 16 is in beta | Notes                                                                        |
+| Package                      | Directory                      | SDK 16 stable dist-tag | Notes                                                                        |
 | ---------------------------- | ------------------------------ | -------------------------------- | ---------------------------------------------------------------------------- |
-| `@adcp/sdk`                  | `.`                            | `beta`                           | The SDK.                                                                     |
-| `@adcp/reporting-storage`    | `packages/reporting-storage`   | `beta`                           | Reliable Reporting storage. Pre-1.0 (`0.x`); depends on `@adcp/sdk` as a peer. |
-| `@adcp/eslint-plugin`        | `packages/eslint-plugin`       | `beta`                           |                                                                              |
-| `@adcp/reference-renderers`  | `packages/reference-renderers` | `beta`                           |                                                                              |
+| `@adcp/sdk`                  | `.`                            | `latest`                           | The SDK.                                                                     |
+| `@adcp/reporting-storage`    | `packages/reporting-storage`   | `latest`                           | Reliable Reporting storage. Pre-1.0 (`0.x`); depends on `@adcp/sdk` as a peer. |
+| `@adcp/eslint-plugin`        | `packages/eslint-plugin`       | `latest`                           |                                                                              |
+| `@adcp/reference-renderers`  | `packages/reference-renderers` | `latest`                           |                                                                              |
 
 `@adcp/reporting-storage` starts at `0.0.0` in `package.json` so a changeset sets its first real version. Under
 pre-release mode its first changeset (`minor`) produces `0.1.0-beta.0`, published on the `beta` tag and never on
-`latest`. It reaches `1.0.0` when the `@experimental` tags come off
+`latest`. The SDK 16 promotion releases storage `0.1.0` on `latest` while keeping its API experimental. It reaches `1.0.0` when the `@experimental` tags come off
 ([stability policy](../guides/REPORTING-STABILITY.md)). Its `@adcp/sdk` peer range is rewritten by Changesets to the
 SDK version released with it, so install the pair published together.
 

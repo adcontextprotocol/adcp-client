@@ -19,6 +19,57 @@ test('release job serializes package-global npm mutations across branches', () =
   });
 });
 
+test('the changeset gate accepts GA release metadata and still requires changesets for runtime code', () => {
+  const workflow = YAML.parse(readFileSync(path.join(ROOT, '.github', 'workflows', 'changeset-check.yml'), 'utf8'));
+  const script = workflow.jobs.check.steps.find(step => step.id === 'release-metadata').run;
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'release-metadata-gate-'));
+  const run = (command, args, env) =>
+    execFileSync(command, args, { cwd: temporaryRoot, encoding: 'utf8', env: env ?? process.env });
+  const write = (file, content) => {
+    const target = path.join(temporaryRoot, file);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, content);
+  };
+  const commit = message => {
+    run('git', ['add', '.']);
+    run('git', ['-c', 'user.name=Release Test', '-c', 'user.email=release@example.com', 'commit', '-m', message]);
+  };
+  const gateOutput = () => {
+    const output = path.join(temporaryRoot, '.git', 'gate-output');
+    writeFileSync(output, '');
+    run('bash', ['-e', '-c', script], { ...process.env, GITHUB_OUTPUT: output });
+    return readFileSync(output, 'utf8').trim();
+  };
+
+  try {
+    run('git', ['init', '-b', 'main']);
+    write('.changeset/pre.json', '{"mode":"pre","tag":"beta"}\n');
+    write('.changeset/pre/release-note.md', '---\n"@adcp/sdk": major\n---\n\nRelease notes.\n');
+    write('package.json', '{"name":"@adcp/sdk","version":"16.0.0-beta.9"}\n');
+    write('src/lib/version.ts', "export const LIBRARY_VERSION = '16.0.0-beta.9';\n");
+    commit('chore: prerelease base');
+    run('git', ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+
+    rmSync(path.join(temporaryRoot, '.changeset'), { recursive: true });
+    write('package.json', '{"name":"@adcp/sdk","version":"16.0.0"}\n');
+    write(
+      'src/lib/version.ts',
+      "export const LIBRARY_VERSION = '16.0.0';\nexport const VERSION_INFO = { library: '16.0.0' };\n"
+    );
+    write('README.md', 'Install the stable SDK.\n');
+    write('docs/releases/16.0.0.md', 'SDK 16 release notes.\n');
+    write('test/release-version-docs.test.js', '// Release workflow verification.\n');
+    commit('chore: promote release');
+    assert.equal(gateOutput(), 'skip=true');
+
+    write('src/lib/core/AdCPClient.ts', 'export const changedRuntime = true;\n');
+    commit('feat: runtime change');
+    assert.equal(gateOutput(), 'skip=false');
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test('Changesets release versioning regenerates agent docs after the package version changes', () => {
   const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const commands = pkg.scripts.version.split(/\s*&&\s*/);

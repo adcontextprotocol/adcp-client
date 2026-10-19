@@ -1,6 +1,6 @@
 # Reliable Reporting storage moved to `@adcp/reporting-storage`
 
-**Applies to:** SDK 16 beta. **Kind:** breaking, by design. There are no re-export shims: the moved subpaths are gone from `@adcp/sdk`.
+**Applies to:** SDK 16. **Kind:** breaking, by design. There are no re-export shims: the moved subpaths are gone from `@adcp/sdk`.
 
 The Reliable Reporting storage implementations now ship as their own package, `@adcp/reporting-storage`, on its own version line. `@adcp/sdk` keeps the protocol layer. If you import anything from `@adcp/sdk/reporting/gcs`, `/s3`, `/azure` or `/bigquery`, or the PostgreSQL store, row storage, managed delivery or notification activity from `@adcp/sdk/reporting/ledger`, or `createPostgresReliableReportingProductionService` from `@adcp/sdk/reporting/service`, change those imports. Nothing else changes on the wire, in the database schema, or in the ledger's behavior.
 
@@ -11,10 +11,10 @@ Why: storage keeps its own release cadence, as Auth.js, LangGraph and OpenTeleme
 1. Install the package next to the SDK. `@adcp/sdk` is a peer dependency of it, so the host keeps exactly one copy:
 
    ```bash
-   npm install @adcp/sdk@beta @adcp/reporting-storage@beta
+   npm install @adcp/sdk@^16.0.0 @adcp/reporting-storage@~0.1.0
    ```
 
-   Pin the storage package with `~` (`"@adcp/reporting-storage": "~0.1.0-beta.0"` while SDK 16 is in beta, `"~0.1.0"` after a stable release; a prerelease version is not matched by `~0.1.0`): it is pre-1.0 and every export is experimental. The cloud SDKs are optional peers of the new package, not of `@adcp/sdk` any more, so keep `@aws-sdk/client-s3`, `@azure/storage-blob` and `@google-cloud/storage` in your own dependencies for the providers you use.
+   Pin the storage package with `~` (`"@adcp/reporting-storage": "~0.1.0"`; this stable range does not match the earlier `0.1.0-beta.0` prerelease): it is pre-1.0 and every export is experimental. The cloud SDKs are optional peers of the new package, not of `@adcp/sdk` any more, so keep `@aws-sdk/client-s3`, `@azure/storage-blob` and `@google-cloud/storage` in your own dependencies for the providers you use.
 
 2. Change the imports using the table below, then run `tsc --noEmit`. A moved name on `@adcp/sdk/reporting/ledger` or `/service` is `TS2305: Module '"@adcp/sdk/reporting/ledger"' has no exported member 'PostgresReportingLedgerStore'`; a deleted subpath is `TS2307: Cannot find module '@adcp/sdk/reporting/gcs'`. At runtime the deleted subpaths fail with `ERR_PACKAGE_PATH_NOT_EXPORTED`, and a stale CommonJS `require` of a moved name on a kept subpath destructures to `undefined` and fails later as `X is not a constructor`, so grep JavaScript too (see [Self-grade](#self-grade)).
 
