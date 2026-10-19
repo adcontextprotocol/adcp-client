@@ -1,6 +1,6 @@
 # Removing AdCP 2 compatibility
 
-AdCP 2.5 reached end of life on August 1, 2026. The SDK now supports AdCP 3 agents only. This is an SDK major release change; older SDK releases remain available for integrations that still require AdCP 2.
+AdCP 2.5 reached end of life on August 1, 2026. The SDK now supports AdCP 3 agents only. This is an SDK major release change. Integrations that still require AdCP 2 can pin the last supporting beta, `npm install @adcp/sdk@16.0.0-beta.8`, or stay on the stable SDK 15 line (`npm install @adcp/sdk@15.9.6`) while upgrading their agents.
 
 Upgrade agents to AdCP 3 before upgrading the SDK. An agent must expose `get_adcp_capabilities`. Its `adcp.supported_versions` determines its supported majors; `adcp.major_versions` is the legacy fallback. Omitting both fields no longer selects AdCP 2.
 
