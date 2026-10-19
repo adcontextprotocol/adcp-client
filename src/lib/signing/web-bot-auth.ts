@@ -1,7 +1,7 @@
 import { toReleasePrecisionVersion } from '../version';
 /**
  * Experimental AdCP 3.3 Web Bot Auth profile, pinned to adcontextprotocol/adcp#7894
- * at f311e1b5 (docs/building/by-layer/L1/wba-profile.mdx) and IETF webbotauth-00.
+ * at e5929470 (docs/building/by-layer/L1/wba-profile.mdx) and IETF webbotauth-00.
  *
  * RFC 9421 parsing, signature bases and cryptographic checks run in Cloudflare's
  * `http-message-sig`. This module adds the profile rules the library does not

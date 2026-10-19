@@ -1187,7 +1187,7 @@ jobs:
       # The head of adcontextprotocol/adcp#8298, which adds tests/wba-interop/
       # on top of the #7894 profile. Move it to the merge commit once #8298
       # merges, and to a release tag after #7894 ships.
-      ADCP_REF: ef966de19affc8b36a28f2fbc7c508050ce92d7b
+      ADCP_REF: 306cdfa6e565725e1a122838eafbcc980707306b
 
     steps:
       - name: Checkout code

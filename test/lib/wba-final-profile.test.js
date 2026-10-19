@@ -1,4 +1,4 @@
-// Web Bot Auth profile rules from adcontextprotocol/adcp#7894 at f311e1b5
+// Web Bot Auth profile rules from adcontextprotocol/adcp#7894 at e5929470
 // (docs/building/by-layer/L1/wba-profile.mdx) that the vendored vectors do
 // not isolate: one signature per request, the 64-byte nonce, the algorithm
 // set, the replay challenge, signed directories, and unsigned requests to
