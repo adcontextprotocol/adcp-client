@@ -1,7 +1,7 @@
 import { toReleasePrecisionVersion } from '../version';
 /**
  * Experimental AdCP 3.3 Web Bot Auth profile, pinned to adcontextprotocol/adcp#7894
- * at e5929470 (docs/building/by-layer/L1/wba-profile.mdx) and IETF webbotauth-00.
+ * at 9f472d63 (docs/building/by-layer/L1/wba-profile.mdx) and IETF webbotauth-00.
  *
  * RFC 9421 parsing, signature bases and cryptographic checks run in Cloudflare's
  * `http-message-sig`. This module adds the profile rules the library does not
@@ -32,7 +32,7 @@ import { canonicalAgentUrl } from './agent-resolver/select-agent';
 import { parseStrictJson } from './agent-resolver/strict-json';
 import { getHeaderValue, type RequestLike, type ResponseLike } from './canonicalize';
 import { computeContentDigest, contentDigestMatches, contentDigestUsesEncoding } from './content-digest';
-import { signWithPrivateJwkAsync, verifySignatureAsync } from './crypto';
+import { jwkToPublicKey, signWithPrivateJwkAsync, verifySignatureAsync } from './crypto';
 import {
   parseSignature,
   parseSignatureInputMember,
@@ -242,6 +242,15 @@ export function jwkThumbprint(
 /** The profile algorithm a key signs with, or undefined for a key the profile cannot use. */
 function keyAlgorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg | undefined {
   return jwk.kty === 'OKP' && jwk.crv === 'Ed25519' ? 'ed25519' : undefined;
+}
+/** Whether the runtime imports a public JWK; a malformed key is not imported. */
+function importable(jwk: AdcpJsonWebKey): boolean {
+  try {
+    jwkToPublicKey(jwk);
+    return true;
+  } catch {
+    return false;
+  }
 }
 /** {@link keyAlgorithm} for a key that must be usable; any other key is unsupported (403). */
 function algorithm(jwk: AdcpJsonWebKey): WebBotAuthAlg {
@@ -883,10 +892,11 @@ export async function verifyKeyDirectory(
       // refuses the directory before an unusable key is skipped.
       if (Object.keys(raw).some(k => PRIVATE_JWK_MEMBERS.has(k.toLowerCase()) || k.startsWith('_private')))
         denied('directory_key');
-      // A key the profile cannot use is ignored, and so is any signature it
+      // A key the profile cannot use or cannot import, such as an Ed25519 key
+      // with no `x` or a short one, is ignored, and so is any signature it
       // made (RFC 7517 section 5): a WBA directory may list keys of other
-      // registered algorithms (WBA section 5.5.1). Every usable key signs.
-      if (!keyAlgorithm(raw)) continue;
+      // registered algorithms (WBA section 5.5.1).
+      if (!keyAlgorithm(raw) || !importable(raw)) continue;
       const thumbprint = jwkThumbprint(raw);
       // `kid` may be omitted; when present it must be the thumbprint.
       const key = { ...raw, kid: raw.kid ?? thumbprint } as AdcpJsonWebKey;
@@ -898,7 +908,8 @@ export async function verifyKeyDirectory(
       )
         denied('directory_key');
       kids.add(key.kid);
-      keys.push(key);
+      // Only a key with a valid proof is used; any other key is ignored with
+      // its signature (WBA Appendix B.1; directory draft section 5).
       const proof = signatures.find(input => input.params.keyid === key.kid && input.params.tag === DIRECTORY_TAG);
       if (
         !proof ||
@@ -909,17 +920,17 @@ export async function verifyKeyDirectory(
         proof.params.expires <= now ||
         proof.params.expires <= proof.params.created
       )
-        denied('directory_proof');
+        continue;
       const proofComponents = [component('@authority', { req: true }), component('content-digest')];
       // Appendix B.1 sets the minimum coverage; a proof may cover more.
       let covered: ComponentDescriptor[];
       try {
         covered = proof.components.map(componentDescriptor);
       } catch {
-        return denied('directory_proof');
+        continue;
       }
       const requestHeaders = response.request.headers ?? {};
-      await verifyWithLibrary(
+      const proven = await verifyWithLibrary(
         {
           kind: 'response',
           status: response.status,
@@ -945,7 +956,15 @@ export async function verifyKeyDirectory(
         // The library rejects a proof whose `created` is in the future (beyond skew).
         { requiredComponents: proofComponents, requiredParameters: ['created', 'expires', 'keyid', 'tag'], now },
         async () => keyVerifier(key)
+      ).then(
+        () => true,
+        (error: unknown) => {
+          if (error instanceof WebBotAuthError) return false;
+          throw error;
+        }
       );
+      if (!proven) continue;
+      keys.push(key);
       expires = Math.min(expires, proof.params.expires);
     }
     if (!keys.length) denied('directory_keys');

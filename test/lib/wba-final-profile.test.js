@@ -1,4 +1,4 @@
-// Web Bot Auth profile rules from adcontextprotocol/adcp#7894 at e5929470
+// Web Bot Auth profile rules from adcontextprotocol/adcp#7894 at 9f472d63
 // (docs/building/by-layer/L1/wba-profile.mdx) that the vendored vectors do
 // not isolate: one signature per request, the 64-byte nonce, the algorithm
 // set, the replay challenge, signed directories, and unsigned requests to
@@ -386,7 +386,7 @@ async function directoryResponse(published, signers, { leaked = [] } = {}) {
   return { status: 200, headers, body, request: { method: 'GET', url } };
 }
 
-test('directories: keys the profile cannot use are ignored with their signatures; every usable key signs', async () => {
+test('directories: keys the profile cannot use or import, and keys without a valid proof, are ignored', async () => {
   const key = newKey();
   const ec = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ format: 'jwk' });
   const kids = async response => (await wba.verifyKeyDirectory(response, T)).keys.map(k => k.kid);
@@ -398,16 +398,35 @@ test('directories: keys the profile cannot use are ignored with their signatures
   // Web Bot Auth is Ed25519 only, so an RSA key is ignored the same way.
   const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'jwk' });
   assert.deepEqual(await kids(await directoryResponse([key, rsa], [key, rsa])), [key.kid]);
-  // A directory with no usable key, or with a usable key that did not sign, is a discovery failure.
+  // A directory with no usable key, or with no validly signed one, is a discovery failure.
   for (const unusable of [ec, rsa])
     await assert.rejects(
       wba.verifyKeyDirectory(await directoryResponse([unusable], [unusable]), T),
       e => e.status === 403 && e.reason === 'directory_keys'
     );
+  // Only an Ed25519 key with a valid proof is used; an unsigned key is ignored
+  // (WBA Appendix B.1; directory draft section 5), wherever it is listed.
+  const unsigned = newKey();
+  assert.deepEqual(await kids(await directoryResponse([key, unsigned], [key])), [key.kid]);
+  assert.deepEqual(await kids(await directoryResponse([unsigned, key], [key])), [key.kid]);
+  // So is a key whose proof does not verify: key2's signature is key1's.
+  const forged = await directoryResponse([key, unsigned], [key, unsigned]);
+  const [first] = forged.headers.signature.split(', ');
+  forged.headers.signature = `${first}, key2=${first.slice('key1='.length)}`;
+  assert.deepEqual(await kids(forged), [key.kid]);
+  // A directory with no validly signed Ed25519 key yields no key.
   await assert.rejects(
-    wba.verifyKeyDirectory(await directoryResponse([key, newKey()], [key]), T),
-    e => e.status === 403 && e.reason === 'directory_proof'
+    wba.verifyKeyDirectory(await directoryResponse([unsigned], [key]), T),
+    e => e.status === 403 && e.reason === 'directory_keys'
   );
+  // An Ed25519 key the runtime cannot import is ignored (RFC 7517 section 5):
+  // one with no `x` and one with a 31-byte `x`, as in the harness's D15.
+  const malformed = [
+    { kty: 'OKP', crv: 'Ed25519', kid: 'malformed-no-x', use: 'sig' },
+    { kty: 'OKP', crv: 'Ed25519', kid: 'malformed-short-x', x: Buffer.alloc(31, 7).toString('base64url'), use: 'sig' },
+  ];
+  assert.deepEqual(await kids(await directoryResponse([key, ...malformed], [key])), [key.kid]);
+  assert.deepEqual(await kids(await directoryResponse([...malformed, key], [key])), [key.kid]);
   // A request signed by the usable key verifies through a directory that also lists the P-256 key.
   const response = await directoryResponse([key, ec], [key, ec]);
   const options = {
@@ -419,6 +438,19 @@ test('directories: keys the profile cannot use are ignored with their signatures
     now: () => T,
   };
   assert.equal((await wba.verifyWebBotAuth(await rawSign(key), options))[0].keyid, key.kid);
+  // Through a directory that lists an unsigned key, the signed key verifies and the unsigned key is unknown (D11).
+  const mixed = await directoryResponse([key, unsigned], [key]);
+  const verifyAgainstMixed = async signer =>
+    wba.verifyWebBotAuth(await rawSign(signer), {
+      directory: new wba.SignatureDirectoryResolver({
+        now: () => T,
+        fetchOptions: { trustedFetchFn: async () => new Response(mixed.body, { headers: mixed.headers }) },
+      }),
+      replayStore: new InMemoryReplayStore(),
+      now: () => T,
+    });
+  assert.equal((await verifyAgainstMixed(key))[0].keyid, key.kid);
+  await assert.rejects(verifyAgainstMixed(unsigned), e => e.status === 403);
 });
 
 test('directories: a key that carries private material is refused, whether or not the profile can use it', async () => {
@@ -443,6 +475,8 @@ test('directories: a key that carries private material is refused, whether or no
     ['oct k', [key, { kty: 'oct', k: 'c2VjcmV0' }], [key]],
     // Member names are matched case-insensitively, as the Go and Python SDKs match them.
     ['Ed25519 D', [(({ d, ...rest }) => ({ ...rest, D: d }))(key)], [key]],
+    // The check runs before a malformed key is skipped.
+    ['malformed Ed25519 d', [key, { kty: 'OKP', crv: 'Ed25519', d: key.d }], [key]],
     ['P-256 D', [key, (({ d, ...rest }) => ({ ...rest, D: d }))(ec)], [key]],
     ['RSA P only', [key, { ...rsaPublic, P: rsa.p }], [key]],
     ['oct K', [key, { kty: 'oct', K: 'c2VjcmV0' }], [key]],
