@@ -17,8 +17,10 @@ const REQUEST = {
   body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
 };
 
+const spawn = operation =>
+  spawnSync(process.execPath, [ADAPTER], { input: JSON.stringify(operation), encoding: 'utf8' });
 function run(operation) {
-  const result = spawnSync(process.execPath, [ADAPTER], { input: JSON.stringify(operation), encoding: 'utf8' });
+  const result = spawn(operation);
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout);
 }
@@ -45,5 +47,25 @@ test('the adapter signs and verifies requests and directories', () => {
     status: 429,
     rule: 'replayed',
   });
-  assert.deepEqual(pick(run({ op: 'unknown' })), { ok: false, status: 0, rule: 'Error' });
+});
+
+test('only the SDK verification refusals are refusals; any other error crashes the adapter', () => {
+  const key = generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' });
+  // A refusal: a request with no signature fields is a 403.
+  assert.deepEqual(pick(run({ op: 'verify_request', request: REQUEST, directories: {}, now: NOW })), {
+    ok: false,
+    status: 403,
+    rule: 'headers_missing',
+  });
+  // A crash, which the harness grades as a failure, never as a refusal: an
+  // unknown operation, a signer refusing its input, and a malformed operation.
+  for (const operation of [
+    { op: 'unknown' },
+    { op: 'sign_request', key, origin: 'http://buyer.example.com', request: REQUEST, now: NOW },
+    { op: 'verify_request', request: null, directories: {}, now: NOW },
+  ]) {
+    const result = spawn(operation);
+    assert.notEqual(result.status, 0, operation.op);
+    assert.equal(result.stdout, '', operation.op);
+  }
 });

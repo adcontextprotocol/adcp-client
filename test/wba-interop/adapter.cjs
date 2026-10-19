@@ -16,12 +16,9 @@ const { InMemoryReplayStore } = require('@adcp/sdk/signing/server');
 
 const DIRECTORY_PATH = '/.well-known/http-message-signatures-directory';
 const directoryUrl = origin => origin.replace(/\/$/, '') + DIRECTORY_PATH;
-const failure = error => ({
-  ok: false,
-  status: error?.status ?? 0,
-  rule: error?.reason ?? error?.name ?? 'error',
-  error: String(error?.message ?? error),
-});
+// A refusal is only the SDK's own verification refusal. Any other error
+// crashes the adapter, which the harness grades as a failure (PROTOCOL.md).
+const refusal = error => ({ ok: false, status: error.status, rule: error.reason, error: error.message });
 
 // `directories` maps each origin to the signed directory response it serves.
 function directoryResolver(directories, now) {
@@ -98,14 +95,18 @@ async function main() {
   for await (const chunk of process.stdin) input += chunk;
   const operation = JSON.parse(input);
   const run = OPERATIONS[operation.op];
+  if (!run) throw new Error(`unknown operation ${operation.op}`);
   let result;
   try {
-    if (!run) throw new Error(`unknown operation ${operation.op}`);
     result = await run(operation);
   } catch (error) {
-    result = failure(error);
+    if (!(error instanceof identity.WebBotAuthError)) throw error;
+    result = refusal(error);
   }
   process.stdout.write(JSON.stringify(result));
 }
 
-main();
+main().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
