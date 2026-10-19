@@ -6,7 +6,7 @@ process.env.NODE_ENV = 'test';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { generateKeyPairSync } = require('node:crypto');
-const { CompactSign, importJWK } = require('jose');
+const { CompactSign } = require('jose');
 
 const wba = require('../../dist/lib/signing/web-bot-auth');
 const identity = require('../../dist/lib/identity-3.3');
@@ -395,8 +395,7 @@ test('a kid longer than any thumbprint is refused before any key lookup', async 
 
 test('the WBA path never skips revocation: without an origin revocation source the token is refused', async () => {
   const w = await world();
-  const { revocation, ...withoutRevocation } = w.webBotAuth;
-  void revocation;
+  const withoutRevocation = { ...w.webBotAuth, revocation: undefined };
   const result = await verifyGovernanceAuthorization(
     w.options(await sign(w.key.privateKey, w.key.kid), { webBotAuth: withoutRevocation })
   );
