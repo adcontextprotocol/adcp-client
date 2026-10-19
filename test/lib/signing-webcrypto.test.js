@@ -72,6 +72,8 @@ import {
 } from ${imp('signing/index.mjs')};
 import { InMemorySigningProvider } from ${imp('signing/testing.mjs')};
 import * as wba from ${imp('signing/web-bot-auth.mjs')};
+import * as jwsArtifacts from ${imp('identity-3.3/jws-artifacts.mjs')};
+import { CompactSign, importJWK } from 'jose';
 export default { async fetch(req) {
   const input = await req.json();
   const out = {};
@@ -131,6 +133,20 @@ export default { async fetch(req) {
         directory, replayStore: new InMemoryReplayStore(), isRevoked: async () => false, now: () => input.now });
       return signers[0].origin === origin ? 'verified' : 'wrong origin';
     });
+  // AdCP 3.3 R4: a JWS artifact verified with a key from the issuer's WBA key directory.
+  for (const key of input.wbaKeys)
+    await run('jws-artifact ' + key.alg, async () => {
+      const origin = 'https://gov.agency.com';
+      const privateKey = { ...key.privateJwk, kid: wba.jwkThumbprint(key.privateJwk) };
+      const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey }], { now: () => input.now });
+      const directory = new wba.SignatureDirectoryResolver({ now: () => input.now, fetchOptions: {
+        trustedFetchFn: async () => new Response(proof.body, { status: 200, headers: proof.headers }) } });
+      const token = await new CompactSign(new TextEncoder().encode('{"iss":"https://gov.agency.com"}'))
+        .setProtectedHeader({ alg: 'EdDSA', kid: privateKey.kid, typ: 'adcp-gov+jws' })
+        .sign(await importJWK(privateKey, 'EdDSA'));
+      const verified = await jwsArtifacts.verifyWebBotAuthJwsArtifact(token, origin, { directory });
+      return verified.kid === privateKey.kid && verified.keySource === 'directory' ? 'verified' : 'wrong key';
+    });
   return Response.json(out);
 } };`;
 }
@@ -175,6 +191,8 @@ test(
       platform: 'node',
       write: false,
       logLevel: 'error',
+      // The worker imports jose directly; it is written outside the repository.
+      nodePaths: [path.join(ROOT, 'node_modules')],
       plugins: [nodePrefix],
     });
     fs.rmSync(dir, { recursive: true, force: true });
@@ -241,6 +259,7 @@ test(
         'webhook ed25519': 'verified',
         'webhook ecdsa-p256-sha256': 'verified',
         'web-bot-auth ed25519': 'verified',
+        'jws-artifact ed25519': 'verified',
       });
     } finally {
       worker.stop();

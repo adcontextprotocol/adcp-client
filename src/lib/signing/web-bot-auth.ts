@@ -823,6 +823,10 @@ async function legacyRevocationCheck(options: VerifyWebBotAuthOptions, origin: s
 function testKeysAllowed(allowTestKeys: boolean | undefined): boolean {
   return allowTestKeys === true && ['test', 'development'].includes(process.env.NODE_ENV ?? '');
 }
+/** @internal A published fixture key that may not be used here (always outside test and development). */
+export function isRefusedWebBotAuthTestKey(kid: string, allowTestKeys?: boolean): boolean {
+  return TEST_KIDS.has(kid) && !testKeysAllowed(allowTestKeys);
+}
 export interface VerifiedSignatureDirectory {
   keys: AdcpJsonWebKey[];
   /** The earliest proof expiry. */
