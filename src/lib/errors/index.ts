@@ -898,7 +898,11 @@ export class VersionUnsupportedError extends ADCPError {
     public readonly actualVersion: 'v2' | 'v3',
     public readonly agentUrl?: string
   ) {
-    super(`Refusing to dispatch task '${taskType}': ` + VersionUnsupportedError.explain(reason, actualVersion));
+    super(
+      (taskType === 'get_adcp_capabilities'
+        ? 'Cannot discover supported AdCP capabilities: '
+        : `Refusing to dispatch task '${taskType}': `) + VersionUnsupportedError.explain(reason, actualVersion)
+    );
   }
 
   private static explain(reason: VersionUnsupportedReason, actualVersion: 'v2' | 'v3'): string {
@@ -908,7 +912,7 @@ export class VersionUnsupportedError extends ADCPError {
           ? 'AdCP 2 reached end of life on 2026-08-01. Upgrade the agent to AdCP 3. Migration and older SDK pins: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/migration-drop-adcp-2.md'
           : `seller does not support the configured AdCP 3 release.`;
       case 'idempotency':
-        return `seller reports v3 but omits adcp.idempotency.replay_ttl_seconds (required by spec).`;
+        return 'seller reports v3 but omits adcp.idempotency.replay_ttl_seconds (required by spec). Upgrade the agent to publish its replay guarantee. If your application does not require this guarantee, configure requireV3ForMutations: false.';
       case 'synthetic':
         return 'The agent does not advertise get_adcp_capabilities. AdCP 3 capability discovery is required; AdCP 2 compatibility has been removed.';
     }

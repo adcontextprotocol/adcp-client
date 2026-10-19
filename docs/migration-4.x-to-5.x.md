@@ -882,13 +882,18 @@ steps for a 4.x upgrader and are omitted here:
 
 ## v2 sunset
 
-AdCP v2 went unsupported on 2026-04-20 as part of the 3.0 GA cutover
-([adcp#2220](https://github.com/adcontextprotocol/adcp/issues/2220)). The
-client still executes v2 code paths — no functional break — but emits a
-one-time `console.warn` the first time a client instance sees v2
-capabilities from an agent. Suppress with `ADCP_ALLOW_V2=1` or `adcp
---allow-v2` if you're knowingly running against a legacy holdout.
-Synthetic capabilities don't fire the warning.
+AdCP v2 became unsupported at the April 2026 3.0 GA cutover and reached
+full end of life on August 1, 2026; see the protocol's
+[v2 sunset policy](https://github.com/adcontextprotocol/adcp/blob/main/docs/reference/v2-sunset.mdx).
+In SDK 5.x, the client still executed v2 code paths and emitted a one-time
+`console.warn` when a client instance saw explicit v2 capabilities. That
+historical warning could be suppressed with `ADCP_ALLOW_V2=1` or
+`adcp --allow-v2`; synthetic capabilities did not fire it.
+
+**SDK 16 update:** AdCP 2 compatibility, `ADCP_ALLOW_V2`, and `--allow-v2`
+have been removed. Agents must support AdCP 3 discovery before business-tool
+dispatch. Follow the [AdCP 2 retirement guide](./migration-drop-adcp-2.md)
+for current behavior and the last supporting SDK pins.
 
 ## Webhook HMAC legacy deprecation
 

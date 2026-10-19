@@ -5840,6 +5840,12 @@ function formatVerdict(verdict) {
 
 async function main() {
   const args = process.argv.slice(2);
+  if (args.some(arg => arg === '--allow-v2' || arg.startsWith('--allow-v2='))) {
+    console.error(
+      'ERROR: --allow-v2 has been removed. AdCP 2 reached end of life on 2026-08-01; upgrade the agent to AdCP 3. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/migration-drop-adcp-2.md'
+    );
+    process.exit(2);
+  }
   if (args[0] === 'identity') return require('./adcp-identity.js').handleIdentityCommand(args.slice(1));
 
   // `--version` / `-v` is handled before subcommands and before the

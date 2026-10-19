@@ -83,14 +83,11 @@ describe('SingleAgentClient.requireV3 — corroborated check', () => {
     );
   });
 
-  test('allowV2: false overrides ADCP_ALLOW_V2=1', async () => {
+  test('retired ADCP_ALLOW_V2 cannot enable AdCP 2', async () => {
     const original = process.env.ADCP_ALLOW_V2;
     process.env.ADCP_ALLOW_V2 = '1';
     try {
-      const client = clientWithCapabilities(
-        { version: 'v2', majorVersions: [2], _synthetic: false },
-        { allowV2: false }
-      );
+      const client = clientWithCapabilities({ version: 'v2', majorVersions: [2], _synthetic: false });
       await assert.rejects(() => client.requireV3('sync_creatives'), VersionUnsupportedError);
     } finally {
       if (original === undefined) delete process.env.ADCP_ALLOW_V2;

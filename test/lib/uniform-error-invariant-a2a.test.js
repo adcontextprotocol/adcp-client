@@ -142,7 +142,7 @@ function dispatchSkill(rpc, token, shape) {
       status: 'completed',
       adcp_version: '3.2',
       adcp: { major_versions: [3], idempotency: { supported: false } },
-      supported_protocols: ['media_buy'],
+      supported_protocols: ['governance'],
     };
   } else if (skill === 'get_property_list') {
     payload = getPropertyList(parameters, token, shape);
@@ -231,7 +231,7 @@ describe('conformance: uniform-error-response invariant (A2A)', () => {
     const invariant = report.uniformError.find(r => r.tool === 'get_property_list');
     assert.ok(invariant, 'invariant entry for get_property_list');
     assert.equal(invariant.mode, 'baseline');
-    assert.equal(invariant.verdict, 'pass', `unexpected differences: ${JSON.stringify(invariant.differences)}`);
+    assert.equal(invariant.verdict, 'pass', `unexpected invariant result: ${JSON.stringify(invariant)}`);
   });
 
   test('baseline: seller echoes probe id in error.details → fail', async () => {

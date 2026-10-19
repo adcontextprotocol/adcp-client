@@ -22,4 +22,4 @@ Seller applications using `createAdcpServer` or `createAdcpServerFromPlatform` m
 
 AdCP 3.0 and 3.1 compatibility remains available. Creative-model v2 projections and MCP v2 transport names refer to separate version schemes and remain supported.
 
-See the protocol's [v2 sunset policy](https://github.com/adcontextprotocol/adcp/issues/2220) and [FAQ](https://github.com/adcontextprotocol/adcp/blob/main/docs/faq.mdx).
+See the protocol's [v2 sunset policy](https://github.com/adcontextprotocol/adcp/blob/main/docs/reference/v2-sunset.mdx) and [FAQ](https://github.com/adcontextprotocol/adcp/blob/main/docs/faq.mdx).

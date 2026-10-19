@@ -69,6 +69,8 @@ describe('AdCP 2 end of life', () => {
       error => {
         assert.ok(error instanceof VersionUnsupportedError);
         assert.match(error.message, /does not advertise get_adcp_capabilities/);
+        assert.match(error.message, /^Cannot discover supported AdCP capabilities:/);
+        assert.doesNotMatch(error.message, /Refusing to dispatch task/);
         return true;
       }
     );
