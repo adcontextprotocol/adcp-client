@@ -135,6 +135,8 @@ both the format agent URL and ID. No network lookup occurs during projection.
 Existing declared asset keys keep their values. Other assets move only to one
 unoccupied slot with the same `asset_type`; URL assets must also match
 `requirements.url_type`, and pixel trackers must match the slot's `event`.
+Custom tracker events also match `custom_event_name`. Definitions containing
+repeatable groups retain all asset keys; projection does not infer group membership.
 Unmatched assets, ambiguous matches, and assets competing for the same slot
 keep their original keys. Unknown definitions leave assets unchanged. Canonical
 delivery retains its asset keys, and projection never mutates the caller's data.

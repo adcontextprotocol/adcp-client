@@ -68,8 +68,12 @@ describe('legacy creative asset keys (#3347)', () => {
       impression: { asset_type: 'pixel_tracker', event: 'impression', url: 'https://track.example/impression' },
       viewable: { asset_type: 'pixel_tracker', event: 'viewable_mrc_50', url: 'https://track.example/viewable' },
       click: { asset_type: 'pixel_tracker', event: 'click', url: 'https://track.example/click' },
-      other_url: { asset_type: 'url', url_type: 'privacy_policy', url: 'https://example.com/privacy' },
-      other_tracker: { asset_type: 'pixel_tracker', event: 'complete', url: 'https://track.example/complete' },
+      other_url: { asset_type: 'url', url_type: 'tracker_pixel', url: 'https://track.example/pixel' },
+      other_tracker: {
+        asset_type: 'pixel_tracker',
+        event: 'viewable_mrc_100',
+        url: 'https://track.example/viewable-100',
+      },
       unknown_event: { asset_type: 'pixel_tracker', url: 'https://track.example/unknown' },
     });
     assert.deepEqual(project(input).assets, {
@@ -144,15 +148,15 @@ describe('legacy creative asset keys (#3347)', () => {
       assets: [
         { asset_id: 'seller_image', asset_type: 'image' },
         { asset_id: 'destination', asset_type: 'url', requirements: { url_type: 'clickthrough' } },
-        { asset_id: 'privacy', asset_type: 'url', requirements: { url_type: 'privacy_policy' } },
+        { asset_id: 'tracker', asset_type: 'url', requirements: { url_type: 'tracker_pixel' } },
       ],
     };
     const input = creative();
-    input.assets.privacy_policy = { asset_type: 'url', url_type: 'privacy_policy', url: 'https://example.com/privacy' };
+    input.assets.tracking_url = { asset_type: 'url', url_type: 'tracker_pixel', url: 'https://track.example/pixel' };
     assert.deepEqual(project(input, definition).assets, {
       seller_image: input.assets.image,
       destination: input.assets.landing_page_url,
-      privacy: input.assets.privacy_policy,
+      tracker: input.assets.tracking_url,
     });
   });
 
@@ -189,6 +193,69 @@ describe('legacy creative asset keys (#3347)', () => {
   test('canonical delivery preserves canonical asset keys', () => {
     const input = creative();
     assert.deepEqual(projectCreativeForDelivery(input, product(), 'canonical'), input);
+  });
+
+  test('malformed JavaScript definition entries and slots are ignored', () => {
+    const input = creative();
+    assert.deepEqual(
+      projectCreativeForDelivery(input, product(), 'legacy', undefined, undefined, undefined, [null, {}]).assets,
+      { banner_image: input.assets.image, click_url: input.assets.landing_page_url }
+    );
+    const result = projectCreativeForDelivery(input, product(), 'legacy', undefined, undefined, undefined, [
+      null,
+      {},
+      { format_id: { id: formatId.id } },
+      { format_id: formatId, assets: [null, {}, { asset_id: 'hero', asset_type: 'image' }] },
+    ]);
+    assert.deepEqual(result.assets, { hero: input.assets.image, landing_page_url: input.assets.landing_page_url });
+  });
+
+  test('definitions with repeatable groups retain their asset keys', () => {
+    const input = creative();
+    const definition = {
+      format_id: formatId,
+      assets: [
+        { item_type: 'individual', asset_id: 'logo', asset_type: 'image' },
+        {
+          item_type: 'repeatable_group',
+          asset_group_id: 'cards',
+          assets: [{ asset_id: 'image', asset_type: 'image' }],
+        },
+      ],
+    };
+    for (const item_type of ['repeatable_group', 'future_group']) {
+      definition.assets[1].item_type = item_type;
+      assert.equal(project(input, definition).assets, input.assets);
+    }
+  });
+
+  test('custom trackers require the same custom event name', () => {
+    const definition = {
+      format_id: formatId,
+      assets: [
+        { asset_id: 'engagement', asset_type: 'pixel_tracker', event: 'custom', custom_event_name: 'engagement_3s' },
+      ],
+    };
+    for (const custom_event_name of [undefined, 'different_event', 'engagement_3s']) {
+      const input = creative();
+      input.assets.tracker = {
+        asset_type: 'pixel_tracker',
+        event: 'custom',
+        custom_event_name,
+        url: 'https://track.example/custom',
+      };
+      const result = project(input, definition);
+      assert.deepEqual(
+        result.assets,
+        custom_event_name === 'engagement_3s'
+          ? {
+              image: input.assets.image,
+              landing_page_url: input.assets.landing_page_url,
+              engagement: input.assets.tracker,
+            }
+          : input.assets
+      );
+    }
   });
 
   test('sync and inline create/update apply the same asset projection', () => {

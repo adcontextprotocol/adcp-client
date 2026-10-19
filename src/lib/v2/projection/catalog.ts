@@ -77,7 +77,10 @@ export interface V1FormatDefinition {
     required?: boolean;
     asset_type?: string;
     requirements?: Record<string, unknown>;
+    /** Reference-catalog extension used to match pixel-tracker slots. */
     event?: string;
+    /** Caller-defined tracker extension; required to match a custom event. */
+    custom_event_name?: string;
   }>;
   /**
    * v2 canonical projection. Always object-shaped per

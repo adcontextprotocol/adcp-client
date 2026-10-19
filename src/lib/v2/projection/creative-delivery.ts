@@ -1121,8 +1121,12 @@ function selectLegacyRef(
 function projectLegacyAssetKeys(assetsValue: unknown, definition: V1FormatDefinition | undefined): unknown {
   const assets = record(assetsValue);
   if (!assets || !Array.isArray(definition?.assets)) return assetsValue;
-  const declaredIds = new Set(definition.assets.map(slot => slot.asset_id));
-  const availableSlots = definition.assets.filter(
+  const slots = definition.assets.filter(slot => record(slot) !== undefined);
+  // Group membership needs a separate mapping contract; never flatten it into
+  // a standalone slot just because the asset types happen to agree.
+  if (slots.some(slot => slot.item_type !== undefined && slot.item_type !== 'individual')) return assetsValue;
+  const declaredIds = new Set(slots.map(slot => slot.asset_id));
+  const availableSlots = slots.filter(
     slot =>
       (slot.item_type === undefined || slot.item_type === 'individual') &&
       typeof slot.asset_id === 'string' &&
@@ -1141,7 +1145,12 @@ function projectLegacyAssetKeys(assetsValue: unknown, definition: V1FormatDefini
         return typeof asset.url_type === 'string' && asset.url_type === slot.requirements?.url_type;
       }
       if (asset.asset_type === 'pixel_tracker') {
-        return typeof asset.event === 'string' && asset.event === slot.event;
+        return (
+          typeof asset.event === 'string' &&
+          asset.event === slot.event &&
+          (asset.event !== 'custom' ||
+            (typeof asset.custom_event_name === 'string' && asset.custom_event_name === slot.custom_event_name))
+        );
       }
       return true;
     });
@@ -1170,7 +1179,10 @@ function projectCreative<T extends Record<string, unknown>>(
   delete next.format_kind;
   delete next.format_option_ref;
   next.format_id = { ...formatId };
-  const supplied = legacyFormatDefinitions?.filter(definition => sameLegacyIdentity(definition.format_id, formatId));
+  const supplied = legacyFormatDefinitions?.filter(definition => {
+    const ref = legacyRef(record(definition)?.format_id);
+    return ref !== undefined && sameLegacyIdentity(ref, formatId);
+  });
   const definition = supplied?.length ? (supplied.length === 1 ? supplied[0] : undefined) : lookupV1Format(formatId);
   if (Object.hasOwn(creative, 'assets')) next.assets = projectLegacyAssetKeys(creative.assets, definition);
   return next as T;
