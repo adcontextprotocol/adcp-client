@@ -60,6 +60,16 @@ describe('all_fields_present (#3343)', () => {
     assert.ok(result.error.length < 200);
   });
 
+  test('preserves pointers at the path length limit when array indexes gain digits', () => {
+    const field = 'x'.repeat(1024 - 'products[*].'.length);
+    const products = Array.from({ length: 10 }, () => ({ [field]: true }));
+    products.push({});
+    const result = grade({ products }, { path: `products[*].${field}` });
+    assert.equal(result.passed, false);
+    assert.deepEqual(result.actual, [`/products/10/${field}`]);
+    assert.equal(result.json_pointer, result.actual[0]);
+  });
+
   test('treats null items, primitive items, and inherited fields as missing', () => {
     const result = grade({ products: [null, false, Object.create({ format_options: [] })] });
     assert.equal(result.passed, false);

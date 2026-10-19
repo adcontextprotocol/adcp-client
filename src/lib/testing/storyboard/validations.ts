@@ -979,9 +979,9 @@ function validateFieldPresent(validation: StoryboardValidation, taskResult: Task
 
 function validateAllFieldsPresent(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
   const base = { check: validation.check, description: validation.description, path: validation.path };
-  const match = validation.path?.match(/^(.+)\[\*\]\.(.+)$/);
   const segments = parsePathWithWildcards(validation.path ?? '');
   const wildcardIndex = segments.indexOf(WILDCARD);
+  const match = wildcardIndex > 0 ? validation.path?.match(/^(.+)\[\*\]\.(.+)$/) : null;
   if (
     !match ||
     wildcardIndex <= 0 ||
@@ -1000,6 +1000,7 @@ function validateAllFieldsPresent(validation: StoryboardValidation, taskResult: 
 
   const arrayPath = match[1]!;
   const fieldPath = match[2]!;
+  const arrayPointer = toJsonPointer(arrayPath);
   const items = resolvePath(taskResult.data, arrayPath);
   if (items == null || (Array.isArray(items) && items.length === 0)) {
     return {
@@ -1014,16 +1015,17 @@ function validateAllFieldsPresent(validation: StoryboardValidation, taskResult: 
       ...base,
       passed: false,
       error: `Expected an array at path: ${arrayPath}`,
-      json_pointer: toJsonPointer(arrayPath),
+      json_pointer: arrayPointer,
       expected: 'array',
       actual: items,
     };
   }
 
   const missing: string[] = [];
+  const fieldPointer = toJsonPointer(fieldPath);
   for (let index = 0; index < items.length; index++) {
     if (resolvePath(items[index], fieldPath) == null) {
-      missing.push(toJsonPointer(`${arrayPath}[${index}].${fieldPath}`));
+      missing.push(`${arrayPointer}/${index}${fieldPointer}`);
     }
   }
   if (missing.length === 0) return { ...base, passed: true };
