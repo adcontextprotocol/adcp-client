@@ -17,6 +17,16 @@ function runCli(args) {
   });
 }
 
+for (const flag of ['--allow-v2', '--allow-v2=true']) {
+  test(`${flag} rejects retired AdCP 2 compatibility before resolving an agent`, () => {
+    const result = runCli(['https://retired.invalid/mcp', 'get_products', flag]);
+    assert.strictEqual(result.status, 2);
+    assert.match(result.stderr, /--allow-v2 has been removed/);
+    assert.match(result.stderr, /2026-08-01/);
+    assert.match(result.stderr, /migration-drop-adcp-2/);
+  });
+}
+
 // Call the command with no agent arg so `handleStoryboardRun` exits at the
 // "Usage:" check (exit 2). `warnRemovedFlags` fires at the top of the handler,
 // before that check — so we get the warning without any network call.

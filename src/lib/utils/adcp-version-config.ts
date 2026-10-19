@@ -63,6 +63,12 @@ export function resolveAdcpVersion(adcpVersion: string | undefined, optionName =
   }
 
   const major = parseAdcpMajorVersion(adcpVersion);
+  if (Number.isFinite(major) && major < 3) {
+    throw new ConfigurationError(
+      'AdCP 2 reached end of life on 2026-08-01 and is no longer supported. Use AdCP 3 or pin an older SDK release.',
+      optionName
+    );
+  }
   if (!Number.isFinite(major)) {
     throw new ConfigurationError(
       `${optionName} ${JSON.stringify(adcpVersion)} is not a valid AdCP version. ` +

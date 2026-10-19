@@ -5040,8 +5040,6 @@ function bundledReleasesForMajors(majors: readonly number[], configured: ParsedA
     if (!acceptedMajors.has(parsed.major) || compareAdcpRelease(parsed, configured) > 0) continue;
     const key = `${parsed.major}.${parsed.minor}${parsed.prerelease ? `-${parsed.prerelease}` : ''}`;
     const existing = releases.get(key);
-    // Preserve the v2.5 alias because that is the actual bundled directory;
-    // stable semver patches otherwise collapse to release precision.
     if (!existing || parsed.value.startsWith('v')) releases.set(key, parsed);
   }
   // A server may explicitly opt into a bundled forward release before the
@@ -5283,6 +5281,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     responseEnhancer,
     structuredContentTextFallback = 'always',
   } = config;
+  if (
+    capConfig?.major_versions?.some(major => major < 3) ||
+    capConfig?.supported_versions?.some(version => parseAdcpMajorVersion(version) < 3)
+  ) {
+    throw new ConfigurationError(
+      'AdCP 2 reached end of life on 2026-08-01. Server capabilities must advertise AdCP 3 only.',
+      'capabilities'
+    );
+  }
   if (taskRegistry !== undefined && taskRegistry.scopeVersion !== 1) {
     throw new Error(
       'createAdcpServer: taskRegistry.scopeVersion must be 1. Migrate custom registries to the account/principal-scoped TaskRegistry signatures before use.'

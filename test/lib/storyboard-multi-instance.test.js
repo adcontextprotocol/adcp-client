@@ -484,7 +484,7 @@ describe('runStoryboard: multi-instance multi-pass', () => {
 
   test('coalesces unresolved fixture evidence into one coverage gap across passes', async () => {
     const shared = new Map();
-    const tools = ['get_products', 'create_media_buy'];
+    const tools = ['get_adcp_capabilities', 'get_products', 'create_media_buy'];
     agentA = await startFakeAgent({ state: shared, label: 'A', tools });
     agentB = await startFakeAgent({ state: shared, label: 'B', tools });
     const storyboard = {

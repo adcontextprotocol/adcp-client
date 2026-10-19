@@ -119,6 +119,19 @@ function hasMethod(parsedBody, method) {
 }
 
 function registerSessionTools(mcp, state) {
+  mcp.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => ({
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          status: 'completed',
+          adcp_version: '3.2',
+          adcp: { major_versions: [3], idempotency: { supported: false } },
+          supported_protocols: ['media_buy'],
+        }),
+      },
+    ],
+  }));
   for (const toolName of ['ping', 'get_products', 'create_media_buy', 'sync_creatives']) {
     mcp.registerTool(toolName, { inputSchema: {} }, async () => {
       state.toolCalls++;
@@ -340,25 +353,24 @@ test('ProtocolClient default OAuth path reuses the stateful MCP session across w
 test('SingleAgentClient default OAuth path reuses the stateful MCP session after discovery', async () => {
   await closeMCPConnections();
   const server = await startStatefulMcpOAuthStub();
-  const client = new SingleAgentClient(
-    {
-      id: 'single-agent-default-oauth-session',
-      name: 'SingleAgent Default OAuth Session',
-      agent_uri: server.url,
-      protocol: 'mcp',
-      oauth_tokens: {
-        access_token: 'tok_single_agent',
-        refresh_token: 'rt_single_agent',
-        issuer: new URL(server.url).origin,
-        token_type: 'Bearer',
-      },
-      oauth_client: { client_id: 'client_single_agent' },
+  const client = new SingleAgentClient({
+    id: 'single-agent-default-oauth-session',
+    name: 'SingleAgent Default OAuth Session',
+    agent_uri: server.url,
+    protocol: 'mcp',
+    oauth_tokens: {
+      access_token: 'tok_single_agent',
+      refresh_token: 'rt_single_agent',
+      issuer: new URL(server.url).origin,
+      token_type: 'Bearer',
     },
-    { allowV2: true }
-  );
+    oauth_client: { client_id: 'client_single_agent' },
+  });
 
   try {
     await client.getCapabilities();
+    const discoverySessionId = server.state.sessionHeaders.at(-1);
+    assert.ok(discoverySessionId, 'capability discovery must use a server-issued MCP session');
     resetStatefulMcpCounters(server.state);
 
     await client.executeTask('ping', {});
@@ -366,14 +378,14 @@ test('SingleAgentClient default OAuth path reuses the stateful MCP session after
     await client.executeTask('ping', {});
 
     assert.strictEqual(
-      server.state.methodCounts.get('initialize'),
-      1,
-      'SingleAgentClient should keep one OAuth MCP session across default executeTask calls'
+      server.state.methodCounts.get('initialize') ?? 0,
+      0,
+      'SingleAgentClient should reuse the capability discovery session across default executeTask calls'
     );
     assert.strictEqual(
       server.state.initializedSessionIds.length,
-      1,
-      'stateful MCP server should issue one session id for the executeTask workflow'
+      0,
+      'stateful MCP server should not issue another session id after capability discovery'
     );
     assert.strictEqual(server.state.methodCounts.get('tools/call'), 3, 'all executeTask calls should use tools/call');
     assert.ok(
@@ -381,8 +393,8 @@ test('SingleAgentClient default OAuth path reuses the stateful MCP session after
       'stateful MCP executeTask calls should carry the server-issued mcp-session-id'
     );
     assert.ok(
-      server.state.sessionHeaders.every(sessionId => sessionId === server.state.initializedSessionIds[0]),
-      `expected all executeTask calls to reuse session ${server.state.initializedSessionIds[0]}, saw ${JSON.stringify(
+      server.state.sessionHeaders.every(sessionId => sessionId === discoverySessionId),
+      `expected all executeTask calls to reuse session ${discoverySessionId}, saw ${JSON.stringify(
         server.state.sessionHeaders
       )}`
     );

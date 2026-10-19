@@ -163,6 +163,19 @@ test('CLI tools-list --json drains a large schema document before exiting', { ti
         content: [{ type: 'text', text: JSON.stringify({ status: 'completed', payload: largeDescription }) }],
       })
     );
+    server.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => ({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            status: 'completed',
+            adcp_version: '3.2',
+            adcp: { major_versions: [3], idempotency: { supported: false } },
+            supported_protocols: ['media_buy'],
+          }),
+        },
+      ],
+    }));
     return server;
   };
 

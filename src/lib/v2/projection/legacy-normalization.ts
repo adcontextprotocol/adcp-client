@@ -18,7 +18,7 @@ export type NormalizedLegacyProduct<TProduct extends LegacyProductNormalizationI
 };
 
 /**
- * Apply the SDK's complete v2.5 `get_products` compatibility normalization
+ * Apply the SDK's established `get_products` field normalization
  * before projecting a response recovered through a custom `tasks_get` flow.
  */
 export function normalizeLegacyGetProductsResponse<

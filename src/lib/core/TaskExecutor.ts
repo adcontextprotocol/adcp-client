@@ -1,3 +1,4 @@
+import { VersionUnsupportedError } from '../errors';
 import { deliveryWebhookRegistrationId } from './webhook-registration';
 import { isAdcpVersionAtLeast } from '../utils/adcp-version-config';
 function validateIdentity33Payload(
@@ -649,13 +650,6 @@ function resolveIdempotencyKey(taskName: string, params: any, serverVersion?: 'v
       ? params.idempotency_key
       : undefined;
   if (callerSupplied) return callerSupplied;
-  // v2.5 mutations use buyer_ref as their stable replay identity. Request
-  // adaptation has already derived it from the caller's canonical key. Do
-  // not inject a fresh v3-only idempotency_key after adaptation: that makes
-  // identical retries differ on the wire and can defeat legacy dedupe.
-  if (serverVersion === 'v2') {
-    return params && typeof params === 'object' && typeof params.buyer_ref === 'string' ? params.buyer_ref : undefined;
-  }
   if (requestUsesIdempotency(taskName, params)) return generateIdempotencyKey();
   return undefined;
 }
@@ -1209,23 +1203,6 @@ export class TaskExecutor {
   }
 
   /**
-   * After `adaptRequestForServerVersion` has rewritten a v3 request into v2
-   * wire format, validate the adapted shape against the cached v2.5 schema
-   * bundle. Always warn-only — adapter bugs shouldn't break user requests,
-   * and the v3 pre-send pass already vouched for the user-facing input.
-   * This pass exists to surface drift between what the adapter emits and
-   * what a v2.5 server expects on the wire (primarily as CI signal via the
-   * adapter-conformance test suite).
-   *
-   * Skips silently for tasks without a v2.5 schema or when the v2.5 bundle
-   * isn't cached. Caller is responsible for gating on `serverVersion === 'v2'`
-   * so v3-targeted traffic doesn't pay the validation cost.
-   */
-  validateAdaptedRequestAgainstV2(taskName: string, adaptedParams: unknown, debugLogs?: any[]): void {
-    validateOutgoingRequest(taskName, adaptedParams, 'warn', debugLogs, 'v2.5');
-  }
-
-  /**
    * Generate webhook URL for protocol-level webhook support
    */
   /**
@@ -1347,6 +1324,7 @@ export class TaskExecutor {
     beforeProtocolDispatch?: BeforeProtocolDispatchHook<T>,
     deferredClientContext?: unknown
   ): Promise<TaskResult<T>> {
+    if (serverVersion === 'v2') throw new VersionUnsupportedError(taskName, 'version', 'v2', agent.agent_uri);
     const effectiveServerVersion = serverVersion ?? 'v3';
     this.lastKnownServerVersion = effectiveServerVersion;
     // Own the request graph before the first awaited activity/governance
@@ -1388,7 +1366,7 @@ export class TaskExecutor {
         ? undefined
         : resolveIdempotencyKey(taskName, params, serverVersion);
     if (idempotencyKey) attachTaskDeadlineIdempotencyKey(options, idempotencyKey);
-    if (serverVersion !== 'v2' && idempotencyKey && params && typeof params === 'object' && !params.idempotency_key) {
+    if (idempotencyKey && params && typeof params === 'object' && !params.idempotency_key) {
       params = { ...params, idempotency_key: idempotencyKey };
     }
 
@@ -4211,6 +4189,9 @@ export class TaskExecutor {
     if (!state) {
       throw new Error('Deferred task not found.');
     }
+    if (state.serverVersion === 'v2') {
+      throw new VersionUnsupportedError(state.taskName, 'version', 'v2');
+    }
     if (state.expiresAt <= Date.now()) {
       throw new Error('Deferred task expired.');
     }
@@ -6067,10 +6048,9 @@ export class TaskExecutor {
   /**
    * Normalize response data for schema validation
    *
-   * Converts v2-style responses to v3 format before validation.
-   * This ensures validation passes for both v2 and v3 server responses.
+   * Normalizes established AdCP 3 product fields before validation.
    */
-  private normalizeResponseForValidation(response: any, taskName: string, legacyWire = false): any {
+  private normalizeResponseForValidation(response: any, taskName: string): any {
     if (!response) return response;
 
     // Strip underscore-prefixed client-side annotations (`_message` is added
@@ -6084,14 +6064,8 @@ export class TaskExecutor {
         if (!k.startsWith('_')) stripped[k] = v;
       }
     } else {
-      return taskName === 'get_products' && !legacyWire ? normalizeGetProductsResponse(response) : response;
+      return taskName === 'get_products' ? normalizeGetProductsResponse(response) : response;
     }
-
-    // Validate v2.5 against the exact response that crossed the wire. Public
-    // canonicalization happens later in SingleAgentClient; applying it here
-    // would compare canonical `fixed_price`/`format_options` fields to the
-    // legacy schema that correctly requires `rate`/`is_fixed`/`format_ids`.
-    if (legacyWire) return stripped;
 
     switch (taskName) {
       case 'get_products':
@@ -6117,18 +6091,8 @@ export class TaskExecutor {
     const logViolations = this.config.logSchemaViolations !== false;
 
     try {
-      // Validate against the version the agent actually spoke. Without
-      // this, v2.5 sellers (e.g. Wonderstruck) return valid v2.5-shaped
-      // responses and the SDK rejects them as malformed v3 — surfaces as
-      // `pricing_options must NOT have fewer than 1 items` and similar
-      // shape mismatches that don't exist in v2.5. The v3 → v2 path is
-      // Normal dispatch uses lastKnownServerVersion; restart recovery passes
-      // the persisted continuation version explicitly so concurrent or fresh
-      // executors cannot validate the seller's response against another wire.
       const pinnedValidationVersion =
-        (serverVersion ?? this.lastKnownServerVersion) === 'v2'
-          ? 'v2.5'
-          : (this.responseAdcpVersionForValidation() ?? this.config.adcpVersion ?? ADCP_VERSION);
+        this.responseAdcpVersionForValidation() ?? this.config.adcpVersion ?? ADCP_VERSION;
       // Capabilities are negotiated before any pin applies: a 3.0 pin (or a
       // major-only envelope) is served the seller's highest release in the
       // major, echoed in `adcp_version`. Validate against that release, as the
@@ -6137,7 +6101,7 @@ export class TaskExecutor {
       // otherwise against the pin. This holds even when an external schema
       // root is active for the pin. Only the validator's version changes; the
       // unwrapper keeps `effectiveResponseAdcpVersion()`.
-      if (taskName === 'get_adcp_capabilities' && pinnedValidationVersion !== 'v2.5') {
+      if (taskName === 'get_adcp_capabilities') {
         return withServedValidationVersion(response, pinnedValidationVersion, validationVersion =>
           this.validateResponseSchemaAgainst(response, taskName, debugLogs, mode, logViolations, validationVersion)
         );
@@ -6168,7 +6132,7 @@ export class TaskExecutor {
     logViolations: boolean,
     validationVersion: string
   ): { valid: boolean; errors: string[] } {
-    const normalizedResponse = this.normalizeResponseForValidation(response, taskName, validationVersion === 'v2.5');
+    const normalizedResponse = this.normalizeResponseForValidation(response, taskName);
     // TaskExecutor owns the user-facing log entry below. Passing debugLogs
     // into the lower-level hook would emit a second, unversioned duplicate.
     const outcome =
@@ -6221,7 +6185,6 @@ export class TaskExecutor {
   }
 
   private effectiveResponseAdcpVersion(serverVersion?: 'v2' | 'v3'): string {
-    if ((serverVersion ?? this.lastKnownServerVersion) === 'v2') return 'v2.5';
     return this.responseAdcpVersionForValidation() ?? this.config.adcpVersion ?? ADCP_VERSION;
   }
 

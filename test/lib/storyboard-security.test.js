@@ -1387,7 +1387,10 @@ describe('storyboard runner: auth-override dispatch', () => {
       },
       defaultInputModes: ['application/json'],
       defaultOutputModes: ['application/json'],
-      skills: [{ id: 'list_creatives', name: 'list_creatives', description: 'Protected probe', tags: ['adcp'] }],
+      skills: [
+        { id: 'get_adcp_capabilities', name: 'get_adcp_capabilities', description: 'Discovery', tags: ['adcp'] },
+        { id: 'list_creatives', name: 'list_creatives', description: 'Protected probe', tags: ['adcp'] },
+      ],
     };
     const storyboard = {
       id: 'a2a_auth_transport_failure',
@@ -1466,6 +1469,37 @@ describe('storyboard runner: auth-override dispatch', () => {
       if (url === crossOriginRpcUrl) {
         crossOriginAuthorization = new Headers(init.headers).get('authorization');
         const body = JSON.parse(init.body);
+        if (body.params?.message?.parts?.[0]?.data?.skill === 'get_adcp_capabilities') {
+          return new Response(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: body.id,
+              result: {
+                task: {
+                  id: 'cross-origin-capabilities',
+                  contextId: 'capabilities-context',
+                  status: { state: 'TASK_STATE_COMPLETED' },
+                  artifacts: [
+                    {
+                      artifactId: 'capabilities',
+                      parts: [
+                        {
+                          data: {
+                            status: 'completed',
+                            adcp_version: '3.2',
+                            adcp: { major_versions: [3], idempotency: { supported: false } },
+                            supported_protocols: ['creative'],
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
         return new Response(
           JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32001, message: 'Authentication required' } }),
           { status: 401, headers: { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="agent"' } }
@@ -2182,6 +2216,7 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
               id: body.id,
               result: {
                 tools: [
+                  { name: 'get_adcp_capabilities', inputSchema: { type: 'object' } },
                   {
                     name: advertisedTool,
                     inputSchema: {
@@ -2190,6 +2225,20 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
                     },
                   },
                 ],
+              },
+            });
+          }
+          if (body.method === 'tools/call' && body.params?.name === 'get_adcp_capabilities') {
+            return reply(200, {
+              jsonrpc: '2.0',
+              id: body.id,
+              result: {
+                structuredContent: {
+                  status: 'completed',
+                  adcp_version: '3.2',
+                  adcp: { major_versions: [3], idempotency: { supported: false } },
+                  supported_protocols: ['creative'],
+                },
               },
             });
           }

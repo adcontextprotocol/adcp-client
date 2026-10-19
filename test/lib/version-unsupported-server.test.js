@@ -106,13 +106,8 @@ describe('createAdcpServer — VERSION_UNSUPPORTED single-field check (#1075)', 
     assert.ok(Array.isArray(res.structuredContent.products));
   });
 
-  test('multi-version seller (major_versions: [2, 3]) accepts both majors', async () => {
-    const server = buildServer({ major_versions: [2, 3] });
-    const res2 = await callTool(server, 'get_products', { ...VALID_GET_PRODUCTS, adcp_major_version: 2 });
-    const res3 = await callTool(server, 'get_products', { ...VALID_GET_PRODUCTS, adcp_major_version: 3 });
-
-    assert.notStrictEqual(res2.isError, true);
-    assert.notStrictEqual(res3.isError, true);
+  test('server refuses to advertise the retired AdCP 2 major', () => {
+    assert.throws(() => buildServer({ major_versions: [2, 3] }), /AdCP 2 reached end of life/);
   });
 
   test('buyer omits both fields → no version check, dispatches normally', async () => {

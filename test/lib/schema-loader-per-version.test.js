@@ -286,8 +286,8 @@ describe('schema-loader per-version state', () => {
 
   test('resolveBundleKey accepts legacy v-prefix aliases', () => {
     assert.strictEqual(resolveBundleKey('v3'), 'v3');
-    assert.strictEqual(resolveBundleKey('v2.5'), 'v2.5');
-    assert.strictEqual(resolveBundleKey('v2.6'), 'v2.6');
+    assert.throws(() => resolveBundleKey('v2.5'), /end of life/);
+    assert.throws(() => resolveBundleKey('v2.6'), /end of life/);
   });
 
   test(`${ADCP_VERSION} primary bundle compiles and accepts wholesale-feed request fields`, () => {

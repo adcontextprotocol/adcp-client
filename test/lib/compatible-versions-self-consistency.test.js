@@ -51,7 +51,7 @@ describe('COMPATIBLE_ADCP_VERSIONS self-consistency', () => {
     // Belt-and-suspenders against a regression that drops maintained stable
     // aliases while keeping 3.0.x intact. Retired beta/RC aliases must not be
     // reintroduced alongside the single current primary prerelease.
-    for (const legacy of ['v2.5', 'v2.6', 'v3']) {
+    for (const legacy of ['v3']) {
       assert.ok(
         COMPATIBLE_ADCP_VERSIONS.includes(legacy),
         `Legacy alias ${legacy} dropped from COMPATIBLE_ADCP_VERSIONS — would break ` +
@@ -59,7 +59,7 @@ describe('COMPATIBLE_ADCP_VERSIONS self-consistency', () => {
       );
     }
 
-    for (const retiredPreview of ['3.0.0-beta.1', '3.0.0-beta.3']) {
+    for (const retiredPreview of ['v2.5', 'v2.6', '3.0.0-beta.1', '3.0.0-beta.3']) {
       assert.equal(
         COMPATIBLE_ADCP_VERSIONS.includes(retiredPreview),
         false,

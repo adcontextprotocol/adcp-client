@@ -1,3 +1,6 @@
+import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
+import { normalizeMediaBuyResponse } from '../utils/creative-adapter';
+import { normalizeFormatsResponse } from '../utils/format-renders';
 import {
   isIdentity33SchemaScope,
   withIdentity33SchemaScope,
@@ -243,7 +246,7 @@ function presentedStaticTransportCredential(
 }
 
 // v3.0 compatibility utilities
-import type { AdcpCapabilities, AdcpMajorVersion, ToolInfo, FeatureName } from '../utils/capabilities';
+import type { AdcpCapabilities, ToolInfo, FeatureName } from '../utils/capabilities';
 import {
   agentDiscoveryCacheKey,
   MAX_AGENT_DISCOVERY_TTL_MS,
@@ -253,7 +256,6 @@ import {
   type AgentDiscoveryEntry,
 } from './agent-discovery-cache';
 import {
-  buildSyntheticCapabilities,
   buildSyntheticV3Capabilities,
   augmentCapabilitiesFromTools,
   looksLikeV3Capabilities,
@@ -286,7 +288,6 @@ import { normalizeRequestParams } from '../utils/request-normalizer';
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
 import { validateUserAgent } from '../utils/validate-user-agent';
 import { resolveWebhookUrl, selectWebhookTemplate } from './webhook-url';
-import { getV25Adapter } from '../adapters/legacy/v2-5';
 import {
   ProductPropertyPolicyError,
   validateProductsAgainstPropertyPolicy,
@@ -1660,35 +1661,8 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    * @default true
    */
   validateFeatures?: boolean;
-  /**
-   * Gate mutating-task dispatch on the seller's declared major version.
-   * When the seller returns an authoritative `get_adcp_capabilities`
-   * response, the guard requires:
-   *   1. `major_versions` includes 3
-   *   2. `adcp.idempotency.replay_ttl_seconds` is declared (spec-required)
-   *
-   * Sellers whose capabilities are synthesized from `tools/list` (no
-   * authoritative `get_adcp_capabilities` response) route through the
-   * v2 adapter with a one-time warning — a compliant v3 seller would
-   * declare itself, so absence of a declaration is read as v2. Adopters
-   * who need a hard "definitely-v3" gate should validate
-   * `(await client.getCapabilities())._synthetic === false` directly.
-   *
-   * Throws `VersionUnsupportedError` before the request is sent when
-   * the guard rejects. Bypass with `allowV2` or — process-wide as a
-   * fallback — `ADCP_ALLOW_V2=1`.
-   *
-   * @default false
-   */
+  /** Require release compatibility and the declared idempotency replay TTL before mutations. */
   requireV3ForMutations?: boolean;
-  /**
-   * Per-client bypass for the v3 guard. When `true`, the guard is off
-   * regardless of the `ADCP_ALLOW_V2` env var. When `undefined`, the env
-   * var is consulted as a fallback. Set explicitly in multi-tenant
-   * deployments so one tenant's override can't silently disable safety
-   * for another.
-   */
-  allowV2?: boolean;
   /**
    * Runtime schema validation options
    */
@@ -1895,10 +1869,10 @@ function isCapabilityEvidence(value: unknown): value is AdcpCapabilities {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const candidate = value as Partial<AdcpCapabilities>;
   return (
-    (candidate.version === 'v2' || candidate.version === 'v3') &&
+    candidate.version === 'v3' &&
     Array.isArray(candidate.majorVersions) &&
-    candidate.majorVersions.length > 0 &&
-    candidate.majorVersions.every(version => version === 2 || version === 3) &&
+    candidate.majorVersions.includes(3) &&
+    candidate.majorVersions.every(version => Number.isSafeInteger(version) && version > 0) &&
     Array.isArray(candidate.protocols) &&
     candidate.protocols.every(protocol => typeof protocol === 'string') &&
     typeof candidate.features === 'object' &&
@@ -1908,64 +1882,6 @@ function isCapabilityEvidence(value: unknown): value is AdcpCapabilities {
     candidate.extensions.every(extension => typeof extension === 'string') &&
     typeof candidate._synthetic === 'boolean'
   );
-}
-
-/**
- * Internal single-agent client implementation
- *
- * This is an internal implementation detail used by AgentClient and ADCPMultiAgentClient.
- * External users should use AdCPClient (alias for ADCPMultiAgentClient) instead.
- *
- * Key features:
- * - 🔒 Full type safety for all ADCP tasks
- * - 💬 Conversation management with context preservation
- * - 🔄 Input handler pattern for clarifications
- * - ⏱️ Timeout and retry support
- * - 🐛 Debug logging and observability
- * - 🎯 Works with both MCP and A2A protocols
- */
-/**
- * Does a JS runtime value's type plausibly match a JSON Schema's declared
- * shape? Used by the v2 adapter aliasing path to avoid moving a string
- * into a slot the agent's tool schema declared as an object (e.g.,
- * Wonderstruck's `brand: BrandReference` slot vs our adapter's
- * `brand_manifest: 'https://...'` URL string).
- *
- * Recurses into `anyOf` / `oneOf`: the move is safe iff at least one
- * variant accepts the value's runtime type. `$ref` we can't introspect
- * locally — return true and let the seller's own validation catch.
- *
- * The empty schema `{}` is treated as "doesn't accept this type" so
- * Pydantic-generated tool schemas with `anyOf: [{}, {type: null}]` —
- * which technically allow anything but in practice mask a stricter
- * Pydantic union — don't pull the buyer into the broken alias.
- */
-function valueMatchesSchemaType(value: unknown, propSchema: unknown): boolean {
-  if (!propSchema || typeof propSchema !== 'object') return false;
-  const schema = propSchema as { type?: unknown; oneOf?: unknown; anyOf?: unknown; $ref?: unknown };
-  if (schema.$ref) return true;
-
-  const valueType: string = Array.isArray(value)
-    ? 'array'
-    : value === null
-      ? 'null'
-      : typeof value === 'object'
-        ? 'object'
-        : typeof value;
-
-  // anyOf / oneOf: any variant matching = safe.
-  for (const key of ['anyOf', 'oneOf'] as const) {
-    const variants = (schema as { [k: string]: unknown })[key];
-    if (Array.isArray(variants)) {
-      return variants.some(v => valueMatchesSchemaType(value, v));
-    }
-  }
-
-  const declared = schema.type;
-  if (declared === undefined) return false;
-  if (typeof declared === 'string') return declared === valueType;
-  if (Array.isArray(declared)) return declared.includes(valueType);
-  return false;
 }
 
 function productHasPricingOptions(product: unknown): boolean {
@@ -2397,9 +2313,7 @@ export class SingleAgentClient {
   private discoveredEndpointExpiresAt?: number; // freshness bound for that endpoint (shared-cache mode only)
   private sharedEvidenceEpoch?: number; // shared invalidation epoch of that key when the evidence was obtained
   private sharedEvidenceKey?: string; // discoveryCache key the local capability cache was obtained under
-  private _v2WarningFired = false; // Gate: emit the v2-sunset warning once per client instance
   private _syntheticV3WarningFired = false; // Gate: emit the synthetic-v3 warning once per client instance
-  private _syntheticV2WarningFired = false; // Gate: emit the synthetic-v2 warning once per client instance
   private readonly productPolicyRequestParamsByTask = new Map<string, ProductPolicyRequestState>();
   private readonly canonicalCreativeTaskAssociations = new Map<string, CanonicalCreativeTaskAssociation>();
   private readonly previewCreativeHandlersByTask = new Map<string, 'canonical' | 'legacy'>();
@@ -5539,7 +5453,7 @@ export class SingleAgentClient {
   /**
    * Execute task and call appropriate handler on completion
    *
-   * Automatically adapts requests for v2 servers and normalizes responses.
+   * Adapts requests for maintained AdCP 3 releases and normalizes product responses.
    */
   private async executeAndHandle<T>(
     taskType: string,
@@ -5640,13 +5554,6 @@ export class SingleAgentClient {
       throwIfAborted(options?.signal);
     }
 
-    // Check for v3 features used against v2 servers - return empty result if unsupported
-    const earlyResult = await this.getEarlyResultForUnsupportedFeatures<T>(taskType, normalizedParams, options);
-    throwIfAborted(options?.signal);
-    if (earlyResult) {
-      return attachMatch(earlyResult);
-    }
-
     const agent = await this.ensureEndpointDiscovered(options);
     throwIfAborted(options?.signal);
 
@@ -5701,17 +5608,8 @@ export class SingleAgentClient {
           capabilityDiscoveryContext.capabilities
         );
 
-    // Symmetric to the pre-adapter v3 pass above: when the adapter
-    // rewrote the request for a v2 server, warn-validate the adapted
-    // shape against the cached v2.5 schema bundle. Drift gets collected
-    // here and merged into result.metadata.debug_logs after executeTask
-    // returns — without that merge the warning would silently drop on
-    // the floor and adapter drift would land in production unnoticed.
-    const v25DriftLogs: any[] = [...adaptDriftLogs];
-    if (webhookDriftLog) v25DriftLogs.push(webhookDriftLog);
-    if (serverVersion === 'v2') {
-      this.executor.validateAdaptedRequestAgainstV2(taskType, adaptedParams, v25DriftLogs);
-    }
+    const adaptationLogs: any[] = [...adaptDriftLogs];
+    if (webhookDriftLog) adaptationLogs.push(webhookDriftLog);
 
     const canonicalInputHandler = this.canonicalCreativeInputHandler(
       taskType,
@@ -5765,11 +5663,11 @@ export class SingleAgentClient {
 
     // Merge collected drift into the executor's debug_logs so adopters
     // reading result.debug_logs see input-schema stripping, post-adapter
-    // v2.5 warnings, and any pre-3.1 webhook-degradation notice alongside
+    // adaptation and pre-3.1 webhook-degradation notices alongside
     // the executor's own logs. On error paths the executor may not surface
     // result.debug_logs at all; logs collected before the failure are
     // dropped, matching the executor's own debug-log behavior.
-    const postAdapterLogs = [...inputSchemaStripLogs, ...v25DriftLogs];
+    const postAdapterLogs = [...inputSchemaStripLogs, ...adaptationLogs];
     if (postAdapterLogs.length > 0) {
       result.debug_logs = [...(result.debug_logs ?? []), ...postAdapterLogs];
     }
@@ -5903,7 +5801,7 @@ export class SingleAgentClient {
       legacyFormatConverter ?? this.resolveLegacyFormatConverter(undefined, context.projectionCatalogs);
 
     if (result.success && result.data) {
-      result.data = this.normalizeResponseToV3(taskType, result.data) as T;
+      result.data = this.normalizeEstablishedResponse(taskType, result.data) as T;
     }
 
     result = this.wrapProductPolicySubmittedContinuation(
@@ -6078,7 +5976,7 @@ export class SingleAgentClient {
     transform?: (data: T) => T,
     legacyFormatConverter?: LegacyFormatConverter
   ): CanonicalCreativeResponse<T> {
-    let projected = this.normalizeResponseToV3(taskType, data) as T;
+    let projected = this.normalizeEstablishedResponse(taskType, data) as T;
     const record = projected && typeof projected === 'object' ? (projected as Record<string, unknown>) : undefined;
     const canProjectRead =
       taskType === 'get_products'
@@ -6935,7 +6833,7 @@ export class SingleAgentClient {
       waitForCompletion: async (pollInterval, signal) => {
         let completed = await submitted.waitForCompletion(pollInterval, signal);
         if (completed.success && completed.data) {
-          completed.data = this.normalizeResponseToV3(taskType, completed.data) as T;
+          completed.data = this.normalizeEstablishedResponse(taskType, completed.data) as T;
         }
         const terminal = completed.status === 'completed' || completed.status === 'failed';
         try {
@@ -6979,7 +6877,7 @@ export class SingleAgentClient {
       attachMatch({
         success: true as const,
         status: 'completed' as const,
-        data: this.normalizeResponseToV3(taskType, taskInfo.result),
+        data: this.normalizeEstablishedResponse(taskType, taskInfo.result),
         metadata: {
           taskId: taskInfo.taskId,
           taskName: taskInfo.taskType,
@@ -7083,8 +6981,7 @@ export class SingleAgentClient {
 
   /**
    * Adapt a request for the detected server wire version and the seller's
-   * AdCP protocol version. Applies wire-format adapters (v2.5) when talking
-   * to a v2 server, then applies protocol-version adapters (e.g. stripping
+   * AdCP protocol version. Applies protocol-version adapters (e.g. stripping
    * 3.1-only fields for a 3.0 seller). Returns the adapted params and any
    * drift log entries describing what was changed.
    *
@@ -7099,19 +6996,11 @@ export class SingleAgentClient {
     perCallToolSchemas?: ToolSchemaMap,
     perCallCapabilities?: AdcpCapabilities
   ): { params: any; driftLogs: Record<string, unknown>[] } {
+    if (serverVersion !== 'v3') {
+      throw new VersionUnsupportedError(taskType, 'version', 'v2', this.agent.agent_uri);
+    }
     const driftLogs: Record<string, unknown>[] = [];
     let adapted = params;
-
-    if (serverVersion !== 'v3') {
-      // Dispatch through the legacy v2.5 adapter registry. Per-tool pairs
-      // live in `src/lib/adapters/legacy/v2-5/<tool>.ts`. Tools without a
-      // registered pair (or pairs whose request side is pass-through)
-      // leave `adapted` unchanged. Adding a future legacy version means
-      // adding a sibling `legacy/<version>/` directory, not editing
-      // this dispatch.
-      const pair = getV25Adapter(taskType);
-      if (pair) adapted = pair.adaptRequest(adapted);
-    }
 
     // Strip any top-level fields not declared in the agent's tool schema.
     // This handles partial implementations (agents that omit some fields)
@@ -7137,32 +7026,6 @@ export class SingleAgentClient {
     const toolSchema = (perCallToolSchemas ?? this.cachedToolSchemas)?.get(taskType);
     if (toolSchema && Object.keys(toolSchema).length > 0) {
       const declaredFields = new Set(Object.keys(toolSchema));
-
-      // The v2 adapter may rename fields (e.g. brand → brand_manifest) that a
-      // v3 server — misdetected as v2 — doesn't declare. Reconcile known
-      // adapter mappings so the value isn't silently dropped.
-      //
-      // CRITICAL: only alias when the JS type of the moved value is
-      // compatible with the destination field's declared shape. v2.5 sellers
-      // (e.g. Wonderstruck) declare `brand` in their tool schema as a
-      // BrandReference object — v2 adapter produces a `brand_manifest` URL
-      // string, and blindly aliasing the string into the object slot causes
-      // the seller to reject with `Input should be a valid dictionary or
-      // instance of BrandReference`. Skip the alias when shapes don't match
-      // and let the field-stripping path drop the v2-shaped value cleanly.
-      const adapterAliases: [string, string][] = [['brand_manifest', 'brand']];
-      for (const [adapterField, schemaField] of adapterAliases) {
-        if (
-          adapted[adapterField] !== undefined &&
-          !declaredFields.has(adapterField) &&
-          declaredFields.has(schemaField) &&
-          adapted[schemaField] === undefined &&
-          valueMatchesSchemaType(adapted[adapterField], (toolSchema as Record<string, unknown>)[schemaField])
-        ) {
-          adapted[schemaField] = adapted[adapterField];
-          delete adapted[adapterField];
-        }
-      }
 
       // Protocol envelope fields are always preserved — they live at the
       // protocol layer, not in individual tool schemas.
@@ -7254,98 +7117,19 @@ export class SingleAgentClient {
     return { params: adapted, driftLogs };
   }
 
-  /**
-   * Normalize response to v3 format
-   *
-   * Converts v2 responses to v3 structure for consistent API surface.
-   */
-  private normalizeResponseToV3(taskType: string, data: any): any {
-    // Dispatch through the legacy v2.5 adapter registry. The pair's
-    // optional `normalizeResponse` runs when present; otherwise the
-    // response is passed through unchanged.
-    const pair = getV25Adapter(taskType);
-    if (pair?.normalizeResponse) return pair.normalizeResponse(data);
-    return data;
-  }
-
-  /**
-   * Check if request uses v3 features that the server doesn't support
-   *
-   * Returns an early empty result if the request requires v3 features
-   * that the server doesn't support. This treats "products matching unsupported
-   * capability" as an empty result set rather than an error.
-   *
-   * @returns TaskResult with empty data if v3 features are unsupported, null to proceed normally
-   */
-  private async getEarlyResultForUnsupportedFeatures<T>(
-    taskType: string,
-    params: any,
-    options?: ReadRequestOptions
-  ): Promise<TaskResult<T> | null> {
-    // Only check for tasks that have v3-specific features
-    if (taskType !== 'get_products') {
-      return null;
+  private normalizeEstablishedResponse(taskType: string, data: any): any {
+    if (!data) return data;
+    switch (taskType) {
+      case 'get_products':
+        return normalizeGetProductsResponse(data);
+      case 'create_media_buy':
+      case 'update_media_buy':
+        return normalizeMediaBuyResponse(data);
+      case 'list_creative_formats':
+        return normalizeFormatsResponse(data);
+      default:
+        return data;
     }
-
-    // Get capabilities to check what the server supports
-    const capabilities = await this.getCapabilities(options);
-
-    // If server is v3, all features are supported - proceed normally
-    if (capabilities.version === 'v3') {
-      return null;
-    }
-
-    // Check for v3-only features that would make this query return empty results.
-    //
-    // TODO: Once we remove backwards-compatibility stripping in adaptGetProductsRequestForV2,
-    // re-enable these guards so v3-only requests fail fast against v2 servers:
-    //   (params.property_list && !capabilities.features.propertyListFiltering) ||
-    //   (params.filters?.required_features?.includes('property_list_filtering') &&
-    //     !capabilities.features.propertyListFiltering) ||
-    //
-    // TODO: Surface the reason for empty results to the caller (e.g. metadata or a
-    // structured warning) so they can distinguish "no products matched" from "server
-    // lacks v3 feature support" vs "request failed". Right now empty results from a
-    // capability mismatch look identical to a seller that simply has no inventory.
-    const usesUnsupportedFeature =
-      // required_features: content_standards requires contentStandards
-      params.filters?.required_features?.includes('content_standards') && !capabilities.features.contentStandards;
-
-    if (!usesUnsupportedFeature) {
-      return null; // Proceed normally
-    }
-
-    // Log warning about v2 downgrade
-    console.warn(
-      `[AdCP] v3-only features not supported by server "${this.agent.id}" (${capabilities.version}). Returning empty results.`
-    );
-
-    // Return empty result - semantically "no products match this filter"
-    const emptyResponse = {
-      products: [],
-      property_list_applied: false,
-    } as T;
-
-    return {
-      success: true,
-      status: 'completed',
-      data: emptyResponse,
-      metadata: {
-        taskId: `early_${Date.now()}`,
-        taskName: taskType,
-        agent: {
-          id: this.agent.id,
-          name: this.agent.name,
-          protocol: this.normalizedAgent.protocol,
-        },
-        responseTimeMs: 0,
-        timestamp: new Date().toISOString(),
-        clarificationRounds: 0,
-        status: 'completed',
-        serverVersion: capabilities.version,
-        serverVersionSynthetic: capabilities._synthetic,
-      },
-    };
   }
 
   // ====== MEDIA BUY TASKS ======
@@ -9577,14 +9361,8 @@ export class SingleAgentClient {
             capabilityDiscoveryContext.capabilities
           );
 
-      // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
-      // Drift gets surfaced via result.metadata.debug_logs so adapter
-      // regressions in production aren't silently swallowed.
-      const v25DriftLogs: any[] = [...adaptDriftLogs];
-      if (webhookDriftLog) v25DriftLogs.push(webhookDriftLog);
-      if (serverVersion === 'v2') {
-        this.executor.validateAdaptedRequestAgainstV2(taskName, adaptedParams, v25DriftLogs);
-      }
+      const adaptationLogs: any[] = [...adaptDriftLogs];
+      if (webhookDriftLog) adaptationLogs.push(webhookDriftLog);
 
       const deferredClientContext: DeferredClientFinalizationContext = {
         kind: 'single-agent',
@@ -9616,7 +9394,7 @@ export class SingleAgentClient {
       );
       if (!result.success) await this.invalidateDiscoveryOnCapabilityError(result.adcpError?.code, effectiveOptions);
 
-      const postAdapterLogs = [...inputSchemaStripLogs, ...v25DriftLogs];
+      const postAdapterLogs = [...inputSchemaStripLogs, ...adaptationLogs];
       if (postAdapterLogs.length > 0) {
         result.debug_logs = [...(result.debug_logs ?? []), ...postAdapterLogs];
       }
@@ -10466,7 +10244,7 @@ export class SingleAgentClient {
    * Get agent capabilities, including AdCP version support
    *
    * For v3 servers, calls get_adcp_capabilities tool.
-   * For v2 servers, builds synthetic capabilities from available tools.
+   * Requires AdCP 3 capability discovery; retired AdCP 2 agents are rejected.
    *
    * @returns Promise resolving to normalized capabilities object
    *
@@ -10523,7 +10301,7 @@ export class SingleAgentClient {
     // Return cached if available
     if (!usesScopedFetch && this.cachedCapabilities) {
       if (discoveryContext) discoveryContext.toolSchemas = this.cachedToolSchemas;
-      this.maybeWarnV2Sunset(this.cachedCapabilities);
+      this.assertSupportedServer(this.cachedCapabilities);
       return this.cachedCapabilities;
     }
 
@@ -10631,7 +10409,7 @@ export class SingleAgentClient {
     this.capabilitiesFromSharedCache = true;
     this.recordSharedEvidence(key);
     if (discoveryContext) discoveryContext.toolSchemas = this.cachedToolSchemas;
-    this.maybeWarnV2Sunset(installed);
+    this.assertSupportedServer(installed);
     return installed;
   }
 
@@ -10720,6 +10498,7 @@ export class SingleAgentClient {
 
         if (result.success && result.data) {
           const capabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
+          this.assertSupportedServer(capabilities);
           if (!usesScopedFetch && !superseded()) {
             this.cachedCapabilities = capabilities;
             this.capabilitiesFromSharedCache = false;
@@ -10752,49 +10531,33 @@ export class SingleAgentClient {
               }
             }
           }
-          this.maybeWarnV2Sunset(capabilities);
+          this.assertSupportedServer(capabilities);
           return capabilities;
         }
         if (!advertisesCapabilitiesTool) {
           throw new Error('unadvertised official A2A capability probe was not supported');
         }
-        // Tightened v2 fallback (issue #1189). When `result.success` is false
-        // but `result.data` is structurally v3-shaped, the agent is a v3 agent
-        // with a wire-shape bug — typically a single failed schema validation
-        // on `get_adcp_capabilities`. Falling back to v2 in this case masks
-        // the original bug behind cascading "AdCP schema data for version v2.5
-        // not found" errors that nobody can debug. Parse the data anyway,
-        // surface the validation failure loudly, and continue with the
-        // v3 capabilities the agent actually returned.
-        //
-        // Override `version`/`majorVersions` after parse: when the response
-        // doesn't carry an explicit `adcp.major_versions` block (one of the
-        // valid v3-shape signals), `parseCapabilitiesResponse` defaults
-        // majorVersions to [2] which would re-classify a known-v3 response
-        // as v2 downstream. The heuristic established v3-shape; honor that.
+        // Recover usable capabilities from a structurally v3-shaped response
+        // that failed validation (issue #1189). Explicit unsupported version
+        // declarations must still be rejected before logging recovery or caching.
         // CodeQL: deliberately omit `result.error` from the log (matches the
         // existing fallback log below) — it can carry transport-level agent
         // identifiers that flow through the clear-text-logging tracker.
         if (result.data && looksLikeV3Capabilities(result.data)) {
+          const capabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
+          this.assertSupportedServer(capabilities);
           console.warn(
             `[AdCP] Agent "${this.agent.id}" returned a get_adcp_capabilities response that ` +
               `failed validation, but the response is structurally v3-shaped. Treating as v3 ` +
               `(the agent has a wire-shape bug — that's the thing to fix).`,
             { hasError: !!result.error, hasData: !!result.data }
           );
-          const parsed = parseCapabilitiesResponse(result.data);
-          const v3Capabilities: AdcpCapabilities = {
-            ...parsed,
-            version: 'v3',
-            majorVersions: parsed.majorVersions.includes(3) ? parsed.majorVersions : ([3] as AdcpMajorVersion[]),
-          };
-          const capabilities = augmentCapabilitiesFromTools(v3Capabilities, tools);
           if (!usesScopedFetch && !superseded()) {
             this.cachedCapabilities = capabilities;
             this.capabilitiesFromSharedCache = false;
             this.recordSharedEvidence(this.sharedDiscoveryKey(options));
           }
-          this.maybeWarnV2Sunset(capabilities);
+          this.assertSupportedServer(capabilities);
           return capabilities;
         }
         // The call returned non-success and the response wasn't even
@@ -10829,6 +10592,7 @@ export class SingleAgentClient {
         // advertises get_adcp_capabilities but can't actually serve it).
         if (
           error instanceof AuthenticationRequiredError ||
+          error instanceof VersionUnsupportedError ||
           error instanceof ConfigurationError ||
           error instanceof TaskTimeoutError ||
           isAbortOrTimeoutError(error)
@@ -10857,24 +10621,12 @@ export class SingleAgentClient {
           this.capabilitiesFromSharedCache = false;
           this.recordSharedEvidence(this.sharedDiscoveryKey(options));
         }
-        this.maybeWarnV2Sunset(capabilities);
+        this.assertSupportedServer(capabilities);
         return capabilities;
       }
     }
 
-    // No get_adcp_capabilities tool — the agent is verifiably v2 (the tool
-    // is v3-only). Synthesize v2 capabilities from the tool list.
-    console.warn(
-      `[AdCP] Agent "${this.agent.id}" detected as v2 (no get_adcp_capabilities tool). ` +
-        `Tools: [${tools.map(t => t.name).join(', ')}]`
-    );
-    const capabilities = buildSyntheticCapabilities(tools);
-    if (!usesScopedFetch && !superseded()) {
-      this.cachedCapabilities = capabilities;
-      this.capabilitiesFromSharedCache = false;
-      this.recordSharedEvidence(this.sharedDiscoveryKey(options));
-    }
-    return capabilities;
+    throw new VersionUnsupportedError('get_adcp_capabilities', 'synthetic', 'v2', this.agent.agent_uri);
   }
 
   /**
@@ -11522,32 +11274,11 @@ export class SingleAgentClient {
     await this.invalidateDiscoveryCache(options);
   }
 
-  /**
-   * Emit a one-time warning when the agent reports v2 capabilities.
-   *
-   * v2 went unsupported on 2026-04-20 (AdCP 3.0 GA — adcp#2220). We still
-   * execute v2 code paths (no behaviour change), but clients integrating
-   * against an unsupported agent should hear about it loudly.
-   *
-   * Synthetic capabilities (no `get_adcp_capabilities` tool available) don't
-   * trigger the warning — we don't actually know the agent's version, and
-   * shouting at legitimately-unversioned agents would be noise.
-   *
-   * Suppression: `process.env.ADCP_ALLOW_V2 === '1'`.
-   */
-  private maybeWarnV2Sunset(capabilities: AdcpCapabilities): void {
-    if (this._v2WarningFired) return;
-    if (capabilities.version === 'v3') return;
-    if (capabilities._synthetic) return;
-    if (process.env.ADCP_ALLOW_V2 === '1') return;
-
-    this._v2WarningFired = true;
-    console.warn(
-      `[adcp] Warning: agent ${this.agent.agent_uri} reports v2 capabilities. ` +
-        `v2 went unsupported on 2026-04-20 (AdCP 3.0 GA). ` +
-        `Upgrade the agent to v3 or set ADCP_ALLOW_V2=1 to suppress this warning. ` +
-        `See https://github.com/adcontextprotocol/adcp/issues/2220`
-    );
+  /** Reject retired protocol generations before caching or dispatching. */
+  private assertSupportedServer(capabilities: AdcpCapabilities): void {
+    if (capabilities.version !== 'v3' || !capabilities.majorVersions.includes(3)) {
+      throw new VersionUnsupportedError('get_adcp_capabilities', 'version', capabilities.version, this.agent.agent_uri);
+    }
   }
 
   /**
@@ -11574,28 +11305,6 @@ export class SingleAgentClient {
   }
 
   /**
-   * Warn once per client when `requireSupportedMajor` routes a synthetic-v2
-   * seller through the v2 adapter — the agent did not expose
-   * `get_adcp_capabilities`, so the version was inferred from `tools/list`.
-   * A compliant v3 seller would declare itself; absence of a declaration is
-   * read as v2. Idempotency-TTL guarantees are unknown for these sellers,
-   * so BYOK retry callers should treat them as such.
-   *
-   * One-shot via `_syntheticV2WarningFired` (matches `maybeWarnV2Sunset`
-   * cadence).
-   */
-  private maybeWarnSyntheticV2(): void {
-    if (this._syntheticV2WarningFired) return;
-    this._syntheticV2WarningFired = true;
-    console.warn(
-      `[adcp] Warning: agent ${this.agent.agent_uri} does not expose get_adcp_capabilities. ` +
-        `Routing as v2 (synthetic) — idempotency-TTL guarantee is unknown. ` +
-        `Ask the agent operator to declare v3 via get_adcp_capabilities if v3 routing is intended. ` +
-        `Branch on client.isSyntheticV2() to tighten retry policies for these sellers.`
-    );
-  }
-
-  /**
    * Detect server AdCP version
    *
    * @returns 'v2' or 'v3' based on server capabilities
@@ -11604,38 +11313,16 @@ export class SingleAgentClient {
     const capabilities = await this.getCapabilities(options);
     const discoveryContext = (options as InternalReadRequestOptions | undefined)?.[CAPABILITY_DISCOVERY_CONTEXT];
     if (discoveryContext) discoveryContext.capabilities = capabilities;
+    this.assertSupportedServer(capabilities);
     return capabilities.version;
-  }
-
-  /**
-   * Whether the seller's capabilities are synthesized from `tools/list`
-   * with no authoritative `get_adcp_capabilities` response — i.e. the
-   * dispatcher routes through the v2 adapter and idempotency-TTL is
-   * unknown. Use this to gate retry behavior for sellers whose retry
-   * safety can't be derived from declared capabilities (lower attempt
-   * caps, longer backoff, or fall back to natural-key recovery).
-   *
-   * Returns `false` for declared v2 sellers, declared v3 sellers, and
-   * synthetic v3 sellers (which advertise the v3 discovery tool even
-   * when the call itself failed).
-   *
-   * Caveat for synthetic v3: the predicate returns `false`, but TTL is
-   * still unknown for those sellers — `getIdempotencyReplayTtlSeconds()`
-   * throws until the agent's capabilities endpoint is fixed (issue
-   * #1217). Retry-policy consumers that need a complete "TTL unknown"
-   * gate should additionally check `getCapabilities()._synthetic`.
-   */
-  async isSyntheticV2(): Promise<boolean> {
-    const capabilities = await this.getCapabilities();
-    return capabilities._synthetic === true && capabilities.version === 'v2';
   }
 
   /**
    * Check if server supports a specific AdCP major version
    */
-  async supportsVersion(version: 2 | 3): Promise<boolean> {
+  async supportsVersion(version: 3): Promise<boolean> {
     const capabilities = await this.getCapabilities();
-    return capabilities.majorVersions.includes(version);
+    return version === 3 && capabilities.majorVersions.includes(3);
   }
 
   /**
@@ -11647,8 +11334,7 @@ export class SingleAgentClient {
    *
    * Fails closed when the seller is v3 but does not declare the field: the
    * spec makes the declaration REQUIRED, and silently defaulting to 24h
-   * would mislead buyers about retry safety. Callers on v2 servers get
-   * `undefined` instead of a throw — v2 pre-dates the idempotency envelope.
+   * would mislead buyers about retry safety.
    */
   async getIdempotencyReplayTtlSeconds(): Promise<number | undefined> {
     const capabilities = await this.getCapabilities();
@@ -11657,7 +11343,6 @@ export class SingleAgentClient {
       assertValidIdempotencyReplayTtlSeconds(capabilities.idempotency.replayTtlSeconds);
       return capabilities.idempotency.replayTtlSeconds;
     }
-    if (capabilities.version !== 'v3') return undefined;
     throw new ConfigurationError(
       `Agent "${this.agent.id}" is v3 but does not declare adcp.idempotency.replay_ttl_seconds. ` +
         `The spec requires this for v3 sellers — treating the agent as non-compliant rather than ` +
@@ -12089,35 +11774,17 @@ export class SingleAgentClient {
    *   2. `capabilities.idempotency.replayTtlSeconds` present (spec-required
    *      for real major-3+ sellers)
    *
-   * Sellers whose capabilities are synthesized from `tools/list` (no
-   * authoritative `get_adcp_capabilities` response) are treated as v2: a
-   * compliant v3 seller would declare itself, so absence of a declaration
-   * is taken as evidence of v2. The dispatcher routes the request through
-   * the v2 wire-shape adapter. A one-time warning surfaces the routing
-   * decision so adopters can audit it; retry-safety (idempotency TTL) is
-   * unknown for these sellers and BYOK callers should treat them as such.
-   *
-   * Per-client `allowV2: true` or, when that's undefined,
-   * `ADCP_ALLOW_V2=1` in the environment bypasses the guard entirely.
+   * Synthetic v3 evidence is accepted only when the agent advertises discovery.
+   * Agents without discovery and AdCP 2-only agents are rejected.
    *
    * Throws `VersionUnsupportedError` with the specific reason on failure.
    */
   async requireSupportedMajor(taskType: string = 'request', options?: ReadRequestOptions): Promise<void> {
-    if (this.isV2Allowed()) return;
     const capabilities = await this.getCapabilities(options);
 
-    // Synthetic capabilities — no authoritative `get_adcp_capabilities`
-    // response, so the version + idempotency-TTL fields couldn't be read.
-    // Route as the synthesized version (v2 when the v3 discovery tool is
-    // absent from tools/list, v3 when the tool is present but the call
-    // failed). Emit a one-time per-client warning so adopters can audit
-    // the routing decision and the skipped TTL guarantee.
+    this.assertSupportedServer(capabilities);
     if (capabilities._synthetic) {
-      if (capabilities.version === 'v3') {
-        this.maybeWarnSyntheticV3();
-      } else {
-        this.maybeWarnSyntheticV2();
-      }
+      this.maybeWarnSyntheticV3();
       return;
     }
     // Prefer release-precision matching when the seller advertises
@@ -12131,11 +11798,8 @@ export class SingleAgentClient {
         throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
       }
     } else {
-      // `AdcpMajorVersion` is currently `2 | 3` — cast through `number[]` because
-      // the parsed major is a plain number; a future SDK release that supports
-      // major 4 will widen the union.
       const expectedMajor = parseAdcpMajorVersion(this.resolvedAdcpVersion);
-      const advertisedMajors = capabilities.majorVersions as readonly number[];
+      const advertisedMajors = capabilities.majorVersions;
       if (!Number.isFinite(expectedMajor) || !advertisedMajors.includes(expectedMajor)) {
         throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
       }
@@ -12156,11 +11820,6 @@ export class SingleAgentClient {
    */
   async requireV3(taskType: string = 'request'): Promise<void> {
     return this.requireSupportedMajor(taskType);
-  }
-
-  private isV2Allowed(): boolean {
-    if (this.config.allowV2 !== undefined) return this.config.allowV2 === true;
-    return process.env.ADCP_ALLOW_V2 === '1';
   }
 
   // ====== STATIC HELPER METHODS ======

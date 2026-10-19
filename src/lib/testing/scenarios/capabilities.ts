@@ -3,14 +3,14 @@
  *
  * Tests agent capability discovery including:
  * - get_adcp_capabilities (v3 agents)
- * - Synthetic capability detection (v2 agents)
+ * - Rejection of agents missing AdCP 3 capability discovery
  * - Protocol/tool cross-validation
  */
 
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import { getOrCreateClient, runStep, getOrDiscoverProfile } from '../client';
 import {
-  buildSyntheticCapabilities,
+  buildSyntheticV3Capabilities,
   parseCapabilitiesResponse,
   MEDIA_BUY_TOOLS,
   SIGNALS_TOOLS,
@@ -31,7 +31,7 @@ import type { GetAdCPCapabilitiesResponse } from '../../types/tools.generated';
  * 1. Discover agent profile (tools list)
  * 2. If get_adcp_capabilities exists, call it and validate response
  * 3. Cross-check reported protocols against available tools
- * 4. For v2 agents, build synthetic capabilities and note v3 upgrade path
+ * 4. Reject agents without AdCP 3 discovery
  */
 export async function testCapabilityDiscovery(
   agentUrl: string,
@@ -96,8 +96,8 @@ export async function testCapabilityDiscovery(
 
       // Fall back to synthetic capabilities
       const toolInfos = profile.tools.map(name => ({ name }));
-      capabilities = buildSyntheticCapabilities(toolInfos);
-      profile.adcp_version = 'v2';
+      capabilities = buildSyntheticV3Capabilities(toolInfos);
+      profile.adcp_version = 'v3';
       profile.supported_protocols = capabilities.protocols;
 
       steps.push({
@@ -109,59 +109,22 @@ export async function testCapabilityDiscovery(
     } else {
       // No result at all
       const toolInfos = profile.tools.map(name => ({ name }));
-      capabilities = buildSyntheticCapabilities(toolInfos);
-      profile.adcp_version = 'v2';
+      capabilities = buildSyntheticV3Capabilities(toolInfos);
+      profile.adcp_version = 'v3';
       profile.supported_protocols = capabilities.protocols;
       step.passed = false;
       step.error = 'get_adcp_capabilities returned no data';
       steps.push(step);
     }
   } else {
-    // v2 agent: build synthetic capabilities
-    const toolInfos = profile.tools.map(name => ({ name }));
-    capabilities = buildSyntheticCapabilities(toolInfos);
-    profile.adcp_version = 'v2';
-    profile.supported_protocols = capabilities.protocols;
-    profile.supports_governance = capabilities.protocols.includes('governance');
-    profile.supports_si = capabilities.protocols.includes('sponsored_intelligence');
-
     steps.push({
-      step: 'Build synthetic capabilities (v2)',
-      task: undefined,
-      passed: true,
+      step: 'Require AdCP 3 capability discovery',
+      passed: false,
       duration_ms: 0,
-      details: `Agent does not support get_adcp_capabilities. Detected ${capabilities.protocols.length} protocol(s) from tools.`,
-      response_preview: JSON.stringify(
-        {
-          version: capabilities.version,
-          protocols: capabilities.protocols,
-          features: capabilities.features,
-          _synthetic: true,
-        },
-        null,
-        2
-      ),
+      error:
+        'Agent does not advertise get_adcp_capabilities. AdCP 2 reached end of life on 2026-08-01; upgrade the agent to AdCP 3.',
     });
-
-    // Check for v3 upgrade potential
-    const v3ToolsPresent = [
-      ...GOVERNANCE_TOOLS,
-      ...SPONSORED_INTELLIGENCE_TOOLS,
-      ...TRUSTED_MATCH_TOOLS,
-      ...COMPLIANCE_TOOLS,
-    ].filter(t => profile.tools.includes(t));
-
-    if (v3ToolsPresent.length > 0) {
-      steps.push({
-        step: 'v3 upgrade potential detected',
-        passed: true,
-        duration_ms: 0,
-        details: `Agent has ${v3ToolsPresent.length} v3 tool(s) but missing get_adcp_capabilities`,
-        warnings: [
-          `Consider implementing get_adcp_capabilities for better protocol discovery. v3 tools detected: ${v3ToolsPresent.join(', ')}`,
-        ],
-      });
-    }
+    return { steps, profile };
   }
 
   // Cross-validate: check that reported protocols match available tools

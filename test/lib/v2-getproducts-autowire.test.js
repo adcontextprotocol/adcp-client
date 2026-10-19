@@ -26,23 +26,25 @@ const { AgentClient, packageRefsForFormatOptions } = require('../../dist/lib/ind
  */
 const PRICING_OPTIONS = [{ pricing_option_id: 'po_cpm', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 }];
 
-async function buildMockSeller(getProductsResponse, clientConfig = {}, { advertiseV3 = false } = {}) {
+function registerCapabilities(server) {
+  server.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => {
+    const capabilities = {
+      status: 'completed',
+      adcp_version: '3.2',
+      adcp: { major_versions: [3], supported_versions: ['3.2.1'], idempotency: { supported: false } },
+      supported_protocols: ['media_buy'],
+      specialisms: [],
+    };
+    return {
+      content: [{ type: 'text', text: JSON.stringify(capabilities) }],
+      structuredContent: capabilities,
+    };
+  });
+}
+
+async function buildMockSeller(getProductsResponse, clientConfig = {}) {
   const server = new McpServer({ name: 'autowire-test', version: '1.0.0' });
-  if (advertiseV3) {
-    server.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => {
-      const capabilities = {
-        status: 'completed',
-        adcp_version: '3.2.1',
-        adcp: { major_versions: [3], supported_versions: ['3.2.1'] },
-        supported_protocols: ['media_buy'],
-        specialisms: [],
-      };
-      return {
-        content: [{ type: 'text', text: JSON.stringify(capabilities) }],
-        structuredContent: capabilities,
-      };
-    });
-  }
+  registerCapabilities(server);
   server.registerTool(
     'get_products',
     { inputSchema: { brief: z.string().optional(), adcp_major_version: z.number().optional() } },
@@ -75,7 +77,7 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
       reason: 'No inventory matches the requested brief',
       suggestions: ['Try broadening the requested geography'],
     };
-    const { agent, close } = await buildMockSeller(rejection, {}, { advertiseV3: true });
+    const { agent, close } = await buildMockSeller(rejection);
     try {
       const result = await agent.getProducts({ brief: 'test' });
 
@@ -677,6 +679,7 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
     };
     const handlerCalls = [];
     const server = new McpServer({ name: 'legacy-list-mcp', version: '1.0.0' });
+    registerCapabilities(server);
     server.registerTool('list_creatives', { inputSchema: {} }, async () => ({
       content: [{ type: 'text', text: '{}' }],
       structuredContent: listResponse,

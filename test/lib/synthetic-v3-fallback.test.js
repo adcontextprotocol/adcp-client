@@ -16,7 +16,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { SingleAgentClient } = require('../../dist/lib/core/SingleAgentClient.js');
-const { buildSyntheticV3Capabilities, buildSyntheticCapabilities } = require('../../dist/lib/utils/capabilities.js');
+const { buildSyntheticV3Capabilities } = require('../../dist/lib/utils/capabilities.js');
 const { VersionUnsupportedError } = require('../../dist/lib/errors/index.js');
 
 const stubAgent = {
@@ -72,17 +72,6 @@ describe('SingleAgentClient.requireSupportedMajor with synthetic capabilities (i
     // evidence the agent is v3.
     const client = new SingleAgentClient(stubAgent);
     client.cachedCapabilities = buildSyntheticV3Capabilities([{ name: 'get_adcp_capabilities' }]);
-
-    await client.requireSupportedMajor('test');
-    // No throw = pass.
-  });
-
-  it('accepts synthetic v2 capabilities (no get_adcp_capabilities — routed as v2)', async () => {
-    // No get_adcp_capabilities in tool list → a compliant v3 seller would
-    // declare itself, so absence of declaration is read as v2 → request is
-    // routed through the v2 wire-shape adapter rather than refused.
-    const client = new SingleAgentClient(stubAgent);
-    client.cachedCapabilities = buildSyntheticCapabilities([{ name: 'list_signals' }]);
 
     await client.requireSupportedMajor('test');
     // No throw = pass.
@@ -177,66 +166,5 @@ describe('SingleAgentClient.maybeWarnSyntheticV3 — one-time warning when check
     } finally {
       warn.restore();
     }
-  });
-
-  it('emits exactly one warning when requireSupportedMajor routes synthetic v2', async () => {
-    const warn = captureWarnings();
-    try {
-      const client = new SingleAgentClient(stubAgent);
-      client.cachedCapabilities = buildSyntheticCapabilities([{ name: 'list_signals' }]);
-
-      await client.requireSupportedMajor('test');
-      await client.requireSupportedMajor('test');
-      await client.requireSupportedMajor('test');
-
-      const synthV2Warns = warn.calls.filter(c => c.includes('does not expose get_adcp_capabilities'));
-      assert.equal(synthV2Warns.length, 1, 'synthetic-v2 warning must fire once per client');
-      assert.match(synthV2Warns[0], /Routing as v2/);
-      const synthV3Warns = warn.calls.filter(c => c.includes('v3-only'));
-      assert.equal(synthV3Warns.length, 0, 'synthetic-v2 must not fire the synthetic-v3 warning');
-    } finally {
-      warn.restore();
-    }
-  });
-});
-
-describe('SingleAgentClient.isSyntheticV2 — programmatic signal for retry policies', () => {
-  it('returns true for synthetic v2 capabilities', async () => {
-    const client = new SingleAgentClient(stubAgent);
-    client.cachedCapabilities = buildSyntheticCapabilities([{ name: 'list_signals' }]);
-    assert.equal(await client.isSyntheticV2(), true);
-  });
-
-  it('returns false for synthetic v3 capabilities', async () => {
-    const client = new SingleAgentClient(stubAgent);
-    client.cachedCapabilities = buildSyntheticV3Capabilities([{ name: 'get_adcp_capabilities' }]);
-    assert.equal(await client.isSyntheticV2(), false);
-  });
-
-  it('returns false for declared v2 capabilities', async () => {
-    const client = new SingleAgentClient(stubAgent);
-    client.cachedCapabilities = {
-      version: 'v2',
-      majorVersions: [2],
-      protocols: ['media_buy'],
-      features: {},
-      extensions: [],
-      _synthetic: false,
-    };
-    assert.equal(await client.isSyntheticV2(), false);
-  });
-
-  it('returns false for declared v3 capabilities', async () => {
-    const client = new SingleAgentClient(stubAgent);
-    client.cachedCapabilities = {
-      version: 'v3',
-      majorVersions: [3],
-      protocols: ['media_buy'],
-      features: {},
-      extensions: [],
-      _synthetic: false,
-      idempotency: { replayTtlSeconds: 86400 },
-    };
-    assert.equal(await client.isSyntheticV2(), false);
   });
 });

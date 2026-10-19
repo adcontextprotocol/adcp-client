@@ -8,7 +8,7 @@ import { canonicalize } from '../utils/jcs';
 /** Minimum crash-recovery horizon after an SDK-owned publication is acknowledged. */
 export const LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
-export type LegacyPurchaseSourceVersion = '2.5' | '3.0' | '3.1';
+export type LegacyPurchaseSourceVersion = '3.0' | '3.1';
 export type LegacyPurchaseLoss =
   | 'feed_version_not_atomic'
   | 'pricing_version_not_atomic'
@@ -54,7 +54,7 @@ export interface LegacyPurchaseClaim {
   claimedAt: string;
   replayExpiresAt: string;
   selectedProductIds: string[];
-  /** Source-version mutation key (`idempotency_key`, or v2.5 `buyer_ref`). */
+  /** Source-version mutation idempotency key. */
   sourceMutationKey?: string;
   /** Seller task handle retained after a submitted response. */
   sellerTaskId?: string;

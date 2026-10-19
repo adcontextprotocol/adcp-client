@@ -26,7 +26,7 @@ const {
 function makeCapabilities(overrides = {}) {
   return {
     version: 'v3',
-    majorVersions: [2, 3],
+    majorVersions: [3],
     protocols: ['media_buy'],
     features: {
       inlineCreativeManagement: true,
@@ -140,9 +140,8 @@ describe('resolveFeature', () => {
     assert.strictEqual(resolveFeature(caps, 'targeting.geo_countries'), false);
   });
 
-  test('handles v2 synthetic capabilities (no _raw)', () => {
+  test('handles synthetic capabilities without raw feature evidence', () => {
     const caps = makeCapabilities({
-      version: 'v2',
       _synthetic: true,
       _raw: undefined,
       extensions: [],
@@ -524,10 +523,15 @@ describe('SingleAgentClient feature API exists', () => {
       protocol: 'mcp',
     });
     let discoveryCalls = 0;
+    client.ensureEndpointDiscovered = async () => client.getAgent();
     client.getAgentInfo = async () => {
       discoveryCalls += 1;
-      return { tools: [] };
+      return { tools: [{ name: 'get_adcp_capabilities' }] };
     };
+    client.executor.executeTask = async () => ({
+      success: true,
+      data: { adcp: { major_versions: [3] }, supported_protocols: ['media_buy'] },
+    });
 
     await client.getCapabilities();
     assert.strictEqual(discoveryCalls, 1);
@@ -623,10 +627,15 @@ describe('SingleAgentClient feature API exists', () => {
     });
     const primedCapabilities = makeCapabilities({ discoveredTools: [] });
     let discoveryCalls = 0;
+    client.ensureEndpointDiscovered = async () => client.getAgent();
     client.getAgentInfo = async () => {
       discoveryCalls += 1;
-      return { tools: [] };
+      return { tools: [{ name: 'get_adcp_capabilities' }] };
     };
+    client.executor.executeTask = async () => ({
+      success: true,
+      data: { adcp: { major_versions: [3] }, supported_protocols: ['media_buy'] },
+    });
 
     assert.strictEqual(
       client.primeCapabilities({
@@ -644,7 +653,7 @@ describe('SingleAgentClient feature API exists', () => {
     const rediscovered = await client.getCapabilities();
 
     assert.strictEqual(discoveryCalls, 1);
-    assert.strictEqual(rediscovered._synthetic, true);
+    assert.strictEqual(rediscovered._synthetic, false);
     assert.notDeepStrictEqual(rediscovered, primedCapabilities);
   });
 

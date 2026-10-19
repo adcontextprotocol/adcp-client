@@ -1851,10 +1851,8 @@ export { Render, urlRender, htmlRender, bothRender } from './utils/render-builde
 // Use `parameterizedRender({ role })` (or the alias `templateRender`) so
 // format_id parameters carry duration.
 //
-// `FormatRender` below is the grouped namespace (value export). The v3
-// structural interface by the same name is re-exported from
-// `utils/format-renders` further down — TypeScript keeps type and value
-// namespaces separate, so both are available under the single import.
+// `FormatRender` below is the factory namespace. The structural interface
+// is exported separately as `FormatRenderEntry` further down.
 export {
   FormatRender,
   displayRender,
@@ -2039,7 +2037,6 @@ export {
 //   - `ADCP_MAJOR_VERSION` / `COMPATIBLE_ADCP_VERSIONS` in version information
 //   - `SingleAgentClient#requireV3()` / `AgentClient#requireV3()` — runtime gate
 export {
-  buildSyntheticCapabilities,
   buildSyntheticV3Capabilities,
   parseCapabilitiesResponse,
   supportsV3,
@@ -2087,21 +2084,17 @@ export type {
   LegacyInlineCreativePackage,
 } from './utils/creative-delivery';
 
-// Creative assignment adapter (v2 creative_ids ↔ v3 creative_assignments)
+// AdCP 3 creative assignment helpers
 export {
-  adaptPackageRequestForV2,
-  adaptCreateMediaBuyRequestForV2,
-  adaptUpdateMediaBuyRequestForV2,
   normalizePackageResponse,
   normalizeMediaBuyResponse,
-  usesV2CreativeIds,
   usesV3CreativeAssignments,
   getCreativeIds,
   getCreativeAssignments,
 } from './utils/creative-adapter';
 export type { CreativeAssignment } from './utils/creative-adapter';
 
-// Format renders normalizer (v2 dimensions ↔ v3 renders)
+// AdCP 3 format render helpers
 export {
   normalizeFormatRenders,
   normalizeFormatsResponse,
@@ -2109,23 +2102,16 @@ export {
   getPrimaryRender,
   getCompanionRenders,
   isMultiRenderFormat,
-  usesV2Dimensions,
   usesV3Renders,
   getFormatDimensions,
 } from './utils/format-renders';
-// FormatRender (the v3 structural interface) was renamed to FormatRenderEntry
-// so the `FormatRender` name at the barrel becomes the factory namespace
-// exported from `./utils/format-render-builders` above. The deprecated type
-// alias `FormatRender = FormatRenderEntry` still lives in `utils/format-renders`
-// for callers importing the sub-module directly; it's not re-exported here.
 export type { FormatRenderEntry, RenderDimensions } from './utils/format-renders';
 
-// Preview response normalizer (v2 output_id ↔ v3 render_id)
+// AdCP 3 preview render helpers
 export {
   normalizePreviewRender,
   normalizePreview,
   normalizePreviewCreativeResponse,
-  usesV2RenderFields,
   usesV3RenderFields,
   getRenderId,
   getRenderRole,
@@ -2134,6 +2120,7 @@ export {
   getPreviewHtml,
 } from './utils/preview-normalizer';
 export type { PreviewRendererMetadata, PreviewRenderV3 } from './utils/preview-normalizer';
+
 export {
   resolvePreviewAuthority,
   type PlacementPreviewCandidate,
