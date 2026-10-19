@@ -124,7 +124,24 @@ await agent.syncCreatives(
 The same pure functions are available from the explicit
 `@adcp/sdk/v2/projection` migration subpath for composition outside a client call:
 `projectCreativeForDelivery()`, `projectMediaBuyCreativesForDelivery()`, and
-`projectSyncCreativesForDelivery()`. Capability resolution uses the client's
+`projectSyncCreativesForDelivery()`.
+
+When these helpers emit a legacy `format_id`, they also map assets to the
+definition's `asset_id` keys. Definitions come from the bundled reference
+catalog, or from an optional final `legacyFormatDefinitions` array supplied to
+any of the three helpers. Caller definitions take precedence and must match
+both the format agent URL and ID. No network lookup occurs during projection.
+
+Existing declared asset keys keep their values. Other assets move only to one
+unoccupied slot with the same `asset_type`; URL assets must also match
+`requirements.url_type`, and pixel trackers must match the slot's `event`.
+Custom tracker events also match `custom_event_name`. Definitions containing
+repeatable groups retain all asset keys; projection does not infer group membership.
+Unmatched assets, ambiguous matches, and assets competing for the same slot
+keep their original keys. Unknown definitions leave assets unchanged. Canonical
+delivery retains its asset keys, and projection never mutates the caller's data.
+
+Capability resolution uses the client's
 emitted wire release pin: AdCP 3.2+ is canonical by contract, 3.0 is legacy, and 3.1
 checks the explicit `media_buy.features.canonical_creatives` declaration. A
 3.1 peer without the feature is deliberately
