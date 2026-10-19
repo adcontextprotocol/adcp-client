@@ -134,6 +134,14 @@ Signing keys are Ed25519 only; ES256 stays on the AdCP RFC 9421 profile, and
 `createWebBotAuthFetch`, `createWebhookEmitter` and `createAdcpServer` refuse
 a P-256 or RSA Web Bot Auth key at wire-up.
 
+This also changes two helpers outside the experiment. `verifySignature` and
+`verifySignatureAsync`, which `@adcp/sdk/signing/server` exports, no longer
+verify `rsa-pss-sha512`: they return `false` for it, as for any algorithm they
+don't support. Only Web Bot Auth used it, and the AdCP RFC 9421 profile allows
+only `ed25519` and `ecdsa-p256-sha256`. A caller that verifies RSA-PSS
+signatures with these helpers needs to verify them with `node:crypto` or
+WebCrypto instead.
+
 The covered `Signature-Agent` member must be exactly the canonical https origin
 string, compared as received: a lowercase host, no default port, and no path
 (not even `/`), query, fragment, or userinfo. Any other value, including an
