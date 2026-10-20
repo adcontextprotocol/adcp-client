@@ -114,7 +114,8 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
       assert.strictEqual(result.data.products[0].product_id, 'optimera_display');
       assert.strictEqual(result.data.products[0].format_options.length, 2);
       assert.strictEqual(result.data.products[0].format_options[0].format_kind, 'image');
-      assert.strictEqual(result.data.products[0].format_options[1].format_kind, 'html5');
+      // HTML-markup legacy formats project to display_tag (adcp#8339).
+      assert.strictEqual(result.data.products[0].format_options[1].format_kind, 'display_tag');
       assert.strictEqual(result.data.products[0].format_options[1].params.width, 320);
       assert.strictEqual(result.data.products[0].format_options[1].params.height, 50);
       assert.strictEqual(result.data.products[0].format_ids, undefined);
