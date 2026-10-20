@@ -14,13 +14,22 @@ function sized(id, width, height) {
   return { agent_url: AGENT_URL, id, width, height };
 }
 
-function html5Creative(width, height) {
+// The AAO `display_html` / `display_WxH_html` formats take HTML markup, which
+// canonically is display_tag inline markup, not an html5 zip (adcp#8339).
+function markupCreative(width, height) {
   return {
     creative_id: `creative_${width}x${height}`,
     name: `Banner ${width}x${height}`,
-    format_kind: 'html5',
+    format_kind: 'display_tag',
     format_parameters: { width, height },
-    assets: { html: { asset_type: 'html', snippet: '<div>ad</div>' } },
+    assets: {
+      html_creative: {
+        asset_type: 'display_tag',
+        delivery_type: 'inline_markup',
+        markup_type: 'standard',
+        markup: '<div>ad</div>',
+      },
+    },
   };
 }
 
@@ -50,7 +59,7 @@ describe('creative delivery picks the most constrained legacy ref', () => {
         {
           product_id: 'seller-product',
           format_ids: [sized('display_html', 300, 250), sized('display_300x250_html', 300, 250)],
-          creatives: [html5Creative(300, 250)],
+          creatives: [markupCreative(300, 250)],
         },
       ],
     });
@@ -73,7 +82,7 @@ describe('creative delivery picks the most constrained legacy ref', () => {
         {
           product_id: 'multi-size',
           format_ids: sizes.flatMap(([w, h]) => [sized('display_html', w, h), sized(`display_${w}x${h}_html`, w, h)]),
-          creatives: [html5Creative(728, 90)],
+          creatives: [markupCreative(728, 90)],
         },
       ],
     });
@@ -87,7 +96,7 @@ describe('creative delivery picks the most constrained legacy ref', () => {
         {
           product_id: 'generic-plus-sized',
           format_ids: [{ agent_url: AGENT_URL, id: 'display_html' }, sized('display_300x250_html', 300, 250)],
-          creatives: [html5Creative(300, 250)],
+          creatives: [markupCreative(300, 250)],
         },
       ],
     });
@@ -96,7 +105,7 @@ describe('creative delivery picks the most constrained legacy ref', () => {
   });
 
   test('still fails closed when the creative declares no size and the refs differ in size', () => {
-    const creative = html5Creative(300, 250);
+    const creative = markupCreative(300, 250);
     delete creative.format_parameters;
     assert.throws(
       () =>
@@ -124,7 +133,7 @@ describe('creative delivery picks the most constrained legacy ref', () => {
       [970, 250],
     ];
     const creative = {
-      ...html5Creative(300, 250),
+      ...markupCreative(300, 250),
       creative_id: 'pinned_300x250',
       format_option_ref: { scope: 'product', format_option_id: migratedFormatOptionId(sizedRef) },
     };
@@ -148,7 +157,7 @@ describe('creative delivery picks the most constrained legacy ref', () => {
 
   test('fails closed when a pinned creative names no legacy ref the product advertises', () => {
     const creative = {
-      ...html5Creative(300, 250),
+      ...markupCreative(300, 250),
       creative_id: 'pinned_elsewhere',
       format_option_ref: { scope: 'product', format_option_id: 'seller_authored_option' },
     };
@@ -169,10 +178,10 @@ describe('creative delivery picks the most constrained legacy ref', () => {
 
   test('leaves canonical wire mode untouched', () => {
     const request = {
-      packages: [{ product_id: 'canonical-seller', creatives: [html5Creative(300, 250)] }],
+      packages: [{ product_id: 'canonical-seller', creatives: [markupCreative(300, 250)] }],
     };
     const projected = projectMediaBuyCreativesForDelivery(request, 'canonical', 'create_media_buy');
-    assert.equal(projected.packages[0].creatives[0].format_kind, 'html5');
+    assert.equal(projected.packages[0].creatives[0].format_kind, 'display_tag');
     assert.equal(projected.packages[0].creatives[0].format_id, undefined);
   });
 });
@@ -196,7 +205,7 @@ describe('creative delivery matches dimensions from catalog-backed bare IDs (#32
 
   for (const [width, height] of sizes) {
     test(`sync_creatives selects only the HTML ref for ${width}x${height}`, () => {
-      const creative = html5Creative(width, height);
+      const creative = markupCreative(width, height);
       const original = structuredClone(creative);
       const projected = syncLegacy(creative, formatIds);
 
@@ -212,7 +221,7 @@ describe('creative delivery matches dimensions from catalog-backed bare IDs (#32
     test(`${operation} selects the same sized bare ref for inline creatives`, () => {
       const projected = projectMediaBuyCreativesForDelivery(
         {
-          packages: [{ product_id: 'multi-size', format_ids: formatIds, creatives: [html5Creative(300, 250)] }],
+          packages: [{ product_id: 'multi-size', format_ids: formatIds, creatives: [markupCreative(300, 250)] }],
         },
         'legacy',
         operation
@@ -222,7 +231,7 @@ describe('creative delivery matches dimensions from catalog-backed bare IDs (#32
   }
 
   test('compares explicit and catalog dimensions together and prefers the fixed-size ID', () => {
-    const projected = syncLegacy(html5Creative(300, 250), [
+    const projected = syncLegacy(markupCreative(300, 250), [
       sized('display_html', 300, 250),
       bare('display_300x250_html'),
       sized('display_728x90_html', 728, 90),
@@ -231,7 +240,7 @@ describe('creative delivery matches dimensions from catalog-backed bare IDs (#32
   });
 
   test('preserves explicit dimensions on parameterized refs', () => {
-    const projected = syncLegacy(html5Creative(320, 50), [
+    const projected = syncLegacy(markupCreative(320, 50), [
       sized('display_html', 320, 50),
       bare('display_300x250_html'),
     ]);
@@ -241,30 +250,30 @@ describe('creative delivery matches dimensions from catalog-backed bare IDs (#32
   test('preserves a seller-owned creative-agent URL when standard IDs are aliases', () => {
     const sellerAgentUrl = 'https://creative.example.com';
     const sellerRefs = formatIds.map(ref => bare(ref.id, sellerAgentUrl));
-    const projected = syncLegacy(html5Creative(300, 250), sellerRefs);
+    const projected = syncLegacy(markupCreative(300, 250), sellerRefs);
     assert.deepEqual(projected.format_id, bare('display_300x250_html', sellerAgentUrl));
   });
 
   test('refuses a multi-size catalog without creative dimensions', () => {
-    const creative = html5Creative(300, 250);
+    const creative = markupCreative(300, 250);
     delete creative.format_parameters;
     assert.throws(() => syncLegacy(creative, formatIds), CreativeFormatProjectionError);
   });
 
   test('refuses multiple catalog refs when none matches the creative dimensions', () => {
-    assert.throws(() => syncLegacy(html5Creative(320, 50), formatIds), CreativeFormatProjectionError);
+    assert.throws(() => syncLegacy(markupCreative(320, 50), formatIds), CreativeFormatProjectionError);
   });
 
   test('refuses even a single catalog ref that contradicts the creative dimensions', () => {
     assert.throws(
-      () => syncLegacy(html5Creative(728, 90), [bare('display_300x250_html')]),
+      () => syncLegacy(markupCreative(728, 90), [bare('display_300x250_html')]),
       CreativeFormatProjectionError
     );
   });
 
   test('refuses a single explicitly sized ref that contradicts the creative dimensions', () => {
     assert.throws(
-      () => syncLegacy(html5Creative(728, 90), [sized('display_html', 300, 250)]),
+      () => syncLegacy(markupCreative(728, 90), [sized('display_html', 300, 250)]),
       CreativeFormatProjectionError
     );
   });
@@ -288,7 +297,7 @@ describe('creative delivery matches dimensions from catalog-backed bare IDs (#32
   test('refuses multiple matching refs routed through different creative agents', () => {
     assert.throws(
       () =>
-        syncLegacy(html5Creative(300, 250), [
+        syncLegacy(markupCreative(300, 250), [
           bare('display_300x250_html'),
           bare('display_300x250_html', 'https://creative.example.com'),
         ]),
@@ -297,21 +306,139 @@ describe('creative delivery matches dimensions from catalog-backed bare IDs (#32
   });
 
   test('refuses partial dimensions that match more than one size', () => {
-    const creative = html5Creative(300, 250);
+    const creative = markupCreative(300, 250);
     delete creative.format_parameters.height;
     assert.throws(() => syncLegacy(creative, formatIds), CreativeFormatProjectionError);
   });
 
   test('does not infer dimensions from uncatalogued IDs that look sized', () => {
-    const creative = html5Creative(310, 210);
+    const creative = markupCreative(310, 210);
     assert.throws(
       () =>
         projectSyncCreativesForDelivery(
           { creatives: [creative] },
-          [{ format_kind: 'html5', format_ids: [bare('display_310x210_html'), bare('display_620x420_html')] }],
+          [{ format_kind: 'display_tag', format_ids: [bare('display_310x210_html'), bare('display_620x420_html')] }],
           'legacy'
         ),
       CreativeFormatProjectionError
     );
+  });
+});
+
+describe('inline-markup display_tag creatives round-trip to the HTML-markup legacy formats (adcp#8339)', () => {
+  const MARKUP =
+    '<ins class="dcmads" style="display:inline-block;width:300px;height:250px" data-dcm-placement="N0000.0000ACME/B0000000.000000000"><script src="https://ads.acme.example/dcmads.js"></script></ins>';
+  const sizedHtmlRefs = [bare('display_300x250_html'), bare('display_300x600_html'), bare('display_320x50_html')];
+
+  function inlineMarkupCreative(size, overrides = {}) {
+    return {
+      creative_id: 'cm360_tag',
+      name: 'Third-party tag',
+      format_kind: 'display_tag',
+      assets: {
+        html_creative: {
+          asset_type: 'display_tag',
+          delivery_type: 'inline_markup',
+          markup_type: 'javascript',
+          markup: MARKUP,
+          ...size,
+        },
+      },
+      ...overrides,
+    };
+  }
+
+  test('selects the exact sized ref from the rendered asset size and carries the markup in html_creative', () => {
+    const projected = syncLegacy(inlineMarkupCreative({ width: 300, height: 250 }), sizedHtmlRefs);
+    assert.deepEqual(projected.format_id, bare('display_300x250_html'));
+    assert.equal(projected.format_kind, undefined);
+    assert.deepEqual(projected.assets, { html_creative: { asset_type: 'html', content: MARKUP } });
+  });
+
+  test('maps a differently named inline-markup slot onto html_creative', () => {
+    const creative = inlineMarkupCreative({ width: 320, height: 50 });
+    creative.assets = { serving_tag: creative.assets.html_creative };
+    const projected = syncLegacy(creative, sizedHtmlRefs);
+    assert.deepEqual(projected.format_id, bare('display_320x50_html'));
+    assert.deepEqual(projected.assets, { html_creative: { asset_type: 'html', content: MARKUP } });
+  });
+
+  test('selects the same ref for inline media-buy creatives', () => {
+    const projected = projectLegacy({
+      packages: [
+        {
+          product_id: 'html-sizes',
+          format_ids: sizedHtmlRefs,
+          creatives: [inlineMarkupCreative({ width: 300, height: 600 })],
+        },
+      ],
+    });
+    const creative = projected.packages[0].creatives[0];
+    assert.deepEqual(creative.format_id, bare('display_300x600_html'));
+    assert.deepEqual(creative.assets.html_creative, { asset_type: 'html', content: MARKUP });
+  });
+
+  test('prefers the inline-markup HTML ref over a tag-URL display_js ref of the same kind', () => {
+    const projected = syncLegacy(inlineMarkupCreative(), [bare('display_js'), bare('display_html')]);
+    assert.deepEqual(projected.format_id, bare('display_html'));
+  });
+
+  test('keeps a tag-URL display_tag creative on display_js', () => {
+    const creative = {
+      creative_id: 'tag_url',
+      name: 'Tag URL',
+      format_kind: 'display_tag',
+      assets: { tag_url: { asset_type: 'url', url_type: 'ad_request', url: 'https://ads.acme.example/render' } },
+    };
+    assert.deepEqual(syncLegacy(creative, [bare('display_js'), bare('display_html')]).format_id, bare('display_js'));
+    assert.throws(() => syncLegacy(creative, sizedHtmlRefs), CreativeFormatProjectionError);
+  });
+
+  test('refuses an unsized inline-markup creative against several sized HTML refs', () => {
+    assert.throws(() => syncLegacy(inlineMarkupCreative(), sizedHtmlRefs), CreativeFormatProjectionError);
+  });
+
+  test('intended: an html5 zip creative no longer matches HTML-markup-only products', () => {
+    const zip = {
+      creative_id: 'zip_bundle',
+      name: 'HTML5 bundle',
+      format_kind: 'html5',
+      assets: {
+        html5_bundle: {
+          asset_type: 'zip',
+          url: 'https://cdn.acme.example/spring-300x250.zip',
+          width: 300,
+          height: 250,
+        },
+      },
+    };
+    assert.throws(() => syncLegacy(zip, sizedHtmlRefs), CreativeFormatProjectionError);
+    assert.throws(() => syncLegacy(zip, [bare('display_html')]), CreativeFormatProjectionError);
+  });
+
+  test('reads a legacy html_creative back as inline markup on the canonical wire', () => {
+    const legacy = {
+      creative_id: 'legacy_html',
+      name: 'Legacy HTML',
+      format_id: bare('display_300x250_html'),
+      assets: { html_creative: { asset_type: 'html', content: MARKUP } },
+    };
+    const canonical = projectSyncCreativesForDelivery(
+      { creatives: [legacy], assignments: [{ creative_id: 'legacy_html', package_id: 'package_1' }] },
+      [{ package_id: 'package_1', format_ids: [bare('display_300x250_html')] }],
+      'canonical'
+    ).creatives[0];
+    assert.equal(canonical.format_kind, 'display_tag');
+    assert.equal(canonical.format_id, undefined);
+    assert.deepEqual(canonical.assets.html_creative, {
+      asset_type: 'display_tag',
+      delivery_type: 'inline_markup',
+      markup_type: 'standard',
+      markup: MARKUP,
+    });
+
+    // The legacy wire leaves the original asset untouched.
+    const legacyWire = syncLegacy(legacy, [bare('display_300x250_html')]);
+    assert.deepEqual(legacyWire.assets, legacy.assets);
   });
 });
