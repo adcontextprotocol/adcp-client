@@ -12,6 +12,14 @@ type DeadlineTaskOptions<TOptions extends TaskOptions = TaskOptions> = TOptions 
   [TASK_DEADLINE_ERROR]?: TaskTimeoutError;
 };
 
+/** Give a child dispatch its own correlation id while retaining the parent deadline and cancellation. */
+export function childTaskOptions(options?: TaskOptions): TaskOptions {
+  const child = { ...options };
+  delete child.operationId;
+  delete (child as Partial<DeadlineTaskOptions>)[TASK_OPERATION_ID];
+  return child;
+}
+
 export function getTaskOperationId(options: TaskOptions | undefined): string | undefined {
   const operationId = options?.operationId;
   if (

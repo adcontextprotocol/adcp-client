@@ -1179,7 +1179,7 @@ export class TaskExecutor {
     }
     if (task && task.serverTaskId === undefined && identity.serverTaskId !== undefined)
       task.serverTaskId = identity.serverTaskId;
-    this.updateTaskStatus(taskId, status, result);
+    if (task && !TERMINAL_TASK_STATUSES.has(task.status)) this.updateTaskStatus(taskId, status, result);
     return { settled: false, result };
   }
 
@@ -3686,6 +3686,12 @@ export class TaskExecutor {
         status = pollResult.task;
         rawResponse = pollResult.rawResponse;
       } catch (err) {
+        if (signal?.aborted && agent.protocol === 'a2a' && a2aCancellationTaskId && isAbortOrTimeoutError(err)) {
+          // An abort-aware transport can reject before the next iteration.
+          // Re-enter the cancellation branch so explicit seller cancellation
+          // is honored for in-flight polls as well as polling delays.
+          continue;
+        }
         if (err instanceof TaskBindingMismatchError) {
           return attachMatch({
             success: false as const,

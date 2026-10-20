@@ -6,6 +6,8 @@ const {
   TaskExecutor,
   ProtocolClient,
   AsyncHandler,
+  parseCapabilitiesResponse,
+  createProductCache,
 } = require('../../dist/lib/index.js');
 
 const seller = {
@@ -434,6 +436,166 @@ describe('persisted seller task tracking (#3338)', () => {
       assert.equal(activities.length, 0);
     });
   }
+
+  for (const order of ['poll-first', 'push-first']) {
+    for (const pushedStatus of ['completed', 'failed']) {
+      test(`terminal publication stays final across ${order} and a ${pushedStatus} push`, async () => {
+        const activities = [];
+        const executor = new TaskExecutor({ onActivity: activity => activities.push(activity) });
+        const handle = executor.trackTask(seller, identity);
+        mock.method(ProtocolClient, 'callTool', async () => response('completed', { result: {} }));
+        const push = () =>
+          executor.observeExternalTaskStatus(
+            identity.operationId,
+            pushedStatus,
+            {},
+            {
+              serverTaskId: identity.taskId,
+              taskType: identity.taskType,
+            }
+          );
+        if (order === 'poll-first') {
+          await handle.track();
+          await push();
+        } else {
+          await push();
+          await handle.track();
+        }
+        await push();
+        await handle.waitForCompletion(0);
+        assert.equal(activities.length, 1);
+        const expected = order === 'poll-first' ? 'completed' : pushedStatus;
+        assert.equal(activities[0].status, expected);
+        assert.equal(executor.getActiveTasks()[0].status, expected);
+      });
+    }
+  }
+
+  test('explicit A2A seller cancellation also runs when an in-flight poll rejects on abort', async () => {
+    const agent = { ...seller, protocol: 'a2a' };
+    const calls = [];
+    const trustedFetchFn = async (_url, options) => {
+      if (!options?.body)
+        return new Response(
+          JSON.stringify({
+            name: 'In-flight cancellation fixture',
+            description: 'A2A cancellation fixture',
+            url: agent.agent_uri,
+            version: '1.0.0',
+            protocolVersion: '0.3.0',
+            capabilities: {},
+            defaultInputModes: ['application/json'],
+            defaultOutputModes: ['application/json'],
+            skills: [],
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        );
+      const body = JSON.parse(options.body);
+      calls.push(body);
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { id: 'transport-task-42' } }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    const activities = [];
+    const executor = new TaskExecutor({
+      transport: { trustedFetchFn },
+      onActivity: activity => activities.push(activity),
+    });
+    const controller = new AbortController();
+    const handle = executor.trackTask(agent, {
+      ...identity,
+      a2aTaskId: 'transport-task-42',
+      cancelOnAbort: true,
+      signal: controller.signal,
+    });
+    mock.method(
+      ProtocolClient,
+      'callTool',
+      async (_agent, _tool, _params, options) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(new DOMException('poll aborted', 'AbortError')), {
+            once: true,
+          });
+          controller.abort();
+        })
+    );
+    const result = await handle.waitForCompletion(0);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(result.success, false);
+    assert.match(result.error, /cancelled/);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].method, 'tasks/cancel');
+    assert.equal(calls[0].params.id, 'transport-task-42');
+    assert.equal(activities.length, 0);
+  });
+
+  for (const operationId of [undefined, 'resolve-parent-operation']) {
+    test(`multi-page account resolution gives each physical dispatch its own id (${operationId})`, async () => {
+      const client = clientFor(seller, []);
+      client.detectServerVersion = async () => 'v3';
+      client.getCapabilities = async () =>
+        parseCapabilitiesResponse({
+          adcp: { major_versions: [3], supported_versions: ['3.1'] },
+          supported_protocols: ['media_buy'],
+          media_buy: {},
+          account: { require_operator_auth: true },
+        });
+      const calls = [];
+      mock.method(ProtocolClient, 'callTool', async (_agent, tool, params, options) => {
+        assert.equal(tool, 'list_accounts');
+        calls.push(options);
+        const second = params.pagination?.cursor === 'next';
+        return {
+          status: 'completed',
+          accounts: [
+            {
+              account_id: second ? 'account-two' : 'account-one',
+              status: 'active',
+              brand: { domain: second ? 'two.example' : 'one.example' },
+            },
+          ],
+          pagination: second ? { has_more: false } : { has_more: true, cursor: 'next' },
+        };
+      });
+      const account = await client.resolveAccount({ brand: { domain: 'two.example' } }, { timeout: 5000, operationId });
+      assert.deepEqual(account, { account_id: 'account-two' });
+      assert.equal(calls.length, 2);
+      assert.notEqual(calls[0].operationId, calls[1].operationId);
+      if (operationId) assert.ok(calls.every(call => call.operationId !== operationId));
+      assert.ok(calls[0].signal);
+      assert.equal(calls[0].signal, calls[1].signal, 'children retain the absolute parent deadline signal');
+    });
+  }
+
+  test('an unconditional product-cache refetch gets a fresh operation id under the same deadline', async () => {
+    const client = clientFor(seller, []);
+    client.config.productCache = createProductCache();
+    client.detectServerVersion = async () => 'v3';
+    client.getCapabilities = async () =>
+      parseCapabilitiesResponse({
+        adcp: { major_versions: [3], supported_versions: ['3.1'] },
+        supported_protocols: ['media_buy'],
+        media_buy: { buying_modes: ['wholesale'] },
+      });
+    const calls = [];
+    mock.method(ProtocolClient, 'callTool', async (_agent, tool, _params, options) => {
+      assert.equal(tool, 'get_products');
+      calls.push(options);
+      return calls.length === 1
+        ? { status: 'completed', unchanged: true, cache_scope: 'public', wholesale_feed_version: 'v1' }
+        : { status: 'completed', products: [], cache_scope: 'public', wholesale_feed_version: 'v2' };
+    });
+    const result = await client.getProducts({ buying_mode: 'wholesale' }, undefined, {
+      operationId: 'product-query',
+      timeout: 5000,
+    });
+    assert.equal(result.status, 'completed');
+    assert.deepEqual(result.data.products, []);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].operationId, 'product-query');
+    assert.notEqual(calls[1].operationId, calls[0].operationId);
+    assert.equal(calls[0].signal, calls[1].signal);
+  });
 
   for (const operationId of ['', '.', '..', 'delivery_route:reporting:reserved', 'with spaces', 'x'.repeat(256), 42]) {
     test(`rejects invalid public operationId ${JSON.stringify(operationId)} before discovery`, async () => {

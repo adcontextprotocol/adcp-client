@@ -140,7 +140,7 @@ import {
   assertNativeRequestProposalsTask,
   guardNativeRequestProposalsCompletion,
 } from './request-proposals-guard';
-import { getTaskOperationId, withTaskDeadline } from './task-deadline';
+import { childTaskOptions, getTaskOperationId, withTaskDeadline } from './task-deadline';
 import { createMCPRequestHeaders } from '../auth';
 import { isAbortOrTimeoutError } from '../protocols/abort';
 import { getSignedRequestRejection } from '../protocols/signedRequestRejection';
@@ -2093,7 +2093,7 @@ export class SingleAgentClient {
           const result = await this.listAccounts(
             { account: { account_id: accountId }, ...(cursor && { pagination: { cursor } }) },
             undefined,
-            { ...options, [SKIP_ACCOUNT_REGISTRY_OBSERVATION]: true } as TaskOptions
+            { ...childTaskOptions(options), [SKIP_ACCOUNT_REGISTRY_OBSERVATION]: true } as TaskOptions
           );
           if (!result.success || result.status !== 'completed' || !result.data || !('accounts' in result.data))
             throw new Error('Account status reconciliation failed.');
@@ -7350,8 +7350,7 @@ export class SingleAgentClient {
           ) {
             // A missing/mismatched conditional snapshot needs a real unconditional read.
             return this.getProducts(params, inputHandler, {
-              ...options,
-              ...effectiveOptions,
+              ...childTaskOptions({ ...options, ...effectiveOptions }),
               [SKIP_PRODUCT_CACHE]: true,
             } as CanonicalReadTaskOptions);
           }
@@ -8681,7 +8680,7 @@ export class SingleAgentClient {
               ...(cursor !== undefined && { pagination: { cursor } }),
             },
             undefined,
-            effectiveOptions
+            childTaskOptions(effectiveOptions)
           );
           onTaskResult?.(result);
           if (
@@ -8789,7 +8788,7 @@ export class SingleAgentClient {
             ],
           } as MutatingRequestInput<SyncAccountsRequest>,
           undefined,
-          effectiveOptions
+          childTaskOptions(effectiveOptions)
         );
         onTaskResult?.(result);
         if (
@@ -8881,7 +8880,7 @@ export class SingleAgentClient {
             paymentTerms: hints.paymentTerms,
             billingEntity: hints.billingEntity,
           },
-          effectiveOptions,
+          childTaskOptions(effectiveOptions),
           onTaskResult
         );
       } catch (error) {
