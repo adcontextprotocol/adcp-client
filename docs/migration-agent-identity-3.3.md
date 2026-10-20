@@ -155,12 +155,14 @@ parameter is a Token (WBA section 5.2.1), and the verifier accepts
 type, which leaves no member to resolve (403).
 
 `SignatureDirectoryResolver` derives the directory from the covered canonical
-origin. Directories must be signed (WBA Appendix B.1): it validates a
-possession signature for every key the profile can use, covering
-`"@authority";req` and `content-digest`, and the exact body digest before
-caching keys. It ignores keys the profile cannot use, such as a P-256 key, and
-any signature they made (RFC 7517 section 5). An unsigned directory, one
-with no usable key, or one that publishes private key material for any key,
+origin. Directories must be signed (WBA Appendix B.1): it uses each Ed25519
+key that has a valid possession signature, covering `"@authority";req` and
+`content-digest`, and validates the exact body digest before caching keys. It
+ignores every other key and any signature it made: a key the profile cannot
+use, such as a P-256 key, a key it cannot import, such as an Ed25519 key with
+no `x` (RFC 7517 section 5), and a key without a valid signature (WBA Appendix
+B.1; directory draft section 5). An unsigned directory, one with no validly
+signed Ed25519 key, or one that publishes private key material for any key,
 usable or not, is a discovery failure. Its audit proof retains the signed body and
 headers. Verification requires this resolver so context-free JWKS adapters cannot
 attribute a key to an arbitrary origin. Discovery uses HTTPS, DNS pinning, no redirects, a 256 KiB cap, a
@@ -407,18 +409,19 @@ released schemas:
 
 | PR | Pinned head | Surface |
 | --- | --- | --- |
-| [7894](https://github.com/adcontextprotocol/adcp/pull/7894) | `e59294701d733b0ea2a004a2f0c091c8eccdcaae` | WBA wire profile (`wba-profile.mdx`), profile selectors, directory and request vectors |
+| [7894](https://github.com/adcontextprotocol/adcp/pull/7894) | `9f472d63900b99efcd9ed05b5d0bb75552c3b9d6` | WBA wire profile (`wba-profile.mdx`), profile selectors |
 | [8121](https://github.com/adcontextprotocol/adcp/pull/8121) | `f5973ac0267b1b94d714c55fc4e3ad8fc2511350` | Origin identity and key-free trust v1 |
 | [8162](https://github.com/adcontextprotocol/adcp/pull/8162) | `5c9914c5c382cc32f3d2ad7842942e548c414705` | Ratified identity, coexistence, revocation |
 | [8168](https://github.com/adcontextprotocol/adcp/pull/8168) | `45540941dfd61e80ab8a463f780cb147c82a32f0` | Relationship and principal response arms |
 | [8169](https://github.com/adcontextprotocol/adcp/pull/8169) | `3ce6a14d7afaa71fa78ddf2223ed0421e01205ae` | Grants, trust schema, grant_absent; the registrable-domain `grantee` rule and its schema description from `eabe46048530c08a34e6eee6e4d15d7848e01c57` |
 | [8170](https://github.com/adcontextprotocol/adcp/pull/8170) | `8d3591e70e9a717c7fdfb513360a796fba24ca9a` | Onboarding additions only; its old trust key fields are excluded |
 | [8177](https://github.com/adcontextprotocol/adcp/pull/8177) | `b663f8e4235fe4276c73fb9bac6db491b2252bbf` | Reporting authentication omission |
+| [8298](https://github.com/adcontextprotocol/adcp/pull/8298) | `f44785a5b65db93988f30ad3d23ba5849f1a1d5e` | WBA interop harness, directory and request vectors |
 
-The vectors in `test/fixtures/wba-profile/` are byte-identical to #7894 at that
-head (see `PINNED.json`). Every vendored request and directory vector is
-graded, and the interop harness (adcontextprotocol/adcp#8298) grades
-`scenarios.json`.
+The vectors in `test/fixtures/wba-profile/` are byte-identical to #8298 at that
+head (see `PINNED.json`), which carries the #7894 profile and vectors. Every
+vendored request and directory vector is graded, and the interop harness
+(adcontextprotocol/adcp#8298) grades `scenarios.json`.
 
 Verification runs in Cloudflare's `http-message-sig` (signature base, coverage,
 window, algorithm and cryptographic checks); the SDK adds the profile rules in

@@ -238,7 +238,7 @@ test('D2: directory proofs must cover the exact "content-digest" component', asy
   );
   await assert.rejects(
     wba.verifySignatureDirectory(signedWith('"@authority";req "content-digest";key="sha-512"'), T),
-    e => e.reason === 'directory_proof'
+    e => e.reason === 'directory_keys'
   );
 });
 
