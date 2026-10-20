@@ -1,5 +1,30 @@
 # Changelog
 
+## 16.1.0
+
+### Minor Changes
+
+- f886e1a: Add `SingleAgentClient.trackTask()` and `AgentClient.trackTask()` to observe persisted seller tasks through the existing continuation polling path. Polls share one operation ID and emit terminal lifecycle activity without creating a new protocol activity record for each status read. Add `TaskOptions.operationId` to pin the caller's correlation ID, and expose `server_task_id` on response, status, and webhook activity alongside the runner's `operation_id`.
+
+  Reject operation-ID collisions, fence stale polling handles, and allow matching same-client work to be tracked again. Local observation failures do not publish seller failures; A2A seller cancellation requires explicit opt-in.
+
+- 1d284f9: Experimental AdCP 3.3 identity (`@adcp/sdk/identity-3.3`): a trust.json grant's `grantee` must be a registrable domain under the pinned Public Suffix List snapshot, ICANN and private sections (adcontextprotocol/adcp#8169).
+  - **A host grantee is no longer broadened.** `authorizeDemandGrant` used to reduce a `grantee` such as `media.agency.example` to its registrable domain, `agency.example`, so the grant reached every agent that domain runs. A grant whose `grantee` is not itself a registrable domain now covers no claim, on either link of a chain and for a self-operated brand's direct grant. Its `scopes` still count for `exclusive_grants`: with `exclusive_grants: true` the claim is refused and `sellerAuthorization` is not consulted. Without it, the uncovered claim stays at the seller's discretion: such a grant no longer counts as published narrowing that blocks `sellerAuthorization`.
+  - **A public suffix grantee covers no claim.** A `grantee` that is a public suffix itself, such as `github.io`, has no registrable domain, while `alice.github.io` does. Such a grant used to throw `EtldComputationError` out of `authorizeDemandGrant` for every claim against that record; it is now ignored like any other non-registrable grantee.
+  - **Authoring refuses them.** The new `assertPublishableTrustRecord`, which `createTrustRecord` and `adcp identity trust-validate` now use, throws a `TypeError` naming the grantee when a grant's `grantee` is not a registrable domain, or when a grant's `agents[].url` is not a valid agent origin. A fetched record that carries either is still a valid record: the rule applies per grant.
+  - **A malformed grant `agents[].url` no longer throws.** A schema-valid but unparseable URL (such as `https://agency.example:99999/`) in one grant's `agents[]` used to throw `CanonicalizeError` out of `authorizeDemandGrant`, failing every claim against the record. That grant now lists no agent and simply does not match.
+
+### Patch Changes
+
+- 291b7a8: Stop rejecting a whole `get_products` response because a seller's canonical `format_options` declaration disagrees with an AAO naming guess about a `v1_format_ref` under the seller's own `agent_url`. Two shapes were refused with "does not narrow its v1_format_ref" or "divergent legacy and canonical format declarations": a `video_hosted` size range declared for an id the AAO catalog also publishes once (the bare-id alias), and a `display_tag` declared for an unsuffixed display size id (the registry id-glob). Those guesses describe the AAO agent; under any other agent URL the seller's own agent owns what its ids mean. The dual-declaration check now lets an exact catalog entry, a projection catalog, or the explicit legacy converter decide in either direction, and an AAO naming guess under a non-AAO `agent_url` can only confirm a declaration, never reject it. Refs under the AAO agent are checked as before.
+- de30020: Project sync_accounts lookup references onto natural-key fields so strict account resolvers accept entries containing billing and other account settings. Preserve all natural-key dimensions when populating existing-account snapshots and enriching billing terms, including enrichment for implicit list_accounts.
+- 4aff74f: Experimental AdCP 3.3 identity: `verifyKeyDirectory` and `SignatureDirectoryResolver` now use each Ed25519 key that has a valid signature on the directory response, and ignore every other key and its signatures, as the profile in adcontextprotocol/adcp#7894 requires. draft-ietf-webbotauth-httpsig-protocol-00 Appendix B.1 says the proof matters for a domain-bound identifier, which an AdCP origin is, and the directory draft says in section 5 that clients SHOULD ignore keys without a valid signature.
+  - **Unsigned keys are ignored.** An Ed25519 key without a valid directory signature no longer refuses the directory with `directory_proof`. A request signed with that key fails as an unknown key (403).
+  - **Malformed keys are ignored.** An Ed25519 key the runtime cannot import, such as one with no `x` or a 31-byte `x`, no longer refuses the directory with `directory_unsupported_key` (RFC 7517 section 5).
+  - **Unchanged refusals.** A directory that publishes a private JWK member for any key is still refused, and that check still runs before any key is skipped. A directory with no validly signed Ed25519 key is still a discovery failure.
+
+  The Web Bot Auth interop harness pin and the vendored vectors move to adcontextprotocol/adcp#8298 at `f44785a5`.
+
 ## 16.0.0
 
 ### Major Changes
