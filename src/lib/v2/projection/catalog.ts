@@ -125,6 +125,15 @@ function normalizeAgentUrl(u: string): string | undefined {
   return AAO_LEGACY_AGENT_URL_ALIASES.has(canonical) ? AAO_CANONICAL_AGENT_URL : canonical;
 }
 
+/**
+ * True when `agentUrl` names the AAO reference format agent (including its
+ * folded historical hosts). Ids under any other agent URL belong to that
+ * agent, so AAO naming conventions say nothing about what they mean.
+ */
+export function isAaoAgentUrl(agentUrl: string): boolean {
+  return normalizeAgentUrl(agentUrl) === AAO_CANONICAL_AGENT_URL;
+}
+
 function indexKey(agentUrl: string, id: string): string | undefined {
   const normalized = normalizeAgentUrl(agentUrl);
   return normalized === undefined ? undefined : `${normalized}::${id}`;

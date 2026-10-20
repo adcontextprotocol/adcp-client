@@ -1487,26 +1487,35 @@ function matchLegacyRefToDeclaration(
   ownerId: string,
   legacyFormatConverter: LegacyFormatConverter | undefined
 ): LegacyRefMatch {
-  const projected = projectV1ProductToV2(
-    {
-      product_id: ownerId,
-      name: ownerId,
-      description: ownerId,
-      format_ids: [ref],
-    },
-    { legacyFormatConverter }
-  );
-  if (projected.diagnostics.length > 0 || projected.v2.format_options.length !== 1) return 'unresolved';
-  const expected = projected.v2.format_options[0]!;
-  if (declaration.format_kind !== expected.format_kind) return 'kind_mismatch';
-  const params =
-    declaration.params !== null && typeof declaration.params === 'object' && !Array.isArray(declaration.params)
-      ? (declaration.params as Record<string, unknown>)
-      : {};
-  for (const [key, expectedValue] of Object.entries(expected.params)) {
-    if (!Object.hasOwn(params, key) || !jsonValuesEqual(params[key], expectedValue)) return 'params_mismatch';
-  }
-  return 'match';
+  const compare = (authoritativeOnly: boolean): LegacyRefMatch => {
+    const projected = projectV1ProductToV2(
+      {
+        product_id: ownerId,
+        name: ownerId,
+        description: ownerId,
+        format_ids: [ref],
+      },
+      { legacyFormatConverter, _authoritativeOnly: authoritativeOnly }
+    );
+    if (projected.diagnostics.length > 0 || projected.v2.format_options.length !== 1) return 'unresolved';
+    const expected = projected.v2.format_options[0]!;
+    if (declaration.format_kind !== expected.format_kind) return 'kind_mismatch';
+    const params =
+      declaration.params !== null && typeof declaration.params === 'object' && !Array.isArray(declaration.params)
+        ? (declaration.params as Record<string, unknown>)
+        : {};
+    for (const [key, expectedValue] of Object.entries(expected.params)) {
+      if (!Object.hasOwn(params, key) || !jsonValuesEqual(params[key], expectedValue)) return 'params_mismatch';
+    }
+    return 'match';
+  };
+  // A catalog entry or the explicit converter decides in either direction. An
+  // AAO naming guess applied to a seller's own agent URL may only confirm the
+  // declaration: the seller's agent owns what its ids mean, so a guess that
+  // disagrees leaves the ref unresolved rather than rejecting the response.
+  const authoritative = compare(true);
+  if (authoritative !== 'unresolved') return authoritative;
+  return compare(false) === 'match' ? 'match' : 'unresolved';
 }
 
 function validateLegacyRefNarrowing(

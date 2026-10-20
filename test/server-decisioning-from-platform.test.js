@@ -1267,6 +1267,136 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.match(result.structuredContent.adcp_error.message, /does not narrow/);
   });
 
+  describe("a seller's own agent URL owns the meaning of its format ids", () => {
+    // The SDK guesses what AAO-style ids mean: a bare id the AAO catalog
+    // publishes once, and the registry's unsuffixed display sizes. Those guesses
+    // describe the AAO agent. Under a seller's own agent URL they must not reject
+    // a declaration the seller authored.
+    const sellerAgent = 'https://formats.seller-a.example/';
+    const otherSellerAgent = 'https://formats.seller-b.example/';
+    const rangedRef = { agent_url: sellerAgent, id: 'video_1080x1920' }; // an id the AAO catalog also publishes
+    const displayTagRef = { agent_url: otherSellerAgent, id: 'display_728x90' }; // matches a registry id-glob
+
+    function product(product_id, ref, declaration, { dualEmit = true } = {}) {
+      return {
+        product_id,
+        name: product_id,
+        description: product_id,
+        ...(dualEmit ? { format_ids: [ref] } : {}),
+        format_options: [{ format_option_id: `${product_id}-option`, v1_format_ref: [ref], ...declaration }],
+      };
+    }
+    const rangedVideo = product('ranged-video', rangedRef, {
+      format_kind: 'video_hosted',
+      params: { min_width: 1000, max_width: 1080, min_height: 1700, max_height: 1920 },
+    });
+    const displayTag = product('display-tag', displayTagRef, {
+      format_kind: 'display_tag',
+      params: { width: 728, height: 90 },
+    });
+    const control = {
+      product_id: 'control-image',
+      name: 'control-image',
+      description: 'control-image',
+      format_options: [
+        { format_option_id: 'control-image-option', format_kind: 'image', params: { width: 300, height: 250 } },
+      ],
+    };
+
+    async function getProducts(products, platformOverrides = {}, config = {}) {
+      const base = buildPlatform();
+      const server = createAdcpServerFromPlatform(
+        buildPlatform({
+          sales: { ...base.sales, getProducts: async () => ({ cache_scope: 'account', products }) },
+          ...platformOverrides,
+        }),
+        {
+          name: 'seller-owned-format-ids',
+          version: '1.0.0',
+          adcpVersion: '3.1.11',
+          validation: { requests: 'off', responses: 'off' },
+          ...config,
+        }
+      );
+      return server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'get_products',
+          arguments: { account: { account_id: 'acc_test' }, buying_mode: 'wholesale' },
+        },
+      });
+    }
+
+    for (const [label, sellerProduct, kind] of [
+      ['ranged hosted video under an id the AAO catalog also publishes', rangedVideo, 'video_hosted'],
+      ['display tag under an id matching a registry id-glob', displayTag, 'display_tag'],
+    ]) {
+      it(`keeps a ${label} and the rest of the product list`, async () => {
+        const result = await getProducts([sellerProduct, control]);
+
+        assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+        const products = result.structuredContent.products;
+        assert.deepStrictEqual(
+          products.map(p => p.product_id),
+          [sellerProduct.product_id, 'control-image']
+        );
+        assert.strictEqual(products[0].format_options[0].format_kind, kind);
+        assert.deepStrictEqual(products[0].format_options[0].params, sellerProduct.format_options[0].params);
+        assert.deepStrictEqual(
+          products[0].format_options[0].v1_format_ref,
+          sellerProduct.format_options[0].v1_format_ref
+        );
+      });
+
+      it(`keeps a ${label} that is declared without top-level format_ids`, async () => {
+        const result = await getProducts([{ ...sellerProduct, format_ids: undefined }, control]);
+
+        assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+        assert.deepStrictEqual(
+          result.structuredContent.products.map(p => p.product_id),
+          [sellerProduct.product_id, 'control-image']
+        );
+      });
+    }
+
+    it('still confirms a seller declaration the guess agrees with', async () => {
+      const agreeing = product('agreeing', displayTagRef, { format_kind: 'image', params: { width: 728, height: 90 } });
+      const result = await getProducts([agreeing]);
+
+      assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+      assert.strictEqual(result.structuredContent.products[0].format_options[0].format_kind, 'image');
+    });
+
+    it('lets an explicit converter decide, in either direction, before any guess', async () => {
+      const converter = expectedKind => () => ({
+        format_option_id: 'converted',
+        format_kind: expectedKind,
+        params: { width: 728, height: 90 },
+      });
+
+      const agreeing = await getProducts([displayTag], {}, { legacyCreativeFormatConverter: converter('display_tag') });
+      assert.notStrictEqual(agreeing.isError, true, JSON.stringify(agreeing.structuredContent));
+
+      const contradicting = await getProducts(
+        [displayTag],
+        {},
+        { legacyCreativeFormatConverter: converter('video_hosted') }
+      );
+      assert.strictEqual(contradicting.isError, true);
+      assert.match(contradicting.structuredContent.adcp_error.message, /divergent legacy and canonical/);
+    });
+
+    it('still rejects a declaration that contradicts a ref under the AAO agent', async () => {
+      const aaoRef = { agent_url: 'https://creative.adcontextprotocol.org/', id: 'video_1080x1920' };
+      const result = await getProducts([
+        product('aao-contradiction', aaoRef, { format_kind: 'display_tag', params: { width: 1080, height: 1920 } }),
+      ]);
+
+      assert.strictEqual(result.isError, true);
+      assert.match(result.structuredContent.adcp_error.message, /divergent legacy and canonical/);
+    });
+  });
+
   it('rejects v1_format_ref when canonical_formats_only opts out of legacy emission', async () => {
     const base = buildPlatform();
     const server = createAdcpServerFromPlatform(
