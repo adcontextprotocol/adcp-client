@@ -38,6 +38,8 @@ import type {
   TaskInfo,
   Message,
   DirectPauseRecoveryRequest,
+  TrackTaskRequest,
+  TrackedTask,
 } from './ConversationTypes';
 import type {
   BeforeProtocolDispatchHook,
@@ -2110,6 +2112,16 @@ export class AgentClient {
   }
 
   // ====== GENERIC TASK EXECUTION ======
+
+  /**
+   * Rebuild a polling handle for a persisted seller task. Reuse operationId
+   * from the original TaskResult.metadata.taskId to correlate its lifecycle.
+   * The handle provides track() and waitForCompletion(); polling itself does
+   * not create new protocol activity records. Results retain seller tool shapes.
+   */
+  trackTask<T = unknown>(request: TrackTaskRequest): Promise<TrackedTask<T>> {
+    return this.client.trackTask<T>(request);
+  }
 
   /**
    * Execute any ADCP task by name with full type safety

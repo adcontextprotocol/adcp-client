@@ -204,6 +204,58 @@ if (result.status === 'submitted') {
 }
 ```
 
+### Tracking a seller task after a restart
+
+Persist `result.metadata.serverTaskId`, the original tool name, and
+`result.metadata.taskId` (the buyer's operation ID) when a seller returns
+`submitted` or `working`. A new client can reconstruct the polling handle:
+
+```typescript
+const tracked = await agent.trackTask({
+  taskId: saved.serverTaskId,
+  taskType: saved.taskType,
+  operationId: saved.operationId,
+});
+
+const status = await tracked.track(); // One status check
+const completed = await tracked.waitForCompletion(1000, AbortSignal.timeout(60_000));
+```
+
+Each poll uses AdCP `tasks_get` (MCP) or `tasks/get` (A2A) with
+`{ task_id, include_result: true }`. Polls do not create separate
+`protocol_request` / `protocol_response` activity records. Terminal
+`status_change` activity carries the stable `operation_id` and the seller's
+`server_task_id`; existing `task_id` fields retain their current meaning.
+`TaskInfo` from the handle also carries `operationId` and `serverTaskId`.
+The SDK checks the returned task ID and tool name before exposing a result.
+
+Omitting `operationId` generates a UUID, available as `tracked.operationId`.
+Reuse the handle within a client, or call `trackTask` again with the same
+operation ID, seller task ID, and tool name to rebuild it. You can pin the ID before submitting work
+with `TaskOptions.operationId`, for example
+`agent.executeCustomTask('extension_task', params, undefined, { operationId })`.
+Use a globally unique, opaque operation ID per dispatch (UUID recommended),
+including across clients and tenants sharing persistence or webhook receivers.
+Reuse it for tracking. To retry a dispatch after a crash, use a new operation ID
+and the same `idempotency_key`. Operation IDs correlate observations;
+`idempotency_key` provides retry safety. The SDK rejects local collisions;
+uniqueness across processes is the caller's responsibility. Avoid sensitive
+information in these IDs because webhook registration sends them to the seller.
+They accept 1–255 letters, digits, underscores, periods, colons, or hyphens.
+Dot-only IDs and the `delivery_route:` prefix are reserved.
+
+Tracking returns the seller's original tool response shape and emits lifecycle
+activity. It does not restore the original request's policy/projection context
+or invoke inline tool completion handlers. Handle the returned result in the
+caller. Pass `transport` or `signal` in the tracking request to configure the
+polling lifetime; `track(transport)` overrides transport options for one poll.
+Local cancellation, identity mismatches, missing tasks, and malformed poll
+responses return or throw observation errors without publishing seller failure
+events. Rebuild the handle with a fresh signal to resume after cancellation.
+For A2A, stopping observation leaves seller work running by default. Set both
+`cancelOnAbort: true` and `a2aTaskId` to request cancellation of seller work
+when polling aborts; `a2aTaskId` must be the separate A2A transport task ID.
+
 ### Handling Clarifications (input-required)
 
 When an agent needs more information, you can continue the conversation:

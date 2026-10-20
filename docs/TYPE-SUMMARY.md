@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-10-19
+> Generated at: 2026-10-20
 > @adcp/sdk v16.0.0
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -95,6 +95,7 @@ interface AgentDiscoverySeed {
 // client.invalidateDiscoveryCache(): Promise<void>; refresh after a seller change.
 
 interface TaskOptions {
+  operationId?: string;        // Stable caller correlation id (otherwise a UUID); not an idempotency key
   skipStatusHandlers?: boolean; // Skip inline completion handlers, including continuations
   timeout?: number;             // Absolute whole-task deadline
   signal?: AbortSignal;         // Caller cancellation
@@ -105,6 +106,15 @@ interface TaskOptions {
   delegatedOperatorAuthorization?: DelegatedOperatorAuthorizationContext;
   // ...deadline, cancellation, transport, and conversation options...
 }
+
+// Resume observation of persisted seller work (SingleAgentClient or AgentClient).
+// Save metadata.serverTaskId, metadata.taskName as taskType, and metadata.taskId as operationId.
+const tracked = await agent.trackTask({ taskId: saved.serverTaskId, taskType: saved.taskType, operationId: saved.operationId });
+await tracked.track(); // One status read; TaskInfo includes operationId and serverTaskId
+await tracked.waitForCompletion(1000, signal); // Same polling path as submitted continuations
+// No per-poll protocol activity. Terminal status_change carries operation_id and server_task_id.
+// Local observation errors do not terminalize seller work. Matching identities can reattach on the same client.
+// Results retain seller tool response shapes; tracking does not restore prior request context or handlers.
 
 interface DeferredContinuation<T> {
   token: string;

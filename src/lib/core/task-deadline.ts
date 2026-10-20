@@ -12,8 +12,31 @@ type DeadlineTaskOptions<TOptions extends TaskOptions = TaskOptions> = TOptions 
   [TASK_DEADLINE_ERROR]?: TaskTimeoutError;
 };
 
+/** Give a child dispatch its own correlation id while retaining the parent deadline and cancellation. */
+export function childTaskOptions(options?: TaskOptions): TaskOptions {
+  const child = { ...options };
+  delete child.operationId;
+  delete (child as Partial<DeadlineTaskOptions>)[TASK_OPERATION_ID];
+  return child;
+}
+
 export function getTaskOperationId(options: TaskOptions | undefined): string | undefined {
-  return (options as DeadlineTaskOptions | undefined)?.[TASK_OPERATION_ID];
+  const operationId = options?.operationId;
+  if (
+    operationId !== undefined &&
+    (typeof operationId !== 'string' ||
+      !/^(?!\.+$)[A-Za-z0-9_.:-]{1,255}$/.test(operationId) ||
+      operationId.startsWith('delivery_route:'))
+  ) {
+    throw new TypeError(
+      'operationId must contain 1–255 letters, digits, underscores, periods, colons, or hyphens; dot-only IDs and the delivery_route: prefix are reserved.'
+    );
+  }
+  const internalId = (options as DeadlineTaskOptions | undefined)?.[TASK_OPERATION_ID];
+  if (internalId !== undefined && operationId !== undefined && internalId !== operationId) {
+    throw new TypeError('operationId does not match the operation already assigned to this call.');
+  }
+  return internalId ?? operationId;
 }
 
 export function attachTaskDeadlineIdempotencyKey(options: TaskOptions, idempotencyKey: string): void {
@@ -40,7 +63,7 @@ export async function withTaskDeadline<T, TOptions extends TaskOptions = TaskOpt
   run: (effectiveOptions: DeadlineTaskOptions<TOptions>) => Promise<T>
 ): Promise<T> {
   const existing = options as DeadlineTaskOptions<TOptions> | undefined;
-  const taskId = existing?.[TASK_OPERATION_ID] ?? randomUUID();
+  const taskId = getTaskOperationId(existing) ?? randomUUID();
   const timeout = options?.timeout;
   const baseOptions = { ...options, timeout: undefined, [TASK_OPERATION_ID]: taskId } as DeadlineTaskOptions<TOptions>;
   throwIfAborted(options?.signal);
