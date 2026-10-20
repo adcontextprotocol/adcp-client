@@ -163,7 +163,6 @@ describe('v2 → v1 projection — seller-asserted v1_format_ref (the only norma
   // projection produces ZERO diagnostics. The multi-size case is
   // covered by the dedicated nytimes_homepage_flex_display test below.
   const sellerAsserted = [
-    ['nytimes_homepage_html5', 'https://creative.adcontextprotocol.org/', 'display_300x250_html'],
     ['gam_3p_display_tag', 'https://creative.adcontextprotocol.org/', 'display_js'],
     ['youtube_vast_preroll', 'https://creative.adcontextprotocol.org/', 'video_vast_30s'],
     ['meta_reels_us', 'https://creative.adcontextprotocol.org/translated/meta', 'meta_reels'],
@@ -183,19 +182,27 @@ describe('v2 → v1 projection — seller-asserted v1_format_ref (the only norma
 
 describe('v2 → v1 projection — multi-size full-coverage (seller asserts ref-per-size)', { skip: SKIP_REASON }, () => {
   // The flex-display fixture has 3 format_options (image / html5 /
-  // display_tag), each declaring `sizes: [3]` AND `v1_format_ref: [3]`
-  // — the seller has asserted one ref per size, the spec's preferred
-  // shape. With full seller coverage, the projection emits all refs
-  // verbatim and emits NO lossy advisory (refs.length >= sizes.length).
+  // display_tag), each declaring `sizes: [3]`. The image and display_tag
+  // options assert one ref per size, the spec's preferred shape, so they
+  // emit verbatim with NO lossy advisory. The html5 zip option has no AAO
+  // legacy equivalent (the `_html` formats are HTML markup, adcp#8339), so it
+  // is `canonical_formats_only` and reports FORMAT_DECLARATION_V1_NOT_APPLICABLE.
   test('nytimes_homepage_flex_display: seller refs cover all sizes (clean emit, no advisory)', () => {
     const product = JSON.parse(readFileSync(path.join(FIXTURE_DIR, 'nytimes_homepage_mrec.json'), 'utf-8'));
     const { v1, diagnostics } = projectV2ProductToV1(product);
     assert.strictEqual(product.product_id, 'nytimes_homepage_flex_display');
     assert.strictEqual(product.format_options.length, 3);
 
-    // 3 refs × 3 format_options = 9 v1 emits; no advisories.
-    assert.strictEqual(v1.format_ids.length, 9, '3 refs × 3 format_options = 9 total emits');
-    assert.strictEqual(diagnostics.length, 0, 'seller refs cover all sizes; no lossy advisory needed');
+    // 3 refs × 2 legacy-reachable format_options = 6 v1 emits; no lossy advisory.
+    assert.strictEqual(v1.format_ids.length, 6, '3 refs × 2 legacy-reachable format_options = 6 total emits');
+    assert.ok(
+      v1.format_ids.every(ref => !ref.id.endsWith('_html')),
+      'html5 zips never claim _html markup refs'
+    );
+    assert.deepStrictEqual(
+      diagnostics.map(diagnostic => [diagnostic.code, diagnostic.error.details.reason]),
+      [['FORMAT_DECLARATION_V1_NOT_APPLICABLE', 'canonical_formats_only']]
+    );
   });
 
   // Synthetic fixture: seller asserts ONE ref for a 3-size declaration.
@@ -237,6 +244,8 @@ describe('v2 → v1 projection — canonical_formats_only opt-out', { skip: SKIP
   const optOuts = [
     ['nytimes_homepage_takeover_custom', 'custom'],
     ['triton_daast_audio_30s', 'audio_daast'],
+    // No AAO legacy format describes an HTML5 zip; the `_html` formats are markup (adcp#8339).
+    ['nytimes_homepage_html5', 'html5'],
   ];
   for (const [fixture, kind] of optOuts) {
     test(`${fixture} (${kind}) emits FORMAT_DECLARATION_V1_NOT_APPLICABLE`, () => {

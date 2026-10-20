@@ -48,6 +48,13 @@ export interface CanonicalProjectionRef {
     required?: boolean;
     [k: string]: unknown;
   }>;
+  /**
+   * `display_tag` only: delivery types the projected declaration accepts,
+   * copied to `params.supported_delivery_types`. The AAO catalog uses
+   * `['inline_markup']` for its HTML-markup formats (`display_html`,
+   * `display_WxH_html`) — adcontextprotocol/adcp#8339.
+   */
+  supported_delivery_types?: Array<'tag_url' | 'inline_markup' | 'paired_redirect'>;
 }
 
 /**

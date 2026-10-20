@@ -482,6 +482,9 @@ function projectFormatId(
     }
     if (projection.asset_source) params.asset_source = projection.asset_source;
     if (projection.slots_override) params.slots = projection.slots_override;
+    if (projection.kind === 'display_tag' && projection.supported_delivery_types) {
+      params.supported_delivery_types = [...projection.supported_delivery_types];
+    }
     return {
       decl: {
         format_kind: projection.kind,
@@ -648,9 +651,10 @@ export interface BareFormatIdResolveOptions {
    *
    * The vocabulary is the catalog asset type where it differs from the
    * variant suffix (`javascript` → `_js`), otherwise the suffix itself
-   * (`image`, `html`, `generative`, `js`). Canonical-kind aliases are also
+   * (`image`, `html`, `generative`, `js`). Kind-like local labels are also
    * accepted (`html5` → `html`, `display_tag` → `js`) for callers already
-   * holding a kind-like local value.
+   * holding one. The `_html` variants are HTML markup, so they resolve to
+   * `display_tag` inline markup, not `html5` (adcontextprotocol/adcp#8339).
    *
    * Only consulted when the bare id does NOT resolve on its own (a real
    * catalog id is authoritative). Still fails closed: if `<id>_<suffix>`
