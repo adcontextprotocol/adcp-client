@@ -81,26 +81,68 @@ function fixture(t, extra = {}) {
 }
 
 for (const resolution of ['explicit', 'implicit'])
-  test(`${resolution} upsert receives lookup-only snapshots with full natural key`, async t => {
-    let context;
-    const { call, calls, diagnostics } = fixture(t, {
-      resolution,
-      upsert: async (_, ctx) => {
-        context = ctx;
-        return [row];
-      },
+  for (const dryRun of [false, true])
+    test(`${resolution} sync projects strict lookup references and preserves snapshots (dry_run: ${dryRun})`, async t => {
+      const natural = {
+        brand: entry.brand,
+        operator: entry.operator,
+        sandbox: dryRun,
+        currency: 'USD',
+        timezone: 'UTC',
+        operator_unit: { id: 'unit' },
+      };
+      const syncEntry = { ...entry, ...natural, name: 'Updated brand', ext: { adopter: { setting: true } } };
+      const account = { ...stored, ...natural };
+      const lookups = [];
+      let context;
+      const { call, diagnostics } = fixture(t, {
+        resolution,
+        resolve: async (ref, ctx) => {
+          if (!ref) return account;
+          const allowed = new Set(['brand', 'operator', 'operator_unit', 'currency', 'timezone', 'sandbox']);
+          for (const field of Object.keys(ref)) {
+            if (!allowed.has(field)) throw new Error(`Natural account references do not allow field '${field}'`);
+          }
+          assert.deepEqual(ref, natural);
+          assert.equal(ctx.provisioning, false);
+          lookups.push(ref);
+          return account;
+        },
+        upsert: async (refs, ctx) => {
+          assert.deepEqual(refs, [syncEntry]);
+          context = ctx;
+          return [{ ...row, billing: undefined, payment_terms: undefined }];
+        },
+      });
+      const response = await call('sync_accounts', [syncEntry], { dry_run: dryRun });
+      const body = response.structuredContent;
+      assert.equal(body.adcp_error, undefined, JSON.stringify(body));
+      assert.equal(body.accounts[0].action, 'unchanged');
+      assert.equal(body.accounts[0].billing, 'agent');
+      assert.equal(body.accounts[0].payment_terms, 'net_60');
+      assert.deepEqual(context.existing, [account]);
+      assert.equal(lookups.length, 2, 'both the snapshot and post-write enrichment use projected references');
+      assert.equal(body.dry_run, dryRun || undefined);
+      assert.deepEqual(diagnostics, []);
+      assert.ok(!JSON.stringify(response).includes('internal-metadata'));
     });
-    const natural = { ...entry, sandbox: true, currency: 'USD', timezone: 'UTC', operator_unit: { id: 'unit' } };
-    const response = await call('sync_accounts', [natural]);
-    assert.equal(response.structuredContent.accounts[0].action, 'unchanged');
-    assert.equal(context.existing[0].id, stored.id);
-    const guardLookup = calls.find(call => call.ctx.provisioning === false);
-    assert.ok(guardLookup);
-    assert.equal(guardLookup.ref.currency, 'USD');
-    assert.equal(guardLookup.ref.sandbox, true);
-    assert.deepEqual(diagnostics, []);
-    assert.ok(!JSON.stringify(response).includes('internal-metadata'));
-  });
+
+test('minimal provisioning and nested settings references contain only present natural-key fields', async () => {
+  const { existingSyncAccounts } = require('../../dist/lib/server/account-sync-contract.js');
+  const natural = { brand: entry.brand, operator: entry.operator };
+  const existing = await existingSyncAccounts(
+    {
+      resolve: async ref => {
+        assert.deepEqual(ref, natural);
+        return stored;
+      },
+    },
+    [entry, { account: natural, billing: 'agent', payment_terms: 'net_60' }],
+    {}
+  );
+  assert.deepEqual(existing, [stored, stored]);
+});
+
 for (const change of [{ account_id: 'duplicate' }, { action: 'created' }])
   test(`duplicate account diagnostic preserves compatible output: ${JSON.stringify(change)}`, async t => {
     const { call, diagnostics } = fixture(t, { upsert: async () => [{ ...row, ...change }] });

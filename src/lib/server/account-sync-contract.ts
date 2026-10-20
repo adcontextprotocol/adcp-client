@@ -12,6 +12,7 @@ import type {
 import { AdcpError } from './decisioning/async-outcome';
 
 type Entry = Record<string, unknown>;
+const NATURAL_KEY_FIELDS = ['brand', 'operator', 'operator_unit', 'currency', 'timezone', 'sandbox'] as const;
 
 /** Copy request input only when a callback reads it; keep auth capabilities live. */
 export function isolateAccountCallbackInput(ctx: ResolveContext): ResolveContext {
@@ -41,12 +42,14 @@ export function isolateAccountCallbackInput(ctx: ResolveContext): ResolveContext
   return copy;
 }
 
-/** Preserve the full natural key, including currency, timezone and operator unit. */
+/** Preserve the full natural key without forwarding account settings to resolvers. */
 function naturalRef(entry: Entry): AccountReference | undefined {
   const ref = (entry.account ?? entry) as AccountReference;
   if (!ref || 'account_id' in ref || !('brand' in ref) || !ref.brand || typeof ref.operator !== 'string')
     return undefined;
-  return ref;
+  return Object.fromEntries(
+    NATURAL_KEY_FIELDS.filter(field => ref[field] !== undefined).map(field => [field, ref[field]])
+  ) as AccountReference;
 }
 
 async function lookup(
