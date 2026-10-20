@@ -81,12 +81,17 @@ function fixture(t, extra = {}) {
 }
 
 for (const resolution of ['explicit', 'implicit'])
-  for (const dryRun of [false, true])
-    test(`${resolution} sync projects strict lookup references and preserves snapshots (dry_run: ${dryRun})`, async t => {
+  for (const [dryRun, sandbox] of [
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])
+    test(`${resolution} sync projects strict lookup references and preserves snapshots (dry_run: ${dryRun}, sandbox: ${sandbox})`, async t => {
       const natural = {
         brand: entry.brand,
         operator: entry.operator,
-        sandbox: dryRun,
+        sandbox,
         currency: 'USD',
         timezone: 'UTC',
         operator_unit: { id: 'unit' },
@@ -240,6 +245,38 @@ test('list_accounts emits a typed diagnostic for missing agent billing terms', a
   });
   await call('list_accounts');
   assert.deepEqual(diagnostics, [{ code: 'ACCOUNT_BILLING_FIELDS_MISSING', toolName: 'list_accounts', index: 0 }]);
+});
+
+test('implicit list_accounts projects strict lookup references when enriching billing', async t => {
+  const natural = {
+    brand: { ...entry.brand, brand_id: 'brand_1', countries: ['US'] },
+    operator: entry.operator,
+    operator_unit: { id: 'unit' },
+    currency: 'USD',
+    timezone: 'UTC',
+    sandbox: false,
+  };
+  const account = { ...stored, ...natural };
+  let lookups = 0;
+  const { call, diagnostics } = fixture(t, {
+    resolution: 'implicit',
+    resolve: async (ref, ctx) => {
+      if (!ref) return account;
+      assert.deepEqual(ref, natural);
+      assert.equal(ctx.provisioning, false);
+      lookups++;
+      return account;
+    },
+    list: async () => ({ items: [{ ...account, billing: undefined, payment_terms: undefined }] }),
+  });
+  const response = await call('list_accounts');
+  const listed = response.structuredContent.accounts[0];
+  assert.equal(listed.account_id, account.id);
+  assert.equal(listed.billing, 'agent');
+  assert.equal(listed.payment_terms, 'net_60');
+  assert.equal(lookups, 1);
+  assert.deepEqual(diagnostics, []);
+  assert.ok(!JSON.stringify(response).includes('internal-metadata'));
 });
 
 test('guard snapshots cannot be mutated by upsert to hide a changed ID', async t => {
