@@ -2,6 +2,7 @@ export * from './types';
 export * from './trust';
 export * from './lifecycle';
 export * from './revocation';
+export * from './jws-artifacts';
 export {
   WEB_BOT_AUTH_DRAFT_REVISION,
   verifyWebBotAuth,

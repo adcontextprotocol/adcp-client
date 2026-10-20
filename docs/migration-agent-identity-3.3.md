@@ -375,11 +375,56 @@ included) never falls back to brand.json `authorized_operators[]`, and it is
 not a grant removal: spend gets a retryable `SERVICE_UNAVAILABLE`.
 
 Origin key revocations use `/.well-known/governance-revocations.json`, signed
-with `typ: adcp-gov-revocation+jws`, as ratified R3 specifies. This origin key
-list does not migrate governance-context, designated-task response or rights
-JWS discovery: those retain the RFC chain in 3.3. Polling fails closed, revoked
+with `typ: adcp-gov-revocation+jws`, as ratified R3 specifies. The same list
+revokes the keys a WBA identity signs its JWS artifacts with (see
+[JWS artifacts](#jws-artifacts)). Polling fails closed, revoked
 keys remain revoked forever, `keyCompromise` cannot be weakened, and the earliest
 `invalidity_date` is retained. Revocation never pauses or cancels committed buys.
+
+### JWS artifacts
+
+Governance contexts, designated-task responses and rights attestations from a
+WBA identity are signed with keys from that identity's key directory (R4 as
+amended by adcontextprotocol/adcp#8299). `O` is the canonical origin of the
+signing agent's URL: `iss` for a governance context, `agent_url` for a
+designated-task response, `rights_agent.url` for a rights attestation. Pass it
+from your own context, never from the unverified token.
+
+- `selectJwsArtifactProfile(agentUrl, trust)` derives the trust record from
+  `O`. When it lists `O`, the artifact is verified on the WBA path; when the
+  operator has not published a record, or the record does not list `O`, it
+  stays on the 3.2 profile. A trust-record fetch failure throws
+  `JwsArtifactError` (`jws_key_unavailable`): it is never absence and never
+  selects 3.2. A 404/410 from an operator that once served a record is an
+  outage too, but the evaluator remembers that 200 only in process unless you
+  give it durable `authorityHistory` (`createIdentity33StateStores`). Public,
+  multi-replica and serverless verifiers must, as for grants.
+- `verifyWebBotAuthJwsArtifact(token, origin, { typ, directory, revocation })`
+  requires the `typ` the surface accepts, `alg` `EdDSA` and a `kid` equal to the
+  key's JWK thumbprint, applies no `use`/`key_ops`/`adcp_use` check, and checks
+  `O`'s revocation list. Purpose separation is by origin, so one key at `O` may
+  sign every artifact `O` issues and `typ` tells them apart. `revocation` is
+  required; pass `false` only if you check the returned `kid` yourself. It
+  verifies key and signature only; the surface keeps its own claim checks.
+- `verifyGovernanceAuthorization({ ..., webBotAuth: { trust, directory,
+  revocation } })` applies the rule to governance contexts. Every other check is
+  unchanged, including the `buyerIdentity` cross-check that `iss` is the buyer's
+  governance agent; only the key source moves. `revocation` is required, and an
+  origin that serves no list fails closed, since a governance context
+  authorizes spend. Outages (trust record, directory, revocation list) set
+  `retryable: true` on the failure. Without `webBotAuth` the verifier is 3.2
+  only, as before.
+- `verifyHistoricalGovernanceContext({ token, expectedIssuer, webBotAuth: {
+  ..., archive } })` verifies a retained governance context for audit. A key
+  rotated out of the directory is read from the governance key archive at `O`
+  (`/.well-known/jwks-archive.json`, `GovernanceKeyArchiveResolver`), on the
+  same `EdDSA` and thumbprint rules. A revoked key still verifies here: the
+  result reports `revocation: 'revoked'` and the stored R9 detail (`reason`,
+  `invalidity_date`) for the audit to weigh. Expiry, audience, replay and the
+  request binding are not checked.
+
+The SDK has no designated-task response or rights-attestation verifier of its
+own; a verifier for either uses the two primitives above.
 
 Permanent revocation storage reserves separate bounded capacity for audited bound
 origins and anonymous/self-service origins, so first-contact traffic cannot exhaust the bound
@@ -492,9 +537,9 @@ so verification can run in a CDN or middleware in front of the AdCP server.
   Cloudflare's `web-bot-auth`; they already used signed directories and are
   unchanged.
 #7894 drops the governance-token checks and the `governance/` vectors from the
-WBA profile. Governance moves to the AdCP layer under a separate R4 erratum,
-which moves JWS artifacts, governance included, to the identity's WBA key
-directory in 3.3. This change leaves the SDK's governance code as it is.
+WBA profile. Governance moves to the AdCP layer under a separate R4 erratum
+(adcontextprotocol/adcp#8299), which moves JWS artifacts, governance included,
+to the identity's WBA key directory in 3.3; see [JWS artifacts](#jws-artifacts).
 The buyer default onboarding field is `profiles.adcp.onboarding`, matching the
 schema; the design's `record_profiles` wording names the schema definition.
 
