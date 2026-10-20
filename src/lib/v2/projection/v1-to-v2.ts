@@ -56,7 +56,7 @@ import type {
   CanonicalFormatKind,
 } from './types';
 import { forwardLookupByGlob, forwardLookupByStructural } from './registry';
-import { lookupUniqueV1FormatById, lookupV1Format, type V1FormatDefinition } from './catalog';
+import { isAaoAgentUrl, lookupUniqueV1FormatById, lookupV1Format, type V1FormatDefinition } from './catalog';
 import { AAO_CANONICAL_AGENT_URL } from './constants';
 import { LIBRARY_VERSION } from '../../version';
 import { legacyFormatConverterFromCatalogSnapshots, type ProjectionCatalogSnapshot } from './catalog-snapshot';
@@ -162,6 +162,14 @@ export interface V1ToV2ProjectionOptions {
   _catalogPath?: string;
   /** @internal Disable buyer-only route inference when assembling seller wire responses. */
   _inferDualEmissionLegacyRefs?: boolean;
+  /**
+   * @internal Resolve a ref only from authoritative sources: catalog snapshots,
+   * an exact catalog entry, and the explicit converter. Ids under an agent URL
+   * other than the AAO reference agent skip the AAO naming guesses (the bare-id
+   * alias and the registry id-glob), because that agent, not the AAO, says what
+   * its ids mean. Used to check a seller's own declarations against its refs.
+   */
+  _authoritativeOnly?: boolean;
 }
 
 /**
@@ -429,8 +437,9 @@ function projectFormatId(
     canonicalAgentUrl !== null &&
     new URL(canonicalAgentUrl).protocol === 'https:' &&
     !isLikelyPrivateUrl(canonicalAgentUrl);
+  const aaoGuessesApply = options?._authoritativeOnly !== true || isAaoAgentUrl(fid.agent_url);
   const uniqueAliasEntry =
-    exactCatalogEntry === undefined && mayUseUniqueAlias
+    exactCatalogEntry === undefined && mayUseUniqueAlias && aaoGuessesApply
       ? lookupUniqueV1FormatById(fid.id, options?._catalogPath)
       : undefined;
   if (uniqueAliasEntry) {
@@ -514,7 +523,7 @@ function projectFormatId(
   // Step 2: format not in the AAO catalog. Try registry glob match
   // against format_id.id. Catches publisher-bespoke ids that share the
   // AAO catalog's naming convention.
-  const globMatch = forwardLookupByGlob(fid.id);
+  const globMatch = aaoGuessesApply ? forwardLookupByGlob(fid.id) : undefined;
   if (globMatch) {
     return {
       decl: {
