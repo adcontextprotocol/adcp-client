@@ -1,9 +1,14 @@
-# Migrating from SDK 16.0 to 16.1
+# Migrating from SDK 16 to 17
+
+SDK 17 is being prepared for AdCP `3.3.0-beta.0`. This guide describes the
+prepared creative mapping change; the protocol bundle is not yet integrated
+and the checkout still pins AdCP 3.2.5. SDK 17 publication waits for the exact
+published bundle and its integration checks. SDK 16 retains the previous mapping.
 
 ## HTML-markup formats use inline-markup display tags
 
 The AAO legacy formats `display_html` and `display_WxH_html` accept HTML
-markup rendered by the seller. SDK 16.1 projects them to canonical `display_tag`
+markup rendered by the seller. SDK 17 projects them to canonical `display_tag`
 with `supported_delivery_types: ['inline_markup']`. The previous `html5`
 classification described a zip bundle and prevented correctly classified
 third-party markup from matching these formats.
@@ -55,4 +60,6 @@ retain their format kind and delivery types.
 
 These changes follow [adcp#8339](https://github.com/adcontextprotocol/adcp/issues/8339)
 and [adcp#8357](https://github.com/adcontextprotocol/adcp/pull/8357). They use the
-existing AdCP 3.2.5 display-tag wire contract and do not change the SDK's protocol pin.
+existing AdCP 3.2.5 display-tag wire contract. Preparing this mapping does not
+change the protocol pin; the AdCP 3.3 bundle migration will be documented here
+when that bundle is integrated.
