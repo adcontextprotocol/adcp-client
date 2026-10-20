@@ -1185,10 +1185,10 @@ jobs:
     needs: library-build
     timeout-minutes: 10
     env:
-      # The head of adcontextprotocol/adcp#8298, which adds tests/wba-interop/
-      # on top of the #7894 profile. Move it to the merge commit once #8298
-      # merges, and to a release tag after #7894 ships.
-      ADCP_REF: f44785a5b65db93988f30ad3d23ba5849f1a1d5e
+      # The merge commit of adcontextprotocol/adcp#8298 on main, which adds
+      # tests/wba-interop/ on top of the #7894 profile. Move it to a release
+      # tag after #7894 ships.
+      ADCP_REF: b3461a2ea279971b930b3d4d8d23ae56210a987b
 
     steps:
       - name: Checkout code
