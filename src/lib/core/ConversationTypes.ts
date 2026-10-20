@@ -156,8 +156,11 @@ export interface TaskOptions {
   /**
    * Caller-supplied operation correlation id. Defaults to a generated UUID.
    * Persist it with metadata.serverTaskId to resume tracking after a restart.
-   * Use a unique id per logical operation; this does not provide idempotency.
+   * Use a globally unique opaque id per dispatch (UUID recommended), including
+   * across tenants sharing persistence or webhook receivers. Reuse it for tracking,
+   * not resubmission; retry dispatches use a new id and the same idempotency_key.
    * Accepts 1–255 letters, digits, underscores, periods, colons, or hyphens.
+   * Dot-only IDs and the delivery_route: prefix are reserved.
    */
   operationId?: string;
   /**
@@ -411,8 +414,10 @@ export interface TrackTaskRequest extends Pick<TaskOptions, 'operationId' | 'tra
   taskId: string;
   /** Original tool name, used to verify the seller's task identity. */
   taskType: string;
-  /** Actual A2A transport Task.id, if known, for cancellation on abort. */
+  /** Actual A2A transport Task.id, if known. Distinct from the AdCP taskId. */
   a2aTaskId?: string;
+  /** Request cancellation of seller work on polling abort. Requires a2aTaskId; defaults to false. */
+  cancelOnAbort?: boolean;
 }
 
 /** Polling handle for persisted seller work. */

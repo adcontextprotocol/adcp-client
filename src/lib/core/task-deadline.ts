@@ -14,10 +14,21 @@ type DeadlineTaskOptions<TOptions extends TaskOptions = TaskOptions> = TOptions 
 
 export function getTaskOperationId(options: TaskOptions | undefined): string | undefined {
   const operationId = options?.operationId;
-  if (operationId !== undefined && (typeof operationId !== 'string' || !/^[A-Za-z0-9_.:-]{1,255}$/.test(operationId))) {
-    throw new TypeError('operationId must contain 1–255 letters, digits, underscores, periods, colons, or hyphens.');
+  if (
+    operationId !== undefined &&
+    (typeof operationId !== 'string' ||
+      !/^(?!\.+$)[A-Za-z0-9_.:-]{1,255}$/.test(operationId) ||
+      operationId.startsWith('delivery_route:'))
+  ) {
+    throw new TypeError(
+      'operationId must contain 1–255 letters, digits, underscores, periods, colons, or hyphens; dot-only IDs and the delivery_route: prefix are reserved.'
+    );
   }
-  return (options as DeadlineTaskOptions | undefined)?.[TASK_OPERATION_ID] ?? operationId;
+  const internalId = (options as DeadlineTaskOptions | undefined)?.[TASK_OPERATION_ID];
+  if (internalId !== undefined && operationId !== undefined && internalId !== operationId) {
+    throw new TypeError('operationId does not match the operation already assigned to this call.');
+  }
+  return internalId ?? operationId;
 }
 
 export function attachTaskDeadlineIdempotencyKey(options: TaskOptions, idempotencyKey: string): void {

@@ -3205,7 +3205,8 @@ export class SingleAgentClient {
    * for each poll. Terminal status_change activity carries operation_id and
    * server_task_id. Results use the seller's original tool response shape.
    * Persist the returned operationId if none was supplied. Polling handles
-   * are local to this client; reuse the handle for subsequent status checks.
+   * are local to this client; matching identities can reattach to existing work.
+   * Local observation failures do not publish seller terminal lifecycle events.
    */
   async trackTask<T = unknown>(request: TrackTaskRequest): Promise<TrackedTask<T>> {
     const snapshot = { ...request, transport: request.transport && { ...request.transport } };

@@ -1136,6 +1136,16 @@ export class TaskExecutor {
     result?: unknown,
     identity: { serverTaskId?: string; taskType?: string } = {}
   ): Promise<ExternalTaskStatusResult> {
+    const task = this.activeTasks.get(taskId);
+    if (
+      task &&
+      ((identity.serverTaskId !== undefined &&
+        task.serverTaskId !== undefined &&
+        identity.serverTaskId !== task.serverTaskId) ||
+        (identity.taskType !== undefined && identity.taskType !== task.taskName))
+    ) {
+      throw new ConfigurationError('The pushed task identity does not match the tracked operation.');
+    }
     if (!['completed', 'failed', 'rejected', 'canceled', 'governance-denied', 'aborted'].includes(status)) {
       return { settled: false, result };
     }
@@ -1167,8 +1177,8 @@ export class TaskExecutor {
       // to the settlement handler that can only be registered from the response.
       return { settled: false, queued: true };
     }
-    const task = this.activeTasks.get(taskId);
-    if (task && identity.serverTaskId !== undefined) task.serverTaskId = identity.serverTaskId;
+    if (task && task.serverTaskId === undefined && identity.serverTaskId !== undefined)
+      task.serverTaskId = identity.serverTaskId;
     this.updateTaskStatus(taskId, status, result);
     return { settled: false, result };
   }
@@ -1355,6 +1365,15 @@ export class TaskExecutor {
     // `options.contextId` / `options.taskId` ride on the A2A message envelope
     // and are threaded straight to the protocol adapter below.
     const taskId = getTaskOperationId(options) ?? randomUUID();
+    if (
+      this.activeTasks.has(taskId) ||
+      this.compactedTaskIds.has(taskId) ||
+      this.deferredTerminalPublicationTaskIds.has(taskId) ||
+      this.closedExternalTaskSettlementTaskIds.has(taskId) ||
+      this.externalTaskSettlementHandlers.has(taskId)
+    ) {
+      throw new ConfigurationError('operationId is already in use by this client; track the existing task instead.');
+    }
     const startTime = Date.now();
     const workingTimeout = this.config.workingTimeout || 120000; // 120s max per PR #78
     const wireAdcpVersion = options.wireAdcpVersion ?? this.config.wireAdcpVersion;
@@ -2533,24 +2552,42 @@ export class TaskExecutor {
       throw new TypeError('taskType must be a non-empty tool name.');
     }
     const operationId = getTaskOperationId(request) ?? randomUUID();
-    if (this.activeTasks.has(operationId)) {
-      throw new ConfigurationError('operationId is already tracked by this client; reuse its continuation.');
+    const existing = this.activeTasks.get(operationId);
+    if (
+      existing &&
+      (existing.serverTaskId !== request.taskId ||
+        existing.taskName !== request.taskType ||
+        existing.agent.id !== agent.id ||
+        existing.agent.protocol !== agent.protocol ||
+        existing.status === 'pending')
+    ) {
+      throw new ConfigurationError(
+        'operationId is already tracked by this client for a different or dispatching task.'
+      );
     }
-    const startTime = Date.now();
-    this.activeTasks.set(operationId, {
-      taskId: operationId,
-      serverTaskId: request.taskId,
-      taskName: request.taskType,
-      status: 'submitted',
-      messages: [],
-      startTime,
-      attempt: 0,
-      maxAttempts: 0,
-      options: {},
-      agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
-      serverVersion: 'v3',
-    });
-    this.compactIntermediateTaskState(operationId, 'submitted');
+    if (
+      this.deferredTerminalPublicationTaskIds.has(operationId) ||
+      this.closedExternalTaskSettlementTaskIds.has(operationId) ||
+      this.externalTaskSettlementHandlers.has(operationId)
+    ) {
+      throw new ConfigurationError('This operation requires its original continuation or durable settlement recovery.');
+    }
+    const startTime = existing?.startTime ?? Date.now();
+    if (!existing)
+      this.activeTasks.set(operationId, {
+        taskId: operationId,
+        serverTaskId: request.taskId,
+        taskName: request.taskType,
+        status: 'submitted',
+        messages: [],
+        startTime,
+        attempt: 0,
+        maxAttempts: 0,
+        options: {},
+        agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+        serverVersion: 'v3',
+      });
+    if (!existing) this.compactIntermediateTaskState(operationId, 'submitted');
     const continuation = this.createSubmittedContinuation<T>(
       agent,
       operationId,
@@ -2567,7 +2604,7 @@ export class TaskExecutor {
           status: 'submitted',
         }),
         serverTaskId: request.taskId,
-        a2aTaskId: request.a2aTaskId,
+        a2aTaskId: request.cancelOnAbort === true ? request.a2aTaskId : undefined,
       },
       false,
       'v3',
@@ -2593,6 +2630,15 @@ export class TaskExecutor {
     versionEnvelope?: import('../protocols').VersionEnvelopeMode,
     pollingSignal?: AbortSignal
   ): SubmittedContinuation<T> {
+    // A caller may retain this handle after inspection-state eviction and
+    // reuse its operation id. Old handles must never publish into that new
+    // registration, even when it has the same seller task identity.
+    const registeredTask = this.activeTasks.get(taskId);
+    const canPublish = (status: TaskStatus): boolean =>
+      registeredTask !== undefined &&
+      this.activeTasks.get(taskId) === registeredTask &&
+      !TERMINAL_TASK_STATUSES.has(registeredTask.status) &&
+      registeredTask.status !== status;
     return {
       taskId: serverTaskId,
       webhookUrl,
@@ -2614,7 +2660,7 @@ export class TaskExecutor {
         if (
           !deferTerminalTaskStatus &&
           ['completed', 'failed', 'rejected', 'canceled'].includes(task.status) &&
-          this.activeTasks.get(taskId)?.status !== task.status
+          canPublish(task.status as TaskStatus)
         ) {
           this.updateTaskStatus(taskId, task.status as TaskStatus, task.result, task.error);
         }
@@ -2622,12 +2668,14 @@ export class TaskExecutor {
       },
       waitForCompletion: async (pollInterval = 60000, signal?: AbortSignal, requireExactTaskIdentity = false) => {
         void requireExactTaskIdentity;
+        const completionSignal =
+          pollingSignal && signal ? AbortSignal.any([pollingSignal, signal]) : (signal ?? pollingSignal);
         const completed = await this.pollTaskCompletion<T>(
           agent,
           serverTaskId,
           pollInterval,
           pollingTransport,
-          pollingSignal && signal ? AbortSignal.any([pollingSignal, signal]) : (signal ?? pollingSignal),
+          completionSignal,
           metadata.a2aTaskId,
           taskName,
           taskId,
@@ -2641,7 +2689,10 @@ export class TaskExecutor {
         // only genuinely terminal statuses trigger delayed state eviction.
         if (
           (!deferTerminalTaskStatus || !TERMINAL_TASK_STATUSES.has(completed.status as TaskStatus)) &&
-          this.activeTasks.get(taskId)?.status !== completed.status
+          // Cancellation, identity mismatches, missing tasks, and malformed
+          // responses establish observation failure, not seller task failure.
+          (!TERMINAL_TASK_STATUSES.has(completed.status as TaskStatus) || isAuthoritativePolledTerminal(completed)) &&
+          canPublish(completed.status as TaskStatus)
         ) {
           this.updateTaskStatus(taskId, completed.status as TaskStatus, completed.data, completed.error);
         }
@@ -2656,12 +2707,14 @@ export class TaskExecutor {
    * local task publication only after those final wrappers return.
    */
   private attachSettledContinuationTaskStatus<T>(taskId: string, result: TaskResult<T>): TaskResult<T> {
+    const registeredTask = this.activeTasks.get(taskId);
     const publish = (
       status: TaskStatus,
       data?: unknown,
       error?: string,
       identity?: { serverTaskId?: string; taskType?: string }
     ) => {
+      if (registeredTask === undefined || this.activeTasks.get(taskId) !== registeredTask) return;
       this.publishSettledTaskStatus(taskId, status, data, error, false, identity);
     };
 
@@ -3533,7 +3586,7 @@ export class TaskExecutor {
     signal?: AbortSignal,
     a2aCancellationTaskId?: string,
     expectedTaskType?: string,
-    metadataTaskId = taskId,
+    metadataTaskId?: string,
     serverVersion?: 'v2' | 'v3',
     wireAdcpVersion?: string,
     versionEnvelope?: import('../protocols').VersionEnvelopeMode
@@ -3546,6 +3599,7 @@ export class TaskExecutor {
       throw new RangeError(`pollInterval must be a finite non-negative number <= ${MAX_TIMER_DELAY_MS}`);
     }
     const pollStartTime = Date.now();
+    const correlationId = metadataTaskId ?? taskId;
     const withServerTaskId = (metadata: TaskResultMetadata): TaskResultMetadata => ({
       ...metadata,
       serverTaskId: taskId,
@@ -3598,7 +3652,7 @@ export class TaskExecutor {
           error: `tasks/get polling was cancelled before a terminal state was observed: ${reason}`,
           metadata: withServerTaskId(
             this.buildMetadata({
-              taskId: metadataTaskId,
+              taskId: correlationId,
               taskName: expectedTaskType ?? 'unknown',
               agent,
               startTime: pollStartTime,
@@ -3639,7 +3693,7 @@ export class TaskExecutor {
             error: err.message,
             metadata: withServerTaskId(
               this.buildMetadata({
-                taskId: metadataTaskId,
+                taskId: correlationId,
                 taskName: expectedTaskType ?? 'unknown',
                 agent,
                 startTime: pollStartTime,
@@ -3660,7 +3714,7 @@ export class TaskExecutor {
             error: `Task ${taskId} is no longer queryable — it may have been completed and evicted by the seller before this poll arrived. Consider using push notifications (reporting_webhook) instead of polling, or configuring a longer task retention TTL on the seller.`,
             metadata: withServerTaskId(
               this.buildMetadata({
-                taskId: metadataTaskId,
+                taskId: correlationId,
                 taskName: expectedTaskType ?? 'unknown',
                 agent,
                 startTime: pollStartTime,
@@ -3679,7 +3733,7 @@ export class TaskExecutor {
           error: 'The seller returned a task outside the requested durable task identity.',
           metadata: withServerTaskId(
             this.buildMetadata({
-              taskId: metadataTaskId,
+              taskId: correlationId,
               taskName: expectedTaskType ?? 'unknown',
               agent,
               startTime: pollStartTime,
@@ -3700,7 +3754,7 @@ export class TaskExecutor {
               data: status.result,
               metadata: withServerTaskId(
                 this.buildMetadata({
-                  taskId: metadataTaskId,
+                  taskId: correlationId,
                   taskName: status.taskType,
                   agent,
                   responseTimeMs: Date.now() - status.createdAt,
@@ -3719,11 +3773,11 @@ export class TaskExecutor {
             data: status.result,
             error: this.extractOperationError(status.result),
             adcpError: asyncResultErr,
-            errorInstance: this.buildErrorInstance(metadataTaskId, asyncResultErr),
+            errorInstance: this.buildErrorInstance(correlationId, asyncResultErr),
             correlationId: extractCorrelationId(status.result),
             metadata: withServerTaskId(
               this.buildMetadata({
-                taskId: metadataTaskId,
+                taskId: correlationId,
                 taskName: status.taskType,
                 agent,
                 responseTimeMs: Date.now() - status.createdAt,
@@ -3748,11 +3802,11 @@ export class TaskExecutor {
             data: status.result,
             error: status.error || status.message || `Task ${status.status}`,
             adcpError: asyncFailedErr,
-            errorInstance: this.buildErrorInstance(metadataTaskId, asyncFailedErr),
+            errorInstance: this.buildErrorInstance(correlationId, asyncFailedErr),
             correlationId: extractCorrelationId(status.result),
             metadata: withServerTaskId(
               this.buildMetadata({
-                taskId: metadataTaskId,
+                taskId: correlationId,
                 taskName: status.taskType,
                 agent,
                 responseTimeMs: Date.now() - status.createdAt,
@@ -3779,7 +3833,7 @@ export class TaskExecutor {
           data: status.result as T,
           metadata: withServerTaskId(
             this.buildMetadata({
-              taskId: metadataTaskId,
+              taskId: correlationId,
               taskName: status.taskType,
               agent,
               responseTimeMs: Date.now() - status.createdAt,
@@ -3807,7 +3861,7 @@ export class TaskExecutor {
             `supported envelope shape (flat AdCP, MCP structuredContent, or A2A DataPart artifact).`,
           metadata: withServerTaskId(
             this.buildMetadata({
-              taskId: metadataTaskId,
+              taskId: correlationId,
               taskName: expectedTaskType ?? 'unknown',
               agent,
               startTime: pollStartTime,

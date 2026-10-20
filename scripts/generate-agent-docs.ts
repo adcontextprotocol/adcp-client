@@ -1530,13 +1530,16 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`}`);
   ln();
   ln(`// Resume observation of persisted seller work (SingleAgentClient or AgentClient).`);
-  ln(`// Save metadata.serverTaskId + metadata.taskId from the original call.`);
+  ln(`// Save metadata.serverTaskId, metadata.taskName as taskType, and metadata.taskId as operationId.`);
   ln(
     `const tracked = await agent.trackTask({ taskId: saved.serverTaskId, taskType: saved.taskType, operationId: saved.operationId });`
   );
   ln(`await tracked.track(); // One status read; TaskInfo includes operationId and serverTaskId`);
   ln(`await tracked.waitForCompletion(1000, signal); // Same polling path as submitted continuations`);
   ln(`// No per-poll protocol activity. Terminal status_change carries operation_id and server_task_id.`);
+  ln(
+    `// Local observation errors do not terminalize seller work. Matching identities can reattach on the same client.`
+  );
   ln(`// Results retain seller tool response shapes; tracking does not restore prior request context or handlers.`);
   ln();
   ln(`interface DeferredContinuation<T> {`);

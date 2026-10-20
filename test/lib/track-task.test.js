@@ -120,8 +120,7 @@ describe('persisted seller task tracking (#3338)', () => {
       assert.match(result.error, /does not match/);
       assert.equal(result.metadata.taskId, identity.operationId);
       assert.equal(result.metadata.serverTaskId, identity.taskId);
-      assert.equal(activities[0].operation_id, identity.operationId);
-      assert.equal(activities[0].server_task_id, identity.taskId);
+      assert.equal(activities.length, 0, 'an observation failure is not a seller task failure');
     });
   }
 
@@ -148,14 +147,20 @@ describe('persisted seller task tracking (#3338)', () => {
       controller.abort('buyer stopped');
       return response('working');
     });
-    const handle = await clientFor(seller, activities).trackTask({ ...identity, signal: controller.signal });
+    const client = clientFor(seller, activities);
+    const handle = await client.trackTask({ ...identity, signal: controller.signal });
     const result = await handle.waitForCompletion(0);
     assert.equal(call.mock.callCount(), 1);
     assert.equal(result.success, false);
     assert.match(result.error, /cancelled/);
     assert.equal(result.metadata.taskId, identity.operationId);
     assert.equal(result.metadata.serverTaskId, identity.taskId);
-    assert.equal(activities[0].server_task_id, identity.taskId);
+    assert.equal(activities.length, 0, 'cancelling observation must not terminalize seller work');
+    const resumed = await client.trackTask(identity);
+    mock.method(ProtocolClient, 'callTool', async () => response('completed', { result: {} }));
+    await resumed.waitForCompletion(0);
+    assert.equal(activities.length, 1);
+    assert.equal(activities[0].status, 'completed');
   });
 
   test('transport options are snapshotted for the tracking lifetime', async () => {
@@ -223,7 +228,214 @@ describe('persisted seller task tracking (#3338)', () => {
     assert.equal(activities[0].server_task_id, identity.taskId);
   });
 
-  for (const operationId of ['', 'with spaces', 'x'.repeat(256), 42]) {
+  test('attaches to a working result on the same client and rebuilds a dropped handle', async () => {
+    const activities = [];
+    const client = clientFor(seller, activities);
+    client.detectServerVersion = async () => 'v3';
+    mock.method(ProtocolClient, 'callTool', async () => ({ status: 'working', task_id: identity.taskId }));
+    const original = await client.executeCustomTask(identity.taskType, {}, undefined, {
+      operationId: identity.operationId,
+    });
+    assert.equal(original.status, 'working');
+    assert.equal(original.submitted, undefined);
+    mock.method(ProtocolClient, 'callTool', async () => response('working'));
+    const handle = await client.trackTask(identity);
+    assert.equal((await handle.track()).status, 'working');
+    const rebuilt = await client.trackTask(identity);
+    mock.method(ProtocolClient, 'callTool', async () => response('completed', { result: {} }));
+    await rebuilt.waitForCompletion(0);
+    await handle.track();
+    const statuses = activities.filter(activity => activity.type === 'status_change');
+    assert.equal(statuses.length, 1);
+    assert.equal(statuses[0].operation_id, original.metadata.taskId);
+    assert.equal(statuses[0].server_task_id, original.metadata.serverTaskId);
+  });
+
+  test('rejects tracking-versus-execution collisions before dispatch', async () => {
+    const executor = new TaskExecutor();
+    executor.trackTask(seller, identity);
+    const call = mock.method(ProtocolClient, 'callTool', async () => ({ status: 'completed' }));
+    await assert.rejects(
+      executor.executeTask(seller, 'another_tool', {}, undefined, { operationId: identity.operationId }),
+      /already in use/
+    );
+    assert.equal(call.mock.callCount(), 0);
+    assert.equal(executor.getActiveTasks()[0].serverTaskId, identity.taskId);
+  });
+
+  test('rejects concurrent execution collisions without replacing the first lifecycle', async () => {
+    const executor = new TaskExecutor();
+    let release;
+    let dispatched;
+    const started = new Promise(resolve => {
+      dispatched = resolve;
+    });
+    const call = mock.method(ProtocolClient, 'callTool', async () => {
+      dispatched();
+      return new Promise(resolve => {
+        release = resolve;
+      });
+    });
+    const first = executor.executeTask(seller, identity.taskType, {}, undefined, { operationId: identity.operationId });
+    await started;
+    try {
+      await assert.rejects(
+        executor.executeTask(seller, 'another_tool', {}, undefined, { operationId: identity.operationId }),
+        /already in use/
+      );
+      assert.equal(call.mock.callCount(), 1);
+      assert.equal(executor.getActiveTasks()[0].taskName, identity.taskType);
+    } finally {
+      release({ status: 'working', task_id: identity.taskId });
+      await first;
+    }
+  });
+
+  for (const method of ['track', 'waitForCompletion']) {
+    test(`an old ${method} handle cannot publish into a replacement operation after eviction`, async () => {
+      const activities = [];
+      const executor = new TaskExecutor({ onActivity: activity => activities.push(activity) });
+      const old = executor.trackTask(seller, identity);
+      mock.method(ProtocolClient, 'callTool', async (_agent, _tool, params) =>
+        response('completed', {
+          task_id: params.task_id,
+          result: { owner: params.task_id },
+        })
+      );
+      await old.waitForCompletion(0);
+      executor.cleanupTerminalTaskInspectionState(identity.operationId);
+      const replacement = executor.trackTask(seller, { ...identity, taskId: 'replacement-seller-work' });
+      activities.length = 0;
+      if (method === 'track') await old.track();
+      else await old.waitForCompletion(0);
+      assert.equal(activities.length, 0);
+      assert.equal(executor.getActiveTasks()[0].status, 'submitted');
+      const current = await replacement.waitForCompletion(0);
+      assert.equal(current.metadata.serverTaskId, 'replacement-seller-work');
+      assert.equal(activities.length, 1);
+      assert.equal(activities[0].server_task_id, 'replacement-seller-work');
+    });
+  }
+
+  for (const status of ['failed', 'rejected', 'canceled']) {
+    for (const methods of [
+      ['track', 'waitForCompletion'],
+      ['waitForCompletion', 'track'],
+    ]) {
+      test(`${status} publishes once when mixing ${methods.join(' then ')}`, async () => {
+        const activities = [];
+        mock.method(ProtocolClient, 'callTool', async () => response(status));
+        const handle = await clientFor(seller, activities).trackTask(identity);
+        for (const method of [...methods, ...methods]) {
+          if (method === 'track') await handle.track();
+          else await handle.waitForCompletion(0);
+        }
+        assert.equal(activities.length, 1);
+        assert.equal(activities[0].server_task_id, identity.taskId);
+      });
+    }
+  }
+
+  for (const mismatched of [{ serverTaskId: 'unrelated-work' }, { taskType: 'unrelated_tool' }]) {
+    test(`refuses a mismatched pushed identity ${JSON.stringify(mismatched)}`, async () => {
+      const activities = [];
+      const executor = new TaskExecutor({ onActivity: activity => activities.push(activity) });
+      executor.trackTask(seller, identity);
+      await assert.rejects(
+        executor.observeExternalTaskStatus(
+          identity.operationId,
+          'completed',
+          {},
+          {
+            serverTaskId: identity.taskId,
+            taskType: identity.taskType,
+            ...mismatched,
+          }
+        ),
+        /does not match/
+      );
+      assert.equal(activities.length, 0);
+      assert.equal(executor.getActiveTasks()[0].serverTaskId, identity.taskId);
+      assert.equal(executor.getActiveTasks()[0].status, 'submitted');
+    });
+  }
+
+  test('an in-flight abort rejection leaves the seller lifecycle observable with a fresh signal', async () => {
+    const activities = [];
+    const controller = new AbortController();
+    const client = clientFor(seller, activities);
+    const handle = await client.trackTask({ ...identity, signal: controller.signal });
+    mock.method(
+      ProtocolClient,
+      'callTool',
+      async (_agent, _tool, _params, options) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(new DOMException('poll aborted', 'AbortError')), {
+            once: true,
+          });
+          controller.abort();
+        })
+    );
+    await assert.rejects(handle.waitForCompletion(0), { name: 'AbortError' });
+    assert.equal(activities.length, 0);
+    const replacement = await client.trackTask(identity);
+    mock.method(ProtocolClient, 'callTool', async () => response('completed', { result: {} }));
+    await replacement.waitForCompletion(0);
+    assert.equal(activities.length, 1);
+    assert.equal(activities[0].status, 'completed');
+  });
+
+  for (const cancelOnAbort of [undefined, false, true]) {
+    test(`A2A tracking cancellation requires explicit opt-in (${cancelOnAbort})`, async () => {
+      const agent = { ...seller, protocol: 'a2a' };
+      const calls = [];
+      const activities = [];
+      const trustedFetchFn = async (_url, options) => {
+        if (!options?.body)
+          return new Response(
+            JSON.stringify({
+              name: 'Cancellation fixture',
+              description: 'A2A cancellation fixture',
+              url: agent.agent_uri,
+              version: '1.0.0',
+              protocolVersion: '0.3.0',
+              capabilities: {},
+              defaultInputModes: ['application/json'],
+              defaultOutputModes: ['application/json'],
+              skills: [],
+            }),
+            { headers: { 'content-type': 'application/json' } }
+          );
+        const body = JSON.parse(options.body);
+        calls.push(body);
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { id: 'transport-task-42' } }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      };
+      const executor = new TaskExecutor({
+        transport: { trustedFetchFn },
+        onActivity: activity => activities.push(activity),
+      });
+      const controller = new AbortController();
+      const handle = executor.trackTask(agent, {
+        ...identity,
+        a2aTaskId: 'transport-task-42',
+        cancelOnAbort,
+        signal: controller.signal,
+      });
+      controller.abort('observer stopped');
+      await handle.waitForCompletion(0);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(calls.length, cancelOnAbort === true ? 1 : 0);
+      if (cancelOnAbort) {
+        assert.equal(calls[0].method, 'tasks/cancel');
+        assert.equal(calls[0].params.id, 'transport-task-42');
+      }
+      assert.equal(activities.length, 0);
+    });
+  }
+
+  for (const operationId of ['', '.', '..', 'delivery_route:reporting:reserved', 'with spaces', 'x'.repeat(256), 42]) {
     test(`rejects invalid public operationId ${JSON.stringify(operationId)} before discovery`, async () => {
       const client = clientFor(seller, []);
       let discovered = false;
