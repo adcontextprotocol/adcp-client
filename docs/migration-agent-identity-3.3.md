@@ -359,7 +359,12 @@ operator) to the signer's operator, or a two-link chain through the account
 operator, is accepted. The
 intersection must cover the actual brand IDs, countries, scope, signer-origin
 narrowing and temporal window. A restrictive published grant cannot be
-superseded by seller fallback. A trust 200 disables brand.json authority;
+superseded by seller fallback. A grant's `grantee` must be a registrable domain
+under the pinned PSL snapshot (`alice.github.io` is one; `github.io` and
+`media.agency.com` are not). A grant whose `grantee` is not one covers no claim
+and does not block seller fallback, but its scopes still count for
+`exclusive_grants`. `createTrustRecord` and `adcp identity trust-validate` refuse
+such grantees. A trust 200 disables brand.json authority;
 authoritative absence alone permits explicit legacy policy. An established
 identity lacking a grant gets `PERMISSION_DENIED` with
 `{ scope: 'agent', reason: 'grant_absent' }`. No account or live buy is changed.
@@ -406,7 +411,7 @@ released schemas:
 | [8121](https://github.com/adcontextprotocol/adcp/pull/8121) | `f5973ac0267b1b94d714c55fc4e3ad8fc2511350` | Origin identity and key-free trust v1 |
 | [8162](https://github.com/adcontextprotocol/adcp/pull/8162) | `5c9914c5c382cc32f3d2ad7842942e548c414705` | Ratified identity, coexistence, revocation |
 | [8168](https://github.com/adcontextprotocol/adcp/pull/8168) | `45540941dfd61e80ab8a463f780cb147c82a32f0` | Relationship and principal response arms |
-| [8169](https://github.com/adcontextprotocol/adcp/pull/8169) | `3ce6a14d7afaa71fa78ddf2223ed0421e01205ae` | Grants, trust schema, grant_absent |
+| [8169](https://github.com/adcontextprotocol/adcp/pull/8169) | `3ce6a14d7afaa71fa78ddf2223ed0421e01205ae` | Grants, trust schema, grant_absent; the registrable-domain `grantee` rule and its schema description from `eabe46048530c08a34e6eee6e4d15d7848e01c57` |
 | [8170](https://github.com/adcontextprotocol/adcp/pull/8170) | `8d3591e70e9a717c7fdfb513360a796fba24ca9a` | Onboarding additions only; its old trust key fields are excluded |
 | [8177](https://github.com/adcontextprotocol/adcp/pull/8177) | `b663f8e4235fe4276c73fb9bac6db491b2252bbf` | Reporting authentication omission |
 

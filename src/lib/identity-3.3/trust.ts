@@ -82,8 +82,52 @@ export function validateTrustRecord(value: unknown): asserts value is TrustRecor
     origins.add(origin);
   }
 }
-export function createTrustRecord(record: TrustRecord): TrustRecord {
+/**
+ * The grantee when it is itself a registrable domain under the pinned PSL
+ * snapshot (ICANN and PRIVATE sections), otherwise undefined. A host below a
+ * registrable domain (`t1.vendor.example`) is not one, and neither is a public
+ * suffix (`github.io`); `alice.github.io` is one. Reducing a host to its
+ * eTLD+1 would broaden the grant to every tenant of that domain, so a grant
+ * whose grantee is not registrable covers no claim (adcp#8169).
+ */
+function registrableGrantee(grantee: string): string | undefined {
+  try {
+    // Exact: the schema already requires the canonical lowercase A-label form,
+    // so a grantee that only matches after URL parsing is not a registrable domain.
+    return eTldPlusOne(grantee) === grantee ? grantee : undefined;
+  } catch {
+    return undefined;
+  }
+}
+/** A grant's agents[] URL as a canonical origin, or undefined when it cannot be parsed. */
+function grantAgentOrigin(url: string): string | undefined {
+  try {
+    return canonicalAgentOrigin(url);
+  } catch {
+    return undefined;
+  }
+}
+/**
+ * Publication rules beyond the schema: every grant's `grantee` is a
+ * registrable domain and every `agents[].url` parses as an agent origin. A
+ * relying party ignores a grant that breaks either, so publishing one grants
+ * nothing while still making `grants[]` exhaustive for its scopes.
+ */
+export function assertPublishableTrustRecord(record: TrustRecord): void {
   validateTrustRecord(record);
+  for (const grant of record.grants ?? []) {
+    if (registrableGrantee(grant.grantee) === undefined)
+      throw new TypeError(
+        `Grant grantee "${grant.grantee}" is not a registrable domain; name the organization's registrable domain and narrow with agents[]`
+      );
+    for (const agent of grant.agents ?? [])
+      if (grantAgentOrigin(agent.url) === undefined)
+        throw new TypeError(`Grant agents[] URL "${agent.url}" is not a valid agent origin`);
+  }
+}
+/** Validate ({@link assertPublishableTrustRecord}) and copy a trust record for publication. */
+export function createTrustRecord(record: TrustRecord): TrustRecord {
+  assertPublishableTrustRecord(record);
   return structuredClone(record);
 }
 export type TrustFetchResult =
@@ -371,17 +415,20 @@ export interface DemandGrantOptions {
   /** Seller-verified brand identity resolution, including the house's child-brand ID. Never accept a buyer-selected authorizer. */
   resolveBrandHouse?: (brand: DemandGrantClaim['brand']) => Promise<{ domain: string; brand_id: string } | undefined>;
 }
+function grantsScope(grant: TrustGrant, scope: string): boolean {
+  return grant.scopes.some(
+    granted => granted === '*' || granted === scope || (granted === 'adcp:all' && scope.startsWith('adcp:'))
+  );
+}
 function grantMatches(grant: TrustGrant, target: string, claim: DemandGrantClaim, now: number): boolean {
-  if (eTldPlusOne(grant.grantee) !== target) return false;
-  if (
-    !grant.scopes.some(
-      scope => scope === '*' || scope === claim.scope || (scope === 'adcp:all' && claim.scope.startsWith('adcp:'))
-    )
-  )
-    return false;
+  // Exact match on a registrable grantee: never reduce a host grantee to its eTLD+1.
+  if (registrableGrantee(grant.grantee) !== target) return false;
+  if (!grantsScope(grant, claim.scope)) return false;
+  // An agents[] URL that does not parse lists no agent: the grant fails to
+  // match on its own and never throws out of the evaluation of other grants.
   if (
     grant.agents &&
-    !grant.agents.some(agent => canonicalAgentOrigin(agent.url) === canonicalAgentOrigin(claim.signerOrigin))
+    !grant.agents.some(agent => grantAgentOrigin(agent.url) === canonicalAgentOrigin(claim.signerOrigin))
   )
     return false;
   const brands = grant.profiles?.adcp?.brands;
@@ -448,13 +495,19 @@ export async function authorizeDemandGrant(
       if (second) return result('trust', [brand, account, operator], [first[0]!, second]);
     }
   }
-  const covered = (record.record.grants ?? []).some(
-    g =>
-      (eTldPlusOne(g.grantee) === account || (selfOperated && eTldPlusOne(g.grantee) === operator)) &&
-      g.scopes.some(
-        scope => scope === '*' || scope === claim.scope || (scope === 'adcp:all' && claim.scope.startsWith('adcp:'))
-      )
-  );
+  // A grant to account.operator (or, self-operated, to the signer's operator)
+  // for this scope that did not match is published narrowing: it blocks the
+  // seller's discretion. A grant whose grantee is not a registrable domain
+  // covers no claim, so it does not count here; its scopes still count for
+  // exclusive_grants, which below refuses every uncovered claim.
+  const covered = (record.record.grants ?? []).some(g => {
+    const grantee = registrableGrantee(g.grantee);
+    return (
+      grantee !== undefined &&
+      (grantee === account || (selfOperated && grantee === operator)) &&
+      grantsScope(g, claim.scope)
+    );
+  });
   if (!covered && !record.record.exclusive_grants && (await options.sellerAuthorization?.(claim)))
     return result('seller', [brand, account, operator]);
   throw new IdentityAuthorizationError('grant_absent');
