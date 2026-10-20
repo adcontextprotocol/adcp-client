@@ -181,6 +181,30 @@ describe('v2 → v1 projection — seller-asserted v1_format_ref (the only norma
 });
 
 describe('v2 → v1 projection — multi-size full-coverage (seller asserts ref-per-size)', { skip: SKIP_REASON }, () => {
+  test('does not fan out tag-URL display_js refs into inline-markup HTML formats', () => {
+    const ref = { agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_js' };
+    const { v1, diagnostics } = projectV2ProductToV1({
+      product_id: 'multi-size-tag-url',
+      name: 'Tag URL display',
+      format_options: [
+        {
+          format_kind: 'display_tag',
+          v1_format_ref: [ref],
+          params: {
+            supported_delivery_types: ['tag_url'],
+            sizes: [
+              { width: 300, height: 250 },
+              { width: 728, height: 90 },
+              { width: 970, height: 250 },
+            ],
+          },
+        },
+      ],
+    });
+    assert.deepStrictEqual(v1.format_ids, [ref]);
+    assert.strictEqual(diagnostics[0].code, 'FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE');
+  });
+
   // The flex-display fixture has 3 format_options (image / html5 /
   // display_tag), each declaring `sizes: [3]`. The image and display_tag
   // options assert one ref per size, the spec's preferred shape, so they
