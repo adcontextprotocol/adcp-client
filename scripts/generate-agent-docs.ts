@@ -1517,6 +1517,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`// client.invalidateDiscoveryCache(): Promise<void>; refresh after a seller change.`);
   ln();
   ln(`interface TaskOptions {`);
+  ln(`  operationId?: string;        // Stable caller correlation id (otherwise a UUID); not an idempotency key`);
   ln(`  skipStatusHandlers?: boolean; // Skip inline completion handlers, including continuations`);
   ln(`  timeout?: number;             // Absolute whole-task deadline`);
   ln(`  signal?: AbortSignal;         // Caller cancellation`);
@@ -1527,6 +1528,16 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  delegatedOperatorAuthorization?: DelegatedOperatorAuthorizationContext;`);
   ln(`  // ...deadline, cancellation, transport, and conversation options...`);
   ln(`}`);
+  ln();
+  ln(`// Resume observation of persisted seller work (SingleAgentClient or AgentClient).`);
+  ln(`// Save metadata.serverTaskId + metadata.taskId from the original call.`);
+  ln(
+    `const tracked = await agent.trackTask({ taskId: saved.serverTaskId, taskType: saved.taskType, operationId: saved.operationId });`
+  );
+  ln(`await tracked.track(); // One status read; TaskInfo includes operationId and serverTaskId`);
+  ln(`await tracked.waitForCompletion(1000, signal); // Same polling path as submitted continuations`);
+  ln(`// No per-poll protocol activity. Terminal status_change carries operation_id and server_task_id.`);
+  ln(`// Results retain seller tool response shapes; tracking does not restore prior request context or handlers.`);
   ln();
   ln(`interface DeferredContinuation<T> {`);
   ln(`  token: string;`);

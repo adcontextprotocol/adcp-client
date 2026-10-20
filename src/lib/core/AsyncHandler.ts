@@ -246,6 +246,8 @@ export interface Activity {
   agent_id: string;
   context_id?: string;
   task_id?: string;
+  /** Seller's AdCP work handle; operation_id remains the runner correlation id. */
+  server_task_id?: string;
   task_type: string;
   status?: string;
   /**
@@ -878,7 +880,7 @@ export class AsyncHandler {
    * Emit activity event
    */
   private async emitActivity(activity: Activity): Promise<void> {
-    await this.config.onActivity?.(activity);
+    await this.config.onActivity?.({ ...activity, server_task_id: activity.server_task_id ?? activity.task_id });
   }
 
   /**

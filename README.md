@@ -204,6 +204,46 @@ if (result.status === 'submitted') {
 }
 ```
 
+### Tracking a seller task after a restart
+
+Persist `result.metadata.serverTaskId`, the original tool name, and
+`result.metadata.taskId` (the buyer's operation ID) when a seller returns
+`submitted` or `working`. A new client can reconstruct the polling handle:
+
+```typescript
+const tracked = await agent.trackTask({
+  taskId: saved.serverTaskId,
+  taskType: saved.taskType,
+  operationId: saved.operationId,
+});
+
+const status = await tracked.track(); // One status check
+const completed = await tracked.waitForCompletion(1000, AbortSignal.timeout(60_000));
+```
+
+Each poll uses AdCP `tasks_get` (MCP) or `tasks/get` (A2A) with
+`{ task_id, include_result: true }`. Polls do not create separate
+`protocol_request` / `protocol_response` activity records. Terminal
+`status_change` activity carries the stable `operation_id` and the seller's
+`server_task_id`; existing `task_id` fields retain their current meaning.
+`TaskInfo` from the handle also carries `operationId` and `serverTaskId`.
+The SDK checks the returned task ID and tool name before exposing a result.
+
+Omitting `operationId` generates a UUID, available as `tracked.operationId`.
+Reuse the handle within a client. You can pin the ID before submitting work
+with `TaskOptions.operationId`, for example
+`agent.executeCustomTask('extension_task', params, undefined, { operationId })`.
+Operation IDs correlate observations; use `idempotency_key` for retry safety.
+They accept 1–255 letters, digits, underscores, periods, colons, or hyphens.
+
+Tracking returns the seller's original tool response shape and emits lifecycle
+activity. It does not restore the original request's policy/projection context
+or invoke inline tool completion handlers. Handle the returned result in the
+caller. Pass `transport` or `signal` in the tracking request to configure the
+polling lifetime; `track(transport)` overrides transport options for one poll.
+For A2A, supply `a2aTaskId` separately if you persisted the transport task ID
+and want the existing cancellation courtesy when polling is aborted.
+
 ### Handling Clarifications (input-required)
 
 When an agent needs more information, you can continue the conversation:

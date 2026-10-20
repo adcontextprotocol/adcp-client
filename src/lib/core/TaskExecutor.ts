@@ -63,6 +63,8 @@ import type {
   DeferredContinuation,
   DirectPauseRecoveryRequest,
   SubmittedContinuation,
+  TrackTaskRequest,
+  TrackedTask,
   WebhookUrlTemplate,
 } from './ConversationTypes';
 import { normalizeHandlerResponse, isDeferResponse, isAbortResponse } from '../handlers/types';
@@ -1165,6 +1167,8 @@ export class TaskExecutor {
       // to the settlement handler that can only be registered from the response.
       return { settled: false, queued: true };
     }
+    const task = this.activeTasks.get(taskId);
+    if (task && identity.serverTaskId !== undefined) task.serverTaskId = identity.serverTaskId;
     this.updateTaskStatus(taskId, status, result);
     return { settled: false, result };
   }
@@ -1747,12 +1751,14 @@ export class TaskExecutor {
 
       // Emit protocol_response activity
       const respStatus = this.responseParser.getStatus(response) as string | undefined;
+      taskState.serverTaskId = this.responseParser.getTaskId(response);
       await this.config.onActivity?.({
         type: 'protocol_response',
         operation_id: taskId,
         agent_id: agent.id,
         context_id: options.contextId,
         task_id: taskId,
+        server_task_id: taskState.serverTaskId,
         task_type: taskName,
         status: respStatus,
         payload: response,
@@ -1983,6 +1989,9 @@ export class TaskExecutor {
     requireDeferredSettlementResumeAuthorization = false
   ): Promise<TaskResult<T>> {
     const status = this.responseParser.getStatus(response) as ADCPStatus;
+    const serverTaskId = this.responseParser.getTaskId(response);
+    const task = this.activeTasks.get(taskId);
+    if (task && serverTaskId) task.serverTaskId = serverTaskId;
 
     switch (status) {
       case ADCP_STATUS.COMPLETED:
@@ -2515,6 +2524,60 @@ export class TaskExecutor {
     };
   }
 
+  /** Rebuild the polling continuation for seller work persisted by the caller. */
+  trackTask<T = unknown>(agent: AgentConfig, request: TrackTaskRequest): TrackedTask<T> {
+    if (typeof request.taskId !== 'string' || !request.taskId.trim()) {
+      throw new TypeError('taskId must be a non-empty seller task id.');
+    }
+    if (typeof request.taskType !== 'string' || !request.taskType.trim()) {
+      throw new TypeError('taskType must be a non-empty tool name.');
+    }
+    const operationId = getTaskOperationId(request) ?? randomUUID();
+    if (this.activeTasks.has(operationId)) {
+      throw new ConfigurationError('operationId is already tracked by this client; reuse its continuation.');
+    }
+    const startTime = Date.now();
+    this.activeTasks.set(operationId, {
+      taskId: operationId,
+      serverTaskId: request.taskId,
+      taskName: request.taskType,
+      status: 'submitted',
+      messages: [],
+      startTime,
+      attempt: 0,
+      maxAttempts: 0,
+      options: {},
+      agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
+      serverVersion: 'v3',
+    });
+    this.compactIntermediateTaskState(operationId, 'submitted');
+    const continuation = this.createSubmittedContinuation<T>(
+      agent,
+      operationId,
+      request.taskType,
+      request.taskId,
+      undefined,
+      snapshotTransportOptions(request.transport ?? this.config.transport),
+      {
+        ...this.buildMetadata({
+          taskId: operationId,
+          taskName: request.taskType,
+          agent,
+          startTime,
+          status: 'submitted',
+        }),
+        serverTaskId: request.taskId,
+        a2aTaskId: request.a2aTaskId,
+      },
+      false,
+      'v3',
+      this.config.wireAdcpVersion,
+      this.config.versionEnvelope,
+      request.signal
+    );
+    return { ...continuation, operationId };
+  }
+
   /** Build polling closures around one authoritative seller work handle. */
   private createSubmittedContinuation<T>(
     agent: AgentConfig,
@@ -2527,7 +2590,8 @@ export class TaskExecutor {
     deferTerminalTaskStatus: boolean,
     serverVersion: 'v2' | 'v3',
     wireAdcpVersion?: string,
-    versionEnvelope?: import('../protocols').VersionEnvelopeMode
+    versionEnvelope?: import('../protocols').VersionEnvelopeMode,
+    pollingSignal?: AbortSignal
   ): SubmittedContinuation<T> {
     return {
       taskId: serverTaskId,
@@ -2539,17 +2603,22 @@ export class TaskExecutor {
             agent,
             serverTaskId,
             transportSnapshot,
-            undefined,
+            pollingSignal,
             taskName,
             serverVersion,
             wireAdcpVersion,
-            versionEnvelope
+            versionEnvelope,
+            taskId
           )
         ).task;
-        if (!deferTerminalTaskStatus && ['completed', 'failed', 'rejected', 'canceled'].includes(task.status)) {
+        if (
+          !deferTerminalTaskStatus &&
+          ['completed', 'failed', 'rejected', 'canceled'].includes(task.status) &&
+          this.activeTasks.get(taskId)?.status !== task.status
+        ) {
           this.updateTaskStatus(taskId, task.status as TaskStatus, task.result, task.error);
         }
-        return task;
+        return { ...task, operationId: taskId, serverTaskId };
       },
       waitForCompletion: async (pollInterval = 60000, signal?: AbortSignal, requireExactTaskIdentity = false) => {
         void requireExactTaskIdentity;
@@ -2558,7 +2627,7 @@ export class TaskExecutor {
           serverTaskId,
           pollInterval,
           pollingTransport,
-          signal,
+          pollingSignal && signal ? AbortSignal.any([pollingSignal, signal]) : (signal ?? pollingSignal),
           metadata.a2aTaskId,
           taskName,
           taskId,
@@ -2570,7 +2639,10 @@ export class TaskExecutor {
         // input-required/auth-required states. Preserve that status so callers
         // can select an explicit application/protocol-specific recovery path;
         // only genuinely terminal statuses trigger delayed state eviction.
-        if (!deferTerminalTaskStatus || !TERMINAL_TASK_STATUSES.has(completed.status as TaskStatus)) {
+        if (
+          (!deferTerminalTaskStatus || !TERMINAL_TASK_STATUSES.has(completed.status as TaskStatus)) &&
+          this.activeTasks.get(taskId)?.status !== completed.status
+        ) {
           this.updateTaskStatus(taskId, completed.status as TaskStatus, completed.data, completed.error);
         }
         return completed;
@@ -3351,7 +3423,8 @@ export class TaskExecutor {
     expectedTaskType?: string,
     serverVersion?: 'v2' | 'v3',
     wireAdcpVersion?: string,
-    versionEnvelope?: import('../protocols').VersionEnvelopeMode
+    versionEnvelope?: import('../protocols').VersionEnvelopeMode,
+    operationId?: string
   ): Promise<TaskStatusPollResult> {
     // AdCP `tasks/get` is the cross-protocol work-status interface
     // (`schemas/cache/<v>/bundled/core/tasks-get-{request,response}.json`).
@@ -3398,6 +3471,7 @@ export class TaskExecutor {
         onTransportActivity: this.config.onTransportActivity,
         transportActivityContext: {
           taskId,
+          ...(operationId !== undefined && { operationId }),
         },
       }
     )) as Record<string, unknown>;
@@ -3525,7 +3599,7 @@ export class TaskExecutor {
           metadata: withServerTaskId(
             this.buildMetadata({
               taskId: metadataTaskId,
-              taskName: 'unknown',
+              taskName: expectedTaskType ?? 'unknown',
               agent,
               startTime: pollStartTime,
               status: 'failed',
@@ -3552,7 +3626,8 @@ export class TaskExecutor {
           expectedTaskType,
           serverVersion,
           wireAdcpVersion,
-          versionEnvelope
+          versionEnvelope,
+          metadataTaskId
         );
         status = pollResult.task;
         rawResponse = pollResult.rawResponse;
@@ -3565,7 +3640,7 @@ export class TaskExecutor {
             metadata: withServerTaskId(
               this.buildMetadata({
                 taskId: metadataTaskId,
-                taskName: 'unknown',
+                taskName: expectedTaskType ?? 'unknown',
                 agent,
                 startTime: pollStartTime,
                 status: 'failed',
@@ -3586,7 +3661,7 @@ export class TaskExecutor {
             metadata: withServerTaskId(
               this.buildMetadata({
                 taskId: metadataTaskId,
-                taskName: 'unknown',
+                taskName: expectedTaskType ?? 'unknown',
                 agent,
                 startTime: pollStartTime,
                 status: 'failed',
@@ -3602,13 +3677,15 @@ export class TaskExecutor {
           success: false as const,
           status: 'failed' as const,
           error: 'The seller returned a task outside the requested durable task identity.',
-          metadata: this.buildMetadata({
-            taskId,
-            taskName: 'unknown',
-            agent,
-            startTime: pollStartTime,
-            status: 'failed',
-          }),
+          metadata: withServerTaskId(
+            this.buildMetadata({
+              taskId: metadataTaskId,
+              taskName: expectedTaskType ?? 'unknown',
+              agent,
+              startTime: pollStartTime,
+              status: 'failed',
+            })
+          ),
         });
       }
 
@@ -3731,7 +3808,7 @@ export class TaskExecutor {
           metadata: withServerTaskId(
             this.buildMetadata({
               taskId: metadataTaskId,
-              taskName: 'unknown',
+              taskName: expectedTaskType ?? 'unknown',
               agent,
               startTime: pollStartTime,
               status: 'failed',
@@ -6202,6 +6279,8 @@ export class TaskExecutor {
 
       const taskInfo: TaskInfo = {
         taskId: task.taskId,
+        operationId: task.taskId,
+        serverTaskId: task.serverTaskId,
         status: status,
         taskType: task.taskName,
         createdAt: task.startTime,
@@ -6218,6 +6297,7 @@ export class TaskExecutor {
         agent_id: task.agent.id,
         context_id: undefined,
         task_id: task.taskId,
+        server_task_id: task.serverTaskId,
         task_type: task.taskName,
         status: status,
         payload: result ?? (error ? { error } : undefined),
@@ -6239,7 +6319,7 @@ export class TaskExecutor {
         task.options = {};
         delete task.pendingInput;
         setTimeout(() => {
-          this.cleanupTerminalTaskInspectionState(taskId);
+          if (this.activeTasks.get(taskId) === task) this.cleanupTerminalTaskInspectionState(taskId);
         }, 30000).unref(); // Keep for 30 seconds for final status checks
       }
     }

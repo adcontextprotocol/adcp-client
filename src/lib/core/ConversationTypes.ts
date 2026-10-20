@@ -154,6 +154,13 @@ export type WebhookUrlTemplate =
  */
 export interface TaskOptions {
   /**
+   * Caller-supplied operation correlation id. Defaults to a generated UUID.
+   * Persist it with metadata.serverTaskId to resume tracking after a restart.
+   * Use a unique id per logical operation; this does not provide idempotency.
+   * Accepts 1–255 letters, digits, underscores, periods, colons, or hyphens.
+   */
+  operationId?: string;
+  /**
    * Skip inline completion status handlers for this call and its continuations.
    * Defaults to false. Independently delivered webhook handlers are unaffected.
    */
@@ -298,6 +305,8 @@ export interface TaskOptions {
 export interface TaskState {
   /** Unique task identifier */
   taskId: string;
+  /** Seller work handle, distinct from the local operation id. */
+  serverTaskId?: string;
   /** Task name (tool name) */
   taskName: string;
   /**
@@ -344,6 +353,10 @@ export interface TaskState {
 export interface TaskInfo {
   /** Task ID */
   taskId: string;
+  /** Local operation id when observed through an SDK continuation or lifecycle event. */
+  operationId?: string;
+  /** Seller work handle when known. Existing taskId semantics are preserved. */
+  serverTaskId?: string;
   /** Current status */
   status: string;
   /** Task type/name */
@@ -390,6 +403,22 @@ export interface DirectPauseRecoveryRequest {
   operationId: string;
   recoveryKey: string;
   ownerScope: string;
+}
+
+/** Persisted seller work to observe without submitting a new task. */
+export interface TrackTaskRequest extends Pick<TaskOptions, 'operationId' | 'transport' | 'signal'> {
+  /** Seller's AdCP task_id (TaskResult.metadata.serverTaskId). */
+  taskId: string;
+  /** Original tool name, used to verify the seller's task identity. */
+  taskType: string;
+  /** Actual A2A transport Task.id, if known, for cancellation on abort. */
+  a2aTaskId?: string;
+}
+
+/** Polling handle for persisted seller work. */
+export interface TrackedTask<T = unknown> extends SubmittedContinuation<T> {
+  /** Stable runner operation id. Save this when the SDK generates it. */
+  operationId: string;
 }
 
 /**

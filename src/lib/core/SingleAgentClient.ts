@@ -140,7 +140,7 @@ import {
   assertNativeRequestProposalsTask,
   guardNativeRequestProposalsCompletion,
 } from './request-proposals-guard';
-import { withTaskDeadline } from './task-deadline';
+import { getTaskOperationId, withTaskDeadline } from './task-deadline';
 import { createMCPRequestHeaders } from '../auth';
 import { isAbortOrTimeoutError } from '../protocols/abort';
 import { getSignedRequestRejection } from '../protocols/signedRequestRejection';
@@ -174,6 +174,8 @@ import type {
   TaskState,
   WebhookUrlTemplate,
   DirectPauseRecoveryRequest,
+  TrackTaskRequest,
+  TrackedTask,
 } from './ConversationTypes';
 import type { AdcpTaskName, TaskRequestFor, TaskResponseTypeMap } from './AgentClient';
 import type { DeferredTaskStorage } from '../storage/interfaces';
@@ -3197,6 +3199,26 @@ export class SingleAgentClient {
     return this.resolvedAdcpVersion;
   }
 
+  /**
+   * Observe a persisted seller task using the continuation polling path.
+   * Does not submit work or emit protocol_request/protocol_response activity
+   * for each poll. Terminal status_change activity carries operation_id and
+   * server_task_id. Results use the seller's original tool response shape.
+   * Persist the returned operationId if none was supplied. Polling handles
+   * are local to this client; reuse the handle for subsequent status checks.
+   */
+  async trackTask<T = unknown>(request: TrackTaskRequest): Promise<TrackedTask<T>> {
+    const snapshot = { ...request, transport: request.transport && { ...request.transport } };
+    // Validate the correlation id before discovery performs any network work.
+    getTaskOperationId(snapshot);
+    throwIfAborted(snapshot.signal);
+    const agent =
+      this.normalizedAgent.protocol === 'a2a'
+        ? await this.ensureCanonicalUrlResolved(snapshot)
+        : await this.ensureEndpointDiscovered(snapshot);
+    return this.executor.trackTask<T>(agent, snapshot);
+  }
+
   /** Poll through the same discovered/canonical protocol endpoint used for dispatch. @internal */
   async getTaskStatus(
     taskId: string,
@@ -3328,6 +3350,7 @@ export class SingleAgentClient {
       operation_id: metadata.operation_id,
       agent_id: metadata.agent_id,
       task_id: metadata.task_id,
+      server_task_id: metadata.task_id,
       task_type: metadata.task_type,
       status: metadata.status,
       payload: args.result,
@@ -4882,6 +4905,7 @@ export class SingleAgentClient {
               agent_id: metadata.agent_id,
               context_id: metadata.context_id,
               task_id: metadata.task_id,
+              server_task_id: metadata.task_id,
               task_type: metadata.task_type,
               status: metadata.status,
               idempotency_key: metadata.idempotency_key,
@@ -4909,6 +4933,7 @@ export class SingleAgentClient {
               agent_id: metadata.agent_id,
               context_id: metadata.context_id,
               task_id: metadata.task_id,
+              server_task_id: metadata.task_id,
               task_type: metadata.task_type,
               status: metadata.status,
               payload: webhookResult,
@@ -5003,6 +5028,7 @@ export class SingleAgentClient {
             agent_id: metadata.agent_id,
             context_id: metadata.context_id,
             task_id: metadata.task_id,
+            server_task_id: metadata.task_id,
             task_type: metadata.task_type,
             status: metadata.status,
             idempotency_key: metadata.idempotency_key,
