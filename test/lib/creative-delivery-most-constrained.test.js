@@ -247,12 +247,29 @@ describe('creative delivery matches dimensions from catalog-backed bare IDs (#32
     assert.deepEqual(projected.format_id, sized('display_html', 320, 50));
   });
 
-  test('preserves a seller-owned creative-agent URL when standard IDs are aliases', () => {
-    const sellerAgentUrl = 'https://creative.example.com';
-    const sellerRefs = formatIds.map(ref => bare(ref.id, sellerAgentUrl));
-    const projected = syncLegacy(markupCreative(300, 250), sellerRefs);
-    assert.deepEqual(projected.format_id, bare('display_300x250_html', sellerAgentUrl));
-  });
+  for (const sourceKey of ['html_creative', 'serving_tag']) {
+    test(`preserves seller-owned alias URLs and converts ${sourceKey} to legacy HTML`, () => {
+      const sellerAgentUrl = 'https://creative.example.com';
+      const sellerRefs = formatIds.map(ref => bare(ref.id, sellerAgentUrl));
+      const creative = markupCreative(300, 250);
+      creative.assets = { [sourceKey]: creative.assets.html_creative };
+      const original = structuredClone(creative);
+      const projected = syncLegacy(creative, sellerRefs);
+      assert.deepEqual(projected.format_id, bare('display_300x250_html', sellerAgentUrl));
+      assert.deepEqual(projected.assets, { [sourceKey]: { asset_type: 'html', content: '<div>ad</div>' } });
+      assert.deepEqual(creative, original);
+
+      for (const operation of ['create_media_buy', 'update_media_buy']) {
+        const inline = projectMediaBuyCreativesForDelivery(
+          { packages: [{ product_id: 'seller-owned', format_ids: sellerRefs, creatives: [creative] }] },
+          'legacy',
+          operation
+        ).packages[0].creatives[0];
+        assert.deepEqual(inline.format_id, projected.format_id);
+        assert.deepEqual(inline.assets, projected.assets);
+      }
+    });
+  }
 
   test('refuses a multi-size catalog without creative dimensions', () => {
     const creative = markupCreative(300, 250);
@@ -441,4 +458,43 @@ describe('inline-markup display_tag creatives round-trip to the HTML-markup lega
     const legacyWire = syncLegacy(legacy, [bare('display_300x250_html')]);
     assert.deepEqual(legacyWire.assets, legacy.assets);
   });
+
+  for (const [formatKind, params, convertsMarkup] of [
+    ['html5', { width: 300, height: 250 }, false],
+    ['display_tag', { supported_delivery_types: ['tag_url'] }, false],
+    ['display_tag', { supported_delivery_types: ['inline_markup'] }, true],
+  ])
+    test(`preserves seller-declared ${formatKind} delivery constraints (${params.supported_delivery_types ?? 'bundle'})`, () => {
+      const ref = bare('display_300x250_html');
+      const legacy = {
+        creative_id: 'seller-declared-html5',
+        name: 'Seller declaration',
+        format_id: ref,
+        assets: { html_creative: { asset_type: 'html', content: MARKUP } },
+      };
+      const canonical = projectSyncCreativesForDelivery(
+        { creatives: [legacy], assignments: [{ creative_id: legacy.creative_id, package_id: 'package_1' }] },
+        [
+          {
+            package_id: 'package_1',
+            format_options: [{ format_kind: formatKind, params, v1_format_ref: [ref] }],
+          },
+        ],
+        'canonical'
+      ).creatives[0];
+      assert.equal(canonical.format_kind, formatKind);
+      assert.deepEqual(
+        canonical.assets,
+        convertsMarkup
+          ? {
+              html_creative: {
+                asset_type: 'display_tag',
+                delivery_type: 'inline_markup',
+                markup_type: 'standard',
+                markup: MARKUP,
+              },
+            }
+          : legacy.assets
+      );
+    });
 });
