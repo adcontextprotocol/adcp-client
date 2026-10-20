@@ -54,7 +54,7 @@ describe('resolveCanonicalFormatKind', { skip: SKIP_REASON }, () => {
 
   test('resolves representative bare ids across canonical families', () => {
     assert.strictEqual(resolveCanonicalFormatKind('display_300x250_image'), 'image');
-    assert.strictEqual(resolveCanonicalFormatKind('display_300x250_html'), 'html5');
+    assert.strictEqual(resolveCanonicalFormatKind('display_300x250_html'), 'display_tag');
     assert.strictEqual(resolveCanonicalFormatKind('display_js'), 'display_tag');
     assert.strictEqual(resolveCanonicalFormatKind('video_standard_30s'), 'video_hosted');
     assert.strictEqual(resolveCanonicalFormatKind('video_vast_30s'), 'video_vast');
@@ -65,8 +65,8 @@ describe('resolveCanonicalFormatKind', { skip: SKIP_REASON }, () => {
 
   test('resolves deployed AAO legacy aliases for canonical and historical owner URLs', () => {
     const expected = new Map([
-      ['display_320x50_html', 'html5'],
-      ['display_300x50_html', 'html5'],
+      ['display_320x50_html', 'display_tag'],
+      ['display_300x50_html', 'display_tag'],
       ['display_static', 'image'],
       ['video_hosted', 'video_hosted'],
       ['audio_30s', 'audio_hosted'],
@@ -119,7 +119,7 @@ describe('resolveCanonicalFormatKind', { skip: SKIP_REASON }, () => {
 
   test('assetType disambiguates an under-specified bare id to its catalog variant', () => {
     assert.strictEqual(resolveCanonicalFormatKind('display_336x280', { assetType: 'image' }), 'image');
-    assert.strictEqual(resolveCanonicalFormatKind('display_336x280', { assetType: 'html' }), 'html5');
+    assert.strictEqual(resolveCanonicalFormatKind('display_336x280', { assetType: 'html' }), 'display_tag');
     assert.strictEqual(resolveCanonicalFormatKind('display_336x280', { assetType: 'generative' }), 'image');
     // Size-less base id disambiguates too.
     assert.strictEqual(resolveCanonicalFormatKind('display', { assetType: 'js' }), 'display_tag');
@@ -127,7 +127,9 @@ describe('resolveCanonicalFormatKind', { skip: SKIP_REASON }, () => {
 
   test('assetType accepts catalog and canonical-kind aliases (javascript → js, html5 → html, display_tag → js)', () => {
     assert.strictEqual(resolveCanonicalFormatKind('display', { assetType: 'javascript' }), 'display_tag');
-    assert.strictEqual(resolveCanonicalFormatKind('display_336x280', { assetType: 'html5' }), 'html5');
+    // `html5` stays a local alias for the `_html` variant, which is HTML markup
+    // and therefore projects to display_tag (adcontextprotocol/adcp#8339).
+    assert.strictEqual(resolveCanonicalFormatKind('display_336x280', { assetType: 'html5' }), 'display_tag');
     assert.strictEqual(resolveCanonicalFormatKind('display', { assetType: 'display_tag' }), 'display_tag');
   });
 
@@ -179,16 +181,51 @@ describe('canonicalDeclarationFromBareId', { skip: SKIP_REASON }, () => {
     assert.ok(Array.isArray(decl.params.slots));
   });
 
+  test('projects HTML-markup legacy formats to display_tag with the html_creative slot (adcp#8339)', () => {
+    for (const id of [
+      'display_html',
+      'display_300x250_html',
+      'display_728x90_html',
+      'display_160x600_html',
+      'display_336x280_html',
+      'display_300x600_html',
+      'display_970x250_html',
+      'display_320x50_html',
+      'display_300x50_html',
+    ]) {
+      const decl = canonicalDeclarationFromBareId(id);
+      assert.strictEqual(decl.format_kind, 'display_tag', id);
+      assert.strictEqual(decl.params.asset_source, 'buyer_uploaded', id);
+      assert.deepStrictEqual(
+        decl.params.slots,
+        [{ asset_group_id: 'html_creative', asset_type: 'html', required: true }],
+        id
+      );
+    }
+    const sized = canonicalDeclarationFromBareId('display_300x250_html');
+    assert.strictEqual(sized.params.width, 300);
+    assert.strictEqual(sized.params.height, 250);
+  });
+
+  test('keeps display_js on the default display_tag contract', () => {
+    const js = canonicalDeclarationFromBareId('display_js');
+    assert.strictEqual(js.format_kind, 'display_tag');
+    assert.strictEqual(js.params.slots, undefined);
+  });
+
   test('extracts fixed canonical params from reviewed catalog requirements', () => {
     const mobileLeaderboard = canonicalDeclarationFromBareId('display_320x50_html');
     assert.ok(mobileLeaderboard);
-    assert.strictEqual(mobileLeaderboard.format_kind, 'html5');
+    assert.strictEqual(mobileLeaderboard.format_kind, 'display_tag');
+    assert.deepStrictEqual(mobileLeaderboard.params.slots, [
+      { asset_group_id: 'html_creative', asset_type: 'html', required: true },
+    ]);
     assert.strictEqual(mobileLeaderboard.params.width, 320);
     assert.strictEqual(mobileLeaderboard.params.height, 50);
 
     const mobileBanner = canonicalDeclarationFromBareId('display_300x50_html');
     assert.ok(mobileBanner);
-    assert.strictEqual(mobileBanner.format_kind, 'html5');
+    assert.strictEqual(mobileBanner.format_kind, 'display_tag');
     assert.strictEqual(mobileBanner.params.width, 300);
     assert.strictEqual(mobileBanner.params.height, 50);
 
