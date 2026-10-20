@@ -42,7 +42,9 @@ import {
 import type { CanonicalFormatDeclaration } from './legacy-metadata';
 import type { UndeclaredFormatOptionSelector } from './legacy-routes';
 import { canonicalize as canonicalizeJson } from '../../utils/jcs';
-import { lookupV1Format, type V1FormatDefinition } from './catalog';
+import { lookupUniqueV1FormatById, lookupV1Format, type V1FormatDefinition } from './catalog';
+import { canonicalizeAgentUrl } from '../../discovery/resolve-agent-properties';
+import { isLikelyPrivateUrl } from '../../net/address-guards';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, Extract<keyof T, K>> : never;
 
@@ -1236,7 +1238,7 @@ function projectLegacyAssetKeys(assetsValue: unknown, definition: V1FormatDefini
  * Legacy HTML-markup formats (`display_html`, `display_WxH_html`) take markup
  * as an `html` asset; canonically it is a `display_tag` inline-markup asset
  * (adcontextprotocol/adcp#8339). Carry the bytes into the legacy `content`.
- * `delivery_type` and `markup_type` have no legacy field.
+ * `delivery_type`, `markup_type` and `macro_declarations` have no legacy field.
  */
 function projectInlineMarkupToLegacyHtml(assetsValue: unknown, definition: V1FormatDefinition | undefined): unknown {
   const assets = record(assetsValue);
@@ -1279,8 +1281,8 @@ function inlineMarkupSlotIds(paramsValue: unknown): Set<string> {
 }
 
 /**
- * Legacy `html` markup read into an inline-markup `display_tag` slot. AdCP
- * says to use `markup_type: 'standard'` when the legacy wire carried none.
+ * Legacy `html` markup read into an inline-markup `display_tag` slot, using
+ * the `standard` default specified by adcontextprotocol/adcp#8357.
  */
 function legacyHtmlToInlineMarkup(creative: Record<string, unknown>, paramsValue: unknown): void {
   const assets = record(creative.assets);
@@ -1321,8 +1323,26 @@ function projectCreative<T extends Record<string, unknown>>(
     return ref !== undefined && sameLegacyIdentity(ref, formatId);
   });
   const definition = supplied?.length ? (supplied.length === 1 ? supplied[0] : undefined) : lookupV1Format(formatId);
+  let markupDefinition = definition;
+  if (!markupDefinition && !supplied?.length && creative.format_kind === 'display_tag') {
+    // Use the same guarded AAO-id alias as discovery, while keeping the
+    // seller's original owner tuple on the emitted legacy format_id.
+    const canonicalAgentUrl = canonicalizeAgentUrl(formatId.agent_url);
+    if (
+      canonicalAgentUrl !== null &&
+      new URL(canonicalAgentUrl).protocol === 'https:' &&
+      !isLikelyPrivateUrl(canonicalAgentUrl)
+    ) {
+      markupDefinition = lookupUniqueV1FormatById(formatId.id);
+    }
+  }
   if (Object.hasOwn(creative, 'assets')) {
-    next.assets = projectLegacyAssetKeys(projectInlineMarkupToLegacyHtml(creative.assets, definition), definition);
+    // A bare-id alias can establish markup representation, but only an exact
+    // or caller-supplied definition establishes the seller's asset slot IDs.
+    next.assets = projectLegacyAssetKeys(
+      projectInlineMarkupToLegacyHtml(creative.assets, markupDefinition),
+      definition
+    );
   }
   return next as T;
 }
@@ -1543,13 +1563,17 @@ function canonicalizeCreative<T extends Record<string, unknown>>(
     const next: Record<string, unknown> = { ...creative, format_kind: candidate.formatKind };
     delete next.format_id;
     if (candidate.formatOptionRef) next.format_option_ref = candidate.formatOptionRef;
-    if (convertLegacyMarkup) {
-      legacyHtmlToInlineMarkup(
-        next,
-        record(candidate.selectorParams)?.slots
-          ? candidate.selectorParams
-          : canonicalDeclarationFromBareId(existing.id, { agentUrl: existing.agent_url })?.params
-      );
+    if (convertLegacyMarkup && candidate.formatKind === 'display_tag') {
+      const declared = record(candidate.selectorParams);
+      const types = declared?.supported_delivery_types;
+      if (!Array.isArray(types) || types.includes('inline_markup')) {
+        legacyHtmlToInlineMarkup(
+          next,
+          Array.isArray(declared?.slots)
+            ? candidate.selectorParams
+            : canonicalDeclarationFromBareId(existing.id, { agentUrl: existing.agent_url })?.params
+        );
+      }
     }
     if (candidate.formatKind === 'custom' && !candidate.formatOptionRef) {
       throw new CreativeFormatProjectionError(
