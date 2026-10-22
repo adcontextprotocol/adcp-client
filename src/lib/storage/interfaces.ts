@@ -153,6 +153,8 @@ export interface DeferredTaskState {
   versionEnvelope?: import('../protocols').VersionEnvelopeMode;
   /** True when the original seller-version decision used the SDK's synthetic fallback. */
   serverVersionSynthetic?: boolean;
+  /** @internal Explicit discovery served release retained across refinement continuation. */
+  refinementServedVersion?: string;
   /** Trusted agent identifier resolved through current client configuration. */
   agentId: string;
   /** Task/tool name. */

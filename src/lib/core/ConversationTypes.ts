@@ -342,6 +342,8 @@ export interface TaskState {
   serverVersion?: 'v2' | 'v3';
   /** True when seller-version detection used the SDK's compatibility heuristic. */
   serverVersionSynthetic?: boolean;
+  /** @internal Explicit discovery served release retained for refinement response validation. */
+  refinementServedVersion?: string;
   /**
    * Idempotency key for this task, when the tool is mutating. Tracked on
    * state so internal retries reuse the same key (the whole point of the

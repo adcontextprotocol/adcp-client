@@ -25,6 +25,11 @@ function archivePath(bundledRoot: string): string {
   return path.join(path.dirname(bundledRoot), ARCHIVE_FILE);
 }
 
+/** @internal Refresh archive contents before registering a replacement schema root. */
+export function clearBundledSchemaStoreCache(bundledRoot: string): void {
+  archiveCache.delete(archivePath(bundledRoot));
+}
+
 /** Restore a compact archive entry to the protocol-authored inline shape. */
 function expandCompactSchema(root: JsonSchema): JsonSchema {
   const compactNames = root[COMPACT_DEFINITIONS_KEY];

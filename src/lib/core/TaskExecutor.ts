@@ -36,7 +36,10 @@ import {
 } from '../validation/client-hooks';
 import { formatIssues } from '../validation/schema-validator';
 import { withServedValidationVersion } from '../validation/schema-loader';
-import { ADCP_VERSION } from '../version';
+import { ADCP_VERSION, toReleasePrecisionVersion } from '../version';
+import { applicableRefinementServedVersion } from '../negotiation/version';
+import { selectRefinementSchemaVersion } from '../negotiation/verification';
+import type { ProposalVerificationIssue } from '../negotiation/types';
 import { unwrapProtocolResponse, isAdcpOperationSuccess } from '../utils/response-unwrapper';
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
 import { generateIdempotencyKey, requestUsesIdempotency, redactIdempotencyKeyInArgs } from '../utils/idempotency';
@@ -1407,6 +1410,15 @@ export class TaskExecutor {
       agent: { id: agent.id, name: agent.name, protocol: agent.protocol },
       serverVersion: effectiveServerVersion,
       serverVersionSynthetic: targetCapabilities?._synthetic ?? serverVersion === undefined,
+      ...(taskName === 'refine_proposals' &&
+        targetCapabilities?._synthetic === false && {
+          refinementServedVersion: applicableRefinementServedVersion(
+            targetCapabilities.servedVersion,
+            params?.adcp_version ??
+              toReleasePrecisionVersion(wireAdcpVersion ?? this.config.adcpVersion ?? ADCP_VERSION),
+            toReleasePrecisionVersion(this.config.wireAdcpVersion ?? this.config.adcpVersion ?? ADCP_VERSION)
+          ),
+        }),
       idempotencyKey,
     };
     this.activeTasks.set(taskId, taskState);
@@ -1812,7 +1824,8 @@ export class TaskExecutor {
         dispatchSettlement?.persistPausedContinuation ?? true,
         effectiveServerVersion,
         deferredClientContext,
-        dispatchSettlement?.requireDeferredSettlementResumeAuthorization === true
+        dispatchSettlement?.requireDeferredSettlementResumeAuthorization === true,
+        taskState.refinementServedVersion
       );
       throwIfAborted(postDispatchOptions.signal);
 
@@ -2005,7 +2018,8 @@ export class TaskExecutor {
     persistPausedContinuation = true,
     serverVersion: 'v2' | 'v3' = 'v3',
     deferredClientContext?: unknown,
-    requireDeferredSettlementResumeAuthorization = false
+    requireDeferredSettlementResumeAuthorization = false,
+    refinementServedVersion?: string
   ): Promise<TaskResult<T>> {
     const status = this.responseParser.getStatus(response) as ADCPStatus;
     const serverTaskId = this.responseParser.getTaskId(response);
@@ -2024,7 +2038,14 @@ export class TaskExecutor {
         const operationSuccess = this.isOperationSuccess(completedData, taskName, serverVersion);
 
         // Validate response against AdCP schema - validate extracted data, not protocol wrapper
-        const validationResult = this.validateResponseSchema(completedData, taskName, debugLogs, serverVersion);
+        const validationResult = this.validateResponseSchema(
+          completedData,
+          taskName,
+          debugLogs,
+          serverVersion,
+          params,
+          refinementServedVersion
+        );
 
         // In strict mode, schema validation failures cause task to fail
         const finalSuccess = operationSuccess && validationResult.valid;
@@ -2123,7 +2144,8 @@ export class TaskExecutor {
           persistPausedContinuation,
           serverVersion,
           deferredClientContext,
-          requireDeferredSettlementResumeAuthorization
+          requireDeferredSettlementResumeAuthorization,
+          refinementServedVersion
         );
 
       case ADCP_STATUS.FAILED:
@@ -2192,7 +2214,14 @@ export class TaskExecutor {
           const defaultSuccess = this.isOperationSuccess(defaultData, taskName, serverVersion);
 
           // Validate response against AdCP schema - validate extracted data, not protocol wrapper
-          const defaultValidation = this.validateResponseSchema(defaultData, taskName, debugLogs, serverVersion);
+          const defaultValidation = this.validateResponseSchema(
+            defaultData,
+            taskName,
+            debugLogs,
+            serverVersion,
+            params,
+            refinementServedVersion
+          );
 
           // In strict mode, schema validation failures cause task to fail
           const defaultFinalSuccess = defaultSuccess && defaultValidation.valid;
@@ -3044,7 +3073,8 @@ export class TaskExecutor {
     persistPausedContinuation = true,
     serverVersion: 'v2' | 'v3' = 'v3',
     deferredClientContext?: unknown,
-    requireDeferredSettlementResumeAuthorization = false
+    requireDeferredSettlementResumeAuthorization = false,
+    refinementServedVersion?: string
   ): Promise<TaskResult<T>> {
     const inputRequest = this.responseParser.parseInputRequest(response);
     const serverContextId = this.responseParser.getContextId(response) ?? response.contextId;
@@ -3118,6 +3148,7 @@ export class TaskExecutor {
           ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
           ...(options.versionEnvelope !== undefined && { versionEnvelope: options.versionEnvelope }),
           serverVersionSynthetic: this.activeTasks.get(taskId)?.serverVersionSynthetic,
+          ...(refinementServedVersion !== undefined && { refinementServedVersion }),
           agentId: agent.id,
           taskName,
           params: durableDeferredSnapshot(params),
@@ -3185,7 +3216,8 @@ export class TaskExecutor {
           persistPausedContinuation,
           serverVersion,
           deferredClientContext,
-          requireDeferredSettlementResumeAuthorization
+          requireDeferredSettlementResumeAuthorization,
+          refinementServedVersion
         );
       };
       const deferred: DeferredContinuation<T> = {
@@ -3280,6 +3312,7 @@ export class TaskExecutor {
           ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
           ...(options.versionEnvelope !== undefined && { versionEnvelope: options.versionEnvelope }),
           serverVersionSynthetic: this.activeTasks.get(taskId)?.serverVersionSynthetic,
+          ...(refinementServedVersion !== undefined && { refinementServedVersion }),
           agentId: agent.id,
           taskName,
           params: durableDeferredSnapshot(params),
@@ -3354,7 +3387,8 @@ export class TaskExecutor {
           persistPausedContinuation,
           serverVersion,
           deferredClientContext,
-          requireDeferredSettlementResumeAuthorization
+          requireDeferredSettlementResumeAuthorization,
+          refinementServedVersion
         );
       };
       const deferred: DeferredContinuation<T> = {
@@ -3408,7 +3442,8 @@ export class TaskExecutor {
       persistPausedContinuation,
       serverVersion,
       deferredClientContext,
-      requireDeferredSettlementResumeAuthorization
+      requireDeferredSettlementResumeAuthorization,
+      refinementServedVersion
     );
   }
 
@@ -4755,7 +4790,8 @@ export class TaskExecutor {
         false,
         state.serverVersion,
         state.clientContext,
-        state.settlementResumeAuthorizationRequired === true
+        state.settlementResumeAuthorizationRequired === true,
+        state.refinementServedVersion
       );
       resumed = attachDeferredServerVersion(resumed, state);
       const observedResumedServerTaskId = resumed.metadata.serverTaskId;
@@ -4791,6 +4827,9 @@ export class TaskExecutor {
               : {}),
           a2aTaskId: nextA2ATaskId,
           serverVersion: state.serverVersion,
+          ...(state.refinementServedVersion !== undefined && {
+            refinementServedVersion: state.refinementServedVersion,
+          }),
           ...(state.wireAdcpVersion !== undefined && { wireAdcpVersion: state.wireAdcpVersion }),
           ...(state.versionEnvelope !== undefined && { versionEnvelope: state.versionEnvelope }),
           ...(state.serverVersionSynthetic !== undefined && {
@@ -5880,7 +5919,8 @@ export class TaskExecutor {
     persistPausedContinuation = true,
     serverVersion: 'v2' | 'v3' = 'v3',
     deferredClientContext?: unknown,
-    requireDeferredSettlementResumeAuthorization = false
+    requireDeferredSettlementResumeAuthorization = false,
+    refinementServedVersion?: string
   ): Promise<TaskResult<T>> {
     // This is also the direct same-process continuation when durable storage
     // is absent. Snapshot before the first await so nested caller-owned input
@@ -5957,7 +5997,8 @@ export class TaskExecutor {
       persistPausedContinuation,
       serverVersion,
       deferredClientContext,
-      requireDeferredSettlementResumeAuthorization
+      requireDeferredSettlementResumeAuthorization,
+      refinementServedVersion
     );
   }
 
@@ -6222,7 +6263,9 @@ export class TaskExecutor {
     response: any,
     taskName: string,
     debugLogs: any[],
-    serverVersion?: 'v2' | 'v3'
+    serverVersion?: 'v2' | 'v3',
+    requestParams?: { adcp_version?: unknown },
+    refinementServedVersion?: string
   ): { valid: boolean; errors: string[] } {
     const mode = this.responseValidationMode;
     const logViolations = this.config.logSchemaViolations !== false;
@@ -6242,6 +6285,48 @@ export class TaskExecutor {
         return withServedValidationVersion(response, pinnedValidationVersion, validationVersion =>
           this.validateResponseSchemaAgainst(response, taskName, debugLogs, mode, logViolations, validationVersion)
         );
+      }
+      if (taskName === 'refine_proposals' && mode !== 'off') {
+        const ceiling =
+          requestParams?.adcp_version ??
+          toReleasePrecisionVersion(this.config.wireAdcpVersion ?? pinnedValidationVersion);
+        const issues: ProposalVerificationIssue[] = [];
+        const selected = selectRefinementSchemaVersion(
+          ceiling,
+          response,
+          {
+            adcpVersion: pinnedValidationVersion,
+            servedAdcpVersion: applicableRefinementServedVersion(refinementServedVersion, ceiling),
+          },
+          issues
+        );
+        if (!selected) {
+          const errors = issues.map(issue => `${issue.path}: ${issue.message}`);
+          if (logViolations) {
+            debugLogs.push({
+              timestamp: new Date().toISOString(),
+              type: mode === 'strict' ? 'error' : 'warning',
+              message: `Schema validation ${mode === 'strict' ? 'failed' : 'warning'} for ${taskName}: ${errors.join('; ')}`,
+              errors,
+              issues,
+              schemaVersion: pinnedValidationVersion,
+              mode,
+            });
+            if (mode === 'warn') {
+              console.warn(
+                `Schema validation failed for ${taskName} against AdCP ${pinnedValidationVersion} (non-blocking):`,
+                errors
+              );
+            } else {
+              console.error(
+                `Schema validation failed for ${taskName} against AdCP ${pinnedValidationVersion}:`,
+                errors
+              );
+            }
+          }
+          return { valid: mode !== 'strict', errors: mode === 'strict' ? errors : [] };
+        }
+        return this.validateResponseSchemaAgainst(response, taskName, debugLogs, mode, logViolations, selected);
       }
       return this.validateResponseSchemaAgainst(
         response,

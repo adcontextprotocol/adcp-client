@@ -3511,6 +3511,25 @@ export class SingleAgentClient {
     return this.config.wireAdcpVersion ?? this.resolvedAdcpVersion;
   }
 
+  /** @internal Read only current, auth-scoped actual discovery evidence; never fetch. */
+  getCachedServedAdcpVersion(options?: ReadRequestOptions): string | undefined {
+    this.synchronizeCapabilityEvidenceAuthorizationScope();
+    if (this.usesScopedDiscoveryTransport(options)) return undefined;
+    if (this.primedCapabilitiesExpiresAt !== undefined && this.primedCapabilitiesExpiresAt <= Date.now())
+      return undefined;
+    if (this.config.discoveryCache && this.cachedCapabilities) {
+      const key = this.sharedDiscoveryKey(options);
+      if (
+        this.sharedEvidenceKey !== key ||
+        (key !== undefined &&
+          this.sharedEvidenceEpoch !== undefined &&
+          this.sharedEvidenceEpoch !== this.sharedInvalidationEpoch(key))
+      )
+        return undefined;
+    }
+    return this.cachedCapabilities?._synthetic === false ? this.cachedCapabilities.servedVersion : undefined;
+  }
+
   /**
    * Ensure MCP endpoint is discovered (lazy initialization)
    *
