@@ -115,3 +115,76 @@ describe('server-direction converters', () => {
     assert.ok(drifts.some(drift => drift.type === 'version_downgrade_fields_dropped' && drift.toVersion === '3.1'));
   });
 });
+
+describe('version translation visibility and async results', () => {
+  const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
+
+  it('reports each response conversion to onVersionTranslation', async () => {
+    const events = [];
+    const adcpServer = createAdcpServer({
+      name: 'Translating seller',
+      version: '1.0.0',
+      capabilities: { supported_versions: ['3.1', '3.2'] },
+      onVersionTranslation: event => events.push(event),
+      mediaBuy: { getMediaBuyDelivery: async () => structuredClone(DELIVERY_32) },
+    });
+    await call(adcpServer, { adcp_version: '3.1', media_buy_ids: ['mb_1'] });
+    await call(adcpServer, { adcp_version: '3.2', media_buy_ids: ['mb_1'] });
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].tool, 'get_media_buy_delivery');
+    assert.strictEqual(events[0].direction, 'response');
+    assert.strictEqual(events[0].toVersion, '3.1');
+    const dropped = events[0].drifts.find(drift => drift.type === 'version_downgrade_fields_dropped');
+    assert.ok(dropped.strippedFields.includes('media_buy_deliveries[0].pacing_index'));
+  });
+
+  it('ignores a throwing onVersionTranslation callback', async () => {
+    const adcpServer = createAdcpServer({
+      name: 'Translating seller',
+      version: '1.0.0',
+      capabilities: { supported_versions: ['3.1', '3.2'] },
+      onVersionTranslation: () => {
+        throw new Error('observer failed');
+      },
+      mediaBuy: { getMediaBuyDelivery: async () => structuredClone(DELIVERY_32) },
+    });
+    const response = await call(adcpServer, { adcp_version: '3.1', media_buy_ids: ['mb_1'] });
+    assert.notStrictEqual(response.isError, true);
+    assert.strictEqual(response.structuredContent.currency, 'USD');
+  });
+
+  it('converts a stored task result down for a buyer polling get_task_status on 3.1', async () => {
+    const taskRegistry = createInMemoryTaskRegistry();
+    const owner = { accountId: 'acct_1', ownerScope: 'api_key:buyer-1' };
+    const task = await taskRegistry.create({ tool: 'create_media_buy', ...owner });
+    await taskRegistry.complete(task.taskId, owner, {
+      media_buy_id: 'mb_1',
+      media_buy_status: 'active',
+      name: 'Q1 launch',
+      packages: [],
+    });
+    const adcpServer = createAdcpServer({
+      name: 'Translating seller',
+      version: '1.0.0',
+      capabilities: { supported_versions: ['3.1', '3.2'] },
+      taskRegistry,
+      resolveAccountFromAuth: async () => ({ id: 'acct_1' }),
+      mediaBuy: { getMediaBuyDelivery: async () => structuredClone(DELIVERY_32) },
+    });
+    const buyer = { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-1' } } };
+    const poll = async adcp_version =>
+      adcpServer.dispatchTestRequest(
+        {
+          method: 'tools/call',
+          params: { name: 'get_task_status', arguments: { adcp_version, task_id: task.taskId, include_result: true } },
+        },
+        buyer
+      );
+    const legacy = await poll('3.1');
+    assert.notStrictEqual(legacy.isError, true, JSON.stringify(legacy.structuredContent));
+    assert.strictEqual(legacy.structuredContent.result.media_buy_id, 'mb_1');
+    assert.strictEqual(legacy.structuredContent.result.name, undefined, 'the 3.2-only name is removed');
+    const current = await poll('3.2');
+    assert.strictEqual(current.structuredContent.result.name, 'Q1 launch');
+  });
+});

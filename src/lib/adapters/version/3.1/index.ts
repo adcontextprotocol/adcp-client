@@ -1,4 +1,5 @@
 import { createMediaBuyAdapter, updateMediaBuyAdapter } from './bidding';
+import { syncCreativesAdapter } from './assignments';
 import { getMediaBuyDeliveryAdapter } from './delivery';
 import type { VersionAdapter } from '../types';
 
@@ -7,4 +8,5 @@ export const v31Adapters: ReadonlyArray<VersionAdapter> = [
   createMediaBuyAdapter,
   updateMediaBuyAdapter,
   getMediaBuyDeliveryAdapter,
+  syncCreativesAdapter,
 ];
