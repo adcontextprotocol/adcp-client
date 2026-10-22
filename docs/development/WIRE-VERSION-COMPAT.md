@@ -20,6 +20,10 @@ Established media-buy tools remain available for AdCP 3.0/3.1 sellers. Their com
 
 An explicitly repinned candidate checkout can build against `3.3.0-beta.N` or `3.3.0-rc.N`. Version synchronization retains maintained AdCP 3.0/3.1 releases and AdCP 3.2.1 through 3.2.5, then advertises only the exact preview pin and its release-precision wire alias (for example, `3.3.0-beta.0` and `3.3-beta.0`). It does not advertise moving `3.3-beta`/`3.3-rc` aliases or AdCP 3.3 GA. The SDK's default pin remains AdCP 3.2.5.
 
+Canonical schema routes determine `MediaBuyTask` and the task used for each action. A separately routed action such as issue reporting does not map to an `update_media_buy` request field and cannot use that compatibility facade. `STRUCTURED_ONLY_MEDIA_BUY_ACTIONS` lists structured actions with update-field bindings; canonical routing retains separately routed actions in the wider `MediaBuyActionId` vocabulary.
+
+Generic change-right assessment retains its accepted-term preconditions. Issue-reporting capability checks and lifecycle processing belong to the seller implementation.
+
 ## Bundled artifacts
 
 ```text

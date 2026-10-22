@@ -1,15 +1,11 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { format } from 'prettier';
+import { canonicalMediaBuyActionTasks } from './lib/canonical-media-buy-action-tasks';
 
 const version = readFileSync('ADCP_VERSION', 'utf8').trim();
 const schema = (path: string) => JSON.parse(readFileSync(`schemas/cache/${version}/${path}.json`, 'utf8'));
 const actions = schema('core/canonical-media-buy-action');
-const tasks: Record<string, string[]> = {};
-for (const branch of actions.oneOf) {
-  for (const action of branch.properties.action.enum) {
-    (tasks[action] ??= []).push(branch.properties.task.const);
-  }
-}
+const tasks = canonicalMediaBuyActionTasks(actions);
 const compatibility =
   schema('media-buy/change-term')['x-adcp-validation'].verifier_constraints.constraint_action_compatibility;
 delete compatibility.on_violation;

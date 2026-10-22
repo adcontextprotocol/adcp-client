@@ -21,6 +21,7 @@ import type { MediaBuyActionId, SLAWindow } from './types';
 
 export const NON_TERMINAL_ACTION_STATUSES = ['pending_creatives', 'pending_start', 'active', 'paused'] as const;
 const MODES = ['self_serve', 'conditional_self_serve', 'seller_managed', 'requires_approval'];
+const CANONICAL_TASKS = new Set<string>(Object.values(CANONICAL_ACTION_TASKS).flat());
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -34,8 +35,10 @@ export function mediaBuyActionTasks(action: string): readonly MediaBuyTask[] {
 
 /** The canonical default, only usable with a known current right and validated live entry. */
 export function defaultMediaBuyActionTask(action: MediaBuyAction): MediaBuyTask | undefined {
-  return (['control_media_buy', 'refine_proposals', 'sync_creatives'] as const).find(task =>
-    mediaBuyActionTasks(action).includes(task)
+  return (
+    (['control_media_buy', 'refine_proposals', 'sync_creatives'] as const).find(task =>
+      mediaBuyActionTasks(action).includes(task)
+    ) ?? mediaBuyActionTasks(action)[0]
   );
 }
 
@@ -309,11 +312,7 @@ export function liveActionIssues(entries: unknown): string[] {
     )
       return ['invalid or duplicate live action'];
     seen.add(entry.action);
-    if (
-      entry.task !== undefined &&
-      !['control_media_buy', 'refine_proposals', 'sync_creatives'].includes(String(entry.task))
-    )
-      return ['invalid live task'];
+    if (entry.task !== undefined && !CANONICAL_TASKS.has(String(entry.task))) return ['invalid live task'];
     if (!slaValid(entry.sla)) return ['invalid live SLA'];
     if (
       entry.change_term_id !== undefined &&

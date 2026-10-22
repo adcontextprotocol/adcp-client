@@ -17,12 +17,18 @@ const fs = require('node:fs');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const ts = require('typescript');
+const { build } = require('esbuild');
+require('tsx/cjs');
+const { canonicalMediaBuyActionTasks } = require('../../scripts/lib/canonical-media-buy-action-tasks.ts');
 
 const REPO_ROOT = path.join(__dirname, '../..');
 const GENERATOR = path.join(REPO_ROOT, 'scripts/generate-media-buy-update-fields.ts');
 const MERGED_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/media-buy-update-fields/merged');
 const LEGACY_ENUM = 'enums/media-buy-valid-action.json';
 const ID_SCHEMA = 'core/media-buy-available-action-id.json';
+const CANONICAL_SCHEMA = 'core/canonical-media-buy-action.json';
+const TASK_ROUTED_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/media-buy-update-fields/task-routed');
+const REPORT_ACTION = 'report_media_buy_issue';
 
 const FREQUENCY_CAP_ACTION = 'update_media_buy_frequency_cap';
 const PACKAGE_FREQUENCY_CAP_FIELD = 'packages[].targeting_overlay.frequency_cap';
@@ -88,6 +94,171 @@ function evaluateModule(source) {
   new Function('module', 'exports', outputText)(mod, mod.exports);
   return mod.exports;
 }
+
+function taskRoutedFixture(name) {
+  const dir = scratchDir(name);
+  copyFixture(dir, LEGACY_ENUM);
+  writeIdSchema(dir, schema => {
+    schema.anyOf.push({ type: 'string', const: REPORT_ACTION });
+  });
+  fs.copyFileSync(path.join(TASK_ROUTED_FIXTURE, CANONICAL_SCHEMA), path.join(dir, CANONICAL_SCHEMA));
+  return dir;
+}
+
+describe('generate-media-buy-update-fields: task-routed actions', () => {
+  it('retains separate task routes for const and enum branches without inventing update bindings', () => {
+    for (const shape of ['const', 'enum']) {
+      const dir = taskRoutedFixture(`task-routed-${shape}`);
+      const schemaPath = path.join(dir, CANONICAL_SCHEMA);
+      const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+      const report = schema.oneOf.find(branch => branch.properties.task.const === REPORT_ACTION);
+      report.properties.action = shape === 'const' ? { const: REPORT_ACTION } : { enum: [REPORT_ACTION] };
+      fs.writeFileSync(schemaPath, JSON.stringify(schema));
+      assert.deepEqual(canonicalMediaBuyActionTasks(schema)[REPORT_ACTION], [REPORT_ACTION]);
+      const generated = evaluateModule(runGenerator(dir).source);
+      assert.equal(generated.UPDATE_FIELDS_BY_ACTION[REPORT_ACTION], undefined);
+      assert.deepEqual(generated.STRUCTURED_ONLY_MEDIA_BUY_ACTIONS, [FREQUENCY_CAP_ACTION]);
+      assert.deepEqual(generated.ACTIONS_BY_FIELD.frequency_cap, [FREQUENCY_CAP_ACTION]);
+      assert.ok(Object.values(generated.ACTIONS_BY_FIELD).every(actions => !actions.includes(REPORT_ACTION)));
+    }
+  });
+
+  it('still rejects absent bindings for every established mutation task', () => {
+    for (const tasks of [
+      ['update_media_buy'],
+      ['control_media_buy'],
+      ['refine_proposals'],
+      ['sync_creatives'],
+      [REPORT_ACTION, 'control_media_buy'],
+    ]) {
+      const dir = taskRoutedFixture(`unbound-mutation-${tasks.join('-')}`);
+      writeIdSchema(dir, schema => {
+        delete schema.enumMetadata[FREQUENCY_CAP_ACTION];
+      });
+      fs.writeFileSync(
+        path.join(dir, CANONICAL_SCHEMA),
+        JSON.stringify({
+          oneOf: tasks.map(task => ({
+            properties: { task: { const: task }, action: { enum: [FREQUENCY_CAP_ACTION] } },
+          })),
+        })
+      );
+      assert.match(runGeneratorExpectingFailure(dir), /no enumMetadata\.update_fields binding/);
+    }
+  });
+
+  it('rejects malformed canonical route declarations instead of exempting missing bindings', () => {
+    for (const [task, action] of [
+      [{ const: '' }, { const: REPORT_ACTION }],
+      [{}, { const: REPORT_ACTION }],
+      [{ const: REPORT_ACTION }, {}],
+      [{ const: REPORT_ACTION }, { enum: [] }],
+      [{ const: REPORT_ACTION }, { enum: [REPORT_ACTION, false] }],
+    ]) {
+      assert.throws(() => canonicalMediaBuyActionTasks({ oneOf: [{ properties: { task, action } }] }), /must declare/);
+    }
+  });
+
+  it('routes a reported issue through its declared task and preserves legacy mutation preflight', async () => {
+    const dir = taskRoutedFixture('task-routed-runtime');
+    const { source, outPath } = runGenerator(dir);
+    fs.writeFileSync(
+      outPath,
+      source.replaceAll("from './types'", `from '${path.join(REPO_ROOT, 'src/lib/media-buy/types')}'`)
+    );
+    const canonical = JSON.parse(fs.readFileSync(path.join(dir, CANONICAL_SCHEMA), 'utf8'));
+    canonical.oneOf.reverse(); // Branch order cannot change established control/refine/sync preference.
+    const metadataPath = path.join(dir, 'action-metadata.generated.ts');
+    fs.writeFileSync(
+      metadataPath,
+      [
+        `export const CANONICAL_ACTION_TASKS = ${JSON.stringify(canonicalMediaBuyActionTasks(canonical))} as const;`,
+        'export const CHANGE_CONSTRAINT_ACTIONS = {} as const;',
+        `export const CHANGE_TERM_ACTIONS = ${JSON.stringify(Object.keys(canonicalMediaBuyActionTasks(canonical)))} as const;`,
+        `export const LEGACY_AVAILABLE_ACTIONS = ${fs.readFileSync(path.join(dir, LEGACY_ENUM), 'utf8')}.enum;`,
+      ].join('\n')
+    );
+    const entry = name => JSON.stringify(path.join(REPO_ROOT, 'src/lib/media-buy', name));
+    const bundle = await build({
+      stdin: {
+        contents: [
+          `export { assessActionAvailability, mediaBuyActionTasks } from ${entry('actions.ts')};`,
+          `export { defaultMediaBuyActionTask } from ${entry('action-contracts.ts')};`,
+          `export { preflightUpdateMediaBuy, decomposeUpdateMediaBuy } from ${entry('preflight.ts')};`,
+        ].join('\n'),
+        resolveDir: REPO_ROOT,
+        loader: 'ts',
+      },
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      write: false,
+      plugins: [
+        {
+          name: 'candidate-action-metadata',
+          setup(builder) {
+            builder.onResolve({ filter: /action-metadata\.generated$/ }, () => ({ path: metadataPath }));
+            builder.onResolve({ filter: /update-fields\.generated$/ }, () => ({ path: outPath }));
+          },
+        },
+      ],
+    });
+    const mod = { exports: {} };
+    new Function('require', 'module', 'exports', bundle.outputFiles[0].text)(require, mod, mod.exports);
+    const api = mod.exports;
+    const state = {
+      media_buy_id: 'buy1',
+      status: 'active',
+      revision: 3,
+      accepted_proposal_id: 'proposal1',
+      accepted_proposal: {
+        proposal_id: 'proposal1',
+        proposal_status: 'accepted',
+        media_buy_id: 'buy1',
+        commercial_terms: {
+          change_terms: [
+            {
+              term_id: 'report_right',
+              action: REPORT_ACTION,
+              service_mode: 'seller_managed',
+              allowed_statuses: ['active'],
+            },
+          ],
+        },
+      },
+      available_actions: [
+        { action: REPORT_ACTION, task: REPORT_ACTION, mode: 'seller_managed', change_term_id: 'report_right' },
+      ],
+    };
+    assert.equal(api.defaultMediaBuyActionTask(REPORT_ACTION), REPORT_ACTION);
+    assert.equal(api.defaultMediaBuyActionTask('increase_budget'), 'control_media_buy');
+    const options = { adcpVersion: '3.3-beta.0', task: REPORT_ACTION };
+    const assessment = api.assessActionAvailability(state, REPORT_ACTION, options);
+    assert.equal(assessment.status, 'available_now', JSON.stringify(assessment));
+    assert.equal(assessment.nonDefaultRoute, REPORT_ACTION);
+    assert.equal(
+      api.assessActionAvailability(state, REPORT_ACTION, { ...options, task: 'update_media_buy' }).reason,
+      'mode_mismatch'
+    );
+    const missingRoute = structuredClone(state);
+    delete missingRoute.available_actions[0].task;
+    for (const missingRouteOptions of [{ adcpVersion: '3.3-beta.0' }, options]) {
+      assert.equal(
+        api.assessActionAvailability(missingRoute, REPORT_ACTION, missingRouteOptions).reason,
+        'condition_unresolved'
+      );
+    }
+    const noTerms = structuredClone(state);
+    delete noTerms.accepted_proposal;
+    assert.equal(api.assessActionAvailability(noTerms, REPORT_ACTION, options).certainty, 'unknown');
+    assert.equal(api.preflightUpdateMediaBuy(state, { paused: true }).ok, false);
+    const legacy = { status: 'active', valid_actions: ['pause'] };
+    assert.equal(api.preflightUpdateMediaBuy(legacy, { paused: true }).ok, true);
+    const [pause] = api.decomposeUpdateMediaBuy(legacy, { paused: true }).actions;
+    assert.equal(pause.action, 'pause');
+    assert.deepEqual(pause.touched_fields, ['paused']);
+  });
+});
 
 describe('generate-media-buy-update-fields: merged enumMetadata (#2887)', () => {
   let generated;

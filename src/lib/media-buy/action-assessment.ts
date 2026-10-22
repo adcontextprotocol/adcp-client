@@ -29,6 +29,7 @@ import {
 import { evaluateChangeTermConstraints, type ConstraintEvaluationOptions } from './action-constraints';
 import { decomposeUpdateMediaBuy, hasUnmappedMutation, mutationShapeIssue } from './mutations';
 import { LEGACY_REQUIRES_PROPOSAL_MODE } from './available-actions';
+import { UPDATE_FIELDS_BY_ACTION } from './update-fields.generated';
 
 export interface ActionAssessmentOptions extends ConstraintEvaluationOptions {
   /** Seller-served wire version. 3.1 term references are always opaque. Defaults to the current 3.2 shape. */
@@ -37,7 +38,7 @@ export interface ActionAssessmentOptions extends ConstraintEvaluationOptions {
   termsRefIsAlias?: boolean;
   /** Current accepted snapshot when it is stored separately from the buy. An embedded snapshot takes precedence. */
   proposal?: ActionProposal;
-  /** Optional route being attempted. update_media_buy can subsume compact tasks as a compatibility facade. */
+  /** Optional route being attempted. update_media_buy subsumes only actions with an update-field binding. */
   task?: MediaBuyTask;
   request?: UpdateMediaBuyRequestLike;
 }
@@ -278,9 +279,12 @@ export function assessActionAvailability(
     return deny('mode_mismatch', 'The live mode or SLA exceeds the accepted commitment.');
   if (entry.task !== undefined && !mediaBuyActionTasks(action).includes(entry.task))
     return deny('mode_mismatch', 'The live action has no compatible canonical task.');
+  const hasUpdateBinding = Object.hasOwn(UPDATE_FIELDS_BY_ACTION, action);
+  if (entry.task === undefined && !hasUpdateBinding)
+    return deny('condition_unresolved', 'This action requires an explicit live task route.', 'unknown');
   const task = entry.task ?? 'update_media_buy';
   const nonDefaultRoute = task === 'update_media_buy' ? undefined : task;
-  if (options.task !== undefined && options.task !== 'update_media_buy' && options.task !== task)
+  if (options.task !== undefined && (options.task === 'update_media_buy' ? !hasUpdateBinding : options.task !== task))
     return deny(
       'mode_mismatch',
       entry.task === undefined
