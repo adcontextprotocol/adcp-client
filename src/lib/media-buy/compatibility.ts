@@ -65,12 +65,7 @@ import type {
   CanonicalUpdateMediaBuyRequest,
 } from '../v2/projection/creative-delivery';
 import type { RefineProposalsInput } from '../negotiation/types';
-import {
-  assertRefineProposalsResponse,
-  isStrictDateTime,
-  proposalTermsDigest,
-  validateRefineProposalsResponseShape,
-} from '../negotiation/verification';
+import { assertRefineProposalsResponse, isStrictDateTime, proposalTermsDigest } from '../negotiation/verification';
 import { isAdcpOperationSuccess, isTerminalAdcpError } from '../utils/response-unwrapper';
 import { ConfigurationError } from '../errors';
 import { toReleasePrecisionVersion } from '../version';
@@ -1253,14 +1248,19 @@ function projectRefineProposals(
   data: unknown,
   lifecycle: MediaBuyLifecycle,
   refinements: RefineProposalsInput['refinements'],
-  adcpVersion: string
+  adcpVersion: string,
+  requestedVersion: RefineProposalsInput['adcp_version'],
+  servedAdcpVersion: string
 ): CompatibleRefineProposalsResponse {
   const source = compactWirePayload(data);
   const proposalIds = refinements.map(refinement => refinement.proposal_id);
   if (lifecycle === 'compact') {
     // Verify the complete response root before following any seller-controlled
     // proposal container or result branch.
-    assertRefineProposalsResponse({ refinements }, source, { adcpVersion });
+    assertRefineProposalsResponse({ refinements, adcp_version: requestedVersion }, source, {
+      adcpVersion,
+      ...(source.adcp_version === undefined && { servedAdcpVersion }),
+    });
   }
   const base = proposalResponseBase(source);
   const sourceResults = array(source.results);
@@ -1279,10 +1279,6 @@ function projectRefineProposals(
       }
       const children = [...array(result.proposals), ...(result.proposal === undefined ? [] : [result.proposal])];
       if (result.outcome === 'revised' || result.outcome === 'partial' || result.outcome === 'finalized') {
-        const shape = validateRefineProposalsResponseShape({ results: [result], products: [] }, { adcpVersion });
-        if (!shape.ok) {
-          throw new TypeError(`refine_proposals result ${index} did not contain complete canonical proposal data.`);
-        }
         const expectedStatus = result.outcome === 'finalized' ? 'committed' : 'draft';
         if (children.some(child => record(child).proposal_status !== expectedStatus)) {
           throw new TypeError(
@@ -8435,7 +8431,15 @@ export class MediaBuyLifecycleCoordinator {
         ? { ...options, skipIdempotencyAutoInject: retry.skipIdempotencyAutoInject }
         : options;
       const projectOnly = (data: CompatibleRefineProposalsWireResponse) =>
-        projectRefineProposals(data, lifecycle, params.refinements, this.negotiated_version);
+        projectRefineProposals(
+          data,
+          lifecycle,
+          params.refinements,
+          this.agent.getAdcpVersion(),
+          params.adcp_version ??
+            (toReleasePrecisionVersion(this.agent.getWireAdcpVersion()) as RefineProposalsInput['adcp_version']),
+          this.negotiated_version
+        );
       const projectAndSettle = (data: CompatibleRefineProposalsWireResponse) => {
         try {
           const projected = projectOnly(data);
@@ -8619,7 +8623,15 @@ export class MediaBuyLifecycleCoordinator {
       ...this.legacyWireTaskOptions(),
     };
     const projectOnly = (data: CompatibleRefineProposalsWireResponse) =>
-      projectRefineProposals(data, lifecycle, params.refinements, this.negotiated_version);
+      projectRefineProposals(
+        data,
+        lifecycle,
+        params.refinements,
+        this.agent.getAdcpVersion(),
+        params.adcp_version ??
+          (toReleasePrecisionVersion(this.agent.getWireAdcpVersion()) as RefineProposalsInput['adcp_version']),
+        this.negotiated_version
+      );
     const projectAndSettle = (data: CompatibleRefineProposalsWireResponse) => {
       try {
         const projected = projectOnly(data);

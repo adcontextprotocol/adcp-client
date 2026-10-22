@@ -154,17 +154,54 @@ under `test/fixtures/proposal-commercial-terms` are portable JSON. Part A's unif
 action assessment and seller resolver remain separate work.
 
 
-### Proposal refinement on newer minor releases
+### Proposal refinement on AdCP 3.3
 
-`AgentClient.refineProposals()` accepts release-precision AdCP 3.2 and later
-minor releases within major 3, including an explicitly selected 3.3 prerelease.
-The matching schema bundle must be available locally; selecting a newer wire
-version does not substitute the SDK's default 3.2 schemas. Responses that echo
-a different version are rejected, and canonical proposals and change terms are
-validated against the requested version before semantic verification.
+`AgentClient.refineProposals()` supports AdCP 3.2 and 3.3, including their
+release-precision prerelease pins. The request's `adcp_version` is a ceiling:
+a 3.3 buyer can accept a seller's lower supported 3.2 response. Upward, malformed,
+other-major and pre-3.2 echoes are rejected.
 
-When using `validateRefineProposalsResponseShape()` without a source request,
-pass `{ adcpVersion: sellerServedVersion }` to select the negotiated schemas.
-`verifyRefineProposalsResponse()` also accepts this option and otherwise uses
-`request.adcp_version` when present. Callers that supply only `refinements`
-retain the SDK's default bundle for their existing 3.2 shape checks.
+The client's `adcpVersion` selects its schema bundle. `wireAdcpVersion` remains
+an envelope-only override: an unchanged echo of a consciously selected
+same-minor wire override keeps the configured schema pin. A genuine downgrade
+uses the bundle for the actual served contract, including an older prerelease.
+Missing selected schemas fail closed with the version and a registration hint.
+No older schema is relabelled as a new contract.
+
+When the task omits its echo, verification uses actual task metadata, or
+non-synthetic discovery/capability evidence already held by that client or
+coordinator. If no actual served version is available, it keeps the configured
+schema pin; it does not infer a downgrade. Standalone callers that provide only
+`refinements` retain the SDK's default 3.2 validation behavior. To provide scoped
+actual-version evidence, pass `servedAdcpVersion` alongside the configured
+`adcpVersion` to `verifyRefineProposalsResponse()`.
+
+For a genuine 3.3 preview, obtain the matching source schema bundle first and
+keep its external root registered throughout client creation and the workflow:
+
+```ts
+import { ADCPMultiAgentClient } from '@adcp/sdk';
+import { withExternalSchemaRoot } from '@adcp/sdk/testing';
+
+const candidateVersion = '3.3.0-beta.0';
+const candidateSchemaRoot = '/absolute/path/to/extracted/candidate/schemas';
+
+await withExternalSchemaRoot(candidateVersion, candidateSchemaRoot, async () => {
+  const client = ADCPMultiAgentClient.simple('https://seller.example/mcp', {
+    adcpVersion: candidateVersion,
+  });
+  return client.agent('default-agent').refineProposals({
+    refinements: [{ proposal_id: 'seller-issued-proposal', action: 'revise', ask: 'Reduce the total budget' }],
+  });
+});
+```
+
+The root must carry the matching version metadata and schema identities;
+`withExternalSchemaRoot` checks them. Do not copy and relabel a 3.2 release as
+3.3. This registration does not change the wire version or enable experimental
+features. The buyer still needs the seller's experimental feature opt-in before
+using such features.
+
+For shape-only verification, pass `{ adcpVersion: actualServedSchemaVersion }`
+to `validateRefineProposalsResponseShape()` to pin the already-selected served
+contract explicitly.

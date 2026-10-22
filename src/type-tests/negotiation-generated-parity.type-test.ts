@@ -197,3 +197,13 @@ void invalidCountry;
 type _Legacy32VersionUnchanged = Assert<Equal<Adcp32Version, '3.2' | `3.2-${string}`>>;
 type _RefinementVersionSupports33 = AssertAssignable<ProposalRefinementVersion, '3.3-beta.0'>;
 type _RefinementInputSupports33 = AssertAssignable<RefineProposalsInput['adcp_version'], '3.3-rc.1'>;
+
+// @ts-expect-error Proposal refinement is unavailable before AdCP 3.2.
+const preRefinementVersion: ProposalRefinementVersion = '3.1';
+// @ts-expect-error Wire pins have release precision, not a patch component.
+const patchRefinementVersion: ProposalRefinementVersion = '3.3.0';
+// @ts-expect-error Future minor releases require explicit SDK support.
+const futureRefinementVersion: ProposalRefinementVersion = '3.4';
+void preRefinementVersion;
+void patchRefinementVersion;
+void futureRefinementVersion;

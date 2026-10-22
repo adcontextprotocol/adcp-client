@@ -13,7 +13,7 @@ import type {
 } from './types';
 import { PROPOSAL_REFINEMENT_DIMENSIONS } from './types';
 import { assertRefineProposalsResponse, isStrictDateTime } from './verification';
-import { isProposalRefinementVersion } from './version';
+import { describeRefinementVersion, isProposalRefinementVersion } from './version';
 
 export const MAX_PROPOSAL_REFINEMENTS = 25;
 export const MAX_PROPOSAL_ALTERNATIVES = 10;
@@ -98,7 +98,7 @@ export function validateRefineProposalsRequest(
   assertAllowedKeys(request, REQUEST_KEYS, 'request');
   if (!isProposalRefinementVersion(request.adcp_version)) {
     fail(
-      'refine_proposals requires a release-precision adcp_version on AdCP 3.2 or newer within major 3',
+      `refine_proposals requires a release-precision adcp_version on AdCP 3.2 or 3.3; received ${describeRefinementVersion(request.adcp_version)}`,
       'adcp_version'
     );
   }
@@ -398,7 +398,7 @@ export function buildRefineProposalsRequest(
   if (!isRecord(input)) fail('request input must be an object');
   if (input.adcp_version !== undefined && !isProposalRefinementVersion(input.adcp_version)) {
     fail(
-      'refine_proposals requires a release-precision adcp_version on AdCP 3.2 or newer within major 3',
+      `refine_proposals requires a release-precision adcp_version on AdCP 3.2 or 3.3; received ${describeRefinementVersion(input.adcp_version)}`,
       'adcp_version'
     );
   }

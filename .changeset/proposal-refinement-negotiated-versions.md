@@ -1,5 +1,7 @@
 ---
-"@adcp/sdk": patch
+"@adcp/sdk": minor
 ---
 
-Support proposal refinement on negotiated AdCP 3.3 and later minor releases within major 3, while retaining the 3.2 minimum and release-precision wire validation. Bind response verification and nested proposal/change-term schemas to the negotiated version; reject mismatched echoes and unavailable selected schemas without changing digest, lineage, hold or atomic-finalize checks.
+Support public proposal refinement on AdCP 3.3 while preserving AdCP 3.2 and wire-only envelope overrides. Treat the requested version as a ceiling, accept supported lower served contracts, and validate nested proposals/change terms with the selected served bundle. Reject upward, malformed or unsupported echoes and missing selected schemas while retaining digest, lineage, hold and atomic-finalize checks.
+
+The public request version type now includes explicit 3.3 release pins. Code reading it into an Adcp32Version variable must narrow the returned value first; Adcp32Version itself is retained unchanged.

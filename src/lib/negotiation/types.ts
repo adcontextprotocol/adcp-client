@@ -138,8 +138,8 @@ export type ProposalRefinement = ReviseProposalRefinement | FinalizeProposalRefi
 
 export type Adcp32Version = '3.2' | `3.2-${string}`;
 
-/** AdCP 3 release pins; runtime validation enforces the 3.2 minimum. */
-export type ProposalRefinementVersion = `3.${number}` | `3.${number}-${string}`;
+/** Supported proposal-refinement release pins; patches belong to schema pins. */
+export type ProposalRefinementVersion = Adcp32Version | '3.3' | `3.3-${string}`;
 
 export interface RefineProposalsRequest {
   idempotency_key: string;

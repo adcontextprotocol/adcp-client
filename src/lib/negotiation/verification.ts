@@ -3,7 +3,8 @@ import { MAX_JSON_DEPTH } from '../utils/json-depth';
 import { canonicalize } from '../utils/jcs';
 import { getSchemaDocumentByRef, getSchemaValidatorByRef } from '../validation/schema-loader';
 import { ADCP_VERSION, toReleasePrecisionVersion } from '../version';
-import { isProposalRefinementVersion } from './version';
+import { ConfigurationError } from '../errors';
+import { compareProposalRefinementVersions, describeRefinementVersion, isProposalRefinementVersion } from './version';
 import { commercialTermsSchemaSupportError } from './commercial-terms-schema';
 import { COMMERCIAL_TERMS_KEYWORDS } from './commercial-terms-keywords';
 export type {
@@ -364,24 +365,14 @@ export function isStrictDateTime(value: unknown): value is string {
 export function verifyRefineProposalsResponse(
   request: Pick<RefineProposalsRequest, 'refinements'> & Partial<Pick<RefineProposalsRequest, 'adcp_version'>>,
   response: unknown,
-  options: { now?: Date; adcpVersion?: string } = {}
+  options: { now?: Date; adcpVersion?: string; servedAdcpVersion?: string } = {}
 ): ProposalVerificationResult {
   const issues: ProposalVerificationIssue[] = [];
 
   // Untrusted wire values are shape-checked completely before any semantic
   // verification. This keeps discriminated-union access fail-closed.
-  const adcpVersion = options.adcpVersion ?? request.adcp_version ?? ADCP_VERSION;
-  const expectedVersion =
-    request.adcp_version ?? (options.adcpVersion && toReleasePrecisionVersion(options.adcpVersion));
-  if (
-    request.adcp_version !== undefined &&
-    options.adcpVersion !== undefined &&
-    request.adcp_version !== toReleasePrecisionVersion(options.adcpVersion)
-  ) {
-    shape(issues, 'adcp_version', 'request and selected schema versions must match');
-    return { ok: false, issues };
-  }
-  if (!validateResponseShape(response, issues, adcpVersion, expectedVersion)) return { ok: false, issues };
+  const adcpVersion = selectRefinementSchemaVersion(request.adcp_version, response, options, issues);
+  if (adcpVersion === undefined || !validateResponseShape(response, issues, adcpVersion)) return { ok: false, issues };
   if (response.status === 'submitted') {
     push(issues, 'shape', 'status', 'semantic proposal verification requires a completed response');
     return { ok: false, issues };
@@ -427,7 +418,7 @@ export function verifyRefineProposalsResponse(
 export function assertRefineProposalsResponse(
   request: Pick<RefineProposalsRequest, 'refinements'> & Partial<Pick<RefineProposalsRequest, 'adcp_version'>>,
   response: unknown,
-  options: { now?: Date; adcpVersion?: string } = {}
+  options: { now?: Date; adcpVersion?: string; servedAdcpVersion?: string } = {}
 ): asserts response is RefineProposalsCompletedResponse {
   const result = verifyRefineProposalsResponse(request, response, options);
   if (!result.ok) throw new ProposalResponseVerificationError(result.issues);
@@ -458,6 +449,76 @@ export function assertRefineProposalsResponseShape(
   if (!result.ok) throw new ProposalResponseVerificationError(result.issues);
 }
 
+/** Keep the owning client's schema pin separate from its wire-only ceiling.
+ * Only an actual downgrade changes the selected schema contract. */
+function selectRefinementSchemaVersion(
+  requested: unknown,
+  response: unknown,
+  options: { adcpVersion?: string; servedAdcpVersion?: string },
+  issues: ProposalVerificationIssue[]
+): string | undefined {
+  const configured = options.adcpVersion ?? ADCP_VERSION;
+  const configuredWire = toReleasePrecisionVersion(configured);
+  if (!isProposalRefinementVersion(configuredWire)) {
+    shape(issues, 'adcp_version', `selected schema ${describeRefinementVersion(configured)} must be AdCP 3.2 or 3.3`);
+    return undefined;
+  }
+  const ceiling = requested ?? configuredWire;
+  if (!isProposalRefinementVersion(ceiling)) {
+    shape(
+      issues,
+      'adcp_version',
+      `request ceiling must be release-precision AdCP 3.2 or 3.3; received ${describeRefinementVersion(ceiling)}`
+    );
+    return undefined;
+  }
+  const echo = isRecord(response) ? response.adcp_version : undefined;
+  if (echo !== undefined && !isProposalRefinementVersion(echo)) {
+    shape(
+      issues,
+      'adcp_version',
+      `response must echo release-precision AdCP 3.2 or 3.3 at or below request ceiling ${ceiling}; received ${describeRefinementVersion(echo)}`
+    );
+    return undefined;
+  }
+  const metadata =
+    options.servedAdcpVersion === undefined ? undefined : toReleasePrecisionVersion(options.servedAdcpVersion);
+  if (metadata !== undefined && !isProposalRefinementVersion(metadata)) {
+    shape(
+      issues,
+      'adcp_version',
+      `served version metadata must identify AdCP 3.2 or 3.3; received ${describeRefinementVersion(options.servedAdcpVersion)}`
+    );
+    return undefined;
+  }
+  if (metadata !== undefined && echo !== undefined && metadata !== echo) {
+    shape(issues, 'adcp_version', `response echo ${echo} conflicts with served version metadata ${metadata}`);
+    return undefined;
+  }
+  const served = echo ?? metadata;
+  if (served === undefined) return configured;
+  if (compareProposalRefinementVersions(served, ceiling) > 0) {
+    shape(
+      issues,
+      'adcp_version',
+      `response served AdCP ${served} above request ceiling ${ceiling} (configured schema ${configured})`
+    );
+    return undefined;
+  }
+  const sameMinor = served.split('-')[0] === configuredWire.split('-')[0];
+  const wireOnlyOverride = ceiling !== configuredWire && ceiling.split('-')[0] === configuredWire.split('-')[0];
+  if (served === configuredWire || (wireOnlyOverride && served === ceiling && sameMinor)) return configured;
+  if (compareProposalRefinementVersions(served, configuredWire) > 0) {
+    shape(
+      issues,
+      'adcp_version',
+      `response served AdCP ${served}, newer than configured schema ${configured}; set adcpVersion to the served contract and register its matching schema bundle`
+    );
+    return undefined;
+  }
+  return metadata === served && options.servedAdcpVersion ? options.servedAdcpVersion : served;
+}
+
 function validateResponseShape(
   value: unknown,
   issues: ProposalVerificationIssue[],
@@ -473,14 +534,18 @@ function validateResponseShape(
     valid = shape(
       issues,
       'adcp_version',
-      `refine_proposals response adcp_version must be release-precision AdCP 3.2 or newer within major 3; received ${describeReceived(
+      `refine_proposals response adcp_version must be release-precision AdCP 3.2 or 3.3; received ${describeRefinementVersion(
         value.adcp_version
       )}`
     );
   }
   const selectedWireVersion = toReleasePrecisionVersion(adcpVersion);
   if (!isProposalRefinementVersion(selectedWireVersion)) {
-    return shape(issues, 'adcp_version', 'selected schema version must be AdCP 3.2 or newer within major 3');
+    return shape(
+      issues,
+      'adcp_version',
+      `selected schema version ${describeRefinementVersion(adcpVersion)} must be AdCP 3.2 or 3.3`
+    );
   }
   // Historical unbound shape-only callers keep the SDK's current minor as
   // their default. A different minor must provide an explicit schema pin;
@@ -491,14 +556,28 @@ function validateResponseShape(
       ? value.adcp_version !== expectedVersion
       : value.adcp_version.split('-')[0] !== selectedWireVersion.split('-')[0])
   ) {
-    return shape(issues, 'adcp_version', 'response adcp_version must match the selected request/schema version');
+    return shape(
+      issues,
+      'adcp_version',
+      `response adcp_version ${describeRefinementVersion(value.adcp_version)} must match selected served schema ${adcpVersion}`
+    );
   }
   try {
-    if (!getSchemaDocumentByRef('core/canonical-proposal.json', adcpVersion)) {
-      return shape(issues, 'adcp_version', 'selected proposal schema is unavailable');
+    const selected = getSchemaDocumentByRef('core/canonical-proposal.json', adcpVersion);
+    if (!selected) {
+      return shape(issues, 'adcp_version', unavailableRefinementSchema(adcpVersion));
     }
-  } catch {
-    return shape(issues, 'adcp_version', 'selected proposal schema is unavailable');
+    // Identity-only preview scopes may alias 3.3 onto the SDK's 3.2 bundle.
+    // Proposal refinement requires the actual selected contract, never that alias.
+    if (toReleasePrecisionVersion(selected.resolvedVersion) !== selectedWireVersion) {
+      return shape(
+        issues,
+        'adcp_version',
+        `selected proposal schema for AdCP ${adcpVersion} resolved to ${describeRefinementVersion(selected.resolvedVersion)}; install or register the actual matching schema bundle`
+      );
+    }
+  } catch (error) {
+    return shape(issues, 'adcp_version', unavailableRefinementSchema(adcpVersion, error));
   }
   if (value.message !== undefined && (typeof value.message !== 'string' || value.message.length > 2000)) {
     valid = shape(issues, 'message', 'message must be a string of at most 2000 characters');
@@ -660,11 +739,27 @@ function validateProposalArray(
   return valid;
 }
 
+function unavailableRefinementSchema(adcpVersion: string, error?: unknown): string {
+  // Preserve safe configuration/tampering signals without exposing local root paths.
+  const cause =
+    error instanceof ConfigurationError
+      ? error.message.includes('Schema validation requires unambiguous schema identities')
+        ? ' (ConfigurationError: schema validation requires unambiguous schema identities)'
+        : ' (ConfigurationError)'
+      : error === undefined
+        ? ''
+        : error instanceof Error && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(error.name)
+          ? ` (${error.name})`
+          : ' (schema loading error)';
+  return `selected proposal schema for AdCP ${adcpVersion} is unavailable${cause}; install its schema bundle or register a matching external schema root with @adcp/sdk/testing`;
+}
+
 function getRefinementSchemaValidator(schemaRef: string, adcpVersion: string) {
   try {
-    return getSchemaValidatorByRef(schemaRef, adcpVersion);
-  } catch {
-    return undefined;
+    const validator = getSchemaValidatorByRef(schemaRef, adcpVersion);
+    return { validator, error: validator ? undefined : unavailableRefinementSchema(adcpVersion) };
+  } catch (error) {
+    return { validator: undefined, error: unavailableRefinementSchema(adcpVersion, error) };
   }
 }
 
@@ -674,8 +769,11 @@ function validateCanonicalProposalShape(
   issues: ProposalVerificationIssue[],
   adcpVersion: string
 ): value is CanonicalProposal {
-  const validateCanonicalProposal = getRefinementSchemaValidator('core/canonical-proposal.json', adcpVersion);
-  if (!validateCanonicalProposal) return shape(issues, path, 'canonical-proposal schema is unavailable');
+  const { validator: validateCanonicalProposal, error: schemaError } = getRefinementSchemaValidator(
+    'core/canonical-proposal.json',
+    adcpVersion
+  );
+  if (!validateCanonicalProposal) return shape(issues, path, schemaError!);
   if (!validateCanonicalProposal(value)) {
     const error = validateCanonicalProposal.errors?.[0];
     const errorPath = error?.instancePath ? `${path}${error.instancePath.replaceAll('/', '.')}` : path;
@@ -842,8 +940,11 @@ function validateChangeTerms(
   purchaseCurrency?: string
 ): boolean {
   if (!Array.isArray(value) || value.length === 0) return shape(issues, path, 'change_terms must be a non-empty array');
-  const validateChangeTerm = getRefinementSchemaValidator('media-buy/change-term.json', adcpVersion);
-  if (!validateChangeTerm) return shape(issues, path, 'change-term schema is unavailable');
+  const { validator: validateChangeTerm, error: schemaError } = getRefinementSchemaValidator(
+    'media-buy/change-term.json',
+    adcpVersion
+  );
+  if (!validateChangeTerm) return shape(issues, path, schemaError!);
   let valid = true;
   const actions = new Set<string>();
   value.forEach((term, index) => {

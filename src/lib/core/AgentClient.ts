@@ -636,6 +636,11 @@ export class AgentClient {
     return this.client.getAdcpVersion();
   }
 
+  /** @internal Original envelope pin, separate from the validation schema pin. */
+  getWireAdcpVersion(): string {
+    return this.client.getWireAdcpVersion();
+  }
+
   /**
    * Negotiate one compact-first media-buy facade for this seller.
    *
@@ -1078,7 +1083,12 @@ export class AgentClient {
     this.retainSession(result);
     if (result.success && result.status === 'completed') {
       const data = stripRefineProposalsSdkAnnotations(result.data);
-      assertRefineProposalsResponse(request, data);
+      assertRefineProposalsResponse(request, data, {
+        adcpVersion: this.client.getAdcpVersion(),
+        servedAdcpVersion:
+          result.metadata.adcpVersion ??
+          (data.adcp_version === undefined ? this.client.getCachedServedAdcpVersion(taskOptions) : undefined),
+      });
       return { ...result, data };
     }
     return result;
