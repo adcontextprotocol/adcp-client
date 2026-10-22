@@ -14,6 +14,36 @@ return, silently normalizes wire shapes, inflates flat responses, or substitutes
 placeholders is a `critical`/`high` finding. Re-shaping at a seam is the same bug
 as fabrication.
 
+Exception: version translation between AdCP releases (adcontextprotocol/adcp
+DR-0032), implemented in `src/lib/adapters/version/` and the server tool
+handler. It is in bounds when every removed or moved field is reported
+(`debug_logs` drift entries on the client, `onVersionTranslation` and logs on
+the server), moves follow an exact older equivalent, and mutations refuse
+rather than drop anything that changes what the seller commits to. A
+translation step that drops or rewrites without reporting is still `high`.
+
+### Mandatory: every 3.x wire change has a pathway back
+
+Per adcontextprotocol/adcp DR-0033, a PR that adds or changes support for a
+3.x wire field, enum value, task, union variant or semantic rule must also
+handle it for the previous minor release. Pick one:
+
+- **Droppable:** the schema projection removes it with no code. For a
+  mutating request, confirm dropping does not change spend, targeting, caps or
+  account identity; if it does, it must be refused.
+- **Moves:** a `VersionAdapter` under `src/lib/adapters/version/<older>/`.
+  Implement `adaptRequest`/`adaptResponse` for the client and
+  `upgradeRequest`/`downgradeResponse` for the server where both directions
+  exist.
+- **Refused:** the call fails before sending with `ProtocolFeatureUnsupportedError`.
+- **Identity-bearing:** goes through the account-key reduction rules in
+  `src/lib/core/account-reduction.ts`.
+
+The PR needs a test for its pathway in `test/lib/version-translation.test.js`
+or `test/server-version-translation.test.js`. Missing pathway handling or a
+missing test is `high`. A mutation-side field that is dropped when it should
+be refused is `high`.
+
 ### Mandatory: official transport clients only
 
 New code under `src/lib/protocols/` or `src/lib/client/` that reimplements HTTP or
