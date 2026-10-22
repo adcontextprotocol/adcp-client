@@ -18,6 +18,8 @@ The public API uses the primary pin. `src/lib/adapters/version/` holds version-s
 
 Established media-buy tools remain available for AdCP 3.0/3.1 sellers. Their compact-lifecycle projections and durable purchase continuations remain scoped to the negotiated AdCP 3 release. Creative-model v1/v2 projections under `src/lib/v2/projection/` are independent of AdCP protocol majors.
 
+An explicitly repinned candidate checkout can build against `3.3.0-beta.N` or `3.3.0-rc.N`. Version synchronization retains maintained AdCP 3.0/3.1 releases and AdCP 3.2.1 through 3.2.5, then advertises only the exact preview pin and its release-precision wire alias (for example, `3.3.0-beta.0` and `3.3-beta.0`). It does not advertise moving `3.3-beta`/`3.3-rc` aliases or AdCP 3.3 GA. The SDK's default pin remains AdCP 3.2.5.
+
 ## Bundled artifacts
 
 ```text

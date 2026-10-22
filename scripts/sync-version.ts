@@ -164,6 +164,8 @@ const MAX_PATCH_ENUMERATION = 500;
  */
 const LAST_3_0_GA_PATCH = 25;
 const LAST_3_1_GA_PATCH = 29;
+/** Maintained 3.2 GA range when building an explicitly pinned 3.3 preview. */
+const LAST_3_2_GA_PATCH = 5;
 /** First published AdCP 3.2 GA patch; 3.2.0 was withdrawn before GA. */
 const FIRST_3_2_GA_PATCH = 1;
 
@@ -201,6 +203,14 @@ function buildCompatibleVersions(adcpVersion: string): string[] {
   const minor = Number(semverMatch[2]);
   const patch = Number(semverMatch[3]);
   const prerelease = semverMatch[4];
+
+  // An explicit 3.3 preview pin retains the maintained stable releases,
+  // including 3.2 GA. Advertise only this exact preview and its wire alias:
+  // neither a moving 3.3-beta/rc family nor 3.3 GA is a compatible pin.
+  if (major === 3 && minor === 3 && patch === 0 && /^(beta|rc)\.(0|[1-9]\d*)$/.test(prerelease ?? '')) {
+    const historical = buildCompatibleVersions(`3.2.${LAST_3_2_GA_PATCH}`);
+    return [...historical, adcpVersion, `${major}.${minor}-${prerelease}`];
+  }
 
   // 3.2 prereleases are exact. Keep every supported 3.0/3.1 GA
   // patch available for pinned peers, but never add a moving `3.2-beta`
