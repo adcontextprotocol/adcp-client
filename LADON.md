@@ -22,11 +22,13 @@ the server), moves follow an exact older equivalent, and mutations refuse
 rather than drop anything that changes what the seller commits to. A
 translation step that drops or rewrites without reporting is still `high`.
 
-### Mandatory: every 3.x wire change has a pathway back
+### Mandatory: every minor-release wire change has a pathway back
 
-Per adcontextprotocol/adcp DR-0033, a PR that adds or changes support for a
-3.x wire field, enum value, task, union variant or semantic rule must also
-handle it for the previous minor release. Pick one:
+Per adcontextprotocol/adcp DR-0033, minor releases are non-breaking and
+backward compatible: on 3.x now, and in each later major's own minors from 4.1
+onward. A PR that adds or changes support for a wire field, enum value, task,
+union variant or semantic rule in a minor release must also handle it for the
+previous minor of the same major. Pick one:
 
 - **Droppable:** the schema projection removes it with no code. For a
   mutating request, confirm dropping does not change spend, targeting, caps or
