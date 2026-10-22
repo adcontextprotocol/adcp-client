@@ -1,5 +1,21 @@
 # Changelog
 
+## 16.2.0
+
+### Minor Changes
+
+- cb511c5: Experimental AdCP 3.3 identity: JWS artifacts from a Web Bot Auth identity are verified with a key from that identity's key directory (`specs/agent-identity-3-3.md` R4, as amended by adcontextprotocol/adcp#8299).
+  - **Selection.** `selectJwsArtifactProfile(agentUrl, trust)` (from `@adcp/sdk/identity-3.3`) derives the trust record from the signing agent's origin `O`. When the record lists `O`, the artifact is verified on the WBA path, never under the 3.2 profile. An issuer whose operator has not published a record, or whose record does not list `O`, stays on the 3.2 profile. A trust-record fetch failure throws `JwsArtifactError` with `jws_key_unavailable`. It is never absence and never selects 3.2. Give the `TrustEvaluator` durable `authorityHistory` so that a 404 after a 200 stays an outage across restarts and replicas.
+  - **Key rules.** `verifyWebBotAuthJwsArtifact(token, origin, { typ, directory, revocation })` checks four things: the `typ` the surface accepts, `alg` `EdDSA`, a `kid` equal to the key's JWK thumbprint, and revocation against `O`'s list. It applies no `use`, `key_ops` or `adcp_use` check. `revocation` is required, or `false` when the caller checks revocation itself. It runs on Cloudflare workerd.
+  - **Governance contexts.** `verifyGovernanceAuthorization` takes an optional `webBotAuth: { trust, directory, revocation }`. With it, a listed issuer's token is verified on its key directory, and an origin that serves no revocation list fails closed. Every other check is unchanged, including the `buyerIdentity` cross-check that `iss` is the buyer's governance agent. Without it, the verifier is 3.2 only, as before. A failure caused by an outage now sets `retryable: true`.
+  - **History.** `verifyHistoricalGovernanceContext` verifies a retained governance context for audit. When a key has been rotated out of the directory, it reads that key from the governance key archive at `O` (`/.well-known/jwks-archive.json`) through the new `GovernanceKeyArchiveResolver`. A revoked key still verifies there, and the result reports the revocation and its R9 detail. `OriginRevocationResolver.detail()` returns that detail.
+  - The SDK has no designated-task response or rights-attestation verifier yet. A verifier for either calls `selectJwsArtifactProfile` with `agent_url` or `rights_agent.url`, then `verifyWebBotAuthJwsArtifact`.
+
+### Patch Changes
+
+- ec10d20: Patch MCP SDK dependencies for newly published advisories: `@modelcontextprotocol/server` and `@modelcontextprotocol/client` move from 2.2.0 to 2.3.1. The dev-only transitives `launch-editor` (via `@changesets/cli`) and `markdown-it` (via `typedoc`) are pinned to patched releases through `overrides`, and `hono` is refreshed to 4.13.13 in the lockfile. `npm audit --audit-level=high` is clean again.
+- cb837ec: Refresh generated registry API types to match the published OpenAPI schema: the advisory AdCP 4.0 readiness report on agent compliance (`v4_readiness`, `V4ReadinessCheck`) and the `sales-fixed-rate` specialism.
+
 ## 16.1.0
 
 ### Minor Changes
