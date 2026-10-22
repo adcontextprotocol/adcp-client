@@ -451,12 +451,6 @@ function transport(catalog, overrides = {}) {
   };
 }
 
-/** Options without a pre-supplied profile, so discovery really would hit the wire. */
-function discoveringOptions(io) {
-  const { profile, ...rest } = io.options;
-  return rest;
-}
-
 function readBoard(contextOutputs) {
   return {
     id: 'protected_context/read',

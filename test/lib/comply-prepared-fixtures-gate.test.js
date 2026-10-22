@@ -21,7 +21,6 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { comply } = require('../../dist/lib/testing/compliance');
-const { prepareStoryboardFixtures } = require('../../dist/lib/testing');
 const { ADCP_VERSION } = require('../../dist/lib/version');
 
 function writeCache() {

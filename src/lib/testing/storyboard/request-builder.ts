@@ -28,7 +28,7 @@ import { createHash } from 'node:crypto';
 import { resolveBrand, resolveAccount } from '../client';
 import type { TestOptions } from '../types';
 import type { StoryboardContext, StoryboardStep } from './types';
-import { applyContextInputs, injectContext, type RunnerVariables } from './context';
+import { injectContext, type RunnerVariables } from './context';
 
 type RequestEnricher = (
   step: StoryboardStep,
