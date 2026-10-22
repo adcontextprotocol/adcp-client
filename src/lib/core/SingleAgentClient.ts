@@ -21,6 +21,14 @@ import { createHash, randomUUID, scryptSync } from 'node:crypto';
 const SKIP_PRODUCT_CACHE = Symbol('adcp.skipProductCache');
 const SKIP_ACCOUNT_REGISTRY_OBSERVATION = Symbol('adcp.skipAccountRegistryObservation');
 import type { AccountReference, AgentConfig } from '../types';
+import {
+  accountKeySites,
+  naturalAccountKey,
+  reducedFields,
+  sameAccountKey,
+  valueAt,
+  withReducedKeyAt,
+} from './account-reduction';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
 import { parseAdcpMajorVersion, toReleasePrecisionVersion, type AdcpVersion } from '../version';
 import {
@@ -31,8 +39,22 @@ import {
   resolveAdcpVersion,
 } from '../utils/adcp-version-config';
 import { beta6ReportingRequestIssue, type Beta6DeliveryRequestIssue } from '../media-buy/reporting-version';
-import { getVersionAdapter, resolveAdapterKey } from '../adapters/version';
-import { isExternalSchemaRootActive, schemaAllowsTopLevelField } from '../validation/schema-loader';
+import {
+  convertRequest,
+  convertResponse,
+  getVersionAdapter,
+  isNegotiationFailure,
+  negotiateAdcpRelease,
+  releaseDefinesTool,
+  resolveAdapterKey,
+  type AccountIdentityDowngrade,
+  type NegotiatedAdcpRelease,
+} from '../adapters/version';
+import {
+  isExternalSchemaRootActive,
+  schemaAllowsTopLevelField,
+  toReleasePrecisionWire,
+} from '../validation/schema-loader';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -682,6 +704,8 @@ interface DeferredClientFinalizationContext {
   readonly canonical: boolean;
   readonly serverVersion?: 'v2' | 'v3';
   readonly serverVersionSynthetic?: boolean;
+  /** Older release negotiated for the call; responses are converted up from it. */
+  readonly negotiatedAdcpVersion?: string;
   readonly productPolicyRequest: Readonly<Record<string, unknown>>;
   readonly projectionCatalogs?: readonly ProjectionCatalogSnapshot[];
   readonly routingSnapshot?: CanonicalCreativeRoutingSnapshot;
@@ -709,12 +733,14 @@ function isDeferredClientFinalizationContext(value: unknown): value is DeferredC
     !Array.isArray(context.productPolicyRequest) &&
     (context.serverVersion === undefined || context.serverVersion === 'v2' || context.serverVersion === 'v3') &&
     (context.serverVersionSynthetic === undefined || typeof context.serverVersionSynthetic === 'boolean') &&
+    (context.negotiatedAdcpVersion === undefined || typeof context.negotiatedAdcpVersion === 'string') &&
     (context.projectionCatalogs === undefined || Array.isArray(context.projectionCatalogs)) &&
     (context.handlerName === undefined || typeof context.handlerName === 'string') &&
     (context.skipStatusHandlers === undefined || typeof context.skipStatusHandlers === 'boolean')
   );
 }
 
+const MAX_REMEMBERED_NEGOTIATED_RELEASES = 1024;
 const CANONICAL_PACKAGE_ROUTE_TASKS = new Set(['create_media_buy', 'update_media_buy', 'get_media_buys']);
 const canonicalCreativeRoutingSnapshots = new WeakSet<object>();
 
@@ -1666,6 +1692,24 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   /** Require release compatibility and the declared idempotency replay TTL before mutations. */
   requireV3ForMutations?: boolean;
   /**
+   * What to do when a request reaches a seller on an older AdCP release and
+   * its account key uses fields that release cannot express. AdCP 3.2 added
+   * `operator_unit`, `currency` and `timezone` to the account natural key and
+   * `countries` to brand references; a 3.1 seller's key has none of them.
+   *
+   * - `'refuse'` (default): fail the call before it is sent with
+   *   `ProtocolFeatureUnsupportedError`.
+   * - `'reduce'`: send the older key. Buyer keys that differ only in the
+   *   removed fields share one seller account. Each reduction is reported in
+   *   `debug_logs` as an `account_identity_reduced` entry.
+   *
+   * The AdCP spec has not yet settled this rule (adcontextprotocol/adcp#8373);
+   * the default may change when it does.
+   *
+   * @default 'refuse'
+   */
+  accountIdentityDowngrade?: AccountIdentityDowngrade;
+  /**
    * Runtime schema validation options
    */
   validation?: {
@@ -2305,6 +2349,8 @@ export class SingleAgentClient {
   private cachedCapabilities?: AdcpCapabilities; // Cache detected server capabilities
   private runAgentInfo?: Awaited<ReturnType<SingleAgentClient['getAgentInfo']>>;
   private cachedToolSchemas?: Map<string, Record<string, unknown>>; // inputSchema.properties per tool name
+  /** Release negotiated per operation, for converting webhook completions up. */
+  private readonly negotiatedReleaseByOperation = new Map<string, string>();
   private primedCapabilitiesExpiresAt?: number; // Freshness bound for application-owned evidence only
   private capabilityEvidenceScopeKey = randomUUID();
   private capabilityEvidenceAuthMaterial?: string;
@@ -4840,7 +4886,11 @@ export class SingleAgentClient {
     let externalStatus: ExternalTaskStatusResult | undefined;
     let forgetPolicyState = false;
     try {
-      const canonicalResult = this.canonicalizeWebhookCreativeResult(metadata, parsed.result, canonicalCreativeTask);
+      const canonicalResult = this.canonicalizeWebhookCreativeResult(
+        metadata,
+        this.convertWebhookResultToClientRelease(parsed),
+        canonicalCreativeTask
+      );
       const dedupResult = canonicalResult as AdCPAsyncResponseData | undefined;
       const dedupMetadata = { ...metadata };
       let webhookResult = dedupResult;
@@ -5625,25 +5675,29 @@ export class SingleAgentClient {
     };
     const serverVersion = await this.detectServerVersion(detectionOptions);
     throwIfAborted(options?.signal);
+    const negotiatedRelease = this.negotiateCallRelease(capabilityDiscoveryContext.capabilities, options);
+    this.assertToolAvailableAtRelease(taskType, negotiatedRelease, capabilityDiscoveryContext.toolSchemas);
     this.assertRequestSupportedByTargetVersion(
       taskType,
       normalizedParams,
       capabilityDiscoveryContext.capabilities,
       canonicalCreativeInvocation,
-      serverVersion
+      serverVersion,
+      negotiatedRelease
     );
-    const { options: effectiveOptions, driftLog: webhookDriftLog } = this.suppressPre31DiscoveryWebhook(
+    const { options: webhookOptions, driftLog: webhookDriftLog } = this.suppressPre31DiscoveryWebhook(
       taskType,
       options,
       capabilityDiscoveryContext.capabilities
     );
+    const effectiveOptions = this.withNegotiatedRelease(webhookOptions, negotiatedRelease);
     const inputSchemaStripLogs: any[] = [];
     if (options?.preserveGovernedPayload && serverVersion !== 'v3') {
       throw new ConfigurationError(
         'Governed storyboard requests require a v3 seller to preserve the approved payload.'
       );
     }
-    const { params: adaptedParams, driftLogs: adaptDriftLogs } = options?.preserveGovernedPayload
+    const { params: convertedParams, driftLogs: adaptDriftLogs } = options?.preserveGovernedPayload
       ? { params: normalizedParams, driftLogs: [] }
       : this.adaptRequest(
           taskType,
@@ -5651,8 +5705,27 @@ export class SingleAgentClient {
           serverVersion,
           inputSchemaStripLogs,
           capabilityDiscoveryContext.toolSchemas,
-          capabilityDiscoveryContext.capabilities
+          capabilityDiscoveryContext.capabilities,
+          negotiatedRelease
         );
+    const adaptedParams = options?.preserveGovernedPayload
+      ? convertedParams
+      : await this.reconcileAccountKeyReductions(
+          taskType,
+          normalizedParams,
+          convertedParams,
+          negotiatedRelease,
+          adaptDriftLogs
+        );
+    if (
+      negotiatedRelease?.downgraded &&
+      !options?.skipIdempotencyAutoInject &&
+      !options?.skipAccountValidation &&
+      !options?.skipRequestValidation
+    ) {
+      // Validate the converted request against the release on the wire.
+      this.executor.validateRequest(taskType, adaptedParams, inputSchemaStripLogs, negotiatedRelease.version);
+    }
 
     const adaptationLogs: any[] = [...adaptDriftLogs];
     if (webhookDriftLog) adaptationLogs.push(webhookDriftLog);
@@ -5674,6 +5747,7 @@ export class SingleAgentClient {
       ...(capabilityDiscoveryContext.capabilities?._synthetic !== undefined && {
         serverVersionSynthetic: capabilityDiscoveryContext.capabilities._synthetic,
       }),
+      ...(negotiatedRelease?.downgraded && { negotiatedAdcpVersion: negotiatedRelease.version }),
       productPolicyRequest: productPolicyRequestSnapshot(normalizedParams),
       accountRegistry: this.accountRegistryContext(taskType, normalizedParams, effectiveOptions),
       ...(projectionCatalogs !== undefined && { projectionCatalogs }),
@@ -5763,6 +5837,21 @@ export class SingleAgentClient {
           serverVersionSynthetic: context.serverVersionSynthetic,
         }),
       };
+    }
+    if (context.negotiatedAdcpVersion !== undefined) {
+      result.metadata = { ...result.metadata, negotiatedAdcpVersion: context.negotiatedAdcpVersion };
+      if (result.metadata.taskId) this.rememberNegotiatedRelease(result.metadata.taskId, context.negotiatedAdcpVersion);
+      if (result.success && result.data) {
+        const converted = this.convertResponseToClientRelease(
+          context.taskType,
+          result.data,
+          context.negotiatedAdcpVersion
+        );
+        result.data = converted.data as T;
+        if (converted.driftLogs.length > 0) {
+          result.debug_logs = [...(result.debug_logs ?? []), ...converted.driftLogs];
+        }
+      }
     }
     const completionHandlerAlreadyPublished = hasCompletionHandlerAlreadyPublished(result);
     const settlementAcknowledger = (
@@ -7025,6 +7114,307 @@ export class SingleAgentClient {
     };
   }
 
+  private get accountIdentityDowngrade(): AccountIdentityDowngrade {
+    return this.config.accountIdentityDowngrade ?? 'refuse';
+  }
+
+  /**
+   * Negotiate the AdCP release to speak with this seller for one call: the
+   * highest release both sides support. Returns `undefined` when the call
+   * keeps its configured wire version: an explicit `wireAdcpVersion`
+   * override, a governed payload that must reach the seller byte-for-byte,
+   * the identity 3.3 experiment, or no authoritative seller release
+   * (synthetic capabilities, no release in common, or no release metadata at
+   * all: AdCP 3.1 does not require `supported_versions`, so its absence does
+   * not prove a 3.0 seller, and such sellers keep the 3.0 request adapters).
+   */
+  private negotiateCallRelease(
+    capabilities: AdcpCapabilities | undefined,
+    options: TaskOptions | undefined
+  ): NegotiatedAdcpRelease | undefined {
+    if (this.config.wireAdcpVersion !== undefined || options?.wireAdcpVersion !== undefined) return undefined;
+    if (options?.preserveGovernedPayload || this.config.experimentalIdentity33) return undefined;
+    const negotiated = negotiateAdcpRelease(this.resolvedAdcpVersion, capabilities);
+    if (!negotiated || isNegotiationFailure(negotiated) || negotiated.source === 'legacy_v3') return undefined;
+    return negotiated;
+  }
+
+  /**
+   * Per-call options carrying the negotiated release to the executor, which
+   * stamps it on the version envelope and validates the response against it.
+   */
+  private withNegotiatedRelease<O extends TaskOptions | undefined>(
+    options: O,
+    negotiated: NegotiatedAdcpRelease | undefined
+  ): O {
+    if (!negotiated?.downgraded) return options;
+    return { ...(options ?? {}), wireAdcpVersion: negotiated.version, negotiatedAdcpVersion: negotiated.version } as O;
+  }
+
+  /**
+   * Refuse a tool the negotiated release does not define (a 3.2-only task
+   * sent to a 3.1 seller) with a typed error instead of a seller-side schema
+   * or unknown-tool failure. Sellers that list the tool anyway are called.
+   */
+  private assertToolAvailableAtRelease(
+    taskType: string,
+    negotiated: NegotiatedAdcpRelease | undefined,
+    toolSchemas: ToolSchemaMap | undefined
+  ): void {
+    if (!negotiated?.downgraded) return;
+    // A caller-supplied schema root may cover only part of a release.
+    if (isExternalSchemaRootActive(negotiated.version)) return;
+    if (releaseDefinesTool(taskType, negotiated.version)) return;
+    if (!releaseDefinesTool(taskType, this.resolvedAdcpVersion)) return;
+    if ((toolSchemas ?? this.cachedToolSchemas)?.has(taskType)) return;
+    const suggestion =
+      `Call a task AdCP ${negotiated.version} defines, or reach this seller once it supports ` +
+      `AdCP ${toReleasePrecisionWire(this.resolvedAdcpVersion)}.`;
+    throw new ProtocolFeatureUnsupportedError([taskType], [], this.agent.agent_uri, {
+      message:
+        `${taskType} is not defined in AdCP ${negotiated.version}, the newest release this seller supports. ` +
+        `No request was sent. ${suggestion}`,
+      suggestion,
+      details: {
+        feature: taskType,
+        required_version: toReleasePrecisionWire(this.resolvedAdcpVersion),
+        capability_path: 'adcp.supported_versions',
+        current_version: negotiated.version,
+        tool: taskType,
+      },
+    });
+  }
+
+  /**
+   * Account-key bookkeeping for `accountIdentityDowngrade: 'reduce'`.
+   *
+   * Converting down to an older seller release: claim each reduced key for
+   * the buyer key it came from, and refuse the request when the reduced key
+   * (or an unreduced key the request sends as is) already belongs to a
+   * different buyer key. Without this, two buyer accounts would silently
+   * share one seller account, with merged settings, spend and reads.
+   *
+   * Seller on the client's release: a buyer key that earlier reached this
+   * seller reduced is still addressed by its reduced key, which is the key
+   * the seller's account has, until the caller moves the account to the full
+   * key and calls `client.accounts.clearReduction(key)`.
+   *
+   * Runs only once the account registry is in use or under `'reduce'`.
+   */
+  private async reconcileAccountKeyReductions(
+    taskType: string,
+    original: unknown,
+    adapted: any,
+    negotiated: NegotiatedAdcpRelease | undefined,
+    driftLogs: Record<string, unknown>[]
+  ): Promise<any> {
+    if (this.accountIdentityDowngrade !== 'reduce' && !this._accounts) return adapted;
+    const sites = accountKeySites(original);
+    if (sites.length === 0) return adapted;
+    const registry = this.getAccountRegistry();
+    if (negotiated?.downgraded) {
+      for (const site of sites) {
+        const reduced = naturalAccountKey(valueAt(adapted, site.path));
+        if (!reduced) continue;
+        if (!sameAccountKey(site.key, reduced)) {
+          const conflict = await registry.claimReduction(site.key, reduced, negotiated.version);
+          if (conflict) this.throwAccountKeyCollision(taskType, site.path, conflict, negotiated.version);
+          continue;
+        }
+        const owner = await registry.reductionOwner(site.key);
+        if (owner && !sameAccountKey(owner, site.key)) {
+          this.throwAccountKeyCollision(taskType, site.path, owner, negotiated.version);
+        }
+      }
+      return adapted;
+    }
+    let rewritten = adapted;
+    const pending: Array<{ path: string; fields: string[]; adcpVersion: string }> = [];
+    for (const site of sites) {
+      const reduction = await registry.reductionFor(site.key);
+      if (!reduction) continue;
+      rewritten = withReducedKeyAt(rewritten, site.path, reduction.account);
+      pending.push({
+        path: site.path.join('.'),
+        fields: reducedFields(site.key, reduction.account),
+        adcpVersion: reduction.adcpVersion,
+      });
+    }
+    if (pending.length > 0) {
+      const inPlace = pending.every(entry => entry.fields.every(field => field === 'operator_unit'));
+      driftLogs.push({
+        type: 'account_identity_migration_pending',
+        message:
+          `${taskType}: addressed ${pending.map(entry => entry.path).join(', ')} by the reduced account key ` +
+          `this seller has, without ${[...new Set(pending.flatMap(entry => entry.fields))].join(', ')}. ` +
+          (inPlace
+            ? 'Rekey the account in place with a sync_accounts settings update (account, operator_identity, revision), '
+            : 'currency, timezone and brand.countries cannot change on an existing account, so open a new account ' +
+              'under the full key (and decide which key keeps the existing history), ') +
+          'then call client.accounts.clearReduction(key).',
+        accounts: pending,
+        taskName: taskType,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    return rewritten;
+  }
+
+  private throwAccountKeyCollision(
+    taskType: string,
+    path: ReadonlyArray<string | number>,
+    owner: AccountReference,
+    negotiatedVersion: string
+  ): never {
+    const field = path.join('.');
+    const suggestion =
+      `Reach this seller with one of the two account keys, address the account by account_id, or wait until ` +
+      `the seller supports the release that tells them apart.`;
+    throw new ProtocolFeatureUnsupportedError([`${taskType}.${field}`], [], this.agent.agent_uri, {
+      message:
+        `${taskType} ${field} would reach the same seller account as another of this buyer's account keys: ` +
+        `AdCP ${negotiatedVersion} cannot tell them apart. No request was sent. ${suggestion}`,
+      field,
+      suggestion,
+      details: {
+        feature: `${taskType}.${field}`,
+        reason: 'account_identity_collision',
+        current_version: negotiatedVersion,
+        tool: taskType,
+        field,
+        conflicting_account: owner,
+      },
+    });
+  }
+
+  private throwFieldsUnsupportedAtRelease(
+    taskType: string,
+    fields: ReadonlyArray<{ path: string; introducedIn: string }>,
+    negotiatedVersion: string
+  ): never {
+    const [first] = fields;
+    const paths = fields.map(field => field.path);
+    const accountMove = paths.some(path => /(?:^|\.)(?:operator_identity|revision)$/.test(path));
+    const suggestion = accountMove
+      ? `AdCP ${negotiatedVersion} cannot rekey an account or hand it to another operator (operator_identity, ` +
+        `revision). Make the move once the seller supports AdCP ${first!.introducedIn}; until then the account ` +
+        'keeps its current key and operator.'
+      : `Remove ${paths.join(', ')} for this seller, or reach it once it supports AdCP ${first!.introducedIn}. ` +
+        'Sending the request without them would change what the seller does.';
+    throw new ProtocolFeatureUnsupportedError(
+      paths.map(path => `${taskType}.${path}`),
+      [],
+      this.agent.agent_uri,
+      {
+        message:
+          `${taskType} ${paths.join(', ')} ${paths.length === 1 ? 'requires' : 'require'} AdCP ${first!.introducedIn}; ` +
+          `this seller supports AdCP ${negotiatedVersion}. No request was sent. ${suggestion}`,
+        field: first!.path,
+        suggestion,
+        details: {
+          feature: `${taskType}.${first!.path}`,
+          required_version: first!.introducedIn,
+          capability_path: 'adcp.supported_versions',
+          current_version: negotiatedVersion,
+          tool: taskType,
+          field: first!.path,
+          fields: paths,
+        },
+      }
+    );
+  }
+
+  private throwAccountIdentityUnsupported(
+    taskType: string,
+    fields: ReadonlyArray<{ path: string; introducedIn: string }>,
+    negotiatedVersion: string
+  ): never {
+    const [first] = fields;
+    const paths = fields.map(field => field.path);
+    const suggestion =
+      "Set accountIdentityDowngrade: 'reduce' to send the older account key (buyer keys that differ only in " +
+      `${paths.join(', ')} then share one seller account), or remove those fields for this seller.`;
+    throw new ProtocolFeatureUnsupportedError(
+      paths.map(path => `${taskType}.${path}`),
+      [],
+      this.agent.agent_uri,
+      {
+        message:
+          `${taskType} ${paths.join(', ')} ${paths.length === 1 ? 'is' : 'are'} part of the AdCP ${first!.introducedIn} ` +
+          `account key, which AdCP ${negotiatedVersion} cannot express. No request was sent. ${suggestion}`,
+        field: first!.path,
+        suggestion,
+        details: {
+          feature: `${taskType}.${first!.path}`,
+          required_version: first!.introducedIn,
+          capability_path: 'adcp.supported_versions',
+          current_version: negotiatedVersion,
+          tool: taskType,
+          field: first!.path,
+          fields: paths,
+        },
+      }
+    );
+  }
+
+  private rememberNegotiatedRelease(operationId: string, version: string): void {
+    this.negotiatedReleaseByOperation.delete(operationId);
+    this.negotiatedReleaseByOperation.set(operationId, version);
+    if (this.negotiatedReleaseByOperation.size > MAX_REMEMBERED_NEGOTIATED_RELEASES) {
+      const oldest = this.negotiatedReleaseByOperation.keys().next().value;
+      if (oldest !== undefined) this.negotiatedReleaseByOperation.delete(oldest);
+    }
+  }
+
+  /**
+   * Webhook completions bypass task finalization, so convert their result up
+   * here. The seller's own `adcp_version` names the release it served; an
+   * AdCP 3.0 seller sends none, so fall back to the release this client
+   * negotiated for the operation.
+   */
+  private convertWebhookResultToClientRelease(parsed: WebhookParseSuccess): unknown {
+    const served = [parsed.result, parsed.envelope]
+      .map(value =>
+        value && typeof value === 'object' && typeof (value as { adcp_version?: unknown }).adcp_version === 'string'
+          ? (value as { adcp_version: string }).adcp_version
+          : undefined
+      )
+      .find(version => version !== undefined);
+    const release = served ?? this.negotiatedReleaseByOperation.get(parsed.metadata.operationId);
+    if (release === undefined || parsed.result === undefined || parsed.result === null) return parsed.result;
+    return convertResponse(parsed.metadata.taskType, parsed.result, {
+      fromVersion: release,
+      toVersion: this.resolvedAdcpVersion,
+    }).data;
+  }
+
+  /**
+   * Convert a response served at the negotiated release up to the client's
+   * release. Returns drift entries for each conversion applied.
+   */
+  private convertResponseToClientRelease(
+    taskType: string,
+    data: unknown,
+    negotiatedVersion: string | undefined
+  ): { data: unknown; driftLogs: Record<string, unknown>[] } {
+    if (negotiatedVersion === undefined || data === undefined || data === null) return { data, driftLogs: [] };
+    const translation = convertResponse(taskType, data, {
+      fromVersion: negotiatedVersion,
+      toVersion: this.resolvedAdcpVersion,
+    });
+    const timestamp = new Date().toISOString();
+    return {
+      data: translation.data,
+      driftLogs: translation.drifts.map(drift => ({
+        ...drift,
+        taskName: taskType,
+        clientVersion: this.resolvedAdcpVersion,
+        targetVersion: negotiatedVersion,
+        timestamp,
+      })),
+    };
+  }
+
   /**
    * Adapt a request for the detected server wire version and the seller's
    * AdCP protocol version. Applies protocol-version adapters (e.g. stripping
@@ -7040,7 +7430,8 @@ export class SingleAgentClient {
     serverVersion: string,
     debugLogs?: any[],
     perCallToolSchemas?: ToolSchemaMap,
-    perCallCapabilities?: AdcpCapabilities
+    perCallCapabilities?: AdcpCapabilities,
+    negotiated?: NegotiatedAdcpRelease
   ): { params: any; driftLogs: Record<string, unknown>[] } {
     if (serverVersion !== 'v3') {
       throw new VersionUnsupportedError(taskType, 'version', 'v2', this.agent.agent_uri);
@@ -7138,14 +7529,40 @@ export class SingleAgentClient {
       adapted = filtered;
     }
 
-    // Protocol version adaptation: strip fields not accepted by the target
-    // AdCP version. `resolveAdapterKey` returns the effective target version
-    // based on the client pin and the seller's advertised caps; adapters live
-    // in `src/lib/adapters/version/<target>/`.
+    // Protocol version adaptation. With a negotiated older release, convert
+    // the request down every minor step to it, removing and reporting what
+    // the release cannot express. Without one (synthetic capabilities),
+    // `resolveAdapterKey` falls back to the 3.0 adapters when the seller does
+    // not advertise 3.1. Adapters live in `src/lib/adapters/version/<target>/`.
+    if (negotiated?.downgraded) {
+      const translation = convertRequest(taskType, adapted, {
+        fromVersion: this.resolvedAdcpVersion,
+        toVersion: negotiated.version,
+        accountIdentity: this.accountIdentityDowngrade,
+      });
+      if (translation.identityFields.length > 0 && this.accountIdentityDowngrade === 'refuse') {
+        this.throwAccountIdentityUnsupported(taskType, translation.identityFields, negotiated.version);
+      }
+      if (translation.refusedFields.length > 0) {
+        this.throwFieldsUnsupportedAtRelease(taskType, translation.refusedFields, negotiated.version);
+      }
+      const timestamp = new Date().toISOString();
+      for (const drift of translation.drifts) {
+        driftLogs.push({
+          ...drift,
+          taskName: taskType,
+          clientVersion: this.resolvedAdcpVersion,
+          targetVersion: negotiated.version,
+          timestamp,
+        });
+      }
+      return { params: translation.params, driftLogs };
+    }
+
     const adapterKey = resolveAdapterKey(this.resolvedAdcpVersion, perCallCapabilities ?? this.cachedCapabilities);
     if (adapterKey) {
       const versionAdapter = getVersionAdapter(adapterKey, taskType);
-      if (versionAdapter) {
+      if (versionAdapter?.adaptRequest) {
         const result = versionAdapter.adaptRequest(adapted);
         adapted = result.params;
         if (result.drift) {
@@ -9377,25 +9794,29 @@ export class SingleAgentClient {
       const serverVersion = await this.detectServerVersion(detectionOptions);
       detectedServerVersion = serverVersion;
       detectedServerVersionSynthetic = capabilityDiscoveryContext.capabilities?._synthetic;
+      const negotiatedRelease = this.negotiateCallRelease(capabilityDiscoveryContext.capabilities, options);
+      this.assertToolAvailableAtRelease(taskName, negotiatedRelease, capabilityDiscoveryContext.toolSchemas);
       this.assertRequestSupportedByTargetVersion(
         taskName,
         normalizedParams,
         capabilityDiscoveryContext.capabilities,
         false,
-        serverVersion
+        serverVersion,
+        negotiatedRelease
       );
-      const { options: effectiveOptions, driftLog: webhookDriftLog } = this.suppressPre31DiscoveryWebhook(
+      const { options: webhookOptions, driftLog: webhookDriftLog } = this.suppressPre31DiscoveryWebhook(
         taskName,
         options,
         capabilityDiscoveryContext.capabilities
       );
+      const effectiveOptions = this.withNegotiatedRelease(webhookOptions, negotiatedRelease);
       const inputSchemaStripLogs: any[] = [];
       if (options?.preserveGovernedPayload && serverVersion !== 'v3') {
         throw new ConfigurationError(
           'Governed storyboard requests require a v3 seller to preserve the approved payload.'
         );
       }
-      const { params: adaptedParams, driftLogs: adaptDriftLogs } = options?.preserveGovernedPayload
+      const { params: convertedParams, driftLogs: adaptDriftLogs } = options?.preserveGovernedPayload
         ? { params: normalizedParams, driftLogs: [] }
         : this.adaptRequest(
             taskName,
@@ -9403,8 +9824,26 @@ export class SingleAgentClient {
             serverVersion,
             inputSchemaStripLogs,
             capabilityDiscoveryContext.toolSchemas,
-            capabilityDiscoveryContext.capabilities
+            capabilityDiscoveryContext.capabilities,
+            negotiatedRelease
           );
+      const adaptedParams = options?.preserveGovernedPayload
+        ? convertedParams
+        : await this.reconcileAccountKeyReductions(
+            taskName,
+            normalizedParams,
+            convertedParams,
+            negotiatedRelease,
+            adaptDriftLogs
+          );
+      if (
+        negotiatedRelease?.downgraded &&
+        !options?.skipIdempotencyAutoInject &&
+        !options?.skipAccountValidation &&
+        !options?.skipRequestValidation
+      ) {
+        this.executor.validateRequest(taskName, adaptedParams, inputSchemaStripLogs, negotiatedRelease.version);
+      }
 
       const adaptationLogs: any[] = [...adaptDriftLogs];
       if (webhookDriftLog) adaptationLogs.push(webhookDriftLog);
@@ -9418,6 +9857,7 @@ export class SingleAgentClient {
         ...(capabilityDiscoveryContext.capabilities?._synthetic !== undefined && {
           serverVersionSynthetic: capabilityDiscoveryContext.capabilities._synthetic,
         }),
+        ...(negotiatedRelease?.downgraded && { negotiatedAdcpVersion: negotiatedRelease.version }),
         productPolicyRequest: productPolicyRequestSnapshot(normalizedParams),
         accountRegistry: this.accountRegistryContext(taskName, normalizedParams, effectiveOptions),
         ...(effectiveOptions?.taskId !== undefined && { optionTaskId: effectiveOptions.taskId }),
@@ -11597,9 +12037,13 @@ export class SingleAgentClient {
     params: unknown,
     capabilities: AdcpCapabilities | undefined,
     canonicalCreativeInvocation = false,
-    serverVersion?: 'v2' | 'v3'
+    serverVersion?: 'v2' | 'v3',
+    negotiated?: NegotiatedAdcpRelease
   ): void {
-    if (taskName === 'sync_accounts') {
+    // Under 'reduce', a negotiated older release converts the account key
+    // down (and reports it) instead of refusing it here.
+    const reducesAccountIdentity = this.accountIdentityDowngrade === 'reduce' && negotiated?.downgraded === true;
+    if (taskName === 'sync_accounts' && !reducesAccountIdentity) {
       const advertisedVersions = capabilities?.supportedVersions ?? [];
       const servedVersion = capabilities?.servedVersion ?? capabilities?._raw?.adcp_version;
       // The selected release takes precedence over the seller's broader
@@ -11837,9 +12281,16 @@ export class SingleAgentClient {
     // Fall back to the deprecated integer `major_versions` for legacy 3.0
     // sellers. Pre-release pins match exactly per spec — `'3.1.0-beta.1'`
     // matches only against another `'3.1.0-beta.1'`, not `'3.1'`.
+    //
+    // A seller on an older release of the same major is compatible: requests
+    // are converted down to the highest release both sides support. Only a
+    // seller with no release on or below the client's line is refused.
     const supportedVersions = capabilities.supportedVersions;
     if (supportedVersions !== undefined && supportedVersions.length > 0) {
-      if (!isAdcpVersionSupported(this.resolvedAdcpVersion, supportedVersions)) {
+      if (
+        !isAdcpVersionSupported(this.resolvedAdcpVersion, supportedVersions) &&
+        this.negotiateCallRelease(capabilities, options as TaskOptions | undefined) === undefined
+      ) {
         throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
       }
     } else {
