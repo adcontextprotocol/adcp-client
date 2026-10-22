@@ -2146,6 +2146,7 @@ These docs are available locally in the repo and hosted at https://adcontextprot
 | Reliable Reporting production operations | docs/guides/REPORTING-OPERATIONS.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-OPERATIONS.md) |
 | Reliable Reporting stability policy (experimental storage package) | docs/guides/REPORTING-STABILITY.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-STABILITY.md) |
 | Validate your agent (5-command checklist) | docs/guides/VALIDATE-YOUR-AGENT.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/VALIDATE-YOUR-AGENT.md) |
+| Collection fixture foundation (storyboard fixtures) | docs/guides/COLLECTION-FIXTURE-FOUNDATION.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/COLLECTION-FIXTURE-FOUNDATION.md) |
 | Async patterns (polling, webhooks, deferred) | docs/guides/ASYNC-DEVELOPER-GUIDE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/ASYNC-DEVELOPER-GUIDE.md) |
 | Async API reference | docs/guides/ASYNC-API-REFERENCE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/ASYNC-API-REFERENCE.md) |
 | Durable task settlement intents | docs/guides/DURABLE-TASK-SETTLEMENT.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/DURABLE-TASK-SETTLEMENT.md) |

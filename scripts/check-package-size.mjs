@@ -110,7 +110,14 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // 20,452,069 bytes packed in CI. Allow about 28 KB of compressor variance for
 // this additive surface; all unpacked, file-count, schema and declaration
 // budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 20_480_000;
+// The collection fixture foundation adds four published files — the
+// `PreparedFixturesDeniedError` surface and the grown `testing/storyboard`
+// modules, whose reviewed rationale for the authority binding and the
+// typed-denial contract ships as JSDoc in the `.d.ts`. Measured on the
+// merged tree at 20,483,097 bytes across 6,394 files. Allow about 36 KB of
+// compressor variance; unpacked, file-count, schema and declaration
+// budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_520_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview

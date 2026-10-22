@@ -1090,3 +1090,40 @@ export function extractErrorInfo(error: unknown): {
     message: String(error),
   };
 }
+
+/**
+ * Prepared fixture state was refused by the host authorizer.
+ *
+ * An authorization failure is an ACCESS-CONTROL error, not a grading
+ * outcome, so the refused caller gets this and no `StoryboardResult` —
+ * not a partial one, not a redacted one. It carries the machine refusal
+ * code and nothing else: no fixture identities, no `seller_ids`, no
+ * captures, no binding values, no request/response records, and no
+ * results from steps that ran before the grant was revoked.
+ *
+ * The complete, unredacted record — including the synthesized
+ * `prepared_fixtures_authorization` check, `fixture_resolutions` with
+ * `seller_ids`, and exact request/response records — is handed to the
+ * host's `prepared_fixtures_audit_sink` before this is thrown. Where no
+ * sink is configured the record is simply not produced to anyone.
+ *
+ * Hosted entry points should surface this as a 403-style denial.
+ */
+export class PreparedFixturesDeniedError extends ADCPError {
+  readonly code = 'PREPARED_FIXTURES_DENIED';
+
+  constructor(
+    /**
+     * Machine refusal code: `authorizer_required` | `untrusted_state` |
+     * `contract_version_mismatch` | `authorizer_denied` |
+     * `binding_mismatch` | `unauthorized_metadata`.
+     */
+    public readonly refusalCode: string
+  ) {
+    super(`prepared fixture state was refused by the configured authorizer (${refusalCode})`);
+    // Deliberately the code alone. Anything derived from the prepared
+    // graph — including which binding field differed — belongs in the
+    // audit record, not in an error the refused caller can read.
+    this.details = { refusal_code: refusalCode };
+  }
+}

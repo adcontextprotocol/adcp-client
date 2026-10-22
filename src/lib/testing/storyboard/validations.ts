@@ -48,6 +48,7 @@ import {
   type PortableIdentifierPathIssue,
 } from './path';
 import { canonicalTargetUri } from '../../signing/canonicalize';
+import { diffCollectionPairSets, normalizeCollectionSelectors, summarizeCollectionPairs } from './collection-selection';
 import { detectShapeDriftHints } from './shape-drift-hints';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
 import { validateCanonicalFormatSatisfaction } from './canonical-format-satisfaction';
@@ -362,6 +363,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateFieldInContextArray(validation, ctx);
     case 'all_fields_in_context_array':
       return validateAllFieldsInContextArray(validation, ctx);
+    case 'collection_set_equals_context':
+      return validateCollectionSetEqualsContext(validation, ctx);
     case 'upstream_traffic':
       return validateUpstreamTraffic(validation, ctx);
     case 'replay_not_cached_rate_limit':
@@ -3244,6 +3247,139 @@ function validateFieldEqualsContext(validation: StoryboardValidation, ctx: Valid
     json_pointer: pointer,
     expected,
     actual: actual ?? null,
+  };
+}
+
+/**
+ * Namespace-aware collection set equality.
+ *
+ * Grouping and ordering are normalized away; publisher namespaces are not.
+ * Unlike the branch-safe `field_equals_context` family this check treats a
+ * missing `context_key` as a setup failure, because a mandatory set
+ * comparison that passes when its expected state was never captured
+ * certifies the exact substitution it exists to detect.
+ */
+function validateCollectionSetEqualsContext(
+  validation: StoryboardValidation,
+  ctx: ValidationContext
+): ValidationResult {
+  const check = 'collection_set_equals_context';
+  // `schema_id` / `schema_url` are required_on_failure for every check and
+  // MUST be null outside `response_schema`. Carried on the shared base so
+  // no arm of this validator can forget them.
+  const base = { check, description: validation.description, schema_id: null, schema_url: null } as const;
+  if (!validation.path) {
+    return {
+      ...base,
+      passed: false,
+      error:
+        'collection_set_equals_context is missing "path" — set it to the response array of CollectionSelector objects to compare, e.g. packages[0].targeting_overlay.collection_selection.collections',
+      json_pointer: null,
+      expected: 'a response path pointing at a CollectionSelector[]',
+      actual: null,
+    };
+  }
+  if (!validation.context_key) {
+    return {
+      ...base,
+      passed: false,
+      error:
+        'collection_set_equals_context is missing "context_key" — set it to the __adcp_fixture_* key captured by the fixture declaration whose selection this step reads back, e.g. __adcp_fixture_subset',
+      json_pointer: null,
+      expected: 'a reserved fixture capture key holding the expected selector array',
+      actual: null,
+    };
+  }
+  const pointer = toJsonPointer(validation.path);
+  const storyboardContext = ctx.storyboardContext;
+  // Own-key, not `in`: this is the one validator whose purpose is to refuse
+  // when the expected set was never captured, so a prototype-chain read is
+  // exactly the wrong lookup here.
+  if (!storyboardContext || !Object.hasOwn(storyboardContext, validation.context_key)) {
+    return {
+      ...base,
+      passed: false,
+      path: validation.path,
+      error:
+        `expected_context_absent: context key "${validation.context_key}" was never published, so there is no expected set to compare against. ` +
+        `Declare it as a capture on the fixture_resolution entry that pins this product — ` +
+        `context_outputs: [{ key: ${validation.context_key}, witness: strict_subset }] — and confirm the whole fixture ` +
+        `graph resolved (captures publish all-or-nothing). Unlike field_equals_context, this check FAILS rather than ` +
+        `skipping on a missing key: silently passing would certify exactly the substitution it exists to catch.`,
+      json_pointer: pointer,
+      expected: `context["${validation.context_key}"]`,
+      actual: null,
+    };
+  }
+  const expectedRaw = storyboardContext[validation.context_key];
+  // `distinct_pairs` is a DIAGNOSTIC shape, not a wire shape: its entries
+  // carry singular `collection_id`, not `collection_ids`. The normalizer
+  // reads a missing `collection_ids` as a domain-only bulk grant, so the
+  // expected set silently becomes `"d":*` and the diff reads
+  // `missing "d":*; unexpected "d":"x"` — the exact "an id flattened away
+  // from its domain" failure this module exists to prevent, reintroduced
+  // through one of its own witnesses. Name it instead of diffing it.
+  if (
+    Array.isArray(expectedRaw) &&
+    expectedRaw.length > 0 &&
+    expectedRaw.every(
+      entry => entry !== null && typeof entry === 'object' && 'collection_id' in entry && !('collection_ids' in entry)
+    )
+  ) {
+    return {
+      ...base,
+      passed: false,
+      path: validation.path,
+      error:
+        `expected_context_malformed: context["${validation.context_key}"] looks like a \`distinct_pairs\` witness, ` +
+        `which is a diagnostic shape carrying singular \`collection_id\` — not the \`collection_ids\` arrays the wire ` +
+        `and this check compare. Capture \`witness: declared_selectors\` (every selector the product declared) or ` +
+        `\`witness: strict_subset\` (a proper subset of them) instead.`,
+      json_pointer: pointer,
+      expected: 'an array of { publisher_domain, collection_ids } selectors',
+      actual: 'distinct_pairs_witness',
+    };
+  }
+  const expected = normalizeCollectionSelectors(expectedRaw);
+  if (!expected.ok) {
+    return {
+      ...base,
+      passed: false,
+      path: validation.path,
+      error: `expected_context_malformed: context["${validation.context_key}"] is not a usable collection selector array — ${expected.failure.detail}`,
+      json_pointer: pointer,
+      expected: 'an array of { publisher_domain, collection_ids } selectors',
+      actual: null,
+    };
+  }
+  const actualRaw = resolvePath(resolveTarget(ctx).data, validation.path);
+  const actual = normalizeCollectionSelectors(actualRaw);
+  if (!actual.ok) {
+    return {
+      ...base,
+      passed: false,
+      path: validation.path,
+      error: `actual_collections_malformed: ${actual.failure.detail}`,
+      json_pointer: pointer,
+      expected: 'an array of { publisher_domain, collection_ids } selectors',
+      actual: actualRaw ?? null,
+    };
+  }
+  const diff = diffCollectionPairSets(actual.value.pairs, expected.value.pairs);
+  if (diff.equal) {
+    return { ...base, passed: true, path: validation.path, json_pointer: pointer };
+  }
+  const parts: string[] = [];
+  if (diff.missing.length > 0) parts.push(`missing ${summarizeCollectionPairs(diff.missing)}`);
+  if (diff.unexpected.length > 0) parts.push(`unexpected ${summarizeCollectionPairs(diff.unexpected)}`);
+  return {
+    ...base,
+    passed: false,
+    path: validation.path,
+    error: `collection sets differ: ${parts.join('; ')}`,
+    json_pointer: pointer,
+    expected: expected.value.pairs,
+    actual: actual.value.pairs,
   };
 }
 

@@ -765,6 +765,7 @@ export {
   IdempotencyExpiredError,
   ResponseTooLargeError,
   ActionNotAllowedError,
+  PreparedFixturesDeniedError,
   adcpErrorToTypedError,
   getClientPreflightAdcpError,
   isADCPError,

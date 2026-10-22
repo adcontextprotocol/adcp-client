@@ -3,6 +3,11 @@
 
 export { assertPendingWebFlowStoreRoundTrip, type PendingWebFlowStoreRoundTripOptions } from './pending-web-flow-store';
 
+// A refused prepared-state lookup throws this instead of returning a
+// grading result, so a caller of `runStoryboard` / `runStoryboardStep`
+// needs it to tell a denial from an ordinary failure.
+export { PreparedFixturesDeniedError } from '../errors';
+
 export {
   // Test agents (with auth)
   testAgent,
@@ -411,6 +416,75 @@ export {
   // probe is runner-native, so its task name ships as a constant rather than a
   // magic string operators have to copy (adcp-client#2940).
   MCP_SESSION_PROBE_TASK,
+} from './storyboard';
+
+// Collection fixture foundation.
+//
+// Deliberately narrow. The pair normalizer, the predicate evaluator and the
+// witness reader are exported because a downstream consumer validating its
+// own fixtures against the same definition of collection identity is the
+// whole point of having one normalizer.
+//
+// `diffCollectionPairSets` ships with its two renderers — `formatCollectionPair`
+// and `summarizeCollectionPairs`. The diff returns `CollectionPair[]`, so a
+// consumer without them reimplements the quoted `"domain":"id"` / `"domain":*`
+// form by hand and gets it subtly different, which is the drift one shared
+// normalizer exists to prevent. Half the pair on the public surface was the
+// worst of the three options.
+//
+// The genuinely internal helpers stay unexported entirely (there is no deep
+// subpath: `package.json#exports` has no wildcard reaching
+// `dist/lib/testing/storyboard/*`): `compareCollectionPairs`,
+// `normalizeCollectionSelectionSelector` and the witness-returning matcher
+// are runner internals, and a `minor` that promotes them to semver-stable
+// surface nobody asked for is a cost paid forever.
+export {
+  COLLECTION_DIAGNOSTIC_LIMIT,
+  COLLECTION_PAIR_LIMIT,
+  COLLECTION_TARGETING_MODES,
+  COLLECTION_WITNESS_KINDS,
+  diffCollectionPairSets,
+  evaluateCollectionSelection,
+  formatCollectionPair,
+  isProtectedContextKey,
+  isTrustedPreparedFixtures,
+  normalizeCollectionSelectors,
+  prepareStoryboardFixtures,
+  PREPARED_FIXTURES_CONTRACT_VERSION,
+  PreparedStoryboardFixtures,
+  productSatisfiesCollectionSelection,
+  PROTECTED_CONTEXT_PREFIX,
+  summarizeCollectionPairs,
+  ProtectedContextViolation,
+  readCollectionWitness,
+  withPreparedFixtures,
+} from './storyboard';
+export type {
+  CollectionNormalizationCode,
+  CollectionNormalizationFailure,
+  CollectionNormalizationResult,
+  CrossPublisherCollectionRelation,
+  CollectionPair,
+  CollectionSelectionEvaluation,
+  CollectionSelectionSelector,
+  CollectionSelectionWitness,
+  CollectionSelectorObject,
+  CollectionWitnessKind,
+  CollectionWitnessReadResult,
+  FixtureContextOutput,
+  NormalizedCollectionSelectors,
+  PreparedFixtureBinding,
+  PreparedFixtureSelection,
+  PreparedFixturesAuthorizer,
+  PreparedFixturesDecision,
+  PreparedFixturesDisposition,
+  PreparedFixturesLookup,
+  PreparedFixturesRefusal,
+  PreparedFixturesRefusalCode,
+  PreparedFixturesReference,
+  PreparedSchemaArtifact,
+  ProtectedContextViolationCode,
+  ResolvedCollectionSelectionSelector,
 } from './storyboard';
 
 export { resolveCreativeBuildProbe, validateCreativeBuildProbeSpec } from './storyboard';

@@ -27,6 +27,7 @@ import {
 } from '../storyboard/runner';
 import { applyNativeA2AComplianceTransportOptions } from '../storyboard/native-a2a-compliance';
 import { validateTestKit } from '../storyboard/test-kit';
+import { isProtectedContextKey } from '../storyboard/protected-context';
 import { checkAccountDiscoveryGate, isAccountBearingSpecialism } from './spec-conformance';
 
 // Side-effect import: registers default assertion stubs for invariant ids that
@@ -779,6 +780,32 @@ export async function comply(agentUrl: string, options: ComplyOptions = {}): Pro
     throw new Error(
       `Refusing to run compliance against a non-HTTPS URL: ${agentUrl}. ` +
         `Production agents MUST terminate TLS. Pass { allow_http: true } (or --allow-http) for local development.`
+    );
+  }
+  // `prepared_fixtures` is NOT a comply option and is refused outright,
+  // before any seller contact.
+  //
+  // It is absent from `ComplyOptions`, so no typed caller can pass it — but
+  // `runOptions` is built by spreading the caller's object, so an untyped
+  // one rode through to `runStoryboard` and was half-honoured: comply
+  // selects storyboards from its OWN capability discovery, which happens
+  // before any storyboard (and therefore any binding digest) exists, so the
+  // gate could only fire afterwards. That made the "zero seller calls"
+  // contract false for this path.
+  //
+  // Reuse is per-storyboard by construction — the binding pins a storyboard
+  // digest — and comply is a bundle orchestrator that picks the set at
+  // runtime. Rather than bolt on a weaker gate that authorizes against a
+  // scope comply cannot yet describe, refuse and name the entry points that
+  // do support reuse.
+  const forced = options as ComplyOptions & { prepared_fixtures?: unknown };
+  if (forced.prepared_fixtures !== undefined) {
+    throw new Error(
+      'comply() does not accept prepared_fixtures. Prepared state binds one storyboard digest, and comply ' +
+        'selects its storyboard set from capability discovery at runtime — so there is no scope to authorize ' +
+        'against before the agent is contacted. Call prepareStoryboardFixtures() and pass the state to ' +
+        'runStoryboard() or runStoryboardStep() per storyboard instead. ' +
+        'See docs/guides/COLLECTION-FIXTURE-FOUNDATION.md section 4.'
     );
   }
   return withTestClientScope(() =>
@@ -1869,10 +1896,24 @@ function buildRoutedStoryboardRun(
   const leak = testKitCredentialLeak(storyboard, agentUnderTestKeys);
   if (leak) return { refused: `${selected.id} cannot be routed: ${leak}` };
 
+  // Route JSON is another untrusted caller input: a route entry naming a
+  // reserved `__adcp_fixture_` key would be importing fixture-preparation
+  // authority from routing configuration. Reject it here, where the route
+  // can be named, rather than letting the runner reject an anonymous merge.
   const context =
     runOptions.context !== undefined || route.context !== undefined
       ? { ...runOptions.context, ...route.context }
       : undefined;
+  if (context !== undefined) {
+    const reserved = Object.keys(context).filter(
+      key => isProtectedContextKey(key) || key === '__proto__' || key === 'constructor' || key === 'prototype'
+    );
+    if (reserved.length > 0) {
+      return {
+        refused: `${selected.id} cannot be routed: route context declares reserved or prototype-sensitive key(s) ${reserved.join(', ')}; prepared state cannot be imported from route JSON`,
+      };
+    }
+  }
   const options: StoryboardRunOptions = {
     ...runOptions,
     agents: isolated,

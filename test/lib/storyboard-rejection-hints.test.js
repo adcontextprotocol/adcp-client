@@ -748,3 +748,51 @@ describe('detectContextRejectionHints', () => {
     assert.equal(populated.length, 1);
   });
 });
+
+describe('fixture-preparation provenance', () => {
+  // A fixture capture carries `source_task` (the task whose response the
+  // pinned entity came from), so without an explicit branch it falls into
+  // the convention-extractor arm and the hint tells an implementor to go
+  // look at convention machinery that was never involved. The useful
+  // pointer is the fixture handle whose declaration pinned the value.
+  function rejectionOf(entry) {
+    const taskResult = {
+      success: false,
+      data: {
+        adcp_error: {
+          code: 'invalid_product',
+          message: 'Unknown product',
+          field: 'packages[0].product_id',
+          details: { available: ['prod_live'] },
+        },
+      },
+    };
+    const request = { packages: [{ product_id: 'prod_pinned' }] };
+    const context = { __adcp_fixture_product_id: 'prod_pinned' };
+    return detectContextRejectionHints(taskResult, request, context, provenance({ __adcp_fixture_product_id: entry }));
+  }
+
+  test('names the fixture handle, not a convention extractor', () => {
+    const hints = rejectionOf({
+      source_step_id: '__fixture_resolution__',
+      source_kind: 'fixture_preparation',
+      source_task: 'get_products',
+      fixture_handle: 'authored-product',
+    });
+    assert.equal(hints.length, 1);
+    assert.equal(hints[0].source_kind, 'fixture_preparation');
+    assert.match(hints[0].message, /pinned by fixture preparation for handle `authored-product`/);
+    assert.equal(hints[0].message.includes('convention extractor'), false);
+  });
+
+  test('a capture without a handle still avoids the convention wording', () => {
+    const hints = rejectionOf({
+      source_step_id: '__fixture_resolution__',
+      source_kind: 'fixture_preparation',
+      source_task: 'comply_test_controller',
+    });
+    assert.equal(hints.length, 1);
+    assert.match(hints[0].message, /pinned by fixture preparation/);
+    assert.equal(hints[0].message.includes('convention extractor'), false);
+  });
+});

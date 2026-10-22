@@ -32,10 +32,17 @@ import {
   applyFixtureBindingsToRequest,
   FixtureBindingRegistry,
   matchesFixtureRequirements,
+  matchFixtureRequirementsWithWitness,
   type FixtureResolutionSpec,
 } from './fixture-resolution';
+import { readCollectionWitness, type CollectionSelectionWitness } from './collection-selection';
+import { resolvePath } from './path';
+import { redactSecrets } from '../../utils/redact-secrets';
 import type {
+  ContextProvenanceEntry,
   FixtureResolutionAttempt,
+  RunnerRequestRecord,
+  RunnerResponseRecord,
   FixtureResolutionRecord,
   Storyboard,
   StoryboardContext,
@@ -302,6 +309,20 @@ export interface ControllerSeedingResult {
   bindings?: FixtureBindingRegistry;
   /** Machine-readable AdCP 3.2 resolution evidence. */
   resolutionRecords?: FixtureResolutionRecord[];
+  /**
+   * Declaration-local captures from the SAME selected graph, published only
+   * when every declared fixture resolved. The runner commits them through the
+   * protected-context funnel; they are never merged by plain assignment.
+   */
+  preparedCaptures?: PreparedFixtureCaptures;
+}
+
+/** Reserved-namespace values and provenance produced by fixture preparation. */
+export interface PreparedFixtureCaptures {
+  values: Record<string, unknown>;
+  provenance: Record<string, ContextProvenanceEntry>;
+  /** Per-handle witness retained for the entity that was actually selected. */
+  witnesses: Record<string, CollectionSelectionWitness>;
 }
 
 /**
@@ -535,9 +556,39 @@ async function runRoutedControllerSeeding(
   };
 }
 
+/**
+ * One actual `get_products` exchange from the discovery ladder.
+ *
+ * `runner-output-contract.yaml` makes `request` and `response` required on
+ * a failing validation, with null reserved for pre-wire failures. A capture
+ * that cannot be built from a pinned entity is NOT pre-wire — the entity
+ * came off the wire — so the failing result has to carry the exchange that
+ * produced it rather than an explicit "no contact" null.
+ */
+interface DiscoveryExchange {
+  request: RunnerRequestRecord;
+  response: RunnerResponseRecord;
+}
+
 interface DiscoveryCatalog {
   products: Array<Record<string, unknown>>;
   evidence: { page_count: number; product_count: number; cursors: string[] };
+  /** Per-page exchanges, in request order. */
+  exchanges: DiscoveryExchange[];
+  /** product_id → index into `exchanges`, so a failure cites ITS page. */
+  pageOfProduct: Map<string, number>;
+}
+
+/**
+ * The exchange that actually carried `productId`.
+ *
+ * Falls back to the final page when the id is unknown — a paginated run
+ * still records a real exchange, and `evidence.page_count` / `cursors`
+ * disclose that more pages existed.
+ */
+function discoveryExchangeFor(catalog: DiscoveryCatalog, productId: string | undefined): DiscoveryExchange | undefined {
+  const index = productId === undefined ? undefined : catalog.pageOfProduct.get(productId);
+  return catalog.exchanges[index ?? catalog.exchanges.length - 1];
 }
 
 type DiscoveryCatalogResult =
@@ -593,6 +644,37 @@ async function runDeclaredFixtureResolution(
   const claimedProducts = new Map<string, boolean>();
   const claimedPricingOptions = new Map<string, boolean>();
   const productStatuses = new Map<string, FixtureResolutionRecord['status']>();
+  // Declaration-local captures stay pending until the WHOLE graph resolves.
+  // Publishing early would expose a selected-product id from a graph whose
+  // scoped price later failed, and a step would build a request against an
+  // entity the run never actually pinned.
+  const pendingCaptures: Array<{
+    spec: FixtureResolutionSpec;
+    key: string;
+    value: unknown;
+    sourceTask: 'get_products' | 'comply_test_controller';
+  }> = [];
+  const retainedWitnesses = new Map<string, CollectionSelectionWitness>();
+  let captureFailure: string | undefined;
+  /**
+   * Per-handle capture-failure diagnostics.
+   *
+   * Keyed by handle, NOT run-global: the loop below does not stop at the
+   * first failing declaration, so a single shared pointer/exchange gave
+   * the second failing handle the FIRST handle's evidence while its
+   * `error` was its own. `json_pointer` must point at the field that
+   * failed on THIS declaration, and `request`/`response` must be the
+   * exchange that produced THIS entity.
+   *
+   * `pointer` is the RFC 6901 form of the capture path, when it had one.
+   * `exchange` is the real wire records: `fixture_capture_unbuildable` is
+   * a post-wire failure, so required_on_failure request/response must be
+   * the actual exchange, not the nulls reserved for a pre-wire refusal.
+   */
+  const captureFailures = new Map<string, { pointer?: string; exchange?: DiscoveryExchange }>();
+  // Set alongside `captureFailure` so the synthesized validation does not
+  // have to recognize the failure by its prose.
+  const captureFailedHandles = new Set<string>();
   const seedContext = { correlation_id: `${storyboardCorrelationPrefix(storyboard)}--__seeding__` };
   let seedOptions = options;
   let discoveryOptions = options;
@@ -739,6 +821,48 @@ async function runDeclaredFixtureResolution(
           const data = raw.data as { success?: boolean; error?: string; error_detail?: string } | undefined;
           if (raw.success && data?.success === true) {
             boundIds = bindSeededFixture(spec, bindings);
+            // A seeded entity's authored fixture body IS the graph the seller
+            // was instructed to create, so it is the honest capture source.
+            // No seller catalog read is substituted for it.
+            const seedSnapshot: Record<string, unknown> = {
+              ...spec.fixture,
+              ...(spec.entityType === 'product'
+                ? { product_id: boundIds.product_id }
+                : { pricing_option_id: boundIds.pricing_option_id }),
+            };
+            const seedWitness = matchFixtureRequirementsWithWitness(seedSnapshot, spec.clauses).witness;
+            if (seedWitness) retainedWitnesses.set(spec.handle, seedWitness);
+            const seedCaptures = collectDeclaredCaptures(spec, seedSnapshot, seedWitness);
+            if (!seedCaptures.ok) {
+              failure = seedCaptures.detail;
+              captureFailure ??= seedCaptures.detail;
+              captureFailures.set(spec.handle, {
+                ...(seedCaptures.path !== undefined && { pointer: toJsonPointer(seedCaptures.path) }),
+                exchange: {
+                  request: {
+                    transport: 'mcp',
+                    operation: 'comply_test_controller',
+                    // The object actually handed to `callControllerRaw`,
+                    // not `controllerRequest` — the call substitutes
+                    // `call.params` when the bound params are not a plain
+                    // record, and adds the seeding correlation context.
+                    payload: redactSecrets({
+                      scenario: call.scenario,
+                      params: isPlainRecord(controllerRequest.params) ? controllerRequest.params : call.params,
+                      context: seedContext,
+                    }),
+                  },
+                  response: { transport: 'mcp', payload: redactSecrets(raw.data ?? raw.error ?? null) },
+                },
+              });
+              captureFailedHandles.add(spec.handle);
+              attempts.push({ strategy, disposition: 'failed', detail: seedCaptures.detail });
+              boundIds = undefined;
+              break;
+            }
+            pendingCaptures.push(
+              ...seedCaptures.captures.map(c => ({ ...c, sourceTask: 'comply_test_controller' as const }))
+            );
             if (spec.entityType === 'product') {
               recordIdentityClaim(claimedProducts, boundIds.product_id!, spec.allowReuse);
             } else {
@@ -795,7 +919,13 @@ async function runDeclaredFixtureResolution(
           discovered.catalog.products,
           bindings,
           claimedProducts,
-          claimedPricingOptions
+          claimedPricingOptions,
+          spec.entityType === 'product'
+            ? specs.filter(
+                candidate =>
+                  candidate.entityType === 'product_pricing_option' && candidate.parentProductHandle === spec.handle
+              )
+            : []
         );
         if (!selected.ok) {
           if (selected.failed) {
@@ -818,6 +948,27 @@ async function runDeclaredFixtureResolution(
         }
         boundIds = selected.boundIds;
         chosenStrategy = strategy;
+        if (selected.witness) retainedWitnesses.set(spec.handle, selected.witness);
+        const collected = collectDeclaredCaptures(spec, selected.snapshot, selected.witness);
+        if (!collected.ok) {
+          failure = collected.detail;
+          captureFailure ??= collected.detail;
+          const failureExchange = discoveryExchangeFor(discovered.catalog, selected.boundIds.product_id);
+          captureFailures.set(spec.handle, {
+            ...(collected.path !== undefined && { pointer: toJsonPointer(collected.path) }),
+            ...(failureExchange && { exchange: failureExchange }),
+          });
+          captureFailedHandles.add(spec.handle);
+          attempts.push({
+            strategy,
+            disposition: 'failed',
+            detail: collected.detail,
+            response: { ...discovered.catalog.evidence, selected: selected.boundIds },
+          });
+          boundIds = undefined;
+          break;
+        }
+        pendingCaptures.push(...collected.captures.map(c => ({ ...c, sourceTask: 'get_products' as const })));
         attempts.push({
           strategy,
           disposition: 'resolved',
@@ -843,6 +994,7 @@ async function runDeclaredFixtureResolution(
     records.push(record);
 
     if (status !== 'unsatisfied') {
+      const captureFailed = status === 'failed' && captureFailedHandles.has(spec.handle);
       steps.push({
         storyboard_id: storyboard.id,
         step_id: call.step_id,
@@ -851,7 +1003,31 @@ async function runDeclaredFixtureResolution(
         task: chosenStrategy === 'discover' ? 'get_products' : 'comply_test_controller',
         passed: status !== 'failed',
         duration_ms: Date.now() - stepStart,
-        validations: [],
+        // An unbuildable capture gets a `check` discriminator like the other
+        // two failure classes, so a report renderer keys on `check` for all
+        // three instead of regexing prose for this one.
+        validations: captureFailed
+          ? [
+              {
+                check: 'fixture_capture_unbuildable',
+                passed: false,
+                description: 'Every declared fixture capture must be buildable from the pinned entity',
+                error: failure,
+                // The contract's analogue, `capture_path_not_resolvable`,
+                // requires the RFC 6901 form of the `context_outputs` path
+                // that failed. `null` only for the witness and size/depth
+                // arms, which genuinely have no path.
+                json_pointer: captureFailures.get(spec.handle)?.pointer ?? null,
+                expected: 'a value at the declared selected-entity path, or a derivable witness',
+                actual: null,
+                // required_on_failure: null only when the check is not a
+                // response_schema check, which this never is.
+                schema_id: null,
+                schema_url: null,
+                ...(captureFailures.get(spec.handle)?.exchange ?? {}),
+              },
+            ]
+          : [],
         context,
         extraction: { path: 'none' },
         ...(failure && { error: failure }),
@@ -863,6 +1039,30 @@ async function runDeclaredFixtureResolution(
   }
 
   const allPassed = failedCount === 0;
+  // All-or-nothing: a capture is published only when every declared fixture
+  // in the graph resolved. A partial graph publishes nothing, so a step can
+  // never read a pinned identity whose sibling price never bound.
+  const graphComplete =
+    allPassed && !fixtureUnsatisfied && captureFailure === undefined && records.every(r => r.status === 'resolved');
+  const preparedCaptures: PreparedFixtureCaptures | undefined =
+    graphComplete && pendingCaptures.length > 0
+      ? {
+          values: Object.fromEntries(pendingCaptures.map(entry => [entry.key, entry.value])),
+          provenance: Object.fromEntries(
+            pendingCaptures.map(entry => [
+              entry.key,
+              {
+                source_step_id: CONTROLLER_SEEDING_PHASE_ID,
+                source_kind: 'fixture_preparation' as const,
+                source_task: entry.sourceTask,
+                fixture_handle: entry.spec.handle,
+                ...(entry.spec.parentProductHandle && { fixture_product_handle: entry.spec.parentProductHandle }),
+              },
+            ])
+          ),
+          witnesses: Object.fromEntries(retainedWitnesses),
+        }
+      : undefined;
   return {
     phase: {
       phase_id: CONTROLLER_SEEDING_PHASE_ID,
@@ -877,7 +1077,163 @@ async function runDeclaredFixtureResolution(
     fixtureUnsatisfied,
     bindings,
     resolutionRecords: records,
+    ...(preparedCaptures && { preparedCaptures }),
   };
+}
+
+/**
+ * Dotted storyboard capture path → RFC 6901 JSON pointer.
+ *
+ * `pricing_options[0].rate` → `/pricing_options/0/rate`. `~` and `/` are
+ * escaped per RFC 6901 before the segments are joined.
+ */
+function toJsonPointer(path: string | undefined): string | undefined {
+  if (path === undefined || path.length === 0) return undefined;
+  const segments = path
+    .replace(/\[(\d+)\]/g, '.$1')
+    .split('.')
+    .filter(segment => segment.length > 0)
+    .map(segment => segment.replace(/~/g, '~0').replace(/\//g, '~1'));
+  return segments.length > 0 ? `/${segments.join('/')}` : undefined;
+}
+
+type CollectedCaptures =
+  | { ok: true; captures: Array<{ spec: FixtureResolutionSpec; key: string; value: unknown }> }
+  | {
+      ok: false;
+      detail: string;
+      /**
+       * The declared capture path that failed to resolve, when the failure
+       * HAS one.
+       *
+       * `runner-output-contract.yaml` requires the contract's analogue,
+       * `capture_path_not_resolvable`, to carry the RFC 6901 form of the
+       * path in `json_pointer`. The path was in hand at the failure site
+       * and was being interpolated into prose and then discarded, so the
+       * structured pointer could not be emitted. Absent for the witness
+       * and size/depth arms, which genuinely have no path.
+       */
+      path?: string;
+    };
+
+/**
+ * Pages whose `get_products` RESPONSE is retained as capture-failure
+ * evidence. Requests are retained for every page regardless.
+ */
+const DISCOVERY_RETAINED_RESPONSE_PAGES = 16;
+
+/** Maximum nesting depth a declared capture may carry. */
+const CAPTURE_MAX_DEPTH = 64;
+/** Maximum serialized size, in bytes, of a single declared capture. */
+const CAPTURE_MAX_BYTES = 512 * 1024;
+
+/**
+ * Reject a capture the funnel could not detach safely.
+ *
+ * `snapshot: selected_entity` commits a seller-controlled catalog object,
+ * and `structuredClone` throws a `RangeError` somewhere around 1,800 levels
+ * of nesting while `JSON.parse` accepts hundreds of thousands. Inheriting
+ * V8's stack limit as the de-facto bound would let the graded agent turn a
+ * failing verdict into a crash — which reads as infrastructure flake and
+ * gets retried, rather than being recorded. Bound it explicitly and grade
+ * the overrun as the setup failure it is.
+ */
+function describeUncapturableValue(value: unknown, key: string): string | undefined {
+  let depth = 0;
+  const walk = (node: unknown, level: number): boolean => {
+    if (level > depth) depth = level;
+    if (depth > CAPTURE_MAX_DEPTH) return false;
+    if (node === null || typeof node !== 'object') return true;
+    if (Array.isArray(node)) return node.every(item => walk(item, level + 1));
+    return Object.values(node as Record<string, unknown>).every(item => walk(item, level + 1));
+  };
+  if (!walk(value, 1)) {
+    return `fixture capture "${key}" nests deeper than the ${CAPTURE_MAX_DEPTH}-level capture limit`;
+  }
+  let size: number;
+  try {
+    // Byte length, not `String.length`: the latter counts UTF-16 code units,
+    // so 200,000 three-byte CJK characters would pass a 512 KiB check while
+    // serializing to ~600 KiB.
+    size = Buffer.byteLength(JSON.stringify(value) ?? '', 'utf8');
+  } catch {
+    return `fixture capture "${key}" is not JSON-serializable and cannot be detached`;
+  }
+  if (size > CAPTURE_MAX_BYTES) {
+    return `fixture capture "${key}" serializes to ${size} bytes, over the ${CAPTURE_MAX_BYTES}-byte capture limit`;
+  }
+  return undefined;
+}
+
+function collectDeclaredCaptures(
+  spec: FixtureResolutionSpec,
+  snapshot: Record<string, unknown>,
+  witness: CollectionSelectionWitness | undefined
+): CollectedCaptures {
+  if (spec.contextOutputs.length === 0) return { ok: true, captures: [] };
+  const captures: Array<{ spec: FixtureResolutionSpec; key: string; value: unknown }> = [];
+  for (const output of spec.contextOutputs) {
+    if (output.snapshot !== undefined) {
+      // The whole selected entity. Optional fields stay absent rather than
+      // failing the capture or being defaulted; the funnel deep-clones and
+      // deep-freezes it on commit.
+      //
+      // Redacted first. This is the only capture form that commits a WHOLE
+      // seller-controlled object, and a committed capture is echoed in
+      // every subsequent step's `context` and can be rendered into a
+      // `context_value_rejected` hint. The repo already refuses to extract
+      // `auth_token` into storyboard context for exactly this reason
+      // (`context.ts`), so a snapshot must not reintroduce the surface for
+      // a token-shaped field the catalog happens to carry. Only
+      // secret-shaped KEYS are replaced; `product_id`, pricing and
+      // collections are untouched, so nothing a declaration reads changes.
+      captures.push({ spec, key: output.key, value: redactSecrets(snapshot) });
+      continue;
+    }
+    if (output.witness !== undefined) {
+      const read = readCollectionWitness(witness, output.witness);
+      if (!read.ok) {
+        return {
+          ok: false,
+          detail: `fixture capture "${output.key}" for handle "${spec.handle}" could not be built: ${read.detail}`,
+        };
+      }
+      captures.push({ spec, key: output.key, value: read.value });
+      continue;
+    }
+    // Resolved from the REDACTED snapshot, not redacted after resolving:
+    // `redactSecrets` matches by field NAME, and a path that lands on a
+    // scalar hands it a bare string with the name already gone, so
+    // capturing `auth_token` would have come through verbatim.
+    const value = resolvePath(redactSecrets(snapshot) as Record<string, unknown>, output.path!);
+    // Null and "" are as unusable downstream as an absent path: substituting
+    // either fabricates state the selected entity does not carry.
+    if (value === undefined || value === null || value === '') {
+      const pinned =
+        spec.entityType === 'product'
+          ? `product "${String(snapshot.product_id ?? spec.handle)}"`
+          : `pricing option "${String(snapshot.pricing_option_id ?? spec.handle)}" on product "${spec.parentProductHandle}"`;
+      return {
+        ok: false,
+        path: output.path!,
+        detail:
+          `fixture capture "${output.key}" (handle "${spec.handle}", pinned ${pinned}) found no usable value at ` +
+          `selected-entity path "${output.path}" — resolved to ${value === undefined ? 'absent' : JSON.stringify(value)}. ` +
+          `Either the path does not exist on this entity shape (top-level keys: ${Object.keys(snapshot).join(', ')}), ` +
+          `or this seller does not populate it. If the field is OPTIONAL in the schema (fixed_price and ` +
+          `min_spend_per_package both are), capture the whole entity with ` +
+          `{ key: "${output.key}", snapshot: selected_entity } so absence stays absence. Add a match predicate ` +
+          `for "${output.path}" only when carrying that field is a real eligibility requirement — gating on it ` +
+          `stops a conformant seller qualifying at all.`,
+      };
+    }
+    captures.push({ spec, key: output.key, value });
+  }
+  for (const capture of captures) {
+    const unusable = describeUncapturableValue(capture.value, capture.key);
+    if (unusable) return { ok: false, detail: unusable };
+  }
+  return { ok: true, captures };
 }
 
 function resolutionSpecKey(spec: FixtureResolutionSpec): string {
@@ -1009,6 +1365,8 @@ async function discoverProductCatalog(
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
   let pageCount = 0;
+  const exchanges: DiscoveryExchange[] = [];
+  const pageOfProduct = new Map<string, number>();
   do {
     if (pageCount >= 1_000) {
       return { ok: false, error: 'fixture discovery pagination exceeded the 1,000-page safety limit' };
@@ -1022,6 +1380,7 @@ async function discoverProductCatalog(
       ext: { adcp: { creative_wire: 'canonical' } },
     };
     let result;
+    const pageStart = Date.now();
     try {
       result = await executeStoryboardTask(client, 'get_products', request, { signal: options.signal });
     } catch (err) {
@@ -1031,6 +1390,33 @@ async function discoverProductCatalog(
       };
     }
     pageCount++;
+    // Recorded for EVERY page, success or not: a schema-invalid or rejected
+    // page is exactly the exchange a reader needs to see.
+    // The request is tiny and always retained. The RESPONSE is a second
+    // full copy of a page of products on top of the `products` array this
+    // loop already accumulates, so retaining every page of a deep catalog
+    // doubled peak memory for evidence that is read only when a capture
+    // fails. Past the budget the page records that it was not retained,
+    // rather than silently reading as an empty response.
+    const retainResponse = exchanges.length < DISCOVERY_RETAINED_RESPONSE_PAGES;
+    const pageIndex =
+      exchanges.push({
+        request: { transport: 'mcp', operation: 'get_products', payload: redactSecrets(request) },
+        response: {
+          transport: 'mcp',
+          payload: retainResponse
+            ? redactSecrets(
+                result.data ??
+                  (result.adcp_error ? { adcp_error: result.adcp_error } : undefined) ??
+                  result.error ??
+                  null
+              )
+            : {
+                response_not_retained: `page ${exchanges.length + 1} is past the runner's ${DISCOVERY_RETAINED_RESPONSE_PAGES}-page discovery-evidence budget; the request for this page is recorded in full`,
+              },
+          duration_ms: Date.now() - pageStart,
+        },
+      }) - 1;
     if (!result.success) {
       return {
         ok: false,
@@ -1096,6 +1482,7 @@ async function discoverProductCatalog(
           seenPricingIds.add(option.pricing_option_id);
         }
       }
+      pageOfProduct.set(product.product_id, pageIndex);
       products.push(product);
       if (products.length > 100_000) {
         return { ok: false, error: 'fixture discovery exceeded the 100,000-product safety limit' };
@@ -1119,7 +1506,12 @@ async function discoverProductCatalog(
   } while (cursor);
   return {
     ok: true,
-    catalog: { products, evidence: { page_count: pageCount, product_count: products.length, cursors } },
+    catalog: {
+      products,
+      evidence: { page_count: pageCount, product_count: products.length, cursors },
+      exchanges,
+      pageOfProduct,
+    },
   };
 }
 
@@ -1132,7 +1524,15 @@ function utf8Compare(a: string, b: string): number {
 }
 
 type SelectedFixture =
-  | { ok: true; boundIds: NonNullable<FixtureResolutionRecord['seller_ids']>; detail: string }
+  | {
+      ok: true;
+      boundIds: NonNullable<FixtureResolutionRecord['seller_ids']>;
+      detail: string;
+      /** The exact entity the resolver pinned, for declaration-local captures. */
+      snapshot: Record<string, unknown>;
+      /** Witness retained from the candidate that was selected, if any. */
+      witness?: CollectionSelectionWitness;
+    }
   | { ok: false; failed: boolean; detail: string };
 
 function selectDiscoveredFixture(
@@ -1140,16 +1540,50 @@ function selectDiscoveredFixture(
   products: Array<Record<string, unknown>>,
   bindings: FixtureBindingRegistry,
   claimedProducts: Map<string, boolean>,
-  claimedPricingOptions: Map<string, boolean>
+  claimedPricingOptions: Map<string, boolean>,
+  dependentPricingSpecs: readonly FixtureResolutionSpec[] = []
 ): SelectedFixture {
   if (spec.entityType === 'product') {
-    const candidates = products
-      .filter(product => matchesFixtureRequirements(product, spec.clauses))
-      .filter(product => identityCanBeClaimed(claimedProducts, product.product_id as string, spec.allowReuse))
-      .sort((a, b) => utf8Compare(a.product_id as string, b.product_id as string));
-    const selected = candidates[0];
-    if (!selected)
-      return { ok: false, failed: false, detail: 'no discovered product satisfied the authored requirements' };
+    // Qualification is applied to every complete validated candidate BEFORE
+    // deterministic ordering, so a nonqualifying earlier product can never
+    // conceal a later qualifying one. Each candidate is also required to
+    // carry a pricing option its declared children can bind: otherwise the
+    // bytewise-first product can win the parent selection and then strand
+    // the whole graph on a child that another product would have satisfied.
+    // Rejection reasons are counted, not discarded. Against a real seller's
+    // catalog, "nothing satisfied the requirements" with no handle, no
+    // candidate count and no reason is the least useful sentence the runner
+    // can emit — and three different filters used to collapse into it.
+    const rejections = new Map<string, number>();
+    let claimedElsewhere = 0;
+    let strandedChild = 0;
+    const matched: Array<{ product: Record<string, unknown>; witness?: CollectionSelectionWitness }> = [];
+    for (const product of products) {
+      const match = matchFixtureRequirementsWithWitness(product, spec.clauses);
+      if (!match.matched) {
+        const reason = match.reason ?? 'did not satisfy the authored match predicates';
+        rejections.set(reason, (rejections.get(reason) ?? 0) + 1);
+        continue;
+      }
+      if (!identityCanBeClaimed(claimedProducts, product.product_id as string, spec.allowReuse)) {
+        claimedElsewhere++;
+        continue;
+      }
+      if (!dependentPricingSpecs.every(child => productCanSatisfyPricingSpec(product, child))) {
+        strandedChild++;
+        continue;
+      }
+      matched.push({ product, ...(match.witness && { witness: match.witness }) });
+    }
+    matched.sort((a, b) => utf8Compare(a.product.product_id as string, b.product.product_id as string));
+    const selected = matched[0]?.product;
+    if (!selected) {
+      return {
+        ok: false,
+        failed: false,
+        detail: describeProductNoMatch(spec, products.length, rejections, claimedElsewhere, strandedChild),
+      };
+    }
     const productId = selected.product_id as string;
     bindings.bindProduct(spec.handle, productId);
     recordIdentityClaim(claimedProducts, productId, spec.allowReuse);
@@ -1157,6 +1591,8 @@ function selectDiscoveredFixture(
       ok: true,
       boundIds: { product_id: productId },
       detail: `selected product_id "${productId}" by UTF-8 bytewise order`,
+      snapshot: selected,
+      ...(matched[0]!.witness && { witness: matched[0]!.witness }),
     };
   }
 
@@ -1197,7 +1633,16 @@ function selectDiscoveredFixture(
     return {
       ok: false,
       failed: false,
-      detail: 'no pricing option on the bound product satisfied the authored requirements',
+      detail:
+        `no pricing option on bound product "${sellerProductId}" satisfied fixture handle ` +
+        `"${parentHandle}/${spec.handle}" — ${options.length} option(s) on the pinned product` +
+        (options.length > 0
+          ? `, pricing_option_id(s): ${options
+              .filter(isPlainRecord)
+              .map(option => String(option.pricing_option_id))
+              .slice(0, 10)
+              .join(', ')}`
+          : ''),
     };
   }
   const pricingOptionId = selected.pricing_option_id as string;
@@ -1207,7 +1652,74 @@ function selectDiscoveredFixture(
     ok: true,
     boundIds: { product_id: sellerProductId, pricing_option_id: pricingOptionId },
     detail: `selected pricing option "${sellerProductId}\u0000${pricingOptionId}" by UTF-8 bytewise order`,
+    // The scoped price comes out of the same pinned product graph, so a
+    // captured currency / fixed_price / min_spend_per_package describes the
+    // option the buy will actually reference.
+    snapshot: selected,
   };
+}
+
+/**
+ * True when the candidate product carries at least one pricing option the
+ * declared child could bind.
+ *
+ * Only applied to a discover-ONLY child. A child whose ladder still contains
+ * `seed` can have its option created on whichever parent is chosen, so
+ * requiring a pre-existing catalog match there would reject parents that the
+ * controller would have seeded onto perfectly well.
+ *
+ * Existence only, and deliberately claim-blind: if two children each need a
+ * distinct option and the chosen parent carries only one, the second child
+ * still strands with "no pricing option on the bound product satisfied the
+ * authored requirements". Threading the claim map through would make parent
+ * selection depend on child resolution order, which is a larger change than
+ * this foundation justifies — the stranding case is visible and diagnosable,
+ * not silent.
+ *
+ * (Declared on `productCanSatisfyPricingSpec`, below.)
+ */
+
+/** Name the handle, the candidate count, and why each group was rejected. */
+function describeProductNoMatch(
+  spec: FixtureResolutionSpec,
+  candidateCount: number,
+  rejections: ReadonlyMap<string, number>,
+  claimedElsewhere: number,
+  strandedChild: number
+): string {
+  const parts = [
+    `no discovered product satisfied fixture handle "${spec.handle}" — ${candidateCount} candidate(s) enumerated from the complete paginated catalog`,
+  ];
+  const top = [...rejections]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([reason, count]) => `${count}x ${reason}`);
+  // ` | `, not `; ` — an individual reason can itself contain a semicolon.
+  if (top.length > 0) parts.push(`rejected by the authored match: ${top.join(' | ')}`);
+  if (claimedElsewhere > 0) {
+    parts.push(
+      `${claimedElsewhere} otherwise-matching product(s) were already pinned to another handle — set allow_reuse: true on this declaration to share one seller entity`
+    );
+  }
+  if (strandedChild > 0) {
+    parts.push(
+      `${strandedChild} matched but carried no pricing option the declared child pricing_options could bind — loosen the child match, or give the child a seed strategy`
+    );
+  }
+  return parts.join('. ');
+}
+
+function productCanSatisfyPricingSpec(product: Record<string, unknown>, child: FixtureResolutionSpec): boolean {
+  if (child.strategies.length !== 1 || child.strategies[0] !== 'discover') return true;
+  const options = Array.isArray(product.pricing_options) ? product.pricing_options : [];
+  return options
+    .filter(isPlainRecord)
+    .some(
+      option =>
+        typeof option.pricing_option_id === 'string' &&
+        option.pricing_option_id.length > 0 &&
+        matchesFixtureRequirements(option, child.clauses)
+    );
 }
 
 /** A seller identity may be shared only when every claimant opts into reuse. */

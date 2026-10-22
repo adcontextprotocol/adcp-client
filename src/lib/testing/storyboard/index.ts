@@ -118,6 +118,7 @@ export { WEBHOOK_ASSERTION_TASKS } from './webhook-assertions';
 
 // Runner
 export {
+  prepareStoryboardFixtures,
   runStoryboard,
   runStoryboardStep,
   applyAdcpVersionRunOptions,
@@ -140,9 +141,71 @@ export {
   buildFixtureResolutionSpecs,
   FixtureBindingRegistry,
   matchesFixtureRequirements,
+  matchFixtureRequirementsWithWitness,
+  normalizeFixtureContextOutputs,
   normalizeFixtureMatchExpression,
   validateFixtureResolutionDeclarations,
 } from './fixture-resolution';
+export type { FixtureContextOutput } from './types';
+
+// Domain-qualified collection identity: one normalizer shared by the
+// fixture predicate, the derived witness captures and the set validator.
+export {
+  COLLECTION_DIAGNOSTIC_LIMIT,
+  COLLECTION_PAIR_LIMIT,
+  COLLECTION_TARGETING_MODES,
+  COLLECTION_WITNESS_KINDS,
+  compareCollectionPairs,
+  diffCollectionPairSets,
+  evaluateCollectionSelection,
+  formatCollectionPair,
+  normalizeCollectionSelectionSelector,
+  normalizeCollectionSelectors,
+  productSatisfiesCollectionSelection,
+  readCollectionWitness,
+  summarizeCollectionPairs,
+} from './collection-selection';
+export type {
+  ResolvedCollectionSelectionSelector,
+  CollectionNormalizationCode,
+  CollectionNormalizationFailure,
+  CollectionNormalizationResult,
+  CrossPublisherCollectionRelation,
+  CollectionPair,
+  CollectionSelectionEvaluation,
+  CollectionSelectionSelector,
+  CollectionSelectionWitness,
+  CollectionSelectorObject,
+  CollectionWitnessKind,
+  CollectionWitnessReadResult,
+  NormalizedCollectionSelectors,
+} from './collection-selection';
+
+// Protected fixture-capture namespace. The write capability itself is
+// runner-owned and intentionally NOT exported: a capability a caller can
+// construct is not a capability.
+export { isProtectedContextKey, PROTECTED_CONTEXT_PREFIX, ProtectedContextViolation } from './protected-context';
+export type { ProtectedContextViolationCode } from './protected-context';
+
+// Reusable fixture preparation shared by the full and standalone runners.
+export {
+  isTrustedPreparedFixtures,
+  PREPARED_FIXTURES_CONTRACT_VERSION,
+  PreparedStoryboardFixtures,
+  withPreparedFixtures,
+} from './prepared-fixtures';
+export type {
+  PreparedFixtureBinding,
+  PreparedFixtureSelection,
+  PreparedFixturesAuthorizer,
+  PreparedFixturesDecision,
+  PreparedFixturesDisposition,
+  PreparedFixturesLookup,
+  PreparedFixturesRefusal,
+  PreparedFixturesRefusalCode,
+  PreparedFixturesReference,
+  PreparedSchemaArtifact,
+} from './prepared-fixtures';
 
 // Compliance cache: capability-driven resolution
 export {
