@@ -595,6 +595,28 @@ export function withExternalSchemaRoot<T>(version: string, root: string | undefi
 }
 
 /**
+ * Resolved on-disk location of the schema bundle validation currently uses
+ * for `version`, with whether it came from a caller-supplied external root.
+ *
+ * Exposed so prepared fixture state can bind to the exact artifact it was
+ * validated against rather than to a mutable version label. A run that swaps
+ * the bundle underneath a prepared state must not silently reuse it.
+ *
+ * @internal — not part of the public API surface; may change without a major bump.
+ */
+export function getActiveSchemaArtifactLocation(version: string): {
+  bundle_key: string;
+  root: string;
+  external: boolean;
+} {
+  return {
+    bundle_key: resolveBundleKey(version),
+    root: resolveSchemaRoot(version),
+    external: isExternalSchemaRootActive(version),
+  };
+}
+
+/**
  * Return whether validation for `version` currently resolves through a
  * caller-supplied schema bundle rather than the SDK's packaged snapshot.
  *

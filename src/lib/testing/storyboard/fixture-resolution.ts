@@ -2,8 +2,19 @@ import { isDeepStrictEqual } from 'node:util';
 import { ADCP_VERSION } from '../../version';
 import { getRequestSchemaEntityPaths, type SchemaEntityPath } from '../../validation/schema-loader';
 import { productCanonicalFormatSatisfies } from './canonical-format-satisfaction';
+import {
+  COLLECTION_WITNESS_KINDS,
+  evaluateCollectionSelection,
+  normalizeCollectionSelectionSelector,
+  type ResolvedCollectionSelectionSelector,
+  type CollectionSelectionWitness,
+  type CollectionWitnessKind,
+} from './collection-selection';
+import { parsePath } from './path';
+import { assertWellFormedProtectedKey, isProtectedContextKey } from './protected-context';
 import type {
   FixtureCanonicalFormatSelector,
+  FixtureContextOutput,
   FixtureMatchClause,
   FixtureResolutionDeclaration,
   FixtureResolutionStrategy,
@@ -11,8 +22,15 @@ import type {
   Storyboard,
 } from './types';
 
-const OPERATORS = ['equals', 'present', 'contains_all', 'any_match', 'canonical_format_satisfies'] as const;
-const DECLARATION_KEYS = new Set(['handle', 'strategies', 'match', 'allow_reuse']);
+const OPERATORS = [
+  'equals',
+  'present',
+  'contains_all',
+  'any_match',
+  'canonical_format_satisfies',
+  'collection_selection_satisfies',
+] as const;
+const DECLARATION_KEYS = new Set(['handle', 'strategies', 'match', 'allow_reuse', 'context_outputs']);
 const PRICING_DECLARATION_KEYS = new Set([...DECLARATION_KEYS, 'product_handle']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -95,6 +113,12 @@ function normalizeClause(value: unknown, location: string): FixtureMatchClause {
         operator,
         where: normalizeFixtureMatchExpression(value.where, `${location}.where`),
       };
+    case 'collection_selection_satisfies':
+      return {
+        path: value.path,
+        operator,
+        value: normalizeCollectionSelectionSelector(value.value, `${location}.value`),
+      };
     case 'canonical_format_satisfies':
       assertPlainObject(value.value, `${location}.value`);
       if (typeof value.value.format_kind !== 'string' || value.value.format_kind.length === 0) {
@@ -107,7 +131,12 @@ function normalizeClause(value: unknown, location: string): FixtureMatchClause {
   }
 }
 
-function validateDeclaration(declaration: unknown, location: string, allowedKeys: ReadonlySet<string>): void {
+function validateDeclaration(
+  declaration: unknown,
+  location: string,
+  allowedKeys: ReadonlySet<string>,
+  entityKind: 'product' | 'pricing_option' = 'product'
+): void {
   assertPlainObject(declaration, location);
   const unknown = Object.keys(declaration).filter(key => !allowedKeys.has(key));
   if (unknown.length > 0) throw new Error(`${location}: unknown key(s): ${unknown.join(', ')}`);
@@ -135,12 +164,132 @@ function validateDeclaration(declaration: unknown, location: string, allowedKeys
   if (Array.isArray(declaration.strategies) && declaration.strategies.includes('discover') && clauses.length === 0) {
     throw new Error(`${location}.match: discover strategy requires at least one authored predicate`);
   }
+  normalizeFixtureContextOutputs(declaration.context_outputs, `${location}.context_outputs`, clauses, entityKind);
+}
+
+const FIXTURE_CONTEXT_OUTPUT_KEYS = new Set(['key', 'path', 'witness', 'snapshot']);
+
+/**
+ * Validate the declaration-local capture block.
+ *
+ * A `witness:` entry is only authorable when the same declaration carries a
+ * `collection_selection_satisfies` predicate — the witness is retained from
+ * that evaluation, so asking for one without the predicate is an authoring
+ * error rather than a runtime surprise on an agent that happens to answer
+ * differently.
+ */
+export function normalizeFixtureContextOutputs(
+  value: unknown,
+  location: string,
+  clauses: readonly FixtureMatchClause[],
+  /**
+   * `'pricing_option'` refuses `witness:` captures. A collection witness
+   * describes a PRODUCT — its selectors, its pairs, its cross-publisher
+   * relation — and a pricing option has none of its own. Accepting one
+   * here loaded fine and then failed at run with a message about a missing
+   * `collection_selection_satisfies` predicate that was right there in the
+   * declaration, and the two strategies disagreed about it besides (seed
+   * retained the parent's witness, discover did not). Declare the witness
+   * on the parent product.
+   */
+  entityKind: 'product' | 'pricing_option' = 'product'
+): FixtureContextOutput[] {
+  if (value === undefined) return [];
+  assertArray(value, location);
+  if (value.length === 0) throw new Error(`${location}: must contain at least one capture when present`);
+  const hasCollectionPredicate = clauses.some(clause => clause.operator === 'collection_selection_satisfies');
+  const seen = new Set<string>();
+  return value.map((raw, index) => {
+    const entryLocation = `${location}[${index}]`;
+    assertPlainObject(raw, entryLocation);
+    const unknown = Object.keys(raw).filter(key => !FIXTURE_CONTEXT_OUTPUT_KEYS.has(key));
+    if (unknown.length > 0) {
+      throw new Error(`${entryLocation}: unknown key(s): ${unknown.join(', ')}`);
+    }
+    if (typeof raw.key !== 'string' || raw.key.length === 0) {
+      throw new Error(`${entryLocation}.key: must be a non-empty string`);
+    }
+    if (!isProtectedContextKey(raw.key)) {
+      throw new Error(
+        `${entryLocation}.key: fixture captures must use the reserved "__adcp_fixture_" prefix so later steps, caller context and seller responses cannot replace them; received "${raw.key}"`
+      );
+    }
+    assertWellFormedProtectedKey(raw.key, entryLocation + '.key');
+    if (seen.has(raw.key)) throw new Error(`${entryLocation}.key: duplicate capture key "${raw.key}"`);
+    seen.add(raw.key);
+    const forms = ['path', 'witness', 'snapshot'].filter(form => Object.hasOwn(raw, form));
+    if (forms.length !== 1) {
+      throw new Error(
+        `${entryLocation}: must set exactly one of 'path', 'witness' or 'snapshot'; received ${forms.length === 0 ? 'none' : forms.join(' + ')}`
+      );
+    }
+    const hasPath = forms[0] === 'path';
+    if (forms[0] === 'snapshot') {
+      if (raw.snapshot !== 'selected_entity') {
+        throw new Error(`${entryLocation}.snapshot: must be 'selected_entity'`);
+      }
+      return { key: raw.key, snapshot: 'selected_entity' };
+    }
+    if (hasPath) {
+      if (typeof raw.path !== 'string' || raw.path.length === 0) {
+        throw new Error(`${entryLocation}.path: must be a non-empty string`);
+      }
+      // `match[].path` four lines up IS an RFC 6901 pointer, so mirroring
+      // its style here is the natural mistake — and it loaded fine, ran
+      // discovery, and only then failed with a message about a missing
+      // field rather than a wrong grammar.
+      if (raw.path.startsWith('/')) {
+        throw new Error(
+          `${entryLocation}.path: capture paths use the dotted storyboard grammar ("currency", "pricing_options[0].rate"), not the RFC 6901 pointers that match[].path takes; drop the leading "/" — received "${raw.path}"`
+        );
+      }
+      // Validated against the RESOLVER, not against the dotted string.
+      // Any path `parsePath` reduces to zero segments resolves to the
+      // WHOLE selected entity, so a typo captured the entire product row
+      // under a scalar's name — and unlike the `snapshot:` arm, a `path:`
+      // capture does not run `redactSecrets`, so a credential-shaped
+      // seller field would have been committed verbatim into protected
+      // context. Checking the dotted string alone caught "." and "a..b"
+      // but not "[]" or a path over the resolver's length bound, which
+      // reach the same place.
+      if (parsePath(raw.path).length === 0) {
+        throw new Error(
+          `${entryLocation}.path: must name at least one field in the dotted storyboard grammar ("currency", "pricing_options[0].rate") — received "${raw.path}", which resolves to the whole selected entity. To capture the whole entity, say so: snapshot: 'selected_entity'.`
+        );
+      }
+      // Narrower, and kept for the message: a trailing or doubled dot
+      // ("ext.", ".ext", "a..b") still parses to real segments, so the
+      // check above lets it through while the author's intent is plainly
+      // a typo rather than a whole-entity capture.
+      if (raw.path.split('.').some(segment => segment.length === 0)) {
+        throw new Error(`${entryLocation}.path: every dotted segment must name a field — received "${raw.path}".`);
+      }
+      return { key: raw.key, path: raw.path };
+    }
+    if (typeof raw.witness !== 'string' || !(COLLECTION_WITNESS_KINDS as readonly string[]).includes(raw.witness)) {
+      throw new Error(`${entryLocation}.witness: must be one of ${COLLECTION_WITNESS_KINDS.join(', ')}`);
+    }
+    if (entityKind === 'pricing_option') {
+      throw new Error(
+        `${entryLocation}.witness: a collection witness describes the product, not one of its pricing options; declare it under fixture_resolution.products.<product_handle>.context_outputs instead`
+      );
+    }
+    if (!hasCollectionPredicate) {
+      throw new Error(
+        `${entryLocation}.witness: requires a collection_selection_satisfies predicate on the same declaration`
+      );
+    }
+    return { key: raw.key, witness: raw.witness as CollectionWitnessKind };
+  });
 }
 
 /** Loader/runtime authoring validation for the AdCP 3.2 declaration block. */
 export function validateFixtureResolutionDeclarations(storyboard: Storyboard): void {
   const root = storyboard.fixture_resolution;
-  if (root === undefined) return;
+  if (root === undefined) {
+    assertNoReservedOrdinaryKeys(storyboard);
+    return;
+  }
   assertPlainObject(root, `[${storyboard.id}] fixture_resolution`);
   const unknownRoot = Object.keys(root).filter(key => key !== 'products' && key !== 'pricing_options');
   if (unknownRoot.length > 0) {
@@ -198,7 +347,7 @@ export function validateFixtureResolutionDeclarations(storyboard: Storyboard): v
     for (let index = 0; index < root.pricing_options.length; index++) {
       const declaration = root.pricing_options[index];
       const location = `[${storyboard.id}] fixture_resolution.pricing_options[${index}]`;
-      validateDeclaration(declaration, location, PRICING_DECLARATION_KEYS);
+      validateDeclaration(declaration, location, PRICING_DECLARATION_KEYS, 'pricing_option');
       const typedDeclaration = declaration as PricingOptionFixtureResolutionDeclaration;
       if (typeof typedDeclaration.product_handle !== 'string' || typedDeclaration.product_handle.length === 0) {
         throw new Error(`${location}.product_handle: must be a non-empty string`);
@@ -213,6 +362,88 @@ export function validateFixtureResolutionDeclarations(storyboard: Storyboard): v
           `${location}.handle: no matching fixtures.pricing_options entry for product handle "${typedDeclaration.product_handle}"`
         );
       }
+    }
+  }
+
+  assertNoReservedOrdinaryKeys(storyboard);
+  assertUniqueFixtureCaptureKeys(storyboard);
+}
+
+/**
+ * The reserved namespace is owned by fixture preparation, so every ordinary
+ * authoring surface that writes context must stay out of it. Caught at load,
+ * before any discovery call — the runtime write funnel enforces the same rule
+ * independently for values that only exist at run time.
+ */
+function assertNoReservedOrdinaryKeys(storyboard: Storyboard): void {
+  const reject = (key: string, location: string): void => {
+    if (isProtectedContextKey(key)) {
+      throw new Error(
+        `${location}: "${key}" uses the reserved "__adcp_fixture_" prefix, which is owned by fixture preparation. Rename it to any key not starting with "__adcp_fixture_".`
+      );
+    }
+    // Prototype-sensitive names are refused everywhere a context key is
+    // authored: they can shadow a reserved key through the prototype chain
+    // rather than through an own property.
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      throw new Error(
+        `${location}: "${key}" is a prototype-sensitive context key and cannot be used; rename it to anything other than __proto__, constructor or prototype`
+      );
+    }
+  };
+  for (const key of Object.keys(storyboard.context ?? {})) {
+    reject(key, `[${storyboard.id}] context`);
+  }
+  // `creative_build_probe.context_prefix` needs no reserved-prefix check:
+  // `validateCreativeBuildProbeSpec` already constrains it to a lowercase
+  // identifier, which cannot start with `__`. Adding a second rule here
+  // would be unreachable code that looks like protection.
+  for (const phase of storyboard.phases ?? []) {
+    for (const step of phase.steps ?? []) {
+      for (const output of step.context_outputs ?? []) {
+        if (typeof output.key !== 'string') continue;
+        if (isProtectedContextKey(output.key)) {
+          throw new Error(
+            `[${storyboard.id}] phase '${phase.id}' step '${step.id}': context_outputs entry "${output.key}" uses the reserved "__adcp_fixture_" prefix; step captures cannot write fixture-preparation state. Declare it under fixture_resolution instead, or rename the key.`
+          );
+        }
+        reject(output.key, `[${storyboard.id}] phase '${phase.id}' step '${step.id}' context_outputs`);
+      }
+      // `not_applicable_if[].context_keys` names keys the runner marks
+      // unavailable at run time, which is a metadata write against the same
+      // namespace.
+      const gates = step.not_applicable_if;
+      for (const gate of gates === undefined ? [] : Array.isArray(gates) ? gates : [gates]) {
+        for (const key of gate.context_keys ?? []) {
+          if (typeof key === 'string') {
+            reject(key, `[${storyboard.id}] phase '${phase.id}' step '${step.id}' not_applicable_if.context_keys`);
+          }
+        }
+      }
+    }
+  }
+}
+
+/** Two declarations cannot publish the same reserved key. */
+function assertUniqueFixtureCaptureKeys(storyboard: Storyboard): void {
+  const owners = new Map<string, string>();
+  const claim = (key: string, owner: string): void => {
+    const existing = owners.get(key);
+    if (existing !== undefined) {
+      throw new Error(
+        `[${storyboard.id}] fixture_resolution: capture key "${key}" is declared by both ${existing} and ${owner}`
+      );
+    }
+    owners.set(key, owner);
+  };
+  for (const declaration of storyboard.fixture_resolution?.products ?? []) {
+    for (const output of declaration.context_outputs ?? []) {
+      claim(output.key, `products."${declaration.handle}"`);
+    }
+  }
+  for (const declaration of storyboard.fixture_resolution?.pricing_options ?? []) {
+    for (const output of declaration.context_outputs ?? []) {
+      claim(output.key, `pricing_options."${declaration.product_handle}/${declaration.handle}"`);
     }
   }
 }
@@ -244,8 +475,60 @@ export function matchesFixtureRequirements(candidate: unknown, clauses: readonly
         return Array.isArray(actual) && actual.some(value => matchesFixtureRequirements(value, clause.where ?? []));
       case 'canonical_format_satisfies':
         return productCanonicalFormatSatisfies(actual, clause.value as Record<string, unknown>);
+      case 'collection_selection_satisfies':
+        return evaluateCollectionSelection(actual, clause.value as ResolvedCollectionSelectionSelector).eligible;
     }
   });
+}
+
+/**
+ * Match a candidate and retain the collection witness for it.
+ *
+ * The boolean `matchesFixtureRequirements` keeps its signature for existing
+ * callers. This variant exists so the resolver can retain the witness for the
+ * candidate it *actually selects*, rather than recomputing one later from an
+ * unrelated response — which is precisely how a selected-entity snapshot
+ * drifts away from the entity that was purchased.
+ */
+export function matchFixtureRequirementsWithWitness(
+  candidate: unknown,
+  clauses: readonly FixtureMatchClause[]
+): { matched: boolean; witness?: CollectionSelectionWitness; reason?: string } {
+  let witness: CollectionSelectionWitness | undefined;
+  let matched = true;
+  let reason: string | undefined;
+  for (const clause of clauses) {
+    if (clause.operator !== 'collection_selection_satisfies') {
+      // Keep evaluating rather than returning: a collection clause authored
+      // AFTER a failing ordinary clause must still produce its witness, or
+      // a downstream `witness:` capture reports "requires a
+      // collection_selection_satisfies predicate" about a predicate that is
+      // right there. Clause order must not change the diagnostic.
+      if (matched && !matchesFixtureRequirements(candidate, [clause])) {
+        matched = false;
+        // Name the clause that actually rejected the candidate. Almost no
+        // declaration is a lone collection predicate, so without this the
+        // common case collapses into one generic bucket.
+        reason = `${clause.operator} at "${clause.path || '(whole candidate)'}" did not match`;
+      }
+      continue;
+    }
+    const actual = resolveCandidatePath(candidate, clause.path);
+    const evaluation = evaluateCollectionSelection(actual, clause.value as ResolvedCollectionSelectionSelector);
+    if (!evaluation.eligible) {
+      if (matched) reason = evaluation.reason;
+      matched = false;
+      continue;
+    }
+    // Multiple predicates on one declaration are legal; the last evaluated
+    // witness wins deterministically because clause order is authored.
+    witness = evaluation.witness;
+  }
+  return {
+    matched,
+    ...(witness && { witness }),
+    ...(reason !== undefined && { reason }),
+  };
 }
 
 export interface FixtureResolutionSpec {
@@ -256,6 +539,8 @@ export interface FixtureResolutionSpec {
   strategies: FixtureResolutionStrategy[];
   clauses: FixtureMatchClause[];
   allowReuse: boolean;
+  /** Declaration-local captures published after the whole graph resolves. */
+  contextOutputs: FixtureContextOutput[];
 }
 
 /** Normalize fixture rows + optional metadata into the ordered handle list. */
@@ -294,13 +579,22 @@ export function buildFixtureResolutionSpecs(storyboard: Storyboard): FixtureReso
     if (!fixture) continue;
     if (typeof fixture.product_id !== 'string' || fixture.product_id.length === 0) continue;
     const { product_id: handle, ...requirementFixture } = fixture;
+    const productClauses = normalizeFixtureMatchExpression(
+      declaration?.match,
+      `fixture_resolution.products.${handle}.match`
+    );
     specs.push({
       entityType: 'product',
       handle,
       fixture: requirementFixture,
       strategies: [...(declaration?.strategies ?? ['seed'])],
-      clauses: normalizeFixtureMatchExpression(declaration?.match, `fixture_resolution.products.${handle}.match`),
+      clauses: productClauses,
       allowReuse: declaration?.allow_reuse === true,
+      contextOutputs: normalizeFixtureContextOutputs(
+        declaration?.context_outputs,
+        `fixture_resolution.products.${handle}.context_outputs`,
+        productClauses
+      ),
     });
   }
   const declaredPricing = storyboard.fixture_resolution?.pricing_options ?? [];
@@ -329,17 +623,24 @@ export function buildFixtureResolutionSpecs(storyboard: Storyboard): FixtureReso
     const handle = fixture.pricing_option_id;
     if (typeof parent !== 'string' || !parent || typeof handle !== 'string' || !handle) continue;
     const { product_id: _parent, pricing_option_id: _handle, ...requirementFixture } = fixture;
+    const pricingClauses = normalizeFixtureMatchExpression(
+      declaration?.match,
+      `fixture_resolution.pricing_options.${parent}/${handle}.match`
+    );
     specs.push({
       entityType: 'product_pricing_option',
       handle,
       parentProductHandle: parent,
       fixture: requirementFixture,
       strategies: [...(declaration?.strategies ?? ['seed'])],
-      clauses: normalizeFixtureMatchExpression(
-        declaration?.match,
-        `fixture_resolution.pricing_options.${parent}/${handle}.match`
-      ),
+      clauses: pricingClauses,
       allowReuse: declaration?.allow_reuse === true,
+      contextOutputs: normalizeFixtureContextOutputs(
+        declaration?.context_outputs,
+        `fixture_resolution.pricing_options.${parent}/${handle}.context_outputs`,
+        pricingClauses,
+        'pricing_option'
+      ),
     });
   }
   return specs;

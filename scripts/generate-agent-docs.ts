@@ -1348,6 +1348,7 @@ function generateLlmsTxt(
     ['Reliable Reporting production operations', 'guides/REPORTING-OPERATIONS.md'],
     ['Reliable Reporting stability policy (experimental storage package)', 'guides/REPORTING-STABILITY.md'],
     ['Validate your agent (5-command checklist)', 'guides/VALIDATE-YOUR-AGENT.md'],
+    ['Collection fixture foundation (storyboard fixtures)', 'guides/COLLECTION-FIXTURE-FOUNDATION.md'],
     ['Async patterns (polling, webhooks, deferred)', 'guides/ASYNC-DEVELOPER-GUIDE.md'],
     ['Async API reference', 'guides/ASYNC-API-REFERENCE.md'],
     ['Durable task settlement intents', 'guides/DURABLE-TASK-SETTLEMENT.md'],

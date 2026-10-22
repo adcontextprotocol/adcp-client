@@ -37,6 +37,26 @@ import {
   createRunnerVariables,
   type RunnerVariables,
 } from './context';
+import {
+  applyProtectedContextPatch,
+  createProtectedContextWriter,
+  forwardProtectedContext,
+  isProtectedContextKey,
+  ProtectedContextViolation,
+  registerProtectedContext,
+  type ProtectedContextSinks,
+  type ProtectedContextWriter,
+} from './protected-context';
+import {
+  buildPreparedBinding,
+  createPreparedStoryboardFixtures,
+  preparedBindingRegistryFor,
+  PreparedStoryboardFixtures,
+  resolvePreparedFixtures,
+  type PreparedFixtureBinding,
+  type PreparedFixturesDisposition,
+  type PreparedFixturesRefusal,
+} from './prepared-fixtures';
 import { detectContextRejectionHints } from './rejection-hints';
 import { detectShapeDriftHints } from './shape-drift-hints';
 import { detectStrictValidationHints } from './strict-validation-hints';
@@ -66,6 +86,7 @@ import {
   withPropertyListCredentialRedaction,
 } from './property-list-reference';
 import { ResponseSchemaValidationError } from '../../utils/response-unwrapper';
+import { PreparedFixturesDeniedError } from '../../errors';
 import { injectLegacyEnvelopeStatus, normalizeLegacyMediaBuyStatusForReturn } from '../../utils/envelope-status-compat';
 import { queryUpstreamTraffic, type UpstreamTrafficSuccess } from '../test-controller';
 import { IDENTIFIER_DIGEST_LIMIT } from '../../upstream-recorder/constants';
@@ -128,7 +149,12 @@ import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import { REQUEST_SIGNING_PROBE_TASK } from './request-signing/synthesize';
 import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
-import { runControllerSeeding, type ControllerSeedingResult, type SeedCall } from './seeding';
+import {
+  runControllerSeeding,
+  type ControllerSeedingResult,
+  type PreparedFixtureCaptures,
+  type SeedCall,
+} from './seeding';
 import { callControllerRaw } from '../test-controller';
 import { applyFixtureBindingsToRequest, type FixtureBindingRegistry } from './fixture-resolution';
 import { getComplianceCacheDir } from './compliance';
@@ -212,6 +238,7 @@ import type {
   StoryboardPassResult,
   StoryboardPhaseResult,
   StoryboardStepResult,
+  StoryboardStepHint,
   StoryboardStepPreview,
   StoryboardValidation,
   StrictValidationSummary,
@@ -244,6 +271,51 @@ import {
 // Runner-output contract helpers
 // ────────────────────────────────────────────────────────────
 
+/**
+ * Commit a patch through the protected funnel, converting a namespace
+ * violation into a `protected_context_violation` validation instead of an
+ * exception.
+ *
+ * The guide promises that "a runtime violation becomes a failed
+ * `protected_context_violation` validation on the step that attempted it",
+ * and four of the runner's funnel call sites were letting the throw escape
+ * `runStoryboard` instead. Each of those four is unreachable today — the
+ * keys involved are load-rejected or constrained to a lowercase prefix —
+ * but the funnel's non-key refusal arms (an unfreezable value, a
+ * non-extensible target) apply to ANY key, so the asymmetry was real even
+ * where the trigger was not.
+ *
+ * Returns the validation to record, or `undefined` when the patch
+ * committed. Non-`ProtectedContextViolation` errors still throw: those are
+ * programming errors, not graded outcomes.
+ */
+function tryProtectedContextPatch(
+  context: StoryboardContext,
+  patch: Parameters<typeof applyProtectedContextPatch>[1],
+  options: Parameters<typeof applyProtectedContextPatch>[2]
+): ValidationResult | undefined {
+  try {
+    applyProtectedContextPatch(context, patch, options);
+    return undefined;
+  } catch (error) {
+    if (!(error instanceof ProtectedContextViolation)) throw error;
+    return {
+      check: 'protected_context_violation',
+      passed: false,
+      description: 'Reserved fixture-preparation context keys are immutable for the rest of the run',
+      error: error.message,
+      json_pointer: null,
+      expected: 'no write, delete or metadata change to the __adcp_fixture_ namespace',
+      actual: error.keys.join(', '),
+      // required_on_failure, and null outside `response_schema`. Omitting
+      // the keys is not the same as recording null — a consumer cannot
+      // tell "no schema applies" from "the runner forgot".
+      schema_id: null,
+      schema_url: null,
+    };
+  }
+}
+
 const SKIP_DETAILS: Record<RunnerSkipReason, string> = {
   not_applicable: 'Not applicable: agent did not declare the protocol or specialism this storyboard targets.',
   no_phases: 'Storyboard has no executable phases (placeholder).',
@@ -251,6 +323,8 @@ const SKIP_DETAILS: Record<RunnerSkipReason, string> = {
   missing_tool: 'Skipped: agent did not advertise the required tool.',
   missing_test_controller:
     'Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.',
+  fixture_unsatisfied:
+    'Skipped: every enabled strategy for a declared fixture handle was exhausted without finding or creating a qualifying entity.',
   fixture_unavailable: 'Skipped: the runner test kit cannot synthesize a valid input for the seller-declared contract.',
   unsatisfied_contract: 'Skipped: test-kit contract is out of scope for this grading run.',
   requirement_unmet:
@@ -902,6 +976,38 @@ function responseNotApplicableContextKeys(
     .filter((key): key is string => typeof key === 'string' && key.length > 0);
 }
 
+/**
+ * Step id for the synthetic result that reports a fixture capture the
+ * protected funnel refused to detach.
+ */
+const FIXTURE_CAPTURE_STEP_ID = '__fixture_capture__';
+
+/**
+ * Name the AdCP task whose response the unbuildable capture came from.
+ *
+ * Fixture captures resolve against either `get_products` or
+ * `comply_test_controller`, and preparation records which per capture. The
+ * synthetic step carries one task name, so it reports the task behind the
+ * first refused key rather than assuming the catalog path — a storyboard
+ * seeded through the controller would otherwise be told to go look at a
+ * `get_products` response it never issued.
+ */
+function describeFixtureCaptureTask(
+  captures: PreparedFixtureCaptures | undefined,
+  refusedKeys: readonly string[]
+): string {
+  for (const key of refusedKeys) {
+    const task = captures?.provenance?.[key]?.source_task;
+    if (typeof task === 'string' && task.length > 0) return task;
+  }
+  const distinct = new Set(
+    Object.values(captures?.provenance ?? {})
+      .map(entry => entry.source_task)
+      .filter((task): task is string => typeof task === 'string' && task.length > 0)
+  );
+  return distinct.size === 1 ? [...distinct][0]! : VALIDATION_ONLY_TASK;
+}
+
 function responseDerivedContextResult(
   runState: ExecutionState
 ): Pick<StoryboardStepResult, 'response_derived_not_applicable_context_keys'> {
@@ -1493,27 +1599,78 @@ export async function runStoryboard(
             'Credential-isolated property-list references currently require MCP; A2A probe coverage is unavailable.'
           );
         }
-        if (hasTestClientScope() && options._client && !options.agents) {
-          const resolution = getOrCreateClientResolution(
-            typeof agentUrlOrUrls === 'string' ? agentUrlOrUrls : agentUrlOrUrls[0]!,
-            options
-          );
-          const discovered = await getOrDiscoverProfile(resolution.client, options);
-          options = {
-            ...options,
-            _profile: discovered.step.passed ? discovered.profile : undefined,
-            agentTools: discovered.step.passed ? discovered.profile.tools : undefined,
-          };
-        }
+        // Normalize BEFORE the gate: preparation and the standalone runner both
+        // digest the NORMALIZED storyboard, so gating on the raw document made
+        // any storyboard containing a validation-only step refuse its own
+        // prepared state on `storyboard_digest`.
+        storyboard = normalizeValidationOnlyTasks(storyboard);
+        // ALSO before the gate, not only inside `runStoryboardBody`.
+        // `validateStoryboardShape` mutates in place (`contributes` →
+        // `contributes_to`), and `prepareStoryboardFixtures` runs it before
+        // building its binding — so a storyboard using the shorthand AND a
+        // validation-only step digested differently in prepare and run and
+        // refused its own prepared state. Idempotent, so the later call in
+        // `runStoryboardBody` still stands.
+        validateStoryboardShape(storyboard);
         const schemaRoot = getRunSchemaRoot(options);
-        const runBody = () =>
-          withServedReleaseSchemaRoots(options.servedReleaseSchemaRoots, () =>
+        // The gate must sit INSIDE the schema scopes and ABOVE the `_client`
+        // reuse fast path. Inside, because preparation computed its binding
+        // with the caller's schema root installed — gating outside would
+        // compare a scoped run against the bundled artifact and refuse valid
+        // reuse. Above, because the fast path discovers a profile and calls
+        // `get_adcp_capabilities` before `runStoryboardBody` and its
+        // per-pass gates are ever reached.
+        const gatedBody = async (): Promise<StoryboardResult> => {
+          // Same screen, same verdict shape, same place in the order as the
+          // standalone step route. Letting the funnel THROW here instead
+          // would make one hosted entry point answer a bad caller body with
+          // an exception and the other with a graded result, for the exact
+          // same mistake.
+          const metadataRefusal = describeReservedCallerOptions(options);
+          if (metadataRefusal !== undefined) {
+            return denyPreparedFixtures(
+              options,
+              buildPreparedRefusalRunResult(resolveBindingAgentUrls(agentUrlOrUrls, options), storyboard, {
+                code: 'unauthorized_metadata',
+                detail: metadataRefusal,
+              }),
+              'unauthorized_metadata'
+            );
+          }
+          if (options.prepared_fixtures !== undefined) {
+            // The SAME route projection preparation uses. Comparing a routed
+            // run's real routes against a positional `''` would refuse every
+            // routed reuse on `agent_urls`.
+            const urls = resolveBindingAgentUrls(agentUrlOrUrls, options);
+            const gate = await gatePreparedFixtures(storyboard, urls, options, undefined, 'run');
+            if (gate.used && 'refusal' in gate) {
+              return denyPreparedFixtures(
+                options,
+                buildPreparedRefusalRunResult(urls, storyboard, gate.refusal),
+                gate.refusal.code
+              );
+            }
+          }
+          if (hasTestClientScope() && options._client && !options.agents) {
+            const resolution = getOrCreateClientResolution(
+              typeof agentUrlOrUrls === 'string' ? agentUrlOrUrls : agentUrlOrUrls[0]!,
+              options
+            );
+            const discovered = await getOrDiscoverProfile(resolution.client, options);
+            options = {
+              ...options,
+              _profile: discovered.step.passed ? discovered.profile : undefined,
+              agentTools: discovered.step.passed ? discovered.profile.tools : undefined,
+            };
+          }
+          return withServedReleaseSchemaRoots(options.servedReleaseSchemaRoots, () =>
             runStoryboardBody(agentUrlOrUrls, storyboard, options)
           );
+        };
         if (schemaRoot) {
-          return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, runBody);
+          return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, gatedBody);
         }
-        return await runBody();
+        return await gatedBody();
       },
       { isolate: !hasTestClientScope() }
     )
@@ -2868,6 +3025,735 @@ function collectStepNotices(phases: StoryboardPhaseResult[]): RunnerNotice[] {
   return phases.flatMap(phase => phase.steps.flatMap(step => step.notices ?? []));
 }
 
+/** Context suffixes the creative-build probe owns and replaces per run. */
+const CREATIVE_PROBE_CONTEXT_SUFFIXES = [
+  'capability_id',
+  'target_format_id',
+  'message',
+  'creative_manifest',
+  'creative_id',
+  'transformer_id',
+  'config',
+] as const;
+
+/**
+ * Build a run's initial storyboard context through the protected-write
+ * policy instead of a bare `{ ...storyboard.context, ...options.context }`
+ * spread.
+ *
+ * Both inputs are untrusted with respect to the reserved namespace: a
+ * storyboard is authored content and `options.context` is whatever the
+ * caller (including a hosted step route forwarding browser JSON) supplied.
+ * Either one naming a `__adcp_fixture_` key is an attempt to pre-seed
+ * fixture-preparation state that no fixture graph produced, so it is
+ * rejected loudly rather than silently winning or silently losing.
+ */
+function createRunContext(
+  storyboard: Storyboard,
+  options: StoryboardRunOptions
+): { context: StoryboardContext; protectedWriter: ProtectedContextWriter } {
+  const protectedWriter = createProtectedContextWriter();
+  const context: StoryboardContext = {};
+  registerProtectedContext(context, protectedWriter);
+  applyProtectedContextPatch(
+    context,
+    { set: { ...storyboard.context } },
+    { origin: `[${storyboard.id}] storyboard.context` }
+  );
+  applyProtectedContextPatch(context, { set: { ...options.context } }, { origin: 'options.context' });
+  if (storyboard.context) forwardAliasCache(storyboard.context, context);
+  if (options.context) forwardAliasCache(options.context, context);
+  return { context, protectedWriter };
+}
+
+/**
+ * Refuse reserved or prototype-sensitive keys in a caller-supplied metadata
+ * map. These maps bypass the per-patch funnel by construction (they seed the
+ * sinks the funnel writes into), so they get the same rule at the door.
+ */
+function describeReservedCallerMetadata(
+  map: Record<string, unknown> | undefined,
+  location: string
+): string | undefined {
+  if (!map) return undefined;
+  const offending = Object.keys(map).filter(
+    key => isProtectedContextKey(key) || key === '__proto__' || key === 'constructor' || key === 'prototype'
+  );
+  if (offending.length === 0) return undefined;
+  return `${location}: cannot carry reserved or prototype-sensitive key(s) ${offending.join(', ')}; fixture-preparation metadata is not caller-supplied. Rename the key to anything not starting with "__adcp_fixture_" and not named __proto__, constructor or prototype — or, if you meant to reuse a prepared graph, pass it as options.prepared_fixtures with an authorizer instead of threading its context back.`;
+}
+
+/**
+ * Screen every caller-supplied metadata map on the options object.
+ *
+ * One helper so the full and standalone entry points cannot drift on WHICH
+ * maps are screened — the earlier asymmetry was exactly that kind of drift.
+ */
+function describeReservedCallerOptions(options: StoryboardRunOptions): string | undefined {
+  return (
+    describeReservedCallerMetadata(options.context, 'options.context') ??
+    describeReservedCallerMetadata(options.context_provenance, 'options.context_provenance') ??
+    describeReservedCallerMetadata(
+      options.response_derived_not_applicable_context_keys,
+      'options.response_derived_not_applicable_context_keys'
+    )
+  );
+}
+
+/**
+ * Canonical, nonsecret description of a step-auth directive.
+ *
+ * Literal credential values are folded into the fingerprint (which is an
+ * HMAC under a per-process key), never surfaced: the authorizer sees a
+ * fingerprint, not the probe credential.
+ */
+function describeStepAuthDirective(directive: StepAuthDirective): string {
+  if (directive === 'none') return 'none';
+  if (typeof directive !== 'object') return JSON.stringify(directive);
+  // JSON-encoded per component, like `describeAuth`. `key=value` joined on
+  // `;` collided: `{password: 'a;username=b', username: 'c'}` and
+  // `{password: 'a', username: 'b;username=c'}` both rendered
+  // `basic;password=a;username=b;username=c`, so two different step
+  // credentials produced one fingerprint.
+  const parts: string[] = [JSON.stringify(directive.type)];
+  for (const [key, value] of Object.entries(directive as Record<string, unknown>).sort(([a], [b]) =>
+    a < b ? -1 : 1
+  )) {
+    if (key === 'type') continue;
+    parts.push(JSON.stringify([key, value]));
+  }
+  return parts.join(';');
+}
+
+/**
+ * Routes a prepared binding is pinned to.
+ *
+ * `options.agents` is authoritative when present — the runner requires the
+ * positional argument to be `''` in that mode — so every gate and
+ * preparation must project it the same way or they will disagree about what
+ * "the same route" means.
+ */
+function resolveBindingAgentUrls(agentUrlOrUrls: string | string[], options: StoryboardRunOptions): string[] {
+  if (options.agents) return Object.values(options.agents).map(entry => entry.url);
+  return Array.isArray(agentUrlOrUrls) ? agentUrlOrUrls : [agentUrlOrUrls];
+}
+
+async function gatePreparedFixtures(
+  storyboard: Storyboard,
+  agentUrls: string[],
+  options: StoryboardRunOptions,
+  step?: StoryboardStep,
+  gate: 'run' | 'pass' | 'step' = 'pass'
+): Promise<
+  { used: false } | { used: true; state: PreparedStoryboardFixtures } | { used: true; refusal: PreparedFixturesRefusal }
+> {
+  const outcome = await resolvePreparedFixtures({
+    supplied: options.prepared_fixtures,
+    // The run context is built here so the binding can report the account
+    // the step's request will ACTUALLY carry. Without it the standalone
+    // entry gate — the one `runStoryboardStep` uses — reported no
+    // `request_account_scope` at all, and a caller-supplied or
+    // context-substituted foreign account reached the seller while the
+    // authorizer saw nothing to refuse. Building the context performs no
+    // I/O and is what the run would build moments later anyway.
+    current: buildCurrentPreparedBinding(
+      storyboard,
+      agentUrls,
+      options,
+      step,
+      options,
+      step !== undefined ? createRunContext(storyboard, options).context : undefined
+    ),
+    ...(options.prepared_fixtures_authorizer && { authorizer: options.prepared_fixtures_authorizer }),
+    ...(step !== undefined && { stepId: step.id }),
+    gate,
+  });
+  if (outcome === undefined) return { used: false };
+  if (!outcome.ok) return { used: true, refusal: outcome.refusal };
+  return { used: true, state: outcome.state };
+}
+
+/** Commit an authorized state's captures. Separate from the gate so the gate
+ * can run before any seller contact, while the commit happens where the run
+ * context exists. */
+function hydratePreparedCaptures(
+  state: PreparedStoryboardFixtures,
+  context: StoryboardContext,
+  protectedWriter: ProtectedContextWriter,
+  contextProvenance: Map<string, ContextProvenanceEntry>
+): ValidationResult | undefined {
+  const captures = state.captures;
+  if (Object.keys(captures).length === 0) return undefined;
+  // Graded, not thrown — the only remaining commit site that could have
+  // turned a namespace refusal into a 500 instead of a verdict.
+  return tryProtectedContextPatch(
+    context,
+    { set: captures, setProvenance: state.captureProvenance },
+    { writer: protectedWriter, sinks: { provenance: contextProvenance }, origin: 'prepared fixture state' }
+  );
+}
+
+/**
+ * Resolve a storyboard's fixture graph once and return reusable, immutable
+ * prepared state.
+ *
+ * This is the public form of what `executeStoryboardPass` already does
+ * internally, promoted so the standalone step runner and hosted step routes
+ * stop falling back to literal authored handles. The returned state carries
+ * the pinned seller identities, the declaration-local captures from the
+ * SAME selected graph, the retained collection witnesses, the resolution
+ * evidence, any coverage gaps, and the terminal preparation disposition.
+ *
+ * The state is deliberately process-local: its trust is a live object
+ * identity, and its credential fingerprint is keyed by a per-process random
+ * HMAC key. It will not survive serialization, and it is not meant to — a
+ * frozen JSON snapshot carries no evidence that its grant is still live.
+ * Hosted multi-process reuse belongs behind an authenticated reference
+ * lookup with the authorizer hook. See `docs/guides/COLLECTION-FIXTURE-FOUNDATION.md`.
+ *
+ * A failed or unsatisfied preparation is returned, not thrown: the terminal
+ * disposition is part of the evidence and must be carried forward verbatim
+ * so a retry cannot hide it behind a freshly discovered alternative.
+ */
+export async function prepareStoryboardFixtures(
+  agentUrl: string | string[],
+  storyboard: Storyboard,
+  options: StoryboardRunOptions = {}
+): Promise<PreparedStoryboardFixtures> {
+  options = applyReusableProfileOptions(options);
+  return withPropertyListCredentialRedaction(() =>
+    withMCPConnectionScope(
+      async () => {
+        storyboard = normalizeValidationOnlyTasks(storyboard);
+        validateStoryboardShape(storyboard);
+        options = applyStoryboardVersionOptions(storyboard, options);
+        // Both consumers apply these; preparation did not, so its
+        // `get_products` / `comply_test_controller` calls dispatched
+        // unsigned and without the A2A legacy-compat opt-out against an
+        // agent the run then contacts with both. Neither affects the
+        // credential fingerprint, so the symptom was preparation failing
+        // discovery against a signed-requests seller, not a false mismatch.
+        options = applyFunctionalRequestSigning(options, {
+          ...(options.complianceDir && { complianceDir: options.complianceDir }),
+          ...(options.adcpVersion && { version: options.adcpVersion }),
+        });
+        options = resolveDeclaredTestKit(storyboard, options);
+        options = applyNativeA2AComplianceTransportOptions(options);
+        const schemaRoot = getRunSchemaRoot(options);
+        const body = () =>
+          withServedReleaseSchemaRoots(options.servedReleaseSchemaRoots, () =>
+            prepareStoryboardFixturesBody(agentUrl, storyboard, options)
+          );
+        if (schemaRoot) {
+          return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, body);
+        }
+        return await body();
+      },
+      { isolate: !hasTestClientScope() }
+    )
+  );
+}
+
+/**
+ * Options for the agent preparation will actually contact.
+ *
+ * In a routed run `options.agents[key].auth` is the configured credential
+ * for that route; run-level `auth` is only the default. Preparation reaches
+ * one concrete agent, so it must use that agent's view — the same
+ * projection `buildAgentOptions` applies for ordinary routed dispatch —
+ * rather than the run default.
+ */
+function resolvePreparationRouteOptions(agentUrl: string, options: StoryboardRunOptions): StoryboardRunOptions {
+  const agents = options.agents;
+  if (!agents) return options;
+  const match = Object.entries(agents).find(([, entry]) => entry?.url === agentUrl);
+  if (!match) return options;
+  const [, entry] = match;
+  return {
+    ...options,
+    ...(entry?.auth !== undefined && { auth: entry.auth }),
+    ...(entry?.transport !== undefined && { protocol: entry.transport }),
+  };
+}
+
+async function prepareStoryboardFixturesBody(
+  agentUrl: string | string[],
+  storyboard: Storyboard,
+  options: StoryboardRunOptions
+): Promise<PreparedStoryboardFixtures> {
+  // Project the agents map the same way `runStoryboardBody` does, so a
+  // routed storyboard can be prepared at all: without it `prepareStoryboardFixtures('')`
+  // fails discovery on an empty URL and passing a URL alongside `agents`
+  // is rejected by the runner, leaving no workable argument pair.
+  const agentUrls = resolveBindingAgentUrls(agentUrl, options);
+  // Same screen, same place in the order, as both consumers. Preparation is
+  // the function that MINTS trusted state, and it was the only one of the
+  // three public entry points that reached the agent first and then threw
+  // a raw `ProtectedContextViolation` instead of returning a disposition —
+  // contradicting its own contract that a failed preparation is returned,
+  // not thrown.
+  const metadataRefusal = describeReservedCallerOptions(options);
+  if (metadataRefusal !== undefined) {
+    return buildPreparedFixtures(storyboard, agentUrls, options, undefined, {
+      status: 'failed',
+      detail: metadataRefusal,
+    });
+  }
+  // Preparation is the PRODUCER of prepared state, never a consumer of it.
+  // Supplying `prepared_fixtures` here was silently ignored: the authorizer
+  // was never called — not once, not even on a denial — and preparation went
+  // on to do a full capability-discovery and catalog round trip. A caller
+  // who believed they were reusing an authorized graph got an unauthorized
+  // re-resolution plus seller contact. Refused before anything is
+  // constructed, matching `comply()`'s refusal of the same option.
+  if (options.prepared_fixtures !== undefined) {
+    return buildPreparedFixtures(storyboard, agentUrls, options, undefined, {
+      status: 'failed',
+      detail:
+        'prepareStoryboardFixtures() does not accept prepared_fixtures: it produces prepared state, it does not consume it. ' +
+        'Passing state here authorizes nothing — the authorizer is never consulted — and preparation would re-resolve the ' +
+        'graph against the seller anyway. Pass the state to runStoryboard() or runStoryboardStep() instead, with ' +
+        'prepared_fixtures_authorizer. See docs/guides/COLLECTION-FIXTURE-FOUNDATION.md section 4.',
+    });
+  }
+  const callerOwnsClients = hasTestClientScope();
+  // Per-ROUTE options, not run-level, when the run is routed. Preparation
+  // issues `get_products` and `comply_test_controller` against a concrete
+  // agent, and resolving the client from run options sent the catalog
+  // request under the RUN bearer while the route declared its own — the
+  // credential the seller actually saw was not the configured one.
+  const preparationOptions = resolvePreparationRouteOptions(agentUrls[0]!, options);
+  const resolution = getOrCreateClientResolution(agentUrls[0]!, preparationOptions);
+  const client = resolution.client;
+  // The route projection is a DISPATCH concern. Binding it would fold the
+  // route credential in twice here (once lifted to `auth`, once under
+  // `agents`) and only once in the run, so an identically-routed reuse
+  // would read as a credential_fingerprint mismatch and be refused. The
+  // route credential still binds — `resolveBindingCredential` folds
+  // `agents[*].auth` paired with its url on both sides — so changing it
+  // still refuses reuse. See the routed-reuse and routed-credential-change
+  // regressions in test/lib/storyboard-prepared-fixtures.test.js.
+  const bindingOptions = options;
+  options = preparationOptions;
+  try {
+    let profile = options._profile;
+    if (!profile && !resolution.reusedShared) {
+      const discovered = await getOrDiscoverProfile(client, options);
+      if (discovered.step.passed === false) {
+        return buildPreparedFixtures(storyboard, agentUrls, bindingOptions, undefined, {
+          status: 'failed',
+          detail: discovered.step.error ?? 'agent discovery failed before fixture preparation',
+        });
+      }
+      profile = discovered.profile;
+    }
+    if (profile && (!options._profile || !options.agentTools)) {
+      options = {
+        ...options,
+        ...(!options._profile && { _profile: profile }),
+        ...(!options.agentTools && { agentTools: normalizeAgentToolNames(profile.tools) }),
+      };
+    }
+    const context = createRunContext(storyboard, options).context;
+    const seeding = await runControllerSeeding(client, storyboard, options, context);
+    if (!seeding) {
+      // No declared fixtures: an honest "nothing to prepare" rather than a
+      // synthesized success that implies a graph was pinned.
+      return buildPreparedFixtures(storyboard, agentUrls, bindingOptions, undefined, { status: 'resolved' });
+    }
+    const disposition: PreparedFixturesDisposition = seeding.missingController
+      ? { status: 'unsupported', detail: 'agent does not advertise comply_test_controller' }
+      : seeding.seedUnsupported
+        ? { status: 'unsupported', detail: 'agent did not advertise a required seed_* scenario' }
+        : seeding.failedCount > 0
+          ? {
+              status: 'failed',
+              detail:
+                seeding.phase.steps.find(step => step.error)?.error ?? 'fixture resolution failed during preparation',
+            }
+          : seeding.fixtureUnsatisfied === true
+            ? { status: 'unsatisfied', detail: describeUnsatisfiedFixtures(seeding.resolutionRecords) }
+            : { status: 'resolved' };
+    return buildPreparedFixtures(storyboard, agentUrls, bindingOptions, seeding, disposition);
+  } finally {
+    if (!callerOwnsClients) await closeScopedConnections(options.protocol);
+  }
+}
+
+/**
+ * `fixture_unsatisfied` detail, in the contract's exact form.
+ *
+ * `runner-output-contract.yaml` requires the detail to name EVERY
+ * unsatisfied fixture as `<fixture_type>:<handle>`, with pricing options
+ * scoped as `pricing_option:<product_handle>/<handle>`. Naming only the
+ * first one in prose left a consumer unable to enumerate the gap, and
+ * disagreed with the full runner's own path, which already lists them all.
+ */
+function describeUnsatisfiedFixtures(records: FixtureResolutionRecord[] | undefined): string {
+  const unsatisfied = (records ?? []).filter(record => record.status === 'unsatisfied');
+  if (unsatisfied.length === 0) return 'a declared strategy ladder exhausted without a binding';
+  const names = unsatisfied.map(record =>
+    record.fixture_type === 'pricing_option' && record.product_handle
+      ? `pricing_option:${record.product_handle}/${record.handle}`
+      : `${record.fixture_type}:${record.handle}`
+  );
+  return `fixture_unsatisfied: ${names.join(', ')}`;
+}
+
+function buildPreparedFixtures(
+  storyboard: Storyboard,
+  agentUrls: string[],
+  options: StoryboardRunOptions,
+  seeding: ControllerSeedingResult | undefined | null,
+  disposition: PreparedFixturesDisposition
+): PreparedStoryboardFixtures {
+  const captures = disposition.status === 'resolved' ? (seeding?.preparedCaptures?.values ?? {}) : {};
+  const captureProvenance = disposition.status === 'resolved' ? (seeding?.preparedCaptures?.provenance ?? {}) : {};
+  const witnesses = disposition.status === 'resolved' ? (seeding?.preparedCaptures?.witnesses ?? {}) : {};
+  const unsatisfied = (seeding?.resolutionRecords ?? []).filter(record => record.status === 'unsatisfied');
+  return createPreparedStoryboardFixtures({
+    binding: buildCurrentPreparedBinding(storyboard, agentUrls, options),
+    ...(seeding?.bindings && { bindings: seeding.bindings }),
+    resolutions: seeding?.resolutionRecords ?? [],
+    coverageGaps:
+      unsatisfied.length > 0
+        ? [
+            {
+              reason: 'fixture_unsatisfied',
+              detail:
+                'detail' in disposition ? disposition.detail : 'a declared strategy ladder exhausted without a binding',
+              fixtures: unsatisfied.map(record => ({
+                fixture_type: record.fixture_type,
+                handle: record.handle,
+                ...(record.product_handle && { product_handle: record.product_handle }),
+                requirements: record.requirements,
+              })),
+            },
+          ]
+        : [],
+    captures,
+    captureProvenance,
+    witnesses,
+    disposition,
+    ...(seeding?.phase && { phase: seeding.phase }),
+  });
+}
+
+/**
+ * Nonsecret binding for the scope a run is executing in RIGHT NOW. Recomputed
+ * at every prepared-state lookup so a reroute, account switch or auth
+ * override after preparation is observed rather than inherited.
+ */
+function buildCurrentPreparedBinding(
+  storyboard: Storyboard,
+  agentUrls: string[],
+  options: StoryboardRunOptions,
+  step?: StoryboardStep,
+  runOptions?: StoryboardRunOptions,
+  context?: StoryboardContext,
+  selectedRoute?: { agentKey?: string; agentUrl?: string },
+  runnerVars?: RunnerVariables
+): PreparedFixtureBinding {
+  return buildPreparedBinding({
+    storyboard,
+    agentUrls,
+    ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
+    ...((runOptions ?? options).agents && {
+      agentRouteMap: Object.entries((runOptions ?? options).agents ?? {}).map(
+        ([key, entry]) => [key, entry?.url ?? ''] as [string, string]
+      ),
+    }),
+    accountScope: resolveBindingAccountScope(storyboard, options),
+    brandScope: resolveBindingBrandScope(storyboard, options),
+    ...(step !== undefined && { ...resolveBindingRequestAccountScope(step, context, options, runnerVars) }),
+    sandbox: !(options.disable_sandbox === true || options.sandbox === false),
+    ...(options.prepared_fixtures_principal !== undefined && { principal: options.prepared_fixtures_principal }),
+    // The diffed credential always comes from the RUN options. A routed
+    // dispatch flattens `agents[key].auth` into a bare `auth` on its
+    // per-step view, so deriving it from `assignment.options` would make an
+    // unchanged routed credential read as a mismatch and refuse every step
+    // of every routed run. The step's own view feeds the separate,
+    // undiffed `step_credential_fingerprint` instead.
+    credential: resolveBindingCredential(runOptions ?? options),
+    ...(() => {
+      if (step === undefined) return {};
+      // Emitted whenever the step's EFFECTIVE credential differs from the
+      // run's, not only when the step authors `auth`. A routed step
+      // inherits `agents[key].auth` flattened onto its per-step view, so
+      // keying on `step.auth` alone showed the authorizer the aggregate run
+      // fingerprint for a step dispatching under one specialism's
+      // credential.
+      const stepCredential = resolveBindingCredential(options, step);
+      if (stepCredential === resolveBindingCredential(runOptions ?? options)) return {};
+      return {
+        stepCredential,
+        // The fingerprint is an HMAC under a per-process key, so a host can
+        // observe that it changed but never what it is. This companion is the
+        // value an authorizer can actually branch on.
+        stepAuthKind:
+          step.auth === undefined
+            ? ('routed' as const)
+            : step.auth === 'none'
+              ? ('none' as const)
+              : ('override' as const),
+      };
+    })(),
+    ...(step !== undefined && runOptions !== undefined && (runOptions.agents || selectedRoute)
+      ? resolveBindingStepRoute(step, runOptions, selectedRoute)
+      : {}),
+    // Never mint one here: `current.run_id` is handed to the authorizer as
+    // "identity of the preparation run", and a fresh UUID per lookup is
+    // noise for a host trying to correlate on it.
+    runId: options.prepared_fixtures_run_id ?? '',
+  });
+}
+
+/**
+ * The specialism key and URL this step actually dispatches to.
+ *
+ * `agent_urls` is the sorted set of every route in the run, which says
+ * nothing about which one THIS step uses. An authorizer scoping a grant to
+ * one seller needs the step's own route, not the run's route set.
+ */
+function resolveBindingStepRoute(
+  step: StoryboardStep,
+  runOptions: StoryboardRunOptions,
+  selected?: { agentKey?: string; agentUrl?: string }
+): { stepRoute?: string } {
+  // The DISPATCHER's answer first. Routing resolves by protocol claim (or
+  // `options.default_agent`) when the author names no `step.agent`, and
+  // that decision is invisible to the authorizer otherwise — which left
+  // the common routed case with no field naming the seller about to be
+  // contacted, the exact gap this closes.
+  if (typeof selected?.agentUrl === 'string' && selected.agentUrl.length > 0) {
+    return { stepRoute: `${selected.agentKey ?? '#default'}@${redactOAuthUrlForOutput(selected.agentUrl)}` };
+  }
+  const agents = runOptions.agents ?? {};
+  const key = step.agent;
+  if (typeof key !== 'string' || !Object.hasOwn(agents, key)) return {};
+  const url = agents[key]?.url;
+  if (typeof url !== 'string') return {};
+  return { stepRoute: `${key}@${redactOAuthUrlForOutput(url)}` };
+}
+
+/**
+ * The account the step's request will ACTUALLY carry.
+ *
+ * Built by calling `buildStepRequest` — the same function dispatch calls —
+ * rather than re-deriving the request. A reimplementation drifted from it
+ * immediately: it missed the `expect_error` and `governedFixture` arms,
+ * and it keyed the enricher on the authored `step.task` rather than the
+ * resolved one, so a `$test_kit.*` step reported no account at all while
+ * a context-substituted one went out on the wire.
+ *
+ * `applyBrandInvariant` runs inside the builder, so a step that authors
+ * no account still reports the synthesized one — what the authorizer is
+ * shown is what the seller receives.
+ */
+function resolveBindingRequestAccountScope(
+  step: StoryboardStep,
+  context: StoryboardContext | undefined,
+  options: StoryboardRunOptions,
+  runnerVars?: RunnerVariables
+): { requestAccountScope?: string } {
+  if (!context) return {};
+  let account: unknown;
+  try {
+    // Resolved exactly as dispatch resolves it: `$test_kit.<path>` names a
+    // task through the test kit, and the enricher is keyed on the result.
+    const resolvedTask = resolveTaskName(step, options) ?? step.task;
+    const effectiveStep: StoryboardStep = resolvedTask === step.task ? step : { ...step, task: resolvedTask };
+    account = buildStepRequest(step, effectiveStep, context, options, runnerVars).account;
+  } catch {
+    // A request the builder cannot assemble is a step that will fail
+    // before dispatch; reporting no scope is truthful there.
+    return {};
+  }
+  if (account === undefined || account === null) return {};
+  return { requestAccountScope: canonicalizeScope(account) };
+}
+
+/**
+ * The brand the run actually discovers under.
+ *
+ * `discoverProductCatalog` resolves TWO scoping dimensions and sends both on
+ * `get_products`: the account, and separately `context.brand ?? account.brand
+ * ?? resolveBrand(options)`. Binding only the account let a graph discovered
+ * under one advertiser's catalog be reused under another's — with the
+ * authorizer unable to refuse, because the lookup payload could not express
+ * the difference. Mirror seeding's resolution exactly.
+ */
+function resolveBindingBrandScope(storyboard: Storyboard, options: StoryboardRunOptions): string {
+  const merged = { ...storyboard.context, ...options.context } as Record<string, unknown>;
+  const record = (value: unknown): Record<string, unknown> | undefined =>
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  const contextAccount = record(merged.account);
+  const brand = record(merged.brand) ?? record(contextAccount?.brand) ?? resolveBrand(options);
+  return canonicalizeScope(brand ?? {});
+}
+
+/** Stable, key-ordered rendering used by both scope fields. */
+function canonicalizeScope(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(canonicalizeScope).join(',')}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .filter(([, nested]) => nested !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([key, nested]) => `${JSON.stringify(key)}:${canonicalizeScope(nested)}`)
+    .join(',')}}`;
+}
+
+/**
+ * The account identity the run actually transacts under.
+ *
+ * Read from the SAME source `discoverProductCatalog` uses — `context.account`
+ * when the storyboard or caller supplies one, otherwise `resolveAccount` —
+ * rather than from the brand alone. `resolveAccount` derives `operator` from
+ * `brand.domain`, so a brand-derived proxy conflates accounts that share a
+ * brand but differ by operator or unit, which is a real catalog shape
+ * (`brand: acmeoutdoor.example`, `operator: pinnacle-agency.example`).
+ *
+ * Every scoping field on the account reference is folded in, canonicalized,
+ * so a unit or account_id that distinguishes two accounts also distinguishes
+ * two bindings.
+ */
+function resolveBindingAccountScope(storyboard: Storyboard, options: StoryboardRunOptions): string {
+  // The runner hands discovery the MERGED run context (storyboard defaults
+  // then caller overrides), so reading `options.context` alone would miss a
+  // storyboard-level account default and hand the authorizer a scope the
+  // discovery call never used.
+  const merged = { ...storyboard.context, ...options.context } as Record<string, unknown>;
+  const contextAccount =
+    merged.account !== null && typeof merged.account === 'object' && !Array.isArray(merged.account)
+      ? (merged.account as Record<string, unknown>)
+      : undefined;
+  const account = contextAccount ?? (resolveAccount(options) as unknown as Record<string, unknown>);
+  return canonicalizeScope(account ?? {});
+}
+
+/**
+ * Transport credential used only to derive a per-process HMAC fingerprint.
+ * The value never leaves this function; nothing downstream sees the secret.
+ */
+function resolveBindingCredential(options: StoryboardRunOptions, step?: StoryboardStep): string {
+  const parts: string[] = [];
+  // The EFFECTIVE credential for the step about to execute, not just the
+  // run's. `step.auth` is applied later inside step execution, so a binding
+  // built from run options alone would tell the authorizer the credential is
+  // unchanged while the step actually dispatches unauthenticated or with a
+  // deliberately invalid key.
+  if (step?.auth !== undefined) {
+    parts.push(`step_auth:${JSON.stringify(describeStepAuthDirective(step.auth))}`);
+  }
+  // EVERY header, not just `Authorization`. The SDK's own documentation for
+  // `headers` gives `x-api-key` and `x-org-id` as the canonical example, and
+  // cherry-picking `Authorization` would let two tenants that scope
+  // themselves that way produce identical bindings — an ABSENT fingerprint
+  // on both sides, which compares equal.
+  // Sort on the LOWERCASED name: a hosted route receives headers already
+  // lowercased by Node, so sorting on the raw name would order an identical
+  // credential set differently and read as a mismatch.
+  // Comparator must return 0 for equal keys: two headers differing only in
+  // case lowercase to the same emitted part, and an inconsistent comparator
+  // made the fingerprint depend on insertion order.
+  const headerEntries = Object.entries(options.headers ?? {}).sort(([a], [b]) => {
+    const left = a.toLowerCase();
+    const right = b.toLowerCase();
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
+  for (const [name, value] of headerEntries) {
+    // Stringify rather than skip: undici transmits a numeric header value
+    // just fine, and skipping it made a tenant-scoping header fingerprint
+    // identically to no credential at all.
+    if (value !== undefined && value !== null)
+      parts.push(`header:${JSON.stringify([name.toLowerCase(), String(value)])}`);
+  }
+  const describeAuth = (auth: StoryboardRunOptions['auth'], label: string): void => {
+    if (!auth) return;
+    // Every component is JSON-encoded before joining. Colon-joining was
+    // ambiguous: basic `{username: 'a:b', password: 'c'}` and
+    // `{username: 'a', password: 'b:c'}` produced the same string while
+    // transmitting different credentials.
+    if (auth.type === 'bearer') parts.push(`${label}:bearer:${JSON.stringify(auth.token)}`);
+    else if (auth.type === 'basic') parts.push(`${label}:basic:${JSON.stringify([auth.username, auth.password])}`);
+    // OAuth access tokens rotate by design, so the stable identity is the
+    // grant's client id rather than the current token. Binding to a rotating
+    // token would break legitimate reuse without adding any protection.
+    else if (auth.type === 'oauth') {
+      // BOTH the application and the grant. `client_id` identifies the
+      // application only, so two users who authorized the same application
+      // would otherwise produce one binding. The refresh token is the
+      // stable per-grant identity; the access token rotates by design, so
+      // the whole token set is the fallback only when no refresh token
+      // exists.
+      parts.push(
+        `${label}:oauth:${JSON.stringify([
+          auth.client?.client_id ?? null,
+          typeof auth.tokens?.refresh_token === 'string' ? auth.tokens.refresh_token : null,
+          typeof auth.tokens?.refresh_token === 'string' ? null : (auth.tokens ?? null),
+        ])}`
+      );
+    } else {
+      parts.push(
+        `${label}:oauth_cc:${JSON.stringify([
+          auth.credentials?.client_id ?? null,
+          auth.credentials?.client_secret ?? null,
+        ])}`
+      );
+    }
+  };
+  describeAuth(options.auth, 'run');
+  for (const [key, entry] of Object.entries(options.agents ?? {}).sort(([a], [b]) => (a < b ? -1 : 1))) {
+    // Keyed by SPECIALISM KEY *and* URL, not the key alone. `agent_urls` is
+    // sorted so route order does not matter, which means swapping the URLs
+    // of two specialisms while leaving their credentials in place produced
+    // a byte-identical binding — while sending each credential to the other
+    // seller. The pairing is the thing that changed, so the pairing is what
+    // has to be described.
+    describeAuth(entry?.auth, `agent:${JSON.stringify([key, entry?.url ?? null])}`);
+  }
+  // The WHOLE kit, not just `test_kit.auth`. `resolveStepBasicFromTestKit`
+  // walks an arbitrary dotted path from the kit ROOT, so a step authoring
+  // `auth: { type: 'basic', from_test_kit: 'tenants.b.basic' }` dispatched a
+  // credential neither fingerprint could see: the directive text is pinned
+  // by `storyboard_digest`, but its RESOLUTION was pinned by nothing, and
+  // two kits differing only outside `auth` produced byte-identical run and
+  // step fingerprints while putting different principals on the wire.
+  const kit = options.test_kit as Record<string, unknown> | undefined;
+  if (kit) {
+    for (const [key, value] of Object.entries(kit).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+      if (key === 'auth') {
+        // `auth` keeps its per-field expansion so `probe_task` — a task
+        // name, not a credential, and one that legitimately differs
+        // between otherwise-identical kits — stays out of the fingerprint.
+        //
+        // `authField`, not `authKey`: this binds the FIELD NAME inside
+        // `test_kit.auth` (`api_key`, `basic`, `probe_task`), never a
+        // credential — `authValue` is the credential. The accurate name
+        // also stops a static analyzer reading the label as a secret and
+        // reporting a second, spurious source into the fingerprint HMAC
+        // alongside the real one.
+        for (const [authField, authValue] of Object.entries((value ?? {}) as Record<string, unknown>).sort(
+          ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)
+        )) {
+          if (authField === 'probe_task') continue;
+          if (authValue !== undefined && authValue !== null) {
+            parts.push(`test_kit:${JSON.stringify([`auth.${authField}`, authValue])}`);
+          }
+        }
+        continue;
+      }
+      if (value !== undefined && value !== null) parts.push(`test_kit:${JSON.stringify([key, value])}`);
+    }
+  }
+  // An explicit sentinel rather than `undefined`: "prepared with no
+  // credential" and "prepared with one, reused without" must not both read
+  // as an absent field that compares equal.
+  return parts.length > 0 ? parts.join('\u0000') : 'none';
+}
+
 /**
  * Execute a single pass of the storyboard against the supplied replica URLs
  * using round-robin dispatch starting at `dispatchOffset`. Called directly
@@ -2885,6 +3771,24 @@ async function executeStoryboardPass(
   const start = Date.now();
   const isMultiInstance = agentUrls.length > 1;
   const useRouting = options.agents !== undefined;
+
+  // Authorize BEFORE any seller contact at all — before clients are
+  // constructed and before capability discovery, not merely before the
+  // mutating calls. The binding needs no seller input (storyboard digest,
+  // routes, on-disk schema artifact, caller account and credential), so
+  // there is no reason for an unauthorized caller to reach the agent's
+  // discovery endpoint.
+  let preparedGate: Awaited<ReturnType<typeof gatePreparedFixtures>> = { used: false };
+  if (options.prepared_fixtures !== undefined) {
+    preparedGate = await gatePreparedFixtures(storyboard, agentUrls, options);
+    if (preparedGate.used && 'refusal' in preparedGate) {
+      return denyPreparedFixtures(
+        options,
+        buildPreparedRefusalRunResult(agentUrls, storyboard, preparedGate.refusal),
+        preparedGate.refusal.code
+      );
+    }
+  }
 
   // Per-specialism routing builds its own clients + per-agent discovery; the
   // legacy single/multi-instance path discovers against the first replica.
@@ -2998,7 +3902,9 @@ async function executeStoryboardPass(
     }
   }
 
-  if (preSeeded === undefined) {
+  // A pinned graph is authoritative: resetting and re-seeding would discard
+  // the very state the prepared run is supposed to execute against.
+  if (preSeeded === undefined && !preparedGate.used) {
     const resetTargets =
       routingContext && options.agents
         ? [...routingContext.profiles.entries()].map(([key, profile]) => ({
@@ -3092,7 +3998,9 @@ async function executeStoryboardPass(
   >();
   const routedErrors = new Map<StoryboardStep, unknown>();
   const reportedRoutingErrors = new Set<StoryboardStep>();
-  let context: StoryboardContext = { ...storyboard.context, ...options.context };
+  const runContext = createRunContext(storyboard, options);
+  const protectedWriter = runContext.protectedWriter;
+  let context: StoryboardContext = runContext.context;
   const routingFailedStep = (step: StoryboardStep, phaseId: string, err: unknown): StoryboardStepResult => {
     const detail = redactOAuthUrlsInText(
       err instanceof RoutingError ? err.message : ((err as Error)?.message ?? String(err))
@@ -3428,8 +4336,6 @@ async function executeStoryboardPass(
     }
   }
 
-  if (storyboard.context) forwardAliasCache(storyboard.context, context);
-  if (options.context) forwardAliasCache(options.context, context);
   const contributions = new Set<string>();
   // First phase/step that contributed each flag. Branch-set post-pass reads
   // this to emit the contract-mandated peer_branch_taken detail string
@@ -3726,6 +4632,8 @@ async function executeStoryboardPass(
   // pass would re-seed and the aggregator's cross-pass sum would inflate
   // `failed_count`/`skipped_count` by N when a single fixture broke.
   let seedingPhaseResult: StoryboardPhaseResult | null = null;
+  /** Refused creative-probe context commit, merged into whichever phase attaches. */
+  let probeViolationStep: StoryboardStepResult | undefined;
   let seedingFailed = false;
   let creativeBuildCatalogFailed = false;
   let seedingMissingController = false;
@@ -3825,18 +4733,49 @@ async function executeStoryboardPass(
         ],
       };
     } else if (resolution.status === 'resolved') {
-      for (const key of [
-        'capability_id',
-        'target_format_id',
-        'message',
-        'creative_manifest',
-        'creative_id',
-        'transformer_id',
-        'config',
-      ]) {
-        delete context[`${handle}_${key}`];
+      // Creative preparation is not permission to write fixture captures:
+      // its prefix cleanup and context insertion go through the same funnel
+      // as every other untrusted writer.
+      const probeViolation = tryProtectedContextPatch(
+        context,
+        {
+          unset: CREATIVE_PROBE_CONTEXT_SUFFIXES.map(key => `${handle}_${key}`),
+          set: resolution.context,
+        },
+        { origin: `creative_build_probe '${handle}'` }
+      );
+      if (probeViolation) {
+        // Graded as a setup failure on the probe's own synthetic phase —
+        // the same `seedingPhaseResult` channel the probe's catalog failure
+        // already uses — rather than thrown out of `runStoryboard`.
+        seedingFailed = true;
+        failedCount += 1;
+        // Stashed rather than written straight to `seedingPhaseResult`:
+        // controller seeding runs AFTER this block and would overwrite it,
+        // losing the diagnostic step (the verdict would survive on
+        // `seedingFailed`, but a verdict with no `check` is the thing the
+        // synthesized kinds exist to avoid). Merged in below.
+        probeViolationStep = {
+          storyboard_id: storyboard.id,
+          phase_id: 'fixture_resolution',
+          step_id: `creative_build_probe_context.${handle}`,
+          title: 'Publish creative build probe context',
+          task: 'get_adcp_capabilities',
+          passed: false,
+          duration_ms: 0,
+          validations: [probeViolation],
+          context: withoutProtectedCaptures(context),
+          extraction: { path: 'none' },
+          error: probeViolation.error,
+        };
+        seedingPhaseResult = {
+          phase_id: 'fixture_resolution',
+          phase_title: 'Creative build fixture resolution',
+          passed: false,
+          duration_ms: 0,
+          steps: [probeViolationStep],
+        };
       }
-      Object.assign(context, resolution.context);
       options = { ...options, contracts: [...new Set([...(options.contracts ?? []), 'creative_build_probe_runner'])] };
     } else {
       fixtureUnsatisfied = true;
@@ -3848,11 +4787,59 @@ async function executeStoryboardPass(
       };
     }
   }
+  // Prepared state short-circuits fixture resolution for the whole pass. The
+  // lookup is re-validated and re-authorized here, and again before each
+  // step below, so a grant revoked mid-run fails the next step rather than
+  // riding on the decision made at preparation time.
+  let preparedFixtureState: PreparedStoryboardFixtures | undefined;
+  // Set when any lookup in this pass was refused. The per-step result is
+  // projected already; the run-level echo must be too, or a caller whose
+  // grant was revoked still receives the pinned identity and captured
+  // pricing in the response body.
+  let preparedRefused: string | undefined;
+  {
+    const prepared = preparedGate;
+    if (prepared.used && 'state' in prepared) {
+      const hydrationViolation = hydratePreparedCaptures(prepared.state, context, protectedWriter, contextProvenance);
+      if (hydrationViolation) {
+        if (!callerOwnsClients) await closeScopedConnections(options.protocol);
+        return buildDiscoveryFailedResult(agentUrls, storyboard, {
+          step: 'Publish prepared fixture captures',
+          passed: false,
+          duration_ms: 0,
+          error: hydrationViolation.error,
+        });
+      }
+      preparedFixtureState = prepared.state;
+      fixtureBindings = preparedBindingRegistryFor(prepared.state);
+      fixtureResolutionRecords = prepared.state.resolutions;
+      const disposition = prepared.state.disposition;
+      if (disposition.status === 'failed') {
+        if (!callerOwnsClients) await closeScopedConnections(options.protocol);
+        return buildDiscoveryFailedResult(agentUrls, storyboard, {
+          step: 'Reuse prepared fixture state',
+          passed: false,
+          duration_ms: 0,
+          error: disposition.detail,
+        });
+      }
+      if (disposition.status === 'unsatisfied') {
+        fixtureUnsatisfied = true;
+        // The prepared state carries the gap; the result must not drop it.
+        fixtureCoverageGap = prepared.state.coverageGaps[0] ?? fixtureCoverageGap;
+      }
+      if (disposition.status === 'unsupported') seedingMissingController = true;
+    }
+  }
   {
     let seeding;
     try {
       seeding =
-        creativeAssetFixtureGap || fixtureUnsatisfied || seedingFailed || skipControllerSeedingForPhaseGates
+        preparedFixtureState !== undefined ||
+        creativeAssetFixtureGap ||
+        fixtureUnsatisfied ||
+        seedingFailed ||
+        skipControllerSeedingForPhaseGates
           ? null
           : preSeeded !== undefined
             ? preSeeded.result
@@ -3918,6 +4905,11 @@ async function executeStoryboardPass(
       const attach = preSeeded === undefined || preSeeded.attach;
       if (attach) {
         seedingPhaseResult = seeding.phase;
+        // Preserve a refused probe commit recorded before seeding ran.
+        if (probeViolationStep && !seeding.phase.steps.some(entry => entry.step_id === probeViolationStep!.step_id)) {
+          seeding.phase.steps.unshift({ ...probeViolationStep, phase_id: seeding.phase.phase_id });
+          seeding.phase.passed = false;
+        }
         passedCount += seeding.passedCount;
         failedCount += seeding.failedCount;
         if (seeding.missingController || seeding.seedUnsupported || seeding.fixtureUnsatisfied) {
@@ -3925,6 +4917,74 @@ async function executeStoryboardPass(
         }
       }
       fixtureBindings = seeding.bindings;
+      // Declaration-local captures are committed with the run's preparation
+      // capability, once, after the whole graph resolved. From here they are
+      // immutable: no later step, caller patch or seller response can
+      // replace, delete or suppress them.
+      if (seeding.preparedCaptures) {
+        // Guarded like every other commit: a capture the funnel refuses to
+        // detach must grade as a setup failure, not crash the run.
+        //
+        // Defense in depth, not the primary path. Preparation already
+        // pre-screens each capture with `describeUncapturableValue` and
+        // grades the overrun on the seed step itself, which is where the
+        // reachable depth/size refusals surface today. The funnel enforces
+        // rules that pre-check does not model — freezability and target
+        // extensibility — so a future witness kind can fail only here.
+        try {
+          applyProtectedContextPatch(
+            context,
+            { set: seeding.preparedCaptures.values, setProvenance: seeding.preparedCaptures.provenance },
+            {
+              writer: protectedWriter,
+              sinks: { provenance: contextProvenance },
+              origin: 'fixture preparation',
+            }
+          );
+        } catch (error) {
+          if (!(error instanceof ProtectedContextViolation)) throw error;
+          seedingFailed = true;
+          seeding.phase.passed = false;
+          // Multi-pass shares one seeding result across every pass, so the
+          // synthetic step is attached exactly once — on the same pass that
+          // attaches the rest of the seeding phase. Pushing per pass would
+          // report the one preparation failure N times and inflate
+          // `failedCount` by N.
+          const alreadyReported = seeding.phase.steps.some(entry => entry.step_id === FIXTURE_CAPTURE_STEP_ID);
+          if (attach && !alreadyReported) {
+            seeding.phase.steps.push({
+              storyboard_id: storyboard.id,
+              step_id: FIXTURE_CAPTURE_STEP_ID,
+              phase_id: seeding.phase.phase_id,
+              title: 'Publish fixture captures',
+              task: describeFixtureCaptureTask(seeding.preparedCaptures, error.keys),
+              passed: false,
+              duration_ms: 0,
+              validations: [
+                {
+                  check: 'fixture_capture_unbuildable',
+                  passed: false,
+                  description: 'Every declared fixture capture must be detachable from the pinned entity',
+                  error: error.message,
+                  json_pointer: null,
+                  expected: 'a capture the runner can deep-clone and freeze',
+                  actual: error.keys.join(', '),
+                  schema_id: null,
+                  schema_url: null,
+                },
+              ],
+              // The commit failed, so nothing reserved is in `context` yet —
+              // but the projection is applied unconditionally so a partially
+              // applied patch can never surface a protected value in a
+              // report.
+              context: withoutProtectedCaptures(context),
+              extraction: { path: 'none' },
+              error: error.message,
+            });
+            failedCount += 1;
+          }
+        }
+      }
       fixtureResolutionRecords = fixtureResolutionRecords
         ? [...fixtureResolutionRecords, ...(seeding.resolutionRecords ?? [])]
         : seeding.resolutionRecords;
@@ -3952,14 +5012,13 @@ async function executeStoryboardPass(
             ...(record.product_handle && { product_handle: record.product_handle }),
             requirements: record.requirements,
           }));
-        const names = fixtures.map(fixture =>
-          fixture.fixture_type === 'pricing_option'
-            ? `pricing_option "${fixture.product_handle}/${fixture.handle}"`
-            : `product "${fixture.handle}"`
-        );
         fixtureCoverageGap = {
           reason: 'fixture_unsatisfied',
-          detail: `fixture_unsatisfied: no seller fixture satisfied ${names.join(', ')}`,
+          // The SAME spelling the disposition uses. Two renderings of one
+          // reason over the same data meant a consumer parsing the
+          // documented `<fixture_type>:<handle>` grammar matched on one
+          // field and not the other.
+          detail: describeUnsatisfiedFixtures(fixtureResolutionRecords),
           fixtures,
         };
       }
@@ -4297,7 +5356,13 @@ async function executeStoryboardPass(
     // stale state from a prior group into the new one. Creating a new object
     // identity drops the WeakMap entry without losing any $context.* values
     // (those ride as plain properties on the spread result).
+    const priorPhaseContext = context;
     context = { ...context };
+    // Protection rides the context object identity (like the alias cache),
+    // so the new identity must inherit it. Without this the single-commit
+    // rule and the writer-identity binding silently stop being enforced
+    // from the first executable phase onward.
+    forwardProtectedContext(priorPhaseContext, context);
 
     // Seeding-cascade skip: the pre-flight seed phase can fail as a setup
     // break, or the agent can be out-of-scope for fixture seeding because it
@@ -4588,7 +5653,7 @@ async function executeStoryboardPass(
                 .filter(v => hardKeys.has(v.key))
                 .map(v => v.key),
               ...(step.context_inputs ?? [])
-                .filter(input => !(input.key in context) && hardKeys.has(input.key))
+                .filter(input => !Object.hasOwn(context, input.key) && hardKeys.has(input.key))
                 .map(input => input.key),
             ]);
             if (missingKeys.size > 0) {
@@ -4653,6 +5718,94 @@ async function executeStoryboardPass(
           priorPhaseIds,
           missingPrerequisiteContextKeysByPhase
         );
+      }
+      // Every-lookup authority: a prepared state authorized at run start is
+      // re-checked before each step. The effective route, account and
+      // credential can change between steps (per-step auth overrides,
+      // routed dispatch), and a grant can be revoked mid-run — neither is
+      // observable from a decision cached at preparation time.
+      if (preparedFixtureState !== undefined) {
+        const recheck = await resolvePreparedFixtures({
+          supplied: options.prepared_fixtures,
+          // The EFFECTIVE scope for this step: the routed options actually
+          // dispatching it, plus its own auth directive.
+          current: buildCurrentPreparedBinding(
+            storyboard,
+            agentUrls,
+            assignment.options ?? options,
+            step,
+            options,
+            context,
+            {
+              ...(assignment.agentKey !== undefined && { agentKey: assignment.agentKey }),
+              ...(assignment.agentUrl !== undefined && { agentUrl: assignment.agentUrl }),
+            },
+            runnerVars
+          ),
+          ...(options.prepared_fixtures_authorizer && { authorizer: options.prepared_fixtures_authorizer }),
+          stepId: step.id,
+          gate: 'step',
+        });
+        if (recheck !== undefined && !recheck.ok) {
+          const refusalResult: StoryboardStepResult = {
+            storyboard_id: storyboard.id,
+            step_id: step.id,
+            phase_id: phase.id,
+            title: step.title,
+            task: step.task,
+            passed: false,
+            duration_ms: 0,
+            validations: [
+              {
+                check: 'prepared_fixtures_authorization',
+                passed: false,
+                // One description for all three gates. Three spellings of
+                // the same check read to a report renderer as three kinds.
+                description: 'Prepared fixture state is re-validated and re-authorized on every lookup',
+                error: recheck.refusal.detail,
+                json_pointer: null,
+                expected: 'an authorized prepared state bound to this exact step scope',
+                actual: recheck.refusal.code,
+                schema_id: null,
+                schema_url: null,
+                // Explicit nulls, not omission: this is a PRE-WIRE
+                // refusal, and an absent key cannot be told apart from a
+                // runner that forgot to record one.
+                request: null,
+                response: null,
+              },
+            ],
+            // UNREDACTED. This result is never returned to the refused
+            // caller — it goes to the host's authorized audit scope, where
+            // withholding the evidence would defeat the point.
+            context,
+            extraction: { path: 'none' },
+            error: recheck.refusal.detail,
+          };
+          // Mirror the ordinary failure path's bookkeeping. Pushing the
+          // result and bumping the count is not enough: without these the
+          // phase grades green around a refused step, a refused STATEFUL
+          // step fails to trip the cascade (so downstream steps make real
+          // wire calls against state that was never pinned), and branch-set
+          // grading can relabel the refusal `peer_branch_taken` while the
+          // failed count stays elevated.
+          stepResults.push(refusalResult);
+          preparedRefused = recheck.refusal.code;
+          failedCount++;
+          phasePassed = false;
+          countedAsFailed.add(refusalResult);
+          priorStepResults.set(step.id, refusalResult);
+          if (step.stateful) phaseStatefulCascades.set(phase.id, null);
+          if (isMultiInstance || useRouting) {
+            // Same redaction and one-based index as the ordinary result
+            // path: a route URL can carry userinfo or query credentials,
+            // and a zero-based index misattributes the denial to the
+            // preceding replica.
+            refusalResult.agent_url = redactOAuthUrlForOutput(assignment.agentUrl);
+            refusalResult.agent_index = assignment.instanceIndex + 1;
+          }
+          continue;
+        }
       }
       const rawResult =
         routedCapabilityDetail !== undefined
@@ -4738,7 +5891,16 @@ async function executeStoryboardPass(
           });
           continue;
         }
-        const raw = await spec.onStep(assertionContexts.get(spec.id)!, result);
+        // The step result's `context` IS the live run context object, which
+        // the runner adopts as the next step's context. Handing it to an
+        // operator-supplied `--invariants` module let that module delete a
+        // committed capture with no funnel involvement — the next step then
+        // built its request without the pinned entity. Invariants get a
+        // detached projection; everything else about `result` is unchanged.
+        const raw = await spec.onStep(assertionContexts.get(spec.id)!, {
+          ...result,
+          context: withoutProtectedCaptures(result.context ?? {}),
+        });
         for (const r of raw) {
           const full: AssertionResult = { ...r, assertion_id: spec.id, scope: 'step', step_id: step.id };
           assertionResults.push(full);
@@ -5243,6 +6405,8 @@ async function executeStoryboardPass(
     ...(assertionResults.length > 0 ? { assertions: assertionResults } : {}),
     strict_validation_summary: strictSummary,
     notices,
+    // `fixture_resolutions` carries `seller_ids`, so it is withheld on the
+    // same condition as the context projection above.
     ...(fixtureResolutionRecords && { fixture_resolutions: fixtureResolutionRecords }),
     ...(fixtureCoverageGap && { coverage_gaps: [fixtureCoverageGap] }),
     ...(routingContext && routingContext.discoveryFailures.length > 0
@@ -5265,6 +6429,15 @@ async function executeStoryboardPass(
 
   if (webhookReceiver) await webhookReceiver.close();
 
+  // An authorization refusal is an access-control error, not a grading
+  // outcome. The record above is COMPLETE and unredacted — it is the
+  // host's audit evidence, not the caller's report — so it goes to the
+  // authorized sink and the caller gets a typed denial carrying the
+  // machine refusal code and nothing else.
+  if (preparedRefused !== undefined) {
+    await emitPreparedFixturesAudit(options, result);
+    throw new PreparedFixturesDeniedError(preparedRefused);
+  }
   return result;
 }
 
@@ -5298,6 +6471,28 @@ async function runMultiPass(
 ): Promise<StoryboardResult> {
   const start = Date.now();
 
+  // Same ordering rule as the single-pass path, and it must come first here
+  // too: the pre-seed below constructs clients and discovers profiles before
+  // it ever reaches a pass.
+  if (options.prepared_fixtures !== undefined) {
+    // `'run'`, not the default `'pass'`: each `executeStoryboardPass` gates
+    // again with `'pass'`, so labelling this one `'pass'` gave a host
+    // counting lookups P+1 passes for P passes.
+    const gate = await gatePreparedFixtures(storyboard, agentUrls, options, undefined, 'run');
+    if (gate.used && 'refusal' in gate) {
+      // Same contract-shaped refusal every other gate emits. A bare
+      // `discovery_failed` carries no `prepared_fixtures_authorization`
+      // validation, so it violates the "a failed step carries at least one
+      // failing validation" rule AND is invisible to
+      // `resultRefusedPreparedFixtures`, which then does not project.
+      return denyPreparedFixtures(
+        options,
+        buildPreparedRefusalRunResult(agentUrls, storyboard, gate.refusal),
+        gate.refusal.code
+      );
+    }
+  }
+
   // Run pre-flight controller seeding ONCE at the run level (adcp-client#778)
   // so the aggregator doesn't sum N redundant seed batches into
   // `failed_count` / `skipped_count`. Every pass inherits the same outcome;
@@ -5305,9 +6500,7 @@ async function runMultiPass(
   // phase to its `phaseResults`, so the aggregated top-level counts reflect
   // a single seeding pass across the whole run.
   const preSeedClients = agentUrls.map(url => getOrCreateClientResolution(url, options).client);
-  const preSeedContext: StoryboardContext = { ...storyboard.context, ...options.context };
-  if (storyboard.context) forwardAliasCache(storyboard.context, preSeedContext);
-  if (options.context) forwardAliasCache(options.context, preSeedContext);
+  const preSeedContext: StoryboardContext = createRunContext(storyboard, options).context;
   let preSeedProfile = options._profile;
   if (!preSeedProfile) {
     const discovered = await getOrDiscoverProfile(preSeedClients[0]!, options);
@@ -5325,13 +6518,17 @@ async function runMultiPass(
     };
   }
 
-  const resetFailure = await resetControllerStates(
-    preSeedClients.map(client => ({ client, options })),
-    storyboard
-  );
-  if (resetFailure) {
-    await closeScopedConnections(options.protocol);
-    return buildDiscoveryFailedResult(agentUrls, storyboard, resetFailure);
+  // A pinned graph is authoritative across every pass; resetting and
+  // re-seeding would discard the state the prepared run executes against.
+  if (options.prepared_fixtures === undefined) {
+    const resetFailure = await resetControllerStates(
+      preSeedClients.map(client => ({ client, options })),
+      storyboard
+    );
+    if (resetFailure) {
+      await closeScopedConnections(options.protocol);
+      return buildDiscoveryFailedResult(agentUrls, storyboard, resetFailure);
+    }
   }
 
   // runStoryboardBody cannot evaluate capability-gated requirements until
@@ -5392,7 +6589,13 @@ async function runMultiPass(
     preSeedExcludedPhaseIds
   );
   const preSeededResult =
-    preSeedFixtureGap || allExecutablePhasesCapabilitySkipped(storyboard, phaseCapabilitySkipDetails)
+    // A pinned graph is authoritative across every pass. Re-seeding would
+    // issue fresh `seed_*` mutations that replace the very seller state the
+    // prepared captures describe, while the passes keep the original
+    // bindings — the reset is guarded above for the same reason.
+    options.prepared_fixtures !== undefined ||
+    preSeedFixtureGap ||
+    allExecutablePhasesCapabilitySkipped(storyboard, phaseCapabilitySkipDetails)
       ? null
       : await runControllerSeeding(preSeedClients[0]!, storyboard, options, preSeedContext);
 
@@ -5419,6 +6622,9 @@ async function runMultiPass(
   }
 
   const first = passResults[0]!;
+  // No aggregate projection: a pass whose grant was refused throws from
+  // `executeStoryboardPass` rather than returning, so `passResults` can
+  // only contain authorized passes by the time control reaches here.
   const overallPassed = passes.every(p => p.overall_passed);
   const passed = passes.reduce((sum, p) => sum + p.passed_count, 0);
   const failed = passes.reduce((sum, p) => sum + p.failed_count, 0);
@@ -5458,6 +6664,10 @@ async function runMultiPass(
     tested_at: new Date().toISOString(),
     ...(schemasDedup.length > 0 ? { schemas_used: schemasDedup } : {}),
     ...(assertionsAgg.length > 0 ? { assertions: assertionsAgg } : {}),
+    // `fixture_resolutions` carries `seller_ids`, so the aggregate withholds
+    // it on the same condition the single-pass result does. Projecting
+    // `phases` and `context` but republishing the pinned seller ids here
+    // withheld the copies and published the original.
     ...(first.fixture_resolutions ? { fixture_resolutions: first.fixture_resolutions } : {}),
     ...(first.coverage_gaps ? { coverage_gaps: first.coverage_gaps } : {}),
     notices: noticesDedup,
@@ -5670,6 +6880,262 @@ export async function runStoryboardStep(
   );
 }
 
+/**
+ * True when a pass result carries a failed prepared-state authorization.
+ *
+ * Reads the machine-readable check name rather than the error prose, so a
+ * reworded refusal message cannot quietly stop the aggregate from being
+ * projected.
+ */
+
+/**
+ * Project a context for a refused/unresolved prepared-state result.
+ *
+ * Reserved keys are stripped. A grant that was revoked mid-run must not keep
+ * leaking the pinned product identity and captured pricing into every
+ * subsequent step result just because the wire call was blocked.
+ *
+ * Scope is the reserved namespace, NOT the transitive closure of everything
+ * derived from it. A step that copies a pinned value into an ordinary
+ * `context_outputs` key keeps that key: the step ran under a valid grant and
+ * its result is already with the caller, and stripping authored context
+ * would break the storyboard. This is withholding, not retroactive
+ * un-disclosure, and the guide says so to the adopter in those words.
+ */
+function withoutProtectedCaptures(context: StoryboardContext): StoryboardContext {
+  const projected: StoryboardContext = {};
+  for (const [key, value] of Object.entries(context)) {
+    if (!isProtectedContextKey(key)) projected[key] = value;
+  }
+  return projected;
+}
+
+/**
+ * Run-level result for a refused prepared-state lookup.
+ *
+ * Carries the `prepared_fixtures_authorization` validation rather than a
+ * bare `discovery_failed` with an empty `validations[]`: the contract
+ * requires a failed step to carry at least one failing validation, and an
+ * authorization refusal must be machine-distinguishable from a genuine
+ * discovery failure without regexing the error string.
+ */
+/**
+ * Refuse a caller and leave the evidence where it belongs.
+ *
+ * An authorization failure is an ACCESS-CONTROL error, not a grading
+ * outcome. The caller gets a typed denial carrying the machine refusal
+ * code and nothing else — no grading result, partial or redacted, and so
+ * no fixture identities, seller ids, captures, binding values,
+ * request/response records or earlier-step results. The complete,
+ * UNREDACTED record goes to the host's authorized scope first.
+ */
+async function denyPreparedFixtures(
+  options: StoryboardRunOptions,
+  record: StoryboardResult | StoryboardStepResult,
+  refusalCode: string
+): Promise<never> {
+  await emitPreparedFixturesAudit(options, record);
+  throw new PreparedFixturesDeniedError(refusalCode);
+}
+
+/**
+ * Hand a refused run's COMPLETE record to the host's authorized scope.
+ *
+ * The record is unredacted on purpose: this is the accountable copy, and
+ * every output MUST applies to it. The caller never sees it.
+ *
+ * A sink that throws or rejects does not change the outcome. Reporting
+ * its failure to the refused caller would turn the sink into an oracle
+ * over host state, and swallowing the denial because an audit write
+ * broke would be worse still.
+ */
+async function emitPreparedFixturesAudit(
+  options: StoryboardRunOptions,
+  record: StoryboardResult | StoryboardStepResult
+): Promise<void> {
+  const sink = options.prepared_fixtures_audit_sink;
+  if (!sink) return;
+  try {
+    await sink(record);
+  } catch {
+    // Intentionally swallowed; see above.
+  }
+}
+
+function buildPreparedRefusalRunResult(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  refusal: PreparedFixturesRefusal
+): StoryboardResult {
+  const base = buildDiscoveryFailedResult(agentUrls, storyboard, {
+    step: 'Authorize prepared fixture state',
+    passed: false,
+    duration_ms: 0,
+    error: refusal.detail,
+  });
+  const validation: ValidationResult = {
+    check: 'prepared_fixtures_authorization',
+    passed: false,
+    description: 'Prepared fixture state is re-validated and re-authorized on every lookup',
+    error: refusal.detail,
+    json_pointer: null,
+    expected: 'an authorized prepared state bound to this exact run scope',
+    actual: refusal.code,
+    schema_id: null,
+    schema_url: null,
+    // Explicit nulls. This gate precedes all seller contact, so the
+    // exchange genuinely did not happen — and an omitted key cannot be
+    // told apart from a runner that forgot to record one.
+    request: null,
+    response: null,
+  };
+  return {
+    ...base,
+    phases: base.phases.map(phase => ({
+      ...phase,
+      steps: phase.steps.map(step => ({ ...step, validations: [...step.validations, validation] })),
+    })),
+  };
+}
+
+/**
+ * Project a phase's retained step results after a refusal.
+ *
+ * The run-level projection alone withheld the cheap copy of the pinned
+ * identity while still publishing the expensive one: steps that ran under a
+ * valid grant keep their captures in `context` and their next-step preview.
+ * A whole-run result is returned in one piece, so a mid-run revocation must
+ * clean the whole piece.
+ */
+/**
+ * Marker the output contract already defines for withheld request data.
+ *
+ * `security.payload_redaction` names `[redacted]`, and
+ * `request.required_fields` requires `transport`, `operation` AND
+ * `payload` — so a refusal must REPLACE the protected values inside the
+ * payload, not delete the payload. Deleting it loses required evidence and
+ * pretends no exchange happened; the exchange did happen, under a grant
+ * that was valid at the time.
+ */
+/** Terminal step result for a refused prepared-state lookup. */
+function buildPreparedRefusalStepResult(
+  storyboard: Storyboard,
+  found: { step: StoryboardStep; phaseId: string },
+  context: StoryboardContext,
+  refusal: PreparedFixturesRefusal,
+  contributions: Iterable<string>
+): StoryboardStepResult {
+  return {
+    storyboard_id: storyboard.id,
+    step_id: found.step.id,
+    phase_id: found.phaseId,
+    title: found.step.title,
+    task: found.step.task,
+    passed: false,
+    duration_ms: 0,
+    validations: [
+      {
+        check: 'prepared_fixtures_authorization',
+        passed: false,
+        description: 'Prepared fixture state is re-validated and re-authorized on every lookup',
+        error: refusal.detail,
+        json_pointer: null,
+        // `step scope`, matching the per-step gate. This builds a STEP
+        // result; saying `run scope` here made the published grammar
+        // disagree with itself depending on which gate refused.
+        expected: 'an authorized prepared state bound to this exact step scope',
+        actual: refusal.code,
+        schema_id: null,
+        schema_url: null,
+        request: null,
+        response: null,
+      },
+    ],
+    // UNREDACTED: this record is the host's audit evidence, never the
+    // refused caller's report.
+    context,
+    extraction: { path: 'none' },
+    contributions: Array.from(contributions),
+    error: refusal.detail,
+  };
+}
+
+/** Terminal step result carrying a non-resolved preparation disposition. */
+function buildPreparedDispositionStepResult(
+  storyboard: Storyboard,
+  found: { step: StoryboardStep; phaseId: string },
+  context: StoryboardContext,
+  disposition: PreparedFixturesDisposition,
+  contributions: Iterable<string>
+): StoryboardStepResult {
+  const detail = 'detail' in disposition ? disposition.detail : 'fixture preparation did not resolve';
+  if (disposition.status === 'failed') {
+    return {
+      storyboard_id: storyboard.id,
+      step_id: found.step.id,
+      phase_id: found.phaseId,
+      title: found.step.title,
+      task: found.step.task,
+      passed: false,
+      duration_ms: 0,
+      // A failed step MUST carry at least one failing validation
+      // (runner-output-contract.yaml, `step_result`). The `error`-only
+      // carve-out beside that rule is for TRANSPORT failures, and a failed
+      // preparation is discovery, schema validation or setup — none of
+      // which is transport. Without this the caller saw a red step with no
+      // `check` discriminator and had to regex the prose, which is the one
+      // thing the synthesized kinds exist to avoid.
+      validations: [
+        {
+          check: 'fixture_capture_unbuildable',
+          passed: false,
+          description: 'Fixture preparation must resolve before a step can reuse it',
+          error: detail,
+          json_pointer: null,
+          expected: 'a fixture graph that resolved during preparation',
+          actual: 'preparation_failed',
+          schema_id: null,
+          schema_url: null,
+        },
+      ],
+      context: withoutProtectedCaptures(context),
+      extraction: { path: 'none' },
+      contributions: Array.from(contributions),
+      error: detail,
+    };
+  }
+  return {
+    storyboard_id: storyboard.id,
+    step_id: found.step.id,
+    phase_id: found.phaseId,
+    title: found.step.title,
+    task: found.step.task,
+    passed: true,
+    skipped: true,
+    skip_reason: disposition.status === 'unsatisfied' ? 'fixture_unsatisfied' : 'missing_test_controller',
+    // Match the full runner: reporting a missing controller as a
+    // branch-substitutable `not_applicable` would let a consumer credit a
+    // peer path that does not exist.
+    //
+    // `fixture_unsatisfied` is now the canonical reason too, not a
+    // detailed one mapped down to `not_applicable`. The published contract
+    // lists it as a canonical `skip_result.reason`, and "our other code
+    // path spells it differently" was SDK precedent, not a spec argument —
+    // which the repo's own `spec → mock → SDK` triage order resolves
+    // against the SDK. Promoting it in `RunnerSkipReason` fixed both paths
+    // at once, so the two no longer disagree.
+    skip: {
+      reason: disposition.status === 'unsatisfied' ? 'fixture_unsatisfied' : 'missing_test_controller',
+      detail,
+    },
+    duration_ms: 0,
+    validations: [],
+    context: withoutProtectedCaptures(context),
+    extraction: { path: 'none' },
+    contributions: Array.from(contributions),
+  };
+}
+
 async function runStoryboardStepBody(
   agentUrl: string,
   storyboard: Storyboard,
@@ -5677,6 +7143,67 @@ async function runStoryboardStepBody(
   options: StoryboardRunOptions
 ): Promise<StoryboardStepResult> {
   validateTestKit(options.test_kit);
+
+  // Caller-supplied metadata is screened before any seller contact, for the
+  // same reason prepared state is: these maps seed the sinks the protected
+  // funnel writes into. The refusal is a graded step result, not a thrown
+  // exception — a hosted route must answer a bad body with a verdict.
+  // `options.context` is the largest and most obviously attacker-shaped
+  // caller input on a hosted route. It was reaching the agent before being
+  // refused, and refusing by THROWING rather than grading — both of which
+  // the two smaller maps already avoid.
+  const metadataRefusal = describeReservedCallerOptions(options);
+  if (metadataRefusal !== undefined) {
+    const target = flattenSteps(storyboard).find(entry => entry.step.id === stepId);
+    if (!target) throw new Error(`Step "${stepId}" not found in storyboard "${storyboard.id}".`);
+    return denyPreparedFixtures(
+      options,
+      buildPreparedRefusalStepResult(
+        storyboard,
+        target,
+        {},
+        { code: 'unauthorized_metadata', detail: metadataRefusal },
+        options.contributions ?? []
+      ),
+      'unauthorized_metadata'
+    );
+  }
+
+  // Authorize before any seller contact, including capability discovery.
+  // The step is resolved first only to name it in the lookup and the
+  // refusal; nothing about that touches the agent.
+  let standaloneGate: Awaited<ReturnType<typeof gatePreparedFixtures>> = { used: false };
+  if (options.prepared_fixtures !== undefined) {
+    const target = flattenSteps(storyboard).find(entry => entry.step.id === stepId);
+    if (!target) {
+      throw new Error(
+        `Step "${stepId}" not found in storyboard "${storyboard.id}". ` +
+          `Available steps: ${flattenSteps(storyboard)
+            .map(entry => entry.step.id)
+            .join(', ')}`
+      );
+    }
+    // `'step'`, not the `'pass'` default. A host that implements the
+    // documented taxonomy — a per-step lookup gets the fine-grained
+    // check, a pass lookup the coarse one — was applying the WEAKER
+    // check to the hosted step route, which is the entry point this
+    // whole feature exists for.
+    standaloneGate = await gatePreparedFixtures(storyboard, [agentUrl], options, target.step, 'step');
+    if (standaloneGate.used && 'refusal' in standaloneGate) {
+      return denyPreparedFixtures(
+        options,
+        buildPreparedRefusalStepResult(
+          storyboard,
+          target,
+          createRunContext(storyboard, options).context,
+          standaloneGate.refusal,
+          options.contributions ?? []
+        ),
+        standaloneGate.refusal.code
+      );
+    }
+  }
+
   if (
     storyboard.requires?.[0] === 'property_list_reference_runner' &&
     storyboardCapabilityPredicates(storyboard).length === 0 &&
@@ -5701,7 +7228,9 @@ async function runStoryboardStepBody(
       },
       duration_ms: 0,
       validations: [],
-      context: { ...storyboard.context, ...options.context },
+      // Validated the same way as the executing path so a reserved key in
+      // caller context fails closed on the early-return branch too.
+      context: createRunContext(storyboard, options).context,
       extraction: { path: 'none' },
     };
   }
@@ -5728,9 +7257,9 @@ async function runStoryboardStepBody(
     profile = options._profile;
   }
 
-  const context: StoryboardContext = { ...storyboard.context, ...options.context };
-  if (storyboard.context) forwardAliasCache(storyboard.context, context);
-  if (options.context) forwardAliasCache(options.context, context);
+  const standaloneRunContext = createRunContext(storyboard, options);
+  const protectedWriter = standaloneRunContext.protectedWriter;
+  const context: StoryboardContext = standaloneRunContext.context;
 
   // Find the step
   const allSteps = flattenSteps(storyboard);
@@ -5822,7 +7351,11 @@ async function runStoryboardStepBody(
         passed: true,
         skipped: true,
         skip_reason: 'fixture_unsatisfied',
-        skip: { reason: 'not_applicable', detail: resolution.detail },
+        // Canonical too, now that `fixture_unsatisfied` is in
+        // `RunnerSkipReason`. Both unsatisfied paths spell it the same way,
+        // which is what the contract asks for and what the previous
+        // `not_applicable` mapping obscured.
+        skip: { reason: 'fixture_unsatisfied', detail: resolution.detail },
         duration_ms: 0,
         validations: [],
         context,
@@ -5830,18 +7363,30 @@ async function runStoryboardStepBody(
         contributions: Array.from(options.contributions ?? []),
       };
     }
-    for (const key of [
-      'capability_id',
-      'target_format_id',
-      'message',
-      'creative_manifest',
-      'creative_id',
-      'transformer_id',
-      'config',
-    ]) {
-      delete context[`${storyboard.creative_build_probe.context_prefix}_${key}`];
+    const probeViolation = tryProtectedContextPatch(
+      context,
+      {
+        unset: CREATIVE_PROBE_CONTEXT_SUFFIXES.map(key => `${storyboard.creative_build_probe!.context_prefix}_${key}`),
+        set: resolution.context,
+      },
+      { origin: `creative_build_probe '${storyboard.creative_build_probe.context_prefix}'` }
+    );
+    if (probeViolation) {
+      return {
+        storyboard_id: storyboard.id,
+        step_id: found.step.id,
+        phase_id: found.phaseId,
+        title: found.step.title,
+        task: found.step.task,
+        passed: false,
+        duration_ms: 0,
+        validations: [probeViolation],
+        context: withoutProtectedCaptures(context),
+        extraction: { path: 'none' },
+        contributions: Array.from(options.contributions ?? []),
+        error: probeViolation.error,
+      };
     }
-    Object.assign(context, resolution.context);
     options = { ...options, contracts: [...new Set([...(options.contracts ?? []), 'creative_build_probe_runner'])] };
   }
 
@@ -5873,6 +7418,13 @@ async function runStoryboardStepBody(
     // Seed provenance from the caller-supplied map (threaded through from a
     // previous step's result). Storyboard-level runs build this internally;
     // here the caller owns accumulation across stateless invocations.
+    //
+    // Both maps are the documented hosted thread-back channel, which means
+    // browser JSON on a hosted step route. Reserved keys are refused rather
+    // than filtered: a caller marking a prepared capture unavailable would
+    // suppress its consumer, and a caller forging its provenance would make
+    // the run's evidence claim a fixture_preparation source for a run where
+    // no preparation happened.
     const contextProvenance = new Map<string, ContextProvenanceEntry>(Object.entries(options.context_provenance ?? {}));
     const responseDerivedNotApplicableContextKeys = new Map<string, string>(
       Object.entries(options.response_derived_not_applicable_context_keys ?? {})
@@ -5895,7 +7447,43 @@ async function runStoryboardStepBody(
       storyboardRequiresRequestSigner: resolveStoryboardRequires(storyboard, options).includes('request_signer'),
       storyboardRequiresPublisherAuthRunner:
         storyboard.requires?.includes('trusted_match_publisher_auth_runner') === true,
+      protectedWriter,
     };
+
+    // Standalone execution against prepared state. This is what lets a
+    // hosted step route stop transmitting literal authored handles: the
+    // pinned seller identities, the same-graph captures and the retained
+    // witnesses come from the preparation that actually ran. The lookup was
+    // authorized at the top of this function, before any client existed.
+    const prepared = standaloneGate;
+    if (prepared.used && 'state' in prepared) {
+      const disposition = prepared.state.disposition;
+      if (disposition.status !== 'resolved') {
+        // A terminal preparation outcome is carried forward verbatim. A
+        // retry must not be able to launder a failed graph into a freshly
+        // discovered alternative.
+        return buildPreparedDispositionStepResult(storyboard, found, context, disposition, contributions);
+      }
+      const hydrationViolation = hydratePreparedCaptures(prepared.state, context, protectedWriter, contextProvenance);
+      if (hydrationViolation) {
+        return {
+          storyboard_id: storyboard.id,
+          step_id: found.step.id,
+          phase_id: found.phaseId,
+          title: found.step.title,
+          task: found.step.task,
+          passed: false,
+          duration_ms: 0,
+          validations: [hydrationViolation],
+          context: withoutProtectedCaptures(context),
+          extraction: { path: 'none' },
+          contributions: Array.from(contributions),
+          error: hydrationViolation.error,
+        };
+      }
+      runState.fixtureBindings = preparedBindingRegistryFor(prepared.state);
+      runState.preparedFixtures = prepared.state;
+    }
 
     // The product step depends on a remotely verified catalog that is normally
     // retained by the preceding capability step. Standalone execution performs
@@ -5965,7 +7553,18 @@ async function runStoryboardStepBody(
       }
     }
 
-    return { ...result, contributions: Array.from(contributions) };
+    // The standalone result is a thread-back channel: a hosted step loop
+    // feeds `result.context` into the next call's `options.context`, which
+    // REFUSES a reserved key. Echoing the namespace broke that loop on its
+    // own output, and published the pinned graph on the ordinary success
+    // path where no refusal projection applies. A standalone caller gets
+    // its captures from `prepared_fixtures`, not from threading them back.
+    // `context_provenance` was already withheld here for the same reason.
+    return {
+      ...result,
+      context: withoutProtectedCaptures(result.context ?? {}),
+      contributions: Array.from(contributions),
+    };
   } finally {
     await Promise.all([
       ...(!clientResolution.reusedShared ? [closeScopedConnections(options.protocol)] : []),
@@ -6020,6 +7619,15 @@ interface ExecutionState {
    */
   contextProvenance?: Map<string, ContextProvenanceEntry>;
   /**
+   * Run-owned protected-context write capability. Threaded as a typed
+   * reference on the execution state, never through public JSON context or
+   * the free-form `runnerVars.runState` map — a capability reachable from
+   * caller data is not a capability.
+   */
+  protectedWriter?: ProtectedContextWriter;
+  /** Prepared fixture state pinned for this run, when one is in use. */
+  preparedFixtures?: PreparedStoryboardFixtures;
+  /**
    * Per-step A2A envelopes captured during the run, keyed by step id.
    * Cross-step A2A validators (`a2a_context_continuity`) read this to
    * compare consecutive `Task.contextId` values. The map is mutated
@@ -6063,7 +7671,7 @@ function unresolvedStepContextVars(
 ): ReturnType<typeof findUnresolvedContextVars> {
   const unavailableInputs = (step.context_inputs ?? []).filter(
     input =>
-      !(input.key in context) &&
+      !Object.hasOwn(context, input.key) &&
       (runState.capabilityUnavailableContextKeys?.has(input.key) === true ||
         runState.missingPrerequisiteContextKeys?.has(input.key) === true)
   );
@@ -6549,7 +8157,9 @@ async function executeStep(
           description:
             v.token === BUILD_ASSETS_FROM_FORMAT_DIRECTIVE
               ? `request directive "${v.token}" did not resolve — the test kit could not populate every seller-required asset at ${v.key}`
-              : `request token "${v.token}" did not resolve — prior step did not populate context.${v.key}`,
+              : DOTTED_CONTEXT_TOKEN_RE.test(v.token)
+                ? `request token "${v.token}" is not a supported substitution — $context.<key> matches a whole key only and cannot drill into a captured object. Capture the field directly with context_outputs: [{ key: ..., path: ${suggestedCapturePath(v.token)} }], or branch on the snapshot with a phase skip_if.`
+                : `request token "${v.token}" did not resolve — prior step did not populate context.${v.key}`,
           json_pointer: null,
           expected: v.token,
           actual: null,
@@ -7262,21 +8872,42 @@ async function executeStep(
     allSteps
   );
   if (responseDerivedSkip && !step.expect_error) {
-    for (const key of responseDerivedSkip.contextKeys) {
-      runState.responseDerivedNotApplicableContextKeys?.set(key, responseDerivedSkip.detail);
-    }
+    // Marking a key unavailable is a metadata write against the same
+    // namespace, so it goes through the funnel rather than straight into the
+    // sink. Authored `not_applicable_if[].context_keys` are load-rejected for
+    // reserved names; this is the independent runtime enforcement.
+    const unavailableViolation = tryProtectedContextPatch(
+      context,
+      {
+        markUnavailable: Object.fromEntries(
+          responseDerivedSkip.contextKeys.map(key => [key, responseDerivedSkip.detail])
+        ),
+      },
+      {
+        ...(runState.responseDerivedNotApplicableContextKeys && {
+          sinks: { unavailable: runState.responseDerivedNotApplicableContextKeys },
+        }),
+        origin: `step '${step.id}' not_applicable_if response gate`,
+      }
+    );
     const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
     return {
       step_id: step.id,
       phase_id: phaseId,
       title: step.title,
       task: step.task,
-      passed: true,
-      skipped: true,
-      skip_reason: 'not_applicable',
-      skip: buildSkip('not_applicable', responseDerivedSkip.detail),
+      // A refused metadata write is a failure, not a skip: the gate did not
+      // actually mark anything unavailable, so reporting `not_applicable`
+      // would claim a disposition the runner never reached.
+      passed: unavailableViolation === undefined,
+      ...(unavailableViolation === undefined && {
+        skipped: true as const,
+        skip_reason: 'not_applicable' as const,
+        skip: buildSkip('not_applicable', responseDerivedSkip.detail),
+      }),
       duration_ms: stepResult.duration_ms,
-      validations: [],
+      validations: unavailableViolation ? [unavailableViolation] : [],
+      ...(unavailableViolation && { error: unavailableViolation.error }),
       context,
       ...responseDerivedContextResult(runState),
       response: redactSecrets(taskResult?.data),
@@ -7614,30 +9245,73 @@ async function executeStep(
   // to the same UUID as prior steps with the same alias.
   const updatedContext = { ...context };
   forwardAliasCache(context, updatedContext);
+  // Protection follows the context object identity, exactly like the alias
+  // cache. A shallow spread that forgot this would silently become a new
+  // source of write authority.
+  forwardProtectedContext(context, updatedContext);
+  const protectedSinks: ProtectedContextSinks = {
+    ...(runState.contextProvenance && { provenance: runState.contextProvenance }),
+    ...(runState.responseDerivedNotApplicableContextKeys && {
+      unavailable: runState.responseDerivedNotApplicableContextKeys,
+    }),
+  };
+  const protectedViolations: ValidationResult[] = [];
+  /**
+   * Commit one patch, converting a namespace violation into a visible failed
+   * validation on THIS step. A rejected patch applies nothing, so the run
+   * continues with the prepared state intact and the attempt recorded where
+   * it happened — not swallowed, and not degraded into a skip.
+   */
+  const commitContextPatch = (patch: Parameters<typeof applyProtectedContextPatch>[1], origin: string): void => {
+    try {
+      applyProtectedContextPatch(updatedContext, patch, { sinks: protectedSinks, origin });
+    } catch (error) {
+      if (!(error instanceof ProtectedContextViolation)) throw error;
+      protectedViolations.push({
+        check: 'protected_context_violation',
+        passed: false,
+        description: 'Reserved fixture-preparation context keys are immutable for the rest of the run',
+        error: error.message,
+        json_pointer: null,
+        expected: 'no write, delete or metadata change to the __adcp_fixture_ namespace',
+        actual: error.keys.join(', '),
+        schema_id: null,
+        schema_url: null,
+      });
+    }
+  };
   const hasData = taskResult?.data !== undefined && taskResult?.data !== null;
 
   // Convention-based extraction (for non-error steps, or when expect_error succeeded)
   if (passed && hasData && taskResult && !(effectiveStep.task === 'sync_accounts' && request.dry_run === true)) {
     const extracted = extractContextWithProvenance(effectiveStep.task, taskResult.data, step.id);
+    const conventionUnset: string[] = [];
     for (const group of extracted.clearGroups ?? []) {
       if (group.when && !group.when.values.includes(updatedContext[group.when.key])) continue;
       for (const key of group.keys) {
         const provenance = runState.contextProvenance?.get(key);
+        // `source_kind !== 'convention'` is an ownership check between
+        // ordinary writers; it is NOT an immutable-namespace check, so the
+        // reserved keys still go through the funnel below.
         if (provenance && provenance.source_kind !== 'convention') continue;
-        delete updatedContext[key];
-        runState.responseDerivedNotApplicableContextKeys?.delete(key);
-        runState.contextProvenance?.delete(key);
+        conventionUnset.push(key);
       }
     }
-    Object.assign(updatedContext, extracted.values);
-    for (const key of Object.keys(extracted.values)) {
-      runState.responseDerivedNotApplicableContextKeys?.delete(key);
-    }
-    if (runState.contextProvenance) {
-      for (const [key, entry] of Object.entries(extracted.provenance)) {
-        runState.contextProvenance.set(key, entry);
-      }
-    }
+    // Deletions, values, provenance and availability markers commit as one
+    // atomic patch: a rejected convention write must not be able to leave a
+    // prepared capture deleted or its provenance rewritten.
+    // No writer is supplied: convention extraction is an ordinary, untrusted
+    // writer with respect to the reserved namespace.
+    commitContextPatch(
+      {
+        set: extracted.values,
+        unset: conventionUnset,
+        setProvenance: extracted.provenance,
+        unsetProvenance: conventionUnset,
+        clearUnavailable: [...conventionUnset, ...Object.keys(extracted.values)],
+      },
+      `step '${step.id}' convention extraction for ${effectiveStep.task}`
+    );
   }
 
   // Explicit context_outputs. `generate:` entries fire unconditionally —
@@ -7651,9 +9325,13 @@ async function executeStep(
   // ensures the minted value from any same-step $generate:…#<key> inline
   // substitution is visible here.
   if (step.context_outputs?.length) {
-    for (const output of step.context_outputs) {
-      if (output.key) runState.responseDerivedNotApplicableContextKeys?.delete(output.key);
-    }
+    // Clearing an unavailable marker is itself a metadata write: a step that
+    // could clear the marker on a prepared capture could suppress the
+    // consumer gate that depends on it.
+    commitContextPatch(
+      { clearUnavailable: step.context_outputs.map(output => output.key).filter(key => typeof key === 'string') },
+      `step '${step.id}' context_outputs availability reset`
+    );
     // Resolve `task_completion.<path>` outputs against the eventual task
     // artifact rather than the immediate response. When the immediate
     // response is a submitted-arm envelope (HITL / async-signed-IO flows),
@@ -7692,15 +9370,14 @@ async function executeStep(
       effectiveStep.task,
       updatedContext
     );
-    Object.assign(updatedContext, explicit.values);
-    for (const key of Object.keys(explicit.values)) {
-      runState.responseDerivedNotApplicableContextKeys?.delete(key);
-    }
-    if (runState.contextProvenance) {
-      for (const [key, entry] of Object.entries(explicit.provenance)) {
-        runState.contextProvenance.set(key, entry);
-      }
-    }
+    commitContextPatch(
+      {
+        set: explicit.values,
+        setProvenance: explicit.provenance,
+        clearUnavailable: Object.keys(explicit.values),
+      },
+      `step '${step.id}' context_outputs capture`
+    );
     // Per runner-output-contract.yaml v2.0.0, a `context_outputs.path` that
     // resolves to absent / null / "" is a producer-side conformance failure
     // on THIS step (capture_path_not_resolvable), not on a downstream
@@ -7746,6 +9423,7 @@ async function executeStep(
   }
   // Re-evaluate after any synthesized capture-failure validations are
   // appended — the step's overall pass/fail must reflect them.
+  if (protectedViolations.length > 0) validations.push(...protectedViolations);
   const allValidationsPassedFinal = validations.every(v => !validationFailsStep(v));
 
   // Emit context-value-rejected hints when the seller's error lists the
@@ -7825,10 +9503,22 @@ async function executeStep(
     // modern `response_record.payload` path is already redacted.
     response: redactSecrets(taskResult?.data),
     validations,
+    // NOT projected here: the full runner threads this map from step to
+    // step, so stripping the reserved namespace would break the very
+    // substitution the captures exist for. The STANDALONE entry point
+    // projects it on the way out — see `runStoryboardStepBody` — because
+    // there the map is a thread-back channel the next call refuses.
     context: updatedContext,
     ...(runState.contextProvenance &&
       runState.contextProvenance.size > 0 && {
-        context_provenance: Object.fromEntries(runState.contextProvenance),
+        // Reserved-namespace provenance is withheld from the echo: the
+        // standalone contract threads this map back in on the NEXT call,
+        // where `assertUnreservedCallerMetadata` refuses it. Emitting
+        // something we then reject would break the hosted step loop this
+        // feature exists for.
+        context_provenance: Object.fromEntries(
+          [...runState.contextProvenance].filter(([key]) => !isProtectedContextKey(key))
+        ),
       }),
     ...responseDerivedContextResult(runState),
     error:
@@ -11091,13 +12781,45 @@ function sha256Hex(value: string): string {
  * detail-string formatting) and the full token (for the
  * `unresolved_substitution` validation result's `expected` field, per
  * runner-output-contract.yaml v2.0.0).
+ *
+ * See `DOTTED_CONTEXT_TOKEN_RE` below for the second shape it detects.
  */
+
+/**
+ * Dotted or indexed access into a captured object, e.g.
+ * `$context.__adcp_fixture_price.min_spend_per_package`.
+ *
+ * `$context.<key>` matches a WHOLE key only, so the substituter leaves these
+ * in place — and because the detector used the same anchored pattern, the
+ * literal placeholder string shipped on the wire in, say, a numeric budget
+ * field with nothing reported. The `snapshot:` capture form makes this shape
+ * the natural thing to reach for, so it is detected and named explicitly.
+ */
+const DOTTED_CONTEXT_TOKEN_RE = /^\$context\.(\w+)((?:\.\w+|\[\d+\])+)$/;
+
+/**
+ * The dotted capture path a `$context.<key><accessor>` token should have
+ * used, e.g. `$context.p.min_spend` → `min_spend`, `$context.p[0]` → `[0]`.
+ *
+ * `indexOf('.')` alone returned -1 for the indexed form, so the hint
+ * echoed the whole token back and read `path: $context.foo[0]`.
+ */
+function suggestedCapturePath(token: string): string {
+  const match = token.match(DOTTED_CONTEXT_TOKEN_RE);
+  const accessor = match?.[2] ?? '';
+  return accessor.startsWith('.') ? accessor.slice(1) : accessor;
+}
+
 function findUnresolvedContextVars(obj: unknown): Array<{ key: string; token: string }> {
   const vars: Array<{ key: string; token: string }> = [];
   const walk = (val: unknown) => {
     if (typeof val === 'string') {
       const match = val.match(/^\$context\.(\w+)$/);
       if (match?.[1]) vars.push({ key: match[1], token: val });
+      else {
+        const dotted = val.match(DOTTED_CONTEXT_TOKEN_RE);
+        if (dotted?.[1]) vars.push({ key: dotted[1], token: val });
+      }
     } else if (Array.isArray(val)) {
       val.forEach(walk);
     } else if (val !== null && typeof val === 'object') {

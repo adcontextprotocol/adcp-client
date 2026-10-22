@@ -13,6 +13,7 @@
 import { randomUUID } from 'node:crypto';
 import type { StoryboardContext, ContextOutput, ContextInput, ContextProvenanceEntry } from './types';
 import { resolvePath, setPath } from './path';
+import { detachProtectedValue, isProtectedContextKey } from './protected-context';
 import { getAuthoritativeMediaBuyStatus } from '../../utils/media-buy-status';
 
 // ────────────────────────────────────────────────────────────
@@ -473,7 +474,12 @@ const aliasCaches = new WeakMap<StoryboardContext, Record<string, string>>();
 function getAliasCache(context: StoryboardContext): Record<string, string> {
   let cache = aliasCaches.get(context);
   if (!cache) {
-    cache = {};
+    // Null-prototype: the alias grammar (`[A-Za-z0-9_.-]+`) admits
+    // `__proto__`, `constructor`, `toString` and every other
+    // `Object.prototype` member, so a plain `{}` would report them as
+    // already cached and hand back the inherited value — a function or
+    // the prototype object — where a UUID string is expected.
+    cache = Object.create(null) as Record<string, string>;
     aliasCaches.set(context, cache);
   }
   return cache;
@@ -565,14 +571,24 @@ function deepReplace(value: unknown, context: StoryboardContext, runnerVars?: Ru
     const ctxMatch = expanded.match(/^\$context\.(\w+)$/);
     if (ctxMatch?.[1]) {
       const key = ctxMatch[1];
-      return key in context ? context[key] : expanded;
+      // Own-key lookup only. `in` walks the prototype chain, so a polluted
+      // prototype could otherwise answer for a reserved key that was never
+      // committed.
+      if (!Object.hasOwn(context, key)) return expanded;
+      // Fixture-preparation snapshots are handed out as detached clones.
+      // Request builders legitimately mutate the objects they receive, and
+      // the canonical value is returned by reference everywhere else, so
+      // without this a mutated request could write back into the pinned
+      // snapshot it was built from. Ordinary keys keep their existing
+      // by-reference semantics unchanged.
+      return isProtectedContextKey(key) ? detachProtectedValue(context[key]) : context[key];
     }
     const genMatch = expanded.match(/^\$generate:(uuid_v4|opaque_id)(?:#([A-Za-z0-9_.-]+))?$/);
     if (genMatch) {
       const alias = genMatch[2];
       if (alias) {
         const cache = getAliasCache(context);
-        if (!(alias in cache)) cache[alias] = randomUUID();
+        if (!Object.hasOwn(cache, alias)) cache[alias] = randomUUID();
         return cache[alias];
       }
       return randomUUID();
@@ -782,7 +798,7 @@ export function applyContextOutputsWithProvenance(
       }
       const cache = getAliasCache(context);
       let value: string;
-      if (output.key in cache) {
+      if (Object.hasOwn(cache, output.key)) {
         value = cache[output.key]!;
       } else {
         value = randomUUID();
@@ -836,8 +852,16 @@ export function applyContextInputs(
 ): Record<string, unknown> {
   const result = structuredClone(request);
   for (const input of inputs) {
-    if (input.key in context) {
-      setPath(result, input.inject_at, context[input.key]);
+    // Own-key lookup, for the same reason as `$context.<key>` substitution.
+    if (Object.hasOwn(context, input.key)) {
+      // Same detachment rule as `$context.<key>` substitution: the request is
+      // a mutable working copy, so a protected snapshot must not be aliased
+      // into it.
+      setPath(
+        result,
+        input.inject_at,
+        isProtectedContextKey(input.key) ? detachProtectedValue(context[input.key]) : context[input.key]
+      );
     }
   }
   return result;

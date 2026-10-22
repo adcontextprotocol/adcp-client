@@ -321,3 +321,44 @@ describe('extractContext – get_media_buys pagination guard', () => {
     assert.deepStrictEqual(extractContext('get_media_buys', { media_buys: [] }), {});
   });
 });
+
+describe('$generate alias cache is prototype-safe', () => {
+  // The alias grammar is `[A-Za-z0-9_.-]+`, which admits every
+  // `Object.prototype` member name. On a plain-object cache the first
+  // occurrence of `#toString` reads the inherited function, reports the
+  // alias as already cached, and substitutes a function where a UUID
+  // string belongs — silently, into a request about to go on the wire.
+  const PROTOTYPE_ALIASES = ['__proto__', 'constructor', 'toString', 'valueOf', 'hasOwnProperty'];
+
+  for (const alias of PROTOTYPE_ALIASES) {
+    it(`#${alias} mints a real UUID rather than an inherited member`, () => {
+      const context = {};
+      const first = injectContext({ idempotency_key: `$generate:uuid_v4#${alias}` }, context);
+      assert.match(first.idempotency_key, UUID, `alias ${alias} did not mint a UUID`);
+      const second = injectContext({ idempotency_key: `$generate:uuid_v4#${alias}` }, context);
+      assert.strictEqual(second.idempotency_key, first.idempotency_key, 'the alias must still be stable');
+    });
+  }
+
+  it('a prototype-named alias does not collide with an ordinary one', () => {
+    const context = {};
+    const proto = injectContext({ k: '$generate:uuid_v4#toString' }, context).k;
+    const plain = injectContext({ k: '$generate:uuid_v4#ordinary' }, context).k;
+    assert.notStrictEqual(proto, plain);
+  });
+
+  it('a generator context_output named after a prototype member mints a UUID', () => {
+    const context = {};
+    const { values } = applyContextOutputsWithProvenance(
+      {},
+      [{ key: 'generated_alias', generate: 'uuid_v4' }],
+      'step-1',
+      'create_media_buy',
+      context
+    );
+    assert.match(values.generated_alias, UUID);
+    // The same alias name resolves to the same UUID through the placeholder
+    // path, which is what the shared cache exists to guarantee.
+    assert.strictEqual(injectContext({ k: '$generate:uuid_v4#generated_alias' }, context).k, values.generated_alias);
+  });
+});

@@ -210,6 +210,7 @@ function isOperationScopedControllerScenario(scenario: unknown): boolean {
   return typeof scenario === 'string' && OPERATION_SCOPED_CONTROLLER_SCENARIOS.has(scenario);
 }
 
+/** An authored request account that OVERRIDES the context account. */
 function hasAuthoredAccountIdentity(account: unknown): account is Record<string, unknown> {
   if (account === null || typeof account !== 'object' || Array.isArray(account)) return false;
   const ref = account as Record<string, unknown>;
@@ -1232,6 +1233,7 @@ export function enrichRequest(
 }
 
 /** True iff a request enricher is registered for this task. */
+
 export function hasRequestEnricher(taskName: string): boolean {
   return taskName in REQUEST_ENRICHERS;
 }

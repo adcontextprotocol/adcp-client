@@ -230,11 +230,16 @@ function formatMessage(input: FormatMessageInput): string {
   const valueRepr = formatScalar(rejectedValue);
   const fieldRepr = requestField ? `\`${requestField}: ${valueRepr}\`` : `\`${valueRepr}\``;
   const sourceDetail =
-    entry.source_kind === 'context_outputs' && entry.response_path
-      ? `set by step \`${entry.source_step_id}\` from response path \`${entry.response_path}\``
-      : entry.source_task
-        ? `set by step \`${entry.source_step_id}\` (convention extractor for \`${entry.source_task}\`)`
-        : `set by step \`${entry.source_step_id}\``;
+    entry.source_kind === 'fixture_preparation'
+      ? // Naming a convention extractor here would point an implementor at
+        // machinery that was never involved; the useful pointer is the
+        // fixture handle whose pinned entity produced the value.
+        `pinned by fixture preparation${entry.fixture_handle ? ` for handle \`${entry.fixture_handle}\`` : ''}`
+      : entry.source_kind === 'context_outputs' && entry.response_path
+        ? `set by step \`${entry.source_step_id}\` from response path \`${entry.response_path}\``
+        : entry.source_task
+          ? `set by step \`${entry.source_step_id}\` (convention extractor for \`${entry.source_task}\`)`
+          : `set by step \`${entry.source_step_id}\``;
   const acceptedRepr = `[${acceptedValues.map(formatScalar).join(', ')}]`;
   // Closing sentence prefers the two-task form ("`get_signals` and
   // `activate_signal` catalogs agree") when both source and current task
@@ -263,14 +268,29 @@ function buildClosing(sourceTask: string | undefined, currentTask: string | unde
   return `Check that the seller's catalogs agree across tools.`;
 }
 
+/**
+ * Longest rendered value a single hint may carry.
+ *
+ * A `snapshot: selected_entity` capture commits a whole seller catalog
+ * object, bounded only by the 512 KiB capture limit. Rendering one
+ * unbounded put the entire object on a CI terminal line.
+ */
+const HINT_VALUE_MAX_CHARS = 200;
+
+function truncateForHint(rendered: string): string {
+  return rendered.length <= HINT_VALUE_MAX_CHARS
+    ? rendered
+    : `${rendered.slice(0, HINT_VALUE_MAX_CHARS)}… (${rendered.length} chars)`;
+}
+
 function formatScalar(value: unknown): string {
-  if (typeof value === 'string') return value;
+  if (typeof value === 'string') return truncateForHint(value);
   if (value === null) return 'null';
   if (value === undefined) return 'undefined';
   try {
-    return JSON.stringify(value);
+    return truncateForHint(JSON.stringify(value) ?? String(value));
   } catch {
-    return String(value);
+    return truncateForHint(String(value));
   }
 }
 

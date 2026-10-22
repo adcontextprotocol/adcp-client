@@ -1,3 +1,9 @@
+import type { CollectionSelectionSelector, CollectionWitnessKind } from './collection-selection';
+import type {
+  PreparedFixturesAuthorizer,
+  PreparedFixturesReference,
+  PreparedStoryboardFixtures,
+} from './prepared-fixtures';
 import type { CreativeBuildProbeSpec } from './creative-build-probe';
 /**
  * Types for storyboard-driven testing.
@@ -406,7 +412,13 @@ export interface StoryboardFixtures {
 export type FixtureResolutionStrategy = 'seed' | 'discover';
 
 /** Operators supported by the closed AdCP 3.2 fixture predicate DSL. */
-export type FixtureMatchOperator = 'equals' | 'present' | 'contains_all' | 'any_match' | 'canonical_format_satisfies';
+export type FixtureMatchOperator =
+  | 'equals'
+  | 'present'
+  | 'contains_all'
+  | 'any_match'
+  | 'canonical_format_satisfies'
+  | 'collection_selection_satisfies';
 
 export interface FixtureCanonicalFormatSelector extends Record<string, unknown> {
   format_kind: string;
@@ -423,7 +435,65 @@ export type FixtureMatchClause =
   | { path: string; operator: 'present'; value?: never; where?: never }
   | { path: string; operator: 'contains_all'; value: unknown[]; where?: never }
   | { path: string; operator: 'canonical_format_satisfies'; value: FixtureCanonicalFormatSelector; where?: never }
+  | {
+      path: string;
+      operator: 'collection_selection_satisfies';
+      /**
+       * The AUTHORED operand: `minimum_pairs` and `require_cross_publisher_collection`
+       * are optional, so `{ collection_targeting: 'fixed' }` type-checks exactly as the
+       * loader accepts it. `normalizeFixtureMatchExpression` resolves it to
+       * `ResolvedCollectionSelectionSelector` before evaluation.
+       */
+      value: CollectionSelectionSelector;
+      where?: never;
+    }
   | { path: string; operator: 'any_match'; where: FixtureMatchClause[]; value?: never };
+
+/**
+ * One declaration-local capture published by fixture preparation.
+ *
+ * `path` resolves against the SELECTED entity snapshot — the product or
+ * scoped pricing option the resolver actually pinned — not against the first
+ * row of a later unfiltered read. `witness` instead binds a bounded derived
+ * value from the `collection_selection_satisfies` match witness retained for
+ * that same selection. Exactly one of the two is set.
+ *
+ * `key` must sit inside the reserved `__adcp_fixture_` namespace: these
+ * values decide what gets purchased, so later convention extraction, step
+ * captures, caller context and seller responses must not be able to replace
+ * or suppress them.
+ */
+export type FixtureContextOutput =
+  /**
+   * Dotted storyboard grammar relative to the selected entity snapshot —
+   * `currency`, `pricing_options[0].rate`.
+   *
+   * NOT the RFC 6901 pointer the sibling `FixtureMatchClause.path` takes,
+   * which is the natural mistake when the two are authored side by side.
+   * A leading `/`, an empty dotted segment, and anything else that
+   * resolves to zero segments are all refused at load — the last of those
+   * would otherwise capture the whole entity under a scalar's key.
+   */
+  | { key: string; path: string; witness?: never; snapshot?: never }
+  /** Bounded derived capture from the retained match witness. */
+  | { key: string; witness: CollectionWitnessKind; path?: never; snapshot?: never }
+  /**
+   * The WHOLE selected entity, captured as an immutable snapshot.
+   *
+   * The explicit spelling exists because optional commercial fields must be
+   * able to be absent. `fixed_price` and `min_spend_per_package` are both
+   * optional on `cpm-option.json` — absent `fixed_price` means auction
+   * pricing, absent `min_spend_per_package` means no minimum — so a `path:`
+   * capture of either turns a legal supporting seller into a setup failure,
+   * while gating the declaration on `present` would suppress that seller
+   * from qualifying at all.
+   *
+   * With a snapshot, absence stays absence: the key is simply not on the
+   * captured object, and a storyboard branches on it with an ordinary phase
+   * condition or a context-reading validation. Nothing is defaulted and no
+   * zero is fabricated.
+   */
+  | { key: string; snapshot: 'selected_entity'; path?: never; witness?: never };
 
 export interface FixtureResolutionDeclaration {
   /** Authored run-scoped fixture handle. */
@@ -434,6 +504,12 @@ export interface FixtureResolutionDeclaration {
   match?: FixtureMatchClause[];
   /** Default false: one seller entity cannot satisfy two handles. */
   allow_reuse?: boolean;
+  /**
+   * Opt-in captures published into the reserved context namespace once the
+   * WHOLE fixture graph resolves. A declared capture that cannot be built is
+   * a setup failure, never an unsupported downgrade.
+   */
+  context_outputs?: FixtureContextOutput[];
 }
 
 export type ProductFixtureResolutionDeclaration = FixtureResolutionDeclaration;
@@ -1082,6 +1158,25 @@ export type StoryboardValidationCheck =
    * terminal set passes vacuously; missing context is branch-safe.
    */
   | 'all_fields_in_context_array'
+  /**
+   * Compare a response array of `CollectionSelector` objects against a
+   * context-captured array as exact sets of atomic
+   * `(publisher_domain, collection_id)` pairs.
+   *
+   * Grouping and ordering are irrelevant — a seller may legally regroup
+   * selectors or reorder ids — but namespaces are never dropped, so an id
+   * carried under the wrong publisher is a failure rather than a match.
+   * Schema-valid redundancy (a repeated id, an overlapping pair expressed in
+   * two groups) normalizes to one pair; schema-invalid input fails with a
+   * distinct diagnostic and ordinary response-schema validation still applies
+   * on top.
+   *
+   * Unlike the branch-safe `field_equals_context` family, a missing
+   * `context_key` is a setup failure: a mandatory set comparison that
+   * silently passes when its expected state was never captured would certify
+   * exactly the case it exists to catch.
+   */
+  | 'collection_set_equals_context'
   /**
    * Asserts upstream side-effects against the adopter's
    * `comply_test_controller`'s `query_upstream_traffic` scenario. The
@@ -2101,6 +2196,71 @@ export interface StoryboardRunOptions extends TestOptions {
    */
   skip_controller_seeding?: boolean;
   /**
+   * Prepared fixture state to execute against, instead of resolving the
+   * fixture graph again.
+   *
+   * Pass the `PreparedStoryboardFixtures` returned by
+   * `prepareStoryboardFixtures`, or a `{ ref, resolve }` reference backed by
+   * the host's authenticated run scope. Both forms are re-validated and
+   * re-authorized on EVERY lookup, not once: a direct object reused after
+   * its grant was revoked fails the next step. Requires
+   * `prepared_fixtures_authorizer`.
+   */
+  prepared_fixtures?: PreparedStoryboardFixtures | PreparedFixturesReference;
+  /**
+   * Host authorization resolver, consulted on every prepared-state lookup.
+   *
+   * **Required for any reuse.** Omitting it fails closed — for direct
+   * in-process state exactly as for an opaque reference, with zero seller
+   * calls. Trusted object identity proves a state came from
+   * `prepareStoryboardFixtures` in this process; it does not establish a
+   * current grant, and binding coherence observes a reroute, account switch,
+   * schema swap or credential change but never a revocation. A warning in
+   * place of a refusal would let an unenforced authorization boundary ship
+   * while being described as every-lookup enforcement.
+   *
+   * The SDK does not implement a grant service: resolving the principal and
+   * tenant from trusted session state, and storing grant/revocation, stay
+   * host duties behind this hook.
+   */
+  prepared_fixtures_authorizer?: PreparedFixturesAuthorizer;
+  /**
+   * Authorized-scope sink for the record of a REFUSED run.
+   *
+   * An authorization failure is an access-control error, not a grading
+   * outcome: the refused caller gets a `PreparedFixturesDeniedError`
+   * carrying the machine refusal code and no result at all. But the
+   * evidence still has to exist somewhere accountable, so the runner
+   * builds the complete, UNREDACTED record — the synthesized
+   * `prepared_fixtures_authorization` check, `fixture_resolutions` with
+   * `seller_ids`, exact request and response records for every step that
+   * ran — and hands it here before throwing.
+   *
+   * This is an authorized scope. Whatever you do with the record (audit
+   * log, incident store, operator console) is inside the host's trust
+   * boundary; it must not be routed back to the refused caller. Where no
+   * sink is configured the record is simply not produced to anyone.
+   *
+   * A sink that throws or rejects does not change the outcome: the
+   * denial is thrown either way, and the sink's own failure is not
+   * reported to the caller, since it would be an oracle over host state.
+   */
+  prepared_fixtures_audit_sink?: (record: StoryboardResult | StoryboardStepResult) => void | Promise<void>;
+  /**
+   * Nonsecret principal recorded in the prepared-state binding. Never a
+   * credential: it is an identity label the host authorizer can correlate,
+   * not evidence of authentication.
+   */
+  prepared_fixtures_principal?: string;
+  /**
+   * Stable run identity recorded in the prepared-state binding. Namespaced
+   * with the rest of the family: it is prepared-state metadata, not a
+   * general run-correlation id, and it is the one binding field that is NOT
+   * re-compared on reuse (the whole point of reuse is that later steps share
+   * the preparation's run).
+   */
+  prepared_fixtures_run_id?: string;
+  /**
    * Dependencies for `expect_webhook_signature_valid`. When omitted the step
    * grades `not_applicable` — matches the spec's "pending" gate. Supply the
    * publisher's JWKS resolver (typically fetched via `brand.json`
@@ -2143,7 +2303,15 @@ export interface RunnerRequestRecord {
   transport: RunnerTransport;
   /** Task/tool/skill name actually invoked (after test-kit resolution). */
   operation: string;
-  /** Fully-resolved JSON payload with secrets redacted as "[redacted]". */
+  /**
+   * Fully-resolved JSON payload with secrets redacted as "[redacted]".
+   *
+   * After a prepared-state refusal, values that came from the reserved
+   * `__adcp_fixture_` namespace are replaced with the SAME marker. A
+   * projected payload is evidence, not a replayable request: the marker
+   * is a string whatever the original field's type was, and a
+   * `"[redacted]"` does not say which of the two rules produced it.
+   */
   payload: unknown;
   /**
    * Observed request headers. Deliberately NOT populated today — the runner
@@ -2240,7 +2408,19 @@ export type RunnerSkipReason =
    * Kept distinct from `peer_branch_taken` (branch-set routing) and
    * `not_applicable` (coverage gap). Spec source: adcp#3734 (AdCP 3.0.3+).
    */
-  | 'peer_substituted';
+  | 'peer_substituted'
+  /**
+   * Every enabled strategy for at least one declared `fixture_resolution`
+   * handle was exhausted without finding or creating a qualifying entity.
+   *
+   * `runner-output-contract.yaml` lists this as a canonical
+   * `skip_result.reason` in its own right, and the distinction matters:
+   * bucketing a fixture coverage gap under `not_applicable` puts it in the
+   * same bin as a genuine applicability gate, which is exactly the split
+   * the contract's reason list exists to preserve. It was previously
+   * detailed-only and mapped down to `not_applicable`.
+   */
+  | 'fixture_unsatisfied';
 
 /**
  * Grader-specific skip reasons. These are narrower than the canonical
@@ -2372,7 +2552,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   rate_limit_not_triggered: 'not_applicable',
   force_scenario_unsupported: 'not_applicable',
   fixture_seed_unsupported: 'not_applicable',
-  fixture_unsatisfied: 'not_applicable',
+  fixture_unsatisfied: 'fixture_unsatisfied',
   session_probe_ungradable: 'not_applicable',
   capability_unsupported: 'not_applicable',
   capability_prerequisite_unavailable: 'not_applicable',
@@ -2601,10 +2781,14 @@ export interface ValidationResult {
   schema_id?: string | null;
   /** Resolvable schema URL; set only for `response_schema`. */
   schema_url?: string | null;
-  /** Exact request the runner sent (present on failure when available). */
-  request?: RunnerRequestRecord;
-  /** Exact response observed (present on failure when available). */
-  response?: RunnerResponseRecord;
+  /**
+   * Exact request the runner sent. Required on failure; explicitly `null`
+   * for a PRE-WIRE failure, where omitting the key could not be told apart
+   * from a runner that forgot to record it.
+   */
+  request?: RunnerRequestRecord | null;
+  /** Exact response observed. Required on failure; `null` when pre-wire. */
+  response?: RunnerResponseRecord | null;
   /** Optional remediation hint. */
   remediation?: string;
   /**
@@ -2804,11 +2988,20 @@ export interface ContextProvenanceEntry {
    * `convention`: task-default extractor in CONTEXT_EXTRACTORS.
    * `generator`: runner-minted value (no response path involved).
    */
-  source_kind: 'context_outputs' | 'convention' | 'generator';
+  source_kind: 'context_outputs' | 'convention' | 'generator' | 'fixture_preparation';
   /** Response path the value was extracted from (set for `context_outputs`). */
   response_path?: string;
   /** Task name whose response this value was extracted from. */
   source_task?: string;
+  /**
+   * Fixture handle whose selected-entity snapshot produced this value.
+   * Present only for `fixture_preparation`; it records WHICH pinned entity a
+   * reserved capture came from, so evidence can tie a request field back to
+   * the exact graph the resolver bound.
+   */
+  fixture_handle?: string;
+  /** Parent product handle for a scoped-pricing capture. */
+  fixture_product_handle?: string;
 }
 
 /**
@@ -2881,10 +3074,11 @@ export interface ContextValueRejectedHint extends StoryboardStepHintBase {
    */
   source_step_id: string;
   /**
-   * How the context key was written (`context_outputs` vs convention vs generator).
+   * How the context key was written (`context_outputs` vs convention vs
+   * generator vs fixture preparation).
    * @provenance runner
    */
-  source_kind: 'context_outputs' | 'convention' | 'generator';
+  source_kind: 'context_outputs' | 'convention' | 'generator' | 'fixture_preparation';
   /**
    * YAML response path set for `context_outputs`; absent for convention extractors and generators.
    * @provenance storyboard
