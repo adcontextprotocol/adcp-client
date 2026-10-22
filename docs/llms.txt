@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
 > Generated at: 2026-10-22
-> Library: @adcp/sdk v16.2.0
+> Library: @adcp/sdk v16.3.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -13,7 +13,7 @@ AdCP is an open protocol for AI agents to buy, manage, and optimize advertising 
 
 ## Start here: AdCP 3.2
 
-The SDK requires Node.js `^20.19.0 || >=22.12.0`. Install this reference's release train with `npm install @adcp/sdk@16.2`; use the documentation from the exact published SDK version you install. For reproducible CLI runs, pin that exact SDK version. After installation, `node -p "require('@adcp/sdk').ADCP_VERSION"` reports its protocol pin; `ls node_modules/@adcp/sdk/compliance/cache` lists its packaged compliance versions. The legacy `adcp-3.2` npm tag selects SDK 14 and does not receive the refreshed compliance caches.
+The SDK requires Node.js `^20.19.0 || >=22.12.0`. Install this reference's release train with `npm install @adcp/sdk@16.3`; use the documentation from the exact published SDK version you install. For reproducible CLI runs, pin that exact SDK version. After installation, `node -p "require('@adcp/sdk').ADCP_VERSION"` reports its protocol pin; `ls node_modules/@adcp/sdk/compliance/cache` lists its packaged compliance versions. The legacy `adcp-3.2` npm tag selects SDK 14 and does not receive the refreshed compliance caches.
 
 The SDK is compact-lifecycle first: `list_products → buy_products → control_media_buy`, with `request_proposals → refine_proposals → accept_proposal` when terms need negotiation.
 
