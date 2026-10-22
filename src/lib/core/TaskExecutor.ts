@@ -38,7 +38,7 @@ import { formatIssues } from '../validation/schema-validator';
 import { withServedValidationVersion } from '../validation/schema-loader';
 import { ADCP_VERSION, toReleasePrecisionVersion } from '../version';
 import { applicableRefinementServedVersion } from '../negotiation/version';
-import { selectRefinementSchemaVersion, ProposalResponseVerificationError } from '../negotiation/verification';
+import { selectRefinementSchemaVersion } from '../negotiation/verification';
 import type { ProposalVerificationIssue } from '../negotiation/types';
 import { unwrapProtocolResponse, isAdcpOperationSuccess } from '../utils/response-unwrapper';
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
@@ -6300,7 +6300,32 @@ export class TaskExecutor {
           },
           issues
         );
-        if (!selected) throw new ProposalResponseVerificationError(issues);
+        if (!selected) {
+          const errors = issues.map(issue => `${issue.path}: ${issue.message}`);
+          if (logViolations) {
+            debugLogs.push({
+              timestamp: new Date().toISOString(),
+              type: mode === 'strict' ? 'error' : 'warning',
+              message: `Schema validation ${mode === 'strict' ? 'failed' : 'warning'} for ${taskName}: ${errors.join('; ')}`,
+              errors,
+              issues,
+              schemaVersion: pinnedValidationVersion,
+              mode,
+            });
+            if (mode === 'warn') {
+              console.warn(
+                `Schema validation failed for ${taskName} against AdCP ${pinnedValidationVersion} (non-blocking):`,
+                errors
+              );
+            } else {
+              console.error(
+                `Schema validation failed for ${taskName} against AdCP ${pinnedValidationVersion}:`,
+                errors
+              );
+            }
+          }
+          return { valid: mode !== 'strict', errors: mode === 'strict' ? errors : [] };
+        }
         return this.validateResponseSchemaAgainst(response, taskName, debugLogs, mode, logViolations, selected);
       }
       return this.validateResponseSchemaAgainst(

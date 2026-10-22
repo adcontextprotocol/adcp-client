@@ -404,6 +404,40 @@ test('the public buyer refines and finalizes over the official MCP transport on 
           /ceiling|conflicts with served version metadata/
         );
       }
+      invalidEcho = '3.3.0';
+      for (const [mode, logSchemaViolations] of [
+        ['warn', false],
+        ['strict', false],
+        ['strict', true],
+      ]) {
+        const loggingBuyer = AgentClient.fromMCPClient(mcp, {
+          adcpVersion: BUNDLE_VERSION,
+          validation: { responses: mode, logSchemaViolations },
+        });
+        const logged = [];
+        const originalError = console.error;
+        const originalWarn = console.warn;
+        console.error = (...args) => logged.push(args);
+        console.warn = (...args) => logged.push(args);
+        try {
+          if (mode === 'warn') {
+            await assert.rejects(
+              () => loggingBuyer.refineProposals({ refinements: [refinement] }),
+              /refine_proposals response failed verification:.*request ceiling/
+            );
+          } else {
+            const invalid = await loggingBuyer.refineProposals({ refinements: [refinement] });
+            assert.equal(invalid.success, false);
+            assert.match(invalid.error, /^Schema validation failed: adcp_version: response must echo/);
+            assert.doesNotMatch(invalid.error, /Validation error:|response failed verification/);
+          }
+        } finally {
+          console.error = originalError;
+          console.warn = originalWarn;
+        }
+        assert.equal(logged.length, logSchemaViolations ? 1 : 0, 'honor the schema violation logging flag');
+        if (logSchemaViolations) assert.match(logged[0][0], /^Schema validation failed for refine_proposals/);
+      }
       invalidEcho = '3.3';
       capabilityVersion = '3.3';
       await withIdentity33SchemaScope(async () => {
