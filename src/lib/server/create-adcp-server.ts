@@ -3360,7 +3360,7 @@ function validateFrameworkPayload(
       };
     }
   }
-  const verification = validateRefineProposalsResponseShape(payload);
+  const verification = validateRefineProposalsResponseShape(payload, { adcpVersion: version });
   if (verification.ok) {
     return {
       valid: true as const,

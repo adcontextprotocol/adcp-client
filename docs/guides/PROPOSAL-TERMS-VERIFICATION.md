@@ -152,3 +152,19 @@ ordered-array behavior, precise escaped pointers, failure on unreviewed schema
 semantics, and the same absence/opaque-reference/version behavior. The fixtures
 under `test/fixtures/proposal-commercial-terms` are portable JSON. Part A's unified
 action assessment and seller resolver remain separate work.
+
+
+### Proposal refinement on newer minor releases
+
+`AgentClient.refineProposals()` accepts release-precision AdCP 3.2 and later
+minor releases within major 3, including an explicitly selected 3.3 prerelease.
+The matching schema bundle must be available locally; selecting a newer wire
+version does not substitute the SDK's default 3.2 schemas. Responses that echo
+a different version are rejected, and canonical proposals and change terms are
+validated against the requested version before semantic verification.
+
+When using `validateRefineProposalsResponseShape()` without a source request,
+pass `{ adcpVersion: sellerServedVersion }` to select the negotiated schemas.
+`verifyRefineProposalsResponse()` also accepts this option and otherwise uses
+`request.adcp_version` when present. Callers that supply only `refinements`
+retain the SDK's default bundle for their existing 3.2 shape checks.

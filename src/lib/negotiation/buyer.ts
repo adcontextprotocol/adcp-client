@@ -13,10 +13,10 @@ import type {
 } from './types';
 import { PROPOSAL_REFINEMENT_DIMENSIONS } from './types';
 import { assertRefineProposalsResponse, isStrictDateTime } from './verification';
+import { isProposalRefinementVersion } from './version';
 
 export const MAX_PROPOSAL_REFINEMENTS = 25;
 export const MAX_PROPOSAL_ALTERNATIVES = 10;
-const ADCP_32_RELEASE = /^3\.2(?:-[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)?$/;
 
 /**
  * Read AdCP 3.2 proposal discovery from a raw get_adcp_capabilities response,
@@ -96,8 +96,11 @@ export function validateRefineProposalsRequest(
 ): asserts request is RefineProposalsRequest {
   if (!isRecord(request)) fail('request must be an object');
   assertAllowedKeys(request, REQUEST_KEYS, 'request');
-  if (typeof request.adcp_version !== 'string' || !ADCP_32_RELEASE.test(request.adcp_version)) {
-    fail('refine_proposals requires an adcp_version on the 3.2 release line', 'adcp_version');
+  if (!isProposalRefinementVersion(request.adcp_version)) {
+    fail(
+      'refine_proposals requires a release-precision adcp_version on AdCP 3.2 or newer within major 3',
+      'adcp_version'
+    );
   }
   if (request.adcp_major_version !== 3) {
     fail('refine_proposals requires adcp_major_version 3', 'adcp_major_version');
@@ -393,8 +396,11 @@ export function buildRefineProposalsRequest(
   defaultAdcpVersion = ADCP_VERSION
 ): RefineProposalsRequest {
   if (!isRecord(input)) fail('request input must be an object');
-  if (input.adcp_version !== undefined && !ADCP_32_RELEASE.test(input.adcp_version)) {
-    fail('refine_proposals requires an adcp_version on the 3.2 release line', 'adcp_version');
+  if (input.adcp_version !== undefined && !isProposalRefinementVersion(input.adcp_version)) {
+    fail(
+      'refine_proposals requires a release-precision adcp_version on AdCP 3.2 or newer within major 3',
+      'adcp_version'
+    );
   }
   if (input.adcp_major_version !== undefined && input.adcp_major_version !== 3) {
     fail('refine_proposals requires adcp_major_version 3', 'adcp_major_version');

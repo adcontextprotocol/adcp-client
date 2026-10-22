@@ -539,7 +539,7 @@ test('canonical request validation requires both 3.2 envelope fields and accepts
   assert.doesNotThrow(() => validateRefineProposalsRequest({ ...canonical, adcp_version: '3.2-beta.5' }));
   assert.throws(
     () => validateRefineProposalsRequest({ ...canonical, adcp_version: undefined }),
-    /adcp_version on the 3\.2 release line/
+    /adcp_version on AdCP 3\.2 or newer/
   );
   assert.throws(
     () => validateRefineProposalsRequest({ ...canonical, adcp_major_version: undefined }),
@@ -551,7 +551,7 @@ test('response validation rejects malformed 3.2 prerelease pins', () => {
   for (const adcp_version of ['3.2-.', '3.2-rc.', '3.2--rc', '3.2-rc..1']) {
     const result = validateRefineProposalsResponseShape({ ...response(), adcp_version });
     assert.equal(result.ok, false);
-    assert.match(result.issues[0].message, /adcp_version must be on the 3\.2 release line/);
+    assert.match(result.issues[0].message, /adcp_version must be release-precision AdCP 3\.2 or newer/);
   }
   for (const adcp_version of ['3.2', '3.2-beta', '3.2-beta.1', '3.2-beta-1']) {
     assert.equal(validateRefineProposalsResponseShape({ ...response(), adcp_version }).ok, true);

@@ -1,5 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { withExternalSchemaRoot } = require('../../dist/lib/validation/schema-loader.js');
+const { ADCP_VERSION } = require('../../dist/lib/version.js');
 
 const {
   ProposalNegotiator,
@@ -290,68 +295,92 @@ test('task failures/intermediate states surface before response fields and expir
 });
 
 test('AgentClient.refineProposals dispatches through the official MCP client with its configured wire pin', async () => {
-  const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
-  const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
-  const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
-  const { AgentClient } = require('../../dist/lib/index.js');
-  const z = require('zod');
-  let captured;
-  const server = new McpServer({ name: 'Negotiation seller', version: '1.0.0' });
-  server.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => ({
-    content: [{ type: 'text', text: '{}' }],
-    structuredContent: {
-      success: true,
-      adcp: { major_versions: [3], idempotency: { supported: true, replay_ttl_seconds: 86400 } },
-      supported_protocols: ['media_buy'],
-      specialisms: [],
-    },
-  }));
-  server.registerTool(
-    'refine_proposals',
-    {
-      inputSchema: {
-        adcp_version: z.string(),
-        adcp_major_version: z.number(),
-        idempotency_key: z.string(),
-        refinements: z.array(z.any()),
-      },
-    },
-    async args => {
-      captured = args;
-      return {
+  // The exact wire prerelease also needs a matching local schema root.
+  // This fixture keeps transport pinning independent of network cache state.
+  const schemaRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-refine-prerelease-'));
+  try {
+    fs.cpSync(path.resolve(__dirname, '../../schemas/cache', ADCP_VERSION), schemaRoot, {
+      recursive: true,
+      filter: source => !['bundled', 'mcp'].includes(path.basename(source)),
+    });
+    for (const relative of fs.readdirSync(schemaRoot, { recursive: true })) {
+      if (!relative.endsWith('.json')) continue;
+      const filename = path.join(schemaRoot, relative);
+      fs.writeFileSync(
+        filename,
+        fs.readFileSync(filename, 'utf8').replaceAll(`/schemas/${ADCP_VERSION}/`, '/schemas/latest/')
+      );
+    }
+    const indexPath = path.join(schemaRoot, 'index.json');
+    const index = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+    fs.writeFileSync(indexPath, JSON.stringify({ ...index, adcp_version: '3.2.0-beta.1' }));
+    await withExternalSchemaRoot('3.2.0-beta.1', schemaRoot, async () => {
+      const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+      const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+      const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
+      const { AgentClient } = require('../../dist/lib/index.js');
+      const z = require('zod');
+      let captured;
+      const server = new McpServer({ name: 'Negotiation seller', version: '1.0.0' });
+      server.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => ({
         content: [{ type: 'text', text: '{}' }],
         structuredContent: {
           success: true,
-          results: [
-            {
-              source_proposal_id: 'source-1',
-              outcome: 'revised',
-              proposals: [proposal('draft-1', 'source-1')],
-            },
-          ],
-          products: [],
+          adcp: { major_versions: [3], idempotency: { supported: true, replay_ttl_seconds: 86400 } },
+          supported_protocols: ['media_buy'],
+          specialisms: [],
         },
-      };
-    }
-  );
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  const mcpClient = new Client({ name: 'Buyer', version: '1.0.0' });
-  await mcpClient.connect(clientTransport);
-  const agent = AgentClient.fromMCPClient(mcpClient, {
-    adcpVersion: '3.2.1',
-    wireAdcpVersion: '3.2.0-beta.1',
-  });
+      }));
+      server.registerTool(
+        'refine_proposals',
+        {
+          inputSchema: {
+            adcp_version: z.string(),
+            adcp_major_version: z.number(),
+            idempotency_key: z.string(),
+            refinements: z.array(z.any()),
+          },
+        },
+        async args => {
+          captured = args;
+          return {
+            content: [{ type: 'text', text: '{}' }],
+            structuredContent: {
+              success: true,
+              results: [
+                {
+                  source_proposal_id: 'source-1',
+                  outcome: 'revised',
+                  proposals: [proposal('draft-1', 'source-1')],
+                },
+              ],
+              products: [],
+            },
+          };
+        }
+      );
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await server.connect(serverTransport);
+      const mcpClient = new Client({ name: 'Buyer', version: '1.0.0' });
+      await mcpClient.connect(clientTransport);
+      const agent = AgentClient.fromMCPClient(mcpClient, {
+        adcpVersion: '3.2.1',
+        wireAdcpVersion: '3.2.0-beta.1',
+      });
 
-  const result = await agent.refineProposals({ refinements: [revise()] });
-  assert.equal(result.success, true);
-  assert.match(captured.idempotency_key, /^[A-Za-z0-9_.:-]{16,255}$/);
-  assert.equal(captured.adcp_version, '3.2-beta.1');
-  assert.equal(captured.adcp_major_version, 3);
-  assert.equal(captured.refinements[0].proposal_id, 'source-1');
+      const result = await agent.refineProposals({ refinements: [revise()] });
+      assert.equal(result.success, true);
+      assert.match(captured.idempotency_key, /^[A-Za-z0-9_.:-]{16,255}$/);
+      assert.equal(captured.adcp_version, '3.2-beta.1');
+      assert.equal(captured.adcp_major_version, 3);
+      assert.equal(captured.refinements[0].proposal_id, 'source-1');
 
-  await mcpClient.close();
-  await server.close();
+      await mcpClient.close();
+      await server.close();
+    });
+  } finally {
+    fs.rmSync(schemaRoot, { recursive: true, force: true });
+  }
 });
 
 test('ADCPMultiAgentClient.simple forwards an exact prerelease wire pin to proposal requests', async () => {

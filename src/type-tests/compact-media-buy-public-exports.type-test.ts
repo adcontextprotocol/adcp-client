@@ -16,6 +16,7 @@ import type {
 } from '../lib/types';
 import type {
   RefineProposalsRequest as RootRefineProposalsRequest,
+  ProposalRefinementVersion,
   RefineProposalsResponse as RootRefineProposalsResponse,
 } from '../lib';
 
@@ -51,7 +52,7 @@ type _SourceProposalIdPreserved = Assert<Equal<RefinementResult['source_proposal
 // The root barrel intentionally retains the hand-written negotiation request
 // and response rather than becoming ambiguous with the wire-level types above.
 type _RootRequestKeepsBrandedVersion = Assert<
-  Equal<RootRefineProposalsRequest['adcp_version'], '3.2' | `3.2-${string}`>
+  Equal<RootRefineProposalsRequest['adcp_version'], ProposalRefinementVersion>
 >;
 type _RootResponseKeepsGenericProposal = Assert<
   RootRefineProposalsResponse extends import('../lib/negotiation').RefineProposalsResponse ? true : false

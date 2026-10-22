@@ -138,6 +138,9 @@ export type ProposalRefinement = ReviseProposalRefinement | FinalizeProposalRefi
 
 export type Adcp32Version = '3.2' | `3.2-${string}`;
 
+/** AdCP 3 release pins; runtime validation enforces the 3.2 minimum. */
+export type ProposalRefinementVersion = `3.${number}` | `3.${number}-${string}`;
+
 export interface RefineProposalsRequest {
   idempotency_key: string;
   refinements: ProposalRefinement[];
@@ -145,7 +148,7 @@ export interface RefineProposalsRequest {
   context?: Record<string, unknown>;
   governance_context?: string;
   push_notification_config?: Record<string, unknown>;
-  adcp_version: Adcp32Version;
+  adcp_version: ProposalRefinementVersion;
   adcp_major_version: 3;
 }
 
@@ -154,7 +157,7 @@ export type RefineProposalsInput = Omit<
   'idempotency_key' | 'adcp_version' | 'adcp_major_version'
 > & {
   idempotency_key?: string;
-  adcp_version?: Adcp32Version;
+  adcp_version?: ProposalRefinementVersion;
   adcp_major_version?: 3;
 };
 

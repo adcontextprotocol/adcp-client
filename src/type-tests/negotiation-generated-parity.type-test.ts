@@ -2,6 +2,9 @@ import type { BuyProductsRequest } from '../lib/types';
 import type { TargetingOverlay as ToolTargetingOverlay } from '../lib/types/tools.generated';
 import type {
   AcceptanceContext as RootAcceptanceContext,
+  Adcp32Version,
+  ProposalRefinementVersion,
+  RefineProposalsInput,
   CanonicalDeliveryForecast as RootCanonicalDeliveryForecast,
   CanonicalForecastPoint as RootCanonicalForecastPoint,
   CanonicalProposal,
@@ -188,3 +191,9 @@ void nonemptyTargeting;
 void clearSnapshot;
 void emptyCountries;
 void invalidCountry;
+
+// Existing 3.2 consumers retain their exported type while newer negotiated
+// release pins reach the public request surface without a type assertion.
+type _Legacy32VersionUnchanged = Assert<Equal<Adcp32Version, '3.2' | `3.2-${string}`>>;
+type _RefinementVersionSupports33 = AssertAssignable<ProposalRefinementVersion, '3.3-beta.0'>;
+type _RefinementInputSupports33 = AssertAssignable<RefineProposalsInput['adcp_version'], '3.3-rc.1'>;
