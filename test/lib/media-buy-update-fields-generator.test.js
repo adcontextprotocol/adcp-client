@@ -251,6 +251,33 @@ describe('generate-media-buy-update-fields: task-routed actions', () => {
     const noTerms = structuredClone(state);
     delete noTerms.accepted_proposal;
     assert.equal(api.assessActionAvailability(noTerms, REPORT_ACTION, options).certainty, 'unknown');
+    const compactControl = structuredClone(state);
+    compactControl.packages = [{ package_id: 'p1', budget: 100 }];
+    compactControl.accepted_proposal.commercial_terms.change_terms = [
+      {
+        term_id: 'spend_right',
+        action: 'update_spend_target',
+        service_mode: 'self_serve',
+        allowed_statuses: ['active'],
+      },
+    ];
+    compactControl.available_actions = [
+      {
+        action: 'update_spend_target',
+        task: 'control_media_buy',
+        mode: 'self_serve',
+        change_term_id: 'spend_right',
+      },
+    ];
+    const spendRequest = { packages: [{ package_id: 'p1', min_spend_target: 20 }] };
+    assert.equal(
+      api.assessActionAvailability(compactControl, 'update_spend_target', {
+        task: 'update_media_buy',
+        request: spendRequest,
+      }).status,
+      'available_now'
+    );
+    assert.equal(api.preflightUpdateMediaBuy(compactControl, spendRequest).ok, true);
     assert.equal(api.preflightUpdateMediaBuy(state, { paused: true }).ok, false);
     const legacy = { status: 'active', valid_actions: ['pause'] };
     assert.equal(api.preflightUpdateMediaBuy(legacy, { paused: true }).ok, true);
