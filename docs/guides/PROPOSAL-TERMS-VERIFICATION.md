@@ -168,9 +168,11 @@ uses the bundle for the actual served contract, including an older prerelease.
 Missing selected schemas fail closed with the version and a registration hint.
 No older schema is relabelled as a new contract.
 
-When the task omits its echo, verification uses actual task metadata, or
-non-synthetic discovery/capability evidence already held by that client or
-coordinator. If no actual served version is available, it keeps the configured
+Verification cross-checks any task echo against non-synthetic
+discovery/capability evidence already held by that client or coordinator.
+That independent evidence takes precedence over task metadata, which can repeat
+the response echo. Task metadata supplies the served version when independent
+evidence is unavailable; both can supply it when the echo is omitted. If no actual served version is available, it keeps the configured
 schema pin; it does not infer a downgrade. Standalone callers that provide only
 `refinements` retain the SDK's default 3.2 validation behavior. To provide scoped
 actual-version evidence, pass `servedAdcpVersion` alongside the configured

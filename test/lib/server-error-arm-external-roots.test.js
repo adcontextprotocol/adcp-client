@@ -87,6 +87,12 @@ test('error-arm lookup observes registration after a missing lookup and restores
     assert.equal(getToolsWithErrorArm(WIRE).size, 0);
     registerExternalSchemaRoot(VERSION, a);
     assert.equal(status(), 'failed');
+    const original = getToolsWithErrorArm(WIRE);
+    assert.strictEqual(getToolsWithErrorArm(WIRE), original, 'reuse the inventory within the active loader epoch');
+    writeRoot(a, { status: 'replaced-without-unregister' });
+    registerExternalSchemaRoot(VERSION, a);
+    assert.notStrictEqual(getToolsWithErrorArm(WIRE), original, 're-registering the same path starts a fresh epoch');
+    assert.equal(status(), 'replaced-without-unregister');
     unregisterExternalSchemaRoot(VERSION);
     assert.equal(getToolsWithErrorArm(WIRE).size, 0);
     writeRoot(a, { status: 'replaced-at-same-path' });
@@ -98,6 +104,7 @@ test('nested and parallel external roots with the same version do not leak descr
   withRoots(async (a, b) => {
     await withExternalSchemaRoot(VERSION, a, async () => {
       assert.equal(status(), 'failed');
+      assert.strictEqual(getToolsWithErrorArm(WIRE), getToolsWithErrorArm(WIRE), 'reuse the active scope inventory');
       withExternalSchemaRoot(VERSION, b, () => assert.equal(status(), 'other-root-failure'));
       assert.equal(status(), 'failed', 'exiting nested scope restores the parent');
       await Promise.all([

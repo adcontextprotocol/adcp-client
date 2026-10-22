@@ -217,15 +217,18 @@ test('the public buyer refines and finalizes over the official MCP transport on 
     const { AgentClient } = require('../../dist/lib/index.js');
     const z = require('zod');
     const captured = [];
+    let completedResult;
     let invalidEcho;
+    let invalidName = false;
+    let capabilityVersion = VERSION;
     const seller = new McpServer({ name: 'Candidate seller', version: '1.0.0' });
     seller.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => ({
       content: [{ type: 'text', text: '{}' }],
       structuredContent: {
-        adcp_version: VERSION,
+        adcp_version: capabilityVersion,
         adcp: {
           major_versions: [3],
-          supported_versions: [VERSION],
+          supported_versions: [capabilityVersion],
           idempotency: { supported: true, replay_ttl_seconds: 86400 },
         },
         supported_protocols: ['media_buy'],
@@ -268,6 +271,7 @@ test('the public buyer refines and finalizes over the official MCP transport on 
         const child = finalize ? data.results[0].proposal : data.results[0].proposals[0];
         child.parent_proposal_id = sourceId;
         child.proposal_id = `successor-${captured.length}`;
+        if (invalidName) child.name = 'stable-only-proposal';
         if (invalidEcho !== undefined) data.adcp_version = invalidEcho;
         return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data };
       }
@@ -282,17 +286,54 @@ test('the public buyer refines and finalizes over the official MCP transport on 
         const result = await buyer.refineProposals({ refinements: [entry] });
         assert.equal(result.success, true);
         assert.equal(result.data.adcp_version, VERSION);
+        completedResult = result;
       }
       const coordinator = await buyer.negotiateMediaBuyLifecycle();
+      assert.equal(coordinator.negotiated_version, VERSION);
       const coordinated = await coordinator.refineProposals({
         refinements: [{ ...refinement, proposal_id: 'coordinator-source' }],
       });
       assert.equal(coordinated.data.results[0].outcome, 'revised');
       assert(captured.every(args => args.adcp_version === VERSION && args.adcp_major_version === 3));
+      invalidEcho = '3.2';
+      invalidName = true;
+      await assert.rejects(
+        () => buyer.refineProposals({ refinements: [refinement] }),
+        /response echo 3\.2 conflicts with served version metadata 3\.3-beta\.0/
+      );
+      await assert.rejects(
+        () => coordinator.refineProposals({ refinements: [{ ...refinement, proposal_id: 'hostile-source' }] }),
+        /response echo 3\.2 conflicts with served version metadata 3\.3-beta\.0/
+      );
+      // Isolate the coordinator's own verification: a completed task can
+      // reach projection through polling/callbacks rather than this helper.
+      const publicRefine = buyer.refineProposals;
+      const hostileData = {
+        ...response(proposal({ name: 'stable-only-proposal', parent_proposal_id: 'projection-hostile-source' })),
+        adcp_version: '3.2',
+      };
+      hostileData.results[0].source_proposal_id = 'projection-hostile-source';
+      buyer.refineProposals = async () => ({ ...completedResult, data: hostileData });
+      try {
+        await assert.rejects(
+          () =>
+            coordinator.refineProposals({
+              refinements: [{ ...refinement, proposal_id: 'projection-hostile-source' }],
+            }),
+          /response echo 3\.2 conflicts with served version metadata 3\.3-beta\.0/
+        );
+      } finally {
+        buyer.refineProposals = publicRefine;
+      }
+      invalidName = false;
       for (invalidEcho of ['3.3-rc.1', '3.3.0', '3.1', '4.0', '3.3-beta.01', `3.3-beta.${'9'.repeat(300)}`]) {
-        await assert.rejects(() => buyer.refineProposals({ refinements: [refinement] }), /ceiling/);
+        await assert.rejects(
+          () => buyer.refineProposals({ refinements: [refinement] }),
+          /ceiling|conflicts with served version metadata/
+        );
       }
       invalidEcho = '3.3';
+      capabilityVersion = '3.3';
       await withIdentity33SchemaScope(async () => {
         // The identity-only client scope may construct this pin without a
         // real stable-3.3 bundle, but public proposal verification must refuse it.

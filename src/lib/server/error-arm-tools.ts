@@ -10,9 +10,9 @@
  * response schema doesn't define it would add a key the schema
  * doesn't expect.
  *
- * Derived from the active schema-loader authority. Installed bundles are
- * memoised by bundle key and resolved root; caller-supplied roots are
- * rescanned so scoped or re-registered candidate bundles cannot leak.
+ * Derived from the active schema-loader authority. Bundle inventories are
+ * memoised by bundle key and resolved root, with loader-epoch invalidation
+ * so scoped or re-registered candidate bundles cannot leak.
  * Raw external roots use the loader's response index when no bundled
  * store exists.
  *
@@ -28,7 +28,7 @@ import path from 'path';
 import { ADCP_VERSION } from '../version';
 import {
   getToolSchemaDocument,
-  isExternalSchemaRootActive,
+  getSchemaLoaderGeneration,
   listValidatorKeys,
   resolveBundleKey,
   resolveSchemaRoot,
@@ -172,7 +172,8 @@ function scanForErrorArmTools(root: string, version: string): Map<string, ErrorA
   return map;
 }
 
-/** Memoised installed bundle results, isolated by version and resolved root. */
+/** Memoised active bundle results, isolated by version, root and loader epoch. */
+let cachedGeneration = -1;
 const cachedMaps = new Map<string, ReadonlyMap<string, ErrorArmDescriptor>>();
 
 /**
@@ -182,8 +183,9 @@ const cachedMaps = new Map<string, ReadonlyMap<string, ErrorArmDescriptor>>();
  * dispatcher needs to set when synthesising the wrap.
  *
  * Scans the active schema authority lazily. Missing roots return an empty map
- * without caching, so later external registration takes effect. External roots
- * are not memoised: callers may replace a candidate bundle at the same path.
+ * without caching, so later external registration takes effect. Re-registering
+ * or entering another schema scope invalidates cached inventories, including
+ * replacements of candidate bundles at the same path.
  */
 export function getToolsWithErrorArm(version: string = ADCP_VERSION): ReadonlyMap<string, ErrorArmDescriptor> {
   const bundleKey = resolveBundleKey(version);
@@ -193,16 +195,20 @@ export function getToolsWithErrorArm(version: string = ADCP_VERSION): ReadonlyMa
   } catch {
     return new Map();
   }
-  const external = isExternalSchemaRootActive(version);
+  const generation = getSchemaLoaderGeneration();
+  if (cachedGeneration !== generation) {
+    cachedMaps.clear();
+    cachedGeneration = generation;
+  }
   const key = `${bundleKey}\0${path.resolve(root)}`;
-  const cached = external ? undefined : cachedMaps.get(key);
+  const cached = cachedMaps.get(key);
   if (cached) return cached;
   const map = scanForErrorArmTools(root, version);
-  if (!external) cachedMaps.set(key, map);
+  cachedMaps.set(key, map);
   return map;
 }
 
-/** Test hook: clear the installed bundle cache. */
+/** Test hook: clear cached error-arm inventories. */
 export function _resetErrorArmToolsCache(): void {
   cachedMaps.clear();
 }

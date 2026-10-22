@@ -392,6 +392,11 @@ const keywordSchemaRefValidators = new WeakMap<
   { generation: number; validators: Map<string, ValidateFunction> }
 >();
 let keywordCacheGeneration = 0;
+
+/** @internal Epoch for schema-derived caches sharing loader registration/scope invalidation. */
+export function getSchemaLoaderGeneration(): number {
+  return keywordCacheGeneration;
+}
 const externalSchemaRoots: Map<string, string> = new Map();
 const scopedExternalSchemaRoots = new AsyncLocalStorage<Map<string, string>>();
 
@@ -549,9 +554,8 @@ export function registerExternalSchemaRoot(version: string, root: string): void 
   const aliases = assertSchemaRootMatchesVersion(version, root);
   externalSchemaRootAliases.set(key, aliases);
   for (const alias of aliases) {
-    const previous = externalSchemaRoots.get(alias);
     externalSchemaRoots.set(alias, root);
-    if (previous !== root) clearStatesForBundle(alias);
+    clearStatesForBundle(alias);
   }
 }
 
