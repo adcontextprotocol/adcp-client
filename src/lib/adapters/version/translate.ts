@@ -213,3 +213,58 @@ export function convertResponseFromRelease<T>(
   }
   return { data: current as T, drifts };
 }
+
+/**
+ * Server side: convert an older buyer's request from the served release
+ * `fromVersion` up to the server's release `toVersion` through each step's
+ * `upgradeRequest`. Upward steps never remove fields.
+ */
+export function convertRequestFromRelease<T>(
+  toolName: string,
+  params: T,
+  options: { fromVersion: string; toVersion: string; adapters: AdapterLookup }
+): { params: T; drifts: VersionDrift[] } {
+  const drifts: VersionDrift[] = [];
+  let current: unknown = params;
+  for (const step of [...translationSteps(options.toVersion, options.fromVersion)].reverse()) {
+    const adapter = options.adapters(step.key, toolName);
+    if (!adapter?.upgradeRequest) continue;
+    const adapted = adapter.upgradeRequest(current);
+    current = adapted.params;
+    if (adapted.drift) drifts.push({ ...adapted.drift, fromVersion: step.lower, toVersion: step.upper });
+  }
+  return { params: current as T, drifts };
+}
+
+/**
+ * Server side: convert a handler's response from the server's release
+ * `fromVersion` down to the served release `toVersion`. Each step runs the
+ * hand-written `downgradeResponse`, then removes and reports what the older
+ * release's response schema cannot express.
+ */
+export function convertResponseToRelease<T>(
+  toolName: string,
+  data: T,
+  options: { fromVersion: string; toVersion: string; adapters: AdapterLookup }
+): { data: T; drifts: VersionDrift[] } {
+  const drifts: VersionDrift[] = [];
+  let current: unknown = data;
+  for (const step of translationSteps(options.fromVersion, options.toVersion)) {
+    const adapter = options.adapters(step.key, toolName);
+    if (adapter?.downgradeResponse) {
+      const adapted = adapter.downgradeResponse(current);
+      current = adapted.data;
+      if (adapted.drift) drifts.push({ ...adapted.drift, fromVersion: step.upper, toVersion: step.lower });
+    }
+    const projected = projectToolPayload(toolName, 'sync', current, step.upper, step.lower);
+    if (projected.dropped.length === 0) continue;
+    current = projected.value;
+    drifts.push({
+      ...droppedDrift(toolName, projected.dropped, step),
+      message:
+        `${toolName}: removed ${projected.dropped.length} response field(s) AdCP ` +
+        `${adcpMinorLine(step.lower) ?? step.lower} cannot express: ${projected.dropped.map(d => d.path).join(', ')}.`,
+    });
+  }
+  return { data: current as T, drifts };
+}

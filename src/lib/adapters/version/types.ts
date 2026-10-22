@@ -51,4 +51,17 @@ export interface VersionAdapter {
    * release. Returns the original reference when nothing changes.
    */
   adaptResponse?(data: unknown): { data: unknown; drift?: VersionDrift };
+
+  /**
+   * Server side: adapt an older buyer's request from this adapter's release
+   * up to the next minor release, so handlers see one shape.
+   */
+  upgradeRequest?(params: unknown): { params: unknown; drift?: VersionDrift };
+
+  /**
+   * Server side: adapt a handler's response from the next minor release down
+   * to this adapter's release, before the schema projection removes what
+   * this release cannot express.
+   */
+  downgradeResponse?(data: unknown): { data: unknown; drift?: VersionDrift };
 }

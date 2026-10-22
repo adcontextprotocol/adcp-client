@@ -24,8 +24,10 @@ import type { VersionAdapter } from './types';
 import { v30Adapters } from './3.0/index';
 import { v31Adapters } from './3.1/index';
 import {
+  convertRequestFromRelease,
   convertRequestToRelease,
   convertResponseFromRelease,
+  convertResponseToRelease,
   type AccountIdentityDowngrade,
   type RequestTranslation,
   type ResponseTranslation,
@@ -118,4 +120,28 @@ export function convertResponse<T>(
   options: { fromVersion: string; toVersion: string }
 ): ResponseTranslation<T> {
   return convertResponseFromRelease(toolName, data, { ...options, adapters: getVersionAdapter });
+}
+
+/**
+ * Server side: convert an older buyer's request from the served release
+ * `fromVersion` up to the server's release `toVersion`.
+ */
+export function upgradeRequest<T>(
+  toolName: string,
+  params: T,
+  options: { fromVersion: string; toVersion: string }
+): { params: T; drifts: import('./types').VersionDrift[] } {
+  return convertRequestFromRelease(toolName, params, { ...options, adapters: getVersionAdapter });
+}
+
+/**
+ * Server side: convert a handler's response from the server's release
+ * `fromVersion` down to the served release `toVersion`.
+ */
+export function downgradeResponse<T>(
+  toolName: string,
+  data: T,
+  options: { fromVersion: string; toVersion: string }
+): { data: T; drifts: import('./types').VersionDrift[] } {
+  return convertResponseToRelease(toolName, data, { ...options, adapters: getVersionAdapter });
 }
