@@ -450,8 +450,9 @@ export function assertRefineProposalsResponseShape(
 }
 
 /** Keep the owning client's schema pin separate from its wire-only ceiling.
- * Only an actual downgrade changes the selected schema contract. */
-function selectRefinementSchemaVersion(
+ * Only an actual downgrade changes the selected schema contract.
+ * @internal Shared with generic strict validation before financial verification. */
+export function selectRefinementSchemaVersion(
   requested: unknown,
   response: unknown,
   options: { adcpVersion?: string; servedAdcpVersion?: string },

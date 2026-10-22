@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { brotliCompressSync } = require('node:zlib');
 const {
   withExternalSchemaRoot,
   registerExternalSchemaRoot,
@@ -60,6 +61,28 @@ function writeRoot(root, { bundled = true, status = 'failed', version = VERSION 
     path.join(domain, 'helper-response.json'),
     JSON.stringify({ ...response, $id: response.$id.replace('control-media-buy', 'helper') })
   );
+}
+
+function writeCompressedRoot(root, options) {
+  writeRoot(root, options);
+  const bundledRoot = path.join(root, 'bundled');
+  const schemas = Object.fromEntries(
+    fs
+      .readdirSync(bundledRoot, { recursive: true })
+      .flatMap(relative =>
+        relative.endsWith('.json')
+          ? [
+              [
+                relative.split(path.sep).join('/'),
+                JSON.parse(fs.readFileSync(path.join(bundledRoot, relative), 'utf8')),
+              ],
+            ]
+          : []
+      )
+  );
+  fs.writeFileSync(path.join(root, 'bundled.schemas.br'), brotliCompressSync(Buffer.from(JSON.stringify(schemas))));
+  fs.rmSync(bundledRoot, { recursive: true });
+  fs.mkdirSync(bundledRoot);
 }
 
 async function withRoots(fn) {
@@ -120,6 +143,34 @@ test('nested and parallel external roots with the same version do not leak descr
     });
     assert.equal(getToolsWithErrorArm(WIRE).size, 0, 'exiting all scopes leaves no candidate inventory');
   }));
+
+for (const scoped of [false, true]) {
+  test(`compressed same-path replacement refreshes ${scoped ? 'scoped' : 'registered'} descriptors and validators`, () =>
+    withRoots(a => {
+      const observe = expected => {
+        assert.equal(status(), expected);
+        const validate = getValidator('control_media_buy', 'sync', WIRE);
+        const errors = [{ code: 'ACTION_NOT_ALLOWED', message: 'Unavailable' }];
+        assert.equal(validate({ status: expected, errors }), true, JSON.stringify(validate.errors));
+        assert.equal(validate({ status: expected === 'failed' ? 'replacement' : 'failed', errors }), false);
+      };
+      const install = expected => {
+        if (scoped) return withExternalSchemaRoot(VERSION, a, () => observe(expected));
+        registerExternalSchemaRoot(VERSION, a);
+        observe(expected);
+      };
+      writeCompressedRoot(a);
+      install('failed');
+      writeCompressedRoot(a, { status: 'replacement' });
+      install('replacement');
+      writeCompressedRoot(a, { version: '3.2.5' });
+      assert.throws(
+        () => (scoped ? withExternalSchemaRoot(VERSION, a, () => {}) : registerExternalSchemaRoot(VERSION, a)),
+        /does not match/,
+        'replacement provenance must be checked against the new archive contents'
+      );
+    }));
+}
 
 test('raw external roots use the loader response index when no bundled store exists', () =>
   withRoots(a => {

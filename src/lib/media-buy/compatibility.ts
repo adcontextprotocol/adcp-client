@@ -65,7 +65,7 @@ import type {
   CanonicalUpdateMediaBuyRequest,
 } from '../v2/projection/creative-delivery';
 import type { RefineProposalsInput } from '../negotiation/types';
-import { isProposalRefinementVersion } from '../negotiation/version';
+import { applicableRefinementServedVersion } from '../negotiation/version';
 import { assertRefineProposalsResponse, isStrictDateTime, proposalTermsDigest } from '../negotiation/verification';
 import { isAdcpOperationSuccess, isTerminalAdcpError } from '../utils/response-unwrapper';
 import { ConfigurationError } from '../errors';
@@ -1251,7 +1251,8 @@ function projectRefineProposals(
   refinements: RefineProposalsInput['refinements'],
   adcpVersion: string,
   requestedVersion: RefineProposalsInput['adcp_version'],
-  servedAdcpVersion: string | undefined
+  servedAdcpVersion: string | undefined,
+  discoveryCeiling: string
 ): CompatibleRefineProposalsResponse {
   const source = compactWirePayload(data);
   const proposalIds = refinements.map(refinement => refinement.proposal_id);
@@ -1260,7 +1261,7 @@ function projectRefineProposals(
     // proposal container or result branch.
     assertRefineProposalsResponse({ refinements, adcp_version: requestedVersion }, source, {
       adcpVersion,
-      servedAdcpVersion,
+      servedAdcpVersion: applicableRefinementServedVersion(servedAdcpVersion, requestedVersion, discoveryCeiling),
     });
   }
   const base = proposalResponseBase(source);
@@ -1676,11 +1677,11 @@ export class MediaBuyLifecycleCoordinator {
     options: MediaBuyLifecycleCoordinatorOptions
   ) {
     this.negotiated_version = negotiatedVersion(capabilities, agent.getAdcpVersion());
-    if (
-      capabilities._synthetic === false &&
-      isProposalRefinementVersion(toReleasePrecisionVersion(this.negotiated_version))
-    ) {
-      this.refinementServedVersion = this.negotiated_version;
+    if (capabilities._synthetic === false) {
+      this.refinementServedVersion = applicableRefinementServedVersion(
+        capabilities.servedVersion,
+        toReleasePrecisionVersion(agent.getWireAdcpVersion())
+      );
     }
     this.tools = new Set([...(capabilities.mediaBuyLifecycleTools ?? []), ...(capabilities.discoveredTools ?? [])]);
     this.preferredLifecycle = options.preferredLifecycle ?? 'auto';
@@ -8446,7 +8447,8 @@ export class MediaBuyLifecycleCoordinator {
           this.agent.getAdcpVersion(),
           params.adcp_version ??
             (toReleasePrecisionVersion(this.agent.getWireAdcpVersion()) as RefineProposalsInput['adcp_version']),
-          this.refinementServedVersion
+          this.refinementServedVersion,
+          toReleasePrecisionVersion(this.agent.getWireAdcpVersion())
         );
       const projectAndSettle = (data: CompatibleRefineProposalsWireResponse) => {
         try {
@@ -8638,7 +8640,8 @@ export class MediaBuyLifecycleCoordinator {
         this.agent.getAdcpVersion(),
         params.adcp_version ??
           (toReleasePrecisionVersion(this.agent.getWireAdcpVersion()) as RefineProposalsInput['adcp_version']),
-        this.refinementServedVersion
+        this.refinementServedVersion,
+        toReleasePrecisionVersion(this.agent.getWireAdcpVersion())
       );
     const projectAndSettle = (data: CompatibleRefineProposalsWireResponse) => {
       try {

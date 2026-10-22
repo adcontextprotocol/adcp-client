@@ -157,7 +157,7 @@ import type { MutatingRequestInput } from '../utils/idempotency';
 import type { MediaBuyLifecycleCoordinator, MediaBuyLifecycleCoordinatorOptions } from '../media-buy/compatibility';
 import { buildRefineProposalsRequest } from '../negotiation/buyer';
 import { assertRefineProposalsResponse } from '../negotiation/verification';
-import { isProposalRefinementVersion } from '../negotiation/version';
+import { applicableRefinementServedVersion } from '../negotiation/version';
 import { toReleasePrecisionVersion } from '../version';
 import type {
   ProposalRefinementCapabilities,
@@ -1091,10 +1091,11 @@ export class AgentClient {
         // Task metadata repeats the response echo. Independently discovered
         // actual served evidence must constrain that seller-controlled value.
         servedAdcpVersion:
-          cachedServedVersion !== undefined &&
-          isProposalRefinementVersion(toReleasePrecisionVersion(cachedServedVersion))
-            ? cachedServedVersion
-            : result.metadata.adcpVersion,
+          applicableRefinementServedVersion(
+            cachedServedVersion,
+            request.adcp_version,
+            toReleasePrecisionVersion(this.client.getWireAdcpVersion())
+          ) ?? result.metadata.adcpVersion,
       });
       return { ...result, data };
     }

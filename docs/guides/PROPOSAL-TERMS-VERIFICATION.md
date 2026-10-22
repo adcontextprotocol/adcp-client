@@ -170,13 +170,21 @@ No older schema is relabelled as a new contract.
 
 Verification cross-checks any task echo against non-synthetic
 discovery/capability evidence already held by that client or coordinator.
-That independent evidence takes precedence over task metadata, which can repeat
-the response echo. Task metadata supplies the served version when independent
+Only an explicit served-version observation constrains a compatible request
+ceiling; advertised `supported_versions` alone is not served-version evidence.
+An explicitly lower task ceiling does not inherit a higher discovery release;
+a raised task ceiling also does not inherit a selection made under a lower
+discovery ceiling.
+Applicable independent evidence takes precedence over task metadata, which can
+repeat the response echo. Task metadata supplies the served version when independent
 evidence is unavailable; both can supply it when the echo is omitted. If no actual served version is available, it keeps the configured
 schema pin; it does not infer a downgrade. Standalone callers that provide only
 `refinements` retain the SDK's default 3.2 validation behavior. To provide scoped
 actual-version evidence, pass `servedAdcpVersion` alongside the configured
-`adcpVersion` to `verifyRefineProposalsResponse()`.
+`adcpVersion` to `verifyRefineProposalsResponse()`. Generic strict response
+validation selects the same served schema before financial verification,
+including when an omitted task echo uses retained explicit discovery evidence
+after a durable continuation.
 
 For a genuine 3.3 preview, obtain the matching source schema bundle first and
 keep its external root registered throughout client creation and the workflow:

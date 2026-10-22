@@ -123,6 +123,26 @@ test('proposal refinement accepts same-major release pins from 3.2 and rejects o
   }
 });
 
+test('discovery served evidence is explicit, valid and compatible with the current request ceiling', () => {
+  const { applicableRefinementServedVersion } = require('../../dist/lib/negotiation/version');
+  assert.equal(applicableRefinementServedVersion(BUNDLE_VERSION, VERSION), BUNDLE_VERSION);
+  assert.equal(applicableRefinementServedVersion(BUNDLE_VERSION, '3.2'), undefined);
+  assert.equal(applicableRefinementServedVersion('3.2.5', VERSION), '3.2.5');
+  assert.equal(applicableRefinementServedVersion('3.2-beta.0', '3.2', '3.2-beta.0'), undefined);
+  assert.equal(applicableRefinementServedVersion('3.2-beta.0', '3.2-beta.0', '3.2-beta.0'), '3.2-beta.0');
+  for (const invalid of [
+    undefined,
+    '3.1',
+    '3.4',
+    '3.3.01',
+    '3.3-beta.01',
+    '3.3.0-beta.01',
+    `3.3-beta.${'9'.repeat(300)}`,
+  ]) {
+    assert.equal(applicableRefinementServedVersion(invalid, VERSION), undefined);
+  }
+});
+
 test('negotiated 3.3 validates canonical proposals and nested change terms against its external bundle', () =>
   withCandidateSchema(() => {
     assert.equal(verify(request(), response()).ok, true);
@@ -225,10 +245,11 @@ test('the public buyer refines and finalizes over the official MCP transport on 
     seller.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => ({
       content: [{ type: 'text', text: '{}' }],
       structuredContent: {
+        status: 'completed',
         adcp_version: capabilityVersion,
         adcp: {
           major_versions: [3],
-          supported_versions: [capabilityVersion],
+          supported_versions: [capabilityVersion, '3.2'],
           idempotency: { supported: true, replay_ttl_seconds: 86400 },
         },
         supported_protocols: ['media_buy'],
@@ -271,6 +292,10 @@ test('the public buyer refines and finalizes over the official MCP transport on 
         const child = finalize ? data.results[0].proposal : data.results[0].proposals[0];
         child.parent_proposal_id = sourceId;
         child.proposal_id = `successor-${captured.length}`;
+        if (args.adcp_version.startsWith('3.2')) {
+          data.adcp_version = args.adcp_version;
+          child.name = 'stable-only-proposal';
+        }
         if (invalidName) child.name = 'stable-only-proposal';
         if (invalidEcho !== undefined) data.adcp_version = invalidEcho;
         return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data };
@@ -295,6 +320,53 @@ test('the public buyer refines and finalizes over the official MCP transport on 
       });
       assert.equal(coordinated.data.results[0].outcome, 'revised');
       assert(captured.every(args => args.adcp_version === VERSION && args.adcp_major_version === 3));
+      const strictBuyer = AgentClient.fromMCPClient(mcp, {
+        adcpVersion: BUNDLE_VERSION,
+        validation: { responses: 'strict' },
+      });
+      const strictCoordinator = await strictBuyer.negotiateMediaBuyLifecycle();
+      for (const [client, prefix] of [
+        [strictBuyer, 'direct'],
+        [strictCoordinator, 'coordinated'],
+      ]) {
+        const matched = await client.refineProposals({
+          refinements: [{ ...refinement, proposal_id: `strict-matched-${prefix}` }],
+        });
+        assert.equal(matched.success, true, matched.error);
+        assert.equal(matched.data.results[0].proposals[0].name, 'candidate-proposal');
+        const lower = await client.refineProposals({
+          adcp_version: '3.2',
+          refinements: [{ ...refinement, proposal_id: `explicit-lower-${prefix}` }],
+        });
+        assert.equal(lower.success, true, lower.error);
+        assert.equal(lower.metadata.adcpVersion, '3.2');
+        assert.equal(lower.data.results[0].proposals[0].name, 'stable-only-proposal');
+      }
+      capabilityVersion = '3.2-beta.0';
+      const betaBuyer = AgentClient.fromMCPClient(mcp, {
+        adcpVersion: ADCP_VERSION,
+        wireAdcpVersion: '3.2-beta.0',
+        validation: { responses: 'strict' },
+      });
+      const betaCoordinator = await betaBuyer.negotiateMediaBuyLifecycle();
+      assert.equal(betaCoordinator.negotiated_version, '3.2-beta.0');
+      for (const [client, prefix] of [
+        [betaBuyer, 'direct'],
+        [betaCoordinator, 'coordinated'],
+      ]) {
+        const original = await client.refineProposals({
+          refinements: [{ ...refinement, proposal_id: `beta-default-${prefix}` }],
+        });
+        assert.equal(original.success, true, original.error);
+        assert.equal(original.metadata.adcpVersion, '3.2-beta.0');
+        const raised = await client.refineProposals({
+          adcp_version: '3.2',
+          refinements: [{ ...refinement, proposal_id: `raised-stable-${prefix}` }],
+        });
+        assert.equal(raised.success, true, raised.error);
+        assert.equal(raised.metadata.adcpVersion, '3.2');
+      }
+      capabilityVersion = VERSION;
       invalidEcho = '3.2';
       invalidName = true;
       await assert.rejects(
@@ -392,20 +464,23 @@ test('official MCP mixed-version buyer and coordinator accept a lower 3.2 seller
     const { AgentClient } = require('../../dist/lib/index.js');
     const z = require('zod');
     let omitEcho = false;
+    let omitDiscoveryEcho = false;
     const captured = [];
     const seller = new McpServer({ name: 'Stable seller', version: '1.0.0' });
     seller.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => {
       const data = {
+        status: 'completed',
         adcp_version: '3.2',
         adcp: {
           major_versions: [3],
-          supported_versions: ['3.2'],
+          supported_versions: [VERSION, '3.2'],
           idempotency: { supported: true, replay_ttl_seconds: 86400 },
         },
         supported_protocols: ['media_buy'],
         specialisms: [],
         media_buy: { lifecycle_tools: ['list_products', 'refine_proposals'] },
       };
+      if (omitDiscoveryEcho) delete data.adcp_version;
       return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data };
     });
     seller.registerTool('list_products', { inputSchema: {} }, async () => ({
@@ -437,7 +512,10 @@ test('official MCP mixed-version buyer and coordinator accept a lower 3.2 seller
     const mcp = new Client({ name: 'New buyer', version: '1.0.0' });
     try {
       await mcp.connect(buyerTransport);
-      const buyer = AgentClient.fromMCPClient(mcp, { adcpVersion: BUNDLE_VERSION });
+      const buyer = AgentClient.fromMCPClient(mcp, {
+        adcpVersion: BUNDLE_VERSION,
+        validation: { responses: 'strict' },
+      });
       const coordinator = await buyer.negotiateMediaBuyLifecycle();
       assert.equal(coordinator.negotiated_version, '3.2');
       for (omitEcho of [false, true]) {
@@ -450,6 +528,25 @@ test('official MCP mixed-version buyer and coordinator accept a lower 3.2 seller
         });
         assert.equal(coordinated.data.results[0].outcome, 'revised');
         assert.equal(coordinated.data.results[0].proposals[0].name, 'stable-only-proposal');
+      }
+      omitEcho = false;
+      omitDiscoveryEcho = true;
+      const noDiscoveryEchoBuyer = AgentClient.fromMCPClient(mcp, {
+        adcpVersion: BUNDLE_VERSION,
+        validation: { responses: 'strict' },
+      });
+      const noDiscoveryEchoCoordinator = await noDiscoveryEchoBuyer.negotiateMediaBuyLifecycle();
+      assert.equal(noDiscoveryEchoCoordinator.negotiated_version, VERSION, 'advertised inventory selects tools');
+      for (const [client, prefix] of [
+        [noDiscoveryEchoBuyer, 'direct'],
+        [noDiscoveryEchoCoordinator, 'coordinated'],
+      ]) {
+        const lower = await client.refineProposals({
+          refinements: [{ ...refinement, proposal_id: `no-discovery-echo-${prefix}` }],
+        });
+        assert.equal(lower.success, true, lower.error);
+        assert.equal(lower.metadata.adcpVersion, '3.2');
+        assert.equal(lower.data.results[0].proposals[0].name, 'stable-only-proposal');
       }
       assert(
         captured.every(args => args.adcp_version === VERSION),
@@ -474,3 +571,58 @@ test('identity-only 3.3 aliases cannot replace a genuine proposal schema bundle'
     })
   );
 });
+
+test('strict refinement validation retains explicit served evidence across a fresh durable resume without an echo', () =>
+  withCandidateSchema(async () => {
+    const { TaskExecutor, MemoryStorage, ProtocolClient } = require('../../dist/lib/index.js');
+    const originalCallTool = ProtocolClient.callTool;
+    const storage = new MemoryStorage({ autoCleanup: false });
+    const token = require('node:crypto')
+      .createHash('sha256')
+      .update('refinement-served-version-resume')
+      .digest('base64url');
+    const agent = {
+      id: 'resume-seller',
+      name: 'Resume seller',
+      agent_uri: 'https://seller.example/a2a',
+      protocol: 'a2a',
+    };
+    const now = Date.now();
+    await storage.putIfAbsent(
+      token,
+      {
+        continuationVersion: 'refinement-version-checkpoint',
+        taskId: 'refinement-local-operation',
+        a2aTaskId: 'refinement-seller-task',
+        serverVersion: 'v3',
+        serverVersionSynthetic: false,
+        refinementServedVersion: '3.2',
+        agentId: agent.id,
+        taskName: 'refine_proposals',
+        params: request(),
+        messages: [],
+        createdAt: now,
+        expiresAt: now + 60_000,
+      },
+      60
+    );
+    ProtocolClient.callTool = async () => {
+      const data = { ...response(proposal({ name: 'stable-only-proposal' })), status: 'completed' };
+      delete data.adcp_version;
+      return data;
+    };
+    const executor = new TaskExecutor({
+      adcpVersion: BUNDLE_VERSION,
+      deferredStorage: storage,
+      resolveDeferredAgent: async () => agent,
+      validation: { requests: 'off', responses: 'strict' },
+    });
+    try {
+      const resumed = await executor.resumeDeferredTask(token, { approved: true });
+      assert.equal(resumed.success, true, resumed.error);
+      assert.equal(resumed.data.results[0].proposals[0].name, 'stable-only-proposal');
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+      storage.destroy();
+    }
+  }));

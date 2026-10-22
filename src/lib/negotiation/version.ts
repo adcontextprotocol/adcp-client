@@ -1,5 +1,6 @@
 import { compare, valid } from 'semver';
 import type { ProposalRefinementVersion } from './types';
+import { toReleasePrecisionVersion } from '../version';
 
 /** Supported wire releases. Keep this guard and the public type in sync. */
 export function isProposalRefinementVersion(value: unknown): value is ProposalRefinementVersion {
@@ -8,6 +9,25 @@ export function isProposalRefinementVersion(value: unknown): value is ProposalRe
   // zeros or oversized versions); reject hostile wire values before comparison.
   const comparable = value.replace(/^(3\.[23])(?=-|$)/, '$1.0');
   return valid(comparable) === comparable;
+}
+
+/** @internal Discovery evidence only constrains requests whose ceiling can serve it. */
+export function applicableRefinementServedVersion(
+  served: unknown,
+  ceiling: unknown,
+  discoveryCeiling: unknown = ceiling
+): string | undefined {
+  if (!isProposalRefinementVersion(discoveryCeiling)) return undefined;
+  if (!isProposalRefinementVersion(ceiling) || compareProposalRefinementVersions(ceiling, discoveryCeiling) > 0)
+    return undefined;
+  if (typeof served !== 'string' || !isProposalRefinementVersion(ceiling)) return undefined;
+  // Accept exact artifact versions as metadata, but never normalize invalid
+  // SemVer (such as a leading-zero patch/prerelease) into valid evidence.
+  if (!isProposalRefinementVersion(served) && valid(served) !== served) return undefined;
+  const release = toReleasePrecisionVersion(served);
+  return isProposalRefinementVersion(release) && compareProposalRefinementVersions(release, ceiling) <= 0
+    ? served
+    : undefined;
 }
 
 /** Inputs have already passed the release-precision guard above. */
