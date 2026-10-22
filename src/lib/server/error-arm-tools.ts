@@ -10,10 +10,11 @@
  * response schema doesn't define it would add a key the schema
  * doesn't expect.
  *
- * Built lazily at first use from the bundled schema cache (the same
- * tree `schema-loader.ts` reads). The set is computed once per bundle
- * key (`resolveBundleKey('3.0.0')` → `'3.0'`) and memoised — the schema
- * tree is read-only at runtime, so a single scan is sufficient.
+ * Derived from the active schema-loader authority. Installed bundles are
+ * memoised by bundle key and resolved root; caller-supplied roots are
+ * rescanned so scoped or re-registered candidate bundles cannot leak.
+ * Raw external roots use the loader's response index when no bundled
+ * store exists.
  *
  * Spec basis: `error-code.json#GOVERNANCE_DENIED` and
  * `#GOVERNANCE_UNAVAILABLE` both prescribe "populate `errors[].code` in
@@ -22,98 +23,21 @@
  * structured rejection arm. RFC: `docs/proposals/adcperror-two-layer-emission.md`.
  */
 
-import { readdirSync, readFileSync, existsSync } from 'fs';
+import { readFileSync } from 'fs';
 import path from 'path';
 import { ADCP_VERSION } from '../version';
-import { resolveBundleKey, toReleasePrecisionWire } from '../validation/schema-loader';
+import {
+  getToolSchemaDocument,
+  isExternalSchemaRootActive,
+  listValidatorKeys,
+  resolveBundleKey,
+  resolveSchemaRoot,
+} from '../validation/schema-loader';
 import {
   hasBundledSchemaStore,
   listBundledSchemaFiles,
   loadBundledSchemaFile,
 } from '../validation/bundled-schema-store';
-
-function findPrereleaseBundle(root: string, key: string): string | undefined {
-  if (!existsSync(root)) return undefined;
-  const candidates = readdirSync(root, { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && !entry.name.endsWith('.previous'))
-    .map(entry => {
-      try {
-        return { name: entry.name, releasePrecision: toReleasePrecisionWire(entry.name) };
-      } catch {
-        return undefined;
-      }
-    })
-    .filter(
-      (entry): entry is { name: string; releasePrecision: string } =>
-        entry !== undefined && (entry.releasePrecision === key || entry.releasePrecision.startsWith(`${key}.`))
-    )
-    .sort((a, b) => b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: 'base' }));
-  return candidates[0] ? path.join(root, candidates[0].name) : undefined;
-}
-
-/**
- * Resolve the schema-cache root for a given AdCP version.
- *
- * Mirrors `schema-loader.ts:resolveSchemaRoot` so the two-layer scan
- * reads from the same directory the AJV validators compile against.
- * Kept as a private duplicate (rather than exporting from schema-loader)
- * to keep the schema-loader's public surface narrow — that module is
- * about validators, not generic cache traversal.
- *
- * Returns `undefined` when no bundle exists for the version. The
- * dispatcher gates on a non-empty set, so a missing bundle silently
- * disables the auto-wrap (callers without schemas can't have tools to
- * wrap anyway).
- */
-function resolveBundledRoot(version: string): string | undefined {
-  const key = resolveBundleKey(version);
-  const distRoot = path.join(__dirname, '..', 'schemas-data');
-  // Built layout (dist): dist/lib/schemas-data/<bundle-key>/bundled
-  const distCandidate = path.join(distRoot, key, 'bundled');
-  if (hasBundledSchemaStore(distCandidate)) return distCandidate;
-
-  // Wire envelopes carry release-precision prerelease values such as
-  // `3.2-beta.0`, while published bundles retain the exact full-semver
-  // directory (`3.2.0-beta.0`). Match schema-loader's fuzzy resolution so
-  // error-arm wrapping does not disappear when dispatching a real request.
-  const releasePrecisionMatch = /^\d+\.\d+-/.test(key);
-  if (releasePrecisionMatch) {
-    const distPrerelease = findPrereleaseBundle(distRoot, key);
-    if (distPrerelease) return path.join(distPrerelease, 'bundled');
-  }
-
-  // Source-tree layout (dev): schemas/cache/<exact-version>/bundled
-  const cacheRoot = path.join(__dirname, '..', '..', '..', 'schemas', 'cache');
-  const exactCandidate = path.join(cacheRoot, version, 'bundled');
-  if (hasBundledSchemaStore(exactCandidate)) return exactCandidate;
-
-  // Latest-patch fallback for stable minor pins (matches schema-loader).
-  const minorMatch = key.match(/^(\d+)\.(\d+)$/);
-  if (minorMatch && existsSync(cacheRoot)) {
-    const [, major, minor] = minorMatch;
-    const prefix = `${major}.${minor}.`;
-    const cached = readdirSync(cacheRoot, { withFileTypes: true })
-      .filter(
-        e =>
-          e.isDirectory() &&
-          e.name.startsWith(prefix) &&
-          !e.name.endsWith('.previous') &&
-          /^\d+\.\d+\.\d+$/.test(e.name)
-      )
-      .map(e => ({ name: e.name, patch: parseInt(e.name.slice(prefix.length), 10) }))
-      .filter(c => Number.isFinite(c.patch))
-      .sort((a, b) => b.patch - a.patch);
-    if (cached.length > 0) {
-      return path.join(cacheRoot, cached[0]!.name, 'bundled');
-    }
-  }
-
-  if (releasePrecisionMatch) {
-    const cachePrerelease = findPrereleaseBundle(cacheRoot, key);
-    if (cachePrerelease) return path.join(cachePrerelease, 'bundled');
-  }
-  return undefined;
-}
 
 /**
  * Per-tool descriptor for two-layer auto-emission.
@@ -187,18 +111,19 @@ function describeErrorArm(branch: unknown, rootSchema: Record<string, unknown>):
 }
 
 /**
- * Read every `*-response.json` under the bundled cache root and return
- * a tool-name → descriptor map for tools whose top-level `oneOf`/`anyOf`
- * declares an Error arm.
+ * Read bundled responses, or indexed responses for raw external roots,
+ * and return a tool-name → descriptor map for tools whose top-level
+ * `oneOf`/`anyOf` declares an Error arm.
  *
  * Tool names are derived from the filename stem (`create-media-buy` →
  * `create_media_buy`) to match the dispatcher's `toolName` key.
  */
-function scanForErrorArmTools(bundledRoot: string): Map<string, ErrorArmDescriptor> {
+function scanForErrorArmTools(root: string, version: string): Map<string, ErrorArmDescriptor> {
+  const bundledRoot = path.join(root, 'bundled');
   const map = new Map<string, ErrorArmDescriptor>();
   let manifestTools: ReadonlySet<string> | undefined;
   try {
-    const manifest = JSON.parse(readFileSync(path.join(path.dirname(bundledRoot), 'manifest.json'), 'utf-8')) as {
+    const manifest = JSON.parse(readFileSync(path.join(root, 'manifest.json'), 'utf-8')) as {
       tools?: Record<string, unknown>;
     };
     if (manifest.tools) manifestTools = new Set(Object.keys(manifest.tools));
@@ -207,12 +132,21 @@ function scanForErrorArmTools(bundledRoot: string): Map<string, ErrorArmDescript
     // fallback for those versions; current bundles always take the stricter
     // manifest path below.
   }
-  const files = listBundledSchemaFiles(bundledRoot).filter(file => file.endsWith('-response.json'));
+  const bundled = hasBundledSchemaStore(bundledRoot);
+  // Preserve the packaged bundle's existing inventory. Raw external roots
+  // use the same domain/response selection as runtime validation.
+  const responses = bundled
+    ? listBundledSchemaFiles(bundledRoot)
+        .filter(file => file.endsWith('-response.json'))
+        .map(file => ({ toolName: path.basename(file, '-response.json').replace(/-/g, '_'), file }))
+    : listValidatorKeys(version)
+        .filter(key => key.endsWith('::sync'))
+        .map(key => ({ toolName: key.slice(0, -'::sync'.length), file: undefined }));
 
-  for (const file of files) {
+  for (const { toolName, file } of responses) {
     let schema: Record<string, unknown>;
     try {
-      const loaded = loadBundledSchemaFile(file);
+      const loaded = file ? loadBundledSchemaFile(file) : getToolSchemaDocument(toolName, 'sync', version)?.schema;
       if (!loaded) continue;
       schema = loaded;
     } catch {
@@ -229,8 +163,6 @@ function scanForErrorArmTools(bundledRoot: string): Map<string, ErrorArmDescript
       }
     }
     if (!descriptor) continue;
-    const base = path.basename(file, '-response.json');
-    const toolName = base.replace(/-/g, '_');
     // Bundles contain helper response schemas (for example
     // media-buy-commitment-response.json) that are not dispatchable tools.
     // Only manifest-declared tools belong in the runtime wrapping registry.
@@ -240,7 +172,7 @@ function scanForErrorArmTools(bundledRoot: string): Map<string, ErrorArmDescript
   return map;
 }
 
-/** Memoised per-bundle-key result. Empty map when the bundle is missing. */
+/** Memoised installed bundle results, isolated by version and resolved root. */
 const cachedMaps = new Map<string, ReadonlyMap<string, ErrorArmDescriptor>>();
 
 /**
@@ -249,28 +181,28 @@ const cachedMaps = new Map<string, ReadonlyMap<string, ErrorArmDescriptor>>();
  * gate for two-layer auto-emission, plus the per-arm constants the
  * dispatcher needs to set when synthesising the wrap.
  *
- * Scans the bundled schema cache lazily on first call per bundle key
- * (one read per minor version per process). Returns a frozen, empty map
- * when no schema bundle is reachable — the dispatcher early-returns on
- * `map.size === 0`, so a missing bundle silently disables the wrap
- * rather than breaking server startup.
+ * Scans the active schema authority lazily. Missing roots return an empty map
+ * without caching, so later external registration takes effect. External roots
+ * are not memoised: callers may replace a candidate bundle at the same path.
  */
 export function getToolsWithErrorArm(version: string = ADCP_VERSION): ReadonlyMap<string, ErrorArmDescriptor> {
-  const key = resolveBundleKey(version);
-  const cached = cachedMaps.get(key);
-  if (cached) return cached;
-  const root = resolveBundledRoot(version);
-  if (!root) {
-    const empty: ReadonlyMap<string, ErrorArmDescriptor> = new Map();
-    cachedMaps.set(key, empty);
-    return empty;
+  const bundleKey = resolveBundleKey(version);
+  let root: string;
+  try {
+    root = resolveSchemaRoot(version);
+  } catch {
+    return new Map();
   }
-  const map = scanForErrorArmTools(root);
-  cachedMaps.set(key, map);
+  const external = isExternalSchemaRootActive(version);
+  const key = `${bundleKey}\0${path.resolve(root)}`;
+  const cached = external ? undefined : cachedMaps.get(key);
+  if (cached) return cached;
+  const map = scanForErrorArmTools(root, version);
+  if (!external) cachedMaps.set(key, map);
   return map;
 }
 
-/** Test hook: clear the per-bundle-key cache. */
+/** Test hook: clear the installed bundle cache. */
 export function _resetErrorArmToolsCache(): void {
   cachedMaps.clear();
 }

@@ -200,7 +200,10 @@ The root must carry the matching version metadata and schema identities;
 `withExternalSchemaRoot` checks them. Do not copy and relabel a 3.2 release as
 3.3. This registration does not change the wire version or enable experimental
 features. The buyer still needs the seller's experimental feature opt-in before
-using such features.
+using such features. A server created inside the same scope also derives its
+typed error payloads from that root, including `errors[]` details and required
+error-arm discriminators. Nested or concurrent scopes keep their schema-derived
+error inventories separate.
 
 For shape-only verification, pass `{ adcpVersion: actualServedSchemaVersion }`
 to `validateRefineProposalsResponseShape()` to pin the already-selected served

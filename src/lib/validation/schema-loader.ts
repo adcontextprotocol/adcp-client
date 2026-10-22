@@ -273,7 +273,8 @@ export function bindIdentity33SchemaScope<T extends object>(instance: T): T {
   });
 }
 
-function resolveSchemaRoot(version: string): string {
+/** @internal Resolve the active schema authority for SDK-internal schema-derived behavior. */
+export function resolveSchemaRoot(version: string): string {
   const key = resolveBundleKey(version);
   const scopedRoot = scopedExternalSchemaRoots.getStore()?.get(key);
   if (scopedRoot && existsSync(scopedRoot)) return scopedRoot;
