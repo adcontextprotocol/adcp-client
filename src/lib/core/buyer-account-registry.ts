@@ -813,48 +813,77 @@ export class BuyerAccountRegistry {
   }
 
   /**
-   * Bind the reduced account key `reduced` to the buyer key `account` before
-   * a request carrying it is sent to a seller on an older release. Each
-   * reduced key may serve one buyer key only: when another buyer key already
-   * holds it, nothing is written and that key is returned, so the caller can
-   * refuse rather than merge two buyer accounts into one seller account.
+   * Bind reduced account keys to the buyer keys they came from, before a
+   * request carrying them is sent to a seller on an older release. Each
+   * reduced key serves one buyer key only. A key sent unreduced claims itself
+   * (`account` and `reduced` equal), so a plain key and a reduced one can never
+   * land on the same seller account in either order.
+   *
+   * All-or-nothing: every claim is checked, against storage and against the
+   * other claims in the same request, before any is written. On a conflict
+   * nothing is written and the index and owner of the first conflicting claim
+   * are returned. A claim lost to a concurrent writer rolls back the claims
+   * this call already wrote.
    */
-  async claimReduction(
-    account: AccountReference,
-    reduced: AccountReference,
-    adcpVersion: string
-  ): Promise<AccountReference | undefined> {
+  async claimReductions(
+    claims: ReadonlyArray<{ account: AccountReference; reduced: AccountReference; adcpVersion: string }>
+  ): Promise<{ index: number; owner: AccountReference } | undefined> {
     const scope = this.scope();
-    let conflict: AccountReference | undefined;
+    let conflict: { index: number; owner: AccountReference } | undefined;
     await this.enqueue(async () => {
-      const reverseKey = this.reductionKey('reduced', reduced, scope);
-      const owner = (await this.readReduction(reverseKey))?.reducedFrom;
-      if (owner && accountReferenceKey(owner) !== accountReferenceKey(account)) {
-        conflict = owner;
-        return;
-      }
-      if (!owner) {
-        const inserted = await this.insertReduction(reverseKey, {
-          account: structuredClone(reduced),
-          status: 'reduced',
-          reducedFrom: structuredClone(account),
-        });
-        if (!inserted) {
-          const winner = (await this.readReduction(reverseKey))?.reducedFrom;
-          if (winner && accountReferenceKey(winner) !== accountReferenceKey(account)) {
-            conflict = winner;
-            return;
-          }
+      const pending = new Map<string, AccountReference>();
+      const toInsert: number[] = [];
+      for (const [index, claim] of claims.entries()) {
+        const reducedKey = accountReferenceKey(claim.reduced);
+        const inRequest = pending.get(reducedKey);
+        if (inRequest && accountReferenceKey(inRequest) !== accountReferenceKey(claim.account)) {
+          conflict = { index, owner: inRequest };
+          return;
         }
+        pending.set(reducedKey, claim.account);
+        const owner = (await this.readReduction(this.reductionKey('reduced', claim.reduced, scope)))?.reducedFrom;
+        if (owner && accountReferenceKey(owner) !== accountReferenceKey(claim.account)) {
+          conflict = { index, owner };
+          return;
+        }
+        if (!owner && !inRequest) toInsert.push(index);
       }
-      const forwardKey = this.reductionKey('reduction', account, scope);
-      const current = await this.readReduction(forwardKey);
-      if (current?.reduction && isDeepStrictEqual(current.reduction, { account: reduced, adcpVersion })) return;
-      await this.replaceReduction(forwardKey, {
-        account: structuredClone(account),
-        status: 'reduced',
-        reduction: { account: structuredClone(reduced), adcpVersion },
-      });
+      const inserted: number[] = [];
+      for (const index of toInsert) {
+        const claim = claims[index]!;
+        const reverseKey = this.reductionKey('reduced', claim.reduced, scope);
+        const ok = await this.insertReduction(reverseKey, {
+          account: structuredClone(claim.reduced),
+          status: 'reduced',
+          reducedFrom: structuredClone(claim.account),
+        });
+        const winner = ok ? undefined : (await this.readReduction(reverseKey))?.reducedFrom;
+        if (!ok && winner && accountReferenceKey(winner) !== accountReferenceKey(claim.account)) {
+          for (const done of inserted) {
+            const doneClaim = claims[done]!;
+            await this.replaceReduction(this.reductionKey('reduced', doneClaim.reduced, scope), {
+              account: structuredClone(doneClaim.reduced),
+              status: 'released',
+            });
+          }
+          conflict = { index, owner: winner };
+          return;
+        }
+        if (ok) inserted.push(index);
+      }
+      for (const claim of claims) {
+        // A key sent unreduced owns itself; there is nothing to migrate later.
+        if (accountReferenceKey(claim.account) === accountReferenceKey(claim.reduced)) continue;
+        const forwardKey = this.reductionKey('reduction', claim.account, scope);
+        const current = await this.readReduction(forwardKey);
+        const reduction = { account: claim.reduced, adcpVersion: claim.adcpVersion };
+        if (current?.reduction && isDeepStrictEqual(current.reduction, reduction)) continue;
+        await this.replaceReduction(forwardKey, {
+          account: structuredClone(claim.account),
+          status: 'reduced',
+          reduction: structuredClone(reduction),
+        });
+      }
     });
     return conflict;
   }

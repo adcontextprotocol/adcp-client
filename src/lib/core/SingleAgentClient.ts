@@ -1699,12 +1699,17 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    *
    * - `'refuse'` (default): fail the call before it is sent with
    *   `ProtocolFeatureUnsupportedError`.
-   * - `'reduce'`: send the older key. Buyer keys that differ only in the
-   *   removed fields share one seller account. Each reduction is reported in
-   *   `debug_logs` as an `account_identity_reduced` entry.
+   * - `'reduce'`: send the older key when that is unambiguous, and refuse when
+   *   it would merge accounts. Each reduced key is claimed for the one buyer
+   *   key it came from (a key sent unreduced claims itself), and a second
+   *   buyer key that would reach the same seller account fails with
+   *   `account_identity_collision` before sending, so no two buyer accounts
+   *   share one seller account. Each reduction is reported in `debug_logs` as
+   *   an `account_identity_reduced` entry. Requires `accountStorage` with
+   *   `compareAndSet`, so the claims hold across instances and restarts.
    *
-   * The AdCP spec has not yet settled this rule (adcontextprotocol/adcp#8373);
-   * the default may change when it does.
+   * The rule is proposed for the spec as adcontextprotocol/adcp DR-0032
+   * (#8373); the default may change to `'reduce'` once it is ratified.
    *
    * @default 'refuse'
    */
@@ -2430,6 +2435,18 @@ export class SingleAgentClient {
     this.resolvedAdcpVersion = resolveAdcpVersion(
       config.adcpVersion ?? (config.experimentalIdentity33 ? '3.3' : undefined)
     );
+    if (config.accountIdentityDowngrade === 'reduce' && typeof config.accountStorage?.compareAndSet !== 'function') {
+      // The no-merge guarantee is a claim on a reduced key that every
+      // instance of this buyer must see; without an atomic store, two
+      // instances (or a restart) can each claim a different buyer key for
+      // the same seller account.
+      throw new ConfigurationError(
+        "accountIdentityDowngrade: 'reduce' requires accountStorage with compareAndSet. Reduced account keys are " +
+          'claimed in that storage so that no two buyer accounts reach one seller account, across instances and ' +
+          "restarts. Configure durable accountStorage that implements compareAndSet, or use 'refuse'.",
+        'accountIdentityDowngrade'
+      );
+    }
     this.webhookRegistrationStore = config.webhookRegistrationStore ?? new InMemoryWebhookRegistrationStore();
     this.webhookReplayStore = config.webhookVerification?.replayStore ?? new InMemoryReplayStore();
     this.webhookRevocationStore = config.webhookVerification?.revocationStore ?? new InMemoryRevocationStore();
@@ -5723,7 +5740,11 @@ export class SingleAgentClient {
       !options?.skipAccountValidation &&
       !options?.skipRequestValidation
     ) {
-      // Validate the converted request against the release on the wire.
+      // Validate the converted request against the release on the wire. The
+      // same three flags gate the pre-conversion check above: compliance
+      // vectors that skip idempotency-key injection or account validation send
+      // a deliberately invalid request, which this check would reject before
+      // the seller can grade it.
       this.executor.validateRequest(taskType, adaptedParams, inputSchemaStripLogs, negotiatedRelease.version);
     }
 
@@ -7213,18 +7234,15 @@ export class SingleAgentClient {
     if (sites.length === 0) return adapted;
     const registry = this.getAccountRegistry();
     if (negotiated?.downgraded) {
-      for (const site of sites) {
+      // Under 'refuse' nothing was reduced, so there is nothing to claim.
+      if (this.accountIdentityDowngrade !== 'reduce') return adapted;
+      const claims = sites.flatMap(site => {
         const reduced = naturalAccountKey(valueAt(adapted, site.path));
-        if (!reduced) continue;
-        if (!sameAccountKey(site.key, reduced)) {
-          const conflict = await registry.claimReduction(site.key, reduced, negotiated.version);
-          if (conflict) this.throwAccountKeyCollision(taskType, site.path, conflict, negotiated.version);
-          continue;
-        }
-        const owner = await registry.reductionOwner(site.key);
-        if (owner && !sameAccountKey(owner, site.key)) {
-          this.throwAccountKeyCollision(taskType, site.path, owner, negotiated.version);
-        }
+        return reduced ? [{ site, account: site.key, reduced, adcpVersion: negotiated.version }] : [];
+      });
+      const conflict = await registry.claimReductions(claims);
+      if (conflict) {
+        this.throwAccountKeyCollision(taskType, claims[conflict.index]!.site.path, conflict.owner, negotiated.version);
       }
       return adapted;
     }
@@ -7332,8 +7350,8 @@ export class SingleAgentClient {
     const [first] = fields;
     const paths = fields.map(field => field.path);
     const suggestion =
-      "Set accountIdentityDowngrade: 'reduce' to send the older account key (buyer keys that differ only in " +
-      `${paths.join(', ')} then share one seller account), or remove those fields for this seller.`;
+      "Set accountIdentityDowngrade: 'reduce' to send the older account key (allowed while no other buyer key " +
+      `reaches the same seller account without ${paths.join(', ')}), or remove those fields for this seller.`;
     throw new ProtocolFeatureUnsupportedError(
       paths.map(path => `${taskType}.${path}`),
       [],
@@ -9842,6 +9860,8 @@ export class SingleAgentClient {
         !options?.skipAccountValidation &&
         !options?.skipRequestValidation
       ) {
+        // Gated like the pre-conversion check: see the matching comment in
+        // executeAndHandleWithinDeadline.
         this.executor.validateRequest(taskName, adaptedParams, inputSchemaStripLogs, negotiatedRelease.version);
       }
 

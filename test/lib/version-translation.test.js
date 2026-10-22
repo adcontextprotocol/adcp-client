@@ -309,6 +309,25 @@ describe('convertResponse', () => {
   });
 });
 
+/** Minimal durable-storage stand-in with the compare-and-set 'reduce' requires. */
+function casStorage(rows = new Map()) {
+  return {
+    rows,
+    async get(key) {
+      const row = rows.get(key);
+      return row && structuredClone(row);
+    },
+    async set(key, value) {
+      rows.set(key, structuredClone(value));
+    },
+    async compareAndSet(key, expectedRevision, value) {
+      if (rows.get(key)?.revision !== expectedRevision) return false;
+      rows.set(key, structuredClone(value));
+      return true;
+    },
+  };
+}
+
 function makeClient(sellerCapabilities, config = {}) {
   const client = new SingleAgentClient(
     { id: 'legacy-seller', name: 'Legacy seller', agent_uri: 'https://seller.example/mcp', protocol: 'mcp' },
@@ -408,7 +427,7 @@ describe('SingleAgentClient against an older seller', () => {
 
   test("reduces the account key under accountIdentityDowngrade: 'reduce'", async t => {
     const calls = captureDispatch(t, { status: 'completed', accounts: [] });
-    const client = makeClient(caps(['3.1']), { accountIdentityDowngrade: 'reduce' });
+    const client = makeClient(caps(['3.1']), { accountIdentityDowngrade: 'reduce', accountStorage: casStorage() });
     const result = await client.executeTask('sync_accounts', {
       idempotency_key: 'version-translation-sync',
       accounts: [
@@ -494,7 +513,11 @@ describe("account keys under accountIdentityDowngrade: 'reduce'", () => {
 
   function reducingClient(config = {}) {
     let sellerCaps = caps(['3.1']);
-    const client = makeClient(sellerCaps, { accountIdentityDowngrade: 'reduce', ...config });
+    const client = makeClient(sellerCaps, {
+      accountIdentityDowngrade: 'reduce',
+      accountStorage: casStorage(),
+      ...config,
+    });
     client.getCapabilities = async () => sellerCaps;
     return {
       client,
@@ -578,11 +601,51 @@ describe("account keys under accountIdentityDowngrade: 'reduce'", () => {
     );
   });
 
-  test('refuses two keys in one request that reduce to the same account', async t => {
+  test('refuses two keys in one request that reduce to the same account, and claims neither', async t => {
     const calls = seller(t);
     const { client } = reducingClient();
     await assert.rejects(client.executeTask('sync_accounts', syncRequest(CAD, USD)), collision);
     assert.equal(calls.length, 0);
+    assert.equal(await client.accounts.reductionFor(CAD), undefined, 'a refused request leaves no claim behind');
+    assert.equal((await client.executeTask('sync_accounts', syncRequest(USD))).success, true);
+    assert.equal(calls.length, 1);
+  });
+
+  test('refuses a reduced key after the plain key reached the seller first', async t => {
+    const calls = seller(t);
+    const { client } = reducingClient();
+    assert.equal((await client.executeTask('sync_accounts', syncRequest(REDUCED))).success, true);
+    await assert.rejects(client.executeTask('create_media_buy', buyRequest(CAD)), collision);
+    assert.deepEqual(
+      calls.map(call => call.taskName),
+      ['sync_accounts']
+    );
+    const plainAgain = await client.executeTask('create_media_buy', buyRequest(REDUCED));
+    assert.equal(plainAgain.success, true, 'the plain key keeps working');
+  });
+
+  test('claims hold across client instances that share account storage', async t => {
+    const calls = seller(t);
+    const storage = casStorage();
+    const first = makeClient(caps(['3.1']), { accountIdentityDowngrade: 'reduce', accountStorage: storage });
+    const second = makeClient(caps(['3.1']), { accountIdentityDowngrade: 'reduce', accountStorage: storage });
+    await first.executeTask('sync_accounts', syncRequest(CAD));
+    await assert.rejects(second.executeTask('sync_accounts', syncRequest(USD)), collision);
+    assert.equal(calls.length, 1);
+  });
+
+  test("refuses 'reduce' without compare-and-set account storage", () => {
+    for (const accountStorage of [undefined, { get: async () => undefined, set: async () => {} }]) {
+      assert.throws(
+        () =>
+          makeClient(caps(['3.1']), { accountIdentityDowngrade: 'reduce', ...(accountStorage && { accountStorage }) }),
+        error => {
+          assert.equal(error.code, 'CONFIGURATION_ERROR');
+          assert.match(error.message, /requires accountStorage with compareAndSet/);
+          return true;
+        }
+      );
+    }
   });
 
   test('keeps the reduced key after the seller upgrades, until the account is moved', async t => {

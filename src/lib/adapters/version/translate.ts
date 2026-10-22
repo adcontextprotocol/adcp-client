@@ -23,9 +23,12 @@ import type { VersionAdapter, VersionDrift } from './types';
  * to the account natural key, and `countries` to brand references).
  *
  * - `'refuse'`: fail the call before it is sent.
- * - `'reduce'`: send the older key. Buyer keys that differ only in the new
- *   fields share one seller account. Every reduced field is reported as an
- *   `account_identity_reduced` drift entry so the buyer can detect it.
+ * - `'reduce'`: send the older key when that is unambiguous, and refuse when
+ *   it would merge accounts. The client claims each reduced key for the one
+ *   buyer key it came from; a second buyer key that would reach the same
+ *   seller account is refused with `account_identity_collision`, so no two
+ *   buyer accounts ever share one seller account. Every reduction is reported
+ *   as an `account_identity_reduced` drift entry.
  */
 export type AccountIdentityDowngrade = 'refuse' | 'reduce';
 
@@ -135,7 +138,7 @@ function identityDrift(toolName: string, drops: ProjectionDrop[], step: Translat
     type: 'account_identity_reduced',
     message:
       `${toolName}: account key reduced to AdCP ${adcpMinorLine(step.lower) ?? step.lower} by removing ${paths.join(', ')}. ` +
-      'Buyer accounts that differ only in these fields share one seller account.',
+      'The seller identifies the account by the reduced key; this buyer key is the only one allowed to use it.',
     strippedFields: paths,
     fromVersion: step.upper,
     toVersion: step.lower,
