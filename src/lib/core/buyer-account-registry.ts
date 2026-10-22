@@ -30,6 +30,14 @@ export interface ProvisionedAccount {
   revision?: number;
   /** Durable claim. Reconcile an uncertain dispatch explicitly before provisioning again. */
   dispatch?: { idempotencyKey: string; startedAt: string };
+  /**
+   * Set on a buyer key that reached the seller reduced to an older release's
+   * account key (`accountIdentityDowngrade: 'reduce'`): the key the seller
+   * knows the account by, and the release it was reduced for.
+   */
+  reduction?: { account: AccountReference; adcpVersion: string };
+  /** Set on a reduced seller key: the one buyer key allowed to use it. */
+  reducedFrom?: AccountReference;
 }
 /** Partitioned by seller and caller scope. Implementations must provide read-your-writes. */
 export interface BuyerAccountStorage {
@@ -104,8 +112,25 @@ function isDefinitiveRejection(result: TaskResult<unknown>): boolean {
   );
 }
 
+/** Whether a sync_accounts row is the account the reference names. */
+function rowMatchesReference(ref: AccountReference, row: AccountRow): boolean {
+  if ('account_id' in ref) return row.account_id === ref.account_id;
+  return (
+    row.brand?.domain === ref.brand.domain &&
+    row.operator === ref.operator &&
+    (!ref.brand.brand_id || row.brand.brand_id === ref.brand.brand_id) &&
+    sameCountrySet(ref.brand.countries, row.brand.countries) &&
+    (!ref.operator_unit || row.operator_unit?.id === ref.operator_unit.id) &&
+    (!ref.currency || row.currency === ref.currency) &&
+    (!ref.timezone || row.timezone === ref.timezone) &&
+    (row.sandbox === undefined || (row.sandbox === true) === (ref.sandbox === true))
+  );
+}
+
 export class BuyerAccountRegistry {
   private entries = new Map<string, ProvisionedAccount>();
+  /** Reduction bindings when no storage is configured (never evicted). */
+  private reductions = new Map<string, ProvisionedAccount>();
   private pending = new Map<string, PendingProvisioning>();
   private writes: Promise<void> = Promise.resolve();
   private repairs = new Map<string, object>();
@@ -563,21 +588,14 @@ export class BuyerAccountRegistry {
     return this.enqueue(async () => {
       if (scope !== this.scope()) return;
       for (const ref of refs) {
-        const candidates = rows.filter(value => {
-          if (!value || typeof value !== 'object') return false;
-          const row = value as AccountRow;
-          if ('account_id' in ref) return row.account_id === ref.account_id;
-          return (
-            row.brand?.domain === ref.brand.domain &&
-            row.operator === ref.operator &&
-            (!ref.brand.brand_id || row.brand.brand_id === ref.brand.brand_id) &&
-            sameCountrySet(ref.brand.countries, row.brand.countries) &&
-            (!ref.operator_unit || row.operator_unit?.id === ref.operator_unit.id) &&
-            (!ref.currency || row.currency === ref.currency) &&
-            (!ref.timezone || row.timezone === ref.timezone) &&
-            (row.sandbox === undefined || (row.sandbox === true) === (ref.sandbox === true))
-          );
-        });
+        const isRow = (value: unknown): value is AccountRow => !!value && typeof value === 'object';
+        let candidates = rows.filter(value => isRow(value) && rowMatchesReference(ref, value));
+        if (candidates.length === 0 && !('account_id' in ref)) {
+          // A seller on an older release answers with the reduced key it was sent.
+          const reduction = (await this.reductionFor(ref))?.account;
+          if (scope !== this.scope()) return;
+          if (reduction) candidates = rows.filter(value => isRow(value) && rowMatchesReference(reduction, value));
+        }
         if (candidates.length !== 1) continue; // Never guess between multiple natural-key variants.
         let row = candidates[0] as AccountRow;
         if (row.action === 'failed' || typeof row.status !== 'string') continue;
@@ -764,5 +782,113 @@ export class BuyerAccountRegistry {
         if (invalidationPersisted) this.invalidatedHandles.delete(key);
       }
     }
+  }
+
+  private reductionKey(kind: 'reduction' | 'reduced', account: AccountReference, scope = this.scope()): string {
+    return `${scope}:${kind}:${accountReferenceKey(account)}`;
+  }
+  private async readReduction(key: string): Promise<ProvisionedAccount | undefined> {
+    const entry = this.storage ? await this.storage.get(key) : this.reductions.get(key);
+    return entry && entry.status === 'reduced' ? structuredClone(entry) : undefined;
+  }
+  /** Insert-if-absent; returns false when another writer already holds the key. */
+  private async insertReduction(key: string, entry: ProvisionedAccount): Promise<boolean> {
+    const prior = this.storage ? await this.storage.get(key) : this.reductions.get(key);
+    if (prior && prior.status === 'reduced') return false;
+    if (this.storage?.compareAndSet) {
+      return this.storage.compareAndSet(key, prior?.revision, { ...entry, revision: (prior?.revision ?? 0) + 1 });
+    }
+    if (this.storage) await this.storage.set(key, structuredClone(entry));
+    else this.reductions.set(key, structuredClone(entry));
+    return true;
+  }
+  private async replaceReduction(key: string, entry: ProvisionedAccount): Promise<void> {
+    const prior = this.storage ? await this.storage.get(key) : this.reductions.get(key);
+    if (this.storage?.compareAndSet) {
+      const next = { ...entry, revision: (prior?.revision ?? 0) + 1 };
+      if (!(await this.storage.compareAndSet(key, prior?.revision, next)))
+        throw new AccountSetupRequiredError('Account storage revision changed. Reload and reconcile before retrying.');
+    } else if (this.storage) await this.storage.set(key, structuredClone(entry));
+    else this.reductions.set(key, structuredClone(entry));
+  }
+
+  /**
+   * Bind the reduced account key `reduced` to the buyer key `account` before
+   * a request carrying it is sent to a seller on an older release. Each
+   * reduced key may serve one buyer key only: when another buyer key already
+   * holds it, nothing is written and that key is returned, so the caller can
+   * refuse rather than merge two buyer accounts into one seller account.
+   */
+  async claimReduction(
+    account: AccountReference,
+    reduced: AccountReference,
+    adcpVersion: string
+  ): Promise<AccountReference | undefined> {
+    const scope = this.scope();
+    let conflict: AccountReference | undefined;
+    await this.enqueue(async () => {
+      const reverseKey = this.reductionKey('reduced', reduced, scope);
+      const owner = (await this.readReduction(reverseKey))?.reducedFrom;
+      if (owner && accountReferenceKey(owner) !== accountReferenceKey(account)) {
+        conflict = owner;
+        return;
+      }
+      if (!owner) {
+        const inserted = await this.insertReduction(reverseKey, {
+          account: structuredClone(reduced),
+          status: 'reduced',
+          reducedFrom: structuredClone(account),
+        });
+        if (!inserted) {
+          const winner = (await this.readReduction(reverseKey))?.reducedFrom;
+          if (winner && accountReferenceKey(winner) !== accountReferenceKey(account)) {
+            conflict = winner;
+            return;
+          }
+        }
+      }
+      const forwardKey = this.reductionKey('reduction', account, scope);
+      const current = await this.readReduction(forwardKey);
+      if (current?.reduction && isDeepStrictEqual(current.reduction, { account: reduced, adcpVersion })) return;
+      await this.replaceReduction(forwardKey, {
+        account: structuredClone(account),
+        status: 'reduced',
+        reduction: { account: structuredClone(reduced), adcpVersion },
+      });
+    });
+    return conflict;
+  }
+
+  /** The buyer key a reduced seller key was claimed for, if any. */
+  async reductionOwner(reduced: AccountReference): Promise<AccountReference | undefined> {
+    return (await this.readReduction(this.reductionKey('reduced', reduced)))?.reducedFrom;
+  }
+
+  /** The reduced key a buyer key reached an older seller with, if any. */
+  async reductionFor(account: AccountReference): Promise<ProvisionedAccount['reduction']> {
+    return (await this.readReduction(this.reductionKey('reduction', account)))?.reduction;
+  }
+
+  /**
+   * Forget that `account` reached this seller under a reduced key. Call once
+   * the account has moved to its full key: after a `sync_accounts` settings
+   * update rekeys `operator_unit` in place, or after opening a new account
+   * under the full key when the reduced fields (`currency`, `timezone`,
+   * `brand.countries`) cannot change on an existing account. Until then the
+   * client keeps addressing the seller account by its reduced key.
+   */
+  async clearReduction(account: AccountReference): Promise<void> {
+    const scope = this.scope();
+    await this.enqueue(async () => {
+      const forwardKey = this.reductionKey('reduction', account, scope);
+      const forward = await this.readReduction(forwardKey);
+      if (!forward?.reduction) return;
+      const reverseKey = this.reductionKey('reduced', forward.reduction.account, scope);
+      const reverse = await this.readReduction(reverseKey);
+      if (reverse?.reducedFrom && accountReferenceKey(reverse.reducedFrom) === accountReferenceKey(account)) {
+        await this.replaceReduction(reverseKey, { account: reverse.account, status: 'released' });
+      }
+      await this.replaceReduction(forwardKey, { account: forward.account, status: 'released' });
+    });
   }
 }

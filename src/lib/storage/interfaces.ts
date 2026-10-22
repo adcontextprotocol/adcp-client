@@ -149,6 +149,8 @@ export interface DeferredTaskState {
   serverVersion: 'v2' | 'v3';
   /** Per-operation AdCP wire release retained across durable resume. */
   wireAdcpVersion?: string;
+  /** Older release negotiated with the seller; resumed responses validate against it. */
+  negotiatedAdcpVersion?: string;
   /** Per-operation version-envelope mode retained across durable resume. */
   versionEnvelope?: import('../protocols').VersionEnvelopeMode;
   /** True when the original seller-version decision used the SDK's synthetic fallback. */

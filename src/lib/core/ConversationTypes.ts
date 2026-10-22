@@ -189,6 +189,14 @@ export interface TaskOptions {
    */
   wireAdcpVersion?: string;
   /**
+   * INTERNAL — AdCP release negotiated with the seller for this operation.
+   * Responses are validated against this release before being converted up
+   * to the client's release. Set by `SingleAgentClient`; not an adopter knob.
+   *
+   * @internal
+   */
+  negotiatedAdcpVersion?: string;
+  /**
    * INTERNAL — compatibility-coordinator version-envelope mode for this operation.
    *
    * @internal
@@ -601,6 +609,13 @@ export interface TaskResultMetadata {
    * configuration pin, when detecting same-major downshift.
    */
   adcpVersion?: string;
+  /**
+   * Older AdCP release negotiated with the seller for this call. Present only
+   * when it differs from the client's release: the request was converted down
+   * to it and the response converted back up (see `debug_logs` for every
+   * field the conversion removed or moved).
+   */
+  negotiatedAdcpVersion?: string;
   /** Seller wire generation used for this request after capability discovery. */
   serverVersion?: 'v2' | 'v3';
   /** True when {@link serverVersion} came from the SDK's synthetic fallback. */
