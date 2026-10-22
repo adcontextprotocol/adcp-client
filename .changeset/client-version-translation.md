@@ -19,4 +19,4 @@ The client now negotiates an AdCP release with each seller and converts between 
 - An explicit `wireAdcpVersion` (client config or per call) turns negotiation off for that client or call, as do the media-buy lifecycle facade (which negotiates itself), governed storyboard payloads and the identity 3.3 experiment.
 - Adding the next version pair (3.3 ↔ 3.2) needs hand-written adapters only for renames and moves; see `docs/development/WIRE-VERSION-COMPAT.md`.
 
-The server side (converting an older buyer's request up before the handler and the handler's response down) follows separately.
+The server side is described in the `server-version-translation` changeset.
