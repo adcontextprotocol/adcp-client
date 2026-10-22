@@ -13,6 +13,30 @@ function isObject(value: unknown): value is Json {
  */
 export const getMediaBuyDeliveryAdapter: VersionAdapter = {
   toolName: 'get_media_buy_delivery',
+  /**
+   * AdCP 3.1 requires the root `currency`. A 3.2 handler reports currency per
+   * media buy; when every buy shares one currency, that is the root value.
+   * Mixed currencies have no 3.1 form and are left for response validation
+   * to report.
+   */
+  downgradeResponse(data) {
+    if (!isObject(data) || data.currency !== undefined || !Array.isArray(data.media_buy_deliveries)) {
+      return { data };
+    }
+    const currencies = new Set(
+      data.media_buy_deliveries.map(delivery => (isObject(delivery) ? delivery.currency : undefined))
+    );
+    const [currency] = currencies;
+    if (currencies.size !== 1 || typeof currency !== 'string') return { data };
+    return {
+      data: { ...data, currency },
+      drift: {
+        type: 'delivery_currency_to_root',
+        message: 'Shared per-media-buy currency copied to the root currency AdCP 3.1 requires.',
+        movedFields: [{ from: 'media_buy_deliveries[].currency', to: 'currency' }],
+      },
+    };
+  },
   adaptResponse(data) {
     if (!isObject(data) || typeof data.currency !== 'string' || !Array.isArray(data.media_buy_deliveries)) {
       return { data };

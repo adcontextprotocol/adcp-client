@@ -1,4 +1,5 @@
 import { assertWebBotAuthSigningKey, getWebBotAuthLegacyOriginGate } from '../signing/web-bot-auth';
+import { downgradeResponse, translationSteps, upgradeRequest } from '../adapters/version';
 import {
   isIdentity33SchemaScope,
   withIdentity33SchemaScope,
@@ -6430,6 +6431,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           requestRelease = releaseSelection;
         }
         const requestErrorArms = getToolsWithErrorArm(requestRelease.validationVersion);
+        // A buyer on an older release than the server's: handlers see requests
+        // and return responses in the server's release, and the framework
+        // converts between it and the served release. Capabilities keep their
+        // own per-release projection.
+        const translatesRelease =
+          !config.identity33 &&
+          toolName !== 'get_adcp_capabilities' &&
+          translationSteps(adcpVersion, requestRelease.validationVersion).length > 0;
         const ctx: HandlerContext<TAccount> = withImmutableServedAdcpVersion(
           {
             store: stateStore,
@@ -7696,10 +7705,22 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                     (_entry: unknown, index: number) => !notificationFailureRows.has(index)
                   ),
                 };
+          const upgraded = translatesRelease
+            ? upgradeRequest(toolName, handlerParams, {
+                fromVersion: requestRelease.validationVersion,
+                toVersion: adcpVersion,
+              })
+            : undefined;
+          if (upgraded && upgraded.drifts.length > 0) {
+            logger.debug(`Converted ${toolName} request up to AdCP ${adcpVersion}`, {
+              tool: toolName,
+              drifts: upgraded.drifts,
+            });
+          }
           const result =
             notificationFailureRows.size > 0 && handlerParams.accounts.length === 0
               ? { accounts: [], ...(params.dry_run === true && { dry_run: true }) }
-              : await handler(handlerParams, ctx);
+              : await handler(upgraded ? upgraded.params : handlerParams, ctx);
           mutationHandlerCompleted = true;
           // Narrow Error / Submitted arms of the *Response union before
           // reaching the success-arm builder: wrap() on an Error payload
@@ -8382,6 +8403,27 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             if (!isErrorResponse(formatted)) {
               normalizeMediaBuyStatusCollision(formatted, toolName);
               injectEnvelopeStatusIntoResponse(formatted, toolName);
+            }
+          }
+
+          // Convert the handler's response down to the served release before
+          // validating it against that release. Every removed field is logged.
+          if (translatesRelease && !isErrorResponse(formatted) && formatted.structuredContent) {
+            const downgraded = downgradeResponse(toolName, formatted.structuredContent, {
+              fromVersion: adcpVersion,
+              toVersion: requestRelease.validationVersion,
+            });
+            if (downgraded.data !== formatted.structuredContent) {
+              const mirrors = contentTextMirrorsStructuredContent(formatted, formatted.structuredContent);
+              formatted = cloneFormattedResponse(formatted);
+              formatted.structuredContent = downgraded.data;
+              syncContentJsonText(formatted, downgraded.data, mirrors);
+            }
+            if (downgraded.drifts.length > 0) {
+              logger.info(`Converted ${toolName} response down to AdCP ${requestRelease.validationVersion}`, {
+                tool: toolName,
+                drifts: downgraded.drifts,
+              });
             }
           }
 
