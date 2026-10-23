@@ -35,10 +35,8 @@ export function mediaBuyActionTasks(action: string): readonly MediaBuyTask[] {
 
 /** The canonical default, only usable with a known current right and validated live entry. */
 export function defaultMediaBuyActionTask(action: MediaBuyAction): MediaBuyTask | undefined {
-  return (
-    (['control_media_buy', 'refine_proposals', 'sync_creatives'] as const).find(task =>
-      mediaBuyActionTasks(action).includes(task)
-    ) ?? mediaBuyActionTasks(action)[0]
+  return (['control_media_buy', 'refine_proposals', 'sync_creatives'] as const).find(task =>
+    mediaBuyActionTasks(action).includes(task)
   );
 }
 
@@ -165,9 +163,10 @@ export function slaValid(sla: unknown): boolean {
     (record(sla) &&
       Object.entries(sla).every(
         ([k, v]) =>
-          ['response_max', 'completion_max'].includes(k) &&
-          typeof v === 'string' &&
-          /^P(?!$)(\d+Y)?(\d+M)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$/.test(v)
+          (k === 'clock' && v === 'elapsed') ||
+          (['response_max', 'completion_max'].includes(k) &&
+            typeof v === 'string' &&
+            /^P(?!$)(\d+Y)?(\d+M)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$/.test(v))
       ))
   );
 }
@@ -269,7 +268,10 @@ export function productTemplateIssues(templates: readonly ProductActionTemplate[
         currency
       ).filter(issue => issue !== 'invalid or duplicate action identity')
     );
-    if (!([...CHANGE_TERM_ACTIONS, ...LEGACY_AVAILABLE_ACTIONS] as readonly string[]).includes(template.action))
+    if (
+      !Object.hasOwn(CANONICAL_ACTION_TASKS, template.action) &&
+      !(LEGACY_AVAILABLE_ACTIONS as readonly string[]).includes(template.action)
+    )
       issues.push('invalid product action');
     if (
       template.allowed_statuses !== undefined &&

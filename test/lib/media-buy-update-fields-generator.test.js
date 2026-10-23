@@ -19,7 +19,10 @@ const { execFileSync } = require('node:child_process');
 const ts = require('typescript');
 const { build } = require('esbuild');
 require('tsx/cjs');
-const { canonicalMediaBuyActionTasks } = require('../../scripts/lib/canonical-media-buy-action-tasks.ts');
+const {
+  canonicalMediaBuyActionTasks,
+  commercialMediaBuyActionNames,
+} = require('../../scripts/lib/canonical-media-buy-action-tasks.ts');
 
 const REPO_ROOT = path.join(__dirname, '../..');
 const GENERATOR = path.join(REPO_ROOT, 'scripts/generate-media-buy-update-fields.ts');
@@ -159,33 +162,38 @@ describe('generate-media-buy-update-fields: task-routed actions', () => {
     }
   });
 
-  it('routes a reported issue through its declared task and preserves legacy mutation preflight', async () => {
-    const dir = taskRoutedFixture('task-routed-runtime');
+  it('excludes operational reporting from commercial change rights using the pinned schema', () => {
+    const actions = ['pause', REPORT_ACTION];
+    assert.deepEqual(commercialMediaBuyActionNames(actions, {}), actions);
+    assert.deepEqual(commercialMediaBuyActionNames(actions, { not: { const: REPORT_ACTION } }), ['pause']);
+    assert.throws(() => commercialMediaBuyActionNames(actions, { not: {} }), /must declare not.const/);
+  });
+
+  it('keeps ordinary controls usable beside reporting metadata without creating report change rights', async () => {
+    const dir = taskRoutedFixture('coexisting-actions');
     const { source, outPath } = runGenerator(dir);
     fs.writeFileSync(
       outPath,
       source.replaceAll("from './types'", `from '${path.join(REPO_ROOT, 'src/lib/media-buy/types')}'`)
     );
-    const canonical = JSON.parse(fs.readFileSync(path.join(dir, CANONICAL_SCHEMA), 'utf8'));
-    canonical.oneOf.reverse(); // Branch order cannot change established control/refine/sync preference.
+    const routes = canonicalMediaBuyActionTasks(JSON.parse(fs.readFileSync(path.join(dir, CANONICAL_SCHEMA), 'utf8')));
+    const commercial = commercialMediaBuyActionNames(Object.keys(routes), { not: { const: REPORT_ACTION } });
     const metadataPath = path.join(dir, 'action-metadata.generated.ts');
     fs.writeFileSync(
       metadataPath,
       [
-        `export const CANONICAL_ACTION_TASKS = ${JSON.stringify(canonicalMediaBuyActionTasks(canonical))} as const;`,
+        `export const CANONICAL_ACTION_TASKS = ${JSON.stringify(routes)} as const;`,
         'export const CHANGE_CONSTRAINT_ACTIONS = {} as const;',
-        `export const CHANGE_TERM_ACTIONS = ${JSON.stringify(Object.keys(canonicalMediaBuyActionTasks(canonical)))} as const;`,
-        `export const LEGACY_AVAILABLE_ACTIONS = ${fs.readFileSync(path.join(dir, LEGACY_ENUM), 'utf8')}.enum;`,
+        `export const CHANGE_TERM_ACTIONS = ${JSON.stringify(commercial)} as const;`,
+        `export const LEGACY_AVAILABLE_ACTIONS = ${JSON.stringify(JSON.parse(fs.readFileSync(path.join(dir, LEGACY_ENUM), 'utf8')).enum)} as const;`,
       ].join('\n')
     );
     const entry = name => JSON.stringify(path.join(REPO_ROOT, 'src/lib/media-buy', name));
     const bundle = await build({
       stdin: {
-        contents: [
-          `export { assessActionAvailability, mediaBuyActionTasks } from ${entry('actions.ts')};`,
-          `export { defaultMediaBuyActionTask } from ${entry('action-contracts.ts')};`,
-          `export { preflightUpdateMediaBuy, decomposeUpdateMediaBuy } from ${entry('preflight.ts')};`,
-        ].join('\n'),
+        contents: ['action-assessment.ts', 'action-contracts.ts', 'preflight.ts']
+          .map(name => `export * from ${entry(name)};`)
+          .join('\n'),
         resolveDir: REPO_ROOT,
         loader: 'ts',
       },
@@ -206,7 +214,15 @@ describe('generate-media-buy-update-fields: task-routed actions', () => {
     const mod = { exports: {} };
     new Function('require', 'module', 'exports', bundle.outputFiles[0].text)(require, mod, mod.exports);
     const api = mod.exports;
-    const state = {
+    const pauseTerm = { term_id: 'pause_right', action: 'pause', service_mode: 'self_serve' };
+    const report = {
+      action: REPORT_ACTION,
+      task: REPORT_ACTION,
+      mode: 'seller_managed',
+      sla: { clock: 'elapsed', response_max: 'PT15M' },
+    };
+    const pause = { action: 'pause', task: 'control_media_buy', mode: 'self_serve', change_term_id: 'pause_right' };
+    const buy = {
       media_buy_id: 'buy1',
       status: 'active',
       revision: 3,
@@ -215,75 +231,36 @@ describe('generate-media-buy-update-fields: task-routed actions', () => {
         proposal_id: 'proposal1',
         proposal_status: 'accepted',
         media_buy_id: 'buy1',
-        commercial_terms: {
-          change_terms: [
-            {
-              term_id: 'report_right',
-              action: REPORT_ACTION,
-              service_mode: 'seller_managed',
-              allowed_statuses: ['active'],
-            },
+        commercial_terms: { change_terms: [pauseTerm] },
+      },
+      available_actions: [pause, report],
+    };
+    const options = { adcpVersion: '3.3-beta.0' };
+    const withReport = api.preflightUpdateMediaBuy(buy, { paused: true }, options);
+    assert.equal(withReport.ok, true);
+    assert.deepEqual(
+      withReport,
+      api.preflightUpdateMediaBuy({ ...buy, available_actions: [pause] }, { paused: true }, options)
+    );
+    assert.equal(
+      api.assessProductAction(
+        {
+          allowed_actions: [
+            { action: 'pause', modes: ['self_serve'] },
+            { action: REPORT_ACTION, modes: ['seller_managed'], sla: report.sla },
           ],
         },
-      },
-      available_actions: [
-        { action: REPORT_ACTION, task: REPORT_ACTION, mode: 'seller_managed', change_term_id: 'report_right' },
-      ],
-    };
-    assert.equal(api.defaultMediaBuyActionTask(REPORT_ACTION), REPORT_ACTION);
-    assert.equal(api.defaultMediaBuyActionTask('increase_budget'), 'control_media_buy');
-    const options = { adcpVersion: '3.3-beta.0', task: REPORT_ACTION };
-    const assessment = api.assessActionAvailability(state, REPORT_ACTION, options);
-    assert.equal(assessment.status, 'available_now', JSON.stringify(assessment));
-    assert.equal(assessment.nonDefaultRoute, REPORT_ACTION);
-    assert.equal(
-      api.assessActionAvailability(state, REPORT_ACTION, { ...options, task: 'update_media_buy' }).reason,
-      'mode_mismatch'
+        'pause'
+      ).status,
+      'possible'
     );
-    const missingRoute = structuredClone(state);
-    delete missingRoute.available_actions[0].task;
-    for (const missingRouteOptions of [{ adcpVersion: '3.3-beta.0' }, options]) {
-      assert.equal(
-        api.assessActionAvailability(missingRoute, REPORT_ACTION, missingRouteOptions).reason,
-        'condition_unresolved'
-      );
-    }
-    const noTerms = structuredClone(state);
-    delete noTerms.accepted_proposal;
-    assert.equal(api.assessActionAvailability(noTerms, REPORT_ACTION, options).certainty, 'unknown');
-    const compactControl = structuredClone(state);
-    compactControl.packages = [{ package_id: 'p1', budget: 100 }];
-    compactControl.accepted_proposal.commercial_terms.change_terms = [
-      {
-        term_id: 'spend_right',
-        action: 'update_spend_target',
-        service_mode: 'self_serve',
-        allowed_statuses: ['active'],
-      },
-    ];
-    compactControl.available_actions = [
-      {
-        action: 'update_spend_target',
-        task: 'control_media_buy',
-        mode: 'self_serve',
-        change_term_id: 'spend_right',
-      },
-    ];
-    const spendRequest = { packages: [{ package_id: 'p1', min_spend_target: 20 }] };
-    assert.equal(
-      api.assessActionAvailability(compactControl, 'update_spend_target', {
-        task: 'update_media_buy',
-        request: spendRequest,
-      }).status,
-      'available_now'
-    );
-    assert.equal(api.preflightUpdateMediaBuy(compactControl, spendRequest).ok, true);
-    assert.equal(api.preflightUpdateMediaBuy(state, { paused: true }).ok, false);
-    const legacy = { status: 'active', valid_actions: ['pause'] };
-    assert.equal(api.preflightUpdateMediaBuy(legacy, { paused: true }).ok, true);
-    const [pause] = api.decomposeUpdateMediaBuy(legacy, { paused: true }).actions;
-    assert.equal(pause.action, 'pause');
-    assert.deepEqual(pause.touched_fields, ['paused']);
+    assert.equal(api.defaultMediaBuyActionTask('pause'), 'control_media_buy');
+    assert.equal(api.defaultMediaBuyActionTask(REPORT_ACTION), undefined);
+    assert.equal(api.assessActionAvailability(buy, REPORT_ACTION, options).status, 'currently_unavailable');
+    assert.equal(api.assessProposalAction(buy.accepted_proposal, REPORT_ACTION).status, 'not_negotiated');
+    assert.ok(api.changeTermIssues([{ ...pauseTerm, action: REPORT_ACTION, service_mode: 'seller_managed' }]).length);
+    assert.equal(api.slaValid({ clock: 'elapsed', response_max: 'PT15M' }), true);
+    assert.equal(api.slaValid({ clock: 'business', response_max: 'PT15M' }), false);
   });
 });
 

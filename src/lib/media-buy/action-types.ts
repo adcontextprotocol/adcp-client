@@ -7,7 +7,7 @@ import type {
 import type { MediaBuyActionContext, MediaBuyActionId, MediaBuyActionMode, SLAWindow } from './types';
 import type { CANONICAL_ACTION_TASKS } from './action-metadata.generated';
 
-/** Canonical task vocabulary plus the established 3.1 mutation facade. */
+/** Canonical wire tasks plus the established 3.1 mutation facade. */
 export type MediaBuyTask =
   | 'update_media_buy'
   | (typeof CANONICAL_ACTION_TASKS)[keyof typeof CANONICAL_ACTION_TASKS][number];

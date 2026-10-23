@@ -28,3 +28,16 @@ export function canonicalMediaBuyActionTasks(schema: CanonicalActionSchema): Rec
   }
   return tasks;
 }
+
+/** Commercial change rights can exclude an otherwise discoverable canonical action. */
+export function commercialMediaBuyActionNames(
+  actions: readonly string[],
+  actionSchema: { not?: { const?: unknown } }
+): string[] {
+  if (actionSchema.not === undefined) return [...actions];
+  const excluded = actionSchema.not.const;
+  if (typeof excluded !== 'string') {
+    throw new Error('Commercial media-buy action exclusions must declare not.const.');
+  }
+  return actions.filter(action => action !== excluded);
+}

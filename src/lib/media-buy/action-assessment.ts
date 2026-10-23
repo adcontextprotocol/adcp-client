@@ -37,7 +37,7 @@ export interface ActionAssessmentOptions extends ConstraintEvaluationOptions {
   termsRefIsAlias?: boolean;
   /** Current accepted snapshot when it is stored separately from the buy. An embedded snapshot takes precedence. */
   proposal?: ActionProposal;
-  /** Optional route being attempted. update_media_buy can subsume canonical control/refine/sync mutations. */
+  /** Optional route being attempted. update_media_buy can subsume compact tasks as a compatibility facade. */
   task?: MediaBuyTask;
   request?: UpdateMediaBuyRequestLike;
 }
@@ -278,14 +278,9 @@ export function assessActionAvailability(
     return deny('mode_mismatch', 'The live mode or SLA exceeds the accepted commitment.');
   if (entry.task !== undefined && !mediaBuyActionTasks(action).includes(entry.task))
     return deny('mode_mismatch', 'The live action has no compatible canonical task.');
-  const hasMutationRoute = mediaBuyActionTasks(action).some(task =>
-    ['control_media_buy', 'refine_proposals', 'sync_creatives'].includes(task)
-  );
-  if (entry.task === undefined && !hasMutationRoute)
-    return deny('condition_unresolved', 'This action requires an explicit live task route.', 'unknown');
   const task = entry.task ?? 'update_media_buy';
   const nonDefaultRoute = task === 'update_media_buy' ? undefined : task;
-  if (options.task !== undefined && (options.task === 'update_media_buy' ? !hasMutationRoute : options.task !== task))
+  if (options.task !== undefined && options.task !== 'update_media_buy' && options.task !== task)
     return deny(
       'mode_mismatch',
       entry.task === undefined

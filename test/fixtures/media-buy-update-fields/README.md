@@ -20,10 +20,11 @@ conflict cases are derived from these files at test time.
 Refresh by copying the files out of `schemas/cache/<version>/` once the
 pin moves to a release that ships `core/media-buy-available-action-id.json`.
 
-`task-routed/core/canonical-media-buy-action.json` is copied from the AdCP
-3.3 candidate bundle for protocol PR #8417, commit
+`task-routed/core/canonical-media-buy-action.json` is a routing excerpt from
+the AdCP 3.3 candidate bundle for protocol PR #8417, commit
 `e4ae45fd1c0237a6db046e2f7d6ce2280e4edbf5`. It adds the separate
 `report_media_buy_issue` route. Tests combine that route with the existing
 binding fixtures to verify that reporting has no fabricated update field,
 that enum and const action branches preserve the same route, and that real
-mutation routes still require bindings.
+mutation routes still require bindings. Commercial action names come from
+the pinned change-term schema's explicit exclusions.
