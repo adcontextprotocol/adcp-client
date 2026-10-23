@@ -1206,7 +1206,13 @@ export class TaskExecutor {
    * adaptation runs, so the validator sees the same object the caller wrote.
    * Throws in strict, logs to `debugLogs` in warn, no-ops in off.
    */
-  validateRequest(taskName: string, params: unknown, debugLogs?: any[]): void {
+  validateRequest(taskName: string, params: unknown, debugLogs?: any[], adcpVersion?: string): void {
+    if (adcpVersion !== undefined) {
+      // A request converted down to a negotiated release is checked against
+      // that release's schema, the one the seller validates.
+      validateOutgoingRequest(taskName, params, this.requestValidationMode, debugLogs, adcpVersion);
+      return;
+    }
     if (this.config.experimentalIdentity33?.() && this.requestValidationMode !== 'off') {
       const outcome = validateIdentity33Payload(taskName, 'request', params, this.config.adcpVersion);
       if (!outcome.valid) {
@@ -2029,13 +2035,24 @@ export class TaskExecutor {
     switch (status) {
       case ADCP_STATUS.COMPLETED:
         // Task completed immediately
-        const completedData = this.extractResponseData(response, debugLogs, taskName, serverVersion);
+        const completedData = this.extractResponseData(
+          response,
+          debugLogs,
+          taskName,
+          serverVersion,
+          options.negotiatedAdcpVersion
+        );
         // Ordinary calls retain the historical behavior of publishing seller
         // completion before optional governance postflight work. A committed
         // compatibility mutation defers this until durable settlement.
         if (!deferTerminalTaskStatus) this.updateTaskStatus(taskId, 'completed', completedData);
 
-        const operationSuccess = this.isOperationSuccess(completedData, taskName, serverVersion);
+        const operationSuccess = this.isOperationSuccess(
+          completedData,
+          taskName,
+          serverVersion,
+          options.negotiatedAdcpVersion
+        );
 
         // Validate response against AdCP schema - validate extracted data, not protocol wrapper
         const validationResult = this.validateResponseSchema(
@@ -2044,7 +2061,8 @@ export class TaskExecutor {
           debugLogs,
           serverVersion,
           params,
-          refinementServedVersion
+          refinementServedVersion,
+          options.negotiatedAdcpVersion
         );
 
         // In strict mode, schema validation failures cause task to fail
@@ -2151,7 +2169,13 @@ export class TaskExecutor {
       case ADCP_STATUS.FAILED:
       case ADCP_STATUS.REJECTED:
       case ADCP_STATUS.CANCELED: {
-        const failedData = this.extractResponseData(response, debugLogs, taskName, serverVersion);
+        const failedData = this.extractResponseData(
+          response,
+          debugLogs,
+          taskName,
+          serverVersion,
+          options.negotiatedAdcpVersion
+        );
         // Raw/in-process protocol clients may wrap the tool payload under
         // `data` while carrying the task lifecycle status at the top level.
         // The generic unwrapper intentionally preserves that wrapper, so
@@ -2206,12 +2230,23 @@ export class TaskExecutor {
 
       default:
         // Unknown status - treat as completed if we have data
-        const defaultData = this.extractResponseData(response, debugLogs, taskName, serverVersion);
+        const defaultData = this.extractResponseData(
+          response,
+          debugLogs,
+          taskName,
+          serverVersion,
+          options.negotiatedAdcpVersion
+        );
         if (
           defaultData &&
           (defaultData !== response || response.structuredContent || response.result || response.data)
         ) {
-          const defaultSuccess = this.isOperationSuccess(defaultData, taskName, serverVersion);
+          const defaultSuccess = this.isOperationSuccess(
+            defaultData,
+            taskName,
+            serverVersion,
+            options.negotiatedAdcpVersion
+          );
 
           // Validate response against AdCP schema - validate extracted data, not protocol wrapper
           const defaultValidation = this.validateResponseSchema(
@@ -2220,7 +2255,8 @@ export class TaskExecutor {
             debugLogs,
             serverVersion,
             params,
-            refinementServedVersion
+            refinementServedVersion,
+            options.negotiatedAdcpVersion
           );
 
           // In strict mode, schema validation failures cause task to fail
@@ -2279,7 +2315,13 @@ export class TaskExecutor {
    *
    * @internal Exposed for testing purposes
    */
-  public extractResponseData(response: any, debugLogs?: any[], toolName?: string, serverVersion?: 'v2' | 'v3'): any {
+  public extractResponseData(
+    response: any,
+    debugLogs?: any[],
+    toolName?: string,
+    serverVersion?: 'v2' | 'v3',
+    negotiatedAdcpVersion?: string
+  ): any {
     // MCP error responses (isError: true) flow through here — the response unwrapper
     // extracts structured data (adcp_error, context, ext) from structuredContent or text
 
@@ -2346,7 +2388,7 @@ export class TaskExecutor {
       // Now unwrap the response
       const unwrapped = unwrapProtocolResponse(response, toolName, undefined, {
         filterInvalidProducts: this.config.filterInvalidProducts,
-        responseAdcpVersion: this.effectiveResponseAdcpVersion(serverVersion),
+        responseAdcpVersion: this.effectiveResponseAdcpVersion(serverVersion, negotiatedAdcpVersion),
       });
 
       // Log successful extraction with result details
@@ -2386,8 +2428,17 @@ export class TaskExecutor {
    * Check if extracted response data represents a successful operation.
    * Handles singular `error`, plural `errors` (AdCP schema), and `success: false`.
    */
-  private isOperationSuccess(data: any, taskName?: string, serverVersion?: 'v2' | 'v3'): boolean {
-    return isAdcpOperationSuccess(data, taskName, this.effectiveResponseAdcpVersion(serverVersion));
+  private isOperationSuccess(
+    data: any,
+    taskName?: string,
+    serverVersion?: 'v2' | 'v3',
+    negotiatedAdcpVersion?: string
+  ): boolean {
+    return isAdcpOperationSuccess(
+      data,
+      taskName,
+      this.effectiveResponseAdcpVersion(serverVersion, negotiatedAdcpVersion)
+    );
   }
 
   /**
@@ -2447,7 +2498,13 @@ export class TaskExecutor {
     serverVersion: 'v2' | 'v3' = 'v3'
   ): Promise<TaskResult<T>> {
     // Extract any data that came with the working response
-    const partialData = this.extractResponseData(initialResponse, debugLogs, taskName, serverVersion);
+    const partialData = this.extractResponseData(
+      initialResponse,
+      debugLogs,
+      taskName,
+      serverVersion,
+      options.negotiatedAdcpVersion
+    );
     const metadata = this.buildMetadata({
       taskId,
       taskName,
@@ -2486,7 +2543,13 @@ export class TaskExecutor {
     serverVersion: 'v2' | 'v3' = 'v3'
   ): Promise<TaskResult<T>> {
     // Extract any data that came with the submitted response
-    const partialData = this.extractResponseData(response, debugLogs, taskName, serverVersion);
+    const partialData = this.extractResponseData(
+      response,
+      debugLogs,
+      taskName,
+      serverVersion,
+      options.negotiatedAdcpVersion
+    );
 
     let webhookUrl = response.webhookUrl;
 
@@ -3089,7 +3152,13 @@ export class TaskExecutor {
     // continuation. In either case, return the nonresumable pause without
     // invoking a handler or inventing a continuation call.
     if (agent.protocol === 'mcp' || !a2aTaskId) {
-      const partialData = this.extractResponseData(response, debugLogs, taskName, serverVersion);
+      const partialData = this.extractResponseData(
+        response,
+        debugLogs,
+        taskName,
+        serverVersion,
+        options.negotiatedAdcpVersion
+      );
       const metadata = this.buildMetadata({
         taskId,
         taskName,
@@ -3114,7 +3183,13 @@ export class TaskExecutor {
     // state so callers can collect input or refresh credentials themselves.
     if (!inputHandler) {
       // Extract any data that came with the response (some agents include partial results)
-      const partialData = this.extractResponseData(response, debugLogs, taskName, serverVersion);
+      const partialData = this.extractResponseData(
+        response,
+        debugLogs,
+        taskName,
+        serverVersion,
+        options.negotiatedAdcpVersion
+      );
       const metadata = this.buildMetadata({
         taskId,
         taskName,
@@ -3146,6 +3221,9 @@ export class TaskExecutor {
           a2aTaskId,
           serverVersion,
           ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
+          ...(options.negotiatedAdcpVersion !== undefined && {
+            negotiatedAdcpVersion: options.negotiatedAdcpVersion,
+          }),
           ...(options.versionEnvelope !== undefined && { versionEnvelope: options.versionEnvelope }),
           serverVersionSynthetic: this.activeTasks.get(taskId)?.serverVersionSynthetic,
           ...(refinementServedVersion !== undefined && { refinementServedVersion }),
@@ -3310,6 +3388,9 @@ export class TaskExecutor {
           a2aTaskId,
           serverVersion,
           ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
+          ...(options.negotiatedAdcpVersion !== undefined && {
+            negotiatedAdcpVersion: options.negotiatedAdcpVersion,
+          }),
           ...(options.versionEnvelope !== undefined && { versionEnvelope: options.versionEnvelope }),
           serverVersionSynthetic: this.activeTasks.get(taskId)?.serverVersionSynthetic,
           ...(refinementServedVersion !== undefined && { refinementServedVersion }),
@@ -3785,7 +3866,12 @@ export class TaskExecutor {
       }
 
       if (status.status === ADCP_STATUS.COMPLETED) {
-        const pollSuccess = this.isOperationSuccess(status.result, status.taskType, serverVersion);
+        const pollSuccess = this.isOperationSuccess(
+          status.result,
+          status.taskType,
+          serverVersion,
+          metadataTaskId ? this.activeTasks.get(metadataTaskId)?.options.negotiatedAdcpVersion : undefined
+        );
 
         if (pollSuccess) {
           return markAuthoritativePolledTerminal(
@@ -4533,6 +4619,7 @@ export class TaskExecutor {
         state.messages,
         {
           ...(state.wireAdcpVersion !== undefined && { wireAdcpVersion: state.wireAdcpVersion }),
+          ...(state.negotiatedAdcpVersion !== undefined && { negotiatedAdcpVersion: state.negotiatedAdcpVersion }),
           ...(state.versionEnvelope !== undefined && { versionEnvelope: state.versionEnvelope }),
         },
         [],
@@ -4782,6 +4869,7 @@ export class TaskExecutor {
         undefined, // No handler for deferred tasks - input was provided by human
         {
           ...(state.wireAdcpVersion !== undefined && { wireAdcpVersion: state.wireAdcpVersion }),
+          ...(state.negotiatedAdcpVersion !== undefined && { negotiatedAdcpVersion: state.negotiatedAdcpVersion }),
           ...(state.versionEnvelope !== undefined && { versionEnvelope: state.versionEnvelope }),
         },
         [],
@@ -4831,6 +4919,7 @@ export class TaskExecutor {
             refinementServedVersion: state.refinementServedVersion,
           }),
           ...(state.wireAdcpVersion !== undefined && { wireAdcpVersion: state.wireAdcpVersion }),
+          ...(state.negotiatedAdcpVersion !== undefined && { negotiatedAdcpVersion: state.negotiatedAdcpVersion }),
           ...(state.versionEnvelope !== undefined && { versionEnvelope: state.versionEnvelope }),
           ...(state.serverVersionSynthetic !== undefined && {
             serverVersionSynthetic: state.serverVersionSynthetic,
@@ -6265,14 +6354,17 @@ export class TaskExecutor {
     debugLogs: any[],
     serverVersion?: 'v2' | 'v3',
     requestParams?: { adcp_version?: unknown },
-    refinementServedVersion?: string
+    refinementServedVersion?: string,
+    negotiatedAdcpVersion?: string
   ): { valid: boolean; errors: string[] } {
     const mode = this.responseValidationMode;
     const logViolations = this.config.logSchemaViolations !== false;
 
     try {
+      // A negotiated release is the release on the wire; validate the seller's
+      // payload against it before the client converts it up.
       const pinnedValidationVersion =
-        this.responseAdcpVersionForValidation() ?? this.config.adcpVersion ?? ADCP_VERSION;
+        this.responseAdcpVersionForValidation() ?? negotiatedAdcpVersion ?? this.config.adcpVersion ?? ADCP_VERSION;
       // Capabilities are negotiated before any pin applies: a 3.0 pin (or a
       // major-only envelope) is served the seller's highest release in the
       // major, echoed in `adcp_version`. Validate against that release, as the
@@ -6406,8 +6498,8 @@ export class TaskExecutor {
     return undefined;
   }
 
-  private effectiveResponseAdcpVersion(serverVersion?: 'v2' | 'v3'): string {
-    return this.responseAdcpVersionForValidation() ?? this.config.adcpVersion ?? ADCP_VERSION;
+  private effectiveResponseAdcpVersion(serverVersion?: 'v2' | 'v3', negotiatedAdcpVersion?: string): string {
+    return this.responseAdcpVersionForValidation() ?? negotiatedAdcpVersion ?? this.config.adcpVersion ?? ADCP_VERSION;
   }
 
   /**
