@@ -72,11 +72,22 @@ export const createMediaBuyAdapter: VersionAdapter = {
     // the package authors its own.
     const inherited = legacyBidPrice(params.bidding);
     const packages = adaptPackages(params.packages, inherited, moved, 'bidding');
-    if (moved.length === 0) return { params };
+    if (moved.length === 0 && inherited === undefined) return { params };
     const adapted: Json = { ...params, packages };
-    // Every package now carries the inherited amount explicitly.
-    if (inherited !== undefined && moved.some(m => m.from === 'bidding')) delete adapted.bidding;
-    return { params: adapted, drift: bidDrift(moved) };
+    // 3.1 has no media-buy bidding block. A single-amount default is now
+    // carried by every package that inherited it, and packages that set their
+    // own bid override it, so nothing is lost by removing it.
+    if (inherited !== undefined) delete adapted.bidding;
+    if (moved.length > 0) return { params: adapted, drift: bidDrift(moved) };
+    return {
+      params: adapted,
+      drift: {
+        type: 'redundant_bidding_default_removed',
+        message:
+          'Media-buy bidding default removed: every package sets its own bid, and AdCP 3.1 has no media-buy bidding block.',
+        strippedFields: ['bidding'],
+      },
+    };
   },
   adaptResponse: adaptMediaBuyStatus('create_media_buy'),
 };

@@ -21,14 +21,7 @@ import { createHash, randomUUID, scryptSync } from 'node:crypto';
 const SKIP_PRODUCT_CACHE = Symbol('adcp.skipProductCache');
 const SKIP_ACCOUNT_REGISTRY_OBSERVATION = Symbol('adcp.skipAccountRegistryObservation');
 import type { AccountReference, AgentConfig } from '../types';
-import {
-  accountKeySites,
-  naturalAccountKey,
-  reducedFields,
-  sameAccountKey,
-  valueAt,
-  withReducedKeyAt,
-} from './account-reduction';
+import { accountKeySites, naturalAccountKey, reducedFields, valueAt, withReducedKeyAt } from './account-reduction';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
 import { parseAdcpMajorVersion, toReleasePrecisionVersion, type AdcpVersion } from '../version';
 import {

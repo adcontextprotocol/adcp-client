@@ -171,6 +171,27 @@ describe('convertRequest', () => {
     assert.ok(!dropped.strippedFields.includes('bidding'), 'moved fields are not reported as dropped');
   });
 
+  test('removes a media-buy bid default that every package overrides, without refusing', () => {
+    const request = mediaBuyRequest();
+    request.packages[0].bid_price = 3;
+    const { params, drifts, refusedFields } = convertRequest('create_media_buy', request, {
+      fromVersion: CLIENT_VERSION,
+      toVersion: '3.1',
+    });
+    assert.equal(params.bidding, undefined);
+    assert.equal(params.packages[0].bid_price, 3, 'a package bid_price is kept');
+    assert.equal(params.packages[1].bid_price, 9, 'a package bidding.bid_amount moves');
+    assert.deepEqual(refusedFields, []);
+    const onlyOverrides = mediaBuyRequest();
+    onlyOverrides.packages[0].bid_price = 3;
+    onlyOverrides.packages[1] = { ...onlyOverrides.packages[1], bidding: undefined, bid_price: 4 };
+    const result = convertRequest('create_media_buy', onlyOverrides, { fromVersion: CLIENT_VERSION, toVersion: '3.1' });
+    assert.equal(result.params.bidding, undefined);
+    assert.deepEqual(result.refusedFields, []);
+    assert.ok(result.drifts.some(drift => drift.type === 'redundant_bidding_default_removed'));
+    assert.ok(drifts.some(drift => drift.type === 'bidding_moved_to_bid_price'));
+  });
+
   test('refuses mutation fields whose loss changes what the seller does', () => {
     const request = mediaBuyRequest({ daily_budget_cap: 100 });
     request.packages[0].targeting_overlay.device_platform_exclude = ['ios'];

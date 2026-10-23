@@ -312,6 +312,11 @@ function project(
   let changed = false;
   const out: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
+    // An undefined value never reaches the wire, so it cannot be lost.
+    if (entry === undefined) {
+      out[key] = entry;
+      continue;
+    }
     // A typed `additionalProperties` schema accepts undeclared keys; the
     // boolean `true` of an open object does not count, because a seller on
     // the older release ignores (or rejects) what it does not declare.
