@@ -21,6 +21,7 @@ import type { MediaBuyActionId, SLAWindow } from './types';
 
 export const NON_TERMINAL_ACTION_STATUSES = ['pending_creatives', 'pending_start', 'active', 'paused'] as const;
 const MODES = ['self_serve', 'conditional_self_serve', 'seller_managed', 'requires_approval'];
+const CANONICAL_TASKS = new Set<string>(Object.values(CANONICAL_ACTION_TASKS).flat());
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -162,9 +163,10 @@ export function slaValid(sla: unknown): boolean {
     (record(sla) &&
       Object.entries(sla).every(
         ([k, v]) =>
-          ['response_max', 'completion_max'].includes(k) &&
-          typeof v === 'string' &&
-          /^P(?!$)(\d+Y)?(\d+M)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$/.test(v)
+          (k === 'clock' && v === 'elapsed') ||
+          (['response_max', 'completion_max'].includes(k) &&
+            typeof v === 'string' &&
+            /^P(?!$)(\d+Y)?(\d+M)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$/.test(v))
       ))
   );
 }
@@ -266,7 +268,10 @@ export function productTemplateIssues(templates: readonly ProductActionTemplate[
         currency
       ).filter(issue => issue !== 'invalid or duplicate action identity')
     );
-    if (!([...CHANGE_TERM_ACTIONS, ...LEGACY_AVAILABLE_ACTIONS] as readonly string[]).includes(template.action))
+    if (
+      !Object.hasOwn(CANONICAL_ACTION_TASKS, template.action) &&
+      !(LEGACY_AVAILABLE_ACTIONS as readonly string[]).includes(template.action)
+    )
       issues.push('invalid product action');
     if (
       template.allowed_statuses !== undefined &&
@@ -309,11 +314,7 @@ export function liveActionIssues(entries: unknown): string[] {
     )
       return ['invalid or duplicate live action'];
     seen.add(entry.action);
-    if (
-      entry.task !== undefined &&
-      !['control_media_buy', 'refine_proposals', 'sync_creatives'].includes(String(entry.task))
-    )
-      return ['invalid live task'];
+    if (entry.task !== undefined && !CANONICAL_TASKS.has(String(entry.task))) return ['invalid live task'];
     if (!slaValid(entry.sla)) return ['invalid live SLA'];
     if (
       entry.change_term_id !== undefined &&

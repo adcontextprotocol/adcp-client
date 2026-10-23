@@ -17,12 +17,21 @@ const fs = require('node:fs');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const ts = require('typescript');
+const { build } = require('esbuild');
+require('tsx/cjs');
+const {
+  canonicalMediaBuyActionTasks,
+  commercialMediaBuyActionNames,
+} = require('../../scripts/lib/canonical-media-buy-action-tasks.ts');
 
 const REPO_ROOT = path.join(__dirname, '../..');
 const GENERATOR = path.join(REPO_ROOT, 'scripts/generate-media-buy-update-fields.ts');
 const MERGED_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/media-buy-update-fields/merged');
 const LEGACY_ENUM = 'enums/media-buy-valid-action.json';
 const ID_SCHEMA = 'core/media-buy-available-action-id.json';
+const CANONICAL_SCHEMA = 'core/canonical-media-buy-action.json';
+const TASK_ROUTED_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/media-buy-update-fields/task-routed');
+const REPORT_ACTION = 'report_media_buy_issue';
 
 const FREQUENCY_CAP_ACTION = 'update_media_buy_frequency_cap';
 const PACKAGE_FREQUENCY_CAP_FIELD = 'packages[].targeting_overlay.frequency_cap';
@@ -88,6 +97,172 @@ function evaluateModule(source) {
   new Function('module', 'exports', outputText)(mod, mod.exports);
   return mod.exports;
 }
+
+function taskRoutedFixture(name) {
+  const dir = scratchDir(name);
+  copyFixture(dir, LEGACY_ENUM);
+  writeIdSchema(dir, schema => {
+    schema.anyOf.push({ type: 'string', const: REPORT_ACTION });
+  });
+  fs.copyFileSync(path.join(TASK_ROUTED_FIXTURE, CANONICAL_SCHEMA), path.join(dir, CANONICAL_SCHEMA));
+  return dir;
+}
+
+describe('generate-media-buy-update-fields: task-routed actions', () => {
+  it('retains separate task routes for const and enum branches without inventing update bindings', () => {
+    for (const shape of ['const', 'enum']) {
+      const dir = taskRoutedFixture(`task-routed-${shape}`);
+      const schemaPath = path.join(dir, CANONICAL_SCHEMA);
+      const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+      const report = schema.oneOf.find(branch => branch.properties.task.const === REPORT_ACTION);
+      report.properties.action = shape === 'const' ? { const: REPORT_ACTION } : { enum: [REPORT_ACTION] };
+      fs.writeFileSync(schemaPath, JSON.stringify(schema));
+      assert.deepEqual(canonicalMediaBuyActionTasks(schema)[REPORT_ACTION], [REPORT_ACTION]);
+      const generated = evaluateModule(runGenerator(dir).source);
+      assert.equal(generated.UPDATE_FIELDS_BY_ACTION[REPORT_ACTION], undefined);
+      assert.deepEqual(generated.STRUCTURED_ONLY_MEDIA_BUY_ACTIONS, [FREQUENCY_CAP_ACTION]);
+      assert.deepEqual(generated.ACTIONS_BY_FIELD.frequency_cap, [FREQUENCY_CAP_ACTION]);
+      assert.ok(Object.values(generated.ACTIONS_BY_FIELD).every(actions => !actions.includes(REPORT_ACTION)));
+    }
+  });
+
+  it('still rejects absent bindings for every established mutation task', () => {
+    for (const tasks of [
+      ['update_media_buy'],
+      ['control_media_buy'],
+      ['refine_proposals'],
+      ['sync_creatives'],
+      [REPORT_ACTION, 'control_media_buy'],
+    ]) {
+      const dir = taskRoutedFixture(`unbound-mutation-${tasks.join('-')}`);
+      writeIdSchema(dir, schema => {
+        delete schema.enumMetadata[FREQUENCY_CAP_ACTION];
+      });
+      fs.writeFileSync(
+        path.join(dir, CANONICAL_SCHEMA),
+        JSON.stringify({
+          oneOf: tasks.map(task => ({
+            properties: { task: { const: task }, action: { enum: [FREQUENCY_CAP_ACTION] } },
+          })),
+        })
+      );
+      assert.match(runGeneratorExpectingFailure(dir), /no enumMetadata\.update_fields binding/);
+    }
+  });
+
+  it('rejects malformed canonical route declarations instead of exempting missing bindings', () => {
+    for (const [task, action] of [
+      [{ const: '' }, { const: REPORT_ACTION }],
+      [{}, { const: REPORT_ACTION }],
+      [{ const: REPORT_ACTION }, {}],
+      [{ const: REPORT_ACTION }, { enum: [] }],
+      [{ const: REPORT_ACTION }, { enum: [REPORT_ACTION, false] }],
+    ]) {
+      assert.throws(() => canonicalMediaBuyActionTasks({ oneOf: [{ properties: { task, action } }] }), /must declare/);
+    }
+  });
+
+  it('excludes operational reporting from commercial change rights using the pinned schema', () => {
+    const actions = ['pause', REPORT_ACTION];
+    assert.deepEqual(commercialMediaBuyActionNames(actions, {}), actions);
+    assert.deepEqual(commercialMediaBuyActionNames(actions, { not: { const: REPORT_ACTION } }), ['pause']);
+    assert.throws(() => commercialMediaBuyActionNames(actions, { not: {} }), /must declare not.const/);
+  });
+
+  it('keeps ordinary controls usable beside reporting metadata without creating report change rights', async () => {
+    const dir = taskRoutedFixture('coexisting-actions');
+    const { source, outPath } = runGenerator(dir);
+    fs.writeFileSync(
+      outPath,
+      source.replaceAll("from './types'", `from '${path.join(REPO_ROOT, 'src/lib/media-buy/types')}'`)
+    );
+    const routes = canonicalMediaBuyActionTasks(JSON.parse(fs.readFileSync(path.join(dir, CANONICAL_SCHEMA), 'utf8')));
+    const commercial = commercialMediaBuyActionNames(Object.keys(routes), { not: { const: REPORT_ACTION } });
+    const metadataPath = path.join(dir, 'action-metadata.generated.ts');
+    fs.writeFileSync(
+      metadataPath,
+      [
+        `export const CANONICAL_ACTION_TASKS = ${JSON.stringify(routes)} as const;`,
+        'export const CHANGE_CONSTRAINT_ACTIONS = {} as const;',
+        `export const CHANGE_TERM_ACTIONS = ${JSON.stringify(commercial)} as const;`,
+        `export const LEGACY_AVAILABLE_ACTIONS = ${JSON.stringify(JSON.parse(fs.readFileSync(path.join(dir, LEGACY_ENUM), 'utf8')).enum)} as const;`,
+      ].join('\n')
+    );
+    const entry = name => JSON.stringify(path.join(REPO_ROOT, 'src/lib/media-buy', name));
+    const bundle = await build({
+      stdin: {
+        contents: ['action-assessment.ts', 'action-contracts.ts', 'preflight.ts']
+          .map(name => `export * from ${entry(name)};`)
+          .join('\n'),
+        resolveDir: REPO_ROOT,
+        loader: 'ts',
+      },
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      write: false,
+      plugins: [
+        {
+          name: 'candidate-action-metadata',
+          setup(builder) {
+            builder.onResolve({ filter: /action-metadata\.generated$/ }, () => ({ path: metadataPath }));
+            builder.onResolve({ filter: /update-fields\.generated$/ }, () => ({ path: outPath }));
+          },
+        },
+      ],
+    });
+    const mod = { exports: {} };
+    new Function('require', 'module', 'exports', bundle.outputFiles[0].text)(require, mod, mod.exports);
+    const api = mod.exports;
+    const pauseTerm = { term_id: 'pause_right', action: 'pause', service_mode: 'self_serve' };
+    const report = {
+      action: REPORT_ACTION,
+      task: REPORT_ACTION,
+      mode: 'seller_managed',
+      sla: { clock: 'elapsed', response_max: 'PT15M' },
+    };
+    const pause = { action: 'pause', task: 'control_media_buy', mode: 'self_serve', change_term_id: 'pause_right' };
+    const buy = {
+      media_buy_id: 'buy1',
+      status: 'active',
+      revision: 3,
+      accepted_proposal_id: 'proposal1',
+      accepted_proposal: {
+        proposal_id: 'proposal1',
+        proposal_status: 'accepted',
+        media_buy_id: 'buy1',
+        commercial_terms: { change_terms: [pauseTerm] },
+      },
+      available_actions: [pause, report],
+    };
+    const options = { adcpVersion: '3.3-beta.0' };
+    const withReport = api.preflightUpdateMediaBuy(buy, { paused: true }, options);
+    assert.equal(withReport.ok, true);
+    assert.deepEqual(
+      withReport,
+      api.preflightUpdateMediaBuy({ ...buy, available_actions: [pause] }, { paused: true }, options)
+    );
+    assert.equal(
+      api.assessProductAction(
+        {
+          allowed_actions: [
+            { action: 'pause', modes: ['self_serve'] },
+            { action: REPORT_ACTION, modes: ['seller_managed'], sla: report.sla },
+          ],
+        },
+        'pause'
+      ).status,
+      'possible'
+    );
+    assert.equal(api.defaultMediaBuyActionTask('pause'), 'control_media_buy');
+    assert.equal(api.defaultMediaBuyActionTask(REPORT_ACTION), undefined);
+    assert.equal(api.assessActionAvailability(buy, REPORT_ACTION, options).status, 'currently_unavailable');
+    assert.equal(api.assessProposalAction(buy.accepted_proposal, REPORT_ACTION).status, 'not_negotiated');
+    assert.ok(api.changeTermIssues([{ ...pauseTerm, action: REPORT_ACTION, service_mode: 'seller_managed' }]).length);
+    assert.equal(api.slaValid({ clock: 'elapsed', response_max: 'PT15M' }), true);
+    assert.equal(api.slaValid({ clock: 'business', response_max: 'PT15M' }), false);
+  });
+});
 
 describe('generate-media-buy-update-fields: merged enumMetadata (#2887)', () => {
   let generated;

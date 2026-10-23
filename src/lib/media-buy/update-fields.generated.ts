@@ -7,9 +7,10 @@
 import type { MediaBuyValidAction } from './types';
 
 /**
- * Actions that exist only on the structured `available_actions[].action`
- * surface (absent from the deprecated flat `valid_actions[]` enum). Their
+ * Update-binding actions that exist only on `available_actions[].action`
+ * (absent from the deprecated flat `valid_actions[]` enum). Their
  * field bindings come from `core/media-buy-available-action-id.json`.
+ * Actions routed exclusively to other tasks are excluded.
  * Empty when the schema cache predates that file.
  */
 export const STRUCTURED_ONLY_MEDIA_BUY_ACTIONS = ["update_media_buy_frequency_cap"] as const;
