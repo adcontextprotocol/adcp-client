@@ -21,7 +21,12 @@ import path from 'path';
 import { isDeepStrictEqual } from 'node:util';
 import { ADCP_VERSION } from '../version';
 import { ConfigurationError } from '../errors';
-import { hasBundledSchemaStore, listBundledSchemaFiles, loadBundledSchemaFile } from './bundled-schema-store';
+import {
+  clearBundledSchemaStoreCache,
+  hasBundledSchemaStore,
+  listBundledSchemaFiles,
+  loadBundledSchemaFile,
+} from './bundled-schema-store';
 
 export type ResponseVariant = 'sync' | 'submitted' | 'working' | 'input-required';
 export type Direction = 'request' | ResponseVariant;
@@ -273,7 +278,8 @@ export function bindIdentity33SchemaScope<T extends object>(instance: T): T {
   });
 }
 
-function resolveSchemaRoot(version: string): string {
+/** @internal Resolve the active schema authority for SDK-internal schema-derived behavior. */
+export function resolveSchemaRoot(version: string): string {
   const key = resolveBundleKey(version);
   const scopedRoot = scopedExternalSchemaRoots.getStore()?.get(key);
   if (scopedRoot && existsSync(scopedRoot)) return scopedRoot;
@@ -391,6 +397,11 @@ const keywordSchemaRefValidators = new WeakMap<
   { generation: number; validators: Map<string, ValidateFunction> }
 >();
 let keywordCacheGeneration = 0;
+
+/** @internal Epoch for schema-derived caches sharing loader registration/scope invalidation. */
+export function getSchemaLoaderGeneration(): number {
+  return keywordCacheGeneration;
+}
 const externalSchemaRoots: Map<string, string> = new Map();
 const scopedExternalSchemaRoots = new AsyncLocalStorage<Map<string, string>>();
 
@@ -542,15 +553,15 @@ const externalSchemaRootAliases: Map<string, Set<string>> = new Map();
  */
 export function registerExternalSchemaRoot(version: string, root: string): void {
   const key = resolveBundleKey(version);
+  clearBundledSchemaStoreCache(path.join(root, 'bundled'));
   if (!hasSchemaRootShape(root)) {
     throw new Error(`External AdCP schema root for version "${version}" not found or empty at ${root}`);
   }
   const aliases = assertSchemaRootMatchesVersion(version, root);
   externalSchemaRootAliases.set(key, aliases);
   for (const alias of aliases) {
-    const previous = externalSchemaRoots.get(alias);
     externalSchemaRoots.set(alias, root);
-    if (previous !== root) clearStatesForBundle(alias);
+    clearStatesForBundle(alias);
   }
 }
 
@@ -581,6 +592,7 @@ export function unregisterExternalSchemaRoot(version: string): void {
  */
 export function withExternalSchemaRoot<T>(version: string, root: string | undefined, fn: () => T): T {
   if (root === undefined) return fn();
+  clearBundledSchemaStoreCache(path.join(root, 'bundled'));
   if (!hasSchemaRootShape(root)) {
     throw new Error(`External AdCP schema root for version "${version}" not found or empty at ${root}`);
   }

@@ -157,6 +157,8 @@ import type { MutatingRequestInput } from '../utils/idempotency';
 import type { MediaBuyLifecycleCoordinator, MediaBuyLifecycleCoordinatorOptions } from '../media-buy/compatibility';
 import { buildRefineProposalsRequest } from '../negotiation/buyer';
 import { assertRefineProposalsResponse } from '../negotiation/verification';
+import { applicableRefinementServedVersion } from '../negotiation/version';
+import { toReleasePrecisionVersion } from '../version';
 import type {
   ProposalRefinementCapabilities,
   RefineProposalsInput,
@@ -636,6 +638,11 @@ export class AgentClient {
     return this.client.getAdcpVersion();
   }
 
+  /** @internal Original envelope pin, separate from the validation schema pin. */
+  getWireAdcpVersion(): string {
+    return this.client.getWireAdcpVersion();
+  }
+
   /**
    * Negotiate one compact-first media-buy facade for this seller.
    *
@@ -1078,7 +1085,18 @@ export class AgentClient {
     this.retainSession(result);
     if (result.success && result.status === 'completed') {
       const data = stripRefineProposalsSdkAnnotations(result.data);
-      assertRefineProposalsResponse(request, data);
+      const cachedServedVersion = this.client.getCachedServedAdcpVersion(taskOptions);
+      assertRefineProposalsResponse(request, data, {
+        adcpVersion: this.client.getAdcpVersion(),
+        // Task metadata repeats the response echo. Independently discovered
+        // actual served evidence must constrain that seller-controlled value.
+        servedAdcpVersion:
+          applicableRefinementServedVersion(
+            cachedServedVersion,
+            request.adcp_version,
+            toReleasePrecisionVersion(this.client.getWireAdcpVersion())
+          ) ?? result.metadata.adcpVersion,
+      });
       return { ...result, data };
     }
     return result;

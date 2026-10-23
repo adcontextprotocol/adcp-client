@@ -385,12 +385,10 @@ describe('createCanonicalReferenceResolver', () => {
   });
 
   test('returns unresolvable for nested same-origin ref timeout failures', async () => {
-    const nestedBody = jsonBody({ type: 'string' });
-    routes.set('/defs/slow-nested.json', (_req, res) => {
-      setTimeout(() => {
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(nestedBody);
-      }, 100);
+    let nestedRequested = false;
+    routes.set('/defs/slow-nested.json', () => {
+      nestedRequested = true;
+      // Withhold the response until the default HTTP fetcher's timeout aborts it.
     });
     const parent = serve('/parent-slow-ref.json', {
       $schema: 'http://json-schema.org/draft-07/schema#',
@@ -398,7 +396,13 @@ describe('createCanonicalReferenceResolver', () => {
       properties: { x: { $ref: `${baseUrl}/defs/slow-nested.json` } },
     });
 
-    const result = await resolveFormatSchema({ uri: parent.uri, digest: parent.digest }, { timeoutMs: 10 });
+    // Allow the parent fetch to finish before exercising the nested deadline.
+    const result = await resolveFormatSchema({ uri: parent.uri, digest: parent.digest }, { timeoutMs: 1_000 });
+    assert.strictEqual(
+      nestedRequested,
+      true,
+      'the timeout must occur after the nested HTTP request reaches the server'
+    );
     assert.strictEqual(result.ok, false);
     assert.strictEqual(result.status, 'unresolvable');
     assert.strictEqual(result.code, 'fetch_failed');
