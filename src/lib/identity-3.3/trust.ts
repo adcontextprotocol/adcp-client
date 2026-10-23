@@ -412,7 +412,15 @@ export interface DemandGrantOptions {
   sellerAuthorization?: (claim: DemandGrantClaim) => Promise<boolean>;
   /** Only for authoritative absence; never after a 200 or an exclusive record. */
   legacyAuthorization?: (claim: DemandGrantClaim) => Promise<boolean>;
-  /** Seller-verified brand identity resolution, including the house's child-brand ID. Never accept a buyer-selected authorizer. */
+  /**
+   * Seller-verified brand identity resolution, including the house's child-brand ID. Never accept a buyer-selected authorizer.
+   * Return the house brand.json's mutual-assertion model resolves (a house redirect, or a `house_domain` whose
+   * `brand_refs[]` lists the brand back), or `undefined` when it resolves none, including a house that does not
+   * list the brand back: the brand is then its own house. The house is both the authorizing record and, with the
+   * brand's domain, a domain under which authority is implicit. An uncoded throw is an outage
+   * (`TrustRecordUnavailableError`, `SERVICE_UNAVAILABLE`), never `grant_absent`; an `IdentityAuthorizationError` or
+   * `AdcpError` (any error with a string `code`) thrown by the resolver keeps its code.
+   */
   resolveBrandHouse?: (brand: DemandGrantClaim['brand']) => Promise<{ domain: string; brand_id: string } | undefined>;
 }
 function grantsScope(grant: TrustGrant, scope: string): boolean {
@@ -443,7 +451,13 @@ function grantMatches(grant: TrustGrant, target: string, claim: DemandGrantClaim
   if (grant.valid_until && Date.parse(grant.valid_until) / 1000 <= now) return false;
   return true;
 }
-/** Always invoke before sync_accounts side effects and before spend. No account mutation. */
+/**
+ * Always invoke before sync_accounts side effects and before spend. No account mutation.
+ *
+ * Authority is implicit when `account.operator` and the signer's operator share a registrable domain with the
+ * brand's domain or with its house's (L2 Grants in trust records): an organization's own agents act for its
+ * child brands without a grant. Otherwise a grant chain from the house's record must reach the signer's operator.
+ */
 export async function authorizeDemandGrant(
   claim: DemandGrantClaim,
   options: DemandGrantOptions
@@ -469,8 +483,25 @@ export async function authorizeDemandGrant(
   });
   if (brand === operator && account === operator) return result('implicit', [brand]);
   if (brand === operator && account !== operator) throw new IdentityAuthorizationError('grant_absent');
-  const house = await options.resolveBrandHouse?.(claim.brand);
+  let house: { domain: string; brand_id: string } | undefined;
+  try {
+    house = await options.resolveBrandHouse?.(claim.brand);
+  } catch (cause) {
+    // An unresolvable house is an outage, never grant_absent: the claim may be
+    // the house's own implicit authority, which a narrower fallback would deny.
+    // A coded error (IdentityAuthorizationError, AdcpError) is the
+    // integrator's deliberate answer and keeps its code.
+    if (
+      cause instanceof IdentityAuthorizationError ||
+      (cause instanceof Error && typeof (cause as { code?: unknown }).code === 'string')
+    )
+      throw cause;
+    unavailable(cause);
+  }
   const authoritativeBrand = house ? eTldPlusOne(house.domain) : brand;
+  // The house operating its own child brand: implicit. The signer's record,
+  // already matched above, is the house's record.
+  if (authoritativeBrand === operator && account === operator) return result('implicit', [brand, operator]);
   const grantClaim = house ? { ...claim, brand: { ...claim.brand, brand_id: house.brand_id } } : claim;
   // A grantor that once served a record and is now unreachable (404/410
   // included) is an outage, never a grant removal or a legacy fallback.
