@@ -514,6 +514,51 @@ guarantees:
   tell the two apart. That is not a leak — the authorizer is the host, and
   the store it would be learning about is its own. What is closed is the
   oracle available to the caller, who sees only the refusal.
+- **Preparation itself is authorized, not just reuse.** Supply
+  `prepared_fixtures_authorizer` to `prepareStoryboardFixtures` and it is
+  asked **once**, before a client is created and before any seller byte —
+  no `initialize`, no capability discovery, no controller reset or
+  seeding, no catalog read. Preparation is the step that reads the
+  seller's catalog and pins the graph, so a host that can refuse the
+  reuse of a pinned graph should also be able to refuse pinning one.
+
+  That lookup carries `gate: 'prepare'` and **no `binding`**: nothing has
+  been prepared, so there is no recorded binding to report, and copying
+  `current` into it would say "the stored state matches" when there is no
+  stored state. `current` is the real SDK-owned binding — storyboard
+  digest, routes, on-disk schema artifact, account and brand scope,
+  sandbox, principal, credential fingerprint — none of which needs the
+  seller, which is why it can be computed before the first byte.
+
+  ```ts
+  const prepared = await prepareStoryboardFixtures(agentUrl, storyboard, {
+    ...options,
+    prepared_fixtures_authorizer: async ({ gate, binding, current }) => {
+      if (gate === 'prepare') {
+        // No `binding` here: nothing has been prepared yet.
+        return { authorized: await hostMayPinAGraph(current) };
+      }
+      return { authorized: await hostGrantStillValid(binding, current) };
+    },
+  });
+  ```
+
+  Omit the authorizer and preparation behaves exactly as before — making
+  one mandatory would refuse every preparation that exists today. Supply
+  one and every non-grant answer fails closed with zero seller contact:
+  denied, absent, malformed, throwing and rejecting all raise
+  `PreparedFixturesDeniedError` with `refusalCode: 'authorizer_denied'`,
+  and the canonical refused record goes to `prepared_fixtures_audit_sink`.
+  The prepare gate is **additional** to the reuse gates, never a
+  substitute: a run that later reuses the state still makes its own
+  `run`, `pass` and `step` lookups.
+
+  One asymmetry worth knowing: a caller BODY carrying a reserved key is
+  screened before the host is asked, and preparation still returns that
+  as a failed disposition while `runStoryboard` / `runStoryboardStep`
+  deny it. That difference is raised for contract coordination rather
+  than changed here.
+
 - **A refusal is an access-control error, not a grading outcome.** When a
   gate refuses, `runStoryboard` / `runStoryboardStep` **throw**
   `PreparedFixturesDeniedError` and return nothing. The error carries
