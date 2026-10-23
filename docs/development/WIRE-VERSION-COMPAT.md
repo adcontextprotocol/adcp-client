@@ -26,7 +26,7 @@ Every change is a `debug_logs` drift entry with `fromVersion` / `toVersion`. Tas
 
 To add a version pair (e.g. 3.3 ↔ 3.2), ship the older bundle, create `version/<older>/` with adapters for renames and moves only, and register it in `version/index.ts`. Additions need no code: the projection removes and reports them.
 
-On the server, `createAdcpServer` does the reverse. Handlers are written against the server's `adcpVersion`. When a buyer is served an older release, the request runs through each step's `upgradeRequest` adapters before the handler. The handler's response then runs through `downgradeResponse` adapters and the response-schema projection before it is validated against the served release (`downgradeResponse` / `upgradeRequest` in `src/lib/adapters/version/`, wired in the tool handler of `create-adcp-server.ts`). `get_adcp_capabilities` keeps its own projection.
+On the server, `createAdcpServer` does the reverse. Handlers are written against the server's `adcpVersion`. When a buyer is served an older release, the request runs through each step's `upgradeRequest` adapters before the handler. The handler's response then runs through `downgradeResponse` adapters and the response-schema projection before it is validated against the served release (`downgradeResponse` / `upgradeRequest` in `src/lib/adapters/version/`, wired in the tool handler of `create-adcp-server.ts`). `get_adcp_capabilities` keeps its own projection. `get_task_status` results are converted by their `task_type`. Every conversion is reported to the `onVersionTranslation` callback.
 
 Capability discovery can validate against the seller-served release echoed in `adcp_version`.
 

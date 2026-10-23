@@ -725,3 +725,63 @@ describe("account keys under accountIdentityDowngrade: 'reduce'", () => {
     assert.equal(calls.length, 0);
   });
 });
+
+describe('sync_creatives assignment_operations to a 3.1 seller', () => {
+  test('moves assign-only operations to assignments with strict validation', () => {
+    const { params, drifts, refusedFields } = convertRequest(
+      'sync_creatives',
+      {
+        idempotency_key: 'assign-ops-0000001',
+        assignments: [{ creative_id: 'cr_0', package_id: 'pkg_1' }],
+        assignment_operations: [
+          { operation: 'assign', creative_id: 'cr_1', package_id: 'pkg_1', weight: 50 },
+          { operation: 'assign', creative_id: 'cr_2', package_id: 'pkg_2', placement_ids: ['top'] },
+        ],
+      },
+      { fromVersion: CLIENT_VERSION, toVersion: '3.1' }
+    );
+    assert.deepEqual(params.assignments, [
+      { creative_id: 'cr_0', package_id: 'pkg_1' },
+      { creative_id: 'cr_1', package_id: 'pkg_1', weight: 50 },
+      { creative_id: 'cr_2', package_id: 'pkg_2', placement_ids: ['top'] },
+    ]);
+    assert.equal(params.assignment_operations, undefined);
+    assert.equal(params.validation_mode, 'strict');
+    assert.deepEqual(refusedFields, []);
+    assert.equal(drifts[0].type, 'assignment_operations_moved_to_assignments');
+  });
+
+  test('removes an empty assignment_operations without forcing strict validation', () => {
+    const request = {
+      idempotency_key: 'assign-ops-0000003',
+      assignments: [{ creative_id: 'cr_0', package_id: 'pkg_1' }],
+      assignment_operations: [],
+    };
+    const { params, refusedFields } = convertRequest('sync_creatives', request, {
+      fromVersion: CLIENT_VERSION,
+      toVersion: '3.1',
+    });
+    assert.equal(params.assignment_operations, undefined);
+    assert.equal(params.validation_mode, undefined, 'the caller chose no mode');
+    assert.deepEqual(params.assignments, request.assignments);
+    assert.deepEqual(refusedFields, []);
+  });
+
+  test('refuses unassign and replace, which 3.1 cannot express', () => {
+    const { refusedFields } = convertRequest(
+      'sync_creatives',
+      {
+        idempotency_key: 'assign-ops-0000002',
+        assignment_operations: [
+          { operation: 'assign', creative_id: 'cr_1', package_id: 'pkg_1' },
+          { operation: 'unassign', creative_id: 'cr_2', package_id: 'pkg_1' },
+        ],
+      },
+      { fromVersion: CLIENT_VERSION, toVersion: '3.1' }
+    );
+    assert.deepEqual(
+      refusedFields.map(field => field.path),
+      ['assignment_operations']
+    );
+  });
+});
