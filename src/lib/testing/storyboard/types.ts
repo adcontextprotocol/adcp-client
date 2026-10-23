@@ -2953,6 +2953,16 @@ export interface StoryboardStepResult {
   agent_url?: string;
   /** 1-based index of the agent instance (multi-instance mode). Absent in single-URL mode. */
   agent_index?: number;
+  /**
+   * Producer fixture-handle records, when this step result stands in for a
+   * whole run.
+   *
+   * `runStoryboardStep` returns one step as the entire result, so a
+   * standalone caller reusing a prepared state has nowhere else to read
+   * the `fixture_resolutions` block a full run carries. Present only when
+   * the prepared state actually holds records.
+   */
+  fixture_resolutions?: FixtureResolutionRecord[];
   /** Exact request the runner sent (contract-required on failures). */
   request?: RunnerRequestRecord;
   /** Exact response observed, including transport, status, headers. */

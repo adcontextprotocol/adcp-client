@@ -4816,12 +4816,7 @@ async function executeStoryboardPass(
       const disposition = prepared.state.disposition;
       if (disposition.status === 'failed') {
         if (!callerOwnsClients) await closeScopedConnections(options.protocol);
-        return buildDiscoveryFailedResult(agentUrls, storyboard, {
-          step: 'Reuse prepared fixture state',
-          passed: false,
-          duration_ms: 0,
-          error: disposition.detail,
-        });
+        return buildPreparationFailedRunResult(agentUrls, storyboard, prepared.state, disposition.detail);
       }
       if (disposition.status === 'unsatisfied') {
         fixtureUnsatisfied = true;
@@ -7061,12 +7056,110 @@ function buildPreparedRefusalStepResult(
 }
 
 /** Terminal step result carrying a non-resolved preparation disposition. */
+/**
+ * Result for a full run reusing a prepared state that FAILED preparation.
+ *
+ * Not `buildDiscoveryFailedResult`: that reports agent capability
+ * discovery, and reusing a failed preparation is a different failure with
+ * different evidence. Saying `discovery_failed` with task `''` and no
+ * validations sent an implementor looking at their transport and auth
+ * when the actual failure was product discovery, and it dropped the
+ * producer records the preparation had already collected.
+ *
+ * The producer phase is republished verbatim so the original context and
+ * error survive into the consumer's result, and `fixture_resolutions`
+ * carries the same records `prepared.resolutions` holds. Counts and
+ * failure meaning are unchanged: this is a failure, never a skip, and
+ * never `fixture_unsatisfied`.
+ */
+function buildPreparationFailedRunResult(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  state: PreparedStoryboardFixtures,
+  detail: string
+): StoryboardResult {
+  const resolutions = state.resolutions;
+  const producerPhase = state.phase;
+  // The task that actually failed, read off the producer's own record
+  // rather than guessed. Absent only when preparation failed before any
+  // step was recorded.
+  const failingStep = producerPhase?.steps.find(step => step.passed === false);
+  const syntheticStep: StoryboardStepResult = {
+    storyboard_id: storyboard.id,
+    step_id: 'prepared_fixtures_preparation_failed',
+    phase_id: 'prepared_fixtures_preparation_failed',
+    title: 'Storyboard failed: fixture preparation did not resolve',
+    task: failingStep?.task ?? '',
+    passed: false,
+    skipped: false,
+    duration_ms: 0,
+    validations: [
+      {
+        check: 'fixture_capture_unbuildable',
+        passed: false,
+        description: 'Fixture preparation must resolve before a run can reuse it',
+        error: detail,
+        json_pointer: null,
+        expected: 'a fixture graph that resolved during preparation',
+        actual: 'preparation_failed',
+        schema_id: null,
+        schema_url: null,
+        // Pre-wire for THIS run: the consumer never dispatched. The
+        // producer's own exchange is on its step in the phase below.
+        request: null,
+        response: null,
+      },
+    ],
+    context: {},
+    extraction: { path: 'none' },
+    error: detail,
+  };
+  const phases: StoryboardPhaseResult[] = [
+    ...(producerPhase ? [producerPhase] : []),
+    {
+      phase_id: 'prepared_fixtures_preparation_failed',
+      phase_title: 'Prepared fixture preparation failed',
+      passed: false,
+      steps: [syntheticStep],
+      duration_ms: 0,
+    },
+  ];
+  return {
+    storyboard_id: storyboard.id,
+    storyboard_title: storyboard.title,
+    agent_url: redactOAuthUrlForOutput(agentUrls[0]!),
+    agent_urls: agentUrls.map(redactOAuthUrlForOutput),
+    overall_passed: false,
+    ...(resolutions.length > 0 && { fixture_resolutions: resolutions }),
+    ...(state.coverageGaps.length > 0 && { coverage_gaps: state.coverageGaps }),
+    phases,
+    context: {},
+    total_duration_ms: 0,
+    passed_count: 0,
+    failed_count: 1,
+    skipped_count: 0,
+    runner_capability_version: RUNNER_CAPABILITY_VERSION,
+    tested_at: new Date().toISOString(),
+    strict_validation_summary: {
+      observable: false,
+      checked: 0,
+      passed: 0,
+      failed: 0,
+      strict_only_failures: 0,
+      lenient_also_failed: 0,
+    },
+    notices: [],
+  };
+}
+
 function buildPreparedDispositionStepResult(
   storyboard: Storyboard,
   found: { step: StoryboardStep; phaseId: string },
   context: StoryboardContext,
   disposition: PreparedFixturesDisposition,
-  contributions: Iterable<string>
+  contributions: Iterable<string>,
+  /** Producer records to republish; a standalone result is the whole run. */
+  resolutions: readonly FixtureResolutionRecord[] = []
 ): StoryboardStepResult {
   const detail = 'detail' in disposition ? disposition.detail : 'fixture preparation did not resolve';
   if (disposition.status === 'failed') {
@@ -7096,8 +7189,17 @@ function buildPreparedDispositionStepResult(
           actual: 'preparation_failed',
           schema_id: null,
           schema_url: null,
+          // Pre-wire for THIS step: the consumer never dispatched. The
+          // producer's own exchange rides on its records below.
+          request: null,
+          response: null,
         },
       ],
+      // The producer's own records, so a standalone consumer sees the same
+      // fixture-handle evidence a full run carries. It had none before:
+      // the caller was told preparation failed with no way to see which
+      // handle, which strategy, or what the seller actually returned.
+      ...(resolutions.length > 0 && { fixture_resolutions: [...resolutions] }),
       context: withoutProtectedCaptures(context),
       extraction: { path: 'none' },
       contributions: Array.from(contributions),
@@ -7462,7 +7564,14 @@ async function runStoryboardStepBody(
         // A terminal preparation outcome is carried forward verbatim. A
         // retry must not be able to launder a failed graph into a freshly
         // discovered alternative.
-        return buildPreparedDispositionStepResult(storyboard, found, context, disposition, contributions);
+        return buildPreparedDispositionStepResult(
+          storyboard,
+          found,
+          context,
+          disposition,
+          contributions,
+          prepared.state.resolutions
+        );
       }
       const hydrationViolation = hydratePreparedCaptures(prepared.state, context, protectedWriter, contextProvenance);
       if (hydrationViolation) {
