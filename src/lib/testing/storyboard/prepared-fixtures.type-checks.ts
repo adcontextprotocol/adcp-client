@@ -14,12 +14,15 @@
 import type {
   PreparedFixtureBinding,
   PreparedFixturesAuthorizer,
+  PreparedFixturesDecision,
+  PreparedFixturesPreparationAuthorizer,
+  PreparedFixturesPreparationLookup,
   PreparedFixturesLookup,
   PreparedFixturesReference,
   PreparedFixturesRefusalCode,
   PreparedStoryboardFixtures,
 } from './prepared-fixtures';
-import type { StoryboardRunOptions } from './types';
+import type { StoryboardRunOptions, PrepareStoryboardFixturesOptions } from './types';
 import type { CollectionSelectionSelector, CollectionSelectionWitness } from './collection-selection';
 
 function describeRefusal(code: PreparedFixturesRefusalCode): string {
@@ -110,6 +113,49 @@ export function readEffectiveScope(lookup: PreparedFixturesLookup): string[] {
 // An always-allow authorizer is the documented escape hatch, so it must be
 // assignable without ceremony.
 export const alwaysAllow: PreparedFixturesAuthorizer = () => ({ authorized: true });
+
+// Stable16 reuse callbacks retain their required binding and closed gate union.
+export const compatibleReuse: PreparedFixturesAuthorizer = lookup => {
+  const digest: string = lookup.binding.storyboard_digest;
+  const gate = lookup.gate;
+  switch (gate) {
+    case undefined:
+    case 'run':
+    case 'pass':
+    case 'step':
+      return digest.length > 0 ? { authorized: true } : { authorized: false, detail: 'missing digest' };
+    default: {
+      const exhaustive: never = gate;
+      return exhaustive;
+    }
+  }
+};
+export const preparationOptions: PrepareStoryboardFixturesOptions = {
+  prepared_fixtures_preparation_authorizer: lookup => {
+    const gate: 'prepare' = lookup.gate;
+    // @ts-expect-error - no stored binding exists during fresh preparation.
+    void lookup.binding;
+    return gate === 'prepare' && lookup.current.storyboard_digest.length > 0
+      ? { authorized: true }
+      : { authorized: false, detail: 'missing scope' };
+  },
+};
+// A host may explicitly use one union-aware implementation for both hooks.
+export const hostAuthorization = (
+  lookup: PreparedFixturesLookup | PreparedFixturesPreparationLookup
+): PreparedFixturesDecision => {
+  const authorized =
+    lookup.gate === 'prepare' ? lookup.current.sandbox : lookup.binding.sandbox && lookup.current.sandbox;
+  return authorized ? { authorized: true } : { authorized: false, detail: 'sandbox required' };
+};
+export const sharedPreparation: PreparedFixturesPreparationAuthorizer = hostAuthorization;
+export const sharedReuse: PreparedFixturesAuthorizer = hostAuthorization;
+// @ts-expect-error - a reuse-only authorizer cannot receive preparation lookups.
+export const wrongPreparation: PreparedFixturesPreparationAuthorizer = compatibleReuse;
+export const invalidRunOptions: StoryboardRunOptions = {
+  // @ts-expect-error - preparation-only authority is not accepted as a run option.
+  prepared_fixtures_preparation_authorizer: sharedPreparation,
+};
 
 // ── Known assignability hazard, pinned so the next reader sees it ──
 //

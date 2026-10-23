@@ -1,6 +1,7 @@
 import type { CollectionSelectionSelector, CollectionWitnessKind } from './collection-selection';
 import type {
   PreparedFixturesAuthorizer,
+  PreparedFixturesPreparationAuthorizer,
   PreparedFixturesReference,
   PreparedStoryboardFixtures,
 } from './prepared-fixtures';
@@ -1833,6 +1834,16 @@ export interface TrustedMatchPublisherAuthRunner {
   }): Promise<TrustedMatchPublisherAuthProbeConfiguration>;
 }
 
+/** Options for explicit fresh preparation; the preparation hook is not a run option. */
+export interface PrepareStoryboardFixturesOptions extends StoryboardRunOptions {
+  /**
+   * Asked exactly once before seller contact by prepareStoryboardFixtures.
+   * The existing prepared_fixtures_authorizer remains reuse-only and is not
+   * consulted here. A preparation grant does not authorize later reuse.
+   */
+  prepared_fixtures_preparation_authorizer?: PreparedFixturesPreparationAuthorizer;
+}
+
 export interface StoryboardRunOptions extends TestOptions {
   /** Compliance cache root for bundle-scoped fixtures and test vectors. */
   complianceDir?: string;
@@ -2209,6 +2220,8 @@ export interface StoryboardRunOptions extends TestOptions {
   prepared_fixtures?: PreparedStoryboardFixtures | PreparedFixturesReference;
   /**
    * Host authorization resolver, consulted on every prepared-state lookup.
+   * Never consulted by prepareStoryboardFixtures; fresh preparation uses
+   * PrepareStoryboardFixturesOptions.prepared_fixtures_preparation_authorizer.
    *
    * **Required for any reuse.** Omitting it fails closed — for direct
    * in-process state exactly as for an opaque reference, with zero seller

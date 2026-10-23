@@ -1,9 +1,13 @@
 # AdCP Type Summary
 
-> Generated at: 2026-10-23
+> Generated at: 2026-10-24
 > @adcp/sdk v16.4.0
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
+
+## Prepared Storyboard Authorization
+
+Import `PrepareStoryboardFixturesOptions`, `PreparedFixturesPreparationAuthorizer`, and `PreparedFixturesPreparationLookup` from `@adcp/sdk/testing`. `prepareStoryboardFixtures` alone accepts `prepared_fixtures_preparation_authorizer`, asked once before seller contact with `{ gate: 'prepare', current }` and no stored binding. `PreparedFixturesAuthorizer` and its required `PreparedFixturesLookup.binding` remain reuse-only through `prepared_fixtures_authorizer` on run/pass/step lookups. A preparation grant never authorizes reuse. See [collection fixture foundation](guides/COLLECTION-FIXTURE-FOUNDATION.md).
 
 ## Buyer Reliable Reporting
 
