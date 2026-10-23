@@ -751,6 +751,22 @@ describe('sync_creatives assignment_operations to a 3.1 seller', () => {
     assert.equal(drifts[0].type, 'assignment_operations_moved_to_assignments');
   });
 
+  test('removes an empty assignment_operations without forcing strict validation', () => {
+    const request = {
+      idempotency_key: 'assign-ops-0000003',
+      assignments: [{ creative_id: 'cr_0', package_id: 'pkg_1' }],
+      assignment_operations: [],
+    };
+    const { params, refusedFields } = convertRequest('sync_creatives', request, {
+      fromVersion: CLIENT_VERSION,
+      toVersion: '3.1',
+    });
+    assert.equal(params.assignment_operations, undefined);
+    assert.equal(params.validation_mode, undefined, 'the caller chose no mode');
+    assert.deepEqual(params.assignments, request.assignments);
+    assert.deepEqual(refusedFields, []);
+  });
+
   test('refuses unassign and replace, which 3.1 cannot express', () => {
     const { refusedFields } = convertRequest(
       'sync_creatives',

@@ -21,6 +21,19 @@ export const syncCreativesAdapter: VersionAdapter = {
   adaptRequest(params) {
     if (!isObject(params) || !Array.isArray(params.assignment_operations)) return { params };
     const operations = params.assignment_operations;
+    if (operations.length === 0) {
+      // 3.2 requires at least one operation; an empty list asks for nothing,
+      // so remove it without touching assignments or validation_mode.
+      const { assignment_operations: _, ...rest } = params;
+      return {
+        params: rest,
+        drift: {
+          type: 'empty_assignment_operations_removed',
+          message: 'Empty assignment_operations removed: it requests no change and AdCP 3.1 has no such field.',
+          strippedFields: ['assignment_operations'],
+        },
+      };
+    }
     if (!operations.every(op => isObject(op) && op.operation === 'assign')) return { params };
     const moved = (operations as Json[]).map(({ operation: _, ...assignment }) => assignment);
     const { assignment_operations: _, ...rest } = params;
