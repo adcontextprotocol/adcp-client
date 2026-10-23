@@ -593,7 +593,20 @@ function discoveryExchangeFor(catalog: DiscoveryCatalog, productId: string | und
 
 type DiscoveryCatalogResult =
   | { ok: true; catalog: DiscoveryCatalog }
-  | { ok: false; error: string; evidence?: unknown };
+  | {
+      ok: false;
+      error: string;
+      evidence?: unknown;
+      /**
+       * The actual exchange that failed, so the producer step can record
+       * truthful wire evidence instead of nothing. `response` is null only
+       * when the transport threw and no response was ever received — never
+       * a stand-in for one we did not capture.
+       */
+      exchange?: { request: RunnerRequestRecord; response: RunnerResponseRecord | null };
+      /** AJV detail when the page parsed but failed its response schema. */
+      schemaFailure?: string;
+    };
 
 /** AdCP 3.2 ordered per-handle seed/discover state machine. */
 async function runDeclaredFixtureResolution(
@@ -774,6 +787,18 @@ async function runDeclaredFixtureResolution(
     const attempts: FixtureResolutionAttempt[] = [];
     let boundIds: FixtureResolutionRecord['seller_ids'];
     let chosenStrategy: FixtureResolutionRecord['strategy'];
+    /**
+     * The strategy whose wire call actually ran, successful or not.
+     *
+     * `chosenStrategy` is only assigned when a strategy RESOLVES, so a
+     * discover-only handle that failed left it undefined and the step
+     * label fell through to `comply_test_controller` — claiming a
+     * controller seed for a run whose only traffic was `get_products`.
+     */
+    let attemptedStrategy: FixtureResolutionRecord['strategy'];
+    /** Truthful wire evidence for a failed discovery, never fabricated. */
+    let discoveryFailureEvidence: { request: RunnerRequestRecord; response: RunnerResponseRecord | null } | undefined;
+    let discoverySchemaFailure: string | undefined;
     let failure: string | undefined;
     const stepStart = Date.now();
     const parentStatus = spec.parentProductHandle ? productStatuses.get(spec.parentProductHandle) : undefined;
@@ -790,6 +815,7 @@ async function runDeclaredFixtureResolution(
 
     for (const strategy of parentUnavailable ? [] : spec.strategies) {
       if (strategy === 'seed') {
+        attemptedStrategy = strategy;
         await prepareSeedAgent(call);
         const advertised = controller.scenarios?.has(call.scenario);
         if (controller.missing || advertised === false) {
@@ -899,6 +925,7 @@ async function runDeclaredFixtureResolution(
       }
 
       if (strategy === 'discover') {
+        attemptedStrategy = strategy;
         prepareDiscoveryAgent(call);
         if (discoveryOptions.agentTools && !discoveryOptions.agentTools.includes('get_products')) {
           attempts.push({
@@ -911,6 +938,8 @@ async function runDeclaredFixtureResolution(
         const discovered = await catalog();
         if (!discovered.ok) {
           failure = discovered.error;
+          discoveryFailureEvidence = discovered.exchange;
+          discoverySchemaFailure = discovered.schemaFailure;
           attempts.push({ strategy, disposition: 'failed', detail: failure, response: discovered.evidence });
           break;
         }
@@ -1000,7 +1029,17 @@ async function runDeclaredFixtureResolution(
         step_id: call.step_id,
         phase_id: CONTROLLER_SEEDING_PHASE_ID,
         title: call.title,
-        task: chosenStrategy === 'discover' ? 'get_products' : 'comply_test_controller',
+        // The task that ACTUALLY ran, else the one this handle declared.
+        // Falling back to the controller whenever no strategy RESOLVED
+        // attributed a failed discover-only handle to a seed call that
+        // never happened — and a handle abandoned because its parent
+        // failed makes no call at all, so it is named by the strategy it
+        // declared rather than by a different tool. Such a step carries
+        // no request record, so nothing implies a call was made.
+        task:
+          (chosenStrategy ?? attemptedStrategy ?? spec.strategies[0]) === 'discover'
+            ? 'get_products'
+            : 'comply_test_controller',
         passed: status !== 'failed',
         duration_ms: Date.now() - stepStart,
         // An unbuildable capture gets a `check` discriminator like the other
@@ -1027,9 +1066,35 @@ async function runDeclaredFixtureResolution(
                 ...(captureFailures.get(spec.handle)?.exchange ?? {}),
               },
             ]
-          : [],
+          : discoverySchemaFailure !== undefined
+            ? [
+                // A page that parsed but failed its response schema is a
+                // `response_schema` failure, not a capture failure. Using
+                // the contract's own kind keeps the schema identity where
+                // consumers already look for it.
+                {
+                  check: 'response_schema',
+                  passed: false,
+                  description: 'Fixture discovery response must satisfy the get_products response schema',
+                  error: discoverySchemaFailure,
+                  json_pointer: null,
+                  ...resolveDiscoverySchemaIdentity(options.adcpVersion ?? ADCP_VERSION),
+                  actual: 'schema_validation_failed',
+                  ...(discoveryFailureEvidence && {
+                    request: discoveryFailureEvidence.request,
+                    response: discoveryFailureEvidence.response,
+                  }),
+                },
+              ]
+            : [],
         context,
         extraction: { path: 'none' },
+        // The REAL exchange the failing strategy made. Absent rather than
+        // invented when the strategy never reached the wire.
+        ...(discoveryFailureEvidence && {
+          request: discoveryFailureEvidence.request,
+          ...(discoveryFailureEvidence.response && { response_record: discoveryFailureEvidence.response }),
+        }),
         ...(failure && { error: failure }),
       });
     }
@@ -1346,6 +1411,40 @@ async function executeLegacySeedCall(
   }
 }
 
+/**
+ * `{ schema_id, schema_url }` for the `get_products` response schema.
+ *
+ * Mirrors `resolveSchemaIdentity` in `validations.ts`: the id follows the
+ * `/schemas/<version>/<path>.json` convention cached schemas use for
+ * `$id`, and the url dereferences against the public docs origin so an
+ * implementor can fetch exactly what the page was graded against.
+ */
+function resolveDiscoverySchemaIdentity(adcpVersion: string): { schema_id: string; schema_url: string } {
+  const schemaId = `/schemas/${adcpVersion}/media-buy/get-products-response.json`;
+  return { schema_id: schemaId, schema_url: `https://adcontextprotocol.org${schemaId}` };
+}
+
+/**
+ * AJV detail for a discovery page that does not satisfy the `get_products`
+ * response schema, or `undefined` when it does.
+ */
+function describeDiscoverySchemaFailure(data: unknown, options: StoryboardRunOptions): string | undefined {
+  try {
+    const validator = getValidator('get_products', 'sync', options.adcpVersion ?? ADCP_VERSION);
+    if (validator) {
+      const schemaData = isPlainRecord(data) ? injectLegacyEnvelopeStatus(data, { toolName: 'get_products' }) : data;
+      if (validator(schemaData)) return undefined;
+      return (validator.errors ?? [])
+        .map(error => `${error.instancePath || '/'} ${error.message ?? error.keyword}`)
+        .join('; ');
+    }
+    const schema = validateResponseSchema('get_products', data, options.adcpVersion);
+    return schema.passed ? undefined : (schema.error ?? schema.details ?? 'schema validation failed');
+  } catch (err) {
+    return `response schema unavailable: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 async function discoverProductCatalog(
   client: TestClient,
   options: StoryboardRunOptions,
@@ -1381,12 +1480,23 @@ async function discoverProductCatalog(
     };
     let result;
     const pageStart = Date.now();
+    // Recorded BEFORE dispatch. A transport failure never reaches the
+    // response, but the request it sent is real and is the only evidence
+    // an implementor has to reproduce the failure.
+    const requestRecord: RunnerRequestRecord = {
+      transport: 'mcp',
+      operation: 'get_products',
+      payload: redactSecrets(request),
+    };
     try {
       result = await executeStoryboardTask(client, 'get_products', request, { signal: options.signal });
     } catch (err) {
       return {
         ok: false,
         error: `fixture discovery transport failure: ${err instanceof Error ? err.message : String(err)}`,
+        evidence: { page_count: pageCount + 1, request },
+        // Explicitly null: no response was received. Not a placeholder.
+        exchange: { request: requestRecord, response: null },
       };
     }
     pageCount++;
@@ -1401,7 +1511,7 @@ async function discoverProductCatalog(
     const retainResponse = exchanges.length < DISCOVERY_RETAINED_RESPONSE_PAGES;
     const pageIndex =
       exchanges.push({
-        request: { transport: 'mcp', operation: 'get_products', payload: redactSecrets(request) },
+        request: requestRecord,
         response: {
           transport: 'mcp',
           payload: retainResponse
@@ -1417,55 +1527,54 @@ async function discoverProductCatalog(
           duration_ms: Date.now() - pageStart,
         },
       }) - 1;
+    // Graded whether or not the executor accepted the page. A seller that
+    // returns a malformed body makes the executor reject in strict mode,
+    // and classifying that as a bare protocol error hid WHICH of the two
+    // it was — the one thing a `response_schema` record exists to say.
+    const schemaFailure = result.data === undefined ? undefined : describeDiscoverySchemaFailure(result.data, options);
     if (!result.success) {
       return {
         ok: false,
         error: `fixture discovery get_products rejected: ${result.error ?? result.adcp_error?.code ?? 'unknown error'}`,
         evidence: { page_count: pageCount, request },
+        exchange: exchanges[pageIndex]!,
+        ...(schemaFailure !== undefined && { schemaFailure }),
       };
-    }
-    let schemaFailure: string | undefined;
-    try {
-      const validator = getValidator('get_products', 'sync', options.adcpVersion ?? ADCP_VERSION);
-      if (validator) {
-        const responseData: unknown = result.data;
-        const schemaData = isPlainRecord(responseData)
-          ? injectLegacyEnvelopeStatus(responseData, { toolName: 'get_products' })
-          : responseData;
-        if (!validator(schemaData)) {
-          schemaFailure = (validator.errors ?? [])
-            .map(error => `${error.instancePath || '/'} ${error.message ?? error.keyword}`)
-            .join('; ');
-        }
-      } else {
-        const schema = validateResponseSchema('get_products', result.data, options.adcpVersion);
-        if (!schema.passed) schemaFailure = schema.error ?? schema.details ?? 'schema validation failed';
-      }
-    } catch (err) {
-      schemaFailure = `response schema unavailable: ${err instanceof Error ? err.message : String(err)}`;
     }
     if (schemaFailure) {
       return {
         ok: false,
         error: `fixture discovery returned malformed get_products response: ${schemaFailure}`,
         evidence: { page_count: pageCount },
+        exchange: exchanges[pageIndex]!,
+        schemaFailure,
       };
     }
     if (!isPlainRecord(result.data)) {
-      return { ok: false, error: 'fixture discovery returned a non-object get_products response' };
+      return {
+        ...{ ok: false, error: 'fixture discovery returned a non-object get_products response' },
+        exchange: exchanges[pageIndex]!,
+      };
     }
     const pageProducts = result.data.products;
     if (pageProducts !== undefined && !Array.isArray(pageProducts)) {
-      return { ok: false, error: 'fixture discovery get_products.products is not an array' };
+      return {
+        ...{ ok: false, error: 'fixture discovery get_products.products is not an array' },
+        exchange: exchanges[pageIndex]!,
+      };
     }
     for (const product of pageProducts ?? []) {
       if (!isPlainRecord(product) || typeof product.product_id !== 'string' || product.product_id.length === 0) {
-        return { ok: false, error: 'fixture discovery returned a product without a non-empty product_id' };
+        return {
+          ...{ ok: false, error: 'fixture discovery returned a product without a non-empty product_id' },
+          exchange: exchanges[pageIndex]!,
+        };
       }
       if (seenProductIds.has(product.product_id)) {
         return {
           ok: false,
           error: `fixture discovery returned duplicate product_id "${product.product_id}"; response order cannot resolve duplicate identities`,
+          exchange: exchanges[pageIndex]!,
         };
       }
       seenProductIds.add(product.product_id);
@@ -1477,6 +1586,7 @@ async function discoverProductCatalog(
             return {
               ok: false,
               error: `fixture discovery returned duplicate pricing option identity "${product.product_id}\u0000${option.pricing_option_id}"`,
+              exchange: exchanges[pageIndex]!,
             };
           }
           seenPricingIds.add(option.pricing_option_id);
@@ -1485,17 +1595,26 @@ async function discoverProductCatalog(
       pageOfProduct.set(product.product_id, pageIndex);
       products.push(product);
       if (products.length > 100_000) {
-        return { ok: false, error: 'fixture discovery exceeded the 100,000-product safety limit' };
+        return {
+          ...{ ok: false, error: 'fixture discovery exceeded the 100,000-product safety limit' },
+          exchange: exchanges[pageIndex]!,
+        };
       }
     }
     const pagination = isPlainRecord(result.data.pagination) ? result.data.pagination : undefined;
     if (pagination?.has_more === true) {
       const next = pagination.cursor;
       if (typeof next !== 'string' || next.length === 0) {
-        return { ok: false, error: 'fixture discovery pagination is broken: has_more=true without cursor' };
+        return {
+          ...{ ok: false, error: 'fixture discovery pagination is broken: has_more=true without cursor' },
+          exchange: exchanges[pageIndex]!,
+        };
       }
       if (seenCursors.has(next)) {
-        return { ok: false, error: `fixture discovery pagination is broken: repeated cursor "${next}"` };
+        return {
+          ...{ ok: false, error: `fixture discovery pagination is broken: repeated cursor "${next}"` },
+          exchange: exchanges[pageIndex]!,
+        };
       }
       seenCursors.add(next);
       cursors.push(next);

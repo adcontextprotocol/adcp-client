@@ -25,6 +25,7 @@ const {
   prepareStoryboardFixtures,
   runStoryboard,
   runStoryboardStep,
+  withPreparedFixtures,
 } = require('../../dist/lib/testing/index.js');
 
 const CAPS = {
@@ -69,6 +70,35 @@ function product(id, extra = {}) {
 }
 
 function transport(catalog, overrides = {}) {
+  // `overrides.transportFailure` makes the fetch itself reject, so a test
+  // can exercise the transport arm without a response ever existing.
+  if (overrides.transportFailure) {
+    const wire = [];
+    const calls = [];
+    return {
+      calls,
+      wire,
+      options: {
+        adcpVersion: '3.2.5',
+        timeout_ms: 5000,
+        profile: { tools: TOOLS, raw_capabilities: CAPS, supported_protocols: ['media_buy'] },
+        transport: {
+          trustedFetchFn: async (_input, init = {}) => {
+            const message = JSON.parse(init.body);
+            wire.push(message.method);
+            if (message.method === 'tools/call' && message.params?.name === 'get_products') {
+              throw new Error('synthetic transport failure: connection reset');
+            }
+            return originalTransport(catalog).options.transport.trustedFetchFn(_input, init);
+          },
+        },
+      },
+    };
+  }
+  return originalTransport(catalog, overrides);
+}
+
+function originalTransport(catalog, overrides = {}) {
   const calls = [];
   // Every seller endpoint interaction, including official-client
   // initialization and tool discovery — not just the mutating calls. A gate
@@ -2033,6 +2063,167 @@ describe('refused caller gets a denial; the host gets the evidence', () => {
         // it would be an oracle over host state.
         !error.message.includes('10.0.0.7')
     );
+  });
+});
+
+describe('failed preparation keeps its producer evidence (#3385)', () => {
+  /**
+   * The four ways discovery can fail, each with the shape that produces
+   * it. Transport never reaches a response; the other three do.
+   */
+  const FAILURE_MODES = {
+    transport: { transportFailure: true },
+    protocol: {
+      read: () => {
+        throw new Error('seller rejected get_products');
+      },
+    },
+    schema: { read: () => ({ status: 'completed', products: [{ product_id: 'malformed' }] }) },
+    pagination: {
+      read: () => ({
+        status: 'completed',
+        products: [SELECTED],
+        cache_scope: 'account',
+        wholesale_feed_version: 'v1',
+        // has_more with no cursor: the seller promised another page and
+        // gave the runner no way to ask for it.
+        pagination: { has_more: true },
+      }),
+    },
+  };
+
+  /** Prepare against a seller that fails discovery in the named way. */
+  async function prepareFailing(mode) {
+    const io = transport([SELECTED], FAILURE_MODES[mode]);
+    const state = await prepareStoryboardFixtures(ENDPOINT, board(), io.options);
+    assert.equal(state.disposition.status, 'failed', `${mode}: ${JSON.stringify(state.disposition)}`);
+    assert.ok(state.resolutions.length > 0, `${mode}: the producer recorded its handles`);
+    return { state, io };
+  }
+
+  for (const mode of Object.keys(FAILURE_MODES)) {
+    test(`${mode}: a full run reuse reports product discovery and keeps the producer records`, async () => {
+      const { state } = await prepareFailing(mode);
+      const io = transport([SELECTED]);
+      const result = await runStoryboard(ENDPOINT, board(), {
+        ...io.options,
+        ...withPreparedFixtures(state, ALLOW),
+      });
+      assert.equal(result.overall_passed, false);
+      assert.equal(result.failed_count, 1);
+      assert.equal(result.skipped_count, 0, 'a failed preparation is a failure, never a skip');
+
+      // The producer records survive into the consumer's result.
+      assert.deepEqual(result.fixture_resolutions, state.resolutions);
+
+      // The failure is named as product discovery, not capability discovery.
+      const steps = result.phases.flatMap(phase => phase.steps);
+      const synthetic = steps.find(step => step.step_id === 'prepared_fixtures_preparation_failed');
+      assert.ok(synthetic, JSON.stringify(result.phases.map(p => p.phase_id)));
+      assert.equal(synthetic.task, 'get_products', 'the real failing task, not a blank capability row');
+      assert.equal(
+        steps.some(step => step.step_id === 'discovery_failed'),
+        false,
+        'a failed preparation is not an agent capability-discovery failure'
+      );
+      const check = synthetic.validations.find(v => v.check === 'fixture_capture_unbuildable');
+      assert.ok(check, JSON.stringify(synthetic.validations));
+      assert.equal(check.actual, 'preparation_failed');
+
+      // The producer's own phase, with its original context and error.
+      const producer = result.phases.find(phase => phase.phase_id !== 'prepared_fixtures_preparation_failed');
+      assert.ok(producer, 'the producer phase is republished');
+      assert.ok(
+        producer.steps.some(step => step.passed === false),
+        'with its failing step intact'
+      );
+    });
+
+    test(`${mode}: a standalone reuse carries the same producer records`, async () => {
+      const { state } = await prepareFailing(mode);
+      const io = transport([SELECTED]);
+      const result = await runStoryboardStep(ENDPOINT, board(), 'create', {
+        ...io.options,
+        ...withPreparedFixtures(state, ALLOW),
+      });
+      assert.equal(result.passed, false);
+      assert.deepEqual(result.fixture_resolutions, state.resolutions);
+      const check = result.validations.find(v => v.check === 'fixture_capture_unbuildable');
+      assert.ok(check, JSON.stringify(result.validations));
+      assert.equal(check.actual, 'preparation_failed');
+      assert.equal(check.request, null);
+      assert.equal(check.response, null);
+      // No consumer exchange occurred, so none is invented.
+      assert.equal(
+        io.calls.some(call => call.task === 'create_media_buy'),
+        false
+      );
+    });
+
+    test(`${mode}: the producer step names get_products and never claims a controller seed`, async () => {
+      const { state } = await prepareFailing(mode);
+      const producerSteps = state.phase.steps;
+      const failing = producerSteps.find(step => step.passed === false);
+      assert.ok(failing, JSON.stringify(producerSteps.map(s => ({ id: s.step_id, passed: s.passed }))));
+      assert.equal(failing.task, 'get_products', 'the wire call was get_products');
+      assert.equal(
+        producerSteps.some(step => step.task === 'comply_test_controller'),
+        false,
+        'no controller seed happened, so none may be claimed'
+      );
+    });
+  }
+
+  test('a failed discovery records the real request, and a response only when one arrived', async () => {
+    for (const mode of Object.keys(FAILURE_MODES)) {
+      const { state } = await prepareFailing(mode);
+      const failing = state.phase.steps.find(step => step.passed === false);
+      assert.ok(failing.request, `${mode}: the dispatched request is recorded`);
+      assert.equal(failing.request.operation, 'get_products', mode);
+      assert.equal(failing.request.payload.buying_mode, 'wholesale', mode);
+      // A connection-level failure is converted by the task executor into
+      // an error RESULT rather than a throw, so every one of these four
+      // arms does come back with something. What is recorded is that real
+      // payload — the runner never manufactures one. The `response: null`
+      // arm exists for an executor that genuinely throws.
+      assert.ok(failing.response_record, `${mode}: the raw response is recorded`);
+      assert.equal(failing.response_record.transport, 'mcp', mode);
+    }
+  });
+
+  test('a schema failure carries a response_schema check with the schema identity', async () => {
+    const { state } = await prepareFailing('schema');
+    const failing = state.phase.steps.find(step => step.passed === false);
+    const check = failing.validations.find(v => v.check === 'response_schema');
+    assert.ok(check, JSON.stringify(failing.validations));
+    assert.equal(check.passed, false);
+    assert.equal(check.actual, 'schema_validation_failed');
+    assert.match(check.schema_id, /get-products-response\.json$/);
+    assert.match(check.schema_url, /^https:\/\/adcontextprotocol\.org\/schemas\//);
+    assert.ok(check.request, 'the schema failure cites the request it graded');
+    assert.ok(check.response, 'and the response it graded');
+  });
+
+  test('a denied caller still gets only the typed denial, with the record to the sink', async () => {
+    const { state } = await prepareFailing('schema');
+    const io = transport([SELECTED]);
+    let audited;
+    await assert.rejects(
+      () =>
+        runStoryboard(ENDPOINT, board(), {
+          ...io.options,
+          prepared_fixtures: state,
+          prepared_fixtures_audit_sink: record => {
+            audited = record;
+          },
+          prepared_fixtures_authorizer: () => ({ authorized: false, detail: 'denied' }),
+        }),
+      error => error instanceof PreparedFixturesDeniedError && error.refusalCode === 'authorizer_denied'
+    );
+    // A failed preparation does not downgrade the denial: the caller gets
+    // no producer records, and the host's copy is complete.
+    assert.ok(audited, 'the sink received the record');
+    assert.deepEqual(io.wire, []);
   });
 });
 
