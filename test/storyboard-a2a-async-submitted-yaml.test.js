@@ -278,31 +278,31 @@ describe(
         }
         const skill = params?.message?.parts?.[0]?.data?.skill;
         if (skill === 'get_adcp_capabilities') {
+          // Keep discovery native and valid; only the business response regresses.
           res.json({
             jsonrpc: '2.0',
             id,
             result: {
-              kind: 'task',
-              id: 'a2a-task-caps',
-              contextId: 'ctx-caps',
-              status: { state: 'completed', timestamp: new Date().toISOString() },
-              history: [],
-              artifacts: [
-                {
-                  artifactId: 'art-caps',
-                  name: 'result',
-                  parts: [
-                    {
-                      kind: 'data',
-                      data: {
-                        adcp_version: '3.0.0',
-                        supported_protocols: ['media_buy'],
-                        tools: [{ name: 'create_media_buy' }, { name: 'get_products' }],
+              task: {
+                id: 'a2a-task-caps',
+                contextId: 'ctx-caps',
+                status: { state: 'TASK_STATE_COMPLETED', timestamp: new Date().toISOString() },
+                artifacts: [
+                  {
+                    artifactId: 'art-caps',
+                    parts: [
+                      {
+                        data: {
+                          status: 'completed',
+                          adcp: { major_versions: [3], supported_versions: ['3.2'], idempotency: { supported: false } },
+                          supported_protocols: ['media_buy'],
+                          media_buy: { buying_modes: ['brief', 'wholesale'] },
+                        },
                       },
-                    },
-                  ],
-                },
-              ],
+                    ],
+                  },
+                ],
+              },
             },
           });
           return;

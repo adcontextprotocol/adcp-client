@@ -315,7 +315,15 @@ describe('request-signing: runner dispatch against reference verifier', () => {
       };
       const result = await runStoryboardStep(fresh.url, storyboard, 'positive-001-basic-post', {
         allow_http: true,
-        _client: {}, // bypass MCP profile discovery — probe tasks don't touch the client
+        profile: {
+          name: 'Reference verifier',
+          tools: [],
+          raw_capabilities: {
+            adcp: { major_versions: [3], idempotency: { supported: false } },
+            supported_protocols: ['media_buy'],
+            request_signing: { supported: true, covers_content_digest: 'required' },
+          },
+        },
         request_signing: { transport: 'raw' },
       });
       assert.strictEqual(result.passed, true, `step should pass: ${result.error}`);
@@ -350,7 +358,15 @@ describe('request-signing: runner dispatch against reference verifier', () => {
       };
       const result = await runStoryboardStep(fresh.url, storyboard, 'negative-020-rate-abuse', {
         allow_http: true,
-        _client: {},
+        profile: {
+          name: 'Reference verifier',
+          tools: [],
+          raw_capabilities: {
+            adcp: { major_versions: [3], idempotency: { supported: false } },
+            supported_protocols: ['media_buy'],
+            request_signing: { supported: true, covers_content_digest: 'required' },
+          },
+        },
         request_signing: { skipRateAbuse: true },
       });
       // Skipped ≠ failed — this is the bug the review caught.

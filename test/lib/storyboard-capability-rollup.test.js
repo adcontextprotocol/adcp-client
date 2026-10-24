@@ -171,7 +171,12 @@ async function startAgent({ tools = SELLER_TOOLS, protocols = ['media_buy'], adc
           name === 'get_adcp_capabilities'
             ? (capabilities ?? {
                 supported_protocols: protocols,
-                adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'], ...adcpExtra },
+                adcp: {
+                  major_versions: [3],
+                  supported_versions: ['3.1', '3.2'],
+                  idempotency: { supported: false },
+                  ...adcpExtra,
+                },
               })
             : (RESPONSES[name] ?? {});
         return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data };
@@ -1238,8 +1243,8 @@ describe('executed: an unmet runtime requirement keeps its provenance in routed 
     tools: ['get_products'],
     capabilities: {
       supported_protocols: ['media_buy'],
-      adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'] },
-      account: { require_operator_auth: true },
+      adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'], idempotency: { supported: false } },
+      account: { supported_billing: ['operator'], require_operator_auth: true },
       // No `request_signing` block: the agent did not opt in.
     },
   };
@@ -1258,7 +1263,7 @@ describe('executed: an unmet runtime requirement keeps its provenance in routed 
       tools: ['get_products'],
       capabilities: {
         supported_protocols: ['media_buy'],
-        adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'] },
+        adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'], idempotency: { supported: false } },
       },
     });
     try {
@@ -1313,7 +1318,7 @@ describe('executed: an unmet runtime requirement keeps its provenance in routed 
         tools,
         capabilities: {
           supported_protocols: ['media_buy'],
-          adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'] },
+          adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'], idempotency: { supported: false } },
           ...extraCapabilities,
         },
       });
@@ -1437,8 +1442,8 @@ describe('executed: the multi_agent gate never pre-empts discovery or another ga
       tools: ['get_products'],
       capabilities: {
         supported_protocols: ['media_buy'],
-        adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'] },
-        account: { require_operator_auth: true },
+        adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'], idempotency: { supported: false } },
+        account: { supported_billing: ['operator'], require_operator_auth: true },
       },
     });
     try {
@@ -1609,8 +1614,8 @@ describe('requirement reporting is identical routed and non-routed', () => {
     // no request signing, and is the only tenant in the routed map.
     const AGENT_CAPS = {
       supported_protocols: ['media_buy'],
-      adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'] },
-      account: { require_operator_auth: true },
+      adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'], idempotency: { supported: false } },
+      account: { supported_billing: ['operator'], require_operator_auth: true },
     };
     const agent = await startAgent({ tools: ['get_products'], capabilities: AGENT_CAPS });
     // Exactly what `comply()` hands `runStoryboard`: the discovered profile
@@ -1715,12 +1720,12 @@ describe('routing errors name the agents that advertise an unclaimed tool', () =
 
 const CONTROLLER_CAPS = {
   supported_protocols: ['media_buy'],
-  adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'] },
+  adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'], idempotency: { supported: false } },
   compliance_testing: { scenarios: ['seed_product'] },
 };
 const SIGNALS_CAPS = {
   supported_protocols: ['signals'],
-  adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'] },
+  adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'], idempotency: { supported: false } },
 };
 
 function controllerStoryboard(steps) {
@@ -1978,7 +1983,7 @@ describe('executed: routed `controller` answers from the route that owns the sta
       tools: ['get_products'],
       capabilities: {
         supported_protocols: ['media_buy'],
-        adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'] },
+        adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'], idempotency: { supported: false } },
       },
     });
     for (const [label, peerOptsIn, expectSkipped] of [
@@ -1989,7 +1994,7 @@ describe('executed: routed `controller` answers from the route that owns the sta
         tools: ['get_products', 'comply_test_controller'],
         capabilities: {
           ...CONTROLLER_CAPS,
-          ...(peerOptsIn && { account: { require_operator_auth: true } }),
+          ...(peerOptsIn && { account: { supported_billing: ['operator'], require_operator_auth: true } }),
         },
       });
       try {
@@ -2108,7 +2113,7 @@ describe('executed: routed `controller` answers from the route that owns the sta
           tools: ['get_products'],
           capabilities: {
             supported_protocols: ['media_buy'],
-            adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'] },
+            adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'], idempotency: { supported: false } },
           },
         },
         'tok-ctl': { tools: ['get_products', 'comply_test_controller'], capabilities: CONTROLLER_CAPS },

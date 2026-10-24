@@ -66,7 +66,7 @@ async function startFakeAgent({
   state,
   label,
   tools = ['__test_write', '__test_read', '__test_probe', 'get_adcp_capabilities'],
-  capabilities = { version: '1.0', protocols: [], specialisms: [] },
+  capabilities = { specialisms: [] },
   products = [],
   failToolsList = false,
 }) {
@@ -135,7 +135,11 @@ async function startFakeAgent({
       return ok({ instance: label });
     }
     if (toolName === 'get_adcp_capabilities') {
-      return ok(capabilities);
+      return ok({
+        supported_protocols: ['media_buy'],
+        ...capabilities,
+        adcp: { major_versions: [3], idempotency: { supported: false }, ...capabilities.adcp },
+      });
     }
     if (toolName === 'get_products') {
       return ok({ products, cache_scope: 'public' });

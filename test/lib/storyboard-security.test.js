@@ -3688,7 +3688,14 @@ async function startProbeAgent(opts = {}) {
     }
     if (rpc.method === 'tools/call') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(toolCallResult(rpc));
+      res.end(
+        toolCallResult(
+          rpc,
+          rpc.params?.name === 'get_adcp_capabilities'
+            ? { adcp: { major_versions: [3], idempotency: { supported: false } }, supported_protocols: ['media_buy'] }
+            : undefined
+        )
+      );
       return;
     }
     res.writeHead(200, { 'content-type': 'application/json' });
