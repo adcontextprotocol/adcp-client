@@ -5145,6 +5145,10 @@ function postProcessRepeatedProductIntersections(content: string): string {
         );
       }
       unique.pop();
+      // Zod 4.6 distributes an unannotated object/union intersection across
+      // every union arm, duplicating these shared constraints in OpenAPI.
+      // Describe the common operand so the two allOf members stay distinct.
+      unique[0] = `${commonA}.describe("Common constraints for every product format.")`;
     }
 
     if (unique.length === operands.length) continue;
@@ -6188,6 +6192,11 @@ async function generateZodSchemas() {
 
     // Post-process: Add explicit z.ZodType annotations to schemas that trip TS7056.
     zodSchemas = postProcessTS7056Annotations(zodSchemas);
+
+    // Import the module namespace directly so bundlers can remove unused Zod
+    // exports. The nested `z` export retains the full namespace in Zod 4.6.
+    // Run after passes that insert imports next to ts-to-zod's original import.
+    zodSchemas = zodSchemas.replace('import { z } from "zod";', 'import * as z from "zod";');
 
     // Defensive: ts-to-zod emits `const FooSchema = z.any();` stubs when it
     // can't resolve a referenced type — usually because a cross-file `import

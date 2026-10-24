@@ -40,7 +40,9 @@ This entry has no Node built-ins in its import graph and shares the Node entry's
 | Gzipped bundle | 265,418 B | 67,420 B | 75,000 B |
 | Generated validators retained | 1,203,529 B | 744 B | 2,048 B |
 
-The total-size limits leave roughly 11% headroom for dependency changes. The separate generated-code limit catches unrelated validators being retained even if dependencies become smaller. The check also verifies that product, media-buy, and reporting-obligation validators disappear and that the bundled schema still validates without Node globals. Existing tests exercise all exports through ESM and CommonJS, declaration paths, and portable cross-field validation.
+The original total-size limits left roughly 11% headroom for dependency changes. With Zod 4.6.7 and a direct namespace import in the generated schemas, the same check measures about 100 KB minified / 29 KB gzip, with 607 B of generated validators retained. The namespace import lets bundlers remove unused Zod exports; the CI limits remain unchanged.
+
+The separate generated-code limit catches unrelated validators being retained even if dependencies become smaller. The check also verifies that product, media-buy, and reporting-obligation validators disappear and that the bundled schema still validates without Node globals. Existing tests exercise all exports through ESM and CommonJS, declaration paths, and portable cross-field validation.
 
 ## Why Zod Schemas?
 
