@@ -251,20 +251,32 @@ test('a colliding pricing handle retains its own real controller failure', async
 });
 
 test('a stable feed beyond the page budget is also a runner-owned observation gap', async () => {
+  // Public transport coverage above proves gap publication/reuse. Exercise
+  // this numeric boundary below TaskExecutor to keep a thousand SDK transport exchanges out of this
+  // numeric boundary test.
+  const { runControllerSeeding } = require('../../dist/lib/testing/storyboard/seeding.js');
   let reads = 0;
-  const io = transport([], {
-    read: () => page([], 'stable', false, { pagination: { has_more: true, cursor: `page-${++reads}` } }),
-  });
-  const state = await prepareStoryboardFixtures(ENDPOINT, board(), io.options);
+  const client = {
+    async executeTask(task) {
+      assert.equal(task, 'get_products');
+      return {
+        success: true,
+        data: page([], 'stable', false, { pagination: { has_more: true, cursor: `page-${++reads}` } }),
+      };
+    },
+  };
+  const result = await runControllerSeeding(
+    client,
+    board(),
+    { adcpVersion: '3.2.6', agentTools: ['get_products'] },
+    {}
+  );
   assert.equal(reads, 1000);
-  assert.equal(state.disposition.status, 'unsupported');
-  assert.equal(state.disposition.reason, 'not_applicable');
-  assert.deepEqual(state.captures, {});
-  assert.ok(state.phase.steps.some(step => step.response_record?.payload));
-  const runIo = transport([]);
-  const result = await runStoryboard(ENDPOINT, board(), { ...runIo.options, ...withPreparedFixtures(state, ALLOW) });
-  assert.equal(result.failed_count, 0);
-  assert.equal(result.skipped_count, 1);
-  assert.equal(result.phases[0].steps[0].skip_reason, 'not_applicable');
-  assert.deepEqual(runIo.calls, []);
+  assert.match(result.fixtureUnavailable, /1,000-page/);
+  assert.equal(result.failedCount, 0);
+  assert.equal(result.fixtureUnsatisfied, false);
+  assert.ok(result.resolutionRecords.every(record => record.unavailable_reason === 'runner_budget_exhausted'));
+  assert.ok(result.phase.steps.every(step => step.skipped && step.skip_reason === 'not_applicable'));
+  assert.ok(result.phase.steps.some(step => step.response_record?.payload));
+  assert.equal(result.preparedCaptures, undefined);
 });

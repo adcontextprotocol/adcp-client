@@ -220,3 +220,35 @@ test('the public AgentClient retains validated OAuth requirements on TaskResult.
     await closeMCPConnections();
   }
 });
+
+for (const gate of [
+  'implicit_signer',
+  'signed_requests',
+  'explicit_signer',
+  'oauth_metadata',
+  'account_mode',
+  'creative_build',
+]) {
+  test(`schema-invalid discovery is terminal before the ${gate} gate`, async () => {
+    for (const standalone of [false, true]) {
+      const io = seller('schema');
+      const doc = storyboard();
+      delete doc.requires_capability;
+      if (gate === 'signed_requests') doc.id = 'signed_requests';
+      if (gate === 'explicit_signer') doc.requires = ['request_signer'];
+      if (gate === 'implicit_signer') doc.phases[0].steps[0].task = 'request_signing_probe';
+      if (gate === 'oauth_metadata') doc.phases[0].steps[0].task = 'protected_resource_metadata';
+      if (gate === 'account_mode') doc.phases[0].steps[0].task = 'sync_accounts';
+      if (gate === 'creative_build')
+        doc.creative_build_probe = { context_prefix: 'build', message: 'Build a sandbox creative' };
+      const result = standalone
+        ? await runStoryboardStep(ENDPOINT, doc, 'probe', io.options)
+        : await runStoryboard(ENDPOINT, doc, io.options);
+      const step = standalone ? result : result.phases[0].steps[0];
+      assert.equal(step.step_id, 'discovery_failed', JSON.stringify(result));
+      assert.equal(step.passed, false);
+      assert.equal(step.skipped, false);
+      assert.equal(io.probes(), 1);
+    }
+  });
+}

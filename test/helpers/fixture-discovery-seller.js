@@ -76,6 +76,8 @@ function originalTransport(catalog, overrides = {}) {
   // seller contact.
   const wire = [];
   const trustedFetchFn = async (_input, init = {}) => {
+    // Real network I/O yields; let Response buffers be reclaimed between exchanges.
+    await new Promise(resolve => setImmediate(resolve));
     const message = JSON.parse(init.body);
     wire.push(message.method);
     let result;

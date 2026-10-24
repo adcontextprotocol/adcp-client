@@ -731,12 +731,6 @@ function evaluateRequiresCapabilityGate(
   return null;
 }
 
-/**
- * Every root applicability predicate a storyboard authors, across
- * `requires_capability` and `requires_all_capabilities`. Exported so the
- * compliance rollup keys on the same set the runner gates on, rather than
- * re-listing the fields and drifting when one is added.
- */
 /** @internal Preserve first-class schema/protocol diagnostics without treating failed evidence as absence. */
 export function storyboardAllowsCapabilityDiagnostic(storyboard: Storyboard): boolean {
   const steps = storyboard.phases.flatMap(phase => phase.steps);
@@ -752,10 +746,20 @@ export function storyboardRequiresCapabilityEvidence(storyboard: Storyboard): bo
   return Boolean(
     storyboard.requires_capability ||
     storyboard.requires_all_capabilities?.length ||
-    storyboard.phases.some(phase => phase.requires_capability)
+    storyboard.phases.some(phase => phase.requires_capability || phaseContainsOauthMetadataProbe(phase)) ||
+    storyboard.requires?.includes('request_signer') ||
+    detectImplicitRequires(storyboard).includes('request_signer') ||
+    storyboard.phases.some(phase => phase.steps.some(step => step.task === 'sync_accounts')) ||
+    storyboard.creative_build_probe
   );
 }
 
+/**
+ * Every root applicability predicate a storyboard authors, across
+ * `requires_capability` and `requires_all_capabilities`. Exported so the
+ * compliance rollup keys on the same set the runner gates on, rather than
+ * re-listing the fields and drifting when one is added.
+ */
 export function storyboardCapabilityPredicates(storyboard: Storyboard): RequiresCapabilityPredicate[] {
   return [
     ...(storyboard.requires_capability ? [storyboard.requires_capability] : []),
@@ -3551,7 +3555,12 @@ async function prepareStoryboardFixturesBody(
   try {
     let profile = options._profile;
     const suppliedFailure =
-      profile && describeProfileDiscoveryFailure(profile, options._requireValidCapabilityEvidence === true);
+      profile &&
+      describeProfileDiscoveryFailure(
+        profile,
+        options._requireValidCapabilityEvidence === true,
+        options._allowCapabilityDiagnostic === true
+      );
     if (suppliedFailure) {
       const failed = buildDiscoveryFailedResult(agentUrls, storyboard, suppliedFailure, profile);
       return await finishPreparation(
