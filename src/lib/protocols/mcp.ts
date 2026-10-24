@@ -1450,6 +1450,7 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unk
     debugLogs.push({
       type: modernAttempt.response?.isError ? 'error' : 'success',
       message: `MCP: Tool ${toolName} response received`,
+      response: modernAttempt.response,
       timestamp: new Date().toISOString(),
     });
     return modernAttempt.response;
@@ -1480,6 +1481,7 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unk
       debugLogs.push({
         type: response?.isError ? 'error' : 'success',
         message: `MCP: Tool ${toolName} response received`,
+        response,
         timestamp: new Date().toISOString(),
       });
 

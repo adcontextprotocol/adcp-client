@@ -717,6 +717,17 @@ Until a companion `adcontextprotocol/adcp` PR lands all six, no *published*
 storyboard can legally use any of this. That is a merge dependency, not an
 implementation gap — and it is why the downgrade story below matters.
 
+When a prepared fixture graph failed discovery, authorized reuse retains its
+producer phase as `fixture_preparation` and its handle records as
+`fixture_resolutions`. The producer phase is diagnostic history outside graded
+`phases`, so it does not add JUnit failures or change consumer grading counts.
+Protected capture keys are stripped from its public step contexts; a private
+audit sink receives the complete failed producer record after a denial. Failed
+discovery responses retain the official client's protocol response when available;
+successful-page evidence retains parsed SDK data. HTTP-only A2A evidence includes
+its status and an extraction note when the bounded capture was truncated. SDK
+connection diagnostics never stand in for a seller response.
+
 ### Output inventory for the amendment
 
 Everything a report consumer can newly observe, with where it is emitted and

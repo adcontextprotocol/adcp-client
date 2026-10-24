@@ -8,6 +8,7 @@
  */
 
 import type { TaskResult } from '../types';
+import type { DebugLogEntry } from '../../types/adcp';
 import type { AdcpErrorInfo } from '../../core/ConversationTypes';
 import { isTerminalAdcpError, readExtractionPath } from '../../utils/response-unwrapper';
 import { generateIdempotencyKey } from '../../utils/idempotency';
@@ -316,7 +317,7 @@ export async function executeStoryboardTask(
   taskName: string,
   params: Record<string, unknown>,
   opts: StoryboardTaskExecutionOptions = {}
-): Promise<TaskResult> {
+): Promise<TaskResult & { debug_logs?: DebugLogEntry[] }> {
   const unresolvedAssetDirectives = findUnresolvedCreativeAssetDirectives(params);
   if (unresolvedAssetDirectives.length > 0) {
     return {

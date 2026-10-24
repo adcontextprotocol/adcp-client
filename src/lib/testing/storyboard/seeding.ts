@@ -25,8 +25,10 @@ import { resolveAccount, resolveBrand, validateResponseSchema, type TestClient }
 import { getValidator } from '../../validation/schema-loader';
 import { ADCP_VERSION } from '../../version';
 import { injectLegacyEnvelopeStatus } from '../../utils/envelope-status-compat';
+import { readExtractionPath, unwrapProtocolResponse } from '../../utils/response-unwrapper';
 import { callControllerRaw } from '../test-controller';
 import { executeStoryboardTask } from './task-map';
+import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
 import {
   buildFixtureResolutionSpecs,
   applyFixtureBindingsToRequest,
@@ -37,10 +39,13 @@ import {
 } from './fixture-resolution';
 import { readCollectionWitness, type CollectionSelectionWitness } from './collection-selection';
 import { resolvePath } from './path';
-import { redactSecrets } from '../../utils/redact-secrets';
+import { redactSecrets, SECRET_KEY_PATTERN } from '../../utils/redact-secrets';
+import { redactCredentialPatterns } from '../../utils/redact-credential-patterns';
+import { MAX_JSON_DEPTH } from '../../utils/json-depth';
 import type {
   ContextProvenanceEntry,
   FixtureResolutionAttempt,
+  RunnerExtractionRecord,
   RunnerRequestRecord,
   RunnerResponseRecord,
   FixtureResolutionRecord,
@@ -603,9 +608,13 @@ type DiscoveryCatalogResult =
        * when the transport threw and no response was ever received — never
        * a stand-in for one we did not capture.
        */
-      exchange?: { request: RunnerRequestRecord; response: RunnerResponseRecord | null };
+      exchange?: {
+        request: RunnerRequestRecord;
+        response: RunnerResponseRecord | null;
+        extraction?: RunnerExtractionRecord;
+      };
       /** AJV detail when the page parsed but failed its response schema. */
-      schemaFailure?: string;
+      schemaFailure?: { detail: string; schema_id: string; schema_url: string };
     };
 
 /** AdCP 3.2 ordered per-handle seed/discover state machine. */
@@ -797,8 +806,10 @@ async function runDeclaredFixtureResolution(
      */
     let attemptedStrategy: FixtureResolutionRecord['strategy'];
     /** Truthful wire evidence for a failed discovery, never fabricated. */
-    let discoveryFailureEvidence: { request: RunnerRequestRecord; response: RunnerResponseRecord | null } | undefined;
-    let discoverySchemaFailure: string | undefined;
+    let discoveryFailureEvidence:
+      | { request: RunnerRequestRecord; response: RunnerResponseRecord | null; extraction?: RunnerExtractionRecord }
+      | undefined;
+    let discoverySchemaFailure: Extract<DiscoveryCatalogResult, { ok: false }>['schemaFailure'];
     let failure: string | undefined;
     const stepStart = Date.now();
     const parentStatus = spec.parentProductHandle ? productStatuses.get(spec.parentProductHandle) : undefined;
@@ -815,7 +826,6 @@ async function runDeclaredFixtureResolution(
 
     for (const strategy of parentUnavailable ? [] : spec.strategies) {
       if (strategy === 'seed') {
-        attemptedStrategy = strategy;
         await prepareSeedAgent(call);
         const advertised = controller.scenarios?.has(call.scenario);
         if (controller.missing || advertised === false) {
@@ -828,6 +838,7 @@ async function runDeclaredFixtureResolution(
           });
           continue;
         }
+        attemptedStrategy = strategy;
         try {
           const controllerRequest = applyFixtureBindingsToRequest(
             { scenario: call.scenario, params: call.params },
@@ -925,7 +936,6 @@ async function runDeclaredFixtureResolution(
       }
 
       if (strategy === 'discover') {
-        attemptedStrategy = strategy;
         prepareDiscoveryAgent(call);
         if (discoveryOptions.agentTools && !discoveryOptions.agentTools.includes('get_products')) {
           attempts.push({
@@ -935,6 +945,7 @@ async function runDeclaredFixtureResolution(
           });
           continue;
         }
+        attemptedStrategy = strategy;
         const discovered = await catalog();
         if (!discovered.ok) {
           failure = discovered.error;
@@ -1076,9 +1087,11 @@ async function runDeclaredFixtureResolution(
                   check: 'response_schema',
                   passed: false,
                   description: 'Fixture discovery response must satisfy the get_products response schema',
-                  error: discoverySchemaFailure,
+                  error: discoverySchemaFailure.detail,
                   json_pointer: null,
-                  ...resolveDiscoverySchemaIdentity(options.adcpVersion ?? ADCP_VERSION),
+                  schema_id: discoverySchemaFailure.schema_id,
+                  schema_url: discoverySchemaFailure.schema_url,
+                  expected: discoverySchemaFailure.schema_id,
                   actual: 'schema_validation_failed',
                   ...(discoveryFailureEvidence && {
                     request: discoveryFailureEvidence.request,
@@ -1088,7 +1101,7 @@ async function runDeclaredFixtureResolution(
               ]
             : [],
         context,
-        extraction: { path: 'none' },
+        extraction: discoveryFailureEvidence?.extraction ?? { path: 'none' },
         // The REAL exchange the failing strategy made. Absent rather than
         // invented when the strategy never reached the wire.
         ...(discoveryFailureEvidence && {
@@ -1424,24 +1437,53 @@ function resolveDiscoverySchemaIdentity(adcpVersion: string): { schema_id: strin
   return { schema_id: schemaId, schema_url: `https://adcontextprotocol.org${schemaId}` };
 }
 
+/** Preserve protocol evidence while also scrubbing credentials inside text payloads. */
+function redactDiscoveryResponse(value: unknown): unknown {
+  const visit = (node: unknown, depth: number): unknown => {
+    if (depth > MAX_JSON_DEPTH) return '[redacted]';
+    if (typeof node === 'string') {
+      return (redactCredentialPatterns(node, false) as string).replaceAll('<redacted>', '[redacted]');
+    }
+    if (Array.isArray(node)) return node.map(child => visit(child, depth + 1));
+    if (node && typeof node === 'object') {
+      return Object.fromEntries(Object.entries(node).map(([key, child]) => [key, visit(child, depth + 1)]));
+    }
+    return node;
+  };
+  const pattern = new RegExp(
+    `${SECRET_KEY_PATTERN.source}|^(private[_-]?key|signing[_-]?key|signature|auth[_-]?token|jwt)$`,
+    'i'
+  );
+  return visit(redactSecrets(value, pattern), 0);
+}
+
 /**
  * AJV detail for a discovery page that does not satisfy the `get_products`
  * response schema, or `undefined` when it does.
  */
-function describeDiscoverySchemaFailure(data: unknown, options: StoryboardRunOptions): string | undefined {
+function describeDiscoverySchemaFailure(
+  data: unknown,
+  options: StoryboardRunOptions
+): { error: string; schemaFailure?: { detail: string; schema_id: string; schema_url: string } } | undefined {
   try {
-    const validator = getValidator('get_products', 'sync', options.adcpVersion ?? ADCP_VERSION);
+    const version = options.adcpVersion ?? ADCP_VERSION;
+    const validator = getValidator('get_products', 'sync', version);
+    let detail: string;
     if (validator) {
       const schemaData = isPlainRecord(data) ? injectLegacyEnvelopeStatus(data, { toolName: 'get_products' }) : data;
       if (validator(schemaData)) return undefined;
-      return (validator.errors ?? [])
+      detail = (validator.errors ?? [])
         .map(error => `${error.instancePath || '/'} ${error.message ?? error.keyword}`)
         .join('; ');
+    } else {
+      const schema = validateResponseSchema('get_products', data, options.adcpVersion);
+      if (schema.passed) return undefined;
+      detail = schema.error ?? schema.details ?? 'schema validation failed';
     }
-    const schema = validateResponseSchema('get_products', data, options.adcpVersion);
-    return schema.passed ? undefined : (schema.error ?? schema.details ?? 'schema validation failed');
+    return { error: detail, schemaFailure: { detail, ...resolveDiscoverySchemaIdentity(version) } };
   } catch (err) {
-    return `response schema unavailable: ${err instanceof Error ? err.message : String(err)}`;
+    // Missing runner schemas are a setup failure, not evidence against the seller.
+    return { error: `response schema unavailable: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
@@ -1479,27 +1521,100 @@ async function discoverProductCatalog(
       ext: { adcp: { creative_wire: 'canonical' } },
     };
     let result;
+    let observedResponse: RawHttpCapture | undefined;
+    const toolResponse = (captures: RawHttpCapture[]) =>
+      [...captures].reverse().find(capture => capture.requestAdcpSkill === 'get_products');
     const pageStart = Date.now();
     // Recorded BEFORE dispatch. A transport failure never reaches the
     // response, but the request it sent is real and is the only evidence
     // an implementor has to reproduce the failure.
     const requestRecord: RunnerRequestRecord = {
-      transport: 'mcp',
+      transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
       operation: 'get_products',
       payload: redactSecrets(request),
     };
     try {
-      result = await executeStoryboardTask(client, 'get_products', request, { signal: options.signal });
+      // MCP's official SDK trace already supplies its parsed protocol response.
+      // Capturing its HTTP streams would buffer an unrelated SSE subscription.
+      if (options.protocol === 'a2a') {
+        const captured = await withRawResponseCapture(
+          () => executeStoryboardTask(client, 'get_products', request, { signal: options.signal }),
+          { maxBodyBytes: 65_536, maxCaptures: 8, maxTotalBodyBytes: 262_144 }
+        );
+        result = captured.result;
+        observedResponse = toolResponse(captured.captures);
+      } else {
+        result = await executeStoryboardTask(client, 'get_products', request, { signal: options.signal });
+      }
     } catch (err) {
+      const observed = toolResponse(getCapturesFromError(err) ?? []);
       return {
         ok: false,
-        error: `fixture discovery transport failure: ${err instanceof Error ? err.message : String(err)}`,
-        evidence: { page_count: pageCount + 1, request },
+        error: `fixture discovery transport failure: ${redactCredentialPatterns(err instanceof Error ? err.message : String(err), false)}`,
+        evidence: { page_count: pageCount + 1, request: requestRecord.payload },
         // Explicitly null: no response was received. Not a placeholder.
-        exchange: { request: requestRecord, response: null },
+        exchange: {
+          request: requestRecord,
+          response: observed
+            ? {
+                transport: requestRecord.transport,
+                payload: redactDiscoveryResponse(observed.body),
+                status: observed.status,
+                duration_ms: Date.now() - pageStart,
+              }
+            : null,
+        },
       };
     }
     pageCount++;
+    // The official clients retain the received protocol response before SDK
+    // validation/projection. A connection error has no such response entry.
+    let wireResponse = result.debug_logs
+      ?.slice()
+      .reverse()
+      .find(
+        log =>
+          typeof log.message === 'string' &&
+          (log.message.startsWith('MCP: Tool get_products response received') ||
+            log.message.startsWith('A2A: Response received')) &&
+          log.response !== undefined
+      )?.response;
+    if (wireResponse === undefined && observedResponse && !observedResponse.bodyTruncated) {
+      try {
+        wireResponse = JSON.parse(observedResponse.body);
+      } catch {
+        // Raw diagnostics remain available; protocol decoding belongs to the SDK.
+      }
+    }
+    // An executor error is SDK diagnostic text, not a seller response. Retain
+    // a response only when a tool body or actual HTTP exchange was observed.
+    if (
+      (!result.success || result.data === undefined) &&
+      result._extraction_path === undefined &&
+      observedResponse === undefined &&
+      wireResponse === undefined
+    ) {
+      return {
+        ok: false,
+        error: `fixture discovery get_products rejected: ${redactCredentialPatterns(result.error ?? result.adcp_error?.code ?? 'unknown error', false)}`,
+        evidence: { page_count: pageCount, request: requestRecord.payload },
+        exchange: { request: requestRecord, response: null },
+      };
+    }
+    const extraction: RunnerExtractionRecord = {
+      path: result._extraction_path ?? 'none',
+      ...(observedResponse?.bodyTruncated && { note: 'Raw HTTP response capture was truncated at its body budget.' }),
+    };
+    const failedExchange = {
+      request: requestRecord,
+      extraction,
+      response: {
+        transport: requestRecord.transport,
+        payload: redactDiscoveryResponse(wireResponse ?? observedResponse?.body ?? result.data),
+        ...(observedResponse && { status: observedResponse.status }),
+        duration_ms: Date.now() - pageStart,
+      },
+    };
     // Recorded for EVERY page, success or not: a schema-invalid or rejected
     // page is exactly the exchange a reader needs to see.
     // The request is tiny and always retained. The RESPONSE is a second
@@ -1512,69 +1627,85 @@ async function discoverProductCatalog(
     const pageIndex =
       exchanges.push({
         request: requestRecord,
-        response: {
-          transport: 'mcp',
-          payload: retainResponse
-            ? redactSecrets(
-                result.data ??
-                  (result.adcp_error ? { adcp_error: result.adcp_error } : undefined) ??
-                  result.error ??
-                  null
-              )
-            : {
+        response: retainResponse
+          ? { ...failedExchange.response, payload: redactSecrets(result.data) }
+          : {
+              transport: requestRecord.transport,
+              payload: {
                 response_not_retained: `page ${exchanges.length + 1} is past the runner's ${DISCOVERY_RETAINED_RESPONSE_PAGES}-page discovery-evidence budget; the request for this page is recorded in full`,
               },
-          duration_ms: Date.now() - pageStart,
-        },
+              duration_ms: Date.now() - pageStart,
+            },
       }) - 1;
     // Graded whether or not the executor accepted the page. A seller that
     // returns a malformed body makes the executor reject in strict mode,
     // and classifying that as a bare protocol error hid WHICH of the two
     // it was — the one thing a `response_schema` record exists to say.
-    const schemaFailure = result.data === undefined ? undefined : describeDiscoverySchemaFailure(result.data, options);
+    let schemaData = result.success ? result.data : undefined;
+    if (!result.success && wireResponse !== undefined && result._extraction_path !== 'error') {
+      try {
+        schemaData = unwrapProtocolResponse(wireResponse, undefined, options.protocol === 'a2a' ? 'a2a' : 'mcp');
+        extraction.path = readExtractionPath(schemaData) ?? extraction.path;
+      } catch {
+        // Protocol decoding errors retain their original classification.
+        schemaData = undefined;
+      }
+    }
+    const nativeResult =
+      isPlainRecord(wireResponse) && isPlainRecord(wireResponse.result) ? wireResponse.result : undefined;
+    const nativeState = nativeResult && isPlainRecord(nativeResult.status) ? nativeResult.status.state : undefined;
+    const sellerRejected =
+      result._extraction_path === 'error' ||
+      (isPlainRecord(schemaData) &&
+        (schemaData.adcp_error !== undefined || schemaData.status === 'failed' || schemaData.status === 'rejected')) ||
+      nativeState === 'failed' ||
+      nativeState === 'rejected' ||
+      nativeState === 'canceled';
+    const schemaCheck =
+      sellerRejected || schemaData === undefined ? undefined : describeDiscoverySchemaFailure(schemaData, options);
     if (!result.success) {
       return {
         ok: false,
-        error: `fixture discovery get_products rejected: ${result.error ?? result.adcp_error?.code ?? 'unknown error'}`,
-        evidence: { page_count: pageCount, request },
-        exchange: exchanges[pageIndex]!,
-        ...(schemaFailure !== undefined && { schemaFailure }),
+        error: `fixture discovery get_products rejected: ${redactCredentialPatterns(result.error ?? result.adcp_error?.code ?? 'unknown error', false)}`,
+        evidence: { page_count: pageCount, request: requestRecord.payload },
+        exchange: failedExchange,
+        ...(schemaCheck?.schemaFailure && { schemaFailure: schemaCheck.schemaFailure }),
       };
     }
-    if (schemaFailure) {
+    if (schemaCheck) {
       return {
         ok: false,
-        error: `fixture discovery returned malformed get_products response: ${schemaFailure}`,
+        error: `fixture discovery get_products validation failed: ${schemaCheck.error}`,
         evidence: { page_count: pageCount },
-        exchange: exchanges[pageIndex]!,
-        schemaFailure,
+        exchange: failedExchange,
+        ...(schemaCheck.schemaFailure && { schemaFailure: schemaCheck.schemaFailure }),
       };
     }
     if (!isPlainRecord(result.data)) {
       return {
         ...{ ok: false, error: 'fixture discovery returned a non-object get_products response' },
-        exchange: exchanges[pageIndex]!,
+        exchange: failedExchange,
       };
     }
     const pageProducts = result.data.products;
     if (pageProducts !== undefined && !Array.isArray(pageProducts)) {
       return {
         ...{ ok: false, error: 'fixture discovery get_products.products is not an array' },
-        exchange: exchanges[pageIndex]!,
+        exchange: failedExchange,
       };
     }
     for (const product of pageProducts ?? []) {
       if (!isPlainRecord(product) || typeof product.product_id !== 'string' || product.product_id.length === 0) {
         return {
           ...{ ok: false, error: 'fixture discovery returned a product without a non-empty product_id' },
-          exchange: exchanges[pageIndex]!,
+          exchange: failedExchange,
         };
       }
       if (seenProductIds.has(product.product_id)) {
         return {
           ok: false,
           error: `fixture discovery returned duplicate product_id "${product.product_id}"; response order cannot resolve duplicate identities`,
-          exchange: exchanges[pageIndex]!,
+          exchange: failedExchange,
         };
       }
       seenProductIds.add(product.product_id);
@@ -1586,7 +1717,7 @@ async function discoverProductCatalog(
             return {
               ok: false,
               error: `fixture discovery returned duplicate pricing option identity "${product.product_id}\u0000${option.pricing_option_id}"`,
-              exchange: exchanges[pageIndex]!,
+              exchange: failedExchange,
             };
           }
           seenPricingIds.add(option.pricing_option_id);
@@ -1597,7 +1728,7 @@ async function discoverProductCatalog(
       if (products.length > 100_000) {
         return {
           ...{ ok: false, error: 'fixture discovery exceeded the 100,000-product safety limit' },
-          exchange: exchanges[pageIndex]!,
+          exchange: failedExchange,
         };
       }
     }
@@ -1607,13 +1738,13 @@ async function discoverProductCatalog(
       if (typeof next !== 'string' || next.length === 0) {
         return {
           ...{ ok: false, error: 'fixture discovery pagination is broken: has_more=true without cursor' },
-          exchange: exchanges[pageIndex]!,
+          exchange: failedExchange,
         };
       }
       if (seenCursors.has(next)) {
         return {
           ...{ ok: false, error: `fixture discovery pagination is broken: repeated cursor "${next}"` },
-          exchange: exchanges[pageIndex]!,
+          exchange: failedExchange,
         };
       }
       seenCursors.add(next);

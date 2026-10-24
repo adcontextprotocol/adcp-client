@@ -128,6 +128,33 @@ function originalTransport(catalog, overrides = {}) {
     } else if (message.method === 'tools/call') {
       const { name, arguments: request } = message.params;
       calls.push({ task: name, request });
+      if (name === 'get_products' && overrides.protocolFailure) {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: message.id,
+            result: {
+              isError: true,
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(
+                    overrides.protocolPayload ?? {
+                      status: 'failed',
+                      adcp_error: {
+                        code: 'INVALID_REQUEST',
+                        message: 'Seller refused discovery',
+                        recovery: 'terminal',
+                      },
+                    }
+                  ),
+                },
+              ],
+            },
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        );
+      }
       let data;
       if (name === 'get_adcp_capabilities') data = CAPS;
       else if (name === 'get_products')
@@ -137,6 +164,7 @@ function originalTransport(catalog, overrides = {}) {
           cache_scope: 'account',
           wholesale_feed_version: 'v1',
         };
+      else if (name === 'comply_test_controller' && overrides.controller) data = overrides.controller(request);
       else if (name === 'create_media_buy')
         data = {
           status: 'completed',
@@ -2073,11 +2101,7 @@ describe('failed preparation keeps its producer evidence (#3385)', () => {
    */
   const FAILURE_MODES = {
     transport: { transportFailure: true },
-    protocol: {
-      read: () => {
-        throw new Error('seller rejected get_products');
-      },
-    },
+    protocol: { protocolFailure: true },
     schema: { read: () => ({ status: 'completed', products: [{ product_id: 'malformed' }] }) },
     pagination: {
       read: () => ({
@@ -2131,11 +2155,21 @@ describe('failed preparation keeps its producer evidence (#3385)', () => {
       assert.equal(check.actual, 'preparation_failed');
 
       // The producer's own phase, with its original context and error.
-      const producer = result.phases.find(phase => phase.phase_id !== 'prepared_fixtures_preparation_failed');
-      assert.ok(producer, 'the producer phase is republished');
+      const producer = result.fixture_preparation;
+      assert.ok(producer, 'the producer phase is retained separately from consumer grading');
       assert.ok(
         producer.steps.some(step => step.passed === false),
         'with its failing step intact'
+      );
+      assert.equal(
+        result.phases.flatMap(phase => phase.steps).filter(step => !step.passed && !step.skipped).length,
+        result.failed_count
+      );
+      const { formatStoryboardResultsAsJUnit } = require('../../dist/lib/testing/storyboard/junit.js');
+      assert.match(formatStoryboardResultsAsJUnit([result]), /failures="1"/);
+      assert.deepEqual(
+        producer.steps.map(step => step.error),
+        state.phase.steps.map(step => step.error)
       );
     });
 
@@ -2148,6 +2182,7 @@ describe('failed preparation keeps its producer evidence (#3385)', () => {
       });
       assert.equal(result.passed, false);
       assert.deepEqual(result.fixture_resolutions, state.resolutions);
+      assert.ok(result.fixture_preparation);
       const check = result.validations.find(v => v.check === 'fixture_capture_unbuildable');
       assert.ok(check, JSON.stringify(result.validations));
       assert.equal(check.actual, 'preparation_failed');
@@ -2181,12 +2216,11 @@ describe('failed preparation keeps its producer evidence (#3385)', () => {
       assert.ok(failing.request, `${mode}: the dispatched request is recorded`);
       assert.equal(failing.request.operation, 'get_products', mode);
       assert.equal(failing.request.payload.buying_mode, 'wholesale', mode);
-      // A connection-level failure is converted by the task executor into
-      // an error RESULT rather than a throw, so every one of these four
-      // arms does come back with something. What is recorded is that real
-      // payload — the runner never manufactures one. The `response: null`
-      // arm exists for an executor that genuinely throws.
-      assert.ok(failing.response_record, `${mode}: the raw response is recorded`);
+      if (mode === 'transport') {
+        assert.equal(failing.response_record, undefined, 'an SDK connection error is not a seller response');
+        continue;
+      }
+      assert.ok(failing.response_record, `${mode}: an actual response is recorded`);
       assert.equal(failing.response_record.transport, 'mcp', mode);
     }
   });
@@ -2198,10 +2232,250 @@ describe('failed preparation keeps its producer evidence (#3385)', () => {
     assert.ok(check, JSON.stringify(failing.validations));
     assert.equal(check.passed, false);
     assert.equal(check.actual, 'schema_validation_failed');
-    assert.match(check.schema_id, /get-products-response\.json$/);
-    assert.match(check.schema_url, /^https:\/\/adcontextprotocol\.org\/schemas\//);
+    assert.equal(check.schema_id, '/schemas/3.2.5/media-buy/get-products-response.json');
+    assert.equal(check.schema_url, 'https://adcontextprotocol.org/schemas/3.2.5/media-buy/get-products-response.json');
     assert.ok(check.request, 'the schema failure cites the request it graded');
     assert.ok(check.response, 'and the response it graded');
+  });
+
+  test('a real executor throw records a request without inventing a response', async () => {
+    const { runControllerSeeding } = require('../../dist/lib/testing/storyboard/seeding.js');
+    const dispatch = async () => {
+      throw new Error('executor failed before any response');
+    };
+    const result = await runControllerSeeding(
+      { getProducts: dispatch, getProductsLegacy: dispatch },
+      board(),
+      { ...transport([SELECTED]).options, agentTools: ['get_products'] },
+      {}
+    );
+    const failing = result.phase.steps.find(step => !step.passed);
+    assert.equal(failing.request.operation, 'get_products');
+    assert.equal(failing.response_record, undefined);
+  });
+
+  test('A2A discovery evidence records the configured transport', async () => {
+    const { runControllerSeeding } = require('../../dist/lib/testing/storyboard/seeding.js');
+    const dispatch = async () => ({
+      success: true,
+      status: 'completed',
+      data: {
+        status: 'completed',
+        products: [{ product_id: 'malformed' }],
+      },
+    });
+    const result = await runControllerSeeding(
+      { getProducts: dispatch, getProductsLegacy: dispatch },
+      board(),
+      { ...transport([SELECTED]).options, protocol: 'a2a', agentTools: ['get_products'] },
+      {}
+    );
+    const failing = result.phase.steps.find(step => !step.passed);
+    assert.equal(failing.request.transport, 'a2a');
+    assert.equal(failing.response_record.transport, 'a2a');
+  });
+
+  test('protocol and pagination failures are not relabelled as schema failures', async () => {
+    for (const mode of ['protocol', 'pagination']) {
+      const { state } = await prepareFailing(mode);
+      assert.equal(
+        state.phase.steps.flatMap(step => step.validations).some(v => v.check === 'response_schema'),
+        false,
+        mode
+      );
+    }
+  });
+
+  test('the terminal failing page is retained even beyond the successful-page evidence budget', async () => {
+    let pages = 0;
+    const io = transport([], {
+      read: () => {
+        pages++;
+        return pages <= 16
+          ? {
+              status: 'completed',
+              products: [],
+              cache_scope: 'account',
+              wholesale_feed_version: 'v1',
+              pagination: { has_more: true, cursor: `page-${pages + 1}` },
+            }
+          : { status: 'completed', products: [{ product_id: 'late-malformed' }] };
+      },
+    });
+    const state = await prepareStoryboardFixtures(ENDPOINT, board(), io.options);
+    assert.equal(state.disposition.status, 'failed');
+    assert.equal(pages, 17);
+    const failing = state.phase.steps.find(step => !step.passed);
+    assert.equal(failing.request.payload.pagination.cursor, 'page-17');
+    assert.match(JSON.stringify(failing.response_record.payload), /late-malformed/);
+    assert.doesNotMatch(JSON.stringify(failing.response_record.payload), /response_not_retained/);
+  });
+
+  test('captured protocol text redacts secret fields before producer evidence is retained', async () => {
+    const io = transport([], {
+      protocolFailure: true,
+      protocolPayload: {
+        status: 'failed',
+        adcp_error: {
+          code: 'INVALID_REQUEST',
+          message: 'Denied',
+          recovery: 'terminal',
+          details: { token: 'wire-secret-value', private_key: 'private-key-value', signature: 'signature-value' },
+        },
+      },
+    });
+    const state = await prepareStoryboardFixtures(ENDPOINT, board(), io.options);
+    assert.equal(state.disposition.status, 'failed');
+    assert.doesNotMatch(JSON.stringify(state.phase), /wire-secret-value|private-key-value|signature-value/);
+    assert.match(JSON.stringify(state.phase), /redacted/);
+  });
+
+  test('A2A failed tasks retain the seller rejection without grading a product schema', async () => {
+    const { runControllerSeeding } = require('../../dist/lib/testing/storyboard/seeding.js');
+    const response = {
+      jsonrpc: '2.0',
+      id: 'a2a-error',
+      result: {
+        kind: 'task',
+        id: 'failed-discovery',
+        contextId: 'ctx',
+        status: { state: 'failed' },
+        artifacts: [
+          {
+            artifactId: 'error',
+            parts: [
+              {
+                kind: 'data',
+                data: {
+                  adcp_error: { code: 'INVALID_REQUEST', message: 'Seller refused discovery', recovery: 'terminal' },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const dispatch = async () => ({
+      success: false,
+      error: 'Seller refused discovery',
+      data: {},
+      debug_logs: [{ message: 'A2A: Response received', response }],
+    });
+    const result = await runControllerSeeding(
+      { getProducts: dispatch, getProductsLegacy: dispatch },
+      board(),
+      {
+        ...transport([]).options,
+        protocol: 'a2a',
+        agentTools: ['get_products'],
+      },
+      {}
+    );
+    const failed = result.phase.steps.find(step => !step.passed);
+    assert.equal(failed.task, 'get_products');
+    assert.deepEqual(failed.response_record.payload, response);
+    assert.equal(
+      failed.validations.some(v => v.check === 'response_schema'),
+      false
+    );
+  });
+
+  test('schema diagnostics use the discovery route version and the terminal SDK trace', async () => {
+    const { runControllerSeeding } = require('../../dist/lib/testing/storyboard/seeding.js');
+    const malformed = { status: 'completed', products: [{ product_id: 'terminal-malformed' }] };
+    const protocolResponse = { content: [{ type: 'text', text: JSON.stringify(malformed) }] };
+    const dispatch = async () => ({
+      success: false,
+      error: 'validation failed',
+      data: { products: [] },
+      debug_logs: [
+        {
+          message: 'MCP: Tool get_products response received',
+          response: { content: [{ type: 'text', text: '{"status":"submitted"}' }] },
+        },
+        { message: 'MCP: Tool get_products response received', response: protocolResponse },
+      ],
+    });
+    const client = { getProducts: dispatch, getProductsLegacy: dispatch };
+    const options = { ...transport([]).options, adcpVersion: '3.2.6', agentTools: ['get_products'] };
+    const result = await runControllerSeeding(client, board(), options, {}, client, () => ({
+      client,
+      options: { ...options, adcpVersion: '3.2.5' },
+    }));
+    const failed = result.phase.steps.find(step => !step.passed);
+    const check = failed.validations.find(v => v.check === 'response_schema');
+    assert.equal(check.schema_id, '/schemas/3.2.5/media-buy/get-products-response.json');
+    assert.equal(check.expected, check.schema_id);
+    assert.deepEqual(failed.response_record.payload, protocolResponse);
+  });
+
+  test('SDK-projected errors without wire evidence are never graded as seller schema failures', async () => {
+    const { runControllerSeeding } = require('../../dist/lib/testing/storyboard/seeding.js');
+    const dispatch = async () => ({ success: false, error: 'connection failed', data: { products: [] } });
+    const result = await runControllerSeeding(
+      { getProducts: dispatch, getProductsLegacy: dispatch },
+      board(),
+      {
+        ...transport([]).options,
+        agentTools: ['get_products'],
+      },
+      {}
+    );
+    const failed = result.phase.steps.find(step => !step.passed);
+    assert.equal(failed.response_record, undefined);
+    assert.equal(
+      failed.validations.some(v => v.check === 'response_schema'),
+      false
+    );
+  });
+
+  test('a partial graph keeps protected captures out of consumer context without duplicating failures', async () => {
+    const doc = board();
+    doc.fixtures.products.push(product('other-product'));
+    doc.fixture_resolution.products.push({ handle: 'other-product', strategies: ['seed'] });
+    const io = transport([SELECTED], { controller: () => ({ success: false, error: 'UPSTREAM_FAILURE' }) });
+    const state = await prepareStoryboardFixtures(ENDPOINT, doc, {
+      ...io.options,
+      agentTools: [...TOOLS, 'comply_test_controller'],
+    });
+    assert.equal(state.disposition.status, 'failed', JSON.stringify(state.disposition));
+    assert.ok(
+      state.phase.steps.some(step => step.passed),
+      'the graph must contain earlier successful producer work'
+    );
+    const runIo = transport([SELECTED]);
+    const result = await runStoryboard(ENDPOINT, doc, { ...runIo.options, ...withPreparedFixtures(state, ALLOW) });
+    assert.equal(result.failed_count, 1);
+    assert.equal(result.phases.flatMap(phase => phase.steps).length, 1);
+    assert.doesNotMatch(JSON.stringify(result.fixture_preparation.steps.map(step => step.context)), /__adcp_fixture_/);
+    assert.deepEqual(
+      result.fixture_preparation.steps.map(step => step.error),
+      state.phase.steps.map(step => step.error)
+    );
+  });
+
+  test('standalone denial retains failed producer evidence only in the private sink', async () => {
+    const { state } = await prepareFailing('schema');
+    const io = transport([SELECTED]);
+    let audited;
+    await assert.rejects(
+      runStoryboardStep(ENDPOINT, board(), 'create', {
+        ...io.options,
+        prepared_fixtures: state,
+        prepared_fixtures_authorizer: () => ({ authorized: false, detail: 'denied' }),
+        prepared_fixtures_audit_sink: record => {
+          audited = record;
+        },
+      }),
+      error => {
+        assert.ok(error instanceof PreparedFixturesDeniedError);
+        assert.doesNotMatch(JSON.stringify(error), /malformed|authored-product/);
+        return error.refusalCode === 'authorizer_denied';
+      }
+    );
+    assert.deepEqual(audited.fixture_resolutions, state.resolutions);
+    assert.deepEqual(audited.fixture_preparation, state.phase);
+    assert.deepEqual(io.wire, []);
   });
 
   test('a denied caller still gets only the typed denial, with the record to the sink', async () => {
@@ -2223,6 +2497,8 @@ describe('failed preparation keeps its producer evidence (#3385)', () => {
     // A failed preparation does not downgrade the denial: the caller gets
     // no producer records, and the host's copy is complete.
     assert.ok(audited, 'the sink received the record');
+    assert.deepEqual(audited.fixture_resolutions, state.resolutions);
+    assert.deepEqual(audited.fixture_preparation, state.phase);
     assert.deepEqual(io.wire, []);
   });
 });

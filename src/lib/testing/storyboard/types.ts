@@ -2963,6 +2963,8 @@ export interface StoryboardStepResult {
    * the prepared state actually holds records.
    */
   fixture_resolutions?: FixtureResolutionRecord[];
+  /** Historical producer evidence; excluded from consumer grading and JUnit counts. */
+  fixture_preparation?: StoryboardPhaseResult;
   /** Exact request the runner sent (contract-required on failures). */
   request?: RunnerRequestRecord;
   /** Exact response observed, including transport, status, headers. */
@@ -3456,6 +3458,8 @@ export interface StoryboardResult {
   overall_passed: boolean;
   /** AdCP 3.2 fixture-handle setup/discovery evidence, one row per handle. */
   fixture_resolutions?: FixtureResolutionRecord[];
+  /** Historical producer evidence; excluded from consumer grading and JUnit counts. */
+  fixture_preparation?: StoryboardPhaseResult;
   /** Storyboard-level fixture coverage gaps, emitted once per cause. */
   coverage_gaps?: FixtureResolutionCoverageGap[];
   /**
