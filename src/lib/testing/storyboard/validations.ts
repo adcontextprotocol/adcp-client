@@ -3267,7 +3267,13 @@ function validateCollectionSetEqualsContext(
   // `schema_id` / `schema_url` are required_on_failure for every check and
   // MUST be null outside `response_schema`. Carried on the shared base so
   // no arm of this validator can forget them.
-  const base = { check, description: validation.description, schema_id: null, schema_url: null } as const;
+  const base = {
+    check,
+    description: validation.description,
+    ...(validation.context_key !== undefined && { context_key: validation.context_key }),
+    schema_id: null,
+    schema_url: null,
+  } as const;
   if (!validation.path) {
     return {
       ...base,

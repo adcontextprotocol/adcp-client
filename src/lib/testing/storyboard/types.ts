@@ -553,6 +553,8 @@ export interface FixtureResolutionRecord {
     capability_id?: string;
     format_id?: Record<string, unknown>;
   };
+  /** SDK diagnostic: the resolution failed because the runner exhausted its observation budget, not a seller verdict. */
+  unavailable_reason?: 'runner_budget_exhausted';
 }
 
 /** One storyboard-scoped coverage gap produced by fixture resolution. */
@@ -2782,6 +2784,8 @@ export interface ValidationResult {
   severity_promoted_from_advisory?: boolean;
   /** Dot/bracket JSON path (legacy). See `json_pointer` for the RFC 6901 form. */
   path?: string;
+  /** Authored context key used by a context-based comparison, echoed unchanged. */
+  context_key?: string;
   /** Human-readable failure detail. */
   error?: string;
   /** RFC 6901 pointer to the failing field. Null when the failure is transport-level. */
@@ -2960,6 +2964,8 @@ export interface StoryboardStepResult {
    * structured `adcp_error` envelope; absent for transport-level failures.
    */
   adcp_error?: import('../../core/ConversationTypes').AdcpErrorInfo;
+  /** Validated MCP OAuth metadata retained when discovery requires authorization. */
+  authorization_required?: import('../../auth/oauth/authorization-required').AuthorizationRequirements;
   /** Preview of the next step (for LLM consumption) */
   next?: StoryboardStepPreview;
   /** Agent URL that served this step (multi-instance mode). Absent in single-URL mode. */

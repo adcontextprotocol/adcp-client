@@ -240,3 +240,15 @@ describe('discoverAgentProfile: AbortSignal honored (#1612)', () => {
     );
   });
 });
+
+test('a failed tools probe remains identifiable when its empty profile is reused', async () => {
+  const { profile, step } = await discoverAgentProfile({
+    getAgentInfo: async () => {
+      throw new Error('tools discovery unavailable');
+    },
+  });
+  assert.equal(step.passed, false);
+  assert.equal(profile.capabilities_failure.passed, false);
+  assert.equal(profile.capabilities_failure.task, 'getAgentInfo');
+  assert.equal(profile.capabilities_failure.error, 'tools discovery unavailable');
+});

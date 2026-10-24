@@ -1007,6 +1007,7 @@ describe('collection_set_equals_context', () => {
               sample_request: { buying_mode: 'wholesale', ext: { adcp: { creative_wire: 'canonical' } } },
               validations: [
                 {
+                  id: 'authored-collection-comparison',
                   check: 'collection_set_equals_context',
                   path,
                   context_key: 'expected',
@@ -1105,7 +1106,7 @@ describe('collection_set_equals_context', () => {
     assert.match(validation.error, /^actual_collections_malformed:/);
   });
 
-  test('every failing arm carries the required_on_failure schema identity as explicit null', async () => {
+  test('every failing arm preserves authored context, identity, schema nulls and wire evidence', async () => {
     // runner-output-contract.yaml lists schema_id / schema_url under
     // required_on_failure and requires null outside `response_schema`.
     // Omitting the keys is not the same as recording null: a consumer
@@ -1114,6 +1115,9 @@ describe('collection_set_equals_context', () => {
       ['missing expected key', setBoard(undefined), undefined],
       ['malformed expected set', setBoard([{ collection_ids: ['news'] }]), undefined],
       ['malformed actual path', setBoard(expectedSet, 'products[0].not_collections'), undefined],
+      ['unequal sets', setBoard(expectedSet), undefined],
+      ['missing path', setBoard(expectedSet, ''), undefined],
+      ['distinct-pairs witness', setBoard([{ publisher_domain: 'owner.example', collection_id: 'news' }]), undefined],
     ];
     for (const [label, doc] of cases) {
       const io = transport([product('any')]);
@@ -1121,6 +1125,10 @@ describe('collection_set_equals_context', () => {
       const validation = result.validations.find(v => v.check === 'collection_set_equals_context');
       assert.ok(validation, label);
       assert.equal(validation.passed, false, label);
+      assert.equal(validation.context_key, 'expected', label);
+      assert.equal(validation.id, 'authored-collection-comparison', label);
+      assert.equal(validation.request.operation, 'get_products', label);
+      assert.equal(validation.response.transport, 'mcp', label);
       assert.ok(Object.hasOwn(validation, 'schema_id'), `${label}: schema_id key present`);
       assert.ok(Object.hasOwn(validation, 'schema_url'), `${label}: schema_url key present`);
       assert.equal(validation.schema_id, null, label);

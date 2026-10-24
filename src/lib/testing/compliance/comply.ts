@@ -12,6 +12,7 @@ import {
   createTestClient,
   getOrCreateClientResolution,
   getOrDiscoverProfile,
+  describeProfileDiscoveryFailure,
   seedTestClientSigningCapability,
   seedAuthRejectedTestClientProfile,
   withTestClientScope,
@@ -23,6 +24,8 @@ import {
   collectCapabilityNotices,
   runStoryboard,
   storyboardCapabilityGateUnmet,
+  storyboardRequiresCapabilityEvidence,
+  storyboardAllowsCapabilityDiagnostic,
   storyboardCapabilityPredicates,
 } from '../storyboard/runner';
 import { applyNativeA2AComplianceTransportOptions } from '../storyboard/native-a2a-compliance';
@@ -1677,6 +1680,15 @@ async function runComplyStoryboard(
   } else {
     runOptions = { ...runOptions, _profile: undefined, agentTools: undefined };
   }
+  if (
+    describeProfileDiscoveryFailure(
+      discovered.profile,
+      storyboardRequiresCapabilityEvidence(storyboard),
+      storyboardAllowsCapabilityDiagnostic(storyboard)
+    )
+  ) {
+    return runStoryboard(agentUrl, storyboard, { ...runOptions, _profile: discovered.profile });
+  }
   // Applicability comes before routing: a storyboard whose root capability
   // predicate the agent under test does not satisfy keeps the runner's
   // `not_applicable` verdict (no network call), so a hook skip can never turn
@@ -2437,7 +2449,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
           severity: 'error',
           message:
             `get_adcp_capabilities is advertised but the call failed. ` +
-            `Only universal storyboards ran — domain and specialism bundles were skipped. ` +
+            `Universal diagnostics were selected; failed discovery does not establish domain or specialism support. ` +
             `Agent-reported error: ${fenceAgentText(profile.capabilities_probe_error)}`,
           evidence: { agent_reported_error: profile.capabilities_probe_error },
           source: { kind: 'profile', code: 'capabilities-probe-failed' },

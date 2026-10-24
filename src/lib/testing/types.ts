@@ -8,6 +8,8 @@ import type { WebhookReceiver } from './storyboard/webhook-receiver';
 import type { AdcpVersion } from '../version';
 import type { TransportOptions, VersionEnvelopeMode } from '../protocols';
 import type { AgentRequestSigningConfig } from '../types/adcp';
+import type { RunnerRequestRecord, RunnerResponseRecord, RunnerExtractionRecord } from './storyboard/types';
+import type { AuthorizationRequirements } from '../auth/oauth/authorization-required';
 
 // Test scenarios that can be run
 export type TestScenario =
@@ -351,6 +353,10 @@ export interface TestOptions {
    * @deprecated Use `StoryboardRunOptions.profile` for storyboard profile reuse.
    */
   _profile?: AgentProfile;
+  /** @internal Schema-invalid successes remain diagnostic-only when no capability gate consumes them. */
+  _requireValidCapabilityEvidence?: boolean;
+  /** @internal Ungated capability diagnostics may grade the advertised capability response itself. */
+  _allowCapabilityDiagnostic?: boolean;
   /**
    * @internal Server-declared AdCP version learned during capability discovery.
    * Storyboard response validation uses this for version-skew compatibility
@@ -389,6 +395,13 @@ export interface TestStepResult {
   }>;
   error?: string;
   response_preview?: string;
+  /** Observed discovery exchange, retained when preflight fails. */
+  request?: RunnerRequestRecord;
+  response_record?: RunnerResponseRecord;
+  extraction?: RunnerExtractionRecord;
+  adcp_error?: import('../core/ConversationTypes').AdcpErrorInfo;
+  /** Validated MCP OAuth discovery metadata for an interactive authorization prompt. */
+  authorization_required?: AuthorizationRequirements;
   // Structured data for collectObservations() — decoupled from response_preview display
   observation_data?: Record<string, unknown>;
   // For tracking what was created (for cleanup or follow-up)
@@ -464,6 +477,8 @@ export interface AgentProfile {
    * result is due to a broken caps probe, not an agent that lacks v3 support.
    */
   capabilities_probe_error?: string;
+  /** Original failed capability probe, including its redacted exchange when available. */
+  capabilities_failure?: TestStepResult;
   /**
    * Schema violations found during the preflight `get_adcp_capabilities`
    * call. Kept separately from `capabilities_probe_error`: an invalid

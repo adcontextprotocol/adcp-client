@@ -369,7 +369,7 @@ export type PreparedFixturesDisposition =
   /** Discovery, schema validation or setup failed. Terminal. */
   | { status: 'failed'; detail: string }
   /** The agent cannot be graded for this storyboard's fixtures. */
-  | { status: 'unsupported'; detail: string };
+  | { status: 'unsupported'; detail: string; reason?: 'not_applicable' };
 
 const trustedStates = new WeakSet<PreparedStoryboardFixtures>();
 

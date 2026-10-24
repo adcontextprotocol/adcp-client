@@ -1,4 +1,8 @@
 import { VersionUnsupportedError } from '../errors';
+import {
+  NeedsAuthorizationError,
+  hasValidatedMcpAuthorizationRequirements,
+} from '../auth/oauth/authorization-required';
 import { deliveryWebhookRegistrationId } from './webhook-registration';
 import { isAdcpVersionAtLeast } from '../utils/adcp-version-config';
 function validateIdentity33Payload(
@@ -6116,7 +6120,12 @@ export class TaskExecutor {
       status: 'failed' as const,
       error: error.message || String(error),
       adcpError: adcpErrorInfo,
-      errorInstance: getSignedRequestRejection(error) ?? this.buildErrorInstance(taskId, adcpErrorInfo),
+      errorInstance:
+        getSignedRequestRejection(error) ??
+        (error instanceof NeedsAuthorizationError &&
+        hasValidatedMcpAuthorizationRequirements(error.requirements, agent.agent_uri)
+          ? error
+          : this.buildErrorInstance(taskId, adcpErrorInfo)),
       correlationId,
       metadata: this.buildMetadata({
         taskId,

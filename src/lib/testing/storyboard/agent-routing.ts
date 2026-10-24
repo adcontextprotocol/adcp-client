@@ -46,7 +46,7 @@
 import { redactOAuthUrlForOutput, redactOAuthUrlsInText } from './oauth-metadata-graph';
 import { selectProbeTask } from './test-kit';
 import type { TestClient } from '../client';
-import { getOrCreateClient, getOrDiscoverProfile } from '../client';
+import { getOrCreateClient, getOrDiscoverStoryboardProfile } from '../client';
 import type { AgentProfile } from '../types';
 import { TASK_FEATURE_MAP, type AdcpProtocol } from '../../utils/capabilities';
 import type { AgentEntry, Storyboard, StoryboardRunOptions, StoryboardStep } from './types';
@@ -294,7 +294,7 @@ export async function discoverAgentRouting(options: StoryboardRunOptions): Promi
     entries.map(async ([key, entry]) => {
       const perAgentOptions = buildAgentOptions(entry, options);
       try {
-        const { profile, step } = await getOrDiscoverProfile(clients.get(key)!, perAgentOptions);
+        const { profile, step } = await getOrDiscoverStoryboardProfile(clients.get(key)!, perAgentOptions);
         return { key, profile, step };
       } catch (err) {
         return {
