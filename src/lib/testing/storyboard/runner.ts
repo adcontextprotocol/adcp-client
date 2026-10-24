@@ -54,6 +54,7 @@ import {
   PreparedStoryboardFixtures,
   resolvePreparedFixtures,
   type PreparedFixtureBinding,
+  type PreparedFixturesAuthorizer,
   type PreparedFixturesDisposition,
   type PreparedFixturesRefusal,
 } from './prepared-fixtures';
@@ -3276,6 +3277,42 @@ function resolvePreparationRouteOptions(agentUrl: string, options: StoryboardRun
   };
 }
 
+/**
+ * Ask the supplied authorizer whether preparation itself may proceed.
+ *
+ * The `prepare` gate carries NO `binding`: nothing has been prepared yet,
+ * and copying `current` into it would tell the host that stored state
+ * matches when there is no stored state. `current` is the real
+ * SDK-owned binding — storyboard digest, routes, on-disk schema artifact,
+ * account and brand scope, sandbox, principal and credential fingerprint
+ * — all of which are computable without touching the seller, which is why
+ * this can be asked before the first byte.
+ *
+ * Every non-grant answer is a refusal, matching the reuse gate exactly: a
+ * decision that is denied, absent, malformed, throwing or rejecting all
+ * fail closed. The host's own error text is never echoed.
+ */
+async function resolvePreparationAuthorization(
+  authorizer: PreparedFixturesAuthorizer,
+  current: PreparedFixtureBinding
+): Promise<{ ok: true } | { ok: false; refusal: PreparedFixturesRefusal }> {
+  const refusal: PreparedFixturesRefusal = {
+    code: 'authorizer_denied',
+    detail: 'fixture preparation was refused by the configured authorizer',
+  };
+  try {
+    const decision = await authorizer({ current: structuredClone(current), gate: 'prepare' });
+    // Strictly `true`, like every other gate. A truthy string, `1` or a
+    // missing field is a malformed decision, and reading one as consent
+    // is the failure this gate exists to prevent.
+    return decision?.authorized === true ? { ok: true } : { ok: false, refusal };
+  } catch {
+    // A host authorizer that throws or rejects fails closed, and its own
+    // error text stays with the host.
+    return { ok: false, refusal };
+  }
+}
+
 async function prepareStoryboardFixturesBody(
   agentUrl: string | string[],
   storyboard: Storyboard,
@@ -3292,6 +3329,14 @@ async function prepareStoryboardFixturesBody(
   // a raw `ProtectedContextViolation` instead of returning a disposition —
   // contradicting its own contract that a failed preparation is returned,
   // not thrown.
+  //
+  // That contract covers the PREPARATION OUTCOME. It does not cover an
+  // authorization decision: the `prepare` gate below throws, because a
+  // refused caller must not be handed a prepared-state object for a run
+  // they were denied. The asymmetry is deliberate — a refused caller BODY
+  // is still graded here while `runStoryboard` / `runStoryboardStep` deny
+  // it, which is a known inconsistency raised for contract coordination
+  // rather than changed unilaterally.
   const metadataRefusal = describeReservedCallerOptions(options);
   if (metadataRefusal !== undefined) {
     return buildPreparedFixtures(storyboard, agentUrls, options, undefined, {
@@ -3315,6 +3360,28 @@ async function prepareStoryboardFixturesBody(
         'graph against the seller anyway. Pass the state to runStoryboard() or runStoryboardStep() instead, with ' +
         'prepared_fixtures_authorizer. See docs/guides/COLLECTION-FIXTURE-FOUNDATION.md section 4.',
     });
+  }
+  // Initial-preparation authorization, BEFORE any seller contact at all —
+  // before a client exists, before `initialize`, before capability
+  // discovery or controller seeding. Preparation is the step that reads
+  // the seller's catalog and pins the graph, so a host that supplies an
+  // authorizer must be able to refuse it, not only the later reuse of
+  // what it produced.
+  //
+  // Asked exactly once, and only when an authorizer was supplied: making
+  // one mandatory would refuse every preparation that exists today.
+  if (options.prepared_fixtures_authorizer) {
+    const decision = await resolvePreparationAuthorization(
+      options.prepared_fixtures_authorizer,
+      buildCurrentPreparedBinding(storyboard, agentUrls, options)
+    );
+    if (!decision.ok) {
+      return denyPreparedFixtures(
+        options,
+        buildPreparedRefusalRunResult(agentUrls, storyboard, decision.refusal),
+        decision.refusal.code
+      );
+    }
   }
   const callerOwnsClients = hasTestClientScope();
   // Per-ROUTE options, not run-level, when the run is routed. Preparation

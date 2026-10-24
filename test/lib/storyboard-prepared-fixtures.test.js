@@ -25,6 +25,7 @@ const {
   prepareStoryboardFixtures,
   runStoryboard,
   runStoryboardStep,
+  withPreparedFixtures,
 } = require('../../dist/lib/testing/index.js');
 
 const CAPS = {
@@ -2033,6 +2034,168 @@ describe('refused caller gets a denial; the host gets the evidence', () => {
         // it would be an oracle over host state.
         !error.message.includes('10.0.0.7')
     );
+  });
+});
+
+describe('initial preparation is authorized before any seller contact', () => {
+  /** Prepare with a supplied authorizer, capturing lookups and audit records. */
+  async function prepareWith(decide, extra = {}) {
+    const io = transport([SELECTED]);
+    const lookups = [];
+    const audited = [];
+    let state;
+    let denial;
+    try {
+      state = await prepareStoryboardFixtures(ENDPOINT, board(), {
+        ...io.options,
+        ...extra,
+        prepared_fixtures_audit_sink: record => audited.push(record),
+        prepared_fixtures_authorizer: lookup => {
+          lookups.push(lookup);
+          return decide(lookup);
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof PreparedFixturesDeniedError)) throw error;
+      denial = error;
+    }
+    return { io, lookups, audited, state, denial };
+  }
+
+  test('an allowing authorizer is asked exactly once, before the first byte, and preparation proceeds', async () => {
+    const { io, lookups, state, denial } = await prepareWith(() => ({ authorized: true }));
+    assert.equal(denial, undefined);
+    assert.equal(state.disposition.status, 'resolved', JSON.stringify(state?.disposition));
+    // Exactly one lookup for the whole preparation, and it is the prepare
+    // gate — not a run, pass or step gate borrowed to stand in for it.
+    assert.equal(lookups.length, 1, JSON.stringify(lookups.map(l => l.gate)));
+    assert.equal(lookups[0].gate, 'prepare');
+    // Real preparation happened after the grant.
+    assert.ok(io.wire.includes('initialize'));
+    assert.ok(io.calls.some(call => call.task === 'get_products'));
+  });
+
+  test('the prepare lookup carries a truthful current binding and no stored one', async () => {
+    const { lookups } = await prepareWith(() => ({ authorized: true }));
+    const lookup = lookups[0];
+    // No preparation has happened, so there is no recorded binding. The
+    // field is absent rather than a copy of `current` pretending to match.
+    assert.equal('binding' in lookup, false, JSON.stringify(Object.keys(lookup)));
+    assert.ok(lookup.current, 'the observed binding is real');
+    // SDK-owned identity the host can refuse on, none of it seller-derived.
+    assert.equal(lookup.current.storyboard_id, 'prepared_fixtures/selection');
+    assert.ok(lookup.current.storyboard_digest);
+    assert.deepEqual(lookup.current.agent_urls, [ENDPOINT]);
+    assert.ok(lookup.current.schema_artifact);
+    assert.ok(lookup.current.credential_fingerprint);
+    assert.equal(lookup.current.contract_version, PREPARED_FIXTURES_CONTRACT_VERSION);
+  });
+
+  test('the binding reflects the effective route, credential and account before contact', async () => {
+    const account = { brand: { domain: 'acmeoutdoor.example' }, operator: 'pinnacle-agency.example' };
+    const { lookups } = await prepareWith(() => ({ authorized: true }), {
+      context: { account, brand: { domain: 'acmeoutdoor.example' } },
+      auth: { type: 'bearer', token: 'prepare-bearer' },
+    });
+    const current = lookups[0].current;
+    assert.match(current.account_scope, /pinnacle-agency\.example/);
+    assert.match(current.brand_scope, /acmeoutdoor\.example/);
+    // The credential is folded in as a per-process fingerprint, never the
+    // token itself.
+    assert.ok(current.credential_fingerprint);
+    assert.equal(JSON.stringify(lookups[0]).includes('prepare-bearer'), false);
+  });
+
+  for (const [label, decide] of [
+    ['denied', () => ({ authorized: false, detail: 'no grant' })],
+    ['missing decision', () => undefined],
+    ['malformed decision', () => ({ authorized: 'true' })],
+    ['numeric decision', () => ({ authorized: 1 })],
+    [
+      'throwing',
+      () => {
+        throw new Error('host grant store down: pg://10.0.0.9/grants');
+      },
+    ],
+    ['rejecting', () => Promise.reject(new Error('host grant store unreachable'))],
+  ]) {
+    test(`${label}: preparation is refused with zero seller contact`, async () => {
+      const { io, lookups, audited, state, denial } = await prepareWith(decide);
+      assert.equal(state, undefined, 'no prepared state is produced');
+      assert.ok(denial instanceof PreparedFixturesDeniedError, String(denial));
+      assert.equal(denial.code, 'PREPARED_FIXTURES_DENIED');
+      assert.equal(denial.refusalCode, 'authorizer_denied');
+      assert.equal(lookups.length, 1, 'still asked exactly once');
+      // Zero bytes: not even transport initialization or tool discovery.
+      assert.deepEqual(io.wire, []);
+      assert.deepEqual(io.calls, []);
+      // The host's own error text never reaches the refused caller.
+      assert.equal(`${denial.message} ${JSON.stringify(denial.details)}`.includes('10.0.0.9'), false);
+      // Canonical refused audit evidence, in the same shape every other
+      // gate produces.
+      assert.equal(audited.length, 1, 'the audit sink received the record');
+      const check = audited[0].phases
+        .flatMap(phase => phase.steps)
+        .flatMap(step => step.validations)
+        .find(v => v.check === 'prepared_fixtures_authorization');
+      assert.ok(check, JSON.stringify(audited[0].phases));
+      assert.equal(check.actual, 'authorizer_denied');
+      assert.equal(check.request, null);
+      assert.equal(check.response, null);
+      assert.equal(check.schema_id, null);
+      assert.equal(check.schema_url, null);
+    });
+  }
+
+  test('caller metadata is screened first, and a bad body never reaches the authorizer', async () => {
+    const io = transport([SELECTED]);
+    const lookups = [];
+    // Preparation screens the caller body BEFORE asking the host, so a
+    // reserved key is never shown to an authorizer. Note the disposition
+    // asymmetry this exposes, which is deliberate and documented: a
+    // refused caller BODY is still returned as a failed preparation here,
+    // while `runStoryboard` / `runStoryboardStep` deny it. Only the
+    // authorization decision throws.
+    const state = await prepareStoryboardFixtures(ENDPOINT, board(), {
+      ...io.options,
+      context: { __adcp_fixture_product_id: 'forged' },
+      prepared_fixtures_authorizer: lookup => {
+        lookups.push(lookup);
+        return { authorized: true };
+      },
+    });
+    assert.equal(state.disposition.status, 'failed');
+    assert.match(state.disposition.detail, /reserved or prototype-sensitive key/);
+    assert.deepEqual(lookups, [], 'a refused caller body is not shown to the host authorizer');
+    assert.deepEqual(io.wire, [], 'and nothing reaches the seller');
+  });
+
+  test('preparation without an authorizer is unchanged', async () => {
+    // Requiring one would refuse every preparation that exists today.
+    const io = transport([SELECTED]);
+    const state = await prepareStoryboardFixtures(ENDPOINT, board(), io.options);
+    assert.equal(state.disposition.status, 'resolved');
+    assert.ok(io.calls.some(call => call.task === 'get_products'));
+  });
+
+  test('the prepare gate does not consume the reuse gates', async () => {
+    // Preparation asks once; the run that reuses the state still makes its
+    // own run, pass and step lookups.
+    const prep = await prepareWith(() => ({ authorized: true }));
+    assert.equal(prep.lookups.length, 1);
+    const io = transport([SELECTED]);
+    const reuse = [];
+    const result = await runStoryboard(ENDPOINT, board(), {
+      ...io.options,
+      ...withPreparedFixtures(prep.state, lookup => {
+        reuse.push(lookup.gate);
+        return { authorized: true };
+      }),
+    });
+    assert.equal(result.overall_passed, true, JSON.stringify(result));
+    assert.deepEqual(reuse, ['run', 'pass', 'step']);
+    // And every reuse lookup still carries the stored binding.
+    assert.equal(reuse.length, 3, 'the prepare gate is additional to the reuse gates, not a replacement for one');
   });
 });
 

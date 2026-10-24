@@ -249,8 +249,16 @@ export interface PreparedFixturesRefusal {
 
 /** Context handed to the host authorizer on every lookup. */
 export interface PreparedFixturesLookup {
-  /** Nonsecret binding recorded at preparation time. */
-  binding: PreparedFixtureBinding;
+  /**
+   * Nonsecret binding recorded at preparation time.
+   *
+   * **Absent exactly when `gate === 'prepare'`**, because at that point no
+   * preparation has happened and there is no recorded binding to report.
+   * Filling it with a copy of `current` would say "the stored state
+   * matches" when the truth is "there is no stored state", so the field is
+   * omitted instead. Every reuse gate — `run`, `pass`, `step` — carries it.
+   */
+  binding?: PreparedFixtureBinding;
   /** Nonsecret binding observed right now, after routing and auth overrides. */
   current: PreparedFixtureBinding;
   /** Storyboard step about to execute, when the lookup is per-step. */
@@ -258,12 +266,18 @@ export interface PreparedFixturesLookup {
   /**
    * Which gate asked.
    *
-   * A run makes one `run` lookup, one `pass` lookup per pass, and one `step`
-   * lookup per step. A host implementing "every lookup is a fresh grant use"
-   * literally — consume-once token, nonce, strict counter — needs to tell
-   * them apart rather than seeing byte-identical payloads.
+   * `prepare` is the INITIAL preparation gate: `prepareStoryboardFixtures`
+   * asks once, before it creates a client or touches the seller at all, so
+   * a host can refuse the catalog read that pins the graph in the first
+   * place. It is the only gate with no `binding`.
+   *
+   * The rest are reuse gates. A run makes one `run` lookup, one `pass`
+   * lookup per pass, and one `step` lookup per step. A host implementing
+   * "every lookup is a fresh grant use" literally — consume-once token,
+   * nonce, strict counter — needs to tell them apart rather than seeing
+   * byte-identical payloads.
    */
-  gate?: 'run' | 'pass' | 'step';
+  gate?: 'prepare' | 'run' | 'pass' | 'step';
   /** Opaque reference the caller presented, when reuse came through one. */
   reference?: string;
 }
