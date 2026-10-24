@@ -6,7 +6,6 @@ const CAPS = {
 };
 const TOOLS = ['get_adcp_capabilities', 'get_products', 'create_media_buy'];
 const ENDPOINT = 'https://prepared-fixtures-test.example/mcp';
-const OTHER_ENDPOINT = 'https://prepared-fixtures-other.example/mcp';
 
 function product(id, extra = {}) {
   return {
