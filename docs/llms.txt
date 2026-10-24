@@ -2047,6 +2047,8 @@ Run compliance tests with `adcp test <agent> <scenario>`. 24 built-in scenarios:
 
 ### Seeding fixtures for compliance (seller-side)
 
+Fresh fixture preparation can be gated with `prepareStoryboardFixtures(..., { prepared_fixtures_preparation_authorizer })`. It asks once before seller contact using a truthful proposed binding. The existing `prepared_fixtures_authorizer` remains reuse-only and is never called by preparation. The preparation-only option is rejected by run/step/comply; prepare explicitly before reusing state. See [collection fixture foundation](guides/COLLECTION-FIXTURE-FOUNDATION.md).
+
 Group A storyboards seed fixtures via `comply_test_controller.seed_product` (and the other `seed_*` scenarios) before calling the spec tool. Two SDK helpers bridge this:
 
 - **`mergeSeedProduct`** (plus the raw-wire `mergeSeedProductLegacy` migration counterpart, `mergeSeedPricingOption`, `mergeSeedCreative`, `mergeSeedPlan`, `mergeSeedMediaBuy`): permissive merge of a sparse storyboard fixture onto the seller's baseline defaults. `undefined`/`null` keep base; arrays replace by default; well-known id-keyed lists (`pricing_options`, `publisher_properties`, `packages`, `assets`, plan `findings`) overlay by id so seeding one entry doesn't drop the rest.

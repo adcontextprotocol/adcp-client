@@ -28,6 +28,7 @@ import {
 import { applyNativeA2AComplianceTransportOptions } from '../storyboard/native-a2a-compliance';
 import { validateTestKit } from '../storyboard/test-kit';
 import { isProtectedContextKey } from '../storyboard/protected-context';
+import { assertNoPreparationAuthorizer } from '../storyboard/prepared-fixtures';
 import { checkAccountDiscoveryGate, isAccountBearingSpecialism } from './spec-conformance';
 
 // Side-effect import: registers default assertion stubs for invariant ids that
@@ -764,6 +765,7 @@ export type ComplyStoryboardRouting = ComplyStoryboardRoute | ComplyStoryboardSk
  * when an agent declares a specialism whose bundle isn't in the local cache.
  */
 export async function comply(agentUrl: string, options: ComplyOptions = {}): Promise<ComplianceResult> {
+  assertNoPreparationAuthorizer(options);
   if ('platform_type' in options) {
     throw new Error(
       'comply() no longer accepts platform_type. Agent selection is now driven by ' +

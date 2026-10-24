@@ -1189,6 +1189,10 @@ function generateLlmsTxt(
   ln(`### Seeding fixtures for compliance (seller-side)`);
   ln();
   ln(
+    'Fresh fixture preparation can be gated with `prepareStoryboardFixtures(..., { prepared_fixtures_preparation_authorizer })`. It asks once before seller contact using a truthful proposed binding. The existing `prepared_fixtures_authorizer` remains reuse-only and is never called by preparation. The preparation-only option is rejected by run/step/comply; prepare explicitly before reusing state. See [collection fixture foundation](guides/COLLECTION-FIXTURE-FOUNDATION.md).'
+  );
+  ln();
+  ln(
     `Group A storyboards seed fixtures via \`comply_test_controller.seed_product\` (and the other \`seed_*\` scenarios) before calling the spec tool. Two SDK helpers bridge this:`
   );
   ln();
@@ -1404,6 +1408,13 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln();
   ln(
     `Curated reference of the types that matter for using the AdCP client. For full generated types see \`src/lib/types/tools.generated.ts\` and \`src/lib/types/core.generated.ts\`.`
+  );
+  ln();
+
+  ln('## Prepared Storyboard Authorization');
+  ln();
+  ln(
+    "Import `PrepareStoryboardFixturesOptions`, `PreparedFixturesPreparationAuthorizer`, and `PreparedFixturesPreparationLookup` from `@adcp/sdk/testing`. `prepareStoryboardFixtures` alone accepts `prepared_fixtures_preparation_authorizer`, asked once before seller contact with `{ gate: 'prepare', current }` and no stored binding. `PreparedFixturesAuthorizer` and its required `PreparedFixturesLookup.binding` remain reuse-only through `prepared_fixtures_authorizer` on run/pass/step lookups. A preparation grant never authorizes reuse. See [collection fixture foundation](guides/COLLECTION-FIXTURE-FOUNDATION.md)."
   );
   ln();
 

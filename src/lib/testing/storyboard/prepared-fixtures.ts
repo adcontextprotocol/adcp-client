@@ -294,6 +294,36 @@ export type PreparedFixturesAuthorizer = (
   lookup: PreparedFixturesLookup
 ) => PreparedFixturesDecision | Promise<PreparedFixturesDecision>;
 
+/** Fresh preparation scope, computed locally before any seller contact. */
+export interface PreparedFixturesPreparationLookup {
+  readonly gate: 'prepare';
+  /** The proposed scope; no stored binding or opaque reference exists yet. */
+  readonly current: PreparedFixtureBinding;
+}
+
+/**
+ * Asked once by prepareStoryboardFixtures before client creation. Only a
+ * literal authorized: true grants. Refusal detail is never echoed to the
+ * caller; private evidence goes to prepared_fixtures_audit_sink.
+ * This grant never replaces the separate every-lookup reuse authorizer.
+ */
+export type PreparedFixturesPreparationAuthorizer = (
+  lookup: PreparedFixturesPreparationLookup
+) => PreparedFixturesDecision | Promise<PreparedFixturesDecision>;
+
+/** @internal Refuse a preparation-only security option on other entry points. */
+export function assertNoPreparationAuthorizer(options: object): void {
+  if (
+    (options as { prepared_fixtures_preparation_authorizer?: unknown }).prepared_fixtures_preparation_authorizer !==
+    undefined
+  ) {
+    throw new Error(
+      'prepared_fixtures_preparation_authorizer is supported only by prepareStoryboardFixtures(). ' +
+        'Prepare the storyboard explicitly, then authorize reuse with prepared_fixtures_authorizer.'
+    );
+  }
+}
+
 /**
  * A reference to prepared state held in the host's authenticated run scope.
  *

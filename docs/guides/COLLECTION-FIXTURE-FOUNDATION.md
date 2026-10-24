@@ -514,6 +514,86 @@ guarantees:
   tell the two apart. That is not a leak — the authorizer is the host, and
   the store it would be learning about is its own. What is closed is the
   oracle available to the caller, who sees only the refusal.
+- **Fresh preparation has its own optional authorization hook.** Pass
+  `prepared_fixtures_preparation_authorizer` in `PrepareStoryboardFixturesOptions`
+  to `prepareStoryboardFixtures`. The SDK asks it exactly once, after local
+  caller-metadata and misuse screens and before client creation, initialization,
+  capability discovery, controller reset/seeding, or catalog reads.
+
+  Its `PreparedFixturesPreparationLookup` contains `gate: 'prepare'` and a
+  locally computed `current` binding. There is no stored `binding`, `reference`,
+  or `step_id`: no state exists yet. The proposed identity includes the actual
+  routes, credential fingerprints, schema artifact, storyboard digest, account,
+  brand, principal, sandbox, and run scope. No seller profile is fabricated.
+  The authorized binding must still match before contact and before state is
+  minted; a changed scope is refused with `binding_mismatch`. Authorized
+  dispatch uses detached account, brand, credential, route, and storyboard data
+  across discovery awaits. Runtime services such as transport and OAuth storage
+  retain their host-owned identity. A drift refusal after contact cannot undo
+  earlier calls; their evidence goes only to the private audit sink.
+
+  The existing `PreparedFixturesLookup.binding` stays required and its gate
+  union stays `run | pass | step`. Existing reuse authorizers need no migration.
+  A host can explicitly share one implementation between the two options:
+
+  ```ts
+  import type {
+    PreparedFixturesLookup,
+    PreparedFixturesPreparationLookup,
+    PreparedFixturesDecision,
+  } from '@adcp/sdk/testing';
+
+  const authorize = async (
+    lookup: PreparedFixturesLookup | PreparedFixturesPreparationLookup
+  ): Promise<PreparedFixturesDecision> => {
+    const allowed = lookup.gate === 'prepare'
+      ? await hostMayPinAGraph(lookup.current)
+      : await hostGrantStillValid(lookup.binding, lookup.current);
+    return allowed ? { authorized: true } : { authorized: false, detail: 'denied' };
+  };
+
+  const prepared = await prepareStoryboardFixtures(agentUrl, storyboard, {
+    ...options,
+    prepared_fixtures_preparation_authorizer: authorize,
+  });
+  await runStoryboard(agentUrl, storyboard, {
+    ...options,
+    ...withPreparedFixtures(prepared, authorize),
+  });
+  ```
+
+  | Hooks supplied to preparation | Preparation hook calls | Reuse hook calls |
+  | --- | --- | --- |
+  | Neither | 0 | 0 |
+  | `prepared_fixtures_authorizer` only | 0 | 0 |
+  | Preparation hook only | 1 | 0 |
+  | Both | 1 | 0 |
+
+  **The reuse hook never authorizes preparation.** Passing it alone retains
+  legacy behavior, including seller contact. Hosts requiring a precontact
+  decision must adopt the new preparation option explicitly; invoking it is
+  not fulfilment of a different supplied hook. A preparation grant does not
+  authorize reuse: run/pass/step lookups still require the existing hook.
+
+  Only literal `authorized: true` grants. Denied, absent, malformed, throwing,
+  and rejecting decisions throw `PreparedFixturesDeniedError` with
+  `refusalCode: 'authorizer_denied'`, produce no state, and make zero seller
+  calls. Host-provided detail is never echoed at this gate. Canonical private
+  evidence goes to `prepared_fixtures_audit_sink`; a failing sink cannot grant
+  access or disclose its own error. A hook that never settles stalls the call;
+  the host must bound its authorization lookup.
+
+  The option belongs only to `PrepareStoryboardFixturesOptions`. Untyped use
+  on `runStoryboard`, `runStoryboardStep`, or `comply` throws before seller
+  contact rather than silently ignoring it. To gate a fresh run's catalog
+  reads, prepare explicitly with this hook, then reuse that state with the
+  reuse authorizer. Inline fresh resolution in those other entry points has
+  no preparation-hook contract.
+
+  The existing reserved-key asymmetry remains: preparation returns an invalid
+  caller body as a failed disposition; run/step deny it. Those local screens
+  run before the preparation authorizer and make no seller calls.
+
 - **A refusal is an access-control error, not a grading outcome.** When a
   gate refuses, `runStoryboard` / `runStoryboardStep` **throw**
   `PreparedFixturesDeniedError` and return nothing. The error carries
@@ -744,7 +824,7 @@ Line numbers rot; these find the sites in any revision.
 | --- | --- | --- |
 | synthesized — capture | 3 | `grep -n "check: 'fixture_capture_unbuildable'" src/lib/testing/storyboard/{seeding,runner}.ts` — the seed/discovery step, the funnel's own commit refusal, and a standalone step reusing a failed preparation |
 | synthesized — protection | 2 | `grep -n "check: 'protected_context_violation'" src/lib/testing/storyboard/runner.ts` — the shared graded-commit helper (covering four funnel call sites) and the ordinary step's context patch |
-| synthesized — authority | 3 | `grep -n "check: 'prepared_fixtures_authorization'" src/lib/testing/storyboard/runner.ts` — the per-step gate, the run and pass gates, and the standalone step entry gate |
+| synthesized — authority | 3 | `grep -n "check: 'prepared_fixtures_authorization'" src/lib/testing/storyboard/runner.ts` — the per-step gate, the shared run/pass refusal helper (also used by the fresh-preparation gate), and the standalone step entry gate |
 | **authored — separate** | 1 | `grep -n "collection_set_equals_context" src/lib/testing/storyboard/validations.ts` — dispatch and implementation |
 
 `schema_id` and `schema_url` are `required_on_failure` for every check and

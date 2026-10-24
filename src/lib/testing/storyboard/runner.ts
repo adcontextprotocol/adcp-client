@@ -9,6 +9,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { ACCOUNT_FREE_DISCOVERY_TASKS } from './account-policy';
 import { prepareCreativeBuildProbe } from './creative-build-probe';
 import {
@@ -54,7 +55,9 @@ import {
   PreparedStoryboardFixtures,
   resolvePreparedFixtures,
   isTrustedPreparedFixtures,
+  assertNoPreparationAuthorizer,
   type PreparedFixtureBinding,
+  type PreparedFixturesPreparationAuthorizer,
   type PreparedFixturesDisposition,
   type PreparedFixturesRefusal,
 } from './prepared-fixtures';
@@ -235,6 +238,7 @@ import type {
   StoryboardPhase,
   StoryboardContext,
   StoryboardRunOptions,
+  PrepareStoryboardFixturesOptions,
   StoryboardResult,
   StoryboardPassResult,
   StoryboardPhaseResult,
@@ -1572,6 +1576,7 @@ export async function runStoryboard(
   storyboard: Storyboard,
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardResult> {
+  assertNoPreparationAuthorizer(options);
   options = applyReusableProfileOptions(options);
   if (hasTestClientScope() && !options._discoveryPass) options = { ...options, _discoveryPass: {} };
   return withPropertyListCredentialRedaction(() =>
@@ -3215,11 +3220,14 @@ function hydratePreparedCaptures(
  * A failed or unsatisfied preparation is returned, not thrown: the terminal
  * disposition is part of the evidence and must be carried forward verbatim
  * so a retry cannot hide it behind a freshly discovered alternative.
+ *
+ * @throws PreparedFixturesDeniedError when the optional preparation authorizer
+ * refuses or the authorized scope changes. The reuse authorizer is not called.
  */
 export async function prepareStoryboardFixtures(
   agentUrl: string | string[],
   storyboard: Storyboard,
-  options: StoryboardRunOptions = {}
+  options: PrepareStoryboardFixturesOptions = {}
 ): Promise<PreparedStoryboardFixtures> {
   options = applyReusableProfileOptions(options);
   return withPropertyListCredentialRedaction(() =>
@@ -3277,22 +3285,95 @@ function resolvePreparationRouteOptions(agentUrl: string, options: StoryboardRun
   };
 }
 
+/**
+ * Ask the supplied authorizer whether preparation itself may proceed.
+ *
+ * The `prepare` gate carries NO `binding`: nothing has been prepared yet,
+ * and copying `current` into it would tell the host that stored state
+ * matches when there is no stored state. `current` is the real
+ * SDK-owned binding — storyboard digest, routes, on-disk schema artifact,
+ * account and brand scope, sandbox, principal and credential fingerprint
+ * — all of which are computable without touching the seller, which is why
+ * this can be asked before the first byte.
+ *
+ * Every non-grant answer is a refusal, matching the reuse gate exactly: a
+ * decision that is denied, absent, malformed, throwing or rejecting all
+ * fail closed. The host's own error text is never echoed.
+ */
+async function resolvePreparationAuthorization(
+  authorizer: PreparedFixturesPreparationAuthorizer,
+  current: PreparedFixtureBinding
+): Promise<{ ok: true } | { ok: false; refusal: PreparedFixturesRefusal }> {
+  const refusal: PreparedFixturesRefusal = {
+    code: 'authorizer_denied',
+    detail: 'fixture preparation was refused by the configured authorizer',
+  };
+  try {
+    const decision = await authorizer({ current: structuredClone(current), gate: 'prepare' });
+    // Strictly `true`, like every other gate. A truthy string, `1` or a
+    // missing field is a malformed decision, and reading one as consent
+    // is the failure this gate exists to prevent.
+    return decision?.authorized === true ? { ok: true } : { ok: false, refusal };
+  } catch {
+    // A host authorizer that throws or rejects fails closed, and its own
+    // error text stays with the host.
+    return { ok: false, refusal };
+  }
+}
+
+/** Detach mutable JSON inputs; runtime services retain their host-owned identity. */
+function snapshotPreparationAuth(auth: StoryboardRunOptions['auth']): StoryboardRunOptions['auth'] {
+  if (auth === undefined) return undefined;
+  if (auth.type === 'oauth') {
+    const { storage, ...data } = auth;
+    return { ...structuredClone(data), ...(storage && { storage }) };
+  }
+  return structuredClone(auth);
+}
+
+function snapshotPreparationOptions(options: PrepareStoryboardFixturesOptions): PrepareStoryboardFixturesOptions {
+  return {
+    ...options,
+    ...(options.context && { context: structuredClone(options.context) }),
+    ...(options.brand && { brand: { ...options.brand } }),
+    ...(options.brand_manifest && { brand_manifest: structuredClone(options.brand_manifest) }),
+    ...(options.headers && { headers: { ...options.headers } }),
+    ...(options.auth && { auth: snapshotPreparationAuth(options.auth) }),
+    ...(options.agents && {
+      agents: Object.fromEntries(
+        Object.entries(options.agents).map(([key, agent]) => [
+          key,
+          { ...agent, ...(agent.auth && { auth: snapshotPreparationAuth(agent.auth) }) },
+        ])
+      ),
+    }),
+  };
+}
+
 async function prepareStoryboardFixturesBody(
   agentUrl: string | string[],
   storyboard: Storyboard,
-  options: StoryboardRunOptions
+  options: PrepareStoryboardFixturesOptions
 ): Promise<PreparedStoryboardFixtures> {
   // Project the agents map the same way `runStoryboardBody` does, so a
   // routed storyboard can be prepared at all: without it `prepareStoryboardFixtures('')`
   // fails discovery on an empty URL and passing a URL alongside `agents`
   // is rejected by the runner, leaving no workable argument pair.
-  const agentUrls = resolveBindingAgentUrls(agentUrl, options);
+  const agentUrls = [...resolveBindingAgentUrls(agentUrl, options)];
   // Same screen, same place in the order, as both consumers. Preparation is
   // the function that MINTS trusted state, and it was the only one of the
   // three public entry points that reached the agent first and then threw
   // a raw `ProtectedContextViolation` instead of returning a disposition —
   // contradicting its own contract that a failed preparation is returned,
   // not thrown.
+  //
+  // That contract covers the PREPARATION OUTCOME. It does not cover an
+  // authorization decision: the `prepare` gate below throws, because a
+  // refused caller must not be handed a prepared-state object for a run
+  // they were denied. The asymmetry is deliberate — a refused caller BODY
+  // is still graded here while `runStoryboard` / `runStoryboardStep` deny
+  // it, which is a known inconsistency raised for contract coordination
+  // rather than changed unilaterally.
   const metadataRefusal = describeReservedCallerOptions(options);
   if (metadataRefusal !== undefined) {
     return buildPreparedFixtures(storyboard, agentUrls, options, undefined, {
@@ -3317,6 +3398,64 @@ async function prepareStoryboardFixturesBody(
         'prepared_fixtures_authorizer. See docs/guides/COLLECTION-FIXTURE-FOUNDATION.md section 4.',
     });
   }
+  // Initial-preparation authorization, BEFORE any seller contact at all —
+  // before a client exists, before `initialize`, before capability
+  // discovery or controller seeding. Preparation is the step that reads
+  // the seller's catalog and pins the graph, so a host that opts into the
+  // preparation authorizer can refuse it independently of later reuse.
+  //
+  // Asked exactly once, and only when an authorizer was supplied: making
+  // one mandatory would refuse every preparation that exists today.
+  const bindingOptions = options;
+  const bindingStoryboard = storyboard;
+  let authorizedBinding: PreparedFixtureBinding | undefined;
+  const refusePreparation = (refusal: PreparedFixturesRefusal, seeding?: ControllerSeedingResult) => {
+    const record = buildPreparedRefusalRunResult(agentUrls, storyboard, refusal, 'prepare');
+    if (seeding) {
+      record.phases = [seeding.phase, ...record.phases];
+      record.fixture_resolutions = seeding.resolutionRecords ?? [];
+      const auditSteps = record.phases.flatMap(phase => phase.steps);
+      record.passed_count = auditSteps.filter(step => step.passed && !step.skipped).length;
+      record.failed_count = auditSteps.filter(step => !step.passed && !step.skipped).length;
+      record.skipped_count = auditSteps.filter(step => step.skipped).length;
+    }
+    return denyPreparedFixtures(options, record, refusal.code);
+  };
+  const scopeStillMatches = () => {
+    if (!authorizedBinding) return true;
+    try {
+      return isDeepStrictEqual(
+        authorizedBinding,
+        buildCurrentPreparedBinding(
+          bindingStoryboard,
+          resolveBindingAgentUrls(agentUrl, bindingOptions),
+          bindingOptions
+        )
+      );
+    } catch {
+      return false;
+    }
+  };
+  const driftRefusal: PreparedFixturesRefusal = {
+    code: 'binding_mismatch',
+    detail: 'fixture preparation scope changed after host authorization',
+  };
+  if (options.prepared_fixtures_preparation_authorizer !== undefined) {
+    authorizedBinding = buildCurrentPreparedBinding(storyboard, agentUrls, options);
+    const decision = await resolvePreparationAuthorization(
+      options.prepared_fixtures_preparation_authorizer,
+      authorizedBinding
+    );
+    if (!decision.ok) {
+      return refusePreparation(decision.refusal);
+    }
+    if (!scopeStillMatches()) return refusePreparation(driftRefusal);
+    // Later awaits must not read mutations to the caller's account, credentials,
+    // routes or fixture document. Runtime services (transport, signal, OAuth
+    // storage) remain host-owned. Final drift still refuses minting state.
+    storyboard = structuredClone(storyboard);
+    options = snapshotPreparationOptions(options);
+  }
   const callerOwnsClients = hasTestClientScope();
   // Per-ROUTE options, not run-level, when the run is routed. Preparation
   // issues `get_products` and `comply_test_controller` against a concrete
@@ -3334,14 +3473,23 @@ async function prepareStoryboardFixturesBody(
   // `agents[*].auth` paired with its url on both sides — so changing it
   // still refuses reuse. See the routed-reuse and routed-credential-change
   // regressions in test/lib/storyboard-prepared-fixtures.test.js.
-  const bindingOptions = options;
+  const finishPreparation = (
+    seeding: ControllerSeedingResult | undefined | null,
+    disposition: PreparedFixturesDisposition
+  ) => {
+    // Use the run view, not the flattened route view, for the scope comparison.
+    if (!scopeStillMatches()) {
+      return refusePreparation(driftRefusal, seeding ?? undefined);
+    }
+    return buildPreparedFixtures(storyboard, agentUrls, bindingOptions, seeding, disposition);
+  };
   options = preparationOptions;
   try {
     let profile = options._profile;
     if (!profile && !resolution.reusedShared) {
       const discovered = await getOrDiscoverProfile(client, options);
       if (discovered.step.passed === false) {
-        return buildPreparedFixtures(storyboard, agentUrls, bindingOptions, undefined, {
+        return await finishPreparation(undefined, {
           status: 'failed',
           detail: discovered.step.error ?? 'agent discovery failed before fixture preparation',
         });
@@ -3355,12 +3503,13 @@ async function prepareStoryboardFixturesBody(
         ...(!options.agentTools && { agentTools: normalizeAgentToolNames(profile.tools) }),
       };
     }
+    if (!scopeStillMatches()) return await refusePreparation(driftRefusal);
     const context = createRunContext(storyboard, options).context;
     const seeding = await runControllerSeeding(client, storyboard, options, context);
     if (!seeding) {
       // No declared fixtures: an honest "nothing to prepare" rather than a
       // synthesized success that implies a graph was pinned.
-      return buildPreparedFixtures(storyboard, agentUrls, bindingOptions, undefined, { status: 'resolved' });
+      return await finishPreparation(undefined, { status: 'resolved' });
     }
     const disposition: PreparedFixturesDisposition = seeding.missingController
       ? { status: 'unsupported', detail: 'agent does not advertise comply_test_controller' }
@@ -3375,7 +3524,7 @@ async function prepareStoryboardFixturesBody(
           : seeding.fixtureUnsatisfied === true
             ? { status: 'unsatisfied', detail: describeUnsatisfiedFixtures(seeding.resolutionRecords) }
             : { status: 'resolved' };
-    return buildPreparedFixtures(storyboard, agentUrls, bindingOptions, seeding, disposition);
+    return await finishPreparation(seeding, disposition);
   } finally {
     if (!callerOwnsClients) await closeScopedConnections(options.protocol);
   }
@@ -6846,6 +6995,7 @@ export async function runStoryboardStep(
   stepId: string,
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardStepResult> {
+  assertNoPreparationAuthorizer(options);
   options = applyReusableProfileOptions(options);
   return withPropertyListCredentialRedaction(() =>
     withMCPConnectionScope(
@@ -6970,10 +7120,11 @@ async function emitPreparedFixturesAudit(
 function buildPreparedRefusalRunResult(
   agentUrls: string[],
   storyboard: Storyboard,
-  refusal: PreparedFixturesRefusal
+  refusal: PreparedFixturesRefusal,
+  gate?: 'prepare'
 ): StoryboardResult {
   const base = buildDiscoveryFailedResult(agentUrls, storyboard, {
-    step: 'Authorize prepared fixture state',
+    step: gate === 'prepare' ? 'Authorize fixture preparation' : 'Authorize prepared fixture state',
     passed: false,
     duration_ms: 0,
     error: refusal.detail,
@@ -6981,16 +7132,22 @@ function buildPreparedRefusalRunResult(
   const validation: ValidationResult = {
     check: 'prepared_fixtures_authorization',
     passed: false,
-    description: 'Prepared fixture state is re-validated and re-authorized on every lookup',
+    description:
+      gate === 'prepare'
+        ? 'Fresh fixture preparation requires host authorization before seller contact'
+        : 'Prepared fixture state is re-validated and re-authorized on every lookup',
     error: refusal.detail,
     json_pointer: null,
-    expected: 'an authorized prepared state bound to this exact run scope',
+    expected:
+      gate === 'prepare'
+        ? 'an authorized fixture preparation for this exact run scope'
+        : 'an authorized prepared state bound to this exact run scope',
     actual: refusal.code,
     schema_id: null,
     schema_url: null,
-    // Explicit nulls. This gate precedes all seller contact, so the
-    // exchange genuinely did not happen — and an omitted key cannot be
-    // told apart from a runner that forgot to record one.
+    // Explicit nulls: the refusal check itself makes no seller call.
+    // Earlier producer exchanges remain in the private audit record;
+    // an omitted key would be indistinguishable from missing evidence.
     request: null,
     response: null,
   };
