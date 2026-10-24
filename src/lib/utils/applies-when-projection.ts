@@ -6,23 +6,27 @@
  * (annotation), which target AdCP 3.3. Bundled AdCP schemas do not carry the
  * annotation yet, so against them every projection here is a no-op. The
  * semantics follow `docs/reference/schema-extensions.mdx#x-adcp-applies-when`
- * in the spec repo and may change with the RFC.
+ * in the spec repo (RFC revision of 2026-10-24) and may change with the RFC.
  *
  * ```jsonc
- * "cancellation_policy": {
- *   "x-adcp-applies-when": { "delivery_types": ["guaranteed"] },
- *   "$ref": "#/$defs/external:core~1cancellation-policy.json"
+ * "floor_price": {
+ *   "x-adcp-applies-when": { "delivery_types": ["non_guaranteed"] },
+ *   "type": "number"
  * }
  * ```
  *
  * - `delivery_types` matches `media_buy.supported_delivery_types` and
  *   `pricing_models` matches `media_buy.supported_pricing_models`. When the
- *   seller hasn't declared the list, the property is kept (fail open).
+ *   list is undeclared, the key matches (fail open).
  * - `capabilities` holds dotted paths into the `get_adcp_capabilities`
- *   response. A path is satisfied when it is present and not `false`.
+ *   response. A path matches when it is present, not `null`, and not `false`;
+ *   absence doesn't match, because capability blocks declare support by being
+ *   present.
+ * - When the agent publishes no block at a key's root (for example, a
+ *   governance agent has no `media_buy`), the key matches.
  * - Any match across all keys keeps the property (OR).
- * - Projection only removes optional properties. It never renames, retypes,
- *   or adds required fields.
+ * - Dropping only deletes from `properties`. Required properties and
+ *   properties of closed objects are never dropped.
  *
  * @module
  */
@@ -82,13 +86,22 @@ function readPath(root: unknown, dottedPath: string): unknown {
   return current;
 }
 
+/** True when the agent publishes no block at the root of a multi-segment path. */
+function rootBlockAbsent(capabilities: JsonObject, dottedPath: string): boolean {
+  const dot = dottedPath.indexOf('.');
+  if (dot <= 0) return false;
+  const root = capabilities[dottedPath.slice(0, dot)];
+  return root === undefined || root === null;
+}
+
 /**
- * Decide whether an `x-adcp-applies-when` annotation keeps its property for a
- * seller with the given `get_adcp_capabilities` response.
+ * Decide whether an `x-adcp-applies-when` annotation keeps its property for an
+ * agent with the given `get_adcp_capabilities` response.
  *
- * Returns `true` (keep) on any match, and also whenever the annotation can't
- * be evaluated: a malformed value, an unknown key, or a `delivery_types` /
- * `pricing_models` key whose capability list the seller hasn't declared.
+ * Returns `true` (keep) on any match. A key also matches when its list is
+ * undeclared (`delivery_types`, `pricing_models`) or when the agent publishes
+ * no block at the key's root. Annotations this SDK can't evaluate (malformed
+ * values, unknown keys) keep the property.
  *
  * @experimental Prototype for adcontextprotocol/adcp#8452. Semantics may change.
  */
@@ -101,13 +114,15 @@ export function appliesWhenSatisfied(annotation: unknown, capabilities: unknown)
     const declaredPath = DECLARED_LIST_KEYS[key];
     if (declaredPath !== undefined) {
       const declared = readPath(capabilities, declaredPath);
-      // Undeclared is not empty: an absent (or invalid, empty) list fails open.
+      // Undeclared is not empty: an absent (or invalid, empty) list matches.
+      // This also covers an agent with no `media_buy` block at all.
       if (!Array.isArray(declared) || declared.length === 0) return true;
       if (values.some(value => declared.includes(value))) return true;
     } else if (key === 'capabilities') {
       if (
         values.some(path => {
           if (typeof path !== 'string') return true;
+          if (rootBlockAbsent(capabilities, path)) return true;
           const value = readPath(capabilities, path);
           return value !== undefined && value !== null && value !== false;
         })
@@ -123,33 +138,35 @@ export function appliesWhenSatisfied(annotation: unknown, capabilities: unknown)
 }
 
 /**
- * Property names a projection must never drop from `parent`, even if a
- * (misplaced) annotation says so: the parent's own `required`, `required` in
- * its direct `allOf` / `anyOf` / `oneOf` / `then` / `else` arms, and the
- * targets of `dependentRequired` / array-form `dependencies`.
+ * Names the parent requires anywhere, failing closed: its own `required`;
+ * every `allOf` / `anyOf` / `oneOf` arm and `if` / `then` / `else` branch,
+ * recursively (so a name that appears only in an `if` condition's `required`
+ * counts); draft-07 `dependencies` (array form and schema form); and the
+ * 2020-12 `dependentRequired` / `dependentSchemas` equivalents. Mirrors
+ * `requiredNames` in the spec repo's `scripts/lint-applies-when.cjs`.
  */
-function protectedPropertyNames(parent: JsonObject): Set<string> {
-  const names = new Set<string>();
+function requiredNames(parent: unknown, names: Set<string> = new Set()): Set<string> {
+  if (!isObject(parent)) return names;
   const addAll = (list: unknown) => {
     if (Array.isArray(list)) for (const name of list) if (typeof name === 'string') names.add(name);
   };
   addAll(parent.required);
   for (const keyword of ['allOf', 'anyOf', 'oneOf'] as const) {
     const arms = parent[keyword];
-    if (Array.isArray(arms)) for (const arm of arms) if (isObject(arm)) addAll(arm.required);
+    if (Array.isArray(arms)) for (const arm of arms) requiredNames(arm, names);
   }
-  for (const keyword of ['then', 'else'] as const) {
-    const arm = parent[keyword];
-    if (isObject(arm)) addAll(arm.required);
-  }
-  for (const keyword of ['dependentRequired', 'dependencies'] as const) {
+  for (const keyword of ['if', 'then', 'else'] as const) requiredNames(parent[keyword], names);
+  for (const keyword of ['dependencies', 'dependentRequired', 'dependentSchemas'] as const) {
     const map = parent[keyword];
-    if (isObject(map)) for (const value of Object.values(map)) addAll(value);
+    if (!isObject(map)) continue;
+    for (const dependency of Object.values(map)) {
+      if (Array.isArray(dependency)) addAll(dependency);
+      else requiredNames(dependency, names);
+    }
   }
   return names;
 }
 
-/** Project each value of a name-to-schema map, sharing it when nothing changes. */
 // Maps are rebuilt with Object.fromEntries, which defines own properties, so a
 // property literally named `__proto__` survives as data.
 function projectSchemaMap(map: JsonObject, capabilities: JsonObject): JsonObject {
@@ -163,15 +180,19 @@ function projectSchemaMap(map: JsonObject, capabilities: JsonObject): JsonObject
 }
 
 function projectProperties(properties: JsonObject, parent: JsonObject, capabilities: JsonObject): JsonObject {
-  let protectedNames: Set<string> | undefined;
+  // Deleting a property from a closed object would forbid it (a tightening),
+  // and the spec forbids annotating there. Defensively drop nothing.
+  const closed = parent.additionalProperties === false || parent.unevaluatedProperties === false;
+  let required: Set<string> | undefined;
   let changed = false;
   const entries: Array<[string, unknown]> = [];
   for (const [name, subschema] of Object.entries(properties)) {
     if (
+      !closed &&
       isObject(subschema) &&
       APPLIES_WHEN_KEYWORD in subschema &&
       !appliesWhenSatisfied(subschema[APPLIES_WHEN_KEYWORD], capabilities) &&
-      !(protectedNames ??= protectedPropertyNames(parent)).has(name)
+      !(required ??= requiredNames(parent)).has(name)
     ) {
       changed = true;
       continue;
@@ -221,9 +242,22 @@ function projectNode(node: unknown, capabilities: JsonObject): unknown {
 
 /**
  * Return `schema` without the optional properties whose `x-adcp-applies-when`
- * annotation doesn't apply to a seller with the given `get_adcp_capabilities`
- * response.
+ * annotation doesn't apply to an agent with the given `get_adcp_capabilities`
+ * response. Pass the agent's own, server-wide capabilities: keys are
+ * seller-global.
  *
+ * - **Dropping only deletes from `properties`.** Nothing else changes: no
+ *   renames, retypes, or required fields; `additionalProperties`, `required`,
+ *   enum values, and `$defs` entries are left as they are.
+ * - **Never drops a required property**, even if annotated, wherever the
+ *   parent requires it: `required`, `allOf` / `anyOf` / `oneOf` arms,
+ *   `if` / `then` / `else` (including names only in `if`), and
+ *   `dependencies` / `dependentRequired` / `dependentSchemas`.
+ * - **Never drops from a closed object** (`additionalProperties: false` or
+ *   `unevaluatedProperties: false`). The spec forbids both placements; these
+ *   are defensive guards.
+ * - **Nesting.** A dropped property takes its whole subtree with it, so a
+ *   property survives only when it and every ancestor property match.
  * - **Pure.** The input is never mutated. Unchanged subtrees are shared by
  *   reference with the input, and the input itself is returned when nothing
  *   is removed, so treat the result as read-only.
@@ -232,17 +266,19 @@ function projectNode(node: unknown, capabilities: JsonObject): unknown {
  *   `patternProperties`, `dependentSchemas`, and `$defs` / `definitions`.
  *   Values under `const`, `default`, `enum`, `examples`, and `x-*` keywords
  *   are instance data and are left alone.
- * - **`$ref`s are left in place.** A local reference (`#/...`, or the
+ * - **`$ref`s are left in place.** The annotation is read from the property
+ *   declaration before any dereferencing. A local reference (`#/...`, or the
  *   document's own `$id` plus a fragment, as in the bundled MCP tool schemas)
  *   points into the same document, which this function projects as a whole,
- *   so the reference sees the projected target. No inlining, so no cycles.
- *   References to other documents aren't followed.
- * - **Required properties are never dropped**, even if annotated. The spec forbids the annotation on
- *   required properties; this is a defensive guard. "Required" covers the
- *   parent's `required`, `required` in its direct `allOf` / `anyOf` / `oneOf`
- *   / `then` / `else` arms, and `dependentRequired` targets.
+ *   so the reference sees the projected target and projects the same way in
+ *   every context. No inlining, so no cycles. References to other documents
+ *   aren't followed.
  * - With no capabilities object (`undefined` / `null`), the input is returned
  *   unchanged.
+ *
+ * Not handled: the spec says projections SHOULD NOT be applied to schemas of
+ * records the buyer already accepted (committed proposal or media-buy
+ * snapshots). This function can't tell such schemas apart; don't pass them.
  *
  * @example
  * ```ts

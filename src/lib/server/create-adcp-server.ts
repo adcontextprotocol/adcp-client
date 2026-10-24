@@ -1854,8 +1854,15 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * properties whose annotation doesn't match are removed, so a seller that
    * declares `media_buy.supported_delivery_types: ['guaranteed']` stops
    * advertising `floor_price` and `price_guidance`. Undeclared capability
-   * lists keep everything. Call-time validation, A2A, and
-   * `get_adcp_capabilities` are unchanged.
+   * lists, and keys whose root block this server doesn't publish, keep the
+   * property. Required properties and properties of closed objects are never
+   * dropped. Call-time validation, A2A, and `get_adcp_capabilities` are
+   * unchanged.
+   *
+   * Not handled: the spec says projections SHOULD NOT apply to schemas of
+   * records the buyer already accepted. This prototype projects every
+   * advertised schema, including any that describe committed proposal or
+   * media-buy snapshots (for example, an adopter-registered output schema).
    *
    * The AdCP schemas bundled with this SDK don't carry the annotation yet, so
    * until a release with adcp#8454 ships, only custom tools whose schemas carry

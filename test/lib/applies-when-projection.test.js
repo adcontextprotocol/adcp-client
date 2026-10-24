@@ -37,8 +37,12 @@ function productResponseFixture() {
         properties: {
           product_id: { type: 'string' },
           delivery_type: { type: 'string', enum: ['guaranteed', 'non_guaranteed'] },
-          cancellation_policy: when(GUARANTEED, ref('external:core/cancellation-policy.json')),
-          conversion_tracking: when({ capabilities: ['media_buy.conversion_tracking'] }, { type: 'object' }),
+          // The revised RFC leaves cancellation_policy and conversion_tracking unannotated.
+          cancellation_policy: ref('external:core/cancellation-policy.json'),
+          conversion_tracking: { type: 'object' },
+          // Fixture-only: no spec property is guaranteed-keyed after the RFC revision.
+          guaranteed_terms: when(GUARANTEED, { type: 'object' }),
+          measurement_readiness: when({ capabilities: ['media_buy.conversion_tracking'] }, { type: 'object' }),
           trusted_match: when({ capabilities: ['media_buy.execution.trusted_match'] }, { type: 'object' }),
           pricing_options: {
             type: 'array',
@@ -103,16 +107,18 @@ describe('projectSchemaForCapabilities: delivery types', () => {
     });
     assert.deepEqual(propsOf(projected, CPM), ['pricing_option_id', 'pricing_model', 'fixed_price']);
     assert.deepEqual(propsOf(projected, CPC), ['pricing_option_id', 'pricing_model']);
+    assert.ok(propsOf(projected, PRODUCT).includes('guaranteed_terms'));
     assert.ok(propsOf(projected, PRODUCT).includes('cancellation_policy'));
     // The $ref target stays in $defs: projection removes properties, never definitions.
     assert.ok(defs(projected)['external:pricing-options/price-guidance.json']);
   });
 
-  test('a non-guaranteed-only seller drops cancellation_policy', () => {
+  test('a non-guaranteed-only seller drops guaranteed-keyed properties and keeps unannotated ones', () => {
     const projected = projectSchemaForCapabilities(productResponseFixture(), {
       media_buy: { supported_delivery_types: ['non_guaranteed'] },
     });
-    assert.ok(!propsOf(projected, PRODUCT).includes('cancellation_policy'));
+    assert.ok(!propsOf(projected, PRODUCT).includes('guaranteed_terms'));
+    assert.ok(propsOf(projected, PRODUCT).includes('cancellation_policy'));
     assert.deepEqual(propsOf(projected, CPM), [
       'pricing_option_id',
       'pricing_model',
@@ -173,10 +179,22 @@ describe('projectSchemaForCapabilities: capability paths', () => {
     ]);
   });
 
-  test('an absent path drops the property', () => {
+  test('an absent or null path drops the property when its root block is published', () => {
     assert.deepEqual(keptNames({ media_buy: { execution: {} } }), []);
-    assert.deepEqual(keptNames({ signals: {} }), []);
+    assert.deepEqual(keptNames({ media_buy: {} }), []);
     assert.deepEqual(keptNames({ media_buy: { conversion_tracking: null } }), []);
+  });
+
+  test('a key matches when the agent publishes no block at its root', () => {
+    // A governance agent has no media_buy block, so media_buy.* keys keep the property.
+    assert.deepEqual(keptNames({ governance: {} }), ['conversion_tracking', 'trusted_match']);
+    assert.deepEqual(keptNames({ media_buy: null }), ['conversion_tracking', 'trusted_match']);
+  });
+
+  test('a governance agent keeps every media_buy-keyed field in an embedded product', () => {
+    const schema = productResponseFixture();
+    const governanceAgent = { supported_protocols: ['governance'], governance: {} };
+    assert.equal(projectSchemaForCapabilities(schema, governanceAgent), schema);
   });
 
   test('a path declared false drops the property', () => {
@@ -189,7 +207,7 @@ describe('projectSchemaForCapabilities: capability paths', () => {
     const projected = projectSchemaForCapabilities(productResponseFixture(), {
       media_buy: { supported_delivery_types: ['guaranteed', 'non_guaranteed'], conversion_tracking: {} },
     });
-    assert.ok(propsOf(projected, PRODUCT).includes('conversion_tracking'));
+    assert.ok(propsOf(projected, PRODUCT).includes('measurement_readiness'));
     assert.ok(!propsOf(projected, PRODUCT).includes('trusted_match'));
   });
 });
@@ -234,7 +252,7 @@ describe('projectSchemaForCapabilities: OR semantics', () => {
 });
 
 describe('projectSchemaForCapabilities: traversal', () => {
-  const NG_ONLY = { media_buy: { supported_delivery_types: ['guaranteed'] } };
+  const GUARANTEED_ONLY = { media_buy: { supported_delivery_types: ['guaranteed'] } };
 
   test('removes annotated properties in nested objects and array items', () => {
     const schema = {
@@ -272,7 +290,7 @@ describe('projectSchemaForCapabilities: traversal', () => {
         legacy: { type: 'object', properties: { floor_price: when(NON_GUARANTEED, { type: 'number' }) } },
       },
     };
-    const projected = projectSchemaForCapabilities(schema, NG_ONLY);
+    const projected = projectSchemaForCapabilities(schema, GUARANTEED_ONLY);
     const pricing = projected.properties.packages.items.properties.pricing;
     assert.deepEqual(Object.keys(pricing.properties), ['fixed_price']);
     assert.deepEqual(projected.properties.tuple.prefixItems[0].properties, {});
@@ -290,7 +308,7 @@ describe('projectSchemaForCapabilities: traversal', () => {
 
   test('leaves $ref pointers intact so every reference sees the projected target', () => {
     const schema = productResponseFixture();
-    const projected = projectSchemaForCapabilities(schema, NG_ONLY);
+    const projected = projectSchemaForCapabilities(schema, GUARANTEED_ONLY);
     assert.deepEqual(projected.properties, schema.properties);
     assert.deepEqual(
       defs(projected)[PRODUCT].properties.pricing_options,
@@ -302,41 +320,91 @@ describe('projectSchemaForCapabilities: traversal', () => {
   test('does not treat instance data (const/default/enum/examples) as schema', () => {
     const lookalike = { properties: { floor_price: when(NON_GUARANTEED, { type: 'number' }) } };
     const schema = { type: 'object', default: lookalike, examples: [lookalike], const: lookalike };
-    assert.equal(projectSchemaForCapabilities(schema, NG_ONLY), schema);
+    assert.equal(projectSchemaForCapabilities(schema, GUARANTEED_ONLY), schema);
   });
 });
 
 describe('projectSchemaForCapabilities: safety', () => {
-  const NG_ONLY = { media_buy: { supported_delivery_types: ['guaranteed'] } };
+  const GUARANTEED_ONLY = { media_buy: { supported_delivery_types: ['guaranteed'] } };
 
-  test('never drops a required property, even when annotated', () => {
+  test('never drops a name the parent requires anywhere, even when annotated', () => {
     const annotated = () => when(NON_GUARANTEED, { type: 'number' });
+    const names = [
+      'direct',
+      'via_all_of',
+      'via_nested_any_of',
+      'via_one_of',
+      'via_if_only',
+      'via_then',
+      'via_else',
+      'via_dependencies_array',
+      'via_dependencies_schema',
+      'via_dependent_required',
+      'via_dependent_schemas',
+    ];
     const schema = {
       type: 'object',
       properties: {
-        direct: annotated(),
-        via_all_of: annotated(),
-        via_then: annotated(),
-        dependent: annotated(),
+        ...Object.fromEntries(names.map(name => [name, annotated()])),
         optional: annotated(),
         trigger: { type: 'boolean' },
       },
       required: ['direct'],
-      allOf: [{ required: ['via_all_of'] }],
-      if: { required: ['trigger'] },
+      allOf: [{ required: ['via_all_of'] }, { anyOf: [{ required: ['via_nested_any_of'] }] }],
+      oneOf: [{ required: ['via_one_of'] }, {}],
+      if: { required: ['via_if_only'] },
       then: { required: ['via_then'] },
-      dependentRequired: { trigger: ['dependent'] },
+      else: { required: ['via_else'] },
+      dependencies: { trigger: ['via_dependencies_array'], other: { required: ['via_dependencies_schema'] } },
+      dependentRequired: { trigger: ['via_dependent_required'] },
+      dependentSchemas: { trigger: { required: ['via_dependent_schemas'] } },
     };
-    const projected = projectSchemaForCapabilities(schema, NG_ONLY);
-    assert.deepEqual(Object.keys(projected.properties), ['direct', 'via_all_of', 'via_then', 'dependent', 'trigger']);
-    assert.deepEqual(projected.required, ['direct']);
+    const projected = projectSchemaForCapabilities(schema, GUARANTEED_ONLY);
+    assert.deepEqual(Object.keys(projected.properties), [...names, 'trigger']);
+  });
+
+  test('never drops from a closed object', () => {
+    const annotated = () => when(NON_GUARANTEED, { type: 'number' });
+    for (const closed of [{ additionalProperties: false }, { unevaluatedProperties: false }]) {
+      const schema = { type: 'object', properties: { floor_price: annotated() }, ...closed };
+      assert.equal(projectSchemaForCapabilities(schema, GUARANTEED_ONLY), schema);
+    }
+    // Closed-ness is per object: an open child of a closed parent still projects.
+    const nested = {
+      type: 'object',
+      additionalProperties: false,
+      properties: { pricing: { type: 'object', properties: { floor_price: annotated() } } },
+    };
+    const projected = projectSchemaForCapabilities(nested, GUARANTEED_ONLY);
+    assert.deepEqual(projected.properties.pricing.properties, {});
+    assert.equal(projected.additionalProperties, false);
+  });
+
+  test('dropping only deletes from properties', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        model: { type: 'string', enum: ['cpm', 'cpc'] },
+        floor_price: when(NON_GUARANTEED, { type: 'number' }),
+      },
+      required: ['model'],
+      additionalProperties: { type: 'string' },
+      description: 'kept verbatim',
+    };
+    const projected = projectSchemaForCapabilities(schema, GUARANTEED_ONLY);
+    const { properties: before, ...restBefore } = schema;
+    const { properties: after, ...restAfter } = projected;
+    assert.deepEqual(restAfter, restBefore);
+    assert.equal(projected.additionalProperties, schema.additionalProperties);
+    assert.deepEqual(after, { model: before.model });
+    assert.equal(after.model, before.model, 'enum values are untouched');
   });
 
   test('never mutates its input', () => {
     const schema = deepFreeze(productResponseFixture());
     const before = JSON.stringify(schema);
     for (const capabilities of [
-      NG_ONLY,
+      GUARANTEED_ONLY,
       { media_buy: { supported_delivery_types: ['non_guaranteed'] } },
       { media_buy: {} },
       {},
@@ -352,7 +420,7 @@ describe('projectSchemaForCapabilities: safety', () => {
       '{"type":"object","properties":{"__proto__":{"type":"string"},' +
         '"floor_price":{"x-adcp-applies-when":{"delivery_types":["non_guaranteed"]},"type":"number"}}}'
     );
-    const projected = projectSchemaForCapabilities(schema, NG_ONLY);
+    const projected = projectSchemaForCapabilities(schema, GUARANTEED_ONLY);
     assert.deepEqual(Object.keys(projected.properties), ['__proto__']);
     assert.equal(Object.getPrototypeOf(projected.properties), Object.prototype);
   });
@@ -378,7 +446,7 @@ function annotatedCustomTool() {
         .number()
         .optional()
         .meta({ [APPLIES_WHEN_KEYWORD]: NON_GUARANTEED }),
-      cancellation_policy: z
+      guaranteed_terms: z
         .object({ notice_days: z.number() })
         .optional()
         .meta({ [APPLIES_WHEN_KEYWORD]: GUARANTEED }),
@@ -451,18 +519,18 @@ describe('createAdcpServer projectToolSchemas', () => {
 
   test('on narrows annotated tool schemas to the declared delivery types on both transports', async t => {
     const off = makeServer({ mcpToolProfile: 'all' });
-    assert.deepEqual(fixtureInputProps(await legacyList(off)), ['product_id', 'floor_price', 'cancellation_policy']);
-    assert.deepEqual(fixtureInputProps(await modernList(off, t)), ['product_id', 'floor_price', 'cancellation_policy']);
+    assert.deepEqual(fixtureInputProps(await legacyList(off)), ['product_id', 'floor_price', 'guaranteed_terms']);
+    assert.deepEqual(fixtureInputProps(await modernList(off, t)), ['product_id', 'floor_price', 'guaranteed_terms']);
 
     const guaranteedOnly = makeServer({ mcpToolProfile: 'all', projectToolSchemas: true });
-    assert.deepEqual(fixtureInputProps(await legacyList(guaranteedOnly)), ['product_id', 'cancellation_policy']);
-    assert.deepEqual(fixtureInputProps(await modernList(guaranteedOnly, t)), ['product_id', 'cancellation_policy']);
+    assert.deepEqual(fixtureInputProps(await legacyList(guaranteedOnly)), ['product_id', 'guaranteed_terms']);
+    assert.deepEqual(fixtureInputProps(await modernList(guaranteedOnly, t)), ['product_id', 'guaranteed_terms']);
 
     const undeclared = makeServer({ mcpToolProfile: 'all', projectToolSchemas: true, capabilities: {} });
     assert.deepEqual(fixtureInputProps(await legacyList(undeclared)), [
       'product_id',
       'floor_price',
-      'cancellation_policy',
+      'guaranteed_terms',
     ]);
   });
 
