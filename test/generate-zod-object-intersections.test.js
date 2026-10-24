@@ -885,12 +885,13 @@ export const PlacementSchema = PlacementBaseSchema
 
   assert.match(
     output,
-    /ProductFormatDeclarationSchema = z\.object\(\{ id: z\.string\(\) \}\)\.merge\(CommonBFormatSchema\)\.and\(FormatKindsSchema\);/
+    /ProductFormatDeclarationSchema = z\.object\(\{ id: z\.string\(\) \}\)\.merge\(CommonBFormatSchema\)\.describe\("Common constraints for every product format\."\)\.and\(FormatKindsSchema\);/
   );
   assert.match(
     output,
     /PlacementSchema = PlacementBaseSchema\.and\(PlacementChoiceSchema\)\.and\(CommonBFormatSchema\);/
   );
+  assert.equal(postProcessRepeatedProductIntersections(output), output);
 });
 
 test('postProcessRepeatedProductIntersections fails closed when the common Product validator is not contained', () => {
