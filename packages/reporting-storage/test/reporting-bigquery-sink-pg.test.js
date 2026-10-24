@@ -51,6 +51,9 @@ function fakeBigQuery() {
     },
     dataset(datasetId, datasetOptions = {}) {
       return {
+        async getMetadata() {
+          return [{ location: datasetOptions.location ?? 'US' }];
+        },
         table(tableId) {
           return {
             async load(file, metadata) {
@@ -361,25 +364,34 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     assert.ok(bigquery.tables.get('reporting.revisions').some(value => value.reporting_revision_id === 'rrev_sink_3'));
   });
 
-  for (const location of [undefined, 'asia-northeast1']) {
-    test(`a cross-project replay after a lost response looks up the upload project${location ? ' and location' : ''}`, async () => {
-      const suffix = location ? 'project_region' : 'project_default_region';
+  for (const [location, datasetLocation, suffix] of [
+    [undefined, 'US', 'project_default_region'],
+    ['asia-northeast1', 'asia-northeast1', 'project_region'],
+    [undefined, 'us-central1', 'project_discovered_region'],
+  ]) {
+    test(`a cross-project replay after a lost response uses ${datasetLocation} (${suffix})`, async () => {
       const isolated = await createRowStorageFixture({ store, suffix, accountId: `acct_${suffix}` });
       await store.commitRevision(isolated.revision(`rrev_${suffix}`, 1, rows.slice(0, 1)), isolated.lease);
       const bigquery = fakeBigQuery();
       const dataset = bigquery.dataset.bind(bigquery);
       const job = bigquery.job.bind(bigquery);
       const lookups = [];
+      let metadataReads = 0;
       let loseResponse = true;
       bigquery.dataset = (datasetId, options) => {
         assert.equal(options.projectId, 'warehouse-project');
         assert.equal(options.location, location);
         const target = dataset(datasetId);
         return {
+          async getMetadata() {
+            metadataReads += 1;
+            return [{ location: datasetLocation }];
+          },
           table(tableId) {
             const table = target.table(tableId);
             return {
               async load(file, metadata) {
+                assert.equal(metadata.location, datasetLocation);
                 const result = await table.load(file, metadata);
                 if (loseResponse && tableId === 'revision_rows') {
                   loseResponse = false;
@@ -401,22 +413,27 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
             error.code = 404;
             throw error;
           }
-          assert.equal(options.location, location);
+          assert.equal(options.location, datasetLocation);
           return job(jobId).getMetadata();
         },
       });
-      const sink = newSink(bigquery, {
-        name: suffix,
-        account_id: isolated.request.account.account_id,
-        projectId: 'warehouse-project',
-        ...(location ? { location } : {}),
-      });
+      const makeSink = () =>
+        newSink(bigquery, {
+          name: suffix,
+          account_id: isolated.request.account.account_id,
+          projectId: 'warehouse-project',
+          ...(location ? { location } : {}),
+        });
+      const sink = makeSink();
       await assert.rejects(() => sink.runOnce(), /lost upload response/);
       assert.deepEqual(await sink.runOnce(), { idle: false, revisions: 1, rows: 1, missing: [] });
       assert.ok(lookups.length >= 2, 'every submission is preceded by a lookup, and the replay finds the upload');
       for (const lookup of lookups) {
-        assert.deepEqual(lookup, { projectId: 'warehouse-project', ...(location ? { location } : {}) });
+        assert.deepEqual(lookup, { projectId: 'warehouse-project', location: datasetLocation });
       }
+      assert.equal(metadataReads, location ? 0 : 1, 'successful discovery is cached across runs');
+      assert.equal((await makeSink().runOnce()).idle, true, 'a restarted sink resumes the committed cursor');
+      assert.equal(metadataReads, location ? 0 : 2, 'each sink instance resolves the dataset location');
       assert.equal(bigquery.tables.get('reporting.revision_rows').length, 1, 'the accepted upload is not repeated');
       assert.equal(bigquery.jobs.size, 2, 'both tables finish with their original job IDs');
       const state = (await pool.query('SELECT * FROM adcp_reporting_warehouse_sinks WHERE sink_name = $1', [suffix]))
@@ -462,6 +479,9 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     bigquery.dataset = datasetId => {
       const real = { table };
       return {
+        async getMetadata() {
+          return [{ location: 'US' }];
+        },
         table(tableId) {
           const target = real.table(tableId);
           return {
@@ -524,47 +544,6 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
       assert.equal(job.configuration.labels, undefined);
       assert.equal(job.configuration.jobTimeoutMs, undefined);
     }
-  });
-
-  test('an unset location warns once per process that replay lookups need it outside US/EU', async () => {
-    const modulePath = require.resolve('@adcp/reporting-storage/bigquery');
-    const cached = require.cache[modulePath];
-    delete require.cache[modulePath];
-    const fresh = require(modulePath);
-    const warnings = [];
-    const onWarning = warning => warnings.push(warning);
-    const create = extra =>
-      fresh.createBigQueryReportingWarehouseSinkV1({
-        store,
-        db: pool,
-        bigquery: fakeBigQuery(),
-        name: 'location_warning',
-        projectId: 'adcp-reporting',
-        datasetId: 'reporting',
-        rowsTableId: 'revision_rows',
-        revisionsTableId: 'revisions',
-        mapRow: row => ({ impressions: row.impressions }),
-        ...extra,
-      });
-    process.on('warning', onWarning);
-    try {
-      create({ location: 'asia-northeast1' });
-      await new Promise(resolve => setImmediate(resolve));
-      assert.deepEqual(
-        warnings.filter(warning => warning.code === 'ADCP_BIGQUERY_SINK_LOCATION_UNSET'),
-        [],
-        'a configured location does not warn'
-      );
-      create({});
-      create({});
-      await new Promise(resolve => setImmediate(resolve));
-    } finally {
-      process.off('warning', onWarning);
-      if (cached) require.cache[modulePath] = cached;
-    }
-    const emitted = warnings.filter(warning => warning.code === 'ADCP_BIGQUERY_SINK_LOCATION_UNSET');
-    assert.equal(emitted.length, 1, 'warns once per process');
-    assert.match(emitted[0].message, /location.*not set.*outside the US and EU/s);
   });
 
   // Convergence of a load that outlasts its deadline (#3234). BigQuery does not stop a load the client gives up

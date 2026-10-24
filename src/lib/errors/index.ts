@@ -745,8 +745,8 @@ export class ResponseTooLargeError extends ADCPError {
   ) {
     super(
       contentLengthHeader !== undefined
-        ? `Response body declared ${contentLengthHeader} bytes, exceeds maxResponseBytes cap of ${limit} (${url})`
-        : `Response body exceeded maxResponseBytes cap of ${limit} after reading ${bytesRead} bytes (${url})`
+        ? `Response body declared ${contentLengthHeader} bytes, exceeds transport.maxResponseBytes cap of ${limit} (${url}). Raise transport.maxResponseBytes on the client or call for larger responses.`
+        : `Response body exceeded transport.maxResponseBytes cap of ${limit} after reading ${bytesRead} bytes (${url}). Raise transport.maxResponseBytes on the client or call for larger responses.`
     );
     this.details = { limit, bytesRead, url, contentLengthHeader };
   }

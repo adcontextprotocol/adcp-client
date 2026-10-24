@@ -47,7 +47,7 @@ describe('OAuth perimeter response-size cap (#1175)', () => {
             assert.strictEqual(err.code, 'RESPONSE_TOO_LARGE');
             return true;
           }
-          assert.ok(err.message.includes('exceeds maxResponseBytes') || err.cause instanceof ResponseTooLargeError);
+          assert.ok(err.message.includes('transport.maxResponseBytes') || err.cause instanceof ResponseTooLargeError);
           return true;
         }
       );

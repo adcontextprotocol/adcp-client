@@ -1040,10 +1040,14 @@ setInterval(() => {
   credential.
 - `projectId` scopes both load submission and replay status checks. When it is
   omitted, both use the BigQuery client's default project. Each replica must
-  be able to read the BigQuery jobs submitted by the other replicas. Set
-  `location` for any dataset outside the US and EU multi-regions: BigQuery
-  answers a job lookup without the right location with 404, and the sink then
-  cannot find the jobs it created.
+  be able to read the BigQuery jobs submitted by the other replicas. When
+  `location` is omitted, the first `runOnce()` reads it using the official
+  client's `dataset.getMetadata()` and caches it for that sink instance before
+  any warehouse work, even on an idle tick. This requires `bigquery.datasets.get`.
+  Both load submissions and job lookups use that location. Discovery failures
+  reject before any sink state or load is written and can be retried; they name
+  the permission and the `location` option. Set `location` explicitly to skip
+  metadata access, including when using a wrapper without `getMetadata()`.
 - `loadTimeoutMilliseconds` (default 10 minutes) is the base deadline for one
   run's work on one load: uploading the file, or waiting for a job that is still
   running. It bounds a run, not the job. BigQuery does not stop a load when the
@@ -1122,11 +1126,9 @@ setInterval(() => {
   cancels a load at its deadline, so one running beside a newer worker on the
   same sink can cancel a job the newer worker is waiting on. The job then ends
   `DONE` with an error and the attempt advances. Rows do not duplicate, but
-  convergence slows. Also set `location` to the dataset's location: without it
-  a replay lookup of a load job returns 404 for datasets outside the US and EU
-  multi-regions, and the sink uploads again, gets a 409, and fails with a
-  "check projectId and location" error. The sink warns once per process when
-  `location` is unset.
+  convergence slows. The sink now discovers an omitted `location` from dataset
+  metadata. Older workers require an explicit location for datasets outside the
+  US and EU multi-regions so replay lookups can find their load jobs.
 - Stop old sink workers before relying on these overlap guarantees. If an
   earlier overlapping run left a plan whose starting cursor differs from the
   committed cursor, the sink rejects it before loading. Reconcile the retained

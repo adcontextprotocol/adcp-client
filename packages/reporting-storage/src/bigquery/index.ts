@@ -81,6 +81,8 @@ export interface ReportingBigQueryClientV1 {
     datasetId: string,
     options?: { projectId?: string; location?: string }
   ): {
+    /** Needed for automatic location discovery; wrappers may omit it when `location` is explicit. */
+    getMetadata?(): Promise<unknown>;
     table(tableId: string): {
       load(source: string, metadata: Record<string, unknown>): Promise<unknown>;
     };
@@ -134,9 +136,9 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
   rowsTableId: string;
   revisionsTableId: string;
   /**
-   * Dataset location, so jobs run in the dataset's region. Set it for any dataset outside the US and EU
-   * multi-regions: BigQuery answers a job lookup without the right location with 404, and the sink then
-   * cannot find the jobs it created.
+   * Dataset location. When omitted, the first `runOnce()` reads and caches it from dataset metadata
+   * before any warehouse work (requires `bigquery.datasets.get`). An explicit value skips discovery.
+   * Both load submissions and job lookups use the resolved location, including regional datasets.
    */
   location?: string;
   /** Restrict the sink to one account; omit for the deployment-wide feed. */
@@ -241,7 +243,6 @@ const MAX_LOAD_TIMEOUT = 6 * 3_600_000;
 /** Doublings stop at 2^16: even the 1 second minimum is then past the 6 hour cap. */
 const MAX_TIMEOUT_DOUBLINGS = 16;
 let warnedLabelsIgnored = false;
-let warnedLocationUnset = false;
 const PROJECT = /^[a-z][a-z0-9-]{4,61}[a-z0-9]$/;
 const DATASET_OR_TABLE = /^[A-Za-z_][A-Za-z0-9_]{0,1023}$/;
 const NAME = /^[A-Za-z0-9_.:-]{1,128}$/;
@@ -255,6 +256,9 @@ export function createBigQueryReportingWarehouseSinkV1(
   if (!NAME.test(options.name)) throw new TypeError('Warehouse sink name must be a bounded non-secret identifier');
   if (options.projectId !== undefined && !PROJECT.test(options.projectId)) {
     throw new TypeError('BigQuery projectId is invalid');
+  }
+  if (options.location !== undefined && (typeof options.location !== 'string' || !options.location.trim())) {
+    throw new TypeError('BigQuery location must be a non-empty string');
   }
   for (const [label, value] of [
     ['datasetId', options.datasetId],
@@ -278,13 +282,6 @@ export function createBigQueryReportingWarehouseSinkV1(
       { code: 'ADCP_BIGQUERY_SINK_LABELS_IGNORED', type: 'DeprecationWarning' }
     );
   }
-  if (!options.location && !warnedLocationUnset) {
-    warnedLocationUnset = true;
-    process.emitWarning(
-      'BigQuery warehouse sink option `location` is not set. Replay lookups of load jobs need it for datasets outside the US and EU multi-regions: without it BigQuery answers 404, the sink uploads again, gets a 409, and then fails with a "check projectId and location" error.',
-      { code: 'ADCP_BIGQUERY_SINK_LOCATION_UNSET' }
-    );
-  }
   const tables = {
     projectId: options.projectId,
     datasetId: options.datasetId,
@@ -303,13 +300,39 @@ export function createBigQueryReportingWarehouseSinkV1(
     AND reset_generation = $7`;
   const stalePlan = () => new Error('Warehouse sink plan changed during an overlapping run; retry runOnce()');
 
-  const jobOptions =
-    options.projectId || options.location
-      ? {
-          ...(options.projectId ? { projectId: options.projectId } : {}),
-          ...(options.location ? { location: options.location } : {}),
+  let location = options.location;
+  let locationLookup: Promise<void> | undefined;
+  async function resolveLocation(signal?: AbortSignal): Promise<void> {
+    if (location !== undefined) return;
+    // Share an in-flight lookup across overlapping runs. Cache successes only, so a permission or
+    // network failure can be repaired and retried on this same sink instance.
+    locationLookup ??= withinDeadline(
+      async () => {
+        if (!dataset.getMetadata) throw new TypeError('BigQuery dataset wrapper does not expose getMetadata()');
+        const response = await dataset.getMetadata();
+        const metadata = (Array.isArray(response) ? response[0] : response) as { location?: unknown } | undefined;
+        if (typeof metadata?.location !== 'string' || !metadata.location.trim()) {
+          throw new TypeError('BigQuery dataset metadata has no location');
         }
-      : undefined;
+        return metadata.location;
+      },
+      loadTimeout,
+      undefined,
+      'dataset location discovery'
+    )
+      .then(value => {
+        location = value;
+      })
+      .catch(cause => {
+        locationLookup = undefined;
+        throw new Error(
+          'Cannot discover the BigQuery dataset location. Grant bigquery.datasets.get and expose ' +
+            'dataset.getMetadata(), or set the warehouse sink option location explicitly to the dataset location.',
+          { cause }
+        );
+      });
+    await withinDeadline(() => locationLookup!, loadTimeout, signal, 'dataset location discovery');
+  }
 
   /** Uploads submitted by this process and not yet settled, by job ID, so a rerun can wait on one. */
   const uploads = new Map<string, UploadEntry>();
@@ -337,7 +360,7 @@ export function createBigQueryReportingWarehouseSinkV1(
         jobId,
         sourceFormat: 'NEWLINE_DELIMITED_JSON',
         writeDisposition: 'WRITE_APPEND',
-        ...(options.location ? { location: options.location } : {}),
+        location,
       });
     })();
     const replaced = uploads.get(jobId);
@@ -362,7 +385,10 @@ export function createBigQueryReportingWarehouseSinkV1(
     let metadata: unknown;
     try {
       metadata = await withinDeadline(
-        () => options.bigquery.job(jobId, jobOptions).getMetadata(),
+        () =>
+          options.bigquery
+            .job(jobId, { ...(options.projectId ? { projectId: options.projectId } : {}), location })
+            .getMetadata(),
         boundMilliseconds,
         signal,
         context
@@ -437,7 +463,7 @@ export function createBigQueryReportingWarehouseSinkV1(
         if (status === 'missing') {
           throw new Error(
             'BigQuery refused the load job ID as already existing, but the job cannot be found. Check that projectId ' +
-              'and location match the dataset (location is required for datasets outside the US and EU multi-regions)',
+              'and location match the dataset',
             { cause: error }
           );
         }
@@ -457,7 +483,11 @@ export function createBigQueryReportingWarehouseSinkV1(
         if (isDeadlineExceeded(error) && bound < loadTimeout) throw timedOut('Waiting for the running load job');
         throw error;
       }
-      if (status === 'missing') throw new Error('A BigQuery load job for this batch disappeared while it was awaited');
+      if (status === 'missing') {
+        throw new Error(
+          'A BigQuery load job for this batch disappeared while it was awaited. Check that projectId and location match the dataset'
+        );
+      }
     }
   }
 
@@ -504,6 +534,8 @@ export function createBigQueryReportingWarehouseSinkV1(
     },
     async runOnce(runOptions = {}) {
       const signal = runOptions.signal;
+      signal?.throwIfAborted();
+      await resolveLocation(signal);
       await options.db.query(
         `INSERT INTO adcp_reporting_warehouse_sinks (sink_name) VALUES ($1) ON CONFLICT DO NOTHING`,
         [options.name]
