@@ -668,18 +668,22 @@ has its own, tighter 64 KiB cap and does not use this mechanism.)
 Bytes are counted as they stream in, a declared `Content-Length` over the cap
 is refused before the body is read, and an oversized response fails with a
 typed `ResponseTooLargeError`. Nothing is silently truncated.
+The error names `transport.maxResponseBytes` and explains how to raise it.
+For large catalog, signal, media-buy, and delivery reads, choose a larger client
+cap such as 64 MiB based on expected payloads. Capability and preview probes can
+use the default or an explicitly smaller cap.
 
 ```typescript
 import { ResponseTooLargeError } from '@adcp/sdk';
 
 // Raise the cap for an agent that legitimately publishes a large catalog.
 const client = new ADCPMultiAgentClient(agents, {
-  transport: { maxResponseBytes: 32 * 1024 * 1024 },
+  transport: { maxResponseBytes: 64 * 1024 * 1024 },
 });
 
 // …or per call.
 await client.agent('agent_x').getProducts(params, {
-  transport: { maxResponseBytes: 32 * 1024 * 1024 },
+  transport: { maxResponseBytes: 64 * 1024 * 1024 },
 });
 
 // Opt out entirely — explicit, never the default. Only `0` opts out;

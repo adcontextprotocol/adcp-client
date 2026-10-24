@@ -65,6 +65,11 @@ function createFakeBigQuery({
     const key = keyOf(project, datasetId);
     return {
       projectId: project,
+      async getMetadata() {
+        const metadata = state.datasets.get(key);
+        if (!metadata) throw apiError(404, `Not found: Dataset ${key}`);
+        return [structuredClone(metadata)];
+      },
       async create(createOptions = {}) {
         if (state.datasets.has(key)) throw apiError(409, `Already Exists: Dataset ${key}`);
         state.datasets.set(key, { labels: createOptions.labels, location: options.location, createOptions });

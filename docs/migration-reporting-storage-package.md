@@ -22,6 +22,21 @@ Why: storage keeps its own release cadence, as Auth.js, LangGraph and OpenTeleme
 
 4. Re-run your own tests. No database migration is needed: every migration constant has the same SQL under its new import path.
 
+## BigQuery location discovery
+
+The BigQuery sink now discovers an omitted `location` from dataset metadata,
+including for US/EU datasets. Before upgrading the storage package:
+
+- Grant `bigquery.datasets.get` and expose `dataset.getMetadata()` in any client
+  wrapper, or set `location` explicitly to skip metadata access.
+- Replace empty location strings with an omitted option for discovery, or with
+  the actual dataset location. Empty strings now fail at construction.
+- Replace monitoring of `ADCP_BIGQUERY_SINK_LOCATION_UNSET` with monitoring of
+  rejected `runOnce()` calls. Discovery errors identify the permission and
+  explicit-location alternatives before warehouse state or loads are written.
+
+No database migration is required. See the [warehouse sink guide](guides/REPORTING-LEDGER.md#bigquery-warehouse-sink).
+
 ## Import mapping
 
 | Old import                                                                 | New import                                                                  |
