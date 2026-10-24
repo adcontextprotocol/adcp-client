@@ -110,13 +110,16 @@ import {
   setSdkServerInstructions,
   setMcpAppResources,
   setMcpToolProfile,
+  setToolSchemaProjector,
   setDiscoveryVersionResolver,
   setToolVersionAvailabilityResolver,
   wrapInitializeHandler,
   wrapSdkRequestHandler,
   type AdcpServer,
   type AdcpServerInternal,
+  type AdcpToolSchemaProjector,
 } from './adcp-server';
+import { projectSchemaForCapabilities } from '../utils/applies-when-projection';
 import {
   isMcpAppToolMeta,
   mcpAppResourceUri,
@@ -1836,6 +1839,32 @@ export interface AdcpServerConfig<TAccount = unknown> {
   exposeToolSchemas?: boolean;
 
   /**
+   * Narrow the JSON Schemas advertised in MCP `tools/list` to this server's
+   * own capabilities, using the proposed `x-adcp-applies-when` annotation.
+   *
+   * @experimental **Prototype** for adcontextprotocol/adcp#8452 / #8454
+   * (AdCP 3.3). Not production-hardened, and it may change or be removed in
+   * any release. Defaults to `false`, which leaves `tools/list` exactly as
+   * before.
+   *
+   * When `true`, each advertised tool `inputSchema` / `outputSchema` (on both
+   * the legacy and 2026-07-28 MCP transports) is passed through
+   * `projectSchemaForCapabilities` (from `@adcp/sdk/schemas`) against the
+   * `get_adcp_capabilities` declaration this server builds. Optional
+   * properties whose annotation doesn't match are removed, so a seller that
+   * declares `media_buy.supported_delivery_types: ['guaranteed']` stops
+   * advertising `floor_price` and `price_guidance`. Undeclared capability
+   * lists keep everything. Call-time validation, A2A, and
+   * `get_adcp_capabilities` are unchanged.
+   *
+   * The AdCP schemas bundled with this SDK don't carry the annotation yet, so
+   * until a release with adcp#8454 ships, only custom tools whose schemas carry
+   * it are affected. Passthrough `{ type: 'object' }` schemas have nothing to
+   * project.
+   */
+  projectToolSchemas?: boolean;
+
+  /**
    * Newest AdCP protocol version this server supports. Defaults to
    * {@link ADCP_VERSION} — the version the SDK ships against. Override to pin
    * the entire server to an older stable release or to set the supported
@@ -2475,6 +2504,20 @@ function applyCapabilityOverrides(target: GetAdCPCapabilitiesResponse, overrides
     }
     targetAny[key] = deepMergePlainObjects(targetAny[key], value);
   }
+}
+
+/** Apply the experimental `projectToolSchemas` projector to one advertised `tools/list` entry. */
+function projectAdvertisedToolSchemas(tool: unknown, project: AdcpToolSchemaProjector): unknown {
+  if (!isPlainObject(tool)) return tool;
+  const { inputSchema, outputSchema } = tool;
+  const projectedInput = isPlainObject(inputSchema) ? project(inputSchema) : inputSchema;
+  const projectedOutput = isPlainObject(outputSchema) ? project(outputSchema) : outputSchema;
+  if (projectedInput === inputSchema && projectedOutput === outputSchema) return tool;
+  return {
+    ...tool,
+    ...(inputSchema !== undefined && { inputSchema: projectedInput }),
+    ...(outputSchema !== undefined && { outputSchema: projectedOutput }),
+  };
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -9782,6 +9825,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       ? 'media-buy'
       : 'all';
   const mediaBuyProfileTools = new Set<string>(MEDIA_BUY_MCP_TOOL_PROFILE);
+  // Experimental `projectToolSchemas`: narrow advertised schemas to this
+  // server's declared capabilities. Undefined when off, so the list below is
+  // returned exactly as before.
+  const projectToolSchema: AdcpToolSchemaProjector | undefined =
+    config.projectToolSchemas === true ? schema => projectSchemaForCapabilities(schema, capabilitiesData) : undefined;
   const wrappedToolsList = wrapSdkRequestHandler(server, 'tools/list', async (original, request, extra) => {
     const response = await original(request, extra);
     if (response == null || typeof response !== 'object') return response;
@@ -9835,7 +9883,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
     return {
       ...(response as Record<string, unknown>),
-      tools: projectedTools,
+      tools: projectToolSchema
+        ? projectedTools.map(tool => projectAdvertisedToolSchemas(tool, projectToolSchema))
+        : projectedTools,
       _meta: {
         ...((response as { _meta?: Record<string, unknown> })._meta ?? {}),
         adcp_version: listRelease.advertisedVersion ?? listRelease.validationVersion,
@@ -9966,6 +10016,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       : (selected.advertisedVersion ?? selected.validationVersion);
   });
   setMcpToolProfile(wrapped, activeMcpToolProfile);
+  if (projectToolSchema) setToolSchemaProjector(wrapped, projectToolSchema);
   setMcpAppResources(wrapped, mcpAppResources);
 
   // Attach the auto-wired preTransport so `serve()` mounts the verifier
