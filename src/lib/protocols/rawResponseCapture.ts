@@ -280,12 +280,28 @@ async function readBodyBounded(
   response: Response,
   maxBodyBytes: number
 ): Promise<{ body: string; bodyTruncated: boolean }> {
-  let text: string;
+  if (!response.body) return { body: '', bodyTruncated: false };
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let complete = false;
   try {
-    text = await response.text();
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        text += decoder.decode();
+        complete = true;
+        return { body: text.slice(0, maxBodyBytes), bodyTruncated: text.length > maxBodyBytes };
+      }
+      text += decoder.decode(chunk.value, { stream: true });
+      if (text.length > maxBodyBytes) return { body: text.slice(0, maxBodyBytes), bodyTruncated: true };
+    }
   } catch {
-    return { body: '', bodyTruncated: false };
+    return { body: text, bodyTruncated: true };
+  } finally {
+    // A cloned response is a tee. Waiting for cancellation here can deadlock
+    // until the original body is consumed, which happens only after fetch returns.
+    if (!complete) void reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
-  if (text.length <= maxBodyBytes) return { body: text, bodyTruncated: false };
-  return { body: text.slice(0, maxBodyBytes), bodyTruncated: true };
 }

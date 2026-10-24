@@ -2953,6 +2953,18 @@ export interface StoryboardStepResult {
   agent_url?: string;
   /** 1-based index of the agent instance (multi-instance mode). Absent in single-URL mode. */
   agent_index?: number;
+  /**
+   * Producer fixture-handle records, when this step result stands in for a
+   * whole run.
+   *
+   * `runStoryboardStep` returns one step as the entire result, so a
+   * standalone caller reusing a prepared state has nowhere else to read
+   * the `fixture_resolutions` block a full run carries. Present only when
+   * the prepared state actually holds records.
+   */
+  fixture_resolutions?: FixtureResolutionRecord[];
+  /** Historical producer evidence; excluded from consumer grading and JUnit counts. */
+  fixture_preparation?: StoryboardPhaseResult;
   /** Exact request the runner sent (contract-required on failures). */
   request?: RunnerRequestRecord;
   /** Exact response observed, including transport, status, headers. */
@@ -3446,6 +3458,8 @@ export interface StoryboardResult {
   overall_passed: boolean;
   /** AdCP 3.2 fixture-handle setup/discovery evidence, one row per handle. */
   fixture_resolutions?: FixtureResolutionRecord[];
+  /** Historical producer evidence; excluded from consumer grading and JUnit counts. */
+  fixture_preparation?: StoryboardPhaseResult;
   /** Storyboard-level fixture coverage gaps, emitted once per cause. */
   coverage_gaps?: FixtureResolutionCoverageGap[];
   /**

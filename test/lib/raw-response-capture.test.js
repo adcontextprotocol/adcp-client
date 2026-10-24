@@ -149,6 +149,28 @@ describe('rawResponseCapture', () => {
     assert.doesNotMatch(JSON.stringify(captures[0]), /must-not-be-captured/);
   });
 
+  test('bounded capture returns without waiting for an oversized stream to finish', { timeout: 2000 }, async t => {
+    let controller;
+    const stream = new ReadableStream({
+      start(value) {
+        controller = value;
+        value.enqueue(new TextEncoder().encode('x'.repeat(1024)));
+      },
+    });
+    t.after(() => {
+      try {
+        controller.close();
+      } catch {}
+    });
+    const capturingFetch = wrapFetchWithCapture(async () => new Response(stream));
+    const { result, captures } = await withRawResponseCapture(() => capturingFetch('https://example.test/'), {
+      maxBodyBytes: 32,
+    });
+    assert.equal(captures[0].body.length, 32);
+    assert.equal(captures[0].bodyTruncated, true);
+    await result.body.cancel();
+  });
+
   test('truncates body when it exceeds maxBodyBytes', async () => {
     const big = 'A'.repeat(10_000);
     const { server, url } = await startServer((req, res) => {

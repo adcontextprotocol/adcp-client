@@ -576,14 +576,17 @@ test('modern OAuth refresh uses the scoped fetcher instead of global fetch', asy
   const server = await startOAuthServer('modern');
   try {
     await withGlobalFetchGuard(async (fetchFn, fetchedUrls) => {
+      const debugLogs = [];
       const result = await callMCPToolWithOAuth({
         agentUrl: server.url,
         toolName: 'ping',
         args: {},
         authProvider: createRefreshProvider(server.state.origin),
         fetchFn,
+        debugLogs,
       });
       assert.equal(result.content[0].text, 'pong');
+      assert.deepEqual(debugLogs.find(log => log.message === 'MCP: Tool ping response received').response, result);
       assert.ok(
         fetchedUrls.some(url => url.endsWith('/token')),
         'scoped fetcher should perform the token exchange'
