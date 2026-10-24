@@ -1965,10 +1965,7 @@ function postProcessRefineProposalsRuntimeConstraints(content: string): string {
     return corrected + source.slice(cursor);
   };
 
-  let block = content
-    .slice(schemaStart, schemaEnd)
-    .replaceAll('z.iso.datetime({ offset: true })', 'z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")')
-    .replaceAll('z.iso.datetime()', 'z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")');
+  let block = content.slice(schemaStart, schemaEnd);
   for (const [fieldName, required] of [
     ['results', true],
     ['proposals', true],
@@ -3427,7 +3424,7 @@ export function postProcessCanonicalPrimitiveConstraints(content: string): strin
       if (constraints.pattern !== undefined && !result.includes('.regex(')) {
         suffix += `.regex(new RegExp(${JSON.stringify(constraints.pattern)}))`;
       }
-      if (constraints.dateTime && !result.includes('adcpJsonSchemaDateTime') && !result.includes('z.iso.datetime()')) {
+      if (constraints.dateTime && !result.includes('adcpJsonSchemaDateTime')) {
         suffix += '.refine(adcpJsonSchemaDateTime, "Invalid date-time")';
       }
       if (constraints.uri && !result.includes('adcpJsonSchemaUri')) {
@@ -3925,6 +3922,17 @@ function postProcessJsonSchemaUriFormats(content: string): string {
   return content
     .replaceAll('z.url()', 'z.string().refine(adcpJsonSchemaUri, "Invalid URI")')
     .replaceAll('.url()', '.refine(adcpJsonSchemaUri, "Invalid URI")');
+}
+
+/**
+ * JSON Schema's RFC 3339 date-time format accepts numeric UTC offsets.
+ * Normalize both Zod projections globally to the authoritative ajv-formats
+ * predicate after structural rewrites and before primitive reconciliation.
+ */
+function postProcessJsonSchemaDateTimeFormats(content: string): string {
+  return content
+    .replaceAll('z.iso.datetime({ offset: true })', 'z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")')
+    .replaceAll('z.iso.datetime()', 'z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")');
 }
 
 function postProcessTrustedMatchResponseSchemas(content: string): string {
@@ -6161,6 +6169,7 @@ async function generateZodSchemas() {
 
     // Reconcile canonical primitive constraints last, after structural and
     // exact-schema rewrites that may replace earlier generated blocks.
+    zodSchemas = postProcessJsonSchemaDateTimeFormats(zodSchemas);
     zodSchemas = postProcessCanonicalPrimitiveConstraints(zodSchemas);
     zodSchemas = postProcessOptimizationGoalTargetBounds(zodSchemas);
     zodSchemas = postProcessOptimizationGoalConditionals(zodSchemas);
@@ -6229,6 +6238,7 @@ if (require.main === module) {
 }
 
 export const __test__ = {
+  postProcessJsonSchemaDateTimeFormats,
   postProcessPureInitializers,
   postProcessPrimitiveIntersections,
   postProcessPrimitiveEnumExclusions,

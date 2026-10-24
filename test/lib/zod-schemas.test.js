@@ -12,6 +12,60 @@ describe('Zod Schema Validation', () => {
     assert.ok(schemas, 'Schemas should be importable');
   });
 
+  test('media buy response date-times accept RFC 3339 offsets and preserve their values', async () => {
+    const { GetMediaBuysResponseMediaBuySchema } = await import('../../dist/lib/schemas/index.js');
+
+    for (const timestamp of [
+      '2026-10-14T00:00:00Z',
+      '2026-10-14T00:00:00+00:00',
+      '2026-10-14T00:00:00-04:00',
+      '2026-10-14T00:00:00+05:30',
+      '2026-10-14T00:00:00.123456+00:00',
+    ]) {
+      const mediaBuy = {
+        media_buy_id: 'buy-1',
+        status: 'active',
+        currency: 'USD',
+        total_budget: 1000,
+        revision: 1,
+        confirmed_at: timestamp,
+        status_as_of: timestamp,
+        packages: [{ package_id: 'pkg-1', start_time: timestamp, end_time: timestamp }],
+      };
+      assert.deepEqual(GetMediaBuysResponseMediaBuySchema.parse(mediaBuy), mediaBuy);
+    }
+  });
+
+  test('media buy response date-times reject missing times, missing zones, and invalid dates', async () => {
+    const { GetMediaBuysResponseMediaBuySchema } = await import('../../dist/lib/schemas/index.js');
+    const mediaBuy = {
+      media_buy_id: 'buy-1',
+      status: 'active',
+      currency: 'USD',
+      total_budget: 1000,
+      revision: 1,
+      confirmed_at: '2026-10-14T00:00:00Z',
+      packages: [{ package_id: 'pkg-1' }],
+    };
+
+    for (const timestamp of [
+      '2026-10-14',
+      '2026-10-14T00:00:00',
+      '2026-02-30T00:00:00+00:00',
+      '2026-10-14T25:00:00-04:00',
+      'not-a-date-time',
+    ]) {
+      for (const field of ['start_time', 'end_time']) {
+        const result = GetMediaBuysResponseMediaBuySchema.safeParse({
+          ...mediaBuy,
+          packages: [{ ...mediaBuy.packages[0], [field]: timestamp }],
+        });
+        assert.equal(result.success, false, `${field} should reject ${timestamp}`);
+        assert.deepEqual(result.error.issues[0].path, ['packages', 0, field]);
+      }
+    }
+  });
+
   test('reporting delivery uses the reporting file-transfer schema', async () => {
     if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
 
