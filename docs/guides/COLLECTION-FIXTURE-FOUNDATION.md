@@ -87,6 +87,18 @@ interactive prompting. Successful discovery that omits an optional capability
 still skips normally. Schema-invalid success bodies remain available to ungated diagnostic storyboards with their original schema notices; capability gates require valid evidence. Explicitly supplied profiles remain the caller's trusted
 scope boundary; failed or malformed evidence cannot establish capability absence.
 
+### Canonical format matching
+
+The `canonical_format_satisfies` fixture predicate uses the same comparison as
+the `canonical_format_satisfaction` storyboard validation. A selector may omit
+the option's `asset_source`, `buyer_asset_acceptance`, `composition_model`,
+`slots`, and `ssl_required`; the product keeps those production, manifest, and
+delivery declarations. Omission supplies no defaults, and explicit conflicting
+values still fail. Dimensions, duration, encoding limits, and unknown product
+constraints remain required. Selecting an option does not validate a creative
+manifest or prove buyer-upload support: fixtures that need a particular
+production policy must also match the relevant declared policy.
+
 ### Independent scopes
 
 `minimum_pairs: 1` and `minimum_pairs: 2` qualify **independently**. A seller
