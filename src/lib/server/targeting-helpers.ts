@@ -30,6 +30,7 @@ import { callMCPTool } from '../protocols/mcp';
 import { isAlwaysBlocked, isPrivateIp } from '../net';
 import { isInternalProbesAllowed } from '../utils/probe-policy';
 import { createPinAndBindFetch } from './pin-and-bind-fetch';
+import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 import type {
   PropertyListReference,
   CollectionListReference,
@@ -136,8 +137,30 @@ const defaultResolveListFetch: typeof fetch = (input, init) =>
 const defaultResolveListCallTool: ResolveListCallTool = (agentUrl, toolName, args, authToken) =>
   callMCPTool(agentUrl, toolName, args, authToken, [], undefined, undefined, defaultResolveListFetch);
 
+/** Accept MCP envelopes and the bare payloads supported by custom call hooks. */
+function resolvedListPayload(result: unknown, kind: ResolvedListKind): unknown {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+  const envelope = result as Record<string, unknown>;
+  const isMcp = 'structuredContent' in envelope || 'content' in envelope || 'isError' in envelope;
+  let payload: unknown;
+  try {
+    payload = isMcp ? unwrapProtocolResponse(envelope, undefined, 'mcp') : envelope;
+  } catch (cause) {
+    throw new Error(`${kind}_list_invalid_response`, { cause });
+  }
+  const data = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : undefined;
+  if (envelope.isError === true || data?.adcp_error !== undefined) {
+    // Preserve the upstream error for server-side classification, without
+    // attaching unrelated list contents or echoing untrusted text in message.
+    throw Object.assign(new Error(`${kind}_list_invalid_response`, { cause: data?.adcp_error }), {
+      adcp_error: data?.adcp_error,
+    });
+  }
+  return payload;
+}
+
 export interface ResolveListOptions {
-  /** Require schema-valid property-list pages with identifiers when resolving. Used for certification. */
+  /** Require schema-valid list pages with resolved items. Used for certification. */
   strictResponseValidation?: boolean;
   /** Maximum page size when calling get_property_list / get_collection_list. Defaults to 1000. */
   pageSize?: number;
@@ -198,7 +221,10 @@ async function fetchResolvedPropertyList(
   for (let pageIndex = 0; pageIndex < maxPagesForOptions(options); pageIndex += 1) {
     const args = buildResolveListArgs(ref.list_id, pageSizeForOptions(options), cursor);
 
-    const raw = (await callTool(ref.agent_url, 'get_property_list', args, ref.auth_token)) as Record<string, unknown>;
+    const raw = resolvedListPayload(
+      await callTool(ref.agent_url, 'get_property_list', args, ref.auth_token),
+      'property'
+    ) as Record<string, unknown>;
 
     if (!raw || typeof raw !== 'object' || !('list' in raw)) {
       throw new Error('property_list_invalid_response');
@@ -286,7 +312,8 @@ export async function resolveCollectionList(
   const cache = cacheForOptions(options);
   const nowMs = nowMsForOptions(options);
   const cacheKey = resolvedListCacheKey('collection', structurallyNormalizedRef, options);
-  const cached = cacheKey ? cache?.get<ResolvedCollectionList>(cacheKey, nowMs) : undefined;
+  const cached =
+    cacheKey && !options.strictResponseValidation ? cache?.get<ResolvedCollectionList>(cacheKey, nowMs) : undefined;
   if (cached) return cached;
 
   const normalizedRef = options.callTool
@@ -311,12 +338,56 @@ async function fetchResolvedCollectionList(
   for (let pageIndex = 0; pageIndex < maxPagesForOptions(options); pageIndex += 1) {
     const args = buildResolveListArgs(ref.list_id, pageSizeForOptions(options), cursor);
 
-    const raw = (await callTool(ref.agent_url, 'get_collection_list', args, ref.auth_token)) as Record<string, unknown>;
+    const raw = resolvedListPayload(
+      await callTool(ref.agent_url, 'get_collection_list', args, ref.auth_token),
+      'collection'
+    ) as Record<string, unknown>;
 
     if (!raw || typeof raw !== 'object' || !('list' in raw)) {
       throw new Error('collection_list_invalid_response');
     }
     const response = raw as unknown as GetCollectionListResponse;
+    // As with property lists, legacy responses may omit status, but an
+    // explicit failure or a page for another list must never be cached.
+    if (
+      (response.status !== undefined && response.status !== 'completed') ||
+      (raw.errors !== undefined &&
+        (!Array.isArray(raw.errors) ||
+          raw.errors.some(error => !error || typeof error !== 'object' || error.severity !== 'warning'))) ||
+      !response.list ||
+      response.list.list_id !== ref.list_id ||
+      !Array.isArray(response.collections) ||
+      response.collections.some(
+        collection =>
+          !collection ||
+          typeof collection !== 'object' ||
+          Array.isArray(collection) ||
+          ['publisher_domain', 'collection_id', 'collection_rid', 'name'].some(
+            field => field in collection && typeof collection[field as keyof ResolvedCollection] !== 'string'
+          ) ||
+          (collection.distribution_ids !== undefined &&
+            (!Array.isArray(collection.distribution_ids) ||
+              collection.distribution_ids.some(
+                identifier =>
+                  !identifier ||
+                  typeof identifier !== 'object' ||
+                  typeof identifier.type !== 'string' ||
+                  typeof identifier.value !== 'string'
+              )))
+      )
+    ) {
+      throw new Error('collection_list_invalid_response');
+    }
+    if (options.strictResponseValidation) {
+      const { GetCollectionListResponseSchema } = await import('../types/schemas.generated');
+      if (
+        !GetCollectionListResponseSchema.safeParse(raw).success ||
+        response.status !== 'completed' ||
+        response.collections.length > pageSizeForOptions(options)
+      ) {
+        throw new Error('collection_list_invalid_response');
+      }
+    }
     listId = response.list.list_id;
     collections.push(...(response.collections ?? []));
     if (typeof response.cache_valid_until === 'string') {

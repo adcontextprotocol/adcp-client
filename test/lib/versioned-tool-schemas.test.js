@@ -23,10 +23,10 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
     assert.strictEqual(v31.schema.properties.adcp_major_version, undefined);
     assert.ok(v31.schema.properties.paused);
 
-    for (const adcpVersion of ['3.2.1', '3.2.2', '3.2.3', '3.2.4', '3.2.5']) {
+    for (const adcpVersion of ['3.2.1', '3.2.2', '3.2.3', '3.2.4', '3.2.5', '3.2.6']) {
       const v32 = getToolInputSchema('create_media_buy', { adcpVersion });
       assert.strictEqual(v32.bundleKey, '3.2');
-      assert.strictEqual(v32.resolvedVersion, '3.2.5');
+      assert.strictEqual(v32.resolvedVersion, '3.2.6');
       assert.strictEqual(v32.schema.deprecated, true);
       assert.deepStrictEqual(v32.schema['x-superseded-by'], ['buy_products', 'accept_proposal']);
     }

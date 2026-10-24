@@ -59,7 +59,7 @@ accidentally.
 
 ## SDK 16 and SDK 17 release boundary
 
-SDK 16 is the stable AdCP 3.2 line (`ADCP_VERSION=3.2.5`). Exit Changesets pre-mode and run `npm run version` to produce its GA versions, lockfile, changelogs and generated documentation. Merge and verify the stable npm publication before entering another prerelease cycle.
+SDK 16 is the stable AdCP 3.2 line (`ADCP_VERSION=3.2.6`). Exit Changesets pre-mode and run `npm run version` to produce its GA versions, lockfile, changelogs and generated documentation. Merge and verify the stable npm publication before entering another prerelease cycle.
 
 SDK 17 beta adopts the published AdCP 3.3 beta protocol bundle. Its release preparation enters Changesets pre-mode with `npx changeset pre enter beta` and adds a major SDK changeset. Sync the exact published protocol beta, regenerate its types and schemas, and validate the integration before publishing. Keep `latest` on SDK 16 throughout the SDK 17 beta cycle, and maintain SDK 16 fixes from a stable branch with `ADCP_NPM_TAG=latest`.
 

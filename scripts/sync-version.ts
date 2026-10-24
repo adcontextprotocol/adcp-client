@@ -164,6 +164,8 @@ const MAX_PATCH_ENUMERATION = 500;
  */
 const LAST_3_0_GA_PATCH = 25;
 const LAST_3_1_GA_PATCH = 29;
+/** Update alongside the stable 3.2 pin before building a 3.3 prerelease. */
+const LAST_3_2_GA_PATCH = 6;
 /** First published AdCP 3.2 GA patch; 3.2.0 was withdrawn before GA. */
 const FIRST_3_2_GA_PATCH = 1;
 
@@ -202,16 +204,20 @@ function buildCompatibleVersions(adcpVersion: string): string[] {
   const patch = Number(semverMatch[3]);
   const prerelease = semverMatch[4];
 
-  // 3.2 prereleases are exact. Keep every supported 3.0/3.1 GA
-  // patch available for pinned peers, but never add a moving `3.2-beta`
-  // family alias: beta.0, beta.1, and later candidates may carry different
+  // 3.2/3.3 prereleases are exact. Keep maintained older GA releases
+  // available for pinned peers, but never add a moving prerelease-family
+  // alias: beta.0, beta.1, and later candidates may carry different
   // wire contracts and bundles.
-  if (major === 3 && minor === 2 && patch === 0 && /^(beta|rc)\.\d+$/.test(prerelease ?? '')) {
+  if (major === 3 && (minor === 2 || minor === 3) && patch === 0 && /^(beta|rc)\.\d+$/.test(prerelease ?? '')) {
     const range3_0_x: string[] = [];
     for (let p = 0; p <= LAST_3_0_GA_PATCH; p++) range3_0_x.push(`3.0.${p}`);
     const range3_1_x: string[] = [];
     for (let p = 0; p <= LAST_3_1_GA_PATCH; p++) range3_1_x.push(`3.1.${p}`);
-    const historical = withVersionAliases([...PRE_3_1_COMPATIBLE_PREFIX, ...range3_0_x, ...range3_1_x]);
+    const range3_2_x: string[] = [];
+    if (minor === 3) {
+      for (let p = FIRST_3_2_GA_PATCH; p <= LAST_3_2_GA_PATCH; p++) range3_2_x.push(`3.2.${p}`);
+    }
+    const historical = withVersionAliases([...PRE_3_1_COMPATIBLE_PREFIX, ...range3_0_x, ...range3_1_x, ...range3_2_x]);
     const exactPrereleaseAliases = withVersionAliases([adcpVersion]).filter(
       version => version !== `${major}.${minor}-${prerelease!.split('.')[0]}`
     );
@@ -535,4 +541,4 @@ if (require.main === module) {
   });
 }
 
-export { syncVersion, getTargetAdCPVersion, nextLibraryVersion };
+export { syncVersion, getTargetAdCPVersion, nextLibraryVersion, buildCompatibleVersions };

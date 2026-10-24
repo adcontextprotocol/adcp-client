@@ -1046,9 +1046,11 @@ describe('real AdCP 3.2 bundle aggregates', { skip: !scenariosAvailable }, () =>
     }
   });
 
-  test('the cache census behind the scope claim holds: 180 gated files, 14 compliance_testing', () => {
+  test('the cache census behind the scope claim holds: 184 gated files, 14 compliance_testing', () => {
     // File-level census, which is what the changeset's "160 of 174" claimed at rc.7. The 3.2.3 bundle adds advanced-delivery
     // reporting gates in both domain/protocol copies: 166 of 180 are eligible.
+    // The 3.2.6 change-rights and revenue-share scenarios add four gated
+    // domain/protocol files without controller gates: 170 of 184 are eligible.
     // Distinct storyboard ids are fewer, because the same scenario is carried
     // in more than one bundle directory — both numbers are asserted so the
     // claim cannot drift silently in either direction.
@@ -1095,9 +1097,9 @@ describe('real AdCP 3.2 bundle aggregates', { skip: !scenariosAvailable }, () =>
       if (segments.includes('compliance_testing')) controllerGatedFiles.push(file);
     }
 
-    assert.equal(gatedFiles.length, 180, 'root capability-gated file census drifted');
+    assert.equal(gatedFiles.length, 184, 'root capability-gated file census drifted');
     assert.equal(controllerGatedFiles.length, 14, 'compliance_testing-gated file census drifted');
-    assert.equal(gatedFiles.length - controllerGatedFiles.length, 166, 'eligible census drifted');
+    assert.equal(gatedFiles.length - controllerGatedFiles.length, 170, 'eligible census drifted');
 
     // Normalization, not prefix matching: padded case and a nested namespace
     // are both recognised and both keep capping.

@@ -1136,7 +1136,7 @@ function generateLlmsTxt(
       ln(`### ${trackLabel(track)}`);
       ln();
       for (const sb of sbs) {
-        ln(`**${sb.title}** — ${sb.summary}`);
+        ln(sb.summary ? `**${sb.title}** — ${sb.summary}` : `**${sb.title}**`);
         if (sb.flow) {
           ln(`Flow: \`${sb.flow}\``);
         }
