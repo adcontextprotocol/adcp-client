@@ -331,6 +331,66 @@ describe('Request Builder', () => {
       assert.strictEqual(result.packages[0].bid_price, 2.5, 'fixture bid_price wins over floor * 1.5');
     });
 
+    describe('bid_price synthesis (#3181)', () => {
+      function contextWith(...pricingOptions) {
+        return { products: [{ product_id: 'prod', pricing_options: pricingOptions }] };
+      }
+      const AUCTION_CPM = { pricing_option_id: 'auction', pricing_model: 'cpm', floor_price: 4 };
+      const FIXED_CPM = { pricing_option_id: 'fixed', pricing_model: 'cpm', fixed_price: 12 };
+
+      test('adds no bid_price to a fixed-price cpm option', () => {
+        const result = buildRequest(step('create_media_buy'), contextWith(FIXED_CPM), DEFAULT_OPTIONS);
+        assert.strictEqual(result.packages[0].pricing_option_id, 'fixed');
+        assert.strictEqual(result.packages[0].bid_price, undefined);
+      });
+
+      test('adds no bid_price to a cpm option carrying both fixed_price and floor_price', () => {
+        const option = { ...FIXED_CPM, floor_price: 4 };
+        const result = buildRequest(step('create_media_buy'), contextWith(option), DEFAULT_OPTIONS);
+        assert.strictEqual(result.packages[0].bid_price, undefined);
+      });
+
+      test('still adds a floor-based bid_price to an auction cpm option', () => {
+        const result = buildRequest(step('create_media_buy'), contextWith(AUCTION_CPM), DEFAULT_OPTIONS);
+        assert.strictEqual(result.packages[0].pricing_option_id, 'auction');
+        assert.strictEqual(result.packages[0].bid_price, 6);
+      });
+
+      test('adds no bid_price when the request carries media-buy bidding', () => {
+        const s = step('create_media_buy', {
+          sample_request: { start_time: FUTURE_START, bidding: { max_bid: 7 }, packages: [{}] },
+        });
+        const result = buildRequest(s, contextWith(AUCTION_CPM), DEFAULT_OPTIONS);
+        assert.strictEqual(result.packages[0].bid_price, undefined);
+      });
+
+      test('adds no bid_price when the first package carries its own bidding', () => {
+        const s = step('create_media_buy', {
+          sample_request: { start_time: FUTURE_START, packages: [{ bidding: { bid_amount: 5 } }] },
+        });
+        const result = buildRequest(s, contextWith(AUCTION_CPM), DEFAULT_OPTIONS);
+        assert.strictEqual(result.packages[0].bid_price, undefined);
+      });
+
+      test('prefers a fixed-price option over an earlier auction cpm option', () => {
+        const result = buildRequest(step('create_media_buy'), contextWith(AUCTION_CPM, FIXED_CPM), DEFAULT_OPTIONS);
+        assert.strictEqual(result.packages[0].pricing_option_id, 'fixed');
+        assert.strictEqual(result.packages[0].bid_price, undefined);
+      });
+
+      test('judges the option the fixture names, not the discovery pick', () => {
+        const s = step('create_media_buy', {
+          sample_request: {
+            start_time: FUTURE_START,
+            packages: [{ product_id: 'prod', pricing_option_id: 'auction' }],
+          },
+        });
+        const result = buildRequest(s, contextWith(FIXED_CPM, AUCTION_CPM), DEFAULT_OPTIONS);
+        assert.strictEqual(result.packages[0].pricing_option_id, 'auction');
+        assert.strictEqual(result.packages[0].bid_price, 6);
+      });
+    });
+
     test('discovered pricing fills gaps when fixture omits the first package package-level ids', () => {
       // Generic storyboards that ship a sample_request body without
       // per-package identifiers rely on discovery — this behavior is what
