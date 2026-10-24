@@ -75,6 +75,40 @@ function runGeneratorHarness(source) {
   }
 }
 
+test('generated date-time schemas consistently use JSON Schema format validation', () => {
+  const generated = fs.readFileSync(path.join(REPO_ROOT, 'src/lib/types/schemas.generated.ts'), 'utf8');
+  assert.equal(
+    (generated.match(/z\.iso\.datetime\s*\(/g) ?? []).length,
+    0,
+    'all date-times use the RFC 3339 predicate'
+  );
+});
+
+test('date-time reconciliation covers both Zod projections and preserves wrappers', () => {
+  const result = runGeneratorHarness(`
+import { writeFileSync } from 'node:fs';
+import { __test__ } from __ZOD_GENERATOR__;
+
+const input = \`export const FixtureSchema = z.object({
+    created_at: z.iso.datetime(),
+    start_time: z.iso.datetime().optional(),
+    end_time: z.iso.datetime({ offset: true }).nullable(),
+    confirmed_at: z.iso.datetime().optional().nullable()
+});\`;
+const once = __test__.postProcessJsonSchemaDateTimeFormats(input);
+const twice = __test__.postProcessJsonSchemaDateTimeFormats(once);
+writeFileSync(__OUTPUT__, JSON.stringify({ once, twice }));
+`);
+
+  const dateTime = 'z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")';
+  assert.equal(result.twice, result.once, 'date-time reconciliation is idempotent');
+  assert.doesNotMatch(result.once, /z\.iso\.datetime\s*\(/);
+  assert.ok(result.once.includes(`created_at: ${dateTime},`));
+  assert.ok(result.once.includes(`start_time: ${dateTime}.optional(),`));
+  assert.ok(result.once.includes(`end_time: ${dateTime}.nullable(),`));
+  assert.ok(result.once.includes(`confirmed_at: ${dateTime}.optional().nullable()`));
+});
+
 test('canonical primitive reconciliation follows titled nested schemas into their generated blocks', () => {
   const result = runGeneratorHarness(`
 import { writeFileSync } from 'node:fs';
