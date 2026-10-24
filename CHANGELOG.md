@@ -1,5 +1,16 @@
 # Changelog
 
+## 16.4.1
+
+### Patch Changes
+
+- 7dca440: Preserve compact Product format intersections when converting generated schemas to OpenAPI with Zod 4.6 and later. Annotate the shared constraints to avoid duplicating them across every format branch, and require Zod 4.6.6 or later for development (locked to 4.6.7) to resolve its high-severity collection-validation advisory. The published peer range remains compatible with older Zod 4 consumers.
+
+  Generate a direct Zod namespace import so browser bundles can remove unused exports with patched Zod versions, keeping single-schema imports within the existing bundle-size limits.
+
+- 7dca440: Accept RFC 3339 date-times with numeric UTC offsets in generated AdCP task/core Zod schemas, matching the AdCP JSON Schema format validation. This includes Python UTC timestamps ending in `+00:00` and fractional seconds with offsets. Validation now follows the existing `ajv-formats` date-time predicate, which also accepts lowercase separators, space separators, and leap seconds.
+- a008b4e: Sync the generated registry types with the published registry OpenAPI: a refused prepared-fixture request now types its `PREPARED_FIXTURES_DENIED` error body. Also patches vulnerable transitive dependencies (`body-parser`, `fast-uri`, `ip-address`, `undici`) in the lockfile; no dependency ranges change.
+
 ## 16.4.0
 
 ### Minor Changes
