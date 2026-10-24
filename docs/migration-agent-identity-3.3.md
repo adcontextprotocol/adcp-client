@@ -468,10 +468,10 @@ released schemas:
 | [8169](https://github.com/adcontextprotocol/adcp/pull/8169) | `3ce6a14d7afaa71fa78ddf2223ed0421e01205ae` | Grants, trust schema, grant_absent; the registrable-domain `grantee` rule and its schema description from `eabe46048530c08a34e6eee6e4d15d7848e01c57` |
 | [8170](https://github.com/adcontextprotocol/adcp/pull/8170) | `8d3591e70e9a717c7fdfb513360a796fba24ca9a` | Onboarding additions only; its old trust key fields are excluded |
 | [8177](https://github.com/adcontextprotocol/adcp/pull/8177) | `b663f8e4235fe4276c73fb9bac6db491b2252bbf` | Reporting authentication omission |
-| [8298](https://github.com/adcontextprotocol/adcp/pull/8298) | `f44785a5b65db93988f30ad3d23ba5849f1a1d5e` | WBA interop harness, directory and request vectors |
+| [8298](https://github.com/adcontextprotocol/adcp/pull/8298) | `b3461a2ea279971b930b3d4d8d23ae56210a987b` | WBA interop harness, directory and request vectors (merge commit on `main`) |
 
 The vectors in `test/fixtures/wba-profile/` are byte-identical to #8298 at that
-head (see `PINNED.json`), which carries the #7894 profile and vectors. Every
+commit (see `PINNED.json`), which carries the #7894 profile and vectors. Every
 vendored request and directory vector is graded, and the interop harness
 (adcontextprotocol/adcp#8298) grades `scenarios.json`.
 
