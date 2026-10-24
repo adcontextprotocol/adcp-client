@@ -106,6 +106,8 @@ function originalTransport(catalog, overrides = {}) {
   // seller contact.
   const wire = [];
   const trustedFetchFn = async (_input, init = {}) => {
+    // Match network scheduling so Response buffers can be reclaimed between calls.
+    await new Promise(resolve => setImmediate(resolve));
     const message = JSON.parse(init.body);
     wire.push(message.method);
     let result;

@@ -18,7 +18,7 @@ import type {
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult, Logger } from './types';
 import { prepareResponseForSchemaValidation, TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
 import { injectLegacyEnvelopeStatus } from '../utils/envelope-status-compat';
-import { parseCapabilitiesResponse } from '../utils/capabilities';
+import { parseCapabilitiesResponse, looksLikeV3Capabilities } from '../utils/capabilities';
 import { classifyProbeUrl } from '../utils/probe-policy';
 import { SsrfRefusedError } from '../net/ssrf-fetch';
 import { ADCP_VERSION, toReleasePrecisionVersion } from '../version';
@@ -34,6 +34,14 @@ import { buildAgentSigningContext } from '../signing/client';
 import type { VerifierCapability } from '../signing/types';
 import { bindAgentStorage } from '../auth/oauth/storage-registry';
 import type { OAuthConfigStorage } from '../auth/oauth/types';
+import { isTerminalAdcpError, ResponseSchemaValidationError } from '../utils/response-unwrapper';
+import { redactDiscoveryEvidence } from './discovery-evidence';
+import { redactCredentialPatterns } from '../utils/redact-credential-patterns';
+import {
+  NeedsAuthorizationError,
+  hasValidatedMcpAuthorizationRequirements,
+} from '../auth/oauth/authorization-required';
+import type { DebugLogEntry } from '../types/adcp';
 
 const TEST_CLIENT_VERSION_OPTIONS = Symbol('adcp.testClientVersionOptions');
 const TEST_CLIENT_SCOPE_SALT = randomBytes(32);
@@ -515,6 +523,7 @@ export async function getOrDiscoverProfile(
     (!scope?.active ||
       scope.authRejectedProfiles.has(options._profile) ||
       (!options._profile.capabilities_probe_error &&
+        !options._profile.capabilities_schema_issues?.length &&
         options._client === client &&
         profileBinding?.scopeKey === scopeKey))
   ) {
@@ -544,7 +553,7 @@ export async function getOrDiscoverProfile(
       result => {
         if (options.signal?.aborted) {
           evict();
-        } else if (!result.step.passed || result.profile.capabilities_probe_error) {
+        } else if (!result.step.passed || describeProfileDiscoveryFailure(result.profile)) {
           if (options._discoveryPass && discovery) discovery.failed = true;
           else evict();
         }
@@ -598,6 +607,7 @@ export function seedTestClientSigningCapability(client: TestClient, profile: Age
     }
     profiles.set(profile, { scopeKey: client.getCapabilityEvidenceScope().scopeKey, schemaAdcpVersion: adcpVersion });
   }
+  if (describeProfileDiscoveryFailure(profile)) return;
   const raw = profile.raw_capabilities;
   if (!raw || typeof raw !== 'object') return;
   const clientAccess = client as unknown as {
@@ -788,6 +798,62 @@ export function describeVersionUnsupported(result: unknown, requestedVersion: st
   return `VERSION_UNSUPPORTED: ${requestedText}${supportedText}`;
 }
 
+/** @internal Native storyboard gates require successful capability evidence. */
+export async function getOrDiscoverStoryboardProfile(
+  client: TestClient,
+  options: TestOptions,
+  schemaAdcpVersion?: string
+): ReturnType<typeof discoverAgentProfile> {
+  const result = await getOrDiscoverProfile(client, options, schemaAdcpVersion);
+  const failure = describeProfileDiscoveryFailure(
+    result.profile,
+    options._requireValidCapabilityEvidence === true,
+    options._allowCapabilityDiagnostic === true
+  );
+  return failure ? { ...result, step: failure } : result;
+}
+
+/** @internal A failed probe is not evidence that an optional capability is absent. */
+export function describeProfileDiscoveryFailure(
+  profile: AgentProfile,
+  requireValidSchema = true,
+  allowCapabilityDiagnostic = false
+): TestStepResult | undefined {
+  if (testClientScope.getStore()?.authRejectedProfiles.has(profile)) return undefined;
+  const raw = profile.raw_capabilities;
+  if (
+    allowCapabilityDiagnostic &&
+    profile.tools.includes('get_adcp_capabilities') &&
+    profile.capabilities_failure?.task === 'get_adcp_capabilities' &&
+    !profile.capabilities_probe_error?.startsWith('VERSION_UNSUPPORTED:')
+  )
+    return undefined;
+  const schemaOnly = !profile.capabilities_probe_error && Boolean(profile.capabilities_schema_issues?.length);
+  const error =
+    profile.capabilities_probe_error ??
+    ((!schemaOnly || requireValidSchema) && profile.capabilities_failure?.passed === false
+      ? (profile.capabilities_failure.error ?? 'Capability discovery failed')
+      : undefined) ??
+    (requireValidSchema && profile.capabilities_schema_issues?.length
+      ? `get_adcp_capabilities response schema validation failed: ${profile.capabilities_schema_issues.map(issue => `${issue.pointer || '/'} ${issue.message}`).join('; ')}`
+      : undefined) ??
+    (raw !== undefined && (raw === null || typeof raw !== 'object' || Array.isArray(raw))
+      ? 'Supplied profile.raw_capabilities must be an object'
+      : undefined) ??
+    (isTerminalAdcpError(raw, 'get_adcp_capabilities')
+      ? 'Supplied capability evidence contains an AdCP error'
+      : undefined);
+  if (!error) return undefined;
+  return {
+    ...(redactDiscoveryEvidence(profile.capabilities_failure) as TestStepResult | undefined),
+    step: 'Discover agent capabilities',
+    task: profile.capabilities_failure?.task ?? 'get_adcp_capabilities',
+    passed: false,
+    duration_ms: profile.capabilities_failure?.duration_ms ?? 0,
+    error: (redactCredentialPatterns(error, false) as string).slice(0, 4096),
+  };
+}
+
 /**
  * Discover agent profile - what capabilities does this agent have?
  *
@@ -809,11 +875,12 @@ export async function discoverAgentProfile(
   const {
     result: agentInfo,
     step,
-    caughtError,
+    caughtError: infoError,
   } = await runStep('Discover agent capabilities', 'getAgentInfo', () =>
     raceWithSignal(client.getAgentInfo({ signal }), signal)
   );
 
+  let caughtError = infoError;
   const profile: AgentProfile = {
     name: agentInfo?.name || 'Unknown',
     tools: agentInfo?.tools?.map((t: { name: string }) => t.name) || [],
@@ -831,9 +898,41 @@ export async function discoverAgentProfile(
     );
   }
 
-  if (profile.tools.includes('get_adcp_capabilities')) {
+  if (step.passed && profile.tools.includes('get_adcp_capabilities')) {
+    const probeStart = Date.now();
+    step.request = {
+      transport: client.getAgent?.().protocol === 'a2a' ? 'a2a' : 'mcp',
+      operation: 'get_adcp_capabilities',
+      payload: {},
+    };
     try {
-      const caps = (await raceWithSignal(client.getAdcpCapabilities({}, undefined, { signal }), signal)) as TaskResult;
+      const caps = (await raceWithSignal(
+        client.getAdcpCapabilities({}, undefined, { signal }),
+        signal
+      )) as TaskResult & {
+        debug_logs?: DebugLogEntry[];
+        adcpError?: TestStepResult['adcp_error'];
+        errorInstance?: unknown;
+      };
+      if (caps.errorInstance instanceof NeedsAuthorizationError) caughtError = caps.errorInstance;
+      const observed = caps.debug_logs
+        ?.slice()
+        .reverse()
+        .find(
+          log =>
+            typeof log.message === 'string' &&
+            (log.message.startsWith('MCP: Tool get_adcp_capabilities response received') ||
+              log.message.startsWith('A2A: Response received')) &&
+            log.response !== undefined
+        )?.response;
+      if (observed !== undefined)
+        step.response_record = {
+          transport: step.request.transport,
+          payload: redactDiscoveryEvidence(observed),
+          duration_ms: Date.now() - probeStart,
+        };
+      const adcpError = caps.adcpError ?? caps.adcp_error;
+      if (adcpError) step.adcp_error = redactDiscoveryEvidence(adcpError) as NonNullable<TestStepResult['adcp_error']>;
       const versionUnsupported = describeVersionUnsupported(caps, testClientWireAdcpVersion(client, schemaAdcpVersion));
       if (versionUnsupported) {
         // Some transports return AdCP error envelopes as successful tool data.
@@ -843,6 +942,11 @@ export async function discoverAgentProfile(
         profile.capabilities_probe_error = versionUnsupported;
         step.passed = false;
         step.error = versionUnsupported;
+      } else if (
+        isTerminalAdcpError(caps.data, 'get_adcp_capabilities') ||
+        (!caps?.success && !looksLikeV3Capabilities(caps.data))
+      ) {
+        profile.capabilities_probe_error = caps.error ?? adcpError?.message ?? 'get_adcp_capabilities was rejected';
       } else if (caps?.data) {
         profile.raw_capabilities = caps.data;
         // Validate against the release the seller served (its echoed
@@ -868,33 +972,72 @@ export async function discoverAgentProfile(
         // discriminators to select the storyboards the seller claimed. Keep
         // parsing best-effort so the preflight notice augments downstream
         // failures instead of suppressing them.
-        const parsed = parseCapabilitiesResponse(caps.data);
-        profile.adcp_version = parsed.version;
-        profile.adcp_major_versions = parsed.majorVersions;
-        if (parsed.supportedVersions !== undefined) profile.adcp_supported_versions = parsed.supportedVersions;
-        if (parsed.buildVersion !== undefined) profile.adcp_build_version = parsed.buildVersion;
-        profile.supported_protocols = parsed.protocols;
-        profile.supports_governance = parsed.protocols.includes('governance');
-        profile.supports_si = parsed.protocols.includes('sponsored_intelligence');
-        const specialisms = (caps.data as { specialisms?: unknown }).specialisms;
-        if (Array.isArray(specialisms)) {
-          profile.specialisms = specialisms.filter((s): s is string => typeof s === 'string');
+        if (looksLikeV3Capabilities(caps.data)) {
+          const parsed = parseCapabilitiesResponse(caps.data);
+          profile.adcp_version = parsed.version;
+          profile.adcp_major_versions = parsed.majorVersions;
+          if (parsed.supportedVersions !== undefined) profile.adcp_supported_versions = parsed.supportedVersions;
+          if (parsed.buildVersion !== undefined) profile.adcp_build_version = parsed.buildVersion;
+          profile.supported_protocols = parsed.protocols;
+          profile.supports_governance = parsed.protocols.includes('governance');
+          profile.supports_si = parsed.protocols.includes('sponsored_intelligence');
+          const specialisms = (caps.data as { specialisms?: unknown }).specialisms;
+          if (Array.isArray(specialisms)) {
+            profile.specialisms = specialisms.filter((s): s is string => typeof s === 'string');
+          }
+          const libVersion = (caps.data as Record<string, unknown>).library_version;
+          if (typeof libVersion === 'string') profile.library_version = libVersion;
         }
-        const libVersion = (caps.data as Record<string, unknown>).library_version;
-        if (typeof libVersion === 'string') profile.library_version = libVersion;
       }
-      if (!versionUnsupported && (!caps?.success || !caps?.data) && !profile.capabilities_schema_issues?.length) {
+      if (
+        !versionUnsupported &&
+        (!caps?.success || !caps?.data) &&
+        !profile.capabilities_schema_issues?.length &&
+        !profile.capabilities_probe_error
+      ) {
         profile.capabilities_probe_error = caps?.error || 'get_adcp_capabilities returned no data';
       }
     } catch (err) {
       // Agent advertises the tool but the call failed. Don't silently downgrade —
       // record the failure so the compliance report shows why only universal ran.
+      caughtError = err;
       profile.capabilities_probe_error = (err as Error)?.message || String(err);
+      if (err instanceof ResponseSchemaValidationError) {
+        step.response_record = { transport: step.request.transport, payload: redactDiscoveryEvidence(err.data) };
+      }
+    } finally {
+      step.duration_ms += Date.now() - probeStart;
     }
   }
 
-  if (scopeKey === undefined || scopeKey === client.getCapabilityEvidenceScope().scopeKey) {
+  if (
+    caughtError instanceof NeedsAuthorizationError &&
+    typeof client.getAgent === 'function' &&
+    hasValidatedMcpAuthorizationRequirements(caughtError.requirements, client.getAgent().agent_uri)
+  ) {
+    step.authorization_required = redactDiscoveryEvidence(caughtError.requirements) as typeof caughtError.requirements;
+  }
+  const failure = describeProfileDiscoveryFailure(profile);
+  if (!step.passed || failure) {
+    const evidence = { ...step, ...(failure ?? {}), passed: false, duration_ms: step.duration_ms };
+    evidence.error = (redactCredentialPatterns(evidence.error ?? 'Agent discovery failed', false) as string).slice(
+      0,
+      4096
+    );
+    profile.capabilities_failure = evidence;
+  }
+  if (!step.passed) step.error = redactCredentialPatterns(step.error ?? 'Agent discovery failed', false) as string;
+  if (
+    !failure &&
+    step.passed &&
+    (scopeKey === undefined || scopeKey === client.getCapabilityEvidenceScope().scopeKey)
+  ) {
     seedTestClientSigningCapability(client, profile, schemaAdcpVersion);
+  }
+  if (step.passed && !failure) {
+    delete step.request;
+    delete step.response_record;
+    delete step.adcp_error;
   }
   return { profile, step, ...(caughtError !== undefined && { caughtError }) };
 }

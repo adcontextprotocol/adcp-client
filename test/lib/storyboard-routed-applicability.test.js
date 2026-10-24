@@ -58,9 +58,14 @@ async function startAgent(
         const data =
           name === 'get_adcp_capabilities'
             ? {
-                adcp: { major_versions: [3], supported_versions: ['3.1', '3.2'] },
-                supported_protocols: [],
+                supported_protocols: ['sponsored_intelligence'],
                 ...capabilities,
+                adcp: {
+                  major_versions: [3],
+                  supported_versions: ['3.1', '3.2'],
+                  idempotency: { supported: false },
+                  ...capabilities.adcp,
+                },
               }
             : name === 'get_signals'
               ? { signals: [] }
@@ -542,16 +547,23 @@ for (const adcpVersion of ['3.1.20', '3.1.23', ADCP_VERSION]) {
               [
                 [],
                 {
-                  account: { require_operator_auth: key === 'b' },
-                  request_signing: { supported: true },
+                  account: { supported_billing: ['operator'], require_operator_auth: key === 'b' },
+                  request_signing: { supported: true, covers_content_digest: 'required' },
                 },
               ],
             ])
           );
           const { result, calls } = await run(topology, sb, {
             adcpVersion,
-            _profile: { raw_capabilities: { account: { require_operator_auth: false } } },
+            _profile: {
+              raw_capabilities: { account: { supported_billing: ['operator'], require_operator_auth: false } },
+            },
           });
+          assert.deepEqual(
+            result.notices.filter(notice => notice.code === 'capabilities_response_schema_invalid'),
+            [],
+            JSON.stringify(result.notices)
+          );
           assert.deepEqual(sets(result), {
             selected: ['supported'],
             skipped: [['unsupported', 'not_applicable']],
@@ -634,8 +646,20 @@ for (const adcpVersion of ['3.1.20', '3.1.23', ADCP_VERSION]) {
       ];
       const { result, calls } = await run(
         {
-          a: [[], { account: { require_operator_auth: true }, request_signing: { supported: false } }],
-          b: [[], { account: { require_operator_auth: false }, request_signing: { supported: true } }],
+          a: [
+            [],
+            {
+              account: { supported_billing: ['operator'], require_operator_auth: true },
+              request_signing: { supported: false },
+            },
+          ],
+          b: [
+            [],
+            {
+              account: { supported_billing: ['operator'], require_operator_auth: false },
+              request_signing: { supported: true, covers_content_digest: 'required' },
+            },
+          ],
         },
         sb,
         { adcpVersion }
@@ -649,7 +673,9 @@ for (const adcpVersion of ['3.1.20', '3.1.23', ADCP_VERSION]) {
     });
 
     test('resilient broken routes remain failures through capability and tool-family gates', async () => {
-      const healthy = await startAgent([], { account: { require_operator_auth: false } });
+      const healthy = await startAgent([], {
+        account: { supported_billing: ['operator'], require_operator_auth: false },
+      });
       try {
         for (const scope of ['root', 'phase', 'family']) {
           const sb = storyboard([{ id: 'broken', task: 'get_signals', agent: 'broken' }], ['get_signals']);
@@ -803,8 +829,8 @@ for (const adcpVersion of ['3.1.20', '3.1.23', ADCP_VERSION]) {
     test('account capability and tool presence come from the same selected agent', async () => {
       const { result, calls } = await run(
         {
-          a: [[], { account: { require_operator_auth: false } }],
-          b: [[], { account: { require_operator_auth: true } }],
+          a: [[], { account: { supported_billing: ['operator'], require_operator_auth: false } }],
+          b: [[], { account: { supported_billing: ['operator'], require_operator_auth: true } }],
         },
         storyboard([
           { id: 'implicit_missing', task: 'sync_accounts', agent: 'a' },
@@ -829,7 +855,7 @@ test('routed option binding keeps tools, capabilities, auth and transport togeth
   const profile = {
     name: 'selected',
     tools: [{ name: 'get_products' }],
-    raw_capabilities: { account: { require_operator_auth: true } },
+    raw_capabilities: { account: { supported_billing: ['operator'], require_operator_auth: true } },
   };
   const entry = {
     url: 'https://selected.example/a2a',
@@ -1103,7 +1129,10 @@ test('phase-local repeated step IDs cannot share routed capability decisions', a
     },
   ];
   const { result, calls } = await run(
-    { a: [[], { request_signing: { supported: false } }], b: [[], { request_signing: { supported: true } }] },
+    {
+      a: [[], { request_signing: { supported: false } }],
+      b: [[], { request_signing: { supported: true, covers_content_digest: 'required' } }],
+    },
     sb
   );
   assert.deepEqual(sets(result), { selected: ['same'], skipped: [['same', 'not_applicable']], failed: [] });
@@ -1126,7 +1155,10 @@ test('runtime requirements remain enforced with an unresolved route', async () =
   sb.requires = ['webhook_receiver'];
   // A capability predicate defers the runtime gate until after discovery.
   sb.requires_capability = { path: 'request_signing.supported', equals: true };
-  const { result, calls } = await run({ a: [[], { request_signing: { supported: true } }] }, sb);
+  const { result, calls } = await run(
+    { a: [[], { request_signing: { supported: true, covers_content_digest: 'required' } }] },
+    sb
+  );
   assert.equal(result.phases[0].steps[0].skip.requirement, 'webhook_receiver');
   assert.deepEqual(sets(result), {
     selected: ['unroutable'],
@@ -1153,7 +1185,10 @@ test('implicit signing applicability preserves per-agent opt-in and requirement 
   ]);
   sb.id = 'signed_requests';
   const { result, calls } = await run(
-    { a: [[], { request_signing: { supported: false } }], b: [[], { request_signing: { supported: true } }] },
+    {
+      a: [[], { request_signing: { supported: false } }],
+      b: [[], { request_signing: { supported: true, covers_content_digest: 'required' } }],
+    },
     sb
   );
   assert.deepEqual(sets(result), { selected: ['signed'], skipped: [['unsigned', 'not_applicable']], failed: [] });
@@ -1273,7 +1308,10 @@ test('a legacy routed agent without capability discovery did not opt into signin
   const { result, calls } = await run(
     {
       legacy: [['get_signals'], null],
-      signed: [['get_signals'], { supported_protocols: ['signals'], request_signing: { supported: true } }],
+      signed: [
+        ['get_signals'],
+        { supported_protocols: ['signals'], request_signing: { supported: true, covers_content_digest: 'required' } },
+      ],
     },
     sb
   );
@@ -1445,7 +1483,10 @@ test('neutral routed stateful cascades survive explicit dependency hops without 
         steps: [{ id: 'read', title: 'Read', task: 'get_adcp_capabilities', agent: 'b' }],
       },
     ];
-    const { result, calls } = await run({ a: [[], { account: { require_operator_auth: false } }], b: [[], {}] }, sb);
+    const { result, calls } = await run(
+      { a: [[], { account: { supported_billing: ['operator'], require_operator_auth: false } }], b: [[], {}] },
+      sb
+    );
     for (const id of ['b', 'c', 'd']) {
       const row = result.phases.find(p => p.phase_id === id).steps[0];
       const executed = mode === 'independent' && id !== 'b';
@@ -1587,10 +1628,20 @@ test('selected capability skips retain output protection before OAuth absence ha
     sb.phases[0].requires_capability = { path: 'account.require_operator_auth', equals: true };
     const { result, calls } = await run(
       {
-        a: [[], { account: { require_operator_auth: eligible }, oauth: { supported: false } }],
+        a: [
+          [],
+          {
+            account: { supported_billing: ['operator'], require_operator_auth: eligible },
+            oauth: { supported: false },
+          },
+        ],
         b: [
           ['get_signals'],
-          { account: { require_operator_auth: true }, oauth: { supported: true }, supported_protocols: ['signals'] },
+          {
+            account: { supported_billing: ['operator'], require_operator_auth: true },
+            oauth: { supported: true },
+            supported_protocols: ['signals'],
+          },
           true,
         ],
       },
@@ -1658,8 +1709,15 @@ test('mixed skipped phases retain only known routed capability output gaps', asy
       ];
       const { result, calls } = await run(
         {
-          a: [[], { account: { require_operator_auth: eligible } }],
-          b: [['get_signals'], { account: { require_operator_auth: true }, supported_protocols: ['signals'] }, true],
+          a: [[], { account: { supported_billing: ['operator'], require_operator_auth: eligible } }],
+          b: [
+            ['get_signals'],
+            {
+              account: { supported_billing: ['operator'], require_operator_auth: true },
+              supported_protocols: ['signals'],
+            },
+            true,
+          ],
         },
         sb
       );
@@ -1741,7 +1799,7 @@ test('routed rate-limit targets respect known unavailable context after normaliz
       ];
       const { result, calls } = await run(
         {
-          a: [[], { account: { require_operator_auth: false } }],
+          a: [[], { account: { supported_billing: ['operator'], require_operator_auth: false } }],
           b: [mode === 'missing_target' ? [] : ['get_signals'], { supported_protocols: ['signals'] }, 'structured'],
         },
         sb,
@@ -1976,8 +2034,12 @@ test('mixed routed capability skips propagate unavailable outputs to dependent n
   );
   const { result, calls } = await run(
     {
-      a: [[], { account: { require_operator_auth: false } }],
-      b: [['get_signals'], { account: { require_operator_auth: true }, supported_protocols: ['signals'] }, true],
+      a: [[], { account: { supported_billing: ['operator'], require_operator_auth: false } }],
+      b: [
+        ['get_signals'],
+        { account: { supported_billing: ['operator'], require_operator_auth: true }, supported_protocols: ['signals'] },
+        true,
+      ],
     },
     sb
   );
@@ -2058,7 +2120,7 @@ test('routed probe isolation distinguishes credentials sharing the same URL', as
 
 test('routed JWKS purpose assertions use only their selected agent keys', async () => {
   async function agentWithKeys(purpose) {
-    const caps = { identity: {}, request_signing: { supported: true } };
+    const caps = { identity: {}, request_signing: { supported: true, covers_content_digest: 'required' } };
     const agent = await startAgent([], caps, false, [], 200, req => {
       const origin = `http://${req.headers.host}`;
       return req.url.includes('brand.json')
@@ -2122,11 +2184,11 @@ test('a successful alternate producer rescues a capability-skipped context outpu
   sb.phases[0].requires_capability = { path: 'account.require_operator_auth', equals: true };
   const { result, calls } = await run(
     {
-      a: [[], { account: { require_operator_auth: false } }],
+      a: [[], { account: { supported_billing: ['operator'], require_operator_auth: false } }],
       b: [
         ['get_signals'],
         {
-          account: { require_operator_auth: true },
+          account: { supported_billing: ['operator'], require_operator_auth: true },
           supported_protocols: ['signals'],
           identity: { brand_json_url: 'https://brand.example.test/brand.json' },
         },
@@ -2192,11 +2254,11 @@ test('stateful routed capability cascades retain neutral origin, rescue, and rea
     });
     const { result, calls } = await run(
       {
-        a: [[], { account: { require_operator_auth: false } }],
+        a: [[], { account: { supported_billing: ['operator'], require_operator_auth: false } }],
         b: [
           ['get_signals'],
           {
-            account: { require_operator_auth: true },
+            account: { supported_billing: ['operator'], require_operator_auth: true },
             supported_protocols: ['signals'],
             identity: { brand_json_url: 'https://brand.example.test/brand.json' },
           },
@@ -2242,7 +2304,10 @@ test('unrescued missing tools outrank deferred capability skips when both trigge
       steps: [{ id: 'downstream', title: 'Downstream', task: 'get_adcp_capabilities', agent: 'b', stateful: true }],
     });
     const { result } = await run(
-      { a: [[], { account: { require_operator_auth: false } }], b: [[], { account: { require_operator_auth: true } }] },
+      {
+        a: [[], { account: { supported_billing: ['operator'], require_operator_auth: false } }],
+        b: [[], { account: { supported_billing: ['operator'], require_operator_auth: true } }],
+      },
       sb
     );
     const downstream = result.phases.find(phase => phase.phase_id === 'dependent').steps[0];
@@ -2315,10 +2380,13 @@ test('hard state dependencies outrank capability-only dependencies in either dec
       ];
       const { result } = await run(
         {
-          a: [[], { account: { require_operator_auth: false } }],
+          a: [[], { account: { supported_billing: ['operator'], require_operator_auth: false } }],
           b: [
             kind === 'real_failure' ? ['get_signals'] : [],
-            { account: { require_operator_auth: true }, supported_protocols: ['signals'] },
+            {
+              account: { supported_billing: ['operator'], require_operator_auth: true },
+              supported_protocols: ['signals'],
+            },
             true,
           ],
         },
@@ -2333,8 +2401,8 @@ test('hard state dependencies outrank capability-only dependencies in either dec
         sb.phases.find(phase => phase.id === 'dependent').optional = true;
         const { result: optionalResult } = await run(
           {
-            a: [[], { account: { require_operator_auth: false } }],
-            b: [[], { account: { require_operator_auth: true } }],
+            a: [[], { account: { supported_billing: ['operator'], require_operator_auth: false } }],
+            b: [[], { account: { supported_billing: ['operator'], require_operator_auth: true } }],
           },
           sb
         );
@@ -2370,8 +2438,8 @@ test('ordinary not-applicable state outranks capability-only state in either ste
       });
       const { result, calls } = await run(
         {
-          a: [[], { account: { require_operator_auth: false } }],
-          b: [[], { account: { require_operator_auth: true } }],
+          a: [[], { account: { supported_billing: ['operator'], require_operator_auth: false } }],
+          b: [[], { account: { supported_billing: ['operator'], require_operator_auth: true } }],
         },
         sb
       );
@@ -2565,11 +2633,11 @@ test('mixed explicit inputs and request tokens preserve hard prerequisite preced
       ];
       const { result, calls } = await run(
         {
-          a: [[], { account: { require_operator_auth: false } }],
+          a: [[], { account: { supported_billing: ['operator'], require_operator_auth: false } }],
           b: [
             ['get_signals'],
             {
-              account: { require_operator_auth: true },
+              account: { supported_billing: ['operator'], require_operator_auth: true },
               supported_protocols: ['signals'],
               identity: { brand_json_url: 'https://brand.example.test/brand.json' },
             },
@@ -2732,11 +2800,11 @@ test('neutral stateful cascades cannot conceal hard declared input dependencies'
         }
         const { result, calls } = await run(
           {
-            a: [[], { account: { require_operator_auth: false } }],
+            a: [[], { account: { supported_billing: ['operator'], require_operator_auth: false } }],
             b: [
               ['get_signals'],
               {
-                account: { require_operator_auth: true },
+                account: { supported_billing: ['operator'], require_operator_auth: true },
                 supported_protocols: ['signals'],
                 identity: { brand_json_url: 'https://brand.example.test/brand.json' },
               },
@@ -2795,7 +2863,7 @@ test('intrinsic missing tools under a capability cascade retain local hard-state
       ];
       const { result } = await run(
         {
-          a: [[], { account: { require_operator_auth: false } }],
+          a: [[], { account: { supported_billing: ['operator'], require_operator_auth: false } }],
           b: [['get_signals', 'comply_test_controller'], { supported_protocols: ['signals'] }],
         },
         sb

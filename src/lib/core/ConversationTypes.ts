@@ -739,7 +739,8 @@ export interface TaskResultFailure<T> extends TaskResultBase<T> {
    * `IdempotencyExpiredError`. Lets callers write
    * `if (result.errorInstance instanceof IdempotencyConflictError)` instead of
    * switching on `adcpError.code` strings. Absent for codes without a typed
-   * mapping.
+   * mapping. Also preserves validated NeedsAuthorizationError metadata from
+   * MCP authentication challenges for interactive authorization flows.
    */
   errorInstance?: import('../errors').ADCPError;
   /** Correlation ID from the error response context, for tracing across agents */

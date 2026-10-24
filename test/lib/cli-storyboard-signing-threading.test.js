@@ -345,16 +345,86 @@ test('an assessment that excluded every vector exits nonzero and says why', asyn
   assert.doesNotMatch(softOutput, /Pass --soft-fail/, 'do not advise a flag the operator already passed');
 });
 
-test('a coverage-unavailable single step exits nonzero instead of reporting success', async () => {
+async function startA2aSigningDiscovery(t) {
+  const express = require('express');
+  const app = express();
+  app.use(express.json());
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  });
+  let capabilitiesServed = false;
+  app.get('/.well-known/agent.json', (_req, res) => {
+    // Capability discovery succeeds; a later card refresh cannot resolve
+    // the signing dispatch. This is a genuine transport coverage gap.
+    if (capabilitiesServed) return res.sendStatus(404);
+    return res.json({
+      name: 'Signing discovery',
+      description: 'Discovery for local or transport-excluded vectors',
+      url,
+      version: '1',
+      protocolVersion: '1.0.0',
+      supportedInterfaces: [{ url, protocolBinding: 'JSONRPC', protocolVersion: '1.0', tenant: '' }],
+      defaultInputModes: ['application/json'],
+      defaultOutputModes: ['application/json'],
+      capabilities: { streaming: false, pushNotifications: false },
+      skills: [{ id: 'get_adcp_capabilities', name: 'get_adcp_capabilities', description: 'caps', tags: ['adcp'] }],
+    });
+  });
+  app.post('/', (req, res) => {
+    capabilitiesServed = true;
+    assert.equal(req.body.method, 'SendMessage');
+    res.json({
+      jsonrpc: '2.0',
+      id: req.body.id,
+      result: {
+        task: {
+          id: 'caps-task',
+          contextId: 'caps-context',
+          status: { state: 'TASK_STATE_COMPLETED' },
+          artifacts: [
+            {
+              artifactId: 'caps',
+              parts: [
+                {
+                  data: {
+                    adcp: {
+                      major_versions: [3],
+                      supported_versions: ['3.1', '3.2'],
+                      idempotency: { supported: true, replay_ttl_seconds: 86400 },
+                    },
+                    supported_protocols: ['media_buy'],
+                    request_signing: {
+                      supported: true,
+                      covers_content_digest: 'required',
+                      required_for: ['create_media_buy'],
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+  });
+  return url;
+}
+
+test('a coverage-unavailable single step exits nonzero instead of reporting success', async t => {
   // `adcp storyboard step` maps the step's `passed` flag to the exit code,
   // and a skipped step is `passed: true` — so before adcp-client#2954 an
   // ungradable signing vector exited 0 and `… && echo ok` printed ok for a
-  // vector nothing verified. The probe self-skips before any network work,
-  // so this needs no live agent.
+  // vector nothing verified. Discovery succeeds before transport coverage
+  // is evaluated; no signing vector reaches the discovery-only agent.
   const result = await runCliAsync([
     'storyboard',
     'step',
-    'https://agent.invalid/a2a',
+    await startA2aSigningDiscovery(t),
+    '--allow-http',
     'signed_requests',
     '--compliance-version',
     LEGACY_SIGNING_VERSION,
@@ -369,7 +439,7 @@ test('a coverage-unavailable single step exits nonzero instead of reporting succ
   assert.match(result.stdout, /Remedy: verify the A2A SDK peer is installed/);
 });
 
-test('--soft-fail turns the single-step coverage gap into exit 0, as the help promises', async () => {
+test('--soft-fail turns the single-step coverage gap into exit 0, as the help promises', async t => {
   // The help block and the guide both offer `--soft-fail` as the opt-out for
   // the exit-code change; `storyboard step` did not implement it, so the one
   // command whose exit newly changed had a documented escape hatch that was
@@ -377,7 +447,8 @@ test('--soft-fail turns the single-step coverage gap into exit 0, as the help pr
   const result = await runCliAsync([
     'storyboard',
     'step',
-    'https://agent.invalid/a2a',
+    await startA2aSigningDiscovery(t),
+    '--allow-http',
     'signed_requests',
     '--compliance-version',
     LEGACY_SIGNING_VERSION,
@@ -392,14 +463,15 @@ test('--soft-fail turns the single-step coverage gap into exit 0, as the help pr
   assert.match(result.stderr, /--soft-fail set: exiting 0/);
 });
 
-test('an in-library vector still exits 0 on the same A2A run — only real gaps fail', async () => {
+test('an in-library vector still exits 0 on the same A2A run — only real gaps fail', async t => {
   // The exit rule must not turn every A2A signing step nonzero: vector 025
   // is decided against the SDK verifier with no wire exchange, so it grades
   // normally and the command reports success.
   const result = await runCliAsync([
     'storyboard',
     'step',
-    'https://agent.invalid/a2a',
+    await startA2aSigningDiscovery(t),
+    '--allow-http',
     'signed_requests',
     '--compliance-version',
     LEGACY_SIGNING_VERSION,

@@ -200,11 +200,11 @@ async function startAgent(name) {
       return okTool(res, rpc.id, {
         adcp: {
           major_versions: [3],
-          supported_versions: [ADCP_VERSION],
+          supported_versions: [ADCP_VERSION.split('.').slice(0, 2).join('.')],
           build_version: ADCP_VERSION,
           idempotency: { supported: false },
         },
-        supported_protocols: [],
+        supported_protocols: ['media_buy'],
         specialisms: [],
       });
     }

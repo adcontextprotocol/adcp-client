@@ -97,7 +97,8 @@ async function startRoutedAgent(tool, supportedProtocol) {
     const structuredContent =
       toolName === 'get_adcp_capabilities'
         ? {
-            adcp: { major_versions: [3], supported_versions: ['3.2'] },
+            status: 'completed',
+            adcp: { major_versions: [3], supported_versions: ['3.2'], idempotency: { supported: false } },
             supported_protocols: [supportedProtocol],
           }
         : { ok: true };

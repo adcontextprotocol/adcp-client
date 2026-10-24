@@ -39,9 +39,9 @@ import {
 } from './fixture-resolution';
 import { readCollectionWitness, type CollectionSelectionWitness } from './collection-selection';
 import { resolvePath } from './path';
-import { redactSecrets, SECRET_KEY_PATTERN } from '../../utils/redact-secrets';
+import { redactSecrets } from '../../utils/redact-secrets';
+import { redactDiscoveryEvidence as redactDiscoveryResponse } from '../discovery-evidence';
 import { redactCredentialPatterns } from '../../utils/redact-credential-patterns';
-import { MAX_JSON_DEPTH } from '../../utils/json-depth';
 import type {
   ContextProvenanceEntry,
   FixtureResolutionAttempt,
@@ -310,6 +310,8 @@ export interface ControllerSeedingResult {
   seedUnsupported?: boolean;
   /** At least one declared strategy ladder exhausted without a binding. */
   fixtureUnsatisfied?: boolean;
+  /** Runner exhausted its bounded attempts to enumerate a stable feed. */
+  fixtureUnavailable?: string;
   /** Run-scoped bindings pinned for all subsequent storyboard phases. */
   bindings?: FixtureBindingRegistry;
   /** Machine-readable AdCP 3.2 resolution evidence. */
@@ -577,7 +579,7 @@ interface DiscoveryExchange {
 
 interface DiscoveryCatalog {
   products: Array<Record<string, unknown>>;
-  evidence: { page_count: number; product_count: number; cursors: string[] };
+  evidence: { page_count: number; product_count: number; cursors: string[]; restart_count?: number };
   /** Per-page exchanges, in request order. */
   exchanges: DiscoveryExchange[];
   /** product_id → index into `exchanges`, so a failure cites ITS page. */
@@ -614,6 +616,7 @@ type DiscoveryCatalogResult =
         extraction?: RunnerExtractionRecord;
       };
       /** AJV detail when the page parsed but failed its response schema. */
+      unavailable?: true;
       schemaFailure?: { detail: string; schema_id: string; schema_url: string };
     };
 
@@ -764,6 +767,8 @@ async function runDeclaredFixtureResolution(
   let passedCount = 0;
   let failedCount = 0;
   let fixtureUnsatisfied = false;
+  let fixtureUnavailable: string | undefined;
+  const unavailableResolutions = new Set<string>();
 
   for (const call of orderedCalls) {
     const spec = resolutionSpecForCall(call, specByKey);
@@ -821,7 +826,16 @@ async function runDeclaredFixtureResolution(
           ? `parent product handle "${spec.parentProductHandle}" failed resolution`
           : `parent product handle "${spec.parentProductHandle}" is unavailable`;
       attempts.push({ strategy, disposition: parentStatus === 'failed' ? 'failed' : 'unavailable', detail });
-      if (parentStatus === 'failed') failure = detail;
+      if (parentStatus === 'failed') {
+        failure = detail;
+        if (
+          spec.parentProductHandle &&
+          unavailableResolutions.has(
+            resolutionSpecKey({ ...spec, entityType: 'product', handle: spec.parentProductHandle })
+          )
+        )
+          unavailableResolutions.add(resolutionSpecKey(spec));
+      }
     }
 
     for (const strategy of parentUnavailable ? [] : spec.strategies) {
@@ -949,9 +963,18 @@ async function runDeclaredFixtureResolution(
         const discovered = await catalog();
         if (!discovered.ok) {
           failure = discovered.error;
+          if (discovered.unavailable) {
+            fixtureUnavailable = discovered.error;
+            unavailableResolutions.add(resolutionSpecKey(spec));
+          }
           discoveryFailureEvidence = discovered.exchange;
           discoverySchemaFailure = discovered.schemaFailure;
-          attempts.push({ strategy, disposition: 'failed', detail: failure, response: discovered.evidence });
+          attempts.push({
+            strategy,
+            disposition: discovered.unavailable ? 'unavailable' : 'failed',
+            detail: failure,
+            response: discovered.evidence,
+          });
           break;
         }
         const selected = selectDiscoveredFixture(
@@ -1028,6 +1051,9 @@ async function runDeclaredFixtureResolution(
       requirements: spec.clauses,
       strategies_attempted: attempts,
       status,
+      ...(unavailableResolutions.has(resolutionSpecKey(spec)) && {
+        unavailable_reason: 'runner_budget_exhausted' as const,
+      }),
       ...(chosenStrategy && { strategy: chosenStrategy }),
       ...(boundIds && { seller_ids: boundIds }),
     };
@@ -1051,7 +1077,12 @@ async function runDeclaredFixtureResolution(
           (chosenStrategy ?? attemptedStrategy ?? spec.strategies[0]) === 'discover'
             ? 'get_products'
             : 'comply_test_controller',
-        passed: status !== 'failed',
+        passed: status !== 'failed' || unavailableResolutions.has(resolutionSpecKey(spec)),
+        ...(unavailableResolutions.has(resolutionSpecKey(spec)) && {
+          skipped: true,
+          skip_reason: 'not_applicable' as const,
+          skip: { reason: 'not_applicable' as const, detail: fixtureUnavailable ?? failure! },
+        }),
         duration_ms: Date.now() - stepStart,
         // An unbuildable capture gets a `check` discriminator like the other
         // two failure classes, so a report renderer keys on `check` for all
@@ -1111,9 +1142,9 @@ async function runDeclaredFixtureResolution(
         ...(failure && { error: failure }),
       });
     }
-    if (status === 'failed') failedCount++;
+    if (status === 'failed' && !unavailableResolutions.has(resolutionSpecKey(spec))) failedCount++;
     else if (status === 'unsatisfied') fixtureUnsatisfied = true;
-    else passedCount++;
+    else if (status === 'resolved') passedCount++;
   }
 
   const allPassed = failedCount === 0;
@@ -1153,6 +1184,7 @@ async function runDeclaredFixtureResolution(
     passedCount,
     failedCount,
     fixtureUnsatisfied,
+    ...(fixtureUnavailable && { fixtureUnavailable }),
     bindings,
     resolutionRecords: records,
     ...(preparedCaptures && { preparedCaptures }),
@@ -1437,26 +1469,6 @@ function resolveDiscoverySchemaIdentity(adcpVersion: string): { schema_id: strin
   return { schema_id: schemaId, schema_url: `https://adcontextprotocol.org${schemaId}` };
 }
 
-/** Preserve protocol evidence while also scrubbing credentials inside text payloads. */
-function redactDiscoveryResponse(value: unknown): unknown {
-  const visit = (node: unknown, depth: number): unknown => {
-    if (depth > MAX_JSON_DEPTH) return '[redacted]';
-    if (typeof node === 'string') {
-      return (redactCredentialPatterns(node, false) as string).replaceAll('<redacted>', '[redacted]');
-    }
-    if (Array.isArray(node)) return node.map(child => visit(child, depth + 1));
-    if (node && typeof node === 'object') {
-      return Object.fromEntries(Object.entries(node).map(([key, child]) => [key, visit(child, depth + 1)]));
-    }
-    return node;
-  };
-  const pattern = new RegExp(
-    `${SECRET_KEY_PATTERN.source}|^(private[_-]?key|signing[_-]?key|signature|auth[_-]?token|jwt)$`,
-    'i'
-  );
-  return visit(redactSecrets(value, pattern), 0);
-}
-
 /**
  * AJV detail for a discovery page that does not satisfy the `get_products`
  * response schema, or `undefined` when it does.
@@ -1506,19 +1518,31 @@ async function discoverProductCatalog(
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
   let pageCount = 0;
+  let restarts = 0;
+  let feedIdentity: string | undefined;
+  const query = structuredClone({
+    buying_mode: 'wholesale',
+    brand,
+    account,
+    ext: { adcp: { creative_wire: 'canonical' } },
+  });
+  let lastExchange: Extract<DiscoveryCatalogResult, { ok: false }>['exchange'];
   const exchanges: DiscoveryExchange[] = [];
   const pageOfProduct = new Map<string, number>();
-  do {
+  while (true) {
+    options.signal?.throwIfAborted();
     if (pageCount >= 1_000) {
-      return { ok: false, error: 'fixture discovery pagination exceeded the 1,000-page safety limit' };
+      return {
+        ok: false,
+        unavailable: true,
+        evidence: { page_count: pageCount, restart_count: restarts },
+        ...(lastExchange && { exchange: lastExchange }),
+        error: 'fixture discovery pagination exceeded the runner’s 1,000-page safety limit',
+      };
     }
     const request: Record<string, unknown> = {
-      buying_mode: 'wholesale',
-      brand,
-      account,
+      ...structuredClone(query),
       pagination: { max_results: 100, ...(cursor && { cursor }) },
-      // Fixture match declarations target the canonical product shape.
-      ext: { adcp: { creative_wire: 'canonical' } },
     };
     let result;
     let observedResponse: RawHttpCapture | undefined;
@@ -1615,6 +1639,7 @@ async function discoverProductCatalog(
         duration_ms: Date.now() - pageStart,
       },
     };
+    lastExchange = failedExchange;
     // Recorded for EVERY page, success or not: a schema-invalid or rejected
     // page is exactly the exchange a reader needs to see.
     // The request is tiny and always retained. The RESPONSE is a second
@@ -1687,6 +1712,50 @@ async function discoverProductCatalog(
         exchange: failedExchange,
       };
     }
+    if (result.data.unchanged === true) {
+      return {
+        ok: false,
+        error: 'fixture discovery received unchanged without sending a conditional feed token',
+        exchange: failedExchange,
+      };
+    }
+    const pagination = isPlainRecord(result.data.pagination) ? result.data.pagination : undefined;
+    if (pagination?.has_more === true && (typeof pagination.cursor !== 'string' || pagination.cursor.length === 0)) {
+      return {
+        ok: false,
+        error: 'fixture discovery pagination is broken: has_more=true without cursor',
+        exchange: failedExchange,
+      };
+    }
+    // Versions are opaque, scope-keyed identities. Absence is part of the
+    // identity too. A changed page belongs to a different enumeration.
+    const identity = JSON.stringify([
+      result.data.cache_scope,
+      result.data.wholesale_feed_version,
+      result.data.pricing_version,
+    ]);
+    if (feedIdentity !== undefined && identity !== feedIdentity) {
+      if (restarts >= 3) {
+        return {
+          ok: false,
+          unavailable: true,
+          error: 'fixture discovery could not enumerate a stable feed within the runner’s 3-restart budget',
+          evidence: { page_count: pageCount, restart_count: restarts },
+          exchange: failedExchange,
+        };
+      }
+      restarts++;
+      products.length = 0;
+      seenProductIds.clear();
+      cursors.length = 0;
+      seenCursors.clear();
+      exchanges.length = 0;
+      pageOfProduct.clear();
+      cursor = undefined;
+      feedIdentity = undefined;
+      continue;
+    }
+    feedIdentity = identity;
     const pageProducts = result.data.products;
     if (pageProducts !== undefined && !Array.isArray(pageProducts)) {
       return {
@@ -1732,15 +1801,8 @@ async function discoverProductCatalog(
         };
       }
     }
-    const pagination = isPlainRecord(result.data.pagination) ? result.data.pagination : undefined;
     if (pagination?.has_more === true) {
-      const next = pagination.cursor;
-      if (typeof next !== 'string' || next.length === 0) {
-        return {
-          ...{ ok: false, error: 'fixture discovery pagination is broken: has_more=true without cursor' },
-          exchange: failedExchange,
-        };
-      }
+      const next = pagination.cursor as string;
       if (seenCursors.has(next)) {
         return {
           ...{ ok: false, error: `fixture discovery pagination is broken: repeated cursor "${next}"` },
@@ -1753,12 +1815,18 @@ async function discoverProductCatalog(
     } else {
       cursor = undefined;
     }
-  } while (cursor);
+    if (!cursor) break;
+  }
   return {
     ok: true,
     catalog: {
       products,
-      evidence: { page_count: pageCount, product_count: products.length, cursors },
+      evidence: {
+        page_count: pageCount,
+        product_count: products.length,
+        cursors,
+        ...(restarts > 0 && { restart_count: restarts }),
+      },
       exchanges,
       pageOfProduct,
     },

@@ -710,7 +710,10 @@ describe('comply() discovery reuse', () => {
         assert.ok(first.profile.capabilities_probe_error);
         assert.equal(repeated.profile, first.profile);
         assert.equal(agent.count('get_adcp_capabilities'), 1);
-        await getOrDiscoverProfile(client, { _discoveryPass: {} });
+        agent.state.failCapabilities = false;
+        const recovered = await getOrDiscoverProfile(client, { _discoveryPass: {} });
+        assert.equal(recovered.profile.capabilities_probe_error, undefined);
+        assert.equal(recovered.profile.capabilities_failure, undefined);
         assert.equal(agent.count('get_adcp_capabilities'), 2);
       })
     );

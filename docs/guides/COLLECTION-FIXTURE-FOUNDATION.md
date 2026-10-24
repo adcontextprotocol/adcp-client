@@ -69,6 +69,24 @@ schema-validated catalog is enumerated first. Discovery, schema, transport and
 pagination errors stay terminal; a complete no-match is still an explicit
 `fixture_unsatisfied` coverage gap, never a pass.
 
+Paginated discovery uses one stable `(cache_scope, wholesale_feed_version,
+pricing_version)` identity. Tokens are opaque, and appearing or disappearing
+also changes the identity. A change discards the partial catalog and restarts
+without a cursor; fixture selection and capture publication wait for a complete
+walk. The runner permits three restarts within its cumulative 1,000-page limit
+and honors the caller's abort signal. Continuous churn exhausts runner coverage:
+full and standalone execution skip with the bounded-observation `not_applicable` reason, while preparation
+returns `status: 'unsupported', reason: 'not_applicable'`. This reports neither
+seller nonconformance nor a complete no-match. Producer evidence remains available. Resolution records carry `unavailable_reason: runner_budget_exhausted`; their failed resolution status is not a seller verdict.
+
+Capability discovery errors also precede optional capability gates. Native full
+and standalone execution retain a `discovery_failed` result with the actual
+capability probe and redacted response evidence when available. Validated MCP
+OAuth requirements appear on the failed step's `authorization_required` for
+interactive prompting. Successful discovery that omits an optional capability
+still skips normally. Schema-invalid success bodies remain available to ungated diagnostic storyboards with their original schema notices; capability gates require valid evidence. Explicitly supplied profiles remain the caller's trusted
+scope boundary; failed or malformed evidence cannot establish capability absence.
+
 ### Independent scopes
 
 `minimum_pairs: 1` and `minimum_pairs: 2` qualify **independently**. A seller

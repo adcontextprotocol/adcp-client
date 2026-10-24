@@ -15,7 +15,8 @@ import { prepareCreativeBuildProbe } from './creative-build-probe';
 import {
   createTestClient,
   getOrCreateClientResolution,
-  getOrDiscoverProfile,
+  getOrDiscoverStoryboardProfile,
+  describeProfileDiscoveryFailure,
   hasTestClientScope,
   runStep,
   type TestClient,
@@ -361,6 +362,19 @@ export function applyStoryboardVersionOptions(
 function applyReusableProfileOptions(options: StoryboardRunOptions): StoryboardRunOptions {
   const profile = options.profile ?? options._profile;
   if (!profile) return options;
+  if (
+    options.agents === undefined &&
+    options.profile !== undefined &&
+    (typeof profile !== 'object' ||
+      !Array.isArray(profile.tools) ||
+      profile.tools.some(
+        tool =>
+          typeof tool !== 'string' &&
+          !(tool && typeof tool === 'object' && typeof (tool as { name?: unknown }).name === 'string')
+      ))
+  ) {
+    throw new Error('Storyboard profile must contain an array of tool names.');
+  }
   const profileTools = options.agents === undefined ? (normalizeAgentToolNames(profile.tools) ?? []) : undefined;
 
   return {
@@ -715,6 +729,29 @@ function evaluateRequiresCapabilityGate(
     return evaluateCapabilityPredicate(predicate, undefined);
   }
   return null;
+}
+
+/** @internal Preserve first-class schema/protocol diagnostics without treating failed evidence as absence. */
+export function storyboardAllowsCapabilityDiagnostic(storyboard: Storyboard): boolean {
+  const steps = storyboard.phases.flatMap(phase => phase.steps);
+  return (
+    !storyboardRequiresCapabilityEvidence(storyboard) &&
+    steps.length > 0 &&
+    steps.every(step => step.task === 'get_adcp_capabilities')
+  );
+}
+
+/** @internal Capability-gated execution cannot infer absence from malformed evidence. */
+export function storyboardRequiresCapabilityEvidence(storyboard: Storyboard): boolean {
+  return Boolean(
+    storyboard.requires_capability ||
+    storyboard.requires_all_capabilities?.length ||
+    storyboard.phases.some(phase => phase.requires_capability || phaseContainsOauthMetadataProbe(phase)) ||
+    storyboard.requires?.includes('request_signer') ||
+    detectImplicitRequires(storyboard).includes('request_signer') ||
+    storyboard.phases.some(phase => phase.steps.some(step => step.task === 'sync_accounts')) ||
+    storyboard.creative_build_probe
+  );
 }
 
 /**
@@ -1577,7 +1614,11 @@ export async function runStoryboard(
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardResult> {
   assertNoPreparationAuthorizer(options);
-  options = applyReusableProfileOptions(options);
+  options = {
+    ...applyReusableProfileOptions(options),
+    _requireValidCapabilityEvidence: storyboardRequiresCapabilityEvidence(storyboard),
+    _allowCapabilityDiagnostic: storyboardAllowsCapabilityDiagnostic(storyboard),
+  };
   if (hasTestClientScope() && !options._discoveryPass) options = { ...options, _discoveryPass: {} };
   return withPropertyListCredentialRedaction(() =>
     withMCPConnectionScope(
@@ -1662,7 +1703,14 @@ export async function runStoryboard(
               typeof agentUrlOrUrls === 'string' ? agentUrlOrUrls : agentUrlOrUrls[0]!,
               options
             );
-            const discovered = await getOrDiscoverProfile(resolution.client, options);
+            const discovered = await getOrDiscoverStoryboardProfile(resolution.client, options);
+            if (!discovered.step.passed)
+              return buildDiscoveryFailedResult(
+                resolveBindingAgentUrls(agentUrlOrUrls, options),
+                storyboard,
+                discovered.step,
+                discovered.profile
+              );
             options = {
               ...options,
               _profile: discovered.step.passed ? discovered.profile : undefined,
@@ -1709,6 +1757,17 @@ async function runStoryboardBody(
   const agentUrls = Array.isArray(agentUrlOrUrls) ? agentUrlOrUrls : [agentUrlOrUrls];
   if (!options.agents && agentUrls.length === 0) {
     throw new Error('runStoryboard: at least one agent URL required');
+  }
+
+  const suppliedDiscoveryFailure =
+    options._profile &&
+    describeProfileDiscoveryFailure(
+      options._profile,
+      options._requireValidCapabilityEvidence === true,
+      options._allowCapabilityDiagnostic === true
+    );
+  if (!options.agents && suppliedDiscoveryFailure) {
+    return buildDiscoveryFailedResult(agentUrls, storyboard, suppliedDiscoveryFailure, options._profile);
   }
 
   const isMultiInstance = agentUrls.length > 1;
@@ -2742,7 +2801,8 @@ export function signingCoverageUnverified(steps: readonly SigningCoverageStepVie
 export function buildDiscoveryFailedResult(
   agentUrls: string[],
   storyboard: Storyboard,
-  discoveryStep: TestStepResult
+  discoveryStep: TestStepResult,
+  profile?: AgentProfile
 ): StoryboardResult {
   const detail = discoveryStep.error ?? 'Discovery failed (no agent tools advertised).';
   const syntheticStep: StoryboardStepResult = {
@@ -2750,14 +2810,18 @@ export function buildDiscoveryFailedResult(
     step_id: 'discovery_failed',
     phase_id: 'discovery_failed',
     title: 'Storyboard failed: agent capability discovery did not succeed',
-    task: '',
+    task: discoveryStep.task ?? '',
     passed: false,
     skipped: false,
     duration_ms: discoveryStep.duration_ms,
     validations: [],
     context: {},
-    error: `Discovery failure: ${detail}. The runner refuses to proceed with empty agentTools — that mode produces silent "all clean" reports when the underlying transport / auth / network policy is broken. Fix the discovery error before re-running.`,
-    extraction: { path: 'none' },
+    error: `Discovery failure: ${detail}. The runner cannot evaluate storyboard applicability from failed discovery evidence. Fix the discovery error before re-running.`,
+    extraction: discoveryStep.extraction ?? { path: 'none' },
+    ...(discoveryStep.request && { request: discoveryStep.request }),
+    ...(discoveryStep.response_record && { response_record: discoveryStep.response_record }),
+    ...(discoveryStep.adcp_error && { adcp_error: discoveryStep.adcp_error }),
+    ...(discoveryStep.authorization_required && { authorization_required: discoveryStep.authorization_required }),
   };
   return {
     storyboard_id: storyboard.id,
@@ -2788,7 +2852,7 @@ export function buildDiscoveryFailedResult(
       strict_only_failures: 0,
       lenient_also_failed: 0,
     },
-    notices: [],
+    notices: collectCapabilityNotices(storyboard, profile),
   };
 }
 
@@ -3229,7 +3293,11 @@ export async function prepareStoryboardFixtures(
   storyboard: Storyboard,
   options: PrepareStoryboardFixturesOptions = {}
 ): Promise<PreparedStoryboardFixtures> {
-  options = applyReusableProfileOptions(options);
+  options = {
+    ...applyReusableProfileOptions(options),
+    _requireValidCapabilityEvidence: storyboardRequiresCapabilityEvidence(storyboard),
+    _allowCapabilityDiagnostic: storyboardAllowsCapabilityDiagnostic(storyboard),
+  };
   return withPropertyListCredentialRedaction(() =>
     withMCPConnectionScope(
       async () => {
@@ -3486,13 +3554,31 @@ async function prepareStoryboardFixturesBody(
   options = preparationOptions;
   try {
     let profile = options._profile;
+    const suppliedFailure =
+      profile &&
+      describeProfileDiscoveryFailure(
+        profile,
+        options._requireValidCapabilityEvidence === true,
+        options._allowCapabilityDiagnostic === true
+      );
+    if (suppliedFailure) {
+      const failed = buildDiscoveryFailedResult(agentUrls, storyboard, suppliedFailure, profile);
+      return await finishPreparation(
+        { phase: failed.phases[0]!, allPassed: false, passedCount: 0, failedCount: 1 },
+        { status: 'failed', detail: suppliedFailure.error ?? 'agent discovery failed' }
+      );
+    }
     if (!profile && !resolution.reusedShared) {
-      const discovered = await getOrDiscoverProfile(client, options);
+      const discovered = await getOrDiscoverStoryboardProfile(client, options);
       if (discovered.step.passed === false) {
-        return await finishPreparation(undefined, {
-          status: 'failed',
-          detail: discovered.step.error ?? 'agent discovery failed before fixture preparation',
-        });
+        const failed = buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step, discovered.profile);
+        return await finishPreparation(
+          { phase: failed.phases[0]!, allPassed: false, passedCount: 0, failedCount: 1 },
+          {
+            status: 'failed',
+            detail: discovered.step.error ?? 'agent discovery failed before fixture preparation',
+          }
+        );
       }
       profile = discovered.profile;
     }
@@ -3511,19 +3597,23 @@ async function prepareStoryboardFixturesBody(
       // synthesized success that implies a graph was pinned.
       return await finishPreparation(undefined, { status: 'resolved' });
     }
-    const disposition: PreparedFixturesDisposition = seeding.missingController
-      ? { status: 'unsupported', detail: 'agent does not advertise comply_test_controller' }
-      : seeding.seedUnsupported
-        ? { status: 'unsupported', detail: 'agent did not advertise a required seed_* scenario' }
-        : seeding.failedCount > 0
-          ? {
-              status: 'failed',
-              detail:
-                seeding.phase.steps.find(step => step.error)?.error ?? 'fixture resolution failed during preparation',
-            }
-          : seeding.fixtureUnsatisfied === true
-            ? { status: 'unsatisfied', detail: describeUnsatisfiedFixtures(seeding.resolutionRecords) }
-            : { status: 'resolved' };
+    const disposition: PreparedFixturesDisposition =
+      seeding.fixtureUnavailable && seeding.failedCount === 0
+        ? { status: 'unsupported', reason: 'not_applicable', detail: seeding.fixtureUnavailable }
+        : seeding.missingController
+          ? { status: 'unsupported', detail: 'agent does not advertise comply_test_controller' }
+          : seeding.seedUnsupported
+            ? { status: 'unsupported', detail: 'agent did not advertise a required seed_* scenario' }
+            : seeding.failedCount > 0
+              ? {
+                  status: 'failed',
+                  detail:
+                    seeding.phase.steps.find(step => !step.passed && !step.skipped && step.error)?.error ??
+                    'fixture resolution failed during preparation',
+                }
+              : seeding.fixtureUnsatisfied === true
+                ? { status: 'unsatisfied', detail: describeUnsatisfiedFixtures(seeding.resolutionRecords) }
+                : { status: 'resolved' };
     return await finishPreparation(seeding, disposition);
   } finally {
     if (!callerOwnsClients) await closeScopedConnections(options.protocol);
@@ -4005,7 +4095,7 @@ async function executeStoryboardPass(
     // is sufficient. For multi-instance runs, skipping N-1 redundant
     // get_agent_info calls also keeps CI output clean.
     if (hasTestClientScope() || !callerOwnsClients) {
-      const discovered = await getOrDiscoverProfile(clients[0]!, options);
+      const discovered = await getOrDiscoverStoryboardProfile(clients[0]!, options);
       // Discovery failure must surface as a HARD STORYBOARD FAILURE, not a
       // silent empty `agentTools: []` that lets every step skip with
       // `missing_tool`. The latter mode produces "X/X clean" summaries with
@@ -4014,7 +4104,7 @@ async function executeStoryboardPass(
       // See: https://github.com/adcontextprotocol/adcp-client/issues/...
       if (discovered.step.passed === false) {
         if (!callerOwnsClients) await closeScopedConnections(options.protocol);
-        return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step);
+        return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step, discovered.profile);
       }
       profile = discovered.profile;
       // Populate agentTools and _profile from discovered profile if not already set.
@@ -4037,9 +4127,9 @@ async function executeStoryboardPass(
         !options.agentTools &&
         typeof (clients[0] as unknown as { getAgentInfo?: unknown })?.getAgentInfo === 'function'
       ) {
-        const discovered = await getOrDiscoverProfile(clients[0]!, options);
+        const discovered = await getOrDiscoverStoryboardProfile(clients[0]!, options);
         if (discovered.step.passed === false) {
-          return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step);
+          return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step, discovered.profile);
         }
         profile = discovered.profile;
         const discoveredTools = normalizeAgentToolNames(profile?.tools);
@@ -4050,6 +4140,18 @@ async function executeStoryboardPass(
         }
       }
     }
+  }
+
+  const reusedDiscoveryFailure =
+    profile &&
+    describeProfileDiscoveryFailure(
+      profile,
+      options._requireValidCapabilityEvidence === true,
+      options._allowCapabilityDiagnostic === true
+    );
+  if (reusedDiscoveryFailure) {
+    if (!callerOwnsClients) await closeScopedConnections(options.protocol);
+    return buildDiscoveryFailedResult(agentUrls, storyboard, reusedDiscoveryFailure, profile);
   }
 
   // A pinned graph is authoritative: resetting and re-seeding would discard
@@ -4973,6 +5075,16 @@ async function executeStoryboardPass(
         // The prepared state carries the gap; the result must not drop it.
         fixtureCoverageGap = prepared.state.coverageGaps[0] ?? fixtureCoverageGap;
       }
+      if (disposition.status === 'unsupported' && disposition.reason === 'not_applicable') {
+        if (!callerOwnsClients) await closeScopedConnections(options.protocol);
+        return buildFixtureDiscoveryUnavailableResult(
+          agentUrls,
+          storyboard,
+          disposition.detail,
+          prepared.state.phase,
+          prepared.state.resolutions
+        );
+      }
       if (disposition.status === 'unsupported') seedingMissingController = true;
     }
   }
@@ -5047,6 +5159,17 @@ async function executeStoryboardPass(
       });
     }
     if (seeding) {
+      if (seeding.fixtureUnavailable && seeding.failedCount === 0) {
+        if (webhookReceiver) await webhookReceiver.close();
+        if (!callerOwnsClients) await closeScopedConnections(options.protocol);
+        return buildFixtureDiscoveryUnavailableResult(
+          agentUrls,
+          storyboard,
+          seeding.fixtureUnavailable,
+          seeding.phase,
+          seeding.resolutionRecords
+        );
+      }
       const attach = preSeeded === undefined || preSeeded.attach;
       if (attach) {
         seedingPhaseResult = seeding.phase;
@@ -5057,7 +5180,12 @@ async function executeStoryboardPass(
         }
         passedCount += seeding.passedCount;
         failedCount += seeding.failedCount;
-        if (seeding.missingController || seeding.seedUnsupported || seeding.fixtureUnsatisfied) {
+        if (
+          seeding.missingController ||
+          seeding.seedUnsupported ||
+          seeding.fixtureUnsatisfied ||
+          seeding.fixtureUnavailable
+        ) {
           skippedCount += seeding.phase.steps.filter(step => step.skipped).length;
         }
       }
@@ -6648,10 +6776,10 @@ async function runMultiPass(
   const preSeedContext: StoryboardContext = createRunContext(storyboard, options).context;
   let preSeedProfile = options._profile;
   if (!preSeedProfile) {
-    const discovered = await getOrDiscoverProfile(preSeedClients[0]!, options);
+    const discovered = await getOrDiscoverStoryboardProfile(preSeedClients[0]!, options);
     if (discovered.step.passed === false) {
       await closeScopedConnections(options.protocol);
-      return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step);
+      return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step, discovered.profile);
     }
     preSeedProfile = discovered.profile;
   }
@@ -6743,6 +6871,17 @@ async function runMultiPass(
     allExecutablePhasesCapabilitySkipped(storyboard, phaseCapabilitySkipDetails)
       ? null
       : await runControllerSeeding(preSeedClients[0]!, storyboard, options, preSeedContext);
+
+  if (preSeededResult?.fixtureUnavailable && preSeededResult.failedCount === 0) {
+    await closeScopedConnections(options.protocol);
+    return buildFixtureDiscoveryUnavailableResult(
+      agentUrls,
+      storyboard,
+      preSeededResult.fixtureUnavailable,
+      preSeededResult.phase,
+      preSeededResult.resolutionRecords
+    );
+  }
 
   const passes: StoryboardPassResult[] = [];
   const passResults: StoryboardResult[] = [];
@@ -6996,7 +7135,11 @@ export async function runStoryboardStep(
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardStepResult> {
   assertNoPreparationAuthorizer(options);
-  options = applyReusableProfileOptions(options);
+  options = {
+    ...applyReusableProfileOptions(options),
+    _requireValidCapabilityEvidence: storyboardRequiresCapabilityEvidence(storyboard),
+    _allowCapabilityDiagnostic: storyboardAllowsCapabilityDiagnostic(storyboard),
+  };
   return withPropertyListCredentialRedaction(() =>
     withMCPConnectionScope(
       async () => {
@@ -7317,6 +7460,30 @@ function buildPreparationFailedRunResult(
   };
 }
 
+/** A bounded runner could not establish a complete catalog; this is no seller verdict. */
+function buildFixtureDiscoveryUnavailableResult(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  detail: string,
+  producerPhase?: StoryboardPhaseResult,
+  resolutions: readonly FixtureResolutionRecord[] = []
+): StoryboardResult {
+  const result = buildCapabilityUnsupportedResult(agentUrls, storyboard, detail);
+  const phase = result.phases[0]!;
+  phase.phase_id = 'fixture_discovery_unavailable';
+  phase.phase_title = 'Fixture discovery unavailable';
+  const step = phase.steps[0]!;
+  step.step_id = phase.phase_id;
+  step.phase_id = phase.phase_id;
+  step.title = 'Fixture discovery unavailable within runner budget';
+  step.task = 'get_products';
+  step.skip_reason = 'not_applicable';
+  step.skip = { reason: 'not_applicable', detail };
+  result.fixture_resolutions = [...resolutions];
+  if (producerPhase) result.fixture_preparation = preparedPhaseForOutput(producerPhase);
+  return result;
+}
+
 /** Terminal step result carrying a non-resolved preparation disposition. */
 function buildPreparedDispositionStepResult(
   storyboard: Storyboard,
@@ -7328,6 +7495,12 @@ function buildPreparedDispositionStepResult(
   resolutions: readonly FixtureResolutionRecord[] = [],
   producerPhase?: StoryboardPhaseResult
 ): StoryboardStepResult {
+  const skipReason =
+    disposition.status === 'unsupported' && disposition.reason === 'not_applicable'
+      ? 'not_applicable'
+      : disposition.status === 'unsatisfied'
+        ? 'fixture_unsatisfied'
+        : 'missing_test_controller';
   const detail = 'detail' in disposition ? disposition.detail : 'fixture preparation did not resolve';
   if (disposition.status === 'failed') {
     return {
@@ -7382,7 +7555,7 @@ function buildPreparedDispositionStepResult(
     task: found.step.task,
     passed: true,
     skipped: true,
-    skip_reason: disposition.status === 'unsatisfied' ? 'fixture_unsatisfied' : 'missing_test_controller',
+    skip_reason: skipReason,
     // Match the full runner: reporting a missing controller as a
     // branch-substitutable `not_applicable` would let a consumer credit a
     // peer path that does not exist.
@@ -7395,11 +7568,15 @@ function buildPreparedDispositionStepResult(
     // against the SDK. Promoting it in `RunnerSkipReason` fixed both paths
     // at once, so the two no longer disagree.
     skip: {
-      reason: disposition.status === 'unsatisfied' ? 'fixture_unsatisfied' : 'missing_test_controller',
+      reason: skipReason,
       detail,
     },
     duration_ms: 0,
     validations: [],
+    ...(skipReason === 'not_applicable' && {
+      fixture_resolutions: [...resolutions],
+      ...(producerPhase && { fixture_preparation: preparedPhaseForOutput(producerPhase) }),
+    }),
     context: withoutProtectedCaptures(context),
     extraction: { path: 'none' },
     contributions: Array.from(contributions),
@@ -7513,8 +7690,13 @@ async function runStoryboardStepBody(
   // options so capability-based skip gates in executeStep (e.g. account-mode
   // branching) can read raw_capabilities, mirroring executeStoryboardPass.
   let profile: AgentProfile | undefined;
-  if (!clientResolution.reusedShared) {
-    const discovered = await getOrDiscoverProfile(client, options);
+  if (!clientResolution.reusedShared || hasTestClientScope()) {
+    const discovered = await getOrDiscoverStoryboardProfile(client, options);
+    if (!discovered.step.passed) {
+      if (!clientResolution.reusedShared) await closeScopedConnections(options.protocol);
+      return buildDiscoveryFailedResult([agentUrl], storyboard, discovered.step, discovered.profile).phases[0]!
+        .steps[0]!;
+    }
     profile = discovered.profile;
     if (profile && (!options._profile || !options.agentTools)) {
       options = {
@@ -7525,6 +7707,18 @@ async function runStoryboardStepBody(
     }
   } else {
     profile = options._profile;
+  }
+
+  const reusedDiscoveryFailure =
+    profile &&
+    describeProfileDiscoveryFailure(
+      profile,
+      options._requireValidCapabilityEvidence === true,
+      options._allowCapabilityDiagnostic === true
+    );
+  if (reusedDiscoveryFailure) {
+    if (!clientResolution.reusedShared) await closeScopedConnections(options.protocol);
+    return buildDiscoveryFailedResult([agentUrl], storyboard, reusedDiscoveryFailure, profile).phases[0]!.steps[0]!;
   }
 
   const standaloneRunContext = createRunContext(storyboard, options);
