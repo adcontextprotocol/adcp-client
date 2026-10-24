@@ -354,8 +354,15 @@ resolver that throws: a transient (or uncoded) error is an outage answered
 that envelope and no challenge).
 
 Demand grants come from the verified brand or house record. Implicit authority
-requires brand, account operator, and signer operator to share a registrable
-domain. Otherwise only a direct grant with the account operator equal to the
+requires the account operator and signer operator to share a registrable domain
+with the brand or with its house (the house `resolveBrandHouse` returns, so the
+authorizing record and implicit authority never disagree). A house that the
+brand names but whose `brand_refs[]` does not list it back is unverified:
+`resolveBrandHouse` returns `undefined`, the brand is its own house, and the
+claimed house's operator needs a grant like any other. An uncoded throw from
+`resolveBrandHouse` is a `TrustRecordUnavailableError` (`SERVICE_UNAVAILABLE`),
+never `grant_absent`; an `IdentityAuthorizationError` or `AdcpError` it throws
+keeps its code. Otherwise only a direct grant with the account operator equal to the
 signer, a direct grant from a self-operated brand (the brand is its own account
 operator) to the signer's operator, or a two-link chain through the account
 operator, is accepted. The
