@@ -25,7 +25,7 @@ test('AdCP semver pins normalize to release-precision wire values', () => {
 });
 
 test('3.2 GA pin advertises 3.2.1+ and the 3.2 alias, never the withdrawn 3.2.0 or any 3.2 preview', () => {
-  assert.equal(ADCP_VERSION, '3.2.5');
+  assert.equal(ADCP_VERSION, '3.2.6');
   assert.equal(toReleasePrecisionVersion(ADCP_VERSION), '3.2');
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.0.25'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.1.18'));
@@ -37,6 +37,7 @@ test('3.2 GA pin advertises 3.2.1+ and the 3.2 alias, never the withdrawn 3.2.0 
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2.3'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2.4'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2.5'));
+  assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2.6'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2'));
   assert.ok(!COMPATIBLE_ADCP_VERSIONS.includes('3.2.0'));
   assert.ok(!COMPATIBLE_ADCP_VERSIONS.includes('3.2.0-' + 'rc.7'));

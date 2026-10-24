@@ -112,7 +112,49 @@ export function loadRequestSchema(tool: ConformanceToolName, options: Conformanc
 
 export function loadResponseSchema(tool: ConformanceToolName, options: ConformanceSchemaOptions = {}): JsonSchema {
   const loc = TOOL_SCHEMA_LOCATIONS[tool];
-  return loadSchema(`${loc.domain}/${loc.fileBase}-response.json`, options);
+  const schema = loadSchema(`${loc.domain}/${loc.fileBase}-response.json`, options);
+  const bundledDir = findBundledDir(options);
+  // Packed bundles inline shared schemas into tools rather than shipping
+  // every core file. Discovery contains the same canonical envelope in allOf.
+  const findVersionEnvelope = (node: JsonSchema | undefined): JsonSchema | undefined => {
+    if (!node) return undefined;
+    if (typeof node.$id === 'string' && node.$id.endsWith('/core/version-envelope.json')) return node;
+    for (const keyword of ['allOf', 'anyOf', 'oneOf'] as const) {
+      const branches = node[keyword];
+      if (!Array.isArray(branches)) continue;
+      for (const branch of branches) {
+        if (!branch || typeof branch !== 'object' || Array.isArray(branch)) continue;
+        const found = findVersionEnvelope(branch);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+  const versionEnvelope =
+    loadBundledSchemaFile(path.join(bundledDir, 'core/version-envelope.json')) ??
+    findVersionEnvelope(loadBundledSchemaFile(path.join(bundledDir, 'protocol/get-adcp-capabilities-response.json')));
+  const properties = versionEnvelope?.properties;
+  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return schema;
+
+  // Version metadata belongs to every response envelope (SDK issue #3262).
+  // Some closed task schemas omit its declarations; add only the canonical version fields,
+  // retaining all other root restrictions and every nested-body constraint.
+  const admitVersionFields = (node: JsonSchema): JsonSchema => {
+    const copy = { ...node };
+    if (node.additionalProperties === false) {
+      copy.properties = { ...properties, ...(node.properties as JsonSchema | undefined) };
+    }
+    for (const keyword of ['allOf', 'anyOf', 'oneOf'] as const) {
+      const branches = node[keyword];
+      if (Array.isArray(branches)) {
+        copy[keyword] = branches.map(branch =>
+          branch && typeof branch === 'object' && !Array.isArray(branch) ? admitVersionFields(branch) : branch
+        );
+      }
+    }
+    return copy;
+  };
+  return admitVersionFields(schema);
 }
 
 export function hasSchemas(tool: ConformanceToolName, options: ConformanceSchemaOptions = {}): boolean {

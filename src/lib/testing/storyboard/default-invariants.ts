@@ -43,6 +43,7 @@
 import { ADCP_VERSION } from '../../version';
 import { CONFLICT_ADCP_ERROR_ALLOWLIST } from '../../server/envelope-allowlist';
 import { STANDARD_ERROR_CODES } from '../../types/error-codes';
+import { getAuthoritativeMediaBuyStatus } from '../../utils/media-buy-status';
 import {
   CREATIVE_ASSET_TRANSITIONS as CREATIVE_ASSET_TRANSITIONS_TYPED,
   MEDIA_BUY_TRANSITIONS as MEDIA_BUY_TRANSITIONS_TYPED,
@@ -726,13 +727,17 @@ export function registerDefaultInvariants(): void {
    * and walks arrays where present. Unknown tasks produce no observations —
    * the assertion is silent on tasks it doesn't recognize.
    */
-  function extractStatusObservations(task: string, body: Record<string, unknown>): StatusObservation[] {
+  function extractStatusObservations(
+    task: string,
+    body: Record<string, unknown>,
+    adcpVersion: string
+  ): StatusObservation[] {
     const obs: StatusObservation[] = [];
 
     // Media-buy: create/update_media_buy return top-level status + packages
     // with per-creative approval_status. get_media_buys returns media_buys[].
     if (task === 'create_media_buy' || task === 'update_media_buy') {
-      pushMediaBuy(obs, body);
+      pushMediaBuy(obs, body, true, adcpVersion);
     } else if (task === 'get_media_buys') {
       for (const mb of asArray(body.media_buys)) {
         if (isObject(mb)) pushMediaBuy(obs, mb);
@@ -792,7 +797,12 @@ export function registerDefaultInvariants(): void {
     return obs;
   }
 
-  function pushMediaBuy(obs: StatusObservation[], record: Record<string, unknown>): void {
+  function pushMediaBuy(
+    obs: StatusObservation[],
+    record: Record<string, unknown>,
+    enveloped = false,
+    adcpVersion = ADCP_VERSION
+  ): void {
     const id = asString(record.media_buy_id);
     // 3.1+: `media_buy_status` (body) carries MediaBuyStatus; top-level
     // `status` (envelope) carries TaskStatus. Pre-3.1 + nested fields on
@@ -800,7 +810,11 @@ export function registerDefaultInvariants(): void {
     // MediaBuyStatus. Read the canonical 3.1 field first, fall back to
     // legacy. Refs adcontextprotocol/adcp#4895 (3.1 additive-deprecate),
     // #4906 (3.2 legacy removal), #4905 (4.0 nested cascade).
-    const status = asString(record.media_buy_status) ?? asString(record.status);
+    const status =
+      asString(record.media_buy_status) ??
+      (enveloped
+        ? getAuthoritativeMediaBuyStatus({ ...record, adcp_version: asString(record.adcp_version) ?? adcpVersion })
+        : asString(record.status));
     if (id && status) {
       obs.push({
         resource_type: 'media_buy',
@@ -947,7 +961,11 @@ export function registerDefaultInvariants(): void {
         ((ctx.state.statusMonotonicEligibleStepCount as number | undefined) ?? 0) + 1;
 
       const history = ctx.state.history as Map<string, MonotonicState>;
-      const observations = extractStatusObservations(stepResult.task, body as Record<string, unknown>);
+      const observations = extractStatusObservations(
+        stepResult.task,
+        body as Record<string, unknown>,
+        ctx.options.adcpVersion ?? ADCP_VERSION
+      );
       const description = 'Resource statuses transition only along spec lifecycle edges';
 
       for (const ob of observations) {

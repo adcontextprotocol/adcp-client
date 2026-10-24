@@ -36,13 +36,19 @@ Established media-buy tools remain available for AdCP 3.0/3.1 sellers. Their com
 
 ```text
 schemas/cache/
-├── 3.2.5/       # primary SDK pin
+├── 3.2.6/       # primary SDK pin
 ├── 3.1.29/      # maintained stable release
 ├── 3.0.25/      # maintained stable release
 └── latest/      # symlink to the primary pin
 ```
 
 Run `npm run sync-schemas:all` to refresh the primary and maintained bundles. Run `npm run generate-types:all` to regenerate public types, then `npm run build:lib` to build and copy supported schemas into the package. `copy-schemas-to-dist.ts` excludes retired AdCP 2 caches even when present locally. `check-publish-protocol-artifacts.mjs` checks the published schema inventory and rejects retired type exports.
+
+The v16 primary pin is AdCP 3.2.6, including its signed schema and compliance bundles. The patch refresh preserves the public request/response types and the existing pathways to AdCP 3.1 and 3.0.
+
+Build tooling also understands exact AdCP 3.3.0 `beta.N` and `rc.N` pins. Such a build retains maintained AdCP 3.0, 3.1, and 3.2 GA aliases through 3.2.6 while advertising only the selected prerelease, without a moving beta/RC-family alias. This prepares the v17 integration; the stable v16 compatibility list continues to advertise only AdCP 3.2 and earlier.
+
+Conformance validates current and unversioned response payloads without synthesizing task status. The existing status-optional compatibility shim applies only to explicitly declared AdCP 3.0 payloads, and never to status-free compact tools. Closed response schemas admit only the canonical version-envelope fields alongside their declared task fields; other root restrictions and nested-body constraints remain enforced.
 
 ## Future major-version support
 

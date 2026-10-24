@@ -1055,6 +1055,37 @@ describe('default-invariants: status.monotonic', () => {
     });
   });
 
+  for (const task of ['create_media_buy', 'update_media_buy']) {
+    test(`${task} task completion without a lifecycle field does not precede an active resource`, () => {
+      const ctx = makeCtx();
+      spec.onStart(ctx);
+      const completed = step({ task, response: mb('mb-task', 'completed') });
+      assert.ok(spec.onStep(ctx, completed).every(result => result.passed));
+      assert.equal(ctx.state.history.has('media_buy:mb-task'), false);
+      const read = step({ task: 'get_media_buys', response: { media_buys: [mb('mb-task', 'active')] } });
+      assert.ok(spec.onStep(ctx, read).every(result => result.passed));
+      assert.equal(ctx.state.history.get('media_buy:mb-task').status, 'active');
+    });
+  }
+
+  test('explicit terminal lifecycle states still reject resource reactivation', () => {
+    const out = run([
+      step({ task: 'create_media_buy', response: mb('mb-terminal', 'completed', { media_buy_status: 'completed' }) }),
+      step({ task: 'get_media_buys', response: { media_buys: [mb('mb-terminal', 'active')] } }),
+    ]);
+    assert.equal(out[1].output[0].passed, false);
+    assert.match(out[1].output[0].error, /completed → active/);
+  });
+
+  test('legacy 3.0 create lifecycle completion remains an observation', () => {
+    const ctx = makeCtx();
+    ctx.options.adcpVersion = '3.0';
+    spec.onStart(ctx);
+    spec.onStep(ctx, step({ task: 'create_media_buy', response: mb('mb-legacy', 'completed') }));
+    const failures = spec.onStep(ctx, step({ response: { media_buys: [mb('mb-legacy', 'active')] } }));
+    assert.equal(failures[0].passed, false);
+  });
+
   test('media_buy backward transition fails with actionable error (legal targets + enum URL)', () => {
     const out = run([
       step({ step_id: 'create', task: 'create_media_buy', response: mb('mb-1', 'active') }),
