@@ -37,6 +37,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
+import { canonicalMediaBuyActionTasks } from './lib/canonical-media-buy-action-tasks';
 
 export interface EnumMetadataEntry {
   update_fields?: string[];
@@ -76,6 +77,13 @@ export interface MergedActionMetadata {
 const REPO_ROOT = path.join(__dirname, '..');
 const LEGACY_ENUM_RELATIVE_PATH = 'enums/media-buy-valid-action.json';
 const AVAILABLE_ACTION_ID_RELATIVE_PATH = 'core/media-buy-available-action-id.json';
+const CANONICAL_ACTION_RELATIVE_PATH = 'core/canonical-media-buy-action.json';
+const UPDATE_COMPATIBLE_TASKS = new Set([
+  'update_media_buy',
+  'control_media_buy',
+  'refine_proposals',
+  'sync_creatives',
+]);
 const DEFAULT_OUT_PATH = path.join(REPO_ROOT, 'src/lib/media-buy/update-fields.generated.ts');
 
 export function resolveSchemaDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -166,13 +174,13 @@ export function loadMergedActionMetadata(schemaDir: string): MergedActionMetadat
 
   const idSchema = readJson<AvailableActionIdSchema>(idPath);
   const idMeta = metadataEntries(idSchema.enumMetadata);
-  const structuredOnlyActions: string[] = [];
+  const structuredOnlyCandidates: string[] = [];
   const seen = new Set<string>();
   for (const action of inlineActionIds(idSchema)) {
     if (seen.has(action)) continue;
     seen.add(action);
     if (legacyIds.has(action)) continue; // Redundant restatement of a legacy value; the legacy row already covers it.
-    structuredOnlyActions.push(action);
+    structuredOnlyCandidates.push(action);
   }
 
   // Conflict check: a key present in both blocks must agree. Legacy wins on
@@ -197,14 +205,25 @@ export function loadMergedActionMetadata(schemaDir: string): MergedActionMetadat
     }
   }
 
-  for (const action of structuredOnlyActions) {
+  const canonicalPath = path.join(schemaDir, CANONICAL_ACTION_RELATIVE_PATH);
+  const canonicalTasks: Record<string, string[]> = existsSync(canonicalPath)
+    ? canonicalMediaBuyActionTasks(readJson<Parameters<typeof canonicalMediaBuyActionTasks>[0]>(canonicalPath))
+    : {};
+  const structuredOnlyActions: string[] = [];
+  for (const action of structuredOnlyCandidates) {
     const entry = idMeta.get(action);
     if (!entry?.update_fields?.length) {
+      // An explicit task outside the mutation facade (for example issue
+      // reporting) needs no invented update_media_buy field. Missing routes
+      // and every established mutation task still require the binding.
+      const routes = canonicalTasks[action];
+      if (routes?.length && routes.every(task => !UPDATE_COMPATIBLE_TASKS.has(task))) continue;
       throw new Error(
         `Structured-only action "${action}" in ${AVAILABLE_ACTION_ID_RELATIVE_PATH} has no ` +
           `enumMetadata.update_fields binding; the preflight resolver cannot dispatch it.`
       );
     }
+    structuredOnlyActions.push(action);
     rows.push({
       action,
       update_fields: entry.update_fields,
@@ -233,9 +252,10 @@ export function renderUpdateFieldsModule(merged: MergedActionMetadata): string {
   const structuredOnlyLiteral = structuredOnlyActions.map(action => JSON.stringify(action)).join(', ');
   const tsStructuredOnly =
     '/**\n' +
-    ' * Actions that exist only on the structured `available_actions[].action`\n' +
-    ' * surface (absent from the deprecated flat `valid_actions[]` enum). Their\n' +
+    ' * Update-binding actions that exist only on `available_actions[].action`\n' +
+    ' * (absent from the deprecated flat `valid_actions[]` enum). Their\n' +
     ' * field bindings come from `core/media-buy-available-action-id.json`.\n' +
+    ' * Actions routed exclusively to other tasks are excluded.\n' +
     ' * Empty when the schema cache predates that file.\n' +
     ' */\n' +
     `export const STRUCTURED_ONLY_MEDIA_BUY_ACTIONS = [${structuredOnlyLiteral}] as const;\n\n` +

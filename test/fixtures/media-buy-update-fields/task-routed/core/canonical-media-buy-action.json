@@ -1,0 +1,55 @@
+{
+  "$comment": "Routing excerpt from the protocol candidate; request/response and commercial constraints are outside this fixture.",
+  "oneOf": [
+    {
+      "properties": {
+        "task": {
+          "const": "report_media_buy_issue"
+        },
+        "action": {
+          "type": "string",
+          "const": "report_media_buy_issue"
+        }
+      }
+    },
+    {
+      "properties": {
+        "task": {
+          "const": "control_media_buy"
+        },
+        "action": {
+          "enum": [
+            "pause",
+            "increase_budget",
+            "update_media_buy_frequency_cap"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "task": {
+          "const": "refine_proposals"
+        },
+        "action": {
+          "enum": [
+            "increase_budget",
+            "update_media_buy_frequency_cap"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "task": {
+          "const": "sync_creatives"
+        },
+        "action": {
+          "enum": [
+            "replace_creative"
+          ]
+        }
+      }
+    }
+  ]
+}

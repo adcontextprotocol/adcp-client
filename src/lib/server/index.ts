@@ -383,6 +383,7 @@ export type {
   AdcpCapabilitiesConfig,
   AdcpCapabilitiesOverrides,
   AdcpToolVersionRange,
+  AdcpVersionTranslationEvent,
   AdcpCustomToolConfig as LegacyAdcpCustomToolConfig,
   AdcpCustomToolHandler as LegacyAdcpCustomToolHandler,
   AdcpCustomToolHandlerExtra as LegacyAdcpCustomToolHandlerExtra,

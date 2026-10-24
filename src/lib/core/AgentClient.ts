@@ -355,6 +355,7 @@ export type InProcessAgentClientConfig = Pick<
   | 'canonicalFormatLegacyResolver'
   | 'validateFeatures'
   | 'requireV3ForMutations'
+  | 'accountIdentityDowngrade'
   | 'workingTimeout'
   | 'defaultMaxClarifications'
   | 'persistConversations'

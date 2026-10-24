@@ -1,4 +1,5 @@
 import { assertWebBotAuthSigningKey, getWebBotAuthLegacyOriginGate } from '../signing/web-bot-auth';
+import { downgradeResponse, translationSteps, upgradeRequest, type VersionDrift } from '../adapters/version';
 import {
   isIdentity33SchemaScope,
   withIdentity33SchemaScope,
@@ -1775,6 +1776,18 @@ export type WebhooksConfig = Pick<
   onAttemptObserverError?: WebhookEmitterOptions['onAttemptObserverError'];
 };
 
+/** One request or response conversion between the server's release and a buyer's. */
+export interface AdcpVersionTranslationEvent {
+  tool: string;
+  direction: 'request' | 'response';
+  /** Release the payload was converted from. */
+  fromVersion: string;
+  /** Release the payload was converted to. */
+  toVersion: string;
+  /** What each conversion step removed or moved. */
+  drifts: VersionDrift[];
+}
+
 export interface AdcpServerConfig<TAccount = unknown> {
   /** Experimental 3.3 authorization, invoked before idempotency and handler side effects. */
   identity33?: {
@@ -1850,6 +1863,16 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * releases, and no newer than `adcpVersion`.
    */
   defaultAdcpVersion?: AdcpVersion | (string & {});
+
+  /**
+   * Called each time the framework converts a request up from, or a
+   * handler's response down to, a buyer's older release. `drifts` lists every
+   * field the conversion removed or moved, with JSON paths, so a seller can
+   * record what an older buyer did not receive. The same events are logged
+   * at `debug` (requests) and `info` (responses). A throwing callback is
+   * logged and ignored.
+   */
+  onVersionTranslation?: (event: AdcpVersionTranslationEvent) => void;
 
   /**
    * Per-tool inclusive protocol-release availability. This narrows, but does
@@ -5967,6 +5990,53 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     return isMcpToolResponse(selected) ? undefined : selected;
   };
 
+  /**
+   * A task's stored result is in the server's release. Convert it down by its
+   * task type for a buyer polling `get_task_status` on an older release.
+   */
+  const downgradeTaskStatusResult = (
+    toolName: 'get_task_status' | 'list_tasks',
+    response: McpToolResponse,
+    servedVersion: string
+  ): McpToolResponse => {
+    if (toolName !== 'get_task_status' || config.identity33) return response;
+    if (translationSteps(adcpVersion, servedVersion).length === 0) return response;
+    const body = response.structuredContent as Record<string, unknown> | undefined;
+    if (!body || typeof body.task_type !== 'string' || !body.result || typeof body.result !== 'object') return response;
+    const downgraded = downgradeResponse(body.task_type, body.result, {
+      fromVersion: adcpVersion,
+      toVersion: servedVersion,
+    });
+    if (downgraded.drifts.length > 0) {
+      reportVersionTranslation({
+        tool: body.task_type,
+        direction: 'response',
+        fromVersion: adcpVersion,
+        toVersion: servedVersion,
+        drifts: downgraded.drifts,
+      });
+    }
+    if (downgraded.data === body.result) return response;
+    const mirrors = contentTextMirrorsStructuredContent(response, body);
+    const next = cloneFormattedResponse(response);
+    const nextBody = { ...(next.structuredContent as Record<string, unknown>), result: downgraded.data };
+    next.structuredContent = nextBody;
+    syncContentJsonText(next, nextBody, mirrors);
+    return next;
+  };
+
+  const reportVersionTranslation = (event: AdcpVersionTranslationEvent): void => {
+    if (!config.onVersionTranslation) return;
+    try {
+      config.onVersionTranslation(event);
+    } catch (err) {
+      logger.warn('onVersionTranslation callback threw', {
+        tool: event.tool,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
   const releaseDefinesTool = (toolName: string, release: ServedAdcpRelease): boolean => {
     if (toolName === 'refine_proposals') return true;
     try {
@@ -5989,6 +6059,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     sanitizeAdcpErrorEnvelope(response);
     enrichErrorTwoLayer(response, toolName, getToolsWithErrorArm(release.validationVersion));
     if (!isErrorResponse(response)) {
+      response = downgradeTaskStatusResult(toolName, response, release.validationVersion);
       normalizeMediaBuyStatusCollision(response, toolName);
       injectEnvelopeStatusIntoResponse(response, toolName);
       const validationError = protocolTaskResponseValidationError(toolName, response, params);
@@ -6430,6 +6501,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           requestRelease = releaseSelection;
         }
         const requestErrorArms = getToolsWithErrorArm(requestRelease.validationVersion);
+        // A buyer on an older release than the server's: handlers see requests
+        // and return responses in the server's release, and the framework
+        // converts between it and the served release. Capabilities keep their
+        // own per-release projection.
+        const translatesRelease =
+          !config.identity33 &&
+          toolName !== 'get_adcp_capabilities' &&
+          translationSteps(adcpVersion, requestRelease.validationVersion).length > 0;
         const ctx: HandlerContext<TAccount> = withImmutableServedAdcpVersion(
           {
             store: stateStore,
@@ -7696,10 +7775,29 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                     (_entry: unknown, index: number) => !notificationFailureRows.has(index)
                   ),
                 };
+          const upgraded = translatesRelease
+            ? upgradeRequest(toolName, handlerParams, {
+                fromVersion: requestRelease.validationVersion,
+                toVersion: adcpVersion,
+              })
+            : undefined;
+          if (upgraded && upgraded.drifts.length > 0) {
+            logger.debug(`Converted ${toolName} request up to AdCP ${adcpVersion}`, {
+              tool: toolName,
+              drifts: upgraded.drifts,
+            });
+            reportVersionTranslation({
+              tool: toolName,
+              direction: 'request',
+              fromVersion: requestRelease.validationVersion,
+              toVersion: adcpVersion,
+              drifts: upgraded.drifts,
+            });
+          }
           const result =
             notificationFailureRows.size > 0 && handlerParams.accounts.length === 0
               ? { accounts: [], ...(params.dry_run === true && { dry_run: true }) }
-              : await handler(handlerParams, ctx);
+              : await handler(upgraded ? upgraded.params : handlerParams, ctx);
           mutationHandlerCompleted = true;
           // Narrow Error / Submitted arms of the *Response union before
           // reaching the success-arm builder: wrap() on an Error payload
@@ -8382,6 +8480,34 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             if (!isErrorResponse(formatted)) {
               normalizeMediaBuyStatusCollision(formatted, toolName);
               injectEnvelopeStatusIntoResponse(formatted, toolName);
+            }
+          }
+
+          // Convert the handler's response down to the served release before
+          // validating it against that release. Every removed field is logged.
+          if (translatesRelease && !isErrorResponse(formatted) && formatted.structuredContent) {
+            const downgraded = downgradeResponse(toolName, formatted.structuredContent, {
+              fromVersion: adcpVersion,
+              toVersion: requestRelease.validationVersion,
+            });
+            if (downgraded.data !== formatted.structuredContent) {
+              const mirrors = contentTextMirrorsStructuredContent(formatted, formatted.structuredContent);
+              formatted = cloneFormattedResponse(formatted);
+              formatted.structuredContent = downgraded.data;
+              syncContentJsonText(formatted, downgraded.data, mirrors);
+            }
+            if (downgraded.drifts.length > 0) {
+              logger.info(`Converted ${toolName} response down to AdCP ${requestRelease.validationVersion}`, {
+                tool: toolName,
+                drifts: downgraded.drifts,
+              });
+              reportVersionTranslation({
+                tool: toolName,
+                direction: 'response',
+                fromVersion: adcpVersion,
+                toVersion: requestRelease.validationVersion,
+                drifts: downgraded.drifts,
+              });
             }
           }
 

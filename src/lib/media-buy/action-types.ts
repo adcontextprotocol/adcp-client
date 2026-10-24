@@ -5,9 +5,12 @@ import type {
   MediaBuyStatus,
 } from '../types/core.generated';
 import type { MediaBuyActionContext, MediaBuyActionId, MediaBuyActionMode, SLAWindow } from './types';
+import type { CANONICAL_ACTION_TASKS } from './action-metadata.generated';
 
-/** Explicit task vocabulary; update_media_buy is the established 3.1 default. */
-export type MediaBuyTask = 'update_media_buy' | 'control_media_buy' | 'refine_proposals' | 'sync_creatives';
+/** Canonical wire tasks plus the established 3.1 mutation facade. */
+export type MediaBuyTask =
+  | 'update_media_buy'
+  | (typeof CANONICAL_ACTION_TASKS)[keyof typeof CANONICAL_ACTION_TASKS][number];
 /** Alias of the shared, schema-derived action vocabulary. */
 export type MediaBuyAction = MediaBuyActionId;
 export type ProductActionTemplate = Pick<
