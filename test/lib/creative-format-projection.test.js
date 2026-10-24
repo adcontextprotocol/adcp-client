@@ -621,7 +621,8 @@ describe('creative format delivery projection', () => {
 
   const formats = [
     ['image', { agent_url: SELLER, id: 'display_300x250_image', width: 300, height: 250 }],
-    ['html5', { agent_url: SELLER, id: 'display_728x90_html', width: 728, height: 90 }],
+    // AAO `display_*_html` ids are HTML markup (display_tag); html5 uses a seller zip format.
+    ['html5', { agent_url: SELLER, id: 'html5_bundle_728x90', width: 728, height: 90 }],
     ['display_tag', { agent_url: SELLER, id: 'display_300x600_js', width: 300, height: 600 }],
     ['video_hosted', { agent_url: SELLER, id: 'video_standard_30s', duration_ms: 30000 }],
     ['video_vast', { agent_url: SELLER, id: 'video_vast_15s', duration_ms: 15000 }],

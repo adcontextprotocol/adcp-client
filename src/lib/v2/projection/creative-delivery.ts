@@ -42,7 +42,9 @@ import {
 import type { CanonicalFormatDeclaration } from './legacy-metadata';
 import type { UndeclaredFormatOptionSelector } from './legacy-routes';
 import { canonicalize as canonicalizeJson } from '../../utils/jcs';
-import { lookupV1Format, type V1FormatDefinition } from './catalog';
+import { lookupUniqueV1FormatById, lookupV1Format, type V1FormatDefinition } from './catalog';
+import { canonicalizeAgentUrl } from '../../discovery/resolve-agent-properties';
+import { isLikelyPrivateUrl } from '../../net/address-guards';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, Extract<keyof T, K>> : never;
 
@@ -949,11 +951,37 @@ interface CreativeFormatParameterConstraints {
   durationMs?: number;
 }
 
+/**
+ * Asset types whose rendered size AdCP 3.3 carries on the asset itself
+ * (`zip`, `html`, `display_tag`). Used only when the creative has no
+ * `format_parameters`; one unambiguous size, or nothing.
+ */
+const SELF_SIZED_ASSET_TYPES = new Set(['zip', 'html', 'display_tag']);
+
+/** Every typed asset object on a creative, flattening repeatable slots. */
+function creativeAssetRecords(creative: Record<string, unknown>): Record<string, unknown>[] {
+  return Object.values(record(creative.assets) ?? {}).flatMap(value =>
+    (Array.isArray(value) ? value : [value]).flatMap(item => (record(item) ? [record(item)!] : []))
+  );
+}
+
+function assetRenderedSize(creative: Record<string, unknown>): CreativeFormatParameterConstraints | undefined {
+  const sizes = new Set<string>();
+  for (const asset of creativeAssetRecords(creative)) {
+    if (!SELF_SIZED_ASSET_TYPES.has(String(asset.asset_type))) continue;
+    if (typeof asset.width === 'number' && typeof asset.height === 'number')
+      sizes.add(`${asset.width}x${asset.height}`);
+  }
+  if (sizes.size !== 1) return undefined;
+  const [width, height] = [...sizes][0]!.split('x').map(Number);
+  return { width, height };
+}
+
 function creativeFormatParameterConstraints(
   creative: Record<string, unknown>
 ): CreativeFormatParameterConstraints | undefined {
   const params = record(creative.format_parameters);
-  if (!params) return undefined;
+  if (!params) return assetRenderedSize(creative);
   const width = typeof params.width === 'number' ? params.width : undefined;
   const height = typeof params.height === 'number' ? params.height : undefined;
   const durationMs =
@@ -1037,8 +1065,37 @@ function refConstraintKey(ref: V1FormatId): string {
 }
 
 /**
+ * Delivery types a `display_tag` creative uses: a display-tag asset's
+ * `delivery_type`, or `tag_url` for a backward-compatible ad-request `url`.
+ */
+function creativeDisplayTagDeliveryTypes(creative: Record<string, unknown>): Set<string> | undefined {
+  if (creative.format_kind !== 'display_tag') return undefined;
+  const types = new Set<string>();
+  for (const asset of creativeAssetRecords(creative)) {
+    if (asset.asset_type === 'display_tag' && typeof asset.delivery_type === 'string') types.add(asset.delivery_type);
+    else if (asset.asset_type === 'url' && asset.url_type === 'ad_request') types.add('tag_url');
+  }
+  return types.size > 0 ? types : undefined;
+}
+
+/**
+ * Delivery types a `display_tag` legacy candidate accepts: the seller's
+ * declaration, else the catalog-backed declaration for the legacy id, else the
+ * canonical's `tag_url` default.
+ */
+function candidateDeliveryTypes(candidate: LegacyCandidate): unknown[] {
+  const declared = record(candidate.selectorParams)?.supported_delivery_types;
+  if (Array.isArray(declared)) return declared;
+  const catalog = record(
+    canonicalDeclarationFromBareId(candidate.ref.id, { agentUrl: candidate.ref.agent_url })?.params
+  )?.supported_delivery_types;
+  return Array.isArray(catalog) ? catalog : ['tag_url'];
+}
+
+/**
  * Most-constrained-wins for a canonical creative facing several legacy refs of
- * its kind. Compare explicit dimensions or the catalog-backed ID's dimensions
+ * its kind. A `display_tag` creative first drops refs that do not accept its
+ * delivery type (an inline-markup tag never matches a URL-only `display_js`). Compare explicit dimensions or the catalog-backed ID's dimensions
  * with the creative's own `format_parameters`. Drop contradictory refs,
  * prefer refs that pin them, and among refs imposing identical constraints (a
  * seller listing `display_html` at 300x250 next to `display_300x250_html`)
@@ -1051,6 +1108,13 @@ function preferMostConstrainedLegacyCandidates(
   creative: Record<string, unknown>
 ): LegacyCandidate[] {
   let remaining = candidates;
+  const deliveryTypes = creativeDisplayTagDeliveryTypes(creative);
+  if (deliveryTypes) {
+    remaining = remaining.filter(candidate => {
+      const accepted = candidateDeliveryTypes(candidate);
+      return [...deliveryTypes].every(type => accepted.includes(type));
+    });
+  }
   const constraints = creativeFormatParameterConstraints(creative);
   if (constraints) {
     remaining = remaining.filter(candidate => !refContradictsConstraints(candidate.ref, constraints));
@@ -1170,6 +1234,81 @@ function projectLegacyAssetKeys(assetsValue: unknown, definition: V1FormatDefini
   return Object.fromEntries(Object.entries(assets).map(([key, value]) => [targetBySource.get(key) ?? key, value]));
 }
 
+/**
+ * Legacy HTML-markup formats (`display_html`, `display_WxH_html`) take markup
+ * as an `html` asset; canonically it is a `display_tag` inline-markup asset
+ * (adcontextprotocol/adcp#8339). Carry the bytes into the legacy `content`.
+ * `delivery_type`, `markup_type` and `macro_declarations` have no legacy field.
+ */
+function projectInlineMarkupToLegacyHtml(assetsValue: unknown, definition: V1FormatDefinition | undefined): unknown {
+  const assets = record(assetsValue);
+  if (!assets || !Array.isArray(definition?.assets)) return assetsValue;
+  const slots = definition.assets.filter(slot => record(slot) !== undefined);
+  if (!slots.some(slot => slot.asset_type === 'html') || slots.some(slot => slot.asset_type === 'display_tag')) {
+    return assetsValue;
+  }
+  let changed = false;
+  const next = Object.fromEntries(
+    Object.entries(assets).map(([key, value]) => {
+      const asset = record(value);
+      if (asset?.asset_type !== 'display_tag' || asset.delivery_type !== 'inline_markup') return [key, value];
+      if (typeof asset.markup !== 'string') return [key, value];
+      changed = true;
+      return [
+        key,
+        {
+          asset_type: 'html',
+          content: asset.markup,
+          ...(asset.provenance !== undefined && { provenance: asset.provenance }),
+        },
+      ];
+    })
+  );
+  return changed ? next : assetsValue;
+}
+
+/** Slot ids a declaration fills with inline-markup `display_tag` assets. */
+function inlineMarkupSlotIds(paramsValue: unknown): Set<string> {
+  const params = record(paramsValue);
+  const types = Array.isArray(params?.supported_delivery_types) ? params.supported_delivery_types : [];
+  if (!types.includes('inline_markup') || !Array.isArray(params?.slots)) return new Set();
+  return new Set(
+    params.slots.flatMap(value => {
+      const slot = record(value);
+      return slot?.asset_type === 'display_tag' && typeof slot.asset_group_id === 'string' ? [slot.asset_group_id] : [];
+    })
+  );
+}
+
+/**
+ * Legacy `html` markup read into an inline-markup `display_tag` slot, using
+ * the `standard` default specified by adcontextprotocol/adcp#8357.
+ */
+function legacyHtmlToInlineMarkup(creative: Record<string, unknown>, paramsValue: unknown): void {
+  const assets = record(creative.assets);
+  const slotIds = inlineMarkupSlotIds(paramsValue);
+  if (!assets || slotIds.size === 0) return;
+  let changed = false;
+  const next = Object.fromEntries(
+    Object.entries(assets).map(([key, value]) => {
+      const asset = record(value);
+      if (!slotIds.has(key) || asset?.asset_type !== 'html' || typeof asset.content !== 'string') return [key, value];
+      changed = true;
+      return [
+        key,
+        {
+          asset_type: 'display_tag',
+          delivery_type: 'inline_markup',
+          markup_type: 'standard',
+          markup: asset.content,
+          ...(asset.provenance !== undefined && { provenance: asset.provenance }),
+        },
+      ];
+    })
+  );
+  if (changed) creative.assets = next;
+}
+
 function projectCreative<T extends Record<string, unknown>>(
   creative: T,
   formatId: V1FormatId,
@@ -1184,7 +1323,27 @@ function projectCreative<T extends Record<string, unknown>>(
     return ref !== undefined && sameLegacyIdentity(ref, formatId);
   });
   const definition = supplied?.length ? (supplied.length === 1 ? supplied[0] : undefined) : lookupV1Format(formatId);
-  if (Object.hasOwn(creative, 'assets')) next.assets = projectLegacyAssetKeys(creative.assets, definition);
+  let markupDefinition = definition;
+  if (!markupDefinition && !supplied?.length && creative.format_kind === 'display_tag') {
+    // Use the same guarded AAO-id alias as discovery, while keeping the
+    // seller's original owner tuple on the emitted legacy format_id.
+    const canonicalAgentUrl = canonicalizeAgentUrl(formatId.agent_url);
+    if (
+      canonicalAgentUrl !== null &&
+      new URL(canonicalAgentUrl).protocol === 'https:' &&
+      !isLikelyPrivateUrl(canonicalAgentUrl)
+    ) {
+      markupDefinition = lookupUniqueV1FormatById(formatId.id);
+    }
+  }
+  if (Object.hasOwn(creative, 'assets')) {
+    // A bare-id alias can establish markup representation, but only an exact
+    // or caller-supplied definition establishes the seller's asset slot IDs.
+    next.assets = projectLegacyAssetKeys(
+      projectInlineMarkupToLegacyHtml(creative.assets, markupDefinition),
+      definition
+    );
+  }
   return next as T;
 }
 
@@ -1348,7 +1507,8 @@ function canonicalizeCreative<T extends Record<string, unknown>>(
   creative: T,
   selectorContainer: CreativeFormatSelectorContainer,
   operation: string,
-  legacyFormatConverter?: LegacyFormatConverter
+  legacyFormatConverter?: LegacyFormatConverter,
+  convertLegacyMarkup = false
 ): T {
   const creativeId = typeof creative.creative_id === 'string' ? creative.creative_id : '(unknown)';
   const hasCanonicalKind = typeof creative.format_kind === 'string';
@@ -1403,6 +1563,18 @@ function canonicalizeCreative<T extends Record<string, unknown>>(
     const next: Record<string, unknown> = { ...creative, format_kind: candidate.formatKind };
     delete next.format_id;
     if (candidate.formatOptionRef) next.format_option_ref = candidate.formatOptionRef;
+    if (convertLegacyMarkup && candidate.formatKind === 'display_tag') {
+      const declared = record(candidate.selectorParams);
+      const types = declared?.supported_delivery_types;
+      if (!Array.isArray(types) || types.includes('inline_markup')) {
+        legacyHtmlToInlineMarkup(
+          next,
+          Array.isArray(declared?.slots)
+            ? candidate.selectorParams
+            : canonicalDeclarationFromBareId(existing.id, { agentUrl: existing.agent_url })?.params
+        );
+      }
+    }
     if (candidate.formatKind === 'custom' && !candidate.formatOptionRef) {
       throw new CreativeFormatProjectionError(
         operation,
@@ -1445,6 +1617,7 @@ function canonicalizeCreative<T extends Record<string, unknown>>(
   }
   const next: Record<string, unknown> = { ...creative, format_kind: declaration.format_kind };
   delete next.format_id;
+  if (convertLegacyMarkup) legacyHtmlToInlineMarkup(next, declaration.params);
   const candidateOptionRef =
     matchingCandidates.length === 1 && matchingCandidates[0]!.formatKind === declaration.format_kind
       ? matchingCandidates[0]!.formatOptionRef
@@ -1504,7 +1677,13 @@ export function projectCreativeForDelivery<T extends CreativeAsset>(
 ): CanonicalProjectedCreative<T> | LegacyProjectedCreative<T> {
   const inputRecord = creative as unknown as Record<string, unknown>;
   const originalLegacyRef = legacyRef(inputRecord.format_id);
-  const creativeRecord = canonicalizeCreative(inputRecord, selectorContainer, operation, legacyFormatConverter);
+  const creativeRecord = canonicalizeCreative(
+    inputRecord,
+    selectorContainer,
+    operation,
+    legacyFormatConverter,
+    wireMode === 'canonical'
+  );
   if (wireMode === 'canonical') return creativeRecord as unknown as CanonicalProjectedCreative<T>;
   if (originalLegacyRef) {
     const selectedOriginal = selectLegacyRef(inputRecord, selectorContainer, canonicalFormatLegacyResolver, operation);

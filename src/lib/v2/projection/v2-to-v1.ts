@@ -260,7 +260,10 @@ function tryFanOutMultiSize(decl: V2ProductFormatDeclaration, v1Refs: V1FormatId
   const rep = v1Refs[0];
   if (!rep?.id) return null;
   const template = parseSizedIdTemplate(rep.id);
-  const lookupOpts = template ? { prefix: template.prefix, suffix: template.suffix } : undefined;
+  // An unsized ref does not establish a sized family. In particular,
+  // display_js must not fan out into display_*_html inline-markup refs.
+  if (!template) return null;
+  const lookupOpts = { prefix: template.prefix, suffix: template.suffix };
 
   const found: V1FormatId[] = [];
   for (const size of sizes) {
