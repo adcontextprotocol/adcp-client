@@ -174,7 +174,7 @@ describe('MCP tools/call — maxResponseBytes', () => {
           `expected ResponseTooLargeError, got ${err?.constructor?.name}: ${err?.message}`
         );
         assert.strictEqual(err.code, 'RESPONSE_TOO_LARGE');
-        assert.match(err.message, /Raise transport\.maxResponseBytes on the client or call/);
+        assert.match(err.message, /Raise transport\.maxResponseBytes per client or per call/);
         assert.strictEqual(err.limit, 64 * 1024);
         // Server sets Content-Length so the pre-check fires before any body
         // bytes are read. `bytesRead` must be 0; `contentLengthHeader` is the

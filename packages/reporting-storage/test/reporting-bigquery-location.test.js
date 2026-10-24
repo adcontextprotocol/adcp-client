@@ -104,7 +104,12 @@ test('a hung lookup is bounded by the load deadline and a later run retries disc
     },
     { loadTimeoutMilliseconds: 1_000 }
   );
-  await assert.rejects(sink.runOnce(), /location/);
+  await assert.rejects(sink.runOnce(), error => {
+    assert.match(error.message, /Timed out discovering the BigQuery dataset location/);
+    assert.match(error.message, /Retry the run/);
+    assert.equal(error.cause.adcpDeadlineExceeded, true);
+    return true;
+  });
   assert.equal(queries(), 0);
   await assert.rejects(sink.runOnce(), error => error === reachedWarehouse);
   assert.equal(reads, 2);

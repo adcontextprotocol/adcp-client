@@ -1044,6 +1044,7 @@ setInterval(() => {
   `location` is omitted, the first `runOnce()` reads it using the official
   client's `dataset.getMetadata()` and caches it for that sink instance before
   any warehouse work, even on an idle tick. This requires `bigquery.datasets.get`.
+  Discovery times out after 60 seconds, or `loadTimeoutMilliseconds` if shorter.
   Both load submissions and job lookups use that location. Discovery failures
   reject before any sink state or load is written and can be retried; they name
   the permission and the `location` option. Set `location` explicitly to skip

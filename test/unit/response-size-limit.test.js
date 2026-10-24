@@ -1067,7 +1067,7 @@ describe('responseSizeLimit — ResponseTooLargeError shape', () => {
     assert.strictEqual(err.url, 'https://example.invalid/');
     assert.strictEqual(err.contentLengthHeader, undefined);
     assert.ok(isADCPError(err));
-    assert.match(err.message, /Raise transport\.maxResponseBytes on the client or call/);
+    assert.match(err.message, /Raise transport\.maxResponseBytes per client or per call/);
     // details payload doubles as the wire-error body so logs/tickets
     // surface the cap and observed size without re-parsing the message.
     assert.deepStrictEqual(err.details, {
@@ -1082,6 +1082,6 @@ describe('responseSizeLimit — ResponseTooLargeError shape', () => {
     const err = new ResponseTooLargeError(1000, 0, 'https://example.invalid/', 5000);
     assert.match(err.message, /declared 5000 bytes/);
     assert.match(err.message, /1000/);
-    assert.match(err.message, /Raise transport\.maxResponseBytes on the client or call/);
+    assert.match(err.message, /Raise transport\.maxResponseBytes per client or per call/);
   });
 });

@@ -137,7 +137,8 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
   revisionsTableId: string;
   /**
    * Dataset location. When omitted, the first `runOnce()` reads and caches it from dataset metadata
-   * before any warehouse work (requires `bigquery.datasets.get`). An explicit value skips discovery.
+   * before any warehouse work (requires `bigquery.datasets.get`). Discovery has a 60 second deadline,
+   * or `loadTimeoutMilliseconds` if shorter. An explicit value skips discovery.
    * Both load submissions and job lookups use the resolved location, including regional datasets.
    */
   location?: string;
@@ -302,6 +303,7 @@ export function createBigQueryReportingWarehouseSinkV1(
 
   let location = options.location;
   let locationLookup: Promise<void> | undefined;
+  const locationTimeout = Math.min(loadTimeout, 60_000);
   async function resolveLocation(signal?: AbortSignal): Promise<void> {
     if (location !== undefined) return;
     // Share an in-flight lookup across overlapping runs. Cache successes only, so a permission or
@@ -316,7 +318,7 @@ export function createBigQueryReportingWarehouseSinkV1(
         }
         return metadata.location;
       },
-      loadTimeout,
+      locationTimeout,
       undefined,
       'dataset location discovery'
     )
@@ -325,13 +327,13 @@ export function createBigQueryReportingWarehouseSinkV1(
       })
       .catch(cause => {
         locationLookup = undefined;
-        throw new Error(
-          'Cannot discover the BigQuery dataset location. Grant bigquery.datasets.get and expose ' +
-            'dataset.getMetadata(), or set the warehouse sink option location explicitly to the dataset location.',
-          { cause }
-        );
+        const message = isDeadlineExceeded(cause)
+          ? 'Timed out discovering the BigQuery dataset location. Retry the run, or set the warehouse sink option location explicitly.'
+          : 'Cannot discover the BigQuery dataset location. Check projectId and datasetId, grant bigquery.datasets.get ' +
+            'and expose dataset.getMetadata(), or set the warehouse sink option location explicitly to the dataset location.';
+        throw new Error(message, { cause });
       });
-    await withinDeadline(() => locationLookup!, loadTimeout, signal, 'dataset location discovery');
+    await withinDeadline(() => locationLookup!, locationTimeout, signal, 'dataset location discovery');
   }
 
   /** Uploads submitted by this process and not yet settled, by job ID, so a rerun can wait on one. */
