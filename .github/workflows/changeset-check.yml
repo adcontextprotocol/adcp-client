@@ -29,7 +29,7 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
-          changed_files="$(git diff --name-only "origin/$BASE_REF...HEAD")"
+          changed_files="$(git diff --name-only "origin/${BASE_REF:-main}...HEAD")"
           package_changes="$(
             printf '%s\n' "$changed_files" |
               grep -Ev '^(\.changeset/(pre\.json|(pre/)?[^/]+\.md)|CHANGELOG\.md|README\.md|package(-lock)?\.json|packages/[^/]+/(CHANGELOG\.md|package\.json)|src/lib/version\.ts|docs/.*|test/release-version-docs\.test\.js|\.github/workflows/(changeset-check|release)\.yml)$' ||
@@ -76,4 +76,4 @@ jobs:
         if: github.head_ref != format('changeset-release/{0}', github.base_ref) && steps.release-metadata.outputs.skip != 'true'
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: npx changeset status --since="origin/$BASE_REF"
+        run: npx changeset status --since="origin/${BASE_REF:-main}"
