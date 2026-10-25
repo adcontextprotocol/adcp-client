@@ -17,7 +17,7 @@ const {
 const {
   applyFunctionalRequestSigning,
 } = require('../../dist/lib/testing/storyboard/request-signing/functional-dispatch.js');
-const { buildAgentSigningContext } = require('../../dist/lib/signing/client.js');
+const { buildAgentSigningContext, buildAgentSigningFetch } = require('../../dist/lib/signing/client.js');
 const { ProtocolClient } = require('../../dist/lib/protocols/index.js');
 const { closeMCPConnections } = require('../../dist/lib/protocols/mcp.js');
 const { defaultCapabilityCache } = require('../../dist/lib/signing/client.js');
@@ -331,6 +331,106 @@ describe('functional request signing', () => {
       /requires unsigned bootstrap discovery/
     );
   });
+
+  for (const method of ['SendMessage', 'SendStreamingMessage', 'message/send', 'message/stream']) {
+    test(`rejects a protocol override that signs bootstrap discovery via ${method}`, () => {
+      const complianceDir = writeComplianceBundle();
+      assert.throws(
+        () =>
+          applyFunctionalRequestSigning(
+            {
+              sandbox: true,
+              functional_request_signing: {
+                kind: 'inline',
+                kid: 'operator-key',
+                alg: 'ed25519',
+                private_key: generatedPrivateJwk,
+                agent_url: 'https://operator.example',
+                always_sign_protocol_methods: [method],
+              },
+            },
+            { complianceDir }
+          ),
+        /requires unsigned bootstrap discovery/
+      );
+    });
+  }
+
+  test('shared testing clients cannot reuse a different protocol signing override', () => {
+    const complianceDir = writeComplianceBundle();
+    const options = applyFunctionalRequestSigning({ sandbox: true }, { complianceDir });
+    const shared = createTestClient('https://seller.example/mcp', 'mcp', options);
+    assert.equal(
+      getOrCreateClientResolution('https://seller.example/mcp', { ...options, _client: shared }).reusedShared,
+      true
+    );
+    assert.equal(
+      getOrCreateClientResolution('https://seller.example/mcp', {
+        ...options,
+        _client: shared,
+        functional_request_signing: {
+          ...options.functional_request_signing,
+          always_sign_protocol_methods: ['tasks/cancel'],
+        },
+      }).reusedShared,
+      false
+    );
+  });
+
+  for (const list of ['protocol_methods_supported_for', 'protocol_methods_warn_for', 'protocol_methods_required_for']) {
+    test(`functional bootstrap stays unsigned with cached ${list} for A2A messages`, async () => {
+      const complianceDir = writeComplianceBundle();
+      const options = applyFunctionalRequestSigning({ sandbox: true }, { complianceDir });
+      const agent = {
+        id: 'bootstrap',
+        name: 'Bootstrap',
+        protocol: 'a2a',
+        agent_uri: 'https://seller.example/a2a',
+        request_signing: options.functional_request_signing,
+      };
+      const context = buildAgentSigningContext(agent);
+      const seen = [];
+      const fetch = buildAgentSigningFetch({
+        signing: context.signing,
+        adcpVersion: '3.2.6',
+        getCapability: () => ({
+          requestSigning: {
+            supported: true,
+            required_for: [],
+            covers_content_digest: 'required',
+            [list]: ['SendMessage'],
+          },
+          adcpVersion: 3,
+          fetchedAt: Date.now() / 1000,
+        }),
+        upstream: async (_url, init) => {
+          seen.push(new Headers(init.headers));
+          return new Response('{}');
+        },
+      });
+      for (const skill of ['get_adcp_capabilities', 'create_media_buy', 'get_adcp_capabilities']) {
+        await fetch(agent.agent_uri, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: skill,
+            method: 'SendMessage',
+            params: {
+              message: {
+                messageId: skill,
+                role: 'ROLE_USER',
+                parts: [{ data: { skill, parameters: {} } }],
+              },
+            },
+          }),
+        });
+      }
+      assert.equal(seen[0].has('signature'), false);
+      assert.equal(seen[1].has('signature'), true);
+      assert.equal(seen[2].has('signature'), false);
+    });
+  }
 
   test('keeps the beta.9 not-applicable compatibility path for an older bundle', () => {
     const complianceDir = writeComplianceBundle({ functionalDispatch: false });

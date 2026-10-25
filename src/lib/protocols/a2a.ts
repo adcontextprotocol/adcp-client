@@ -16,10 +16,13 @@ import { discoverOAuthMetadata } from '../auth/oauth/discovery';
 import { probeAuthChallenge } from '../auth/oauth/authorization-required';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
-import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
-import { toSignerKey, isInlineSigningConfig, isProviderSigningConfig } from '../signing/agent-fetch';
-import { createSigningFetch, type FetchLike } from '../signing/fetch';
-import { createSigningFetchAsync } from '../signing/fetch-async';
+import {
+  buildAgentSigningContext,
+  buildAgentSigningFetch,
+  signingContextStorage,
+  type AgentSigningContext,
+} from '../signing/client';
+import type { FetchLike } from '../signing/fetch';
 import type { AgentConfig } from '../types/adcp';
 import { redactArgsForLog } from '../utils/redact-args';
 import { wrapFetchWithCapture } from './rawResponseCapture';
@@ -220,8 +223,8 @@ const CANCEL_TIMEOUT_MS = 5000;
  * into `pollTaskCompletion` (sibling promise trees), so we can't replay the
  * captured ALS context — instead we rebuild a one-shot signer fetch from
  * `agent.request_signing` directly and use it for this single POST. Inline
- * keys go through `createSigningFetch` (sync); provider-backed configs use
- * `createSigningFetchAsync`. A `signed-requests` seller that requires
+ * and provider-backed configs use the shared protocol-method signing policy
+ * with the active AdCP wire-version pin. A seller that requires
  * signing on `tasks/cancel` (or applies a uniform "all mutating POSTs must
  * be signed" policy) now accepts the cancel; one without signing config on
  * the agent gets the Phase 1 unsigned path.
@@ -238,7 +241,8 @@ export async function cancelA2ATask(
   taskId: string,
   fetchFn?: typeof fetch,
   allowPrivateIp?: boolean,
-  legacyCompat?: A2ALegacyCompatOptions
+  legacyCompat?: A2ALegacyCompatOptions,
+  adcpVersion?: string
 ): Promise<void> {
   // Defense-in-depth (ad-tech-protocol-expert review of #1640): the cancel
   // request targets the discovered A2A endpoint. Calling this on an MCP agent
@@ -253,28 +257,23 @@ export async function cancelA2ATask(
   const transportFetch = createAgentTransportFetch(agentUrl, { trustedFetchFn: fetchFn, allowPrivateIp });
   const authToken = agent.auth_token;
 
-  // adcp-client#1617 Phase 2: sign the cancel POST when the agent has a
-  // signer configured. We bypass the `buildAgentSigningFetch` capability-
-  // gate path because `tasks/cancel` is an A2A protocol method, not an
-  // AdCP tool — the seller's `request_signing.supported_for` typically
-  // lists AdCP tool names, not protocol-level methods. The right model
-  // here: if the agent claims signing AT ALL, sign every mutating POST
-  // we send to it on the cancel path. Sellers with uniform "must be
-  // signed" policies accept this; sellers that only check signing on
-  // specific AdCP tools simply ignore the extra signature.
-  //
-  // TODO(adcp#4318, adcp-client#1617): when the AdCP spec adds explicit
-  // verifier coverage for A2A protocol methods (likely in 3.1 as a new
-  // `protocol_methods_supported_for` / `protocol_methods_required_for`
-  // field on `request_signing`), narrow this default by reading the
-  // seller's advertised coverage from `getCapability()` and gating on
-  // the `tasks/cancel` membership. The over-sign default stays as the
-  // fallback for spec-silent sellers (3.0.x and earlier).
+  // Preserve the established best-effort cancel signing policy, using the
+  // same wire encoding, provider snapshot and WBA advertisement guard as all
+  // other protocol-method dispatches. No extra discovery is performed here.
   let requestFetch: FetchLike = (input, init) => transportFetch(input as RequestInfo | URL, init);
-  if (agent.request_signing && isInlineSigningConfig(agent.request_signing)) {
-    requestFetch = createSigningFetch(requestFetch, toSignerKey(agent.request_signing));
-  } else if (agent.request_signing && isProviderSigningConfig(agent.request_signing)) {
-    requestFetch = createSigningFetchAsync(requestFetch, agent.request_signing.provider);
+  const signingContext = buildAgentSigningContext(agent, { adcpVersion });
+  if (signingContext) {
+    requestFetch = buildAgentSigningFetch({
+      upstream: requestFetch,
+      getCapability: signingContext.getCapability,
+      adcpVersion: signingContext.adcpVersion,
+      signing: {
+        ...signingContext.signing,
+        always_sign_protocol_methods: [
+          ...new Set([...(signingContext.signing.always_sign_protocol_methods ?? []), 'tasks/cancel', 'CancelTask']),
+        ],
+      },
+    });
   }
 
   const timeoutSignal = AbortSignal.timeout(CANCEL_TIMEOUT_MS);

@@ -1,3 +1,4 @@
+import { hasUnsignedCapabilityBootstrap } from '../signing/protocol-methods';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import { normalizeMediaBuyResponse } from '../utils/creative-adapter';
 import { normalizeFormatsResponse } from '../utils/format-renders';
@@ -11361,6 +11362,8 @@ export class SingleAgentClient {
       kid: (provider ? provider.keyid : (signing as { kid?: string }).kid) ?? null,
       alg: (provider ? provider.algorithm : (signing as { alg?: string }).alg) ?? null,
       alwaysSign: signing.always_sign ?? null,
+      alwaysSignProtocolMethods: signing.always_sign_protocol_methods ?? null,
+      unsignedCapabilityBootstrap: hasUnsignedCapabilityBootstrap(signing),
       signSupported: signing.sign_supported ?? null,
     };
   }

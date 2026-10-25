@@ -25,6 +25,16 @@ import {
   type PreparedProtocolToolCall,
 } from '../protocols';
 import { listMCPTasks } from '../protocols/mcp-tasks';
+import { ensureClientCredentialsTokens, getAgentStorage } from '../auth/oauth';
+import { getNonInteractiveOAuthProvider, shareNonInteractiveOAuthProvider } from '../auth/oauth/provider-cache';
+import { isLikelyPrivateUrl } from '../net/address-guards';
+import { assertSigningPolicy } from '../signing/protocol-methods';
+import {
+  buildAgentSigningContext,
+  CAPABILITY_OP,
+  ensureCapabilityLoaded,
+  signingContextStorage,
+} from '../signing/client';
 import { withPreparedProtocolToolCall } from '../protocols/prepared-call-context';
 import { getAuthToken } from '../auth';
 import { getSignedRequestRejection } from '../protocols/signedRequestRejection';
@@ -3539,24 +3549,86 @@ export class TaskExecutor {
     agent: AgentConfig,
     transport?: import('../protocols').TransportOptions
   ): Promise<TaskInfo[]> {
-    // Try MCP Tasks protocol method first
+    const credentialOwner = agent;
+    // Native task methods need the same signer/capability scope as tool calls.
     if (agent.protocol === 'mcp') {
-      const authToken = getAuthToken(agent);
+      // Own routing, signing and scalar configuration across discovery awaits.
+      agent = { ...agent, ...(agent.headers && { headers: { ...agent.headers } }) };
+      const version = this.config.wireAdcpVersion ?? this.config.adcpVersion ?? ADCP_VERSION;
+      let signingContext = buildAgentSigningContext(agent, { adcpVersion: version });
+      if (signingContext) agent = { ...agent, request_signing: signingContext.signing };
+      const syncTokens = () => {
+        agent.oauth_tokens = credentialOwner.oauth_tokens;
+      };
       try {
-        return await listMCPTasks(agent.agent_uri, authToken, undefined, {
-          transport: transport ?? this.config.transport,
-          onTransportActivity: this.config.onTransportActivity,
-          transportActivityContext: {
-            agentId: agent.id,
-          },
-        });
+        // Keep the host's agent identity for refresh coalescing and persistence.
+        if (credentialOwner.oauth_client_credentials) {
+          await ensureClientCredentialsTokens(credentialOwner, {
+            storage: getAgentStorage(credentialOwner),
+            allowPrivateIp: transport?.allowPrivateIp ?? isLikelyPrivateUrl(agent.agent_uri),
+            fetch: transport?.trustedFetchFn,
+          });
+          syncTokens();
+        } else if (credentialOwner.oauth_tokens) {
+          getNonInteractiveOAuthProvider(credentialOwner, {
+            agentHint: credentialOwner.id,
+            storage: getAgentStorage(credentialOwner),
+            allowHttp: isLikelyPrivateUrl(credentialOwner.agent_uri),
+          });
+          shareNonInteractiveOAuthProvider(credentialOwner, agent);
+        }
+        signingContext = buildAgentSigningContext(agent, { adcpVersion: version });
+        if (signingContext) {
+          // A refresh during OAuth discovery changes the authenticated scope.
+          // Rediscover under the new token rather than relabel old evidence.
+          for (let attempt = 0; attempt < 2; attempt++) {
+            await ensureCapabilityLoaded(agent, signingContext, async args => {
+              const previousOwnerTokens = credentialOwner.oauth_tokens;
+              const previousRequestTokens = agent.oauth_tokens;
+              try {
+                return await ProtocolClient.callTool(agent, CAPABILITY_OP, args, {
+                  serverVersion: this.lastKnownServerVersion,
+                  adcpVersion: this.config.adcpVersion,
+                  wireAdcpVersion: this.config.wireAdcpVersion,
+                  versionEnvelope: this.config.versionEnvelope,
+                  transport: transport ?? this.config.transport,
+                  onTransportActivity: this.config.onTransportActivity,
+                });
+              } finally {
+                if (
+                  credentialOwner.oauth_tokens === previousOwnerTokens &&
+                  agent.oauth_tokens !== previousRequestTokens
+                ) {
+                  credentialOwner.oauth_tokens = agent.oauth_tokens;
+                } else {
+                  syncTokens();
+                }
+              }
+            });
+            syncTokens(); // Joined discovery may have refreshed the shared owner.
+            const current = buildAgentSigningContext(agent, { adcpVersion: version })!;
+            if (current.capabilityCacheKey === signingContext.capabilityCacheKey) break;
+            signingContext.invalidate();
+            if (attempt === 1)
+              throw new ConfigurationError('Task-list authorization changed during discovery; retry the call');
+            signingContext = current;
+          }
+        }
+        return await signingContextStorage.run(signingContext, () =>
+          listMCPTasks(agent.agent_uri, getAuthToken(agent), undefined, {
+            headers: agent.headers,
+            transport: transport ?? this.config.transport,
+            onTransportActivity: this.config.onTransportActivity,
+            transportActivityContext: { agentId: agent.id },
+          })
+        );
       } catch (err) {
-        if (is401Error(err)) throw err;
-        // Fall through to tool call if protocol method is not supported
+        if (is401Error(err) || err instanceof ConfigurationError || err instanceof TypeError) throw err;
+        // Fall through to tool call if protocol method is not supported.
       }
     }
     const response = (await ProtocolClient.callTool(
-      agent,
+      credentialOwner,
       'tasks/list',
       {},
       {
@@ -3575,6 +3647,7 @@ export class TaskExecutor {
    * Task tracking methods (PR #78)
    */
   async listTasks(agent: AgentConfig, transport?: import('../protocols').TransportOptions): Promise<TaskInfo[]> {
+    if (agent.request_signing) assertSigningPolicy(agent.request_signing);
     const transportSnapshot = snapshotTransportOptions(transport ?? this.config.transport);
     try {
       return await this.listTasksForAgent(agent, transportSnapshot);
@@ -3758,7 +3831,8 @@ export class TaskExecutor {
               a2aCancellationTaskId,
               cancelTransport?.trustedFetchFn,
               cancelTransport?.allowPrivateIp,
-              cancelTransport?.legacyCompat
+              cancelTransport?.legacyCompat,
+              wireAdcpVersion ?? this.config.wireAdcpVersion ?? this.config.adcpVersion ?? ADCP_VERSION
             ).catch(() => {
               /* see SECURITY note above */
             });

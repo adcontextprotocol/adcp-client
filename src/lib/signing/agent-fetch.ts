@@ -17,6 +17,14 @@ import { containsWebhookAuthentication } from './webhook-auth-detection';
 import { ADCP_VERSION } from '../version';
 import { requestSigningEncodingForVersion } from './content-digest';
 import { resolveRequestOperation } from './operation-resolution';
+import { parseStrictJson } from './agent-resolver/strict-json';
+import { freezeSigningProvider } from './provider';
+import {
+  assertSigningPolicy,
+  hasUnsignedCapabilityBootstrap,
+  isSigningProtocolMethod,
+  signingListIncludes,
+} from './protocol-methods';
 export { requestSigningEncodingForVersion } from './content-digest';
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -73,7 +81,7 @@ function describeBody(body: unknown): string {
  *   `kind: "data"`; A2A 1.0 proto-JSON parts carry no `kind` at all.
  * - All other JSON-RPC methods (`initialize`, `tools/list`, notifications)
  *   return `undefined` — those are protocol-layer housekeeping, not AdCP
- *   operations subject to request-signing policy.
+ *   operations. Protocol-method coverage is evaluated separately.
  *
  * Throws if the body is of a shape the signer can't read (Blob, FormData,
  * ReadableStream). The MCP / A2A SDKs both emit JSON strings today; a future
@@ -134,12 +142,66 @@ export function shouldSignOperation(
   config: AgentRequestSigningConfig
 ): boolean {
   if (!operation) return false;
-  if (config.always_sign?.includes(operation)) return true;
-  if (!capability?.supported) return false;
-  if (capability.required_for?.includes(operation)) return true;
-  if (capability.warn_for?.includes(operation)) return true;
-  if (config.sign_supported && capability.supported_for?.includes(operation)) return true;
+  if (signingListIncludes(config.always_sign, operation)) return true;
+  if (capability?.supported !== true) return false;
+  if (signingListIncludes(capability.required_for, operation)) return true;
+  if (signingListIncludes(capability.warn_for, operation)) return true;
+  if (config.sign_supported === true && signingListIncludes(capability.supported_for, operation)) return true;
   return false;
+}
+
+/** Protocol methods remain disjoint from AdCP operation names. */
+function shouldSignProtocolMethod(
+  method: string,
+  capability: VerifierCapability | undefined,
+  config: AgentRequestSigningConfig
+): boolean {
+  if (!isSigningProtocolMethod(method)) return false;
+  if (signingListIncludes(config.always_sign_protocol_methods, method)) return true;
+  if (capability?.supported !== true) return false;
+  return (
+    signingListIncludes(capability.protocol_methods_required_for, method) ||
+    signingListIncludes(capability.protocol_methods_warn_for, method) ||
+    (config.sign_supported === true && signingListIncludes(capability.protocol_methods_supported_for, method))
+  );
+}
+
+function hasProtocolSigningPolicy(
+  capability: VerifierCapability | undefined,
+  config: AgentRequestSigningConfig
+): boolean {
+  return [
+    config.always_sign_protocol_methods,
+    ...(capability?.supported === true
+      ? [
+          capability.protocol_methods_required_for,
+          capability.protocol_methods_warn_for,
+          ...(config.sign_supported === true ? [capability.protocol_methods_supported_for] : []),
+        ]
+      : []),
+  ].some(list => Array.isArray(list) && list.some(isSigningProtocolMethod));
+}
+
+function jsonRpcMethodsForSigning(body: unknown): string[] {
+  const text = bodyToUtf8(body);
+  if (!text) return [];
+  // OAuth token requests can share the transport fetch. Preserve non-JSON
+  // form posts; strict method classification applies to JSON envelopes.
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return [];
+  let parsed: unknown;
+  try {
+    // Ambiguous method keys must not silently choose an unsigned route.
+    if (text.charCodeAt(0) === 0xfeff) throw new TypeError();
+    parsed = parseStrictJson(text);
+  } catch {
+    throw new TypeError('Cannot select protocol-method signing policy from malformed JSON-RPC body');
+  }
+  return (Array.isArray(parsed) ? parsed : [parsed]).flatMap(message =>
+    message !== null && typeof message === 'object' && typeof (message as { method?: unknown }).method === 'string'
+      ? [(message as { method: string }).method]
+      : []
+  );
 }
 
 /**
@@ -200,15 +262,15 @@ export interface BuildAgentSigningFetchOptions {
  * Build a fetch wrapper suitable for injection into MCP/A2A transports. On
  * every outbound request:
  *   1. Sign immediately when the payload carries webhook authentication.
- *   2. Extract the AdCP operation name from the JSON-RPC body (MCP tool-call
- *      or an A2A send method). Non-AdCP JSON-RPC methods (e.g., `initialize`)
- *      pass through unsigned.
- *   3. Consult the cached seller capability to decide whether to sign.
+ *   2. Resolve the AdCP operation and exact JSON-RPC protocol method.
+ *   3. Consult each capability namespace independently; either can request
+ *      signing. Legacy SDK task polls sign when the seller supports signing.
  *   4. Resolve the seller's content-digest policy into a per-request toggle.
  *   5. Delegate to `createSigningFetch` with the decision baked in.
  */
 export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): FetchLike {
   const { signing, getCapability } = options;
+  assertSigningPolicy(signing);
   // Resolve `globalThis.fetch` per-call when no explicit upstream was passed
   // so a polyfill installed between factory creation and first request still
   // takes effect. Eager resolution would freeze whatever was global at
@@ -217,18 +279,40 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
   const upstream: FetchLike = explicitUpstream ?? ((input, init) => defaultUpstream()(input, init));
 
   const shouldSign = (_url: string, init: RequestInit | undefined): boolean => {
+    const capability = getCapability()?.requestSigning;
+    // Credentials and oversized payloads must not bypass strict policy selection.
+    const policyMethods = hasProtocolSigningPolicy(capability, signing)
+      ? jsonRpcMethodsForSigning(init?.body)
+      : undefined;
     if (carriesWebhookAuthentication(init?.body)) {
-      if (signing.profile === 'web-bot-auth' && !getCapability()?.requestSigning?.profiles?.includes('web-bot-auth'))
+      if (signing.profile === 'web-bot-auth' && !signingListIncludes(capability?.profiles, 'web-bot-auth'))
         throw new TypeError('Seller did not advertise the Web Bot Auth request signing profile');
       return true;
     }
     const operation = extractAdcpOperation(init?.body);
-    const entry = getCapability();
+    if (operation === 'get_adcp_capabilities' && hasUnsignedCapabilityBootstrap(signing)) return false;
+    const isPollOperation = operation === 'tasks_get' || operation === 'tasks/get';
+    const methods = policyMethods ?? (isPollOperation ? jsonRpcMethodsForSigning(init?.body) : []);
+    const profileCompatible =
+      signing.profile === 'web-bot-auth'
+        ? signingListIncludes(capability?.profiles, 'web-bot-auth')
+        : capability?.profiles === undefined || signingListIncludes(capability.profiles, 'adcp/request-signing/v1');
+    const legacyPoll =
+      profileCompatible &&
+      capability?.supported === true &&
+      ((operation === 'tasks_get' && methods.includes('tools/call')) ||
+        (operation === 'tasks/get' &&
+          methods.some(method =>
+            ['message/send', 'message/stream', 'SendMessage', 'SendStreamingMessage'].includes(method)
+          )));
     const sign =
-      signing.profile === 'web-bot-auth' && !!operation && entry?.requestSigning?.profiles?.includes('web-bot-auth')
-        ? true
-        : shouldSignOperation(operation, entry?.requestSigning, signing);
-    if (sign && signing.profile === 'web-bot-auth' && !entry?.requestSigning?.profiles?.includes('web-bot-auth'))
+      (signing.profile === 'web-bot-auth' &&
+        !!operation &&
+        signingListIncludes(capability?.profiles, 'web-bot-auth')) ||
+      shouldSignOperation(operation, capability, signing) ||
+      methods.some(method => shouldSignProtocolMethod(method, capability, signing)) ||
+      legacyPoll;
+    if (sign && signing.profile === 'web-bot-auth' && !signingListIncludes(capability?.profiles, 'web-bot-auth'))
       throw new TypeError('Seller did not advertise the Web Bot Auth request signing profile');
     return sign;
   };
@@ -240,7 +324,7 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
       if (!signing.public_key) throw new TypeError('Web Bot Auth providers require public_key');
       return createWebBotAuthFetch(
         upstream,
-        { provider: freezeProviderIdentity(signing.provider), publicKey: signing.public_key },
+        { provider: freezeSigningProvider(signing.provider), publicKey: signing.public_key },
         { origin: signing.agent_url, shouldSign }
       );
     }
@@ -266,24 +350,10 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
     // build and outbound request, the wire `keyid` would drift away from
     // the cache key the connection was bound to. The frozen view binds the
     // wire identity to the snapshot already used for cache routing.
-    const frozen = freezeProviderIdentity(signing.provider);
+    const frozen = freezeSigningProvider(signing.provider);
     return createSigningFetchAsync(upstream, frozen, { shouldSign, coverContentDigest, binaryEncoding });
   }
   return createSigningFetch(upstream, toSignerKey(signing), { shouldSign, coverContentDigest, binaryEncoding });
-}
-
-function freezeProviderIdentity(provider: AgentRequestSigningConfigProvider['provider']) {
-  const keyid = provider.keyid;
-  const algorithm = provider.algorithm;
-  const adcpUse = provider.adcpUse;
-  const fingerprint = provider.fingerprint;
-  return {
-    keyid,
-    algorithm,
-    adcpUse,
-    fingerprint,
-    sign: (payload: Uint8Array) => provider.sign(payload),
-  };
 }
 
 export interface CreateAgentSignedFetchOptions {

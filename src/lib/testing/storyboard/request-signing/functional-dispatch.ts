@@ -1,3 +1,4 @@
+import { assertSigningPolicy, withUnsignedCapabilityBootstrap } from '../../../signing/protocol-methods';
 import type { AgentRequestSigningConfig, AdcpPrivateJsonWebKey } from '../../../types/adcp';
 import type { TestOptions } from '../../types';
 import { loadRequestSigningKeys, findKey } from './vector-loader';
@@ -53,13 +54,18 @@ export function applyFunctionalRequestSigning<T extends TestOptions>(
 
   const suppliedSigning = options.functional_request_signing;
   if (suppliedSigning) {
-    if (suppliedSigning.always_sign?.includes('get_adcp_capabilities')) {
+    assertSigningPolicy(suppliedSigning);
+    if (
+      suppliedSigning.always_sign?.includes('get_adcp_capabilities') ||
+      suppliedSigning.always_sign_protocol_methods?.some(method =>
+        ['message/send', 'message/stream', 'SendMessage', 'SendStreamingMessage'].includes(method)
+      )
+    ) {
       throw new Error('functional request signing requires unsigned bootstrap discovery via get_adcp_capabilities');
     }
-    if (suppliedSigning.sign_supported === true) return options;
     return {
       ...options,
-      functional_request_signing: { ...suppliedSigning, sign_supported: true },
+      functional_request_signing: withUnsignedCapabilityBootstrap({ ...suppliedSigning, sign_supported: true }),
     };
   }
 
@@ -103,5 +109,5 @@ export function applyFunctionalRequestSigning<T extends TestOptions>(
     agent_url: dispatch.signer_agent_url,
     sign_supported: dispatch.operation_selection.sign_supported_for,
   };
-  return { ...options, functional_request_signing: signing };
+  return { ...options, functional_request_signing: withUnsignedCapabilityBootstrap(signing) };
 }

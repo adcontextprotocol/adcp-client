@@ -1,3 +1,4 @@
+import { hasUnsignedCapabilityBootstrap } from '../signing/protocol-methods';
 /**
  * Test client utilities for AdCP Agent E2E Testing
  */
@@ -498,6 +499,8 @@ function requestSigningReuseMode(config: AgentRequestSigningConfig | undefined):
         jwksUri: config.jwks_uri,
         signSupported: config.sign_supported === true,
         alwaysSign: config.always_sign ?? [],
+        alwaysSignProtocolMethods: config.always_sign_protocol_methods ?? [],
+        unsignedCapabilityBootstrap: hasUnsignedCapabilityBootstrap(config),
       })
     )
     .digest('hex')

@@ -60,7 +60,7 @@ delete edPrivateJwk.use;
  * and rejects unsigned / invalid-signed POSTs with 401. Records each
  * request so tests can assert the wire shape.
  */
-function startStrictSigningSeller() {
+function startStrictSigningSeller(adcpVersion = '3.2.6') {
   const requests = [];
   const jwks = new StaticJwksResolver([edPublic]);
   const replayStore = new InMemoryReplayStore({ maxEntriesPerKeyid: 100 });
@@ -108,7 +108,7 @@ function startStrictSigningSeller() {
           const result = await verifyRequestSignature(
             { method: req.method, url, headers, body },
             {
-              adcpVersion: '3.1',
+              adcpVersion,
               capability: {
                 supported: true,
                 covers_content_digest: 'either',
@@ -179,6 +179,30 @@ describe('cancelA2ATask: Phase 2 signing (#1617)', () => {
       // reaching the verified branch (=> the test server returns 200) means
       // the cancel was accepted. No assertion on response body — cancel is
       // fire-and-forget at the buyer side.
+    } finally {
+      await seller.close();
+    }
+  });
+
+  test('preserves an explicit legacy wire pin when signing cancellation', async () => {
+    const seller = await startStrictSigningSeller('3.1');
+    try {
+      await cancelA2ATask(
+        {
+          id: 'legacy-cancel',
+          name: 'Legacy cancel',
+          agent_uri: seller.url,
+          protocol: 'a2a',
+          request_signing: { kind: 'inline', alg: 'ed25519', kid: edRaw.kid, private_key: edPrivateJwk },
+        },
+        'task-being-cancelled',
+        undefined,
+        undefined,
+        undefined,
+        '3.1'
+      );
+      assert.equal(seller.requests.length, 1);
+      assert.ok(seller.requests[0].headers.signature);
     } finally {
       await seller.close();
     }
