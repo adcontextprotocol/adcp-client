@@ -277,3 +277,95 @@ describe('injectLegacyEnvelopeStatus — 3.0.x back-compat shim', () => {
     assert.strictEqual(input.status, undefined, 'input must not be mutated');
   });
 });
+
+// adcp-client#3432: the response `adcp_version` echo is optional. A 3.1+
+// seller may answer a create with only `{ status: 'completed', media_buy_id }`.
+// `completed` / `rejected` / `canceled` are valid both as TaskStatus and as
+// MediaBuyStatus, so without an echo the release the caller requested decides
+// which one top-level `status` is.
+describe('envelope-status compat — requested release for un-echoed media-buy responses', () => {
+  const { normalizeLegacyMediaBuyStatusForReturn } = require('../../dist/lib/utils/envelope-status-compat.js');
+
+  function unechoed(status, extra = {}) {
+    return {
+      status,
+      media_buy_id: 'seller-buy',
+      confirmed_at: '2026-10-23T00:00:00Z',
+      revision: 1,
+      packages: [{ package_id: 'seller-package', product_id: 'seller-product' }],
+      ...extra,
+    };
+  }
+
+  for (const toolName of ['create_media_buy', 'update_media_buy']) {
+    for (const adcpVersion of ['3.1', '3.2', '3.2.7', '3.3.0-beta.0']) {
+      for (const status of ['completed', 'rejected', 'canceled']) {
+        test(`${toolName} at ${adcpVersion}: un-echoed status ${status} is task status, not a lifecycle`, () => {
+          const input = unechoed(status);
+          const options = { toolName, adcpVersion };
+
+          const injected = injectLegacyEnvelopeStatus(input, options);
+          assert.strictEqual(injected, input, 'must return the seller payload unchanged');
+          assert.ok(!('media_buy_status' in injected));
+
+          const returned = normalizeLegacyMediaBuyStatusForReturn(input, options);
+          assert.strictEqual(returned, input);
+          assert.ok(!('media_buy_status' in returned));
+        });
+      }
+    }
+  }
+
+  test('3.0 request: un-echoed lifecycle in status still moves to media_buy_status', () => {
+    for (const status of ['active', 'pending_creatives', 'completed']) {
+      const input = unechoed(status);
+      const options = { toolName: 'create_media_buy', adcpVersion: '3.0' };
+
+      const injected = injectLegacyEnvelopeStatus(input, options);
+      assert.strictEqual(injected.status, 'completed', status);
+      assert.strictEqual(injected.media_buy_status, status, status);
+
+      const returned = normalizeLegacyMediaBuyStatusForReturn(input, options);
+      assert.strictEqual(returned.status, status, 'seller status is preserved on return');
+      assert.strictEqual(returned.media_buy_status, status);
+    }
+  });
+
+  test('3.1+ request: an unambiguous un-echoed lifecycle value keeps the legacy move', () => {
+    // `active` is never a TaskStatus, so moving it does not invent anything.
+    const input = unechoed('active');
+    const injected = injectLegacyEnvelopeStatus(input, { toolName: 'create_media_buy', adcpVersion: '3.2' });
+    assert.strictEqual(injected.status, 'completed');
+    assert.strictEqual(injected.media_buy_status, 'active');
+  });
+
+  test('an explicit seller echo wins over the requested release', () => {
+    const legacy = unechoed('completed', { adcp_version: '3.0' });
+    const fromLegacy = injectLegacyEnvelopeStatus(legacy, { toolName: 'create_media_buy', adcpVersion: '3.2' });
+    assert.strictEqual(fromLegacy.media_buy_status, 'completed', '3.0 echo: completed is the lifecycle');
+
+    const legacyMajor = unechoed('completed', { adcp_major_version: 3 });
+    const fromLegacyMajor = injectLegacyEnvelopeStatus(legacyMajor, {
+      toolName: 'create_media_buy',
+      adcpVersion: '3.2',
+    });
+    assert.strictEqual(fromLegacyMajor.media_buy_status, 'completed', 'major-only echo is a 3.0 emitter');
+
+    const current = unechoed('completed', { adcp_version: '3.2' });
+    const fromCurrent = injectLegacyEnvelopeStatus(current, { toolName: 'create_media_buy', adcpVersion: '3.0' });
+    assert.strictEqual(fromCurrent, current, '3.2 echo: completed is the task status');
+    assert.ok(!('media_buy_status' in fromCurrent));
+  });
+
+  test('without a payload echo or requested release the legacy reading is unchanged', () => {
+    const input = unechoed('completed');
+    const injected = injectLegacyEnvelopeStatus(input, { toolName: 'create_media_buy' });
+    assert.strictEqual(injected.media_buy_status, 'completed');
+  });
+
+  test('strict response validation of an un-echoed 3.2 create neither needs nor adds media_buy_status', () => {
+    const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
+    const result = validateResponse('create_media_buy', unechoed('completed'), '3.2');
+    assert.strictEqual(result.valid, true, JSON.stringify(result.issues));
+  });
+});

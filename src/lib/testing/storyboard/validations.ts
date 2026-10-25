@@ -601,10 +601,13 @@ function validateResponseSchemaForVersion(
   // bundle is authoritative. Its result must never gate that run, but it lets
   // strict-summary consumers distinguish an actual strict/lenient delta from
   // a response that both schema sources reject.
+  const responseAdcpVersion = ctx.responseAdcpVersion ?? ctx.adcpVersion;
   const dataForValidation = Array.isArray(dataWithoutMessage)
     ? dataWithoutMessage
-    : injectLegacyEnvelopeStatus(dataWithoutMessage as Record<string, unknown>, { toolName: taskName });
-  const responseAdcpVersion = ctx.responseAdcpVersion ?? ctx.adcpVersion;
+    : injectLegacyEnvelopeStatus(dataWithoutMessage as Record<string, unknown>, {
+        toolName: taskName,
+        adcpVersion: responseAdcpVersion,
+      });
   const parseResult = schema?.safeParse(
     prepareResponseForSchemaValidation(taskName, dataForValidation, responseAdcpVersion)
   );
