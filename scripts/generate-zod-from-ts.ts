@@ -1545,7 +1545,28 @@ function postProcessCompactTaskSubmittedEnvelope(content: string): string {
   }
 
   const to = 'AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).merge(z.object({';
-  return content.slice(0, compact.start) + compact.text.replace(from, to) + content.slice(compact.end);
+  content = content.slice(0, compact.start) + compact.text.replace(from, to) + content.slice(compact.end);
+  // 3.3 adds an optional finalize estimate to the refinement submitted arm.
+  // It is disjoint from the shared envelope, so merging preserves both
+  // constraints while retaining the public ZodObject helpers.
+  const refinement = blockOf('RefineProposalsAsyncSubmittedSchema');
+  const refinementFrom = 'CompactTaskSubmittedSchema.and(z.object({';
+  if (refinement.text.includes(refinementFrom)) {
+    const extra = topLevelObject('RefineProposalsAsyncSubmittedSchema', refinement.text);
+    if (
+      !extra.passthrough ||
+      [...extra.keys.keys()].join(',') !== 'expected_confirmation_at' ||
+      version.keys.has('expected_confirmation_at') ||
+      protocol.keys.has('expected_confirmation_at') ||
+      own.keys.has('expected_confirmation_at')
+    )
+      fail('refinement submitted extension changed');
+    content =
+      content.slice(0, refinement.start) +
+      refinement.text.replace(refinementFrom, 'CompactTaskSubmittedSchema.merge(z.object({') +
+      content.slice(refinement.end);
+  }
+  return content;
 }
 
 /**

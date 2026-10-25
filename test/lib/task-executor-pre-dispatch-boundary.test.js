@@ -1312,7 +1312,15 @@ describe('TaskExecutor pre-dispatch boundary', () => {
       validation: { requests: 'off', responses: 'off' },
     });
     client.ensureEndpointDiscovered = async () => pauseAgent;
-    client.detectServerVersion = async () => 'v3';
+    client.getCapabilities = async () => ({
+      version: 'v3',
+      majorVersions: [3],
+      supportedVersions: [client.getAdcpVersion()],
+      protocols: ['media_buy'],
+      features: {},
+      extensions: [],
+      _synthetic: false,
+    });
     client.getEarlyResultForUnsupportedFeatures = async () => null;
     const paused = await client.createMediaBuyLegacyWithPreDispatch(
       {
@@ -2516,7 +2524,15 @@ describe('TaskExecutor pre-dispatch boundary', () => {
       },
     });
     client.ensureEndpointDiscovered = async () => AGENT;
-    client.detectServerVersion = async () => 'v3';
+    client.getCapabilities = async () => ({
+      version: 'v3',
+      majorVersions: [3],
+      supportedVersions: [client.getAdcpVersion()],
+      protocols: ['media_buy'],
+      features: {},
+      extensions: [],
+      _synthetic: false,
+    });
     client.getEarlyResultForUnsupportedFeatures = async () => null;
 
     const result = await client.createMediaBuyLegacyWithPreDispatch(

@@ -60,6 +60,8 @@ const GetProductsResponseStrictSchema = schemas.GetProductsResponseSchema.superR
 export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // Product discovery & media buy
   list_products: schemas.ListProductsResponseSchema,
+  list_collections: schemas.ListCollectionsResponseSchema,
+  list_proposals: schemas.ListProposalsResponseSchema,
   request_proposals: schemas.RequestProposalsResponseSchema,
   refine_proposals: schemas.RefineProposalsResponseSchema,
   decline_proposals: schemas.DeclineProposalsResponseSchema,

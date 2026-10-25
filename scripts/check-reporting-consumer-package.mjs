@@ -15,6 +15,7 @@ try {
     {
       cwd: root,
       encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
     }
   );
   // The repository's npm prepare hook writes a status line before pack's JSON.

@@ -122,20 +122,20 @@ describe('adcpVersion constructor option', () => {
       // deliberately rejects its moving prerelease-family alias.
       assert.strictEqual(resolveAdcpVersion(ADCP_VERSION), ADCP_VERSION);
       assert.strictEqual(resolveAdcpVersion(ADCP_RELEASE_PRECISION), ADCP_RELEASE_PRECISION);
-      if (ADCP_VERSION.startsWith('3.2.0-')) {
+      if (/^3\.(?:2|3)\.0-/.test(ADCP_VERSION)) {
         assert.throws(() => resolveAdcpVersion(ADCP_PRERELEASE_FAMILY), /moving prerelease-family alias/);
       } else {
         assert.strictEqual(resolveAdcpVersion(ADCP_PRERELEASE_FAMILY), ADCP_PRERELEASE_FAMILY);
       }
     });
 
-    test('compatibility helpers include exact release-precision aliases without a moving 3.2 family', () => {
+    test('compatibility helpers include exact release-precision aliases without a moving preview family', () => {
       const { getCompatibleVersions, isCompatibleWith } = require('../../dist/lib/index.js');
       const { isAdcpVersionSupported } = require('../../dist/lib/utils/adcp-version-config.js');
 
       assert.ok(getCompatibleVersions().includes(ADCP_RELEASE_PRECISION));
       assert.strictEqual(isCompatibleWith(ADCP_RELEASE_PRECISION), true);
-      if (ADCP_VERSION.startsWith('3.2.0-')) {
+      if (/^3\.(?:2|3)\.0-/.test(ADCP_VERSION)) {
         assert.ok(!getCompatibleVersions().includes(ADCP_PRERELEASE_FAMILY));
         assert.strictEqual(isCompatibleWith(ADCP_PRERELEASE_FAMILY), false);
         assert.strictEqual(isAdcpVersionSupported(ADCP_VERSION, [ADCP_PRERELEASE_FAMILY]), false);
@@ -145,8 +145,8 @@ describe('adcpVersion constructor option', () => {
       }
     });
 
-    test('server capabilities reject the moving 3.2 prerelease-family alias', () => {
-      if (!ADCP_VERSION.startsWith('3.2.0-')) return;
+    test('server capabilities reject the moving prerelease-family alias', () => {
+      if (!/^3\.(?:2|3)\.0-/.test(ADCP_VERSION)) return;
       assert.throws(
         () =>
           createAdcpServer({

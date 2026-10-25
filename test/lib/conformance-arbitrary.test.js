@@ -272,6 +272,20 @@ describe('conformance: schemaToArbitrary', { concurrency: false }, () => {
     fc.sample(schemaToArbitrary(schema), { numRuns: 5, seed: 14 });
   });
 
+  test('not.required excludes a combination while preserving required members', () => {
+    const schema = {
+      type: 'object',
+      properties: { url: { type: 'string' }, authentication: { type: 'string' }, signing_profile: { type: 'string' } },
+      required: ['url', 'authentication'],
+      not: { required: ['authentication', 'signing_profile'] },
+    };
+    for (const value of fc.sample(schemaToArbitrary(schema), { numRuns: 100, seed: 42 })) {
+      assert.equal(typeof value.url, 'string');
+      assert.equal(typeof value.authentication, 'string');
+      assert.equal('signing_profile' in value, false);
+    }
+  });
+
   test('anyOf-required: satisfies at least one required branch', () => {
     const schema = {
       type: 'object',

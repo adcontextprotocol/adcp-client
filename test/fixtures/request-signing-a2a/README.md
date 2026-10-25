@@ -1,11 +1,11 @@
 # A2A operation-resolution vectors (vendored)
 
-Copied verbatim from adcontextprotocol/adcp PR #7945 (merged as
-`54bb6bb5ff507b7115d7bf3768998d7356e0b3b7`,
-`static/compliance/source/test-vectors/request-signing/a2a/`), the security erratum for
-GHSA-2pm6-6mc8-8xcm / adcp#7820.
+Copied verbatim from the signed AdCP `3.3.0-beta.0` protocol bundle's
+`compliance/test-vectors/request-signing/a2a/` corpus. Bundle SHA-256:
+`2095f3bafecf767a4b67e86599e3163008e0a0d7c57b8296f8c0bb81fe722f0a`.
+These 33 vectors originated in the security erratum for
+GHSA-2pm6-6mc8-8xcm / adcp#7820 (adcp#7945).
 
-They are vendored because the published compliance bundle that
-`npm run sync-schemas` pulls does not carry them yet. Once a released bundle
-includes `test-vectors/request-signing/a2a/`, the grader and tests prefer it and
-this copy can be deleted. Do not edit these files; re-copy from upstream.
+The grader prefers the selected compliance cache. This copy supports the
+explicit vendored fallback and fixture-level grader tests. Do not edit the
+JSON files; re-copy them from the verified upstream bundle.

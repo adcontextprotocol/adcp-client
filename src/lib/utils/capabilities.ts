@@ -324,6 +324,8 @@ export interface ToolInfo {
  */
 export const MEDIA_BUY_TOOLS = [
   'list_products',
+  'list_collections',
+  'list_proposals',
   'request_proposals',
   'refine_proposals',
   'decline_proposals',

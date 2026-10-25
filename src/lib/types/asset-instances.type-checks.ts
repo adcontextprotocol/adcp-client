@@ -50,6 +50,7 @@ function describeAsset(asset: AssetInstance): string {
     case 'vast':
     case 'daast':
     case 'brief':
+    case 'video_brief':
     case 'catalog':
     case 'webhook':
     case 'zip':
@@ -107,6 +108,7 @@ const _all_types: AssetInstanceType[] = [
   'vast',
   'daast',
   'brief',
+  'video_brief',
   'catalog',
   'webhook',
   'zip',

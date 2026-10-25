@@ -31,10 +31,9 @@ import {
 import { evaluateChangeTermConstraints, type ConstraintEvaluationOptions } from './action-constraints';
 import { decomposeUpdateMediaBuy, hasUnmappedMutation, mutationShapeIssue } from './mutations';
 import { LEGACY_REQUIRES_PROPOSAL_MODE } from './available-actions';
-import { ADCP_VERSION } from '../version';
 
 export interface ActionAssessmentOptions extends ConstraintEvaluationOptions {
-  /** Seller-served wire version. 3.1 term references are always opaque. Defaults to the current 3.2 shape. */
+  /** Seller-served wire version. 3.1 term references are always opaque. Pass the seller release to enable version-gated actions. */
   adcpVersion?: string;
   /** Explicit 3.2 compatibility projection declaring terms_ref an alias for change_term_id. */
   termsRefIsAlias?: boolean;
@@ -135,7 +134,7 @@ export function assessActionAvailability(
     )
   )
     return deny('condition_unresolved', 'The package start policy must be a boolean.', 'unknown');
-  if (startupControl && !supportsCreativeStartPolicyAction(options.adcpVersion ?? ADCP_VERSION))
+  if (startupControl && !supportsCreativeStartPolicyAction(options.adcpVersion ?? ''))
     return deny('condition_unresolved', 'Creative start policy controls require AdCP 3.3 or newer.', 'unknown');
   if (!buy) return deny('condition_unresolved', 'Current MediaBuy state is missing.', 'unknown');
   if (options.request?.packages?.length) {

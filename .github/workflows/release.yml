@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - 16.x
 
 permissions:
   contents: read
@@ -72,6 +73,7 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           version-script: npm run version
           publish-script: npm run release
+          pr-base-branch: ${{ github.ref_name }}
           pr-title: 'chore: release package'
           commit-message: 'chore: release package'
           create-github-releases: false

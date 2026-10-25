@@ -529,6 +529,20 @@ function enforceSimpleConditionals(value: Record<string, unknown>, schema: JsonS
     current = avoidUnsatisfiedConstConditional(current, entry, schema);
     current = enforceElseForbiddenRequired(current, entry);
   }
+  // A presence-only `not.required` forbids the combination, rather than each
+  // member. Remove one optional member without invalidating required fields.
+  const not = schema.not as JsonSchema | undefined;
+  const forbiddenTogether = Array.isArray(not?.required) ? (not.required as string[]) : [];
+  if (
+    not &&
+    Object.keys(not).every(key => key === 'required') &&
+    forbiddenTogether.length > 0 &&
+    forbiddenTogether.every(key => key in current)
+  ) {
+    const required = new Set(Array.isArray(schema.required) ? (schema.required as string[]) : []);
+    const optional = forbiddenTogether.find(key => !required.has(key));
+    if (optional !== undefined) delete current[optional];
+  }
   current = enforceConstThenForbidden(current, schema);
   return current;
 }

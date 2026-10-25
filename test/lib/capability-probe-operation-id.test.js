@@ -115,6 +115,8 @@ async function createHarness(mutationName, { clientConfig = {}, beforeCapabiliti
       },
     ],
     {
+      // Exercise the stable line's asynchronous capability-probe registration.
+      adcpVersion: '3.2.7',
       requireV3ForMutations: true,
       validateFeatures: false,
       webhookUrlTemplate: WEBHOOK_TEMPLATE,

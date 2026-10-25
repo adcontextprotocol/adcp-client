@@ -1,3 +1,4 @@
+import { withReportingResponseVersion } from './response-version';
 import { createHash } from 'node:crypto';
 
 import { ADCP_MAJOR_VERSION, ADCP_VERSION, toReleasePrecisionVersion } from '../../version';
@@ -88,7 +89,7 @@ export function createReportingStatusHandler<TContext = unknown>(
   const activeReadsByAccount = new Map<string, number>();
   // Fail at wiring time, not on the first read, if the pinned release defines no usable page-size bounds.
   reportingPageBounds();
-  return async (
+  const handler = async (
     request: Parameters<ReportingStatusHandlerV1>[0],
     context: Pick<Parameters<ReportingStatusHandlerV1>[1], 'account' | 'signal'>
   ) => {
@@ -549,6 +550,7 @@ export function createReportingStatusHandler<TContext = unknown>(
       releaseReadSlot();
     }
   };
+  return withReportingResponseVersion('get_reporting_status', handler);
 }
 
 /**

@@ -1,6 +1,6 @@
 # Wire version compatibility
 
-The SDK supports AdCP 3. Its primary schema pin lives in `ADCP_VERSION`; maintained schema and compliance side bundles cover AdCP 3.0 and 3.1. AdCP 2.5 reached end of life on August 1, 2026, and its compatibility layer has been removed. See [migration guidance](../migration-drop-adcp-2.md).
+The SDK supports AdCP 3. Its primary schema pin lives in `ADCP_VERSION`; maintained schema and compliance side bundles cover AdCP 3.0, 3.1 and 3.2. AdCP 2.5 reached end of life on August 1, 2026, and its compatibility layer has been removed. See [migration guidance](../migration-drop-adcp-2.md).
 
 ## Discovery and negotiation
 
@@ -16,7 +16,7 @@ SDK-hosted sellers must advertise only implemented AdCP 3 releases. Server start
 
 The public API uses the primary pin. Application code builds requests and reads responses in that release's shape, and the client translates for older sellers (adcp-client#3370):
 
-1. **Negotiate.** `negotiateAdcpRelease()` (`src/lib/adapters/version/negotiate.ts`) picks the highest release on or below the client's line from the seller's `supported_versions`. It falls back to the served `adcp_version`. A same-line match keeps the client's exact pin. Sellers with no release metadata (AdCP 3.1 does not require `supported_versions`), synthetic capabilities, an explicit `wireAdcpVersion`, governed payloads and the identity 3.3 experiment skip negotiation; the first two keep the 3.0 request adapters via `resolveAdapterKey`.
+1. **Negotiate.** `negotiateAdcpRelease()` (`src/lib/adapters/version/negotiate.ts`) picks the highest release on or below the client's line from the seller's `supported_versions`. It falls back to the served `adcp_version`. A same-line match keeps the client's exact pin. Preview clients require an exact advertised prerelease: a served-version echo, a moving family alias, or synthetic discovery never establishes preview support. Sellers with no release metadata (AdCP 3.1 does not require `supported_versions`), synthetic capabilities, an explicit `wireAdcpVersion`, governed payloads and the identity 3.3 experiment skip negotiation; stable clients with missing or synthetic metadata retain the existing 3.0 adapter fallback. Preview clients refuse requests whose discovery cannot establish a supported release.
 2. **Convert the request down** one minor at a time (`translate.ts`). Each step runs the hand-written `adaptRequest` adapters registered under the older release's key (`version/3.1/` for 3.2 → 3.1, `version/3.0/` for 3.1 → 3.0), then `projectToolPayload()` (`schema-projection.ts`). The projection diffs the two releases' tool schemas and removes properties, enum values and union variants only the newer one defines. Fields neither release declares, and free-form maps, are left alone.
 3. **Guard account identity.** Removed account-key fields (`operator_unit`, `currency`, `timezone` and `brand.countries` on any account reference) are refused by default. `accountIdentityDowngrade: 'reduce'` sends the older key and reports `account_identity_reduced`. The account registry (which needs `accountStorage` with `compareAndSet`) binds each reduced key to one buyer key, with unreduced keys claiming themselves (`claimReductions`, all-or-nothing per request), refuses collisions in either order, keeps sending the reduced key after the seller upgrades (`account_identity_migration_pending`) and forgets it on `clearReduction` (`src/lib/core/account-reduction.ts`, `buyer-account-registry.ts`).
 4. **Validate** the converted request, and the response, against the negotiated release.
@@ -24,7 +24,7 @@ The public API uses the primary pin. Application code builds requests and reads 
 
 Every change is a `debug_logs` drift entry with `fromVersion` / `toVersion`. Tasks the negotiated release does not define are refused with `ProtocolFeatureUnsupportedError` unless the seller lists them.
 
-To add a version pair (e.g. 3.3 ↔ 3.2), ship the older bundle, create `version/<older>/` with adapters for renames and moves only, and register it in `version/index.ts`. Additions need no code: the projection removes and reports them.
+To add a version pair, ship the older bundle. Add `version/<older>/` adapters and register them in `version/index.ts` only when a rename or move has a lossless mapping. Pure additions need no hand-written adapter: the schema projection removes and reports them. The 3.3 → 3.2 path uses this projection; semantic mutation fields that would be lost are refused, and opaque experimental evaluator IDs are never invented from URLs.
 
 On the server, `createAdcpServer` does the reverse. Handlers are written against the server's `adcpVersion`. When a buyer is served an older release, the request runs through each step's `upgradeRequest` adapters before the handler. The handler's response then runs through `downgradeResponse` adapters and the response-schema projection before it is validated against the served release (`downgradeResponse` / `upgradeRequest` in `src/lib/adapters/version/`, wired in the tool handler of `create-adcp-server.ts`). `get_adcp_capabilities` keeps its own projection. `get_task_status` results are converted by their `task_type`. Every conversion is reported to the `onVersionTranslation` callback.
 
@@ -36,7 +36,8 @@ Established media-buy tools remain available for AdCP 3.0/3.1 sellers. Their com
 
 ```text
 schemas/cache/
-├── 3.2.7/       # primary SDK pin
+├── 3.3.0-beta.0/ # primary SDK pin
+├── 3.2.7/        # maintained stable release
 ├── 3.1.29/      # maintained stable release
 ├── 3.0.25/      # maintained stable release
 └── latest/      # symlink to the primary pin
@@ -44,11 +45,11 @@ schemas/cache/
 
 Run `npm run sync-schemas:all` to refresh the primary and maintained bundles. Run `npm run generate-types:all` to regenerate public types, then `npm run build:lib` to build and copy supported schemas into the package. `copy-schemas-to-dist.ts` excludes retired AdCP 2 caches even when present locally. `check-publish-protocol-artifacts.mjs` checks the published schema inventory and rejects retired type exports.
 
-The v16 primary pin is AdCP 3.2.7, including its signed schema and compliance bundles. The patch refresh preserves the public request/response types and the existing pathways to AdCP 3.1 and 3.0.
+The v17 beta primary pin is the signed AdCP 3.3.0-beta.0 bundle. Stable SDK 16 remains on AdCP 3.2.7. The beta retains stable AdCP 3.2.7, 3.1.29 and 3.0.25 bundles for negotiation, schema projection and compliance runs.
 
 Compliance pins select exact fixture bytes, unlike same-minor wire schema aliases. SDK 16.5.0 packages the 3.2.7 corpus; when upgrading from SDK 16.4.0, update explicit `--compliance-version 3.2.5` flags to `3.2.7`. A development pin of `3.2.6` must likewise advance. Retain the matching historical SDK if a run requires that older corpus. The maintained 3.1.29 and 3.0.25 corpora remain packaged.
 
-Build tooling also understands exact AdCP 3.3.0 `beta.N` and `rc.N` pins. Such a build retains maintained AdCP 3.0, 3.1, and 3.2 GA aliases through 3.2.7 while advertising only the selected prerelease, without a moving beta/RC-family alias. This prepares the v17 integration; the stable v16 compatibility list continues to advertise only AdCP 3.2 and earlier.
+Build tooling also understands exact AdCP 3.3.0 `beta.N` and `rc.N` pins. Such a build retains maintained AdCP 3.0, 3.1, and 3.2 GA aliases through 3.2.7 while advertising only the selected prerelease, without a moving beta/RC-family alias. SDK 17 selects the exact 3.3.0-beta.0 preview. The stable v16 compatibility list continues to advertise only AdCP 3.2 and earlier.
 
 Conformance validates current and unversioned response payloads without synthesizing task status. The existing status-optional compatibility shim applies only to explicitly declared AdCP 3.0 payloads, and never to status-free compact tools. Closed response schemas admit only the canonical version-envelope fields alongside their declared task fields; other root restrictions and nested-body constraints remain enforced.
 
@@ -57,3 +58,7 @@ Conformance validates current and unversioned response payloads without synthesi
 Adding another protocol major requires an explicit support decision and a reviewed wire translation layer. Keep translation, request/response schemas, and tests tied to the selected release. Validate responses against the version actually negotiated, preserve unsupported-field errors, and never silently downgrade to an end-of-life protocol.
 
 Removing a supported protocol version is an SDK breaking change. Use a major changeset and document the last SDK release that still supports it. Do not edit the package version manually.
+
+Preview clients discover capabilities with the version-neutral envelope before selecting an exact advertised preview or a maintained stable release. Standalone reporting status helpers preserve the selected context release, or the explicit caller release when no framework selection is present, on both successful and per-item failure replies.
+
+The reverse reporting lane installs and verifies the candidate SDK archive, then configures its managed-reporting seller to serve the stable contract bundled by the pinned Python buyer. Evidence records the candidate primary schema and served contract separately. Run installed Python buyers outside the workspace tree: their editable-install schema fallback can otherwise find workspace bundles absent from the wheel.

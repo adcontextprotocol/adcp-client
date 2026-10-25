@@ -264,6 +264,7 @@ describe('capabilities.overrides — per-domain merge (#654)', () => {
     const server = createAdcpServer({
       name: 'Test',
       version: '1.0.0',
+      adcpVersion: '3.2.7',
       validation: { responses: 'strict' },
       mediaBuy: { getProducts: async () => ({ products: [] }) },
       capabilities: {

@@ -19,6 +19,7 @@ test('packed account feed MCP schema, runtime semantics and cursor types', { tim
       execFileSync('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', temp], {
         cwd: repo,
         encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
         stdio: ['ignore', 'pipe', 'pipe'],
       })
     );

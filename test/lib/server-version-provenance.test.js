@@ -37,6 +37,7 @@ function capabilities(version, synthetic) {
 
 function makeClient(caps, executeTask) {
   const client = new SingleAgentClient(agent, {
+    adcpVersion: '3.2.7',
     validateFeatures: false,
     validation: { requests: 'off', responses: 'off' },
   });

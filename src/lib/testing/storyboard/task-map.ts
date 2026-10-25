@@ -29,6 +29,8 @@ export const TASK_TO_METHOD: Record<string, string> = {
   // Product discovery & media buy
   get_products: 'getProducts',
   list_products: 'listProducts',
+  list_collections: 'listCollections',
+  list_proposals: 'listProposals',
   request_proposals: 'requestProposals',
   refine_proposals: 'refineProposals',
   decline_proposals: 'declineProposals',

@@ -37,6 +37,8 @@ import type {
   SITerminateSessionResponse,
   CreateMediaBuyResponse,
   GetProductsResponse,
+  ListCollectionsResponse,
+  ListProposalsResponse,
   UpdateMediaBuyResponse,
   SyncCreativesResponse,
   GetPrincipalResponse,
@@ -274,6 +276,11 @@ export interface AsyncHandlerConfig {
   // AdCP tool status change handlers - called for ALL status changes (completed, failed, working, input-required, submitted)
   onGetProductsStatusChange?: GetProductsStatusChangeHandler;
   onListProductsStatusChange?: ListProductsStatusChangeHandler;
+  onListCollectionsStatusChange?: (
+    response: ListCollectionsResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
+  onListProposalsStatusChange?: (response: ListProposalsResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onListCreativeFormatsLegacyStatusChange?: (
     data: ListCreativeFormatsResponse,
     metadata: WebhookMetadata
@@ -786,6 +793,12 @@ export class AsyncHandler {
 
       case 'list_products':
         handler = this.config.onListProductsStatusChange;
+        break;
+      case 'list_collections':
+        handler = this.config.onListCollectionsStatusChange;
+        break;
+      case 'list_proposals':
+        handler = this.config.onListProposalsStatusChange;
         break;
 
       case 'list_creative_formats':

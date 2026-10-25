@@ -109,6 +109,9 @@ async def run(url, destination, fixture_root, mode):
         }))
         require(prepared.status.value == "completed", "controller prepare")
         capabilities = await client.get_adcp_capabilities(GetAdcpCapabilitiesRequest())
+        if capabilities.data is None:
+            # The owning process scrubs private runtime inputs from this retained stderr.
+            raise ValueError(f"Capability discovery failed: {capabilities.error}")
         reporting_capabilities = capabilities.data.media_buy.reporting_delivery
         reader = FileReader(destination)
         status = await client.get_reporting_status(request)

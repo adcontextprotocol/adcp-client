@@ -115,6 +115,8 @@ const PreviewCreativeToolRequestSchema = schemas.PreviewCreativeRequestSchema as
  */
 export type KnownToolRequestSchemas = {
   list_products: typeof schemas.ListProductsRequestSchema;
+  list_collections: typeof schemas.ListCollectionsRequestSchema;
+  list_proposals: typeof schemas.ListProposalsRequestSchema;
   request_proposals: typeof schemas.RequestProposalsRequestSchema;
   refine_proposals: typeof schemas.RefineProposalsRequestSchema;
   decline_proposals: typeof schemas.DeclineProposalsRequestSchema;
@@ -201,6 +203,8 @@ export type ToolRequestSchemas = Readonly<KnownToolRequestSchemas> & {
 export const TOOL_REQUEST_SCHEMAS: ToolRequestSchemas = {
   // Product discovery & media buy
   list_products: schemas.ListProductsRequestSchema,
+  list_collections: schemas.ListCollectionsRequestSchema,
+  list_proposals: schemas.ListProposalsRequestSchema,
   request_proposals: schemas.RequestProposalsRequestSchema,
   refine_proposals: schemas.RefineProposalsRequestSchema,
   decline_proposals: schemas.DeclineProposalsRequestSchema,

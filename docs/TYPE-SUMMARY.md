@@ -552,6 +552,7 @@ _Response (success branch):_
   request_signing: object
   webhook_signing: object
   identity: object
+  security_profiles: string[]
   measurement_gateway: object
   measurement: object
   compliance_testing: object
@@ -880,6 +881,7 @@ _Request:_
   required_media_buy_support: Media Buy Support Requirements
   property_list: Property List Ref
   fields: ('product_id' | 'name' | 'description' | 'publisher_properties' | 'channels' | 'video_placement_types' | 'audio_distribution_types' | 'sponsored_placement_types' | 'social_placement_surfaces' | 'format_options' | 'placements' | 'delivery_type' | 'exclusivity' | 'pricing_options' | 'forecast' | 'reporting_capabilities' | 'measurement_terms' | 'performance_standards' | 'catalog_types' | 'signal_targeting_allowed' | 'signal_targeting_rules' | 'demographic_targeting' | 'overlay_support' | 'collections' | 'collection_targeting_allowed' | 'media_buy_support' | 'audience_evidence' | 'audience_evidence_selections' | 'max_optimization_goals' | 'catalog_match' | 'list_applications' | 'brief_relevance' | 'targeting_resolution' | 'acceptance_policy_profile_ids' | 'identity' | 'execution_requirements' | 'expires_at' | 'allowed_actions' | 'format_ids' | 'outcome_measurement' | 'delivery_measurement' | 'creative_policy' | 'metric_optimization' | 'conversion_tracking' | 'data_provider_signals' | 'included_signals' | 'signal_targeting_options' | 'overlay_support' | 'media_buy_support' | 'installments' | 'is_custom' | 'product_card' | 'product_card_detailed' | 'enforced_policies' | 'trusted_match')[]
+  include_collections: boolean
   time_budget: Duration
   push_notification_config: Push Notification Config
   pagination: Pagination Request
@@ -894,6 +896,7 @@ _Response (success branch):_
 ```
 {
   products: Product[]
+  collections: Response Collection[]
   targeting_resolution: Get Products Targeting Resolution
   extensions: object
   proposals: Proposal[]
@@ -936,6 +939,7 @@ _Request:_
   brand: Brand Key
   criteria: Product Discovery Criteria
   fields: Product Fields
+  include_collections: boolean
   cursor: string
   max_results: integer
   if_feed_version: string
@@ -950,9 +954,77 @@ _Response (success branch):_
   products: Canonical Product[]  // required
   feed_version: string  // required
   cache_scope: 'public' | 'account'  // required
+  adcp_version: string
+  collections: Response Collection[]
   next_cursor: string
   pricing_version: string
   incomplete: object[]
+  replayed: 'true'
+  context: Context
+}
+```
+
+#### `list_proposals`
+
+Request parameters for reading proposals and their dispositions (experimental).
+
+_Request:_
+```
+{
+  account: Canonical Account Ref  // required
+  adcp_version: string
+  idempotency_key: string
+  context_id: string
+  context: Context
+  governance_context: string
+  push_notification_config: Push Notification Config
+  opportunity_ids: string[]
+  media_buy_ids: string[]
+  proposal_ids: string[]
+  dispositions: Proposal Disposition[]
+  cursor: string
+  max_results: integer
+}
+```
+
+_Response (success branch):_
+```
+{
+  outcome: 'listed'  // required
+  proposals: object[]  // required
+  opportunities: object[]  // required
+  next_cursor: string
+  replayed: 'true'
+  context: Context
+}
+```
+
+#### `list_collections`
+
+Experimental: request parameters for reading a seller's collection card catalog by key or with filters.
+
+_Request:_
+```
+{
+  adcp_version: string
+  idempotency_key: string
+  context: Context
+  account: Canonical Account Ref
+  collections: Collection Selector[]
+  filters: object
+  pagination: Pagination Request
+  if_collections_version: string
+}
+```
+
+_Response (success branch):_
+```
+{
+  outcome: 'listed'  // required
+  collections: Response Collection[]  // required
+  collections_version: string  // required
+  cache_scope: 'public' | 'account'  // required
+  pagination: Pagination Response
   replayed: 'true'
   context: Context
 }
@@ -976,6 +1048,7 @@ _Request:_
   brand: Brand Key
   criteria: Product Discovery Criteria
   opportunity: Opportunity Context
+  include_collections: boolean
 }
 ```
 
@@ -986,8 +1059,10 @@ _Response (success branch):_
   proposals: Canonical Proposal[]  // required
   products: Canonical Product[]  // required
   adcp_version: string
+  collections: Response Collection[]
   incomplete: object[]
   targeting_resolution: Get Products Targeting Resolution
+  later_proposals: Later Proposals State
   status: 'completed'
   message: string
   errors: Error[]
@@ -1010,6 +1085,7 @@ _Request:_
   context: Context
   governance_context: string
   push_notification_config: Push Notification Config
+  include_collections: boolean
 }
 ```
 
@@ -1019,6 +1095,7 @@ _Response (success branch):_
   results: union[]  // required
   products: Canonical Product[]  // required
   adcp_version: string
+  collections: Response Collection[]
   status: 'completed'
   message: string
   errors: Error[]
@@ -1085,6 +1162,8 @@ _Request:_
   purchase_order_ref: string
   agency_estimate_number: string
   invoice_recipient: Business Entity
+  predecessor_media_buy_id: string
+  lineage_reason: Media Buy Lineage Reason
   governance_context: string
   push_notification_config: Push Notification Config
   reporting_webhook: Reporting Webhook
@@ -1112,6 +1191,8 @@ _Request:_
   budget_cap_timezone: string
   io_acceptance: object
   purchase_order_ref: string
+  predecessor_media_buy_id: string
+  lineage_reason: Media Buy Lineage Reason
   governance_context: string
   push_notification_config: Push Notification Config
   reporting_webhook: Reporting Webhook
@@ -1238,6 +1319,8 @@ _Request:_
   packages: Package Request[]
   advertiser_industry: Advertiser Industry
   invoice_recipient: Business Entity
+  predecessor_media_buy_id: string
+  lineage_reason: Media Buy Lineage Reason
   io_acceptance: object
   po_number: string
   name: string
@@ -1357,6 +1440,7 @@ _Request:_
 {
   account: Account Ref
   media_buy_ids: string[]
+  predecessor_media_buy_id: string
   status_filter: Media Buy Status | Media Buy Status[]
   indicator_types: Indicator Type[]
   include_snapshot: boolean
@@ -1731,6 +1815,7 @@ _Response (success branch):_
   vendor_cost: number
   currency: string
   consumption: Creative Consumption
+  errors: Error[]
   context: Context
 }
 ```
@@ -1910,7 +1995,7 @@ _Request:_
   include_webhook_activity: boolean
   webhook_activity_limit: integer
   account: Account Ref
-  fields: ('creative_id' | 'name' | 'format_id' | 'format_kind' | 'format_option_ref' | 'assets' | 'status' | 'created_date' | 'updated_date' | 'tags' | 'rights' | 'rights_attestation_evaluations' | 'localization' | 'localization_unavailable' | 'assignments' | 'snapshot' | 'items' | 'variables' | 'concept' | 'pricing_options')[]
+  fields: ('creative_id' | 'name' | 'format_id' | 'format_kind' | 'format_option_ref' | 'assets' | 'status' | 'created_date' | 'updated_date' | 'tags' | 'provenance' | 'rights' | 'rights_attestation_evaluations' | 'localization' | 'localization_unavailable' | 'assignments' | 'snapshot' | 'items' | 'variables' | 'concept' | 'pricing_options')[]
   context: Context
 }
 ```
@@ -1941,7 +2026,7 @@ _Request:_
   creatives: Creative Asset[]
   creative_ids: string[]
   assignments: object[]
-  assignment_operations: (Assign or update | Unassign | Replace assignment)[]
+  assignment_operations: union[]
   delete_missing: boolean
   dry_run: boolean
   validation_mode: Validation Mode
@@ -1955,6 +2040,7 @@ _Response (success branch):_
 {
   creatives: object[]  // required
   dry_run: boolean
+  merges: object[]
   sandbox: boolean
   context: Context
 }
@@ -1998,7 +2084,7 @@ _Request:_
   destinations: Destination[]
   countries: string[]
   filters: Signal Filters
-  fields: ('signal_ref' | 'signal_id' | 'signal_agent_segment_id' | 'name' | 'description' | 'value_type' | 'categories' | 'range' | 'demographic_predicate' | 'signal_type' | 'data_provider' | 'coverage_percentage' | 'deployments' | 'pricing_options' | 'taxonomy' | 'data_sources' | 'methodology' | 'segmentation_criteria' | 'criteria_url' | 'refresh_cadence' | 'lookback_window' | 'onboarder' | 'modeling' | 'audience_expansion' | 'device_expansion' | 'countries' | 'consent_basis' | 'restricted_attributes' | 'policy_categories' | 'art9_basis' | 'data_subject_rights' | 'last_updated')[]
+  fields: ('signal_ref' | 'signal_id' | 'signal_agent_segment_id' | 'name' | 'description' | 'value_type' | 'categories' | 'range' | 'demographic_predicate' | 'age_determination_bases' | 'signal_type' | 'signal_status' | 'source_audience_id' | 'data_provider' | 'coverage_percentage' | 'deployments' | 'pricing_options' | 'taxonomy' | 'data_sources' | 'methodology' | 'segmentation_criteria' | 'criteria_url' | 'refresh_cadence' | 'lookback_window' | 'onboarder' | 'modeling' | 'audience_expansion' | 'device_expansion' | 'countries' | 'consent_basis' | 'restricted_attributes' | 'policy_categories' | 'art9_basis' | 'data_subject_rights' | 'last_updated')[]
   max_results: integer
   pagination: Pagination Request
   push_notification_config: Push Notification Config
@@ -2647,6 +2733,7 @@ _Request:_
   caller: string  // required
   plan_id: string
   purchase_type: Purchase Type
+  budget_period_id: string
   target_agent: string
   proposed_commitment: object
   execution_commitment: object
@@ -2673,6 +2760,7 @@ _Response (success branch):_
   explanation: string  // required
   check_type: 'intent' | 'execution'
   plan_id: string
+  budget_period_id: string
   findings: object[]
   conditions: object[]
   consultation_context: string

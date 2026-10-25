@@ -721,7 +721,7 @@ function inspect(schema: any) {
       title: item.title,
       expectedTitle,
       optionalFieldsAbsent: optionalFields.every((field: string) => !required.includes(field)),
-      baseMetricsRemainRequired: required.includes('impressions') && required.includes('spend'),
+      metricRequirementsMatchCanonical: required.includes('spend') && !required.includes('impressions'),
       hasCanonicalId: Object.hasOwn(item, '$id'),
     }];
   }));
@@ -734,7 +734,7 @@ function inspect(schema: any) {
     packageCompatFieldsAbsent: ['pricing_model', 'rate', 'currency'].every(
       field => !(packageDetails.required ?? []).includes(field)
     ),
-    packageBaseFieldsRemainRequired: ['package_id', 'spend'].every(field =>
+    packageBaseFieldsRemainRequired: ['package_id'].every(field =>
       (packageDetails.required ?? []).includes(field)
     ),
   };
@@ -784,7 +784,7 @@ writeFileSync(__OUTPUT__, JSON.stringify({
     for (const entry of Object.values(source.breakdowns)) {
       assert.equal(entry.title, entry.expectedTitle);
       assert.equal(entry.optionalFieldsAbsent, true);
-      assert.equal(entry.baseMetricsRemainRequired, true);
+      assert.equal(entry.metricRequirementsMatchCanonical, true);
       assert.equal(entry.hasCanonicalId, false);
     }
     assert.equal(source.responseCurrencyAbsent, true);

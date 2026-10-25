@@ -26,7 +26,7 @@ const path = require('node:path');
 
 process.env.ADCP_ALLOW_INTERNAL_PROBES = '1';
 
-const { ADCPMultiAgentClient, ADCP_VERSION } = require('../../dist/lib/index.js');
+const { ADCPMultiAgentClient } = require('../../dist/lib/index.js');
 const { testCapabilityDiscovery } = require('../../dist/lib/testing/scenarios/capabilities.js');
 const { runValidations } = require('../../dist/lib/testing/storyboard/validations.js');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
@@ -94,9 +94,9 @@ before(() => {
     fs.writeFileSync(target, JSON.stringify(schema));
   }
   unbundled39Root = path.join(tmpDir, '3.9.0');
-  const capabilities = fs
-    .readFileSync(path.join(SCHEMAS_DATA, '3.2', 'bundled', CAPABILITIES_FILE), 'utf8')
-    .replaceAll(`/schemas/${ADCP_VERSION}/`, '/schemas/3.9.0/');
+  const sourceCapabilities = fs.readFileSync(path.join(SCHEMAS_DATA, '3.2', 'bundled', CAPABILITIES_FILE), 'utf8');
+  const sourceVersion = JSON.parse(sourceCapabilities).$id.match(/\/schemas\/([^/]+)\//)[1];
+  const capabilities = sourceCapabilities.replaceAll(`/schemas/${sourceVersion}/`, '/schemas/3.9.0/');
   const target39 = path.join(unbundled39Root, 'bundled', CAPABILITIES_FILE);
   fs.mkdirSync(path.dirname(target39), { recursive: true });
   fs.writeFileSync(target39, capabilities);

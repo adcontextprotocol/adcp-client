@@ -41,6 +41,7 @@ function captureWarnings(t) {
 function seller(options = {}) {
   return createAdcpServer({
     name: 'account-policy',
+    adcpVersion: '3.2.7',
     version: '1',
     validation: { requests: 'off', responses: 'off' },
     mediaBuy: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
@@ -291,6 +292,7 @@ function implicitPlatform(resolve = otherBrandAccount, accountsExtra = {}, compl
 function implicitServer(logger, { strict = false, resolve, accountsExtra, opts = {} } = {}) {
   return createAdcpServerFromPlatform(implicitPlatform(resolve, accountsExtra, opts.complyTest !== undefined), {
     name: 'implicit-identity',
+    adcpVersion: '3.2.7',
     version: '1',
     validation: { requests: 'off', responses: 'off' },
     logger,
@@ -456,6 +458,20 @@ test('implicit identity mismatch on comply_test_controller: default warns and di
       assert.equal(forced, 1);
       assert.equal(w.warned(MISMATCH).length, 1);
     }
+    await server.close();
+  }
+});
+
+test('3.3 implicit identity mismatches fail closed while an explicit 3.2 route retains compatibility', async t => {
+  const w = captureWarnings(t);
+  const server = implicitServer(w.logger, { opts: { adcpVersion: '3.3.0-beta.0' } });
+  try {
+    const refused = await call(server, 'get_products', { account: a, brief: 'catalog', adcp_version: '3.3-beta.0' });
+    assert.equal(refused.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
+    assertNoAccountIdLeak(refused);
+    const legacy = await call(server, 'get_products', { account: a, brief: 'catalog', adcp_version: '3.2' });
+    assert.notEqual(legacy.isError, true, JSON.stringify(legacy));
+  } finally {
     await server.close();
   }
 });

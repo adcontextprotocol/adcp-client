@@ -193,6 +193,10 @@ export type {
 export type {
   ListProductsRequest,
   ListProductsResponse,
+  ListCollectionsRequest,
+  ListCollectionsResponse,
+  ListProposalsRequest,
+  ListProposalsResponse,
   RequestProposalsRequest,
   RefineProposalsRequest,
   RefineProposalsResponse,

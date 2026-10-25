@@ -38,13 +38,13 @@ function makeClient(executeTask, config = {}) {
   client.cachedCapabilities = {
     version: 'v3',
     majorVersions: [3],
+    supportedVersions: [client.getAdcpVersion()],
     protocols: ['media_buy'],
     features: { canonicalCreatives: true },
     extensions: [],
     _synthetic: false,
   };
   client.ensureEndpointDiscovered = async () => agent;
-  client.detectServerVersion = async () => 'v3';
   client.validateTaskFeatures = async () => {};
   client.executor.executeTask = executeTask;
   return client;

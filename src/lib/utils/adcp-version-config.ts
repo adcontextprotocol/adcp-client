@@ -57,7 +57,7 @@ export function resolveAdcpVersion(adcpVersion: string | undefined, optionName =
   if (isMovingAdcpPrereleaseFamilyAlias(adcpVersion)) {
     throw new ConfigurationError(
       `${optionName} ${JSON.stringify(adcpVersion)} is a moving prerelease-family alias. ` +
-        `Pin the exact 3.2 prerelease artifact (${JSON.stringify(currentReleasePrecision)}) instead.`,
+        `Pin the exact prerelease artifact (${JSON.stringify(currentReleasePrecision)}) instead.`,
       optionName
     );
   }
@@ -102,9 +102,9 @@ export function resolveAdcpVersion(adcpVersion: string | undefined, optionName =
   return adcpVersion;
 }
 
-/** Whether a value is the ambiguous moving family alias for the pinned 3.2 preview. */
+/** Whether a value is the ambiguous moving family alias for the pinned preview. */
 export function isMovingAdcpPrereleaseFamilyAlias(version: string): boolean {
-  if (!ADCP_VERSION.startsWith('3.2.0-')) return false;
+  if (!/^3\.(?:2|3)\.0-/.test(ADCP_VERSION)) return false;
   return prereleaseFamilyAlias(toReleasePrecisionWire(ADCP_VERSION)) === version;
 }
 
@@ -114,7 +114,7 @@ export function adcpVersionAliases(version: string, includeFamilyAlias = true): 
     aliases.add(value);
     if (includeFamilyAlias) {
       const family = prereleaseFamilyAlias(value);
-      if (family && !(ADCP_VERSION.startsWith('3.2.0-') && family.startsWith('3.2-'))) aliases.add(family);
+      if (family && !isMovingAdcpPrereleaseFamilyAlias(family)) aliases.add(family);
     }
   };
 
