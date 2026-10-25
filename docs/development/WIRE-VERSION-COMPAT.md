@@ -60,3 +60,5 @@ Adding another protocol major requires an explicit support decision and a review
 Removing a supported protocol version is an SDK breaking change. Use a major changeset and document the last SDK release that still supports it. Do not edit the package version manually.
 
 Preview clients discover capabilities with the version-neutral envelope before selecting an exact advertised preview or a maintained stable release. Standalone reporting status helpers preserve the selected context release, or the explicit caller release when no framework selection is present, on both successful and per-item failure replies.
+
+The reverse reporting lane installs and verifies the candidate SDK archive, then configures its managed-reporting seller to serve the stable contract bundled by the pinned Python buyer. Evidence records the candidate primary schema and served contract separately. Run installed Python buyers outside the workspace tree: their editable-install schema fallback can otherwise find workspace bundles absent from the wheel.

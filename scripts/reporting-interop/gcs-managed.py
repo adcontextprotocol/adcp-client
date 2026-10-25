@@ -155,6 +155,9 @@ def run(upstream, installation, node, output, mode, gcs_input, wheel, grant_hook
     require(isinstance(seller_protocol, str) and bool(seller_protocol), "checkout protocol present")
     require(package["adcp_version"] == seller_protocol, "installed seller matches checkout protocol")
     require(lock["version"] == package["version"], "installed artifact")
+    # The independent Python wheel validates the maintained stable contract.
+    # Keep the candidate SDK's primary pin above; select the served contract separately.
+    served_protocol = pins["adcp_schema_version"]
     require(gcs_input.stat().st_mode & 0o777 == 0o600, "private GCS input mode")
     gcs = json.loads(gcs_input.read_bytes())
     archive = Path(gcs["typescript_archive_path"])
@@ -219,7 +222,7 @@ def run(upstream, installation, node, output, mode, gcs_input, wheel, grant_hook
         process = subprocess.Popen([
             str(node), str(supplement / "gcs-managed-seller.cjs"), "--upstream", str(upstream), "--mode", mode,
             "--package-lock", str(lock_path), "--expected-version", package["version"],
-            "--expected-integrity", lock["integrity"], "--adcp-version", seller_protocol,
+            "--expected-integrity", lock["integrity"], "--adcp-version", served_protocol,
             "--port", str(port), "--ready-file", str(ready_file),
         ], cwd=output, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
             env=environment(DATABASE_URL=url, REPORTING_INTEROP_DESTINATION=str(destination),
@@ -243,7 +246,7 @@ def run(upstream, installation, node, output, mode, gcs_input, wheel, grant_hook
         require(ready["startup_proof_sha256"] == hashlib.sha256(proof.encode()).hexdigest(), "startup proof")
         require(ready["auth_binding_sha256"] == hashlib.sha256(token.encode()).hexdigest(), "authentication binding")
         require(ready["seller_package"]["integrity"] == lock["integrity"] and
-                ready["seller_package"]["adcp_version"] == seller_protocol, "artifact identity")
+                ready["seller_package"]["adcp_version"] == served_protocol, "artifact identity and served contract")
         preflight = execute([sys.executable, '-I', str(supplement / 'gcs-managed-preflight.py')], env=environment(GCS_PREFLIGHT_URL=f'http://127.0.0.1:{port}/mcp', GCS_PREFLIGHT_MODE=mode, GCS_PREFLIGHT_VERSION=pins['adcp_schema_version'], ADCP_INTEROP_BUYER_TOKEN=token), text=True,timeout=180)
         require(preflight.returncode == 0, 'official MCP preflight')
         grant = execute([sys.executable, '-I', str(grant_hook), str(destination / 'gcs-grant.json')], env=environment(), text=True,timeout=180)
@@ -265,7 +268,7 @@ def run(upstream, installation, node, output, mode, gcs_input, wheel, grant_hook
         with psycopg.connect(conninfo, connect_timeout=10) as connection:
             pg_version = connection.execute("SHOW server_version").fetchone()[0]
         return {"status": "passed", "mode": mode, "postgres_version": pg_version,
-                "seller_version": package["version"], "seller_adcp_version": seller_protocol, "seller_integrity": lock["integrity"],
+                "seller_version": package["version"], "seller_adcp_version": seller_protocol, "served_adcp_version": served_protocol, "seller_integrity": lock["integrity"],
                 "preflight_adcp_version": pins["adcp_schema_version"],
                 "node_version": ready["node"]["version"],
                 "storage_peer_version": json.loads((installation / "node_modules/@google-cloud/storage/package.json").read_bytes())["version"],
