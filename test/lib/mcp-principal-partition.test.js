@@ -15,9 +15,10 @@ const {
 const { closeMCPConnections } = require('../../dist/lib/protocols/mcp.js');
 const { agentDiscoveryCacheKey } = require('../../dist/lib/core/agent-discovery-cache.js');
 
-async function seller(t, modern, nativeTasks = false) {
+async function seller(t, modern, nativeTasks = false, options = {}) {
   const requests = [];
   const sessions = new Map();
+  let initializeRejected = false;
   const { InMemoryTaskStore } = require('@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js');
   const taskStore = nativeTasks ? new InMemoryTaskStore() : undefined;
   const capabilities = {
@@ -70,6 +71,10 @@ async function seller(t, modern, nativeTasks = false) {
       operation: parsed?.params?.name,
     });
     if (parsed?.method === 'server/discover') return res.writeHead(404).end();
+    if (parsed?.method === 'initialize' && options.rejectFirstInitialize && !initializeRejected) {
+      initializeRejected = true;
+      return res.writeHead(405).end();
+    }
     let session = sessions.get(req.headers['mcp-session-id']);
     if (!session && parsed?.method === 'initialize') {
       const mcp = nativeTasks
@@ -86,7 +91,10 @@ async function seller(t, modern, nativeTasks = false) {
             getTaskResult: async (_args, extra) => extra.taskStore.getTaskResult(extra.taskId),
           }
         );
-      mcp.registerTool('ping', { inputSchema: {} }, async () => ({ content: [{ type: 'text', text: 'ok' }] }));
+      mcp.registerTool('ping', { inputSchema: {} }, async () => {
+        await options.onPing?.();
+        return { content: [{ type: 'text', text: 'ok' }] };
+      });
       registerCapabilities(mcp);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
@@ -297,6 +305,69 @@ test('default modern discovery does not consume process-owned server/discover ev
   await isolated.getAgentInfo();
   assert.ok(discoveries() > afterFirst, 'default discovery must not retain a process-wide hint');
 });
+
+for (const oauth of [false, true]) {
+  test(`a timed-out one-shot ${oauth ? 'OAuth' : 'legacy'} call closes without deleting its server session`, async t => {
+    let finish;
+    let enteredTool = false;
+    let closed = 0;
+    let closedAtToolStart = 0;
+    const pendingWork = new Promise(resolve => {
+      finish = resolve;
+    });
+    t.after(() => finish());
+    const s = await seller(t, false, false, {
+      // Force the v2 negotiation attempt to decline, exercising both v1
+      // cleanup implementations rather than the modern OAuth legacy bridge.
+      rejectFirstInitialize: true,
+      onPing: async () => {
+        enteredTool = true;
+        closedAtToolStart = closed;
+        await pendingWork;
+      },
+    });
+    const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+    const close = Client.prototype.close;
+    Client.prototype.close = async function (...args) {
+      const result = await close.apply(this, args);
+      closed++;
+      return result;
+    };
+    t.after(() => {
+      Client.prototype.close = close;
+    });
+    const agent = oauth
+      ? {
+          ...s.agent,
+          auth_token: undefined,
+          oauth_tokens: { access_token: 'timeout-oauth-token', token_type: 'Bearer' },
+          oauth_client: { client_id: 'timeout-oauth-client' },
+        }
+      : s.agent;
+
+    await assert.rejects(
+      ProtocolClient.callTool(agent, 'ping', {}, { transport: { requestTimeoutMs: 1000 } }),
+      /timed out|timeout/i
+    );
+    assert.equal(enteredTool, true, 'the timeout occurs after the seller starts work');
+    assert.ok(
+      s.requests.some(request => request.method === 'initialize'),
+      'a legacy session was established'
+    );
+    // The caller deadline can win before the underlying SDK request unwinds.
+    // Observe cleanup before checking DELETE so late termination cannot hide.
+    const closeDeadline = Date.now() + 2000;
+    while (closed <= closedAtToolStart && Date.now() < closeDeadline)
+      await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(closed > closedAtToolStart, 'the actual SDK client was closed after the timeout');
+    assert.equal(
+      s.requests.filter(request => request.httpMethod === 'DELETE').length,
+      0,
+      'client cleanup must not terminate the seller session and cancel its ongoing work'
+    );
+    finish();
+  });
+}
 
 test('an ordinary failure terminates its initialized one-shot legacy session', async t => {
   const s = await seller(t, false);
