@@ -156,9 +156,9 @@ test('negotiated 3.3 validates canonical proposals and nested change terms again
     );
     assert.equal(verify(request(), wrongTerm).ok, false);
     assert.equal(
-      validateRefineProposalsResponseShape({ ...wrongTerm, adcp_version: '3.2' }).ok,
+      validateRefineProposalsResponseShape({ ...wrongTerm, adcp_version: '3.2' }, { adcpVersion: '3.2.7' }).ok,
       true,
-      'negative control: the same terms satisfy the SDK default schema'
+      'negative control: the same terms satisfy the maintained stable schema'
     );
   }));
 
@@ -181,27 +181,31 @@ test('negotiation rejects a different echoed release and conflicting schema sele
     assert.equal(verify(request(), response(), { adcpVersion: '3.2' }).ok, false);
     assert.equal(
       validateRefineProposalsResponseShape(response()).ok,
-      false,
-      'an unbound caller must not validate a newer envelope using the SDK default bundle'
+      true,
+      'the published beta now matches the SDK default bundle'
     );
   }));
 
 test('an unavailable selected schema fails closed even for an unable result without proposals', () => {
-  const req = request();
-  const result = verify(req, {
-    adcp_version: VERSION,
-    products: [],
-    results: [
-      {
-        source_proposal_id: 'source-1',
-        outcome: 'unable',
-        reason_code: 'commercially_declined',
-        reason: 'Unavailable',
-      },
-    ],
-  });
+  const req = buildRefineProposalsRequest({ adcp_version: '3.3-beta.999', refinements: [refinement] });
+  const result = verifyRefineProposalsResponse(
+    req,
+    {
+      adcp_version: '3.3-beta.999',
+      products: [],
+      results: [
+        {
+          source_proposal_id: 'source-1',
+          outcome: 'unable',
+          reason_code: 'commercially_declined',
+          reason: 'Unavailable',
+        },
+      ],
+    },
+    { adcpVersion: '3.3.0-beta.999' }
+  );
   assert.equal(result.ok, false);
-  assert.match(result.issues[0].message, /3\.3\.0-beta\.0.*unavailable.*(?:ConfigurationError|Error)/);
+  assert.match(result.issues[0].message, /3\.3\.0-beta\.999.*unavailable.*(?:ConfigurationError|Error)/);
   assert.match(result.issues[0].message, /register a matching external schema root/);
   assert(!result.issues[0].message.includes(process.cwd()), 'bundle diagnostics must not expose local paths');
 });
@@ -344,7 +348,7 @@ test('the public buyer refines and finalizes over the official MCP transport on 
       }
       capabilityVersion = '3.2-beta.0';
       const betaBuyer = AgentClient.fromMCPClient(mcp, {
-        adcpVersion: ADCP_VERSION,
+        adcpVersion: '3.2.7',
         wireAdcpVersion: '3.2-beta.0',
         validation: { responses: 'strict' },
       });
@@ -446,7 +450,7 @@ test('the public buyer refines and finalizes over the official MCP transport on 
         const identityBuyer = AgentClient.fromMCPClient(mcp, { adcpVersion: '3.3', experimentalIdentity33: true });
         await assert.rejects(
           () => identityBuyer.refineProposals({ refinements: [refinement] }),
-          /AdCP 3\.3 resolved to "3\.2/
+          /AdCP 3\.3 resolved to "3\.3\.0-beta\.0/
         );
       });
     } finally {
@@ -484,7 +488,7 @@ test('same-minor wire-only overrides preserve the configured schema without rela
         ...response(proposal({ name: 'stable-proposal' })),
         adcp_version: '3.2-beta.1',
       },
-      { adcpVersion: ADCP_VERSION }
+      { adcpVersion: '3.2.7' }
     ).ok,
     true
   );
@@ -597,7 +601,7 @@ test('identity-only 3.3 aliases cannot replace a genuine proposal schema bundle'
   const payload = { ...response(), adcp_version: '3.3' };
   const aliased = withIdentity33SchemaScope(() => verifyRefineProposalsResponse(req, payload, { adcpVersion: '3.3' }));
   assert.equal(aliased.ok, false);
-  assert.match(aliased.issues[0].message, /AdCP 3\.3 resolved to "3\.2/);
+  assert.match(aliased.issues[0].message, /AdCP 3\.3 resolved to "3\.3\.0-beta\.0/);
   assert.match(aliased.issues[0].message, /actual matching schema bundle/);
   await withCandidateSchema(() =>
     withIdentity33SchemaScope(() => {

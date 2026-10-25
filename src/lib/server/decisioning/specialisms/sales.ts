@@ -197,6 +197,14 @@ type CompactLifecycleHandlerResult<T> = T | TaskHandoff<T>;
 export interface MediaBuyLifecyclePlatform<TCtxMeta = Record<string, unknown>> {
   proposalRefinement?: ProposalRefinementCapabilities;
   listProducts?(req: AdcpToolMap['list_products']['params'], ctx: Ctx<TCtxMeta>): Promise<ListProductsPayload>;
+  listCollections?(
+    req: AdcpToolMap['list_collections']['params'],
+    ctx: Ctx<TCtxMeta>
+  ): Promise<AdcpToolMap['list_collections']['result']>;
+  listProposals?(
+    req: AdcpToolMap['list_proposals']['params'],
+    ctx: Ctx<TCtxMeta>
+  ): Promise<AdcpToolMap['list_proposals']['result']>;
   requestProposals?(
     req: AdcpToolMap['request_proposals']['params'],
     ctx: Ctx<TCtxMeta>

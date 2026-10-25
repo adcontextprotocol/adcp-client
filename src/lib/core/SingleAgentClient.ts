@@ -40,6 +40,7 @@ import {
   getVersionAdapter,
   isNegotiationFailure,
   negotiateAdcpRelease,
+  parseAdcpRelease,
   releaseDefinesTool,
   resolveAdapterKey,
   type AccountIdentityDowngrade,
@@ -54,6 +55,10 @@ import type {
   GetProductsRequest,
   GetProductsResponse,
   ListProductsRequest,
+  ListCollectionsRequest,
+  ListCollectionsResponse,
+  ListProposalsRequest,
+  ListProposalsResponse,
   PropertyListReference,
   ListCreativeFormatsRequest,
   ListCreativeFormatsResponse,
@@ -520,6 +525,8 @@ const CANONICAL_CREATIVE_ACTIVITY_TASKS = new Set([
 const RECORDLESS_HMAC_READ_ONLY_TASKS = new Set([
   'get_adcp_capabilities',
   'list_products',
+  'list_collections',
+  'list_proposals',
   'list_creative_formats',
   'preview_creative',
   'list_transformers',
@@ -1160,6 +1167,8 @@ function assertRawMethodForGovernedPayload(taskType: string, options?: TaskOptio
 const PRIMARY_ADCP_TASK_NAMES = {
   get_products: true,
   list_products: true,
+  list_collections: true,
+  list_proposals: true,
   request_proposals: true,
   refine_proposals: true,
   decline_proposals: true,
@@ -7166,7 +7175,20 @@ export class SingleAgentClient {
     if (this.config.wireAdcpVersion !== undefined || options?.wireAdcpVersion !== undefined) return undefined;
     if (options?.preserveGovernedPayload || this.config.experimentalIdentity33) return undefined;
     const negotiated = negotiateAdcpRelease(this.resolvedAdcpVersion, capabilities);
-    if (!negotiated || isNegotiationFailure(negotiated) || negotiated.source === 'legacy_v3') return undefined;
+    if (isNegotiationFailure(negotiated) && parseAdcpRelease(this.resolvedAdcpVersion)?.prerelease) {
+      const requiredVersion = toReleasePrecisionWire(this.resolvedAdcpVersion);
+      throw new ProtocolFeatureUnsupportedError(['adcp_version'], [], this.agent.agent_uri, {
+        message: `The seller has not advertised the exact AdCP ${requiredVersion} preview. No request was sent.`,
+        suggestion: 'Choose a stable AdCP release the seller supports or wait for it to advertise this exact preview.',
+        details: {
+          feature: 'adcp_version',
+          required_version: requiredVersion,
+          capability_path: 'adcp.supported_versions',
+        },
+      });
+    }
+    if (!negotiated || isNegotiationFailure(negotiated)) return undefined;
+    if (negotiated.source === 'legacy_v3' && !parseAdcpRelease(this.resolvedAdcpVersion)?.prerelease) return undefined;
     return negotiated;
   }
 
@@ -7850,6 +7872,36 @@ export class SingleAgentClient {
       params,
       inputHandler,
       options
+    );
+  }
+
+  /** Read the seller's collection catalog using AdCP 3.3. @experimental */
+  async listCollections(
+    params: ListCollectionsRequest = {},
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListCollectionsResponse>> {
+    return this.executeAndHandle<ListCollectionsResponse>(
+      'list_collections',
+      'onListCollectionsStatusChange',
+      params,
+      inputHandler,
+      { ...options, disableWebhook: true }
+    );
+  }
+
+  /** Read proposals in an authorized account using AdCP 3.3. @experimental */
+  async listProposals(
+    params: ListProposalsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListProposalsResponse>> {
+    return this.executeAndHandle<ListProposalsResponse>(
+      'list_proposals',
+      'onListProposalsStatusChange',
+      params,
+      inputHandler,
+      { ...options, disableWebhook: true }
     );
   }
 
@@ -9674,6 +9726,10 @@ export class SingleAgentClient {
         return this.getProducts(params as CanonicalGetProductsRequest, inputHandler, options);
       case 'list_products':
         return this.listProducts(params as ListProductsRequest, inputHandler, options);
+      case 'list_collections':
+        return this.listCollections(params as ListCollectionsRequest, inputHandler, options);
+      case 'list_proposals':
+        return this.listProposals(params as ListProposalsRequest, inputHandler, options);
       case 'create_media_buy':
         return (await this.createMediaBuy(
           params as MutatingRequestInput<CanonicalCreateMediaBuyRequest>,

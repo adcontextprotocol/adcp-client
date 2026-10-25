@@ -152,6 +152,7 @@ describe('forbidden-field validation diagnostics (#3114)', () => {
     const payload = buildAdcpValidationErrorPayload('update_media_buy', 'request', issues, { exposeSchemaPath: true });
     const server = createAdcpServer({
       name: 'escaped-diagnostics',
+      resolveAccount: async ref => ({ id: ref.account_id }),
       version: '0.0.1',
       stateStore: new InMemoryStateStore(),
       idempotency: 'disabled',

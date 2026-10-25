@@ -1,3 +1,4 @@
+const { ADCP_VERSION, toReleasePrecisionVersion } = require('../dist/lib/version.js');
 const { describe, it, mock } = require('node:test');
 const assert = require('node:assert');
 const {
@@ -414,7 +415,7 @@ describe('createAdcpServer', () => {
       assert.equal(listed._meta.adcp_profile, 'all');
     });
 
-    it('stays exactly aligned with the checked-in AdCP 3.2 media-buy manifest', () => {
+    it('stays exactly aligned with the primary AdCP media-buy manifest', () => {
       const manifest = JSON.parse(
         readFileSync('schemas/cache/latest/mcp/2026-07-28/profiles/media-buy/manifest.json', 'utf8')
       );
@@ -471,7 +472,7 @@ describe('createAdcpServer', () => {
       const requestProposalsTool = listed.tools.find(tool => tool.name === 'request_proposals');
       const officialRequestSchema = JSON.parse(
         readFileSync(
-          'schemas/cache/latest/mcp/2026-07-28/profiles/media-buy/media-buy/request-proposals-request.json',
+          'schemas/cache/3.2.7/mcp/2026-07-28/profiles/media-buy/media-buy/request-proposals-request.json',
           'utf8'
         )
       );
@@ -2435,7 +2436,7 @@ describe('createAdcpServer', () => {
       ]);
 
       const legacy = await callTool(server, 'get_adcp_capabilities', { adcp_version: '3.1' });
-      assert.strictEqual(legacy.media_buy.lifecycle_tools, undefined);
+      assert.strictEqual(legacy.media_buy?.lifecycle_tools, undefined);
     });
 
     it('does not emit media_buy capabilities for an empty features object (#2438)', async () => {
@@ -3917,7 +3918,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(status.task_type, 'sync_creatives');
       assert.strictEqual(status.protocol, 'media-buy');
       assert.strictEqual(status.has_webhook, true);
-      assert.strictEqual(status.adcp_version, '3.2');
+      assert.strictEqual(status.adcp_version, toReleasePrecisionVersion(ADCP_VERSION));
       assert.deepStrictEqual(status.result, { creatives: [{ creative_id: 'cr_1' }] });
       assert.deepStrictEqual(status.context, { trace_id: 'trace_1' });
 
@@ -4490,12 +4491,12 @@ describe('createAdcpServer', () => {
       const status = await callToolRaw(server, 'get_task_status', { task_id: owned.taskId }, extra);
       assert.strictEqual(status.isError, true);
       assert.strictEqual(status.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-      assert.strictEqual(status.structuredContent.adcp_version, '3.2');
+      assert.strictEqual(status.structuredContent.adcp_version, toReleasePrecisionVersion(ADCP_VERSION));
 
       const listed = await callToolRaw(server, 'list_tasks', {}, extra);
       assert.strictEqual(listed.isError, true);
       assert.strictEqual(listed.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-      assert.strictEqual(listed.structuredContent.adcp_version, '3.2');
+      assert.strictEqual(listed.structuredContent.adcp_version, toReleasePrecisionVersion(ADCP_VERSION));
 
       const contextLeak = await callToolRaw(
         server,

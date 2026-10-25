@@ -12,7 +12,7 @@ const { TOOL_INPUT_SHAPE, toMcpResponse } = require('../../dist/lib/server/test-
 const { getComplianceStoryboardById } = require('../../dist/lib/testing/storyboard/index.js');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 
-const ADCP_VERSION = '3.2.1';
+const ADCP_VERSION = '3.2.7';
 const ACCOUNT = {
   brand: { domain: 'acmeoutdoor.example' },
   operator: 'pinnacle-agency.example',
@@ -394,12 +394,13 @@ async function createLifecycleServer() {
 }
 
 async function runLifecycle(id) {
-  const storyboard = getComplianceStoryboardById(id);
+  const storyboard = getComplianceStoryboardById(id, { version: ADCP_VERSION });
   assert.ok(storyboard, `missing ${id}`);
   const { calls, server, url } = await createLifecycleServer();
   try {
     const result = await runStoryboard(url, storyboard, {
       protocol: 'mcp',
+      adcpVersion: ADCP_VERSION,
       allow_http: true,
       skip_controller_seeding: true,
       agentTools: [

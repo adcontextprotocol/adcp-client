@@ -23,23 +23,25 @@ This skill enables you to execute the AdCP Media Buy Protocol with sales agents.
 
 The Media Buy Protocol provides these common standardized tasks:
 
-| Task | Purpose | Response Time |
-|------|---------|---------------|
-| `list_products` | Read matching offers without seller curation | ~1-5s |
-| `request_proposals` | Request seller-authored draft plans | ~60s or async |
-| `refine_proposals` | Revise drafts or finalize unchanged terms into inventory holds | ~60s or async |
-| `decline_proposals` | Record terminal buyer disposition | ~1-5s |
-| `accept_proposal` | Accept a finalized proposal into a MediaBuy | Minutes-Days |
-| `get_products` | Use the 3.x compatibility facade for discovery and proposals | ~60s |
-| `get_adcp_capabilities` | See agent capabilities, supported protocols, and publisher properties | ~1s |
-| `create_media_buy` | Create direct buys or use the 3.x proposal adapter | Minutes-Days |
-| `update_media_buy` | Modify campaigns | Minutes-Days |
-| `get_media_buys` | Retrieve campaign state and status | ~1-5s |
-| `sync_creatives` | Upload creative assets | Minutes-Days |
-| `sync_catalogs` | Sync product feeds and catalogs | Minutes-Days |
-| `list_creatives` | Query creative library | ~1s |
-| `get_media_buy_delivery` | Get performance data | ~60s |
-| `provide_performance_feedback` | Share outcomes with publishers | ~1-5s |
+| Task                           | Purpose                                                               | Response Time |
+| ------------------------------ | --------------------------------------------------------------------- | ------------- |
+| `list_collections`             | Read experimental AdCP 3.3 collection cards                           | ~1-5s         |
+| `list_proposals`               | Read experimental account-scoped AdCP 3.3 proposals                   | ~1-5s         |
+| `list_products`                | Read matching offers without seller curation                          | ~1-5s         |
+| `request_proposals`            | Request seller-authored draft plans                                   | ~60s or async |
+| `refine_proposals`             | Revise drafts or finalize unchanged terms into inventory holds        | ~60s or async |
+| `decline_proposals`            | Record terminal buyer disposition                                     | ~1-5s         |
+| `accept_proposal`              | Accept a finalized proposal into a MediaBuy                           | Minutes-Days  |
+| `get_products`                 | Use the 3.x compatibility facade for discovery and proposals          | ~60s          |
+| `get_adcp_capabilities`        | See agent capabilities, supported protocols, and publisher properties | ~1s           |
+| `create_media_buy`             | Create direct buys or use the 3.x proposal adapter                    | Minutes-Days  |
+| `update_media_buy`             | Modify campaigns                                                      | Minutes-Days  |
+| `get_media_buys`               | Retrieve campaign state and status                                    | ~1-5s         |
+| `sync_creatives`               | Upload creative assets                                                | Minutes-Days  |
+| `sync_catalogs`                | Sync product feeds and catalogs                                       | Minutes-Days  |
+| `list_creatives`               | Query creative library                                                | ~1s           |
+| `get_media_buy_delivery`       | Get performance data                                                  | ~60s          |
+| `provide_performance_feedback` | Share outcomes with publishers                                        | ~1-5s         |
 
 ## Typical Workflow
 
@@ -128,6 +130,7 @@ prose that materially affects eligibility, pricing, or forecasting, require one 
 ```
 
 **Key fields:**
+
 - `buying_mode` (string): `"brief"`, `"wholesale"`, or `"refine"`
 - `brief` (string): Natural-language curation input; hard statements remain requirements
 - `brand` (object): Brand identity - `{ "domain": "acmecorp.com" }`
@@ -167,9 +170,7 @@ Create an advertising campaign from selected products.
       "pricing_option_id": "cpm-standard",
       "budget": 10000,
       "targeting_overlay": {
-        "geo_metros": [
-          { "system": "nielsen_dma", "values": ["501"] }
-        ]
+        "geo_metros": [{ "system": "nielsen_dma", "values": ["501"] }]
       }
     }
   ],
@@ -194,7 +195,7 @@ Create an advertising campaign from selected products.
 **Response contains:**
 
 - `media_buy_id`: The created campaign identifier
-- `status`: Current lifecycle state — `pending_creatives` (no creatives assigned yet), `pending_start` (waiting for flight date), or `active` (serving immediately)
+- `status`: Current lifecycle state — `pending_creatives` (no creatives assigned yet), `pending_start` (creatives in place, not yet serving: waiting for the flight date, or for seller confirmation when `confirmed_at` is null), or `active` (serving immediately)
 - `packages`: Created packages with their IDs
 
 ---
@@ -361,8 +362,8 @@ Retrieve media buy state: status, valid_actions, creative approvals, pending for
 
 Before querying indicators, read `get_adcp_capabilities.media_buy.supported_indicator_types`. Indicators may appear at three levels:
 
-- buy: `get_media_buys.media_buys[]` (`budget_constrained`)
-- package: `packages[]` (`creative_diversity_low`, `audience_saturation`, `inventory_shortfall_forecast`, `pacing_risk`, `budget_constrained`)
+- buy: `get_media_buys.media_buys[]` (`budget_constrained`, `flight_extension_opportunity`, `scale_budget_opportunity`)
+- package: `packages[]` (`creative_diversity_low`, `audience_saturation`, `inventory_shortfall_forecast`, `pacing_risk`, `budget_constrained`, `flight_extension_opportunity`, `scale_budget_opportunity`)
 - assignment: `creative_approvals[]` and the matching `list_creatives.assignments.assigned_packages[]` (`creative_fatigue`, `creative_quality_opportunity`)
 
 `indicators` omitted means unknown. A present array requires `indicator_types_evaluated` and `indicators_as_of`; empty means clear only for those named types and coverage. `scope` narrows an assertion; `indicators_evaluated_scope` declares partial publisher/placement coverage. Creative-library sellers advertise `list_creatives` in `relationship_notifications.projection_tasks`; those sellers include `media_buy_id`, approval state, and any `approval_scopes` on every reverse assignment row. Every seller repairs through `get_media_buys`.

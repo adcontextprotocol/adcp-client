@@ -1296,7 +1296,7 @@ function identity33ReferenceSchema(schema: LoadedSchema, version: string): Loade
     if (!node || typeof node !== 'object') continue;
     const object = node as Record<string, unknown>;
     if (Array.isArray(object.enum) && object.enum.includes('destination_state_changed'))
-      object.enum = [...object.enum, 'relationship_changed', 'relationship_expiring'];
+      object.enum = [...new Set([...object.enum, 'relationship_changed', 'relationship_expiring'])];
     for (const value of Object.values(object)) if (typeof value === 'object') pending.push(value);
   }
   return clone;

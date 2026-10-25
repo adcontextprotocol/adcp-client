@@ -14,8 +14,8 @@ const { getToolsWithErrorArm } = require('../../dist/lib/server/error-arm-tools'
 const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server');
 const { adcpError } = require('../../dist/lib/server/errors');
 
-const VERSION = '3.3.0-beta.0';
-const WIRE = '3.3-beta.0';
+const VERSION = '3.4.0-beta.0';
+const WIRE = '3.4-beta.0';
 
 // Minimal loader-isolation schemas, with a discriminator that distinguishes
 // two independently supplied roots for the same release. These are not a

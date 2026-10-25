@@ -965,16 +965,28 @@ function creativeAssetRecords(creative: Record<string, unknown>): Record<string,
   );
 }
 
-function assetRenderedSize(creative: Record<string, unknown>): CreativeFormatParameterConstraints | undefined {
+function assetRenderedSizes(creative: Record<string, unknown>): CreativeFormatParameterConstraints[] {
   const sizes = new Set<string>();
   for (const asset of creativeAssetRecords(creative)) {
     if (!SELF_SIZED_ASSET_TYPES.has(String(asset.asset_type))) continue;
     if (typeof asset.width === 'number' && typeof asset.height === 'number')
       sizes.add(`${asset.width}x${asset.height}`);
+    for (const entry of Array.isArray(asset.sizes) ? asset.sizes : []) {
+      const size = record(entry);
+      if (typeof size?.width === 'number' && typeof size.height === 'number') {
+        sizes.add(`${size.width}x${size.height}`);
+      }
+    }
   }
-  if (sizes.size !== 1) return undefined;
-  const [width, height] = [...sizes][0]!.split('x').map(Number);
-  return { width, height };
+  return [...sizes].map(size => {
+    const [width, height] = size.split('x').map(Number);
+    return { width, height };
+  });
+}
+
+function assetRenderedSize(creative: Record<string, unknown>): CreativeFormatParameterConstraints | undefined {
+  const sizes = assetRenderedSizes(creative);
+  return sizes.length === 1 ? sizes[0] : undefined;
 }
 
 function creativeFormatParameterConstraints(
@@ -1115,6 +1127,13 @@ function preferMostConstrainedLegacyCandidates(
       return [...deliveryTypes].every(type => accepted.includes(type));
     });
   }
+  if (!record(creative.format_parameters)) {
+    const supportedSizes = assetRenderedSizes(creative);
+    if (supportedSizes.length > 1)
+      remaining = remaining.filter(candidate =>
+        supportedSizes.some(size => !refContradictsConstraints(candidate.ref, size))
+      );
+  }
   const constraints = creativeFormatParameterConstraints(creative);
   if (constraints) {
     remaining = remaining.filter(candidate => !refContradictsConstraints(candidate.ref, constraints));
@@ -1240,6 +1259,17 @@ function projectLegacyAssetKeys(assetsValue: unknown, definition: V1FormatDefini
  * (adcontextprotocol/adcp#8339). Carry the bytes into the legacy `content`.
  * `delivery_type`, `markup_type` and `macro_declarations` have no legacy field.
  */
+function renderedSizeFields(asset: Record<string, unknown>): Record<string, unknown> {
+  // The 3.3 schema makes fixed dimensions and responsive sizes exclusive.
+  // Historical assets can carry both; explicit dimensions take precedence.
+  if (asset.width !== undefined || asset.height !== undefined)
+    return {
+      ...(asset.width !== undefined && { width: asset.width }),
+      ...(asset.height !== undefined && { height: asset.height }),
+    };
+  return asset.sizes !== undefined ? { sizes: asset.sizes } : {};
+}
+
 function projectInlineMarkupToLegacyHtml(assetsValue: unknown, definition: V1FormatDefinition | undefined): unknown {
   const assets = record(assetsValue);
   if (!assets || !Array.isArray(definition?.assets)) return assetsValue;
@@ -1259,6 +1289,7 @@ function projectInlineMarkupToLegacyHtml(assetsValue: unknown, definition: V1For
         {
           asset_type: 'html',
           content: asset.markup,
+          ...renderedSizeFields(asset),
           ...(asset.provenance !== undefined && { provenance: asset.provenance }),
         },
       ];
@@ -1301,6 +1332,7 @@ function legacyHtmlToInlineMarkup(creative: Record<string, unknown>, paramsValue
           delivery_type: 'inline_markup',
           markup_type: 'standard',
           markup: asset.content,
+          ...renderedSizeFields(asset),
           ...(asset.provenance !== undefined && { provenance: asset.provenance }),
         },
       ];

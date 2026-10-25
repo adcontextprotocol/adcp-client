@@ -97,7 +97,11 @@ describe('v1↔v2 projection loaders resolve from published-tarball paths', () =
     assert.strictEqual(SCHEMA_VERSIONS_TO_TRY[0], ADCP_VERSION);
     assert.ok(SCHEMA_VERSIONS_TO_TRY.includes(ADCP_BUNDLE_KEY));
     assert.ok(SCHEMA_VERSIONS_TO_TRY.includes('3.1'));
-    assert.ok(!SCHEMA_VERSIONS_TO_TRY.some(version => version.includes('beta')));
+    assert.ok(
+      SCHEMA_VERSIONS_TO_TRY.filter(version => version.includes('beta')).every(
+        version => version === ADCP_VERSION || version === ADCP_BUNDLE_KEY
+      )
+    );
   });
 
   test('registry.ts loadRegistry() finds v1-canonical-mapping.json in dist/lib/schemas-data', () => {

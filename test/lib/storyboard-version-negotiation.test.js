@@ -967,7 +967,15 @@ describe('storyboard runner AdCP version negotiation', () => {
     const innerClient = client.client;
     let capturedRequest;
     innerClient.ensureEndpointDiscovered = async () => agent;
-    innerClient.detectServerVersion = async () => 'v3';
+    innerClient.getCapabilities = async () => ({
+      version: 'v3',
+      majorVersions: [3],
+      supportedVersions: [CURRENT_PRERELEASE_RELEASE_PRECISION],
+      protocols: ['media_buy'],
+      features: {},
+      extensions: [],
+      _synthetic: false,
+    });
     innerClient.validateTaskFeatures = async () => {};
     innerClient.executor.executeTask = async (_agent, taskName, params) => {
       capturedRequest = params;
@@ -1015,7 +1023,15 @@ describe('storyboard runner AdCP version negotiation', () => {
         protocol: 'mcp',
         schemaRoot,
         _client: client,
-        _profile: { name: agent.name, tools: ['list_creatives'], raw_capabilities: {} },
+        _profile: {
+          name: agent.name,
+          tools: ['list_creatives'],
+          raw_capabilities: {
+            status: 'completed',
+            adcp: { major_versions: [3], supported_versions: [CURRENT_PRERELEASE_RELEASE_PRECISION] },
+            supported_protocols: ['media_buy'],
+          },
+        },
       });
 
       assert.strictEqual(result.passed, true, result.error);

@@ -617,10 +617,11 @@ function generateLlmsTxt(
   ln();
 
   // --- Client vs. server routing ---
-  ln(`## Start here: AdCP 3.2`);
+  const protocolVersion = readFileSync(path.join(ROOT, 'ADCP_VERSION'), 'utf8').trim();
+  ln(`## Start here: AdCP ${protocolVersion}`);
   ln();
   ln(
-    `The SDK requires Node.js \`^20.19.0 || >=22.12.0\`. Install this reference's release train with \`npm install @adcp/sdk@${installVersion}\`; use the documentation from the exact published SDK version you install. For reproducible CLI runs, pin that exact SDK version. After installation, \`node -p "require('@adcp/sdk').ADCP_VERSION"\` reports its protocol pin; \`ls node_modules/@adcp/sdk/compliance/cache\` lists its packaged compliance versions. The legacy \`adcp-3.2\` npm tag selects SDK 14 and does not receive the refreshed compliance caches.`
+    `The SDK requires Node.js \`^20.19.0 || >=22.12.0\`. Install this reference's release train with \`npm install @adcp/sdk@${installVersion}\`; use the documentation from the exact published SDK version you install. For reproducible CLI runs, pin that exact SDK version. After installation, \`node -p "require('@adcp/sdk').ADCP_VERSION"\` reports its protocol pin; \`ls node_modules/@adcp/sdk/compliance/cache\` lists its packaged compliance versions. The \`adcp-3.2\` npm tag selects the maintained SDK 16 line. SDK 17 previews use \`beta\` and are intended for development and staging.`
   );
   ln();
   ln(

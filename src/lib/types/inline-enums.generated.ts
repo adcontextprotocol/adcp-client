@@ -114,6 +114,11 @@ export const AdCPExtensionFileSchema_TypeValues = ["object"] as const;
 /** single | AdditionalGoldenVector.purpose */
 export const AdditionalGoldenVector_PurposeValues = ["additional"] as const;
 
+// ====== Agent ======
+
+/** array of | Agent.protocols */
+export const Agent_ProtocolsValues = ["mcp", "a2a"] as const;
+
 // ====== AgentDeclarations ======
 
 /** array of | AgentDeclarations.webhook_signing_algorithms */
@@ -142,7 +147,7 @@ export const AgenticAdvertisingOrgVerificationTokenClaims_RoleValues = ["media-b
 // ====== AgentPermissionDeniedDetails ======
 
 /** single | AgentPermissionDeniedDetails.reason */
-export const AgentPermissionDeniedDetails_ReasonValues = ["sandbox_only"] as const;
+export const AgentPermissionDeniedDetails_ReasonValues = ["sandbox_only", "grant_absent"] as const;
 /** single | AgentPermissionDeniedDetails.scope */
 export const AgentPermissionDeniedDetails_ScopeValues = ["agent"] as const;
 
@@ -363,11 +368,11 @@ export const CanonicalFormatHostedVideo_AudioCodecsValues = ["aac", "mp3", "opus
 /** single | CanonicalFormatHostedVideo.captions */
 export const CanonicalFormatHostedVideo_CaptionsValues = ["required", "recommended", "not_required"] as const;
 /** array of | CanonicalFormatHostedVideo.containers */
-export const CanonicalFormatHostedVideo_ContainersValues = ["mp4", "webm", "mov"] as const;
+export const CanonicalFormatHostedVideo_ContainersValues = ["mp4", "webm", "mov", "mxf"] as const;
 /** single | CanonicalFormatHostedVideo.orientation */
 export const CanonicalFormatHostedVideo_OrientationValues = ["vertical", "horizontal", "square"] as const;
 /** array of | CanonicalFormatHostedVideo.video_codecs */
-export const CanonicalFormatHostedVideo_VideoCodecsValues = ["h264", "h265", "vp8", "vp9", "av1", "prores"] as const;
+export const CanonicalFormatHostedVideo_VideoCodecsValues = ["h264", "h265", "vp8", "vp9", "av1", "prores", "mpeg2", "avc_intra", "xavc"] as const;
 
 // ====== CanonicalFormatHTML5Banner ======
 
@@ -469,6 +474,13 @@ export const CatalogAsset_AssetTypeValues = ["catalog"] as const;
 
 /** single | CatalogFieldMapping.transform */
 export const CatalogFieldMapping_TransformValues = ["date", "divide", "boolean", "split"] as const;
+
+// ====== CatalogIngestionCapability ======
+
+/** array of | CatalogIngestionCapability.ingestion_modes */
+export const CatalogIngestionCapability_IngestionModesValues = ["feed_url", "inline_items"] as const;
+/** single | CatalogIngestionCapability.item_status_reporting */
+export const CatalogIngestionCapability_ItemStatusReportingValues = ["per_item", "feed_level"] as const;
 
 // ====== CatalogItemAvailabilityError ======
 
@@ -884,7 +896,7 @@ export const GetAdCPCapabilitiesResponse_SupportedProtocolsValues = ["media_buy"
 // ====== GetBrandIdentityRequest ======
 
 /** array of | GetBrandIdentityRequest.fields */
-export const GetBrandIdentityRequest_FieldsValues = ["description", "industries", "keller_type", "logos", "colors", "fonts", "visual_guidelines", "tone", "tagline", "voice_synthesis", "assets", "rights"] as const;
+export const GetBrandIdentityRequest_FieldsValues = ["description", "industries", "keller_type", "logos", "colors", "fonts", "visual_guidelines", "tone", "tagline", "voice_synthesis", "assets", "rights", "collections"] as const;
 
 // ====== GetBrandIdentitySuccess ======
 
@@ -899,7 +911,7 @@ export const GetMediaBuyDeliveryResponse_NotificationTypeValues = ["scheduled", 
 // ====== GetMediaBuysResponseMediaBuy ======
 
 /** array of | GetMediaBuysResponseMediaBuy.indicator_types_evaluated */
-export const GetMediaBuysResponseMediaBuy_IndicatorTypesEvaluatedValues = ["budget_constrained"] as const;
+export const GetMediaBuysResponseMediaBuy_IndicatorTypesEvaluatedValues = ["budget_constrained", "flight_extension_opportunity", "scale_budget_opportunity"] as const;
 
 // ====== GetProductsAsyncInputRequired ======
 
@@ -923,7 +935,7 @@ export const GetProductsRequest_FieldsValues = ["product_id", "name", "descripti
 /** single | GetSignalsRequest.discovery_mode */
 export const GetSignalsRequest_DiscoveryModeValues = ["brief", "wholesale"] as const;
 /** array of | GetSignalsRequest.fields */
-export const GetSignalsRequest_FieldsValues = ["signal_ref", "signal_id", "signal_agent_segment_id", "name", "description", "value_type", "categories", "range", "demographic_predicate", "signal_type", "data_provider", "coverage_percentage", "deployments", "pricing_options", "taxonomy", "data_sources", "methodology", "segmentation_criteria", "criteria_url", "refresh_cadence", "lookback_window", "onboarder", "modeling", "audience_expansion", "device_expansion", "countries", "consent_basis", "restricted_attributes", "policy_categories", "art9_basis", "data_subject_rights", "last_updated"] as const;
+export const GetSignalsRequest_FieldsValues = ["signal_ref", "signal_id", "signal_agent_segment_id", "name", "description", "value_type", "categories", "range", "demographic_predicate", "age_determination_bases", "signal_type", "signal_status", "source_audience_id", "data_provider", "coverage_percentage", "deployments", "pricing_options", "taxonomy", "data_sources", "methodology", "segmentation_criteria", "criteria_url", "refresh_cadence", "lookback_window", "onboarder", "modeling", "audience_expansion", "device_expansion", "countries", "consent_basis", "restricted_attributes", "policy_categories", "art9_basis", "data_subject_rights", "last_updated"] as const;
 
 // ====== GroupDaastAsset ======
 
@@ -1005,6 +1017,11 @@ export const IdentityMatchRequest_TypeValues = ["identity_match_request"] as con
 /** single | IdentityMatchResponse.type */
 export const IdentityMatchResponse_TypeValues = ["identity_match_response"] as const;
 
+// ====== IdentityRelyingParty ======
+
+/** single | IdentityRelyingParty.scope */
+export const IdentityRelyingParty_ScopeValues = ["entity", "property"] as const;
+
 // ====== ImageAssetRequirements ======
 
 /** single | ImageAssetRequirements.color_space */
@@ -1078,12 +1095,17 @@ export const ListCreativeFormatsResponse_SourceValues = ["publisher", "aao_mirro
 /** single | ListCreativesRequest.assignment_projection */
 export const ListCreativesRequest_AssignmentProjectionValues = ["all", "matching"] as const;
 /** array of | ListCreativesRequest.fields */
-export const ListCreativesRequest_FieldsValues = ["creative_id", "name", "format_id", "format_kind", "format_option_ref", "assets", "status", "created_date", "updated_date", "tags", "rights", "rights_attestation_evaluations", "localization", "localization_unavailable", "assignments", "snapshot", "items", "variables", "concept", "pricing_options"] as const;
+export const ListCreativesRequest_FieldsValues = ["creative_id", "name", "format_id", "format_kind", "format_option_ref", "assets", "status", "created_date", "updated_date", "tags", "provenance", "rights", "rights_attestation_evaluations", "localization", "localization_unavailable", "assignments", "snapshot", "items", "variables", "concept", "pricing_options"] as const;
 
 // ====== ListProductsRequest ======
 
 /** array of | ListProductsRequest.fields */
 export const ListProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "video_placement_types", "audio_distribution_types", "sponsored_placement_types", "social_placement_surfaces", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "reporting_capabilities", "measurement_terms", "performance_standards", "catalog_types", "signal_targeting_allowed", "signal_targeting_rules", "demographic_targeting", "overlay_support", "collections", "collection_targeting_allowed", "media_buy_support", "audience_evidence", "audience_evidence_selections", "max_optimization_goals", "catalog_match", "list_applications", "brief_relevance", "targeting_resolution", "acceptance_policy_profile_ids", "identity", "execution_requirements", "expires_at", "allowed_actions"] as const;
+
+// ====== ListProposalsResponse ======
+
+/** single | ListProposalsResponse.outcome */
+export const ListProposalsResponse_OutcomeValues = ["listed"] as const;
 
 // ====== MacroDeclaration ======
 
@@ -1129,6 +1151,11 @@ export const MaxBidWithRoas_RoasStrengthsValues = ["floor", "target"] as const;
 /** array of | MediaBuyChangeTerm.allowed_statuses */
 export const MediaBuyChangeTerm_AllowedStatusesValues = ["pending_creatives", "pending_start", "active", "paused"] as const;
 
+// ====== MergeSellerCopy ======
+
+/** single | MergeSellerCopy.operation */
+export const MergeSellerCopy_OperationValues = ["merge"] as const;
+
 // ====== NativeInFeedFormatDeclaration ======
 
 /** single | NativeInFeedFormatDeclaration.format_kind */
@@ -1137,7 +1164,7 @@ export const NativeInFeedFormatDeclaration_FormatKindValues = ["native_in_feed"]
 // ====== NotificationConfig ======
 
 /** array of | NotificationConfig.event_types */
-export const NotificationConfig_EventTypesValues = ["creative.status_changed", "creative.assignment_changed", "indicators.changed", "creative.purged", "account.status_changed", "account.change_recorded", "product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change", "reporting.delivery_ready", "reporting.status_changed", "reporting.ledger_changed"] as const;
+export const NotificationConfig_EventTypesValues = ["creative.status_changed", "creative.assignment_changed", "indicators.changed", "creative.purged", "account.status_changed", "account.change_recorded", "product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change", "collection_card.updated", "collection_card.removed", "collection_catalog.bulk_change", "reporting.delivery_ready", "reporting.status_changed", "reporting.ledger_changed", "proposal.created"] as const;
 /** single | NotificationConfig.product_payload_view */
 export const NotificationConfig_ProductPayloadViewValues = ["canonical", "legacy"] as const;
 
@@ -1165,6 +1192,11 @@ export const OpportunityContext_PhaseValues = ["exploratory", "planning", "activ
 /** single | OrderingEncodingGoldenVector.purpose */
 export const OrderingEncodingGoldenVector_PurposeValues = ["ordering_encoding"] as const;
 
+// ====== Origin ======
+
+/** single | Origin.kind */
+export const Origin_KindValues = ["adcp", "seller_operator", "seller_system", "connected_platform", "unknown"] as const;
+
 // ====== PackageCountConstraints ======
 
 /** single | PackageCountConstraints.kind */
@@ -1183,7 +1215,7 @@ export const PackageSignalTargetingGroups_OperatorValues = ["all"] as const;
 // ====== PackageStatus ======
 
 /** array of | PackageStatus.indicator_types_evaluated */
-export const PackageStatus_IndicatorTypesEvaluatedValues = ["creative_diversity_low", "audience_saturation", "inventory_shortfall_forecast", "pacing_risk", "budget_constrained"] as const;
+export const PackageStatus_IndicatorTypesEvaluatedValues = ["creative_diversity_low", "audience_saturation", "inventory_shortfall_forecast", "pacing_risk", "budget_constrained", "flight_extension_opportunity", "scale_budget_opportunity"] as const;
 
 // ====== PairedRedirect ======
 
@@ -1313,12 +1345,12 @@ export const Price_PeriodValues = ["night", "month", "year", "one_time"] as cons
 /** single | PrincipalChangedWebhook.notification_type */
 export const PrincipalChangedWebhook_NotificationTypeValues = ["principal.changed"] as const;
 /** single | PrincipalChangedWebhook.reason */
-export const PrincipalChangedWebhook_ReasonValues = ["destination_state_changed", "setup_expiring", "setup_expired", "proof_invalidated", "declarations_intersection_changed", "other"] as const;
+export const PrincipalChangedWebhook_ReasonValues = ["destination_state_changed", "setup_expiring", "setup_expired", "proof_invalidated", "declarations_intersection_changed", "relationship_changed", "relationship_expiring", "other"] as const;
 
 // ====== ProductCardReferenceAsset ======
 
 /** single | ProductCardReferenceAsset.role */
-export const ProductCardReferenceAsset_RoleValues = ["coverage_map", "sample_render", "environment_photo", "media_kit", "logo", "other"] as const;
+export const ProductCardReferenceAsset_RoleValues = ["coverage_map", "sample_render", "environment_photo", "media_kit", "logo", "sample_content", "other"] as const;
 
 // ====== ProductDefaultCollections ======
 
@@ -1355,6 +1387,11 @@ export const PropertyListApplication_ListTypeValues = ["property"] as const;
 /** single | PropertyListChangedWebhook.event */
 export const PropertyListChangedWebhook_EventValues = ["property_list_changed"] as const;
 
+// ====== ProposalCreatedWebhook ======
+
+/** single | ProposalCreatedWebhook.notification_type */
+export const ProposalCreatedWebhook_NotificationTypeValues = ["proposal.created"] as const;
+
 // ====== Provenance ======
 
 /** single | Provenance.human_oversight */
@@ -1369,11 +1406,6 @@ export const ProvidePerformanceFeedbackSuccess_ApplicationStatusValues = ["accep
 
 /** single | ProvisionBinding.mode */
 export const ProvisionBinding_ModeValues = ["provision"] as const;
-
-// ====== PublishedPostAsset ======
-
-/** single | PublishedPostAsset.asset_type */
-export const PublishedPostAsset_AssetTypeValues = ["published_post"] as const;
 
 // ====== PublisherCatalogFormatOptionReference ======
 
@@ -1941,8 +1973,15 @@ export const VideoAsset_HdrFormatValues = ["sdr", "hdr10", "hdr10_plus", "hlg", 
 
 /** array of | VideoAssetRequirements.audio_codecs */
 export const VideoAssetRequirements_AudioCodecsValues = ["aac", "pcm", "ac3", "eac3", "mp3", "opus", "vorbis", "flac"] as const;
+/** array of | VideoAssetRequirements.codecs */
+export const VideoAssetRequirements_CodecsValues = ["h264", "h265", "vp8", "vp9", "av1", "prores"] as const;
 /** array of | VideoAssetRequirements.containers */
 export const VideoAssetRequirements_ContainersValues = ["mp4", "webm", "mov", "avi", "mkv"] as const;
+
+// ====== VideoBriefAsset ======
+
+/** single | VideoBriefAsset.asset_type */
+export const VideoBriefAsset_AssetTypeValues = ["video_brief"] as const;
 
 // ====== WarehouseMaterialization ======
 
@@ -1957,7 +1996,7 @@ export const WebhookActivityRecord_StatusValues = ["success", "failed", "timeout
 // ====== WholesaleFeedWebhook ======
 
 /** single | WholesaleFeedWebhook.notification_type */
-export const WholesaleFeedWebhook_NotificationTypeValues = ["product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change"] as const;
+export const WholesaleFeedWebhook_NotificationTypeValues = ["product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change", "collection_card.updated", "collection_card.removed", "collection_catalog.bulk_change"] as const;
 
 // ====== ZipAsset ======
 
@@ -2103,6 +2142,8 @@ export const CanonicalMediaBuyActionFields_TaskValues = CanonicalMediaBuyAction_
 // --- CanonicalProjectionReference ---
 /** @deprecated use `CanonicalFormatHostedAudio_AssetSourceValues` — same literal set, CanonicalProjectionReference.asset_source duplicates the canonical export. */
 export const CanonicalProjectionReference_AssetSourceValues = CanonicalFormatHostedAudio_AssetSourceValues;
+/** @deprecated use `CanonicalFormatDisplayTag_SupportedDeliveryTypesValues` — same literal set, CanonicalProjectionReference.supported_delivery_types duplicates the canonical export. */
+export const CanonicalProjectionReference_SupportedDeliveryTypesValues = CanonicalFormatDisplayTag_SupportedDeliveryTypesValues;
 // --- CapabilitiesChangedWebhook ---
 /** @deprecated use `AgentWebhookChallenge_EventTypesValues` — same literal set, CapabilitiesChangedWebhook.notification_type duplicates the canonical export. */
 export const CapabilitiesChangedWebhook_NotificationTypeValues = AgentWebhookChallenge_EventTypesValues;
@@ -2340,6 +2381,9 @@ export const IndividualVastTrackerAsset_ItemTypeValues = BaseIndividualAsset_Ite
 export const IndividualVideoAsset_AssetTypeValues = GroupVideoAsset_AssetTypeValues;
 /** @deprecated use `BaseIndividualAsset_ItemTypeValues` — same literal set, IndividualVideoAsset.item_type duplicates the canonical export. */
 export const IndividualVideoAsset_ItemTypeValues = BaseIndividualAsset_ItemTypeValues;
+// --- IndividualVideoBriefAsset ---
+/** @deprecated use `BaseIndividualAsset_ItemTypeValues` — same literal set, IndividualVideoBriefAsset.item_type duplicates the canonical export. */
+export const IndividualVideoBriefAsset_ItemTypeValues = BaseIndividualAsset_ItemTypeValues;
 // --- IndividualWebhookAsset ---
 /** @deprecated use `GroupWebhookAsset_AssetTypeValues` — same literal set, IndividualWebhookAsset.asset_type duplicates the canonical export. */
 export const IndividualWebhookAsset_AssetTypeValues = GroupWebhookAsset_AssetTypeValues;
@@ -2580,9 +2624,6 @@ export const VerifyPropertyClaim_ClaimTypeValues = PropertyListApplication_ListT
 // --- VideoAsset ---
 /** @deprecated use `GroupVideoAsset_AssetTypeValues` — same literal set, VideoAsset.asset_type duplicates the canonical export. */
 export const VideoAsset_AssetTypeValues = GroupVideoAsset_AssetTypeValues;
-// --- VideoAssetRequirements ---
-/** @deprecated use `CanonicalFormatHostedVideo_VideoCodecsValues` — same literal set, VideoAssetRequirements.codecs duplicates the canonical export. */
-export const VideoAssetRequirements_CodecsValues = CanonicalFormatHostedVideo_VideoCodecsValues;
 // --- WarehouseMaterializationDestination ---
 /** @deprecated use `WarehouseMaterialization_PatternValues` — same literal set, WarehouseMaterializationDestination.pattern duplicates the canonical export. */
 export const WarehouseMaterializationDestination_PatternValues = WarehouseMaterialization_PatternValues;

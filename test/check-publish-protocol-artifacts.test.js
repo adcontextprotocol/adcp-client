@@ -8,8 +8,18 @@ const modulePromise = import(
   pathToFileURL(path.resolve(__dirname, '..', 'scripts', 'check-publish-protocol-artifacts.mjs')).href
 );
 
-const currentProtocolVersion = '3.2.5';
-const compatibleVersions = ['v3', '3.0.1', '3.0.25', '3.1.24', '3.1.29', '3.2.4', currentProtocolVersion, '3.2'];
+const currentProtocolVersion = '3.3.0-beta.0';
+const compatibleVersions = [
+  'v3',
+  '3.0.1',
+  '3.0.25',
+  '3.1.24',
+  '3.1.29',
+  '3.2.7',
+  '3.2',
+  currentProtocolVersion,
+  '3.3-beta.0',
+];
 
 function fixture(overrides = {}) {
   return {
@@ -18,8 +28,10 @@ function fixture(overrides = {}) {
         { path: 'dist/lib/schemas-data/3.0/bundled.schemas.br' },
         { path: 'dist/lib/schemas-data/3.1/bundled.schemas.br' },
         { path: 'dist/lib/schemas-data/3.2/bundled.schemas.br' },
+        { path: `dist/lib/schemas-data/${currentProtocolVersion}/bundled.schemas.br` },
         { path: 'compliance/cache/3.0.25/index.json' },
         { path: 'compliance/cache/3.1.29/index.json' },
+        { path: 'compliance/cache/3.2.7/index.json' },
         { path: `compliance/cache/${currentProtocolVersion}/index.json` },
         { path: 'docs/releases/14.0.0-beta.0.md' },
       ],
@@ -100,6 +112,18 @@ test('requires every maintained stable schema root including AdCP 3.0', async ()
   assert.throws(() => assertPublishProtocolArtifacts(missingV30), /3\.0 \(required schema bundle is missing\)/);
 });
 
+test('the 3.3 beta package retains the stable 3.2 schema and compliance bundles', async () => {
+  const { assertPublishProtocolArtifacts } = await modulePromise;
+  for (const [prefix, expected] of [
+    ['dist/lib/schemas-data/3.2/', /3\.2 \(required schema bundle is missing\)/],
+    ['compliance/cache/3.2.7/', /3\.2\.7 \(required compliance bundle is missing\)/],
+  ]) {
+    const value = fixture();
+    value.packageInfo.files = value.packageInfo.files.filter(file => !file.path.startsWith(prefix));
+    assert.throws(() => assertPublishProtocolArtifacts(value), expected);
+  }
+});
+
 test('rejects preview type entry points and superseded advertised previews', async () => {
   const { assertPublishProtocolArtifacts } = await modulePromise;
   assert.throws(
@@ -132,9 +156,11 @@ test('allows a beta only when it is the exact current primary pin', async () => 
           files: [
             { path: 'dist/lib/schemas-data/3.0/bundled.schemas.br' },
             { path: 'dist/lib/schemas-data/3.1/bundled.schemas.br' },
+            { path: 'dist/lib/schemas-data/3.2/bundled.schemas.br' },
             { path: `dist/lib/schemas-data/${beta}/bundled.schemas.br` },
             { path: 'compliance/cache/3.0.25/index.json' },
             { path: 'compliance/cache/3.1.29/index.json' },
+            { path: 'compliance/cache/3.2.7/index.json' },
             { path: `compliance/cache/${beta}/index.json` },
           ],
         },

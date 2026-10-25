@@ -19,7 +19,7 @@ function pack(cwd, extra = []) {
   const output = execFileSync(
     'npm',
     ['pack', '--silent', '--json', '--ignore-scripts', '--pack-destination', temporary, ...extra],
-    { cwd, encoding: 'utf8' }
+    { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }
   );
   // The repository's npm prepare hook writes a status line before pack's JSON.
   const jsonStart = output.lastIndexOf('\n[');

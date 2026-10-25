@@ -218,3 +218,5 @@ error inventories separate.
 For shape-only verification, pass `{ adcpVersion: actualServedSchemaVersion }`
 to `validateRefineProposalsResponseShape()` to pin the already-selected served
 contract explicitly.
+
+AdCP 3.3 definition pins require revalidation against the current third-party published definitions at commitment time. This beta's synchronous standalone commercial-terms verifier cannot perform that source verification: it fails closed on definition pins, publisher format references, and any placement/collection/signal targeting. Use the seller-served stable 3.2.7 contract for existing snapshot-verification flows until pin verification is supported. It continues to compare ordinary 3.3 commercial snapshots and enforces collection-list uniqueness by reference identity.

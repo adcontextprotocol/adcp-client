@@ -14,12 +14,14 @@ test('CompactTaskSubmitted validators stay ZodObjects equivalent to the canonica
     schemas.RequestProposalsAsyncSubmittedSchema,
     schemas.RefineProposalsAsyncSubmittedSchema,
   ]) {
-    assert.equal(schema, compact, 'proposal submitted schemas alias the compact schema');
+    if (schema !== schemas.RefineProposalsAsyncSubmittedSchema)
+      assert.equal(schema, compact, 'unextended submitted schema aliases the compact schema');
     for (const key of ['status', 'task_id', 'message', 'errors', 'context', 'ext', 'adcp_version', 'timestamp']) {
       assert.ok(schema.shape[key], `shape exposes ${key}`);
     }
     for (const helper of ['extend', 'pick', 'omit', 'partial']) assert.equal(typeof schema[helper], 'function', helper);
   }
+  assert.ok(schemas.RefineProposalsAsyncSubmittedSchema.shape.expected_confirmation_at);
   const extended = compact.extend({ tenant: z.string() });
   assert.equal(extended.safeParse({ status: 'submitted', task_id: 't1', tenant: 'a' }).success, true);
   assert.equal(extended.safeParse({ status: 'submitted', task_id: 't1' }).success, false);

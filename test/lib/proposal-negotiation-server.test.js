@@ -47,7 +47,7 @@ function negotiationServer(onCall, options = {}) {
   return createAdcpServer({
     name: 'proposal-test',
     version: '1.0.0',
-    ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
+    adcpVersion: options.adcpVersion ?? '3.2.7',
     ...(options.serverCapabilities && { capabilities: options.serverCapabilities }),
     validation: options.validation ?? { requests: 'strict', responses: 'strict' },
     stateStore: new InMemoryStateStore(),

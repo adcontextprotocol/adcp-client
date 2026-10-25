@@ -3748,6 +3748,10 @@ const JSTS_REPEATED_UNDER_RESOLUTION_BASES = [
   'PlatformExtensionReference',
   'DeliveryMetrics',
   'MeasurementTerms',
+  'MacroBearingURL',
+  'AgentOnboardingTier',
+  'BrandKey',
+  'BuyerOnboardingPosture',
 ] as const;
 
 /**

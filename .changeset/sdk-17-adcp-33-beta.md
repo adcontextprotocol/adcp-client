@@ -2,4 +2,6 @@
 '@adcp/sdk': major
 ---
 
-Start the SDK 17 beta release line targeting AdCP 3.3.0-beta.0. SDK 16 remains the stable AdCP 3.2 line on npm's `latest` tag; SDK 17 previews publish under `beta` after the published protocol bundle is integrated and validated.
+Adopt the signed AdCP 3.3.0-beta.0 bundle for SDK 17 beta, regenerating public types, runtime schemas and tool metadata. Add typed `listCollections` and `listProposals` client and server APIs, exact advertised-preview negotiation, and fail-closed account resolution on served 3.3 routes. Retain stable AdCP 3.2.7, 3.1.29 and 3.0.25 schema/compliance bundles. SDK 17 previews publish under `beta`; npm `latest` remains on SDK 16. Identity/Web Bot Auth and reporting storage retain their experimental policies. See `docs/migration-16-to-17.md` for the protocol and creative migration.
+
+The standalone commercial-terms verifier enforces the 3.3 collection-list reference uniqueness rules and fails closed on definition-pin flows that need current-source verification. Until that verification is implemented, use the seller-served stable 3.2.7 contract for those snapshot-verification flows. Default preview servers advertise their exact supported release window, and the new synchronous discovery tools suppress automatic task webhook registration.

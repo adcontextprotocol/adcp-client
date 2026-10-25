@@ -1,10 +1,10 @@
 #!/usr/bin/env tsx
 /**
  * Idempotent guard for the schema cache. Tests load schemas from
- * `schemas/cache/{current,3.1.29,3.0.25,v2.5}/` (gitignored, populated by
+ * `schemas/cache/{current,3.2.7,3.1.29,3.0.25}/` (gitignored, populated by
  * `npm run sync-schemas:all`). Fresh clones, branch switches that wipe
  * the cache, and `git clean -fdx` all leave a dev environment that
- * silently fails ~9 test suites with "AdCP schema data for version 'v2.5'
+ * silently fails test suites with "AdCP schema data for version '3.2'
  * not found" — CI passes because it runs `sync-schemas:all` explicitly,
  * but local dev hits a paper cut.
  *
@@ -25,8 +25,7 @@ import { cacheMatchesCodegenProvenance } from './sync-schemas';
 const REPO_ROOT = path.join(__dirname, '..');
 const CACHE_ROOT = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_ROOT = path.join(REPO_ROOT, 'compliance/cache');
-const STABLE_3_0_SCHEMA_VERSION = '3.0.25';
-const STABLE_3_1_SCHEMA_VERSION = '3.1.29';
+const MAINTAINED_SCHEMA_VERSIONS = ['3.0.25', '3.1.29', '3.2.7'];
 
 function currentAdcpVersion(): string {
   return readFileSync(path.join(REPO_ROOT, 'ADCP_VERSION'), 'utf8').trim();
@@ -43,24 +42,8 @@ function hasCurrentV3Cache(): boolean {
   );
 }
 
-function hasStableV30Cache(): boolean {
-  return existsSync(path.join(CACHE_ROOT, STABLE_3_0_SCHEMA_VERSION));
-}
-
-function hasStableV31Cache(): boolean {
-  return existsSync(path.join(CACHE_ROOT, STABLE_3_1_SCHEMA_VERSION));
-}
-
 function hasCurrentComplianceCache(): boolean {
   return existsSync(path.join(COMPLIANCE_CACHE_ROOT, currentAdcpVersion()));
-}
-
-function hasStableV30ComplianceCache(): boolean {
-  return existsSync(path.join(COMPLIANCE_CACHE_ROOT, STABLE_3_0_SCHEMA_VERSION));
-}
-
-function hasStableV31ComplianceCache(): boolean {
-  return existsSync(path.join(COMPLIANCE_CACHE_ROOT, STABLE_3_1_SCHEMA_VERSION));
 }
 
 function pointLatestAtCurrent(cacheRoot: string, current: string): void {
@@ -73,21 +56,15 @@ function pointLatestAtCurrent(cacheRoot: string, current: string): void {
 }
 
 const currentV3Ok = hasCurrentV3Cache();
-const stableV30Ok = hasStableV30Cache();
-const stableV31Ok = hasStableV31Cache();
 const currentComplianceOk = hasCurrentComplianceCache();
-const stableV30ComplianceOk = hasStableV30ComplianceCache();
-const stableV31ComplianceOk = hasStableV31ComplianceCache();
+const maintained = MAINTAINED_SCHEMA_VERSIONS.map(version => ({
+  version,
+  schemas: existsSync(path.join(CACHE_ROOT, version)),
+  compliance: existsSync(path.join(COMPLIANCE_CACHE_ROOT, version)),
+}));
 
 const current = currentAdcpVersion();
-if (
-  currentV3Ok &&
-  stableV30Ok &&
-  stableV31Ok &&
-  currentComplianceOk &&
-  stableV30ComplianceOk &&
-  stableV31ComplianceOk
-) {
+if (currentV3Ok && currentComplianceOk && maintained.every(bundle => bundle.schemas && bundle.compliance)) {
   pointLatestAtCurrent(CACHE_ROOT, current);
   pointLatestAtCurrent(COMPLIANCE_CACHE_ROOT, current);
   process.exit(0);
@@ -97,8 +74,9 @@ if (
 // a populated cache is ~3s of needless network call.
 const scripts: string[] = [];
 if (!currentV3Ok || !currentComplianceOk) scripts.push('sync-schemas');
-if (!stableV30Ok || !stableV30ComplianceOk) scripts.push(`sync-schemas -- ${STABLE_3_0_SCHEMA_VERSION}`);
-if (!stableV31Ok || !stableV31ComplianceOk) scripts.push(`sync-schemas -- ${STABLE_3_1_SCHEMA_VERSION}`);
+for (const bundle of maintained) {
+  if (!bundle.schemas || !bundle.compliance) scripts.push(`sync-schemas -- ${bundle.version}`);
+}
 
 console.log(`[schemas:ensure] Missing or provenance-stale schema cache; running: ${scripts.join(', ')}`);
 

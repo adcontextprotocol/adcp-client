@@ -53,6 +53,52 @@ function syncLegacy(creative, format_ids) {
 }
 
 describe('creative delivery picks the most constrained legacy ref', () => {
+  test('rendered dimensions survive legacy HTML → canonical markup → sized legacy delivery', () => {
+    const size = { width: 300, height: 250 };
+    const original = {
+      packages: [
+        {
+          format_ids: [bare('display_html')],
+          creatives: [
+            {
+              creative_id: 'sized-markup',
+              format_id: bare('display_html'),
+              assets: { html_creative: { asset_type: 'html', content: '<div>markup</div>', ...size } },
+            },
+          ],
+        },
+      ],
+    };
+    const before = structuredClone(original);
+    const canonical = projectMediaBuyCreativesForDelivery(original, 'canonical', 'create_media_buy').packages[0]
+      .creatives[0];
+    assert.equal(canonical.assets.html_creative.asset_type, 'display_tag');
+    for (const key of ['width', 'height']) {
+      assert.deepEqual(
+        canonical.assets.html_creative[key],
+        original.packages[0].creatives[0].assets.html_creative[key]
+      );
+    }
+    const legacy = syncLegacy(canonical, [bare('display_300x250_html'), bare('display_300x600_html')]);
+    assert.equal(legacy.format_id.id, 'display_300x250_html');
+    assert.deepEqual(legacy.assets.html_creative, original.packages[0].creatives[0].assets.html_creative);
+    assert.deepEqual(original, before);
+  });
+
+  test('a single rendered sizes entry selects a legacy size while multiple entries remain ambiguous', () => {
+    const creative = markupCreative(300, 250);
+    delete creative.format_parameters;
+    creative.assets.html_creative.sizes = [{ width: 300, height: 250 }];
+    const refs = [bare('display_300x250_html'), bare('display_300x600_html')];
+    const projected = syncLegacy(creative, refs);
+    assert.equal(projected.format_id.id, 'display_300x250_html');
+    assert.deepEqual(projected.assets.html_creative.sizes, creative.assets.html_creative.sizes);
+    creative.assets.html_creative.sizes.push({ width: 300, height: 600 });
+    assert.throws(() => syncLegacy(creative, refs), CreativeFormatProjectionError);
+    assert.throws(() => syncLegacy(creative, [bare('display_160x600_html')]), CreativeFormatProjectionError);
+    assert.equal(syncLegacy(creative, [bare('display_300x250_html')]).format_id.id, 'display_300x250_html');
+  });
+
   test('prefers the fixed-size legacy id when the seller also lists the generic id at the same size', () => {
     const projected = projectLegacy({
       packages: [
@@ -369,7 +415,9 @@ describe('inline-markup display_tag creatives round-trip to the HTML-markup lega
     const projected = syncLegacy(inlineMarkupCreative({ width: 300, height: 250 }), sizedHtmlRefs);
     assert.deepEqual(projected.format_id, bare('display_300x250_html'));
     assert.equal(projected.format_kind, undefined);
-    assert.deepEqual(projected.assets, { html_creative: { asset_type: 'html', content: MARKUP } });
+    assert.deepEqual(projected.assets, {
+      html_creative: { asset_type: 'html', content: MARKUP, width: 300, height: 250 },
+    });
   });
 
   test('maps a differently named inline-markup slot onto html_creative', () => {
@@ -377,7 +425,9 @@ describe('inline-markup display_tag creatives round-trip to the HTML-markup lega
     creative.assets = { serving_tag: creative.assets.html_creative };
     const projected = syncLegacy(creative, sizedHtmlRefs);
     assert.deepEqual(projected.format_id, bare('display_320x50_html'));
-    assert.deepEqual(projected.assets, { html_creative: { asset_type: 'html', content: MARKUP } });
+    assert.deepEqual(projected.assets, {
+      html_creative: { asset_type: 'html', content: MARKUP, width: 320, height: 50 },
+    });
   });
 
   test('selects the same ref for inline media-buy creatives', () => {
@@ -392,7 +442,7 @@ describe('inline-markup display_tag creatives round-trip to the HTML-markup lega
     });
     const creative = projected.packages[0].creatives[0];
     assert.deepEqual(creative.format_id, bare('display_300x600_html'));
-    assert.deepEqual(creative.assets.html_creative, { asset_type: 'html', content: MARKUP });
+    assert.deepEqual(creative.assets.html_creative, { asset_type: 'html', content: MARKUP, width: 300, height: 600 });
   });
 
   test('prefers the inline-markup HTML ref over a tag-URL display_js ref of the same kind', () => {
