@@ -1061,6 +1061,20 @@ paths produce a value. The store fills the gap for adopters who
 hadn't wired echo yet (the canonical silent-storyboard-failure for
 `media_buy_seller/inventory_list_targeting/get_after_create`).
 
+The current store also persists buy-level and package-level `context` from
+`create_media_buy`, including empty objects and null-valued keys. It fills
+missing resource context on `get_media_buys`; seller-provided echoes and the
+read request's top-level context take precedence. Targeting updates retain
+creation context. Context for packages added by `update_media_buy` remains
+adapter-owned.
+
+Package context follows unambiguous echoed identities (`product_id`,
+`package_id`, or legacy `buyer_ref`). Positional matching requires equal
+package counts and no contradictory identities. If pairing is ambiguous,
+only context echoed on the create response is retained for that package.
+Existing targeting-only records need no migration; creation context cannot
+be recovered retroactively from those records.
+
 ### 16. **breaking** — drop `customTools["update_rights"]`; wire `BrandRightsPlatform.updateRights`
 
 `update_rights` is now a framework-registered first-class tool (PR
