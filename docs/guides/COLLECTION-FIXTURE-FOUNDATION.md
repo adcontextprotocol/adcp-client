@@ -813,7 +813,7 @@ third-party runner cannot infer them:
 | The second parent-selection exclusion | `storyboard-schema.yaml` pins deterministic selection as "exclude candidates already pinned to non-reusable handles, sort by UTF-8 bytewise seller identity, select the first" — one exclusion. Skipping a parent that cannot satisfy a dependent discover-only pricing spec is a second, and it changes which product a conformant seller is tested on. |
 
 `collection_set` and `minimum_pairs` are zero-occurrence in
-`schemas/cache/3.2.6/` — they are SDK-local storyboard DSL, not wire
+`schemas/cache/3.2.7/` — they are SDK-local storyboard DSL, not wire
 objects, and the amendment should say so or a reader will take
 `collection_set_equals_context` to assert a wire shape.
 

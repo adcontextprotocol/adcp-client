@@ -36,7 +36,7 @@ Established media-buy tools remain available for AdCP 3.0/3.1 sellers. Their com
 
 ```text
 schemas/cache/
-├── 3.2.6/       # primary SDK pin
+├── 3.2.7/       # primary SDK pin
 ├── 3.1.29/      # maintained stable release
 ├── 3.0.25/      # maintained stable release
 └── latest/      # symlink to the primary pin
@@ -44,9 +44,11 @@ schemas/cache/
 
 Run `npm run sync-schemas:all` to refresh the primary and maintained bundles. Run `npm run generate-types:all` to regenerate public types, then `npm run build:lib` to build and copy supported schemas into the package. `copy-schemas-to-dist.ts` excludes retired AdCP 2 caches even when present locally. `check-publish-protocol-artifacts.mjs` checks the published schema inventory and rejects retired type exports.
 
-The v16 primary pin is AdCP 3.2.6, including its signed schema and compliance bundles. The patch refresh preserves the public request/response types and the existing pathways to AdCP 3.1 and 3.0.
+The v16 primary pin is AdCP 3.2.7, including its signed schema and compliance bundles. The patch refresh preserves the public request/response types and the existing pathways to AdCP 3.1 and 3.0.
 
-Build tooling also understands exact AdCP 3.3.0 `beta.N` and `rc.N` pins. Such a build retains maintained AdCP 3.0, 3.1, and 3.2 GA aliases through 3.2.6 while advertising only the selected prerelease, without a moving beta/RC-family alias. This prepares the v17 integration; the stable v16 compatibility list continues to advertise only AdCP 3.2 and earlier.
+Compliance pins select exact fixture bytes, unlike same-minor wire schema aliases. SDK 16.5.0 packages the 3.2.7 corpus; when upgrading from SDK 16.4.0, update explicit `--compliance-version 3.2.5` flags to `3.2.7`. A development pin of `3.2.6` must likewise advance. Retain the matching historical SDK if a run requires that older corpus. The maintained 3.1.29 and 3.0.25 corpora remain packaged.
+
+Build tooling also understands exact AdCP 3.3.0 `beta.N` and `rc.N` pins. Such a build retains maintained AdCP 3.0, 3.1, and 3.2 GA aliases through 3.2.7 while advertising only the selected prerelease, without a moving beta/RC-family alias. This prepares the v17 integration; the stable v16 compatibility list continues to advertise only AdCP 3.2 and earlier.
 
 Conformance validates current and unversioned response payloads without synthesizing task status. The existing status-optional compatibility shim applies only to explicitly declared AdCP 3.0 payloads, and never to status-free compact tools. Closed response schemas admit only the canonical version-envelope fields alongside their declared task fields; other root restrictions and nested-body constraints remain enforced.
 

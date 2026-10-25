@@ -558,7 +558,7 @@
     ".claude-plugin/**/*",
     "compliance/cache/3.0.25/**/*",
     "compliance/cache/3.1.29/**/*",
-    "compliance/cache/3.2.6/**/*",
+    "compliance/cache/3.2.7/**/*",
     "ADCP_VERSION",
     "docs/README.md",
     "docs/TYPE-SUMMARY.md",
@@ -818,7 +818,7 @@
     "launch-editor": "^2.14.2",
     "markdown-it": "^14.3.3"
   },
-  "adcp_version": "3.2.6",
+  "adcp_version": "3.2.7",
   "sideEffects": [
     "**/default-invariants.*"
   ]
