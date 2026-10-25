@@ -9,8 +9,9 @@ dist-tag:
 
 | Tag | SDK line | AdCP line | Published from |
 |---|---|---|---|
-| `latest` | 16.x | 3.2 | `main` |
-| `adcp-3.2` | 16.x | 3.2 (current line) | `main`; moved manually after each release (see below) |
+| `latest` | 16.x | 3.2 | `16.x` |
+| `adcp-3.2` | 16.x | 3.2 (stable line) | `16.x`; moved manually after each release (see below) |
+| `beta` | 17.x beta | 3.3 beta | `main`, in Changesets pre-mode |
 | `adcp-3.1` | 13.x | 3.1 (maintenance line) | `13.x` branch, with `ADCP_NPM_TAG=adcp-3.1` |
 | `adcp-3.0` | 7.11.x | 3.0 | 7.x maintenance releases, with `ADCP_NPM_TAG=adcp-3.0` |
 
@@ -26,8 +27,8 @@ names because it parses them as semver ranges.
 
 ## Release Automation
 
-The release workflow publishes with `npm publish --tag latest` via
-`npm run release`. `latest` intentionally tracks the default stable SDK release,
+The release workflow runs on `main` and `16.x`. SDK 16 releases publish with `npm publish --tag latest` via
+`npm run release`; `main` publishes SDK 17 prereleases under `beta` while Changesets pre-mode is active. `latest` intentionally tracks the default stable SDK release,
 not a branch name.
 
 Set `ADCP_NPM_TAG` only when intentionally publishing a maintenance or alternate
@@ -41,7 +42,7 @@ is a separate registry operation and is not covered by OIDC. Emergency retags ca
 still be repaired manually with `npm dist-tag add`, but normal releases should
 not need a registry token.
 
-The current-line tag is the one exception. A release from `main` publishes with
+The current-line tag is the one exception. A stable release from `16.x` publishes with
 `latest`, so OIDC cannot also move `adcp-3.2`. After each stable AdCP 3.2 SDK release, a
 maintainer with registry access moves it by hand:
 
@@ -175,3 +176,5 @@ hold-back), and adopters have no `@adcp/reporting-storage` to move to until it i
 release PR, and treat them as a checklist item on it.
 
 The same steps bootstrap any future workspace package: swap the name, and use the OIDC settings above.
+
+The `16.x` maintenance branch starts at `505ddc9e` (SDK 16.5.0 plus the pending creative-review changeset). Its release PRs target `16.x`, run the same CI and reference-seller checks, and publish only after the release PR is merged.
