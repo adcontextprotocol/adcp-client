@@ -114,7 +114,10 @@ export const updateMediaBuyAdapter: VersionAdapter = {
 function adaptMediaBuyStatus(toolName: string): NonNullable<VersionAdapter['adaptResponse']> {
   return data => {
     if (!isObject(data)) return { data };
-    const adapted = injectLegacyEnvelopeStatus(data, { toolName });
+    // This adapter only runs for an AdCP 3.1 exchange, so an un-echoed bare
+    // `completed` / `rejected` / `canceled` is the 3.1 task status, not a
+    // lifecycle to move.
+    const adapted = injectLegacyEnvelopeStatus(data, { toolName, adcpVersion: '3.1' });
     if (adapted === data || adapted.media_buy_status === data.media_buy_status) return { data };
     return {
       data: adapted,

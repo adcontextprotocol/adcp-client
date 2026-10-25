@@ -527,7 +527,7 @@ function assertGovernedPayloadHasNoCallbackCredentials(
  * unwrap it before the spec-shape mapping so the SDK stays
  * compatible with both surfaces during the transition.
  */
-function mapTasksGetResponseToTaskInfo(payload: unknown): TaskInfo {
+function mapTasksGetResponseToTaskInfo(payload: unknown, adcpVersion?: string): TaskInfo {
   if (payload == null || typeof payload !== 'object') {
     return { taskId: '', status: 'unknown', taskType: 'unknown', createdAt: Date.now(), updatedAt: Date.now() };
   }
@@ -575,6 +575,7 @@ function mapTasksGetResponseToTaskInfo(payload: unknown): TaskInfo {
       flat.result != null && typeof flat.result === 'object' && !Array.isArray(flat.result)
         ? normalizeLegacyMediaBuyStatusForReturn(flat.result as Record<string, unknown>, {
             toolName: taskInfo.taskType,
+            adcpVersion,
           })
         : flat.result;
   }
@@ -3734,7 +3735,13 @@ export class TaskExecutor {
     // mapper handles the AdCP-spec flat shape, the legacy
     // `{ task: ... }` nested wrapper, and MCP `structuredContent` /
     // A2A latest structured DataPart envelopes.
-    const task = mapTasksGetResponseToTaskInfo(response);
+    // The release this poll was sent at decides whether a bare `completed`
+    // in an un-echoed result is task status or a 3.0 lifecycle value.
+    const resultAdcpVersion =
+      (versionEnvelope ?? this.config.versionEnvelope) === 'major-only'
+        ? '3.0'
+        : (wireAdcpVersion ?? this.config.wireAdcpVersion ?? this.config.adcpVersion ?? ADCP_VERSION);
+    const task = mapTasksGetResponseToTaskInfo(response, resultAdcpVersion);
     if (!task.taskId || task.taskId !== taskId) {
       throw new TaskBindingMismatchError(
         'tasks/get returned a task identity that does not match the requested task.',

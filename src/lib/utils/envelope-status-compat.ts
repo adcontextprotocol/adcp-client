@@ -14,7 +14,10 @@
  * enum during validation. The same translation applies to the documented 3.1
  * deprecation window for top-level `status: MediaBuyStatus`. Other 3.1+
  * responses are returned unchanged so the strict validator still rejects a
- * peer that omits or misuses `status`.
+ * peer that omits or misuses `status`. A bare `completed` / `rejected` /
+ * `canceled` is never treated as a lifecycle when the payload, or failing
+ * that the caller's requested release (`options.adcpVersion`), is 3.1+:
+ * there it is the task envelope status.
  *
  * The leniency is a back-compat affordance, not a permanent loosening.
  */
@@ -29,6 +32,20 @@ export interface LegacyEnvelopeStatusOptions {
    * the protocol task envelope.
    */
   toolName?: string;
+  /**
+   * AdCP release the caller requested or negotiated for this exchange (for
+   * example the client's `adcpVersion` pin, or the release negotiated down
+   * from it). The response `adcp_version` echo is optional, so a seller on
+   * 3.1+ may answer a create with only `{ status: 'completed', media_buy_id }`.
+   * `completed`, `rejected` and `canceled` are valid both as TaskStatus and as
+   * MediaBuyStatus. When the payload carries no version echo, this release
+   * decides which one a bare top-level `status` is: on 3.1+ it is the task
+   * envelope status and is never copied into `media_buy_status`. An explicit
+   * `adcp_version` / `adcp_major_version` on the payload always wins. When
+   * neither the payload nor the caller knows the release, the legacy 3.0
+   * reading still applies.
+   */
+  adcpVersion?: string;
 }
 
 const MEDIA_BUY_STATUS_RESPONSE_TOOLS = new Set(['create_media_buy', 'update_media_buy']);
@@ -109,7 +126,7 @@ export function injectLegacyEnvelopeStatus<T extends Record<string, unknown>>(
     options?.toolName &&
     MEDIA_BUY_STATUS_RESPONSE_TOOLS.has(options.toolName) &&
     allowsDeprecatedMediaBuyStatus(response) &&
-    isMediaBuySuccessStatusForCompat(response)
+    isMediaBuySuccessStatusForCompat(response, options)
   ) {
     const mediaBuyStatus = response.status;
     return {
@@ -149,18 +166,21 @@ export function normalizeLegacyMediaBuyStatusForReturn<T extends Record<string, 
     !options?.toolName ||
     !MEDIA_BUY_STATUS_RESPONSE_TOOLS.has(options.toolName) ||
     !allowsDeprecatedMediaBuyStatus(response) ||
-    !isMediaBuySuccessStatusForCompat(response)
+    !isMediaBuySuccessStatusForCompat(response, options)
   ) {
     return response;
   }
-  const status = getAuthoritativeMediaBuyStatus(response);
+  const status = getAuthoritativeMediaBuyStatus(withRequestedVersion(response, options));
   if (!status || response.media_buy_status === status) return response;
   return { ...response, media_buy_status: status } as T;
 }
 
-function isMediaBuySuccessStatusForCompat(response: Record<string, unknown>): boolean {
+function isMediaBuySuccessStatusForCompat(
+  response: Record<string, unknown>,
+  options: LegacyEnvelopeStatusOptions | undefined
+): boolean {
   const status = response.status;
-  if (getAuthoritativeMediaBuyStatus(response) !== status) return false;
+  if (getAuthoritativeMediaBuyStatus(withRequestedVersion(response, options)) !== status) return false;
   if (typeof response.media_buy_status === 'string' && response.media_buy_status !== status) {
     return false;
   }
@@ -186,4 +206,20 @@ function allowsDeprecatedMediaBuyStatus(payload: Record<string, unknown>): boole
   const major = payload.adcp_major_version;
   if (typeof major === 'number') return major === 3;
   return true;
+}
+
+/**
+ * View of `payload` for the TaskStatus/MediaBuyStatus ambiguity check: when
+ * the seller did not echo a version, read it in the release the caller
+ * requested or negotiated. Only used for classification; the returned object
+ * never reaches the caller.
+ */
+function withRequestedVersion(
+  payload: Record<string, unknown>,
+  options: LegacyEnvelopeStatusOptions | undefined
+): Record<string, unknown> {
+  const requested = options?.adcpVersion;
+  if (typeof requested !== 'string' || requested.length === 0) return payload;
+  if (typeof payload.adcp_version === 'string' || typeof payload.adcp_major_version === 'number') return payload;
+  return { ...payload, adcp_version: requested };
 }

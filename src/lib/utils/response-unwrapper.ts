@@ -347,9 +347,10 @@ export function unwrapProtocolResponse(
       // Back-compat: 3.0.x sellers may omit envelope `status` (made REQUIRED
       // in 3.1.0-beta.2). Inject a synthetic status only when the response
       // declares itself as 3.0.x (or carries no version field at all).
+      const compatOptions = { toolName, adcpVersion: options?.responseAdcpVersion };
       const dataToValidate = prepareResponseForSchemaValidation(
         toolName,
-        injectLegacyEnvelopeStatus(stripped, { toolName }),
+        injectLegacyEnvelopeStatus(stripped, compatOptions),
         options?.responseAdcpVersion
       ) as Record<string, unknown>;
       const result = schema.safeParse(dataToValidate);
@@ -366,7 +367,7 @@ export function unwrapProtocolResponse(
               const { status: _s, ...rest } = validated as unknown as Record<string, unknown>;
               validated = rest as unknown as typeof validated;
             } else {
-              validated = restoreLegacyMediaBuyStatusForReturn(validated, stripped, dataToValidate, toolName);
+              validated = restoreLegacyMediaBuyStatusForReturn(validated, stripped, dataToValidate, compatOptions);
             }
             validated = restoreCompatibilityVersionForReturn(validated, stripped, dataToValidate);
             if (!('adcp_version' in stripped)) {
@@ -405,7 +406,7 @@ export function unwrapProtocolResponse(
         const { status: _s, ...rest } = validated as unknown as Record<string, unknown>;
         validated = rest as unknown as typeof validated;
       } else {
-        validated = restoreLegacyMediaBuyStatusForReturn(validated, stripped, dataToValidate, toolName);
+        validated = restoreLegacyMediaBuyStatusForReturn(validated, stripped, dataToValidate, compatOptions);
       }
       validated = restoreCompatibilityVersionForReturn(validated, stripped, dataToValidate);
       if (!('adcp_version' in stripped)) {
@@ -440,8 +441,9 @@ function restoreLegacyMediaBuyStatusForReturn<T extends AdCPResponse & { _messag
   validated: T,
   original: Record<string, unknown>,
   compat: Record<string, unknown>,
-  toolName: string
+  compatOptions: { toolName: string; adcpVersion?: string }
 ): T {
+  const { toolName } = compatOptions;
   if (
     (toolName === 'create_media_buy' || toolName === 'update_media_buy') &&
     typeof original.media_buy_id === 'string' &&
@@ -451,12 +453,13 @@ function restoreLegacyMediaBuyStatusForReturn<T extends AdCPResponse & { _messag
   ) {
     return normalizeLegacyMediaBuyStatusForReturn(
       { ...validated, status: original.status } as unknown as Record<string, unknown>,
-      { toolName }
+      compatOptions
     ) as unknown as T;
   }
-  return normalizeLegacyMediaBuyStatusForReturn(validated as unknown as Record<string, unknown>, {
-    toolName,
-  }) as unknown as T;
+  return normalizeLegacyMediaBuyStatusForReturn(
+    validated as unknown as Record<string, unknown>,
+    compatOptions
+  ) as unknown as T;
 }
 
 /**
@@ -832,7 +835,7 @@ export function isAdcpSuccess(response: any, taskName: string, responseAdcpVersi
     // so success detection stays consistent across the two entry points.
     const dataToValidate = prepareResponseForSchemaValidation(
       taskName,
-      injectLegacyEnvelopeStatus(stripped, { toolName: taskName }),
+      injectLegacyEnvelopeStatus(stripped, { toolName: taskName, adcpVersion: responseAdcpVersion }),
       responseAdcpVersion
     );
     const result = schema.safeParse(dataToValidate);

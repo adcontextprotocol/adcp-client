@@ -1661,5 +1661,39 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(result.status, 'pending_creatives');
       assert.strictEqual(result.media_buy_status, 'pending_creatives');
     });
+
+    // adcp-client#3432: the response version echo is optional, so the release
+    // the buyer requested decides whether a bare `completed` is task status.
+    test('unwrapProtocolResponse does not turn an un-echoed 3.2 task status into media_buy_status', () => {
+      const created = {
+        status: 'completed',
+        media_buy_id: 'seller-buy',
+        confirmed_at: '2026-10-23T00:00:00Z',
+        revision: 1,
+        packages: [createTestPackage({ package_id: 'seller-package' })],
+      };
+
+      const result = unwrapProtocolResponse({ structuredContent: created, content: [] }, 'create_media_buy', 'mcp', {
+        responseAdcpVersion: '3.2.7',
+      });
+
+      assert.strictEqual(result.status, 'completed');
+      assert.ok(!('media_buy_status' in result), `fabricated media_buy_status: ${result.media_buy_status}`);
+    });
+
+    test('unwrapProtocolResponse keeps the 3.0 lifecycle-in-status move for a 3.0 exchange', () => {
+      const created = {
+        status: 'active',
+        media_buy_id: 'seller-buy',
+        packages: [createTestPackage({ package_id: 'seller-package' })],
+      };
+
+      const result = unwrapProtocolResponse({ structuredContent: created, content: [] }, 'create_media_buy', 'mcp', {
+        responseAdcpVersion: '3.0',
+      });
+
+      assert.strictEqual(result.status, 'active');
+      assert.strictEqual(result.media_buy_status, 'active');
+    });
   });
 });
