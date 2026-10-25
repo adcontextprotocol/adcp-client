@@ -3,6 +3,26 @@
 SDK 17 beta pins the signed AdCP `3.3.0-beta.0` release. Use the beta in
 development and staging; production remains on SDK 16 and AdCP 3.2.
 
+## Companion packages
+
+`@adcp/reporting-storage` declares `@adcp/sdk` as a peer, so it ships a release
+for each SDK line. Its stable releases accept only SDK 16: `0.1.x` takes
+`^16.0.0` and `0.2.0` takes `^16.5.0`. Installing SDK 17 beta beside either one
+makes npm report an invalid tree (`npm ls` prints
+`invalid: "^16.0.0" from node_modules/@adcp/reporting-storage` for `0.1.x`) or
+refuse with `ERESOLVE`. Install the
+storage release from the same `beta` train:
+
+```bash
+npm install --save-exact @adcp/sdk@17.0.0-beta.0 @adcp/reporting-storage@0.2.1-beta.0
+```
+
+`0.2.1-beta.0` has the same storage code and SQL migrations as `0.2.0`; only its
+`@adcp/sdk` peer range changes (`^17.0.0-beta.0`). A `~0.2.0` range does not match
+the prerelease, so pin the exact version. If you are upgrading from SDK 16.4 or
+earlier, read the [`0.2.0` notes](../packages/reporting-storage/CHANGELOG.md#020)
+for BigQuery sinks that omit `location`. No other storage change is required.
+
 ## Protocol and discovery
 
 The SDK packages the exact 3.3 beta schema and compliance bundle alongside
