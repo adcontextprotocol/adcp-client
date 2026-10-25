@@ -122,7 +122,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // account-reduction helpers. Measured in CI at 20,533,600 bytes on the rebased
 // tree; allow about 40 KB of compressor variance and the follow-up adapter
 // module set. Unpacked, file-count, schema and declaration budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 20_575_000;
+// MCP principal partitions add four runtime/declaration artifacts and explicit
+// native-task routing/signing context declarations. CI measures 20,581,610
+// packed bytes; retain about 43 KB of compressor variance for this additive
+// surface. All unpacked, file-count, schema and declaration limits stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_625_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview

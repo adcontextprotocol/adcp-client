@@ -72,6 +72,8 @@ export interface ComplianceSummaryArtifact {
   tested_at: string;
   storyboards_executed: string[];
   failures: ComplianceSummaryFailure[];
+  /** False storyboard verdicts without failed steps; coverage gaps remain distinct from seller failures. */
+  incomplete_storyboards?: ComplianceSummaryIncompleteStoryboard[];
   /** Actionable skip causes grouped by reason. Present only when skipped > 0. */
   skip_causes?: ComplianceSummarySkipCause[];
 }
@@ -94,6 +96,12 @@ export interface ComplianceSummaryFailure {
   reason_kind: ComplianceSummaryFailureKind;
 }
 
+export interface ComplianceSummaryIncompleteStoryboard {
+  track: ComplianceTrack;
+  storyboard_id: string;
+  reason: string;
+}
+
 export interface BuildSummaryOptions {
   sdkVersion: string;
   adcpVersion: string;
@@ -101,6 +109,7 @@ export interface BuildSummaryOptions {
 
 export function buildComplianceSummary(result: ComplianceResult, opts: BuildSummaryOptions): ComplianceSummaryArtifact {
   const skipCauses = buildSkipCauses(result);
+  const incompleteStoryboards = collectIncompleteStoryboardVerdicts(result);
   return {
     schema_version: SUMMARY_SCHEMA_VERSION,
     agent_url: result.agent_url,
@@ -125,8 +134,36 @@ export function buildComplianceSummary(result: ComplianceResult, opts: BuildSumm
     tested_at: result.tested_at,
     storyboards_executed: result.storyboards_executed ?? [],
     failures: (result.failures ?? []).map(toSummaryFailure),
+    ...(incompleteStoryboards.length > 0 ? { incomplete_storyboards: incompleteStoryboards } : {}),
     ...(skipCauses.length > 0 ? { skip_causes: skipCauses } : {}),
   };
+}
+
+function collectIncompleteStoryboardVerdicts(result: ComplianceResult): ComplianceSummaryIncompleteStoryboard[] {
+  const failedStoryboards = new Set((result.failures ?? []).map(failure => failure.storyboard_id));
+  const seen = new Set<string>();
+  const incomplete: ComplianceSummaryIncompleteStoryboard[] = [];
+  const suffix = '/storyboard';
+  for (const track of result.tracks ?? []) {
+    for (const scenario of track.scenarios) {
+      if (
+        scenario.overall_passed !== false ||
+        typeof scenario.scenario !== 'string' ||
+        !scenario.scenario.endsWith(suffix) ||
+        (scenario.steps?.length ?? 0) > 0
+      )
+        continue;
+      const id = scenario.scenario.slice(0, -suffix.length);
+      if (failedStoryboards.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      incomplete.push({
+        track: track.track,
+        storyboard_id: id,
+        reason: truncate(scenario.summary || 'Storyboard verdict failed without a failed step.', REASON_MAX_CHARS),
+      });
+    }
+  }
+  return incomplete;
 }
 
 function toSummaryFailure(f: ComplianceFailure): ComplianceSummaryFailure {
@@ -431,6 +468,10 @@ export function formatComplianceSummaryText(s: ComplianceSummaryArtifact): strin
   lines.push(`Duration:  ${(s.total_duration_ms / 1000).toFixed(1)}s`);
   lines.push('');
 
+  for (const verdict of s.incomplete_storyboards ?? []) {
+    lines.push(`STORYBOARD-INCOMPLETE ${verdict.storyboard_id} [${verdict.track}]: ${verdict.reason}`);
+  }
+
   if (!isHardFail(s)) {
     if (s.completeness === 'timed_out') {
       lines.push(`STORYBOARD-INCOMPLETE ${s.passed} steps passed before the timeout budget expired`);
@@ -490,6 +531,18 @@ export function formatComplianceSummaryMarkdown(s: ComplianceSummaryArtifact): s
   if (skippedReasons) lines.push(`- **Skipped:** ${skippedReasons}`);
   lines.push(`- **Duration:** ${(s.total_duration_ms / 1000).toFixed(1)}s`);
   lines.push('');
+
+  if (s.incomplete_storyboards?.length) {
+    lines.push('');
+    lines.push('### Incomplete storyboard verdicts');
+    lines.push('');
+    lines.push('| Storyboard | Track | Reason |', '|---|---|---|');
+    for (const verdict of s.incomplete_storyboards)
+      lines.push(
+        `| ${escapeTableCell(verdict.storyboard_id)} | ${escapeTableCell(verdict.track)} | ${escapeTableCell(verdict.reason)} |`
+      );
+    lines.push('');
+  }
 
   if (s.failures.length > 0) {
     lines.push('| Track | Storyboard | Step | Reason |');

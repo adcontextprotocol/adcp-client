@@ -1445,7 +1445,7 @@ describe('executeWebhookAssertionStep prerequisites', () => {
         title: 'Assert notification',
         task: 'expect_no_webhook',
         triggered_by: 'trigger',
-        filter: { subscriber_id: 'buyer-primary', notification_type: 'creative.status_changed' },
+        filter: { body: { subscriber_id: 'buyer-primary', notification_type: 'creative.status_changed' } },
         timeout_seconds: 0,
       };
       const runState = {

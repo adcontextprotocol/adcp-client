@@ -142,6 +142,8 @@ export interface WebhookFilter {
   path?: string;
   /** Internal observation guard: previously observed account/change identities. */
   exclude_account_changes?: ReadonlySet<string>;
+  /** Physical or logical deliveries already used by an ordinary positive assertion. */
+  exclude_notifications?: ReadonlySet<string>;
   /** Body paths that must exist with a non-null value (published wildcard selector). */
   present?: readonly string[];
   /** Restrict matches to this step id's URL. */
@@ -568,7 +570,37 @@ function parseBody(raw: string, contentType: string | undefined): Pick<CapturedW
 // Filter matching
 // ────────────────────────────────────────────────────────────
 
+/** @internal Shared identity for retry-safe positive observation consumption. */
+export function webhookObservationKeys(webhook: CapturedWebhook): string[] {
+  const keys: string[] = [];
+  if (typeof webhook.id === 'string' && webhook.id.length > 0) keys.push(`capture:${webhook.id}`);
+  const body = webhook.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return keys;
+  const record = body as Record<string, unknown>;
+  for (const field of ['notification_id', 'idempotency_key']) {
+    const id = record[field];
+    if (typeof id === 'string' && id.length > 0) {
+      keys.push(
+        JSON.stringify([
+          field,
+          webhook.path,
+          record.subscriber_id ?? null,
+          record.account_id ?? null,
+          record.notification_type ?? null,
+          id,
+        ])
+      );
+    }
+  }
+  return keys;
+}
+
 function matchesFilter(webhook: CapturedWebhook, filter: WebhookFilter): boolean {
+  if (
+    filter.exclude_notifications &&
+    webhookObservationKeys(webhook).some(key => filter.exclude_notifications!.has(key))
+  )
+    return false;
   if (filter.received_at_or_after !== undefined && webhook.received_at < filter.received_at_or_after) return false;
   if (filter.path !== undefined && webhook.path !== filter.path) return false;
   if (filter.step_id && webhook.step_id !== filter.step_id) return false;

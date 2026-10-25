@@ -145,7 +145,9 @@ test('@adcp/sdk/client/core keeps heavy generated-schema surfaces out of its eag
     }
   }
 
-  assert.ok(visited.size <= 210, `focused client eager graph grew to ${visited.size} internal modules`);
+  // Protocol-method signing and principal-partition ownership add two small
+  // policy modules. Keep the heavy schema/registry exclusions below unchanged.
+  assert.ok(visited.size <= 212, `focused client eager graph grew to ${visited.size} internal modules`);
   for (const excluded of [
     'types/schemas.generated.mjs',
     'utils/response-schemas.mjs',
