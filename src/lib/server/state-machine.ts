@@ -20,11 +20,15 @@
  *     Production seller code that handles the wire protocol directly
  *     should use this — the framework projects `AdcpError` onto the
  *     wire `adcp_error` envelope automatically.
+ * Media-buy helpers accept the served AdCP version as a third argument;
+ * `getMediaBuyTransitions(version)` selects the same graph for custom consumers.
  *
  * @public
  */
 
 import type { CreativeStatus, MediaBuyStatus } from '../types/core.generated';
+import { ADCP_VERSION } from '../version';
+import { isAdcpVersionAtLeast } from '../utils/adcp-version-config';
 import { AdcpError } from './decisioning/async-outcome';
 
 /**
@@ -33,12 +37,10 @@ import { AdcpError } from './decisioning/async-outcome';
  * `active ↔ paused` is reversible (buyer pauses, seller resumes).
  * `completed | rejected | canceled` are terminal — no outbound edges.
  *
- * `pending_start → rejected` is supported because the schema's prose
- * (`"declined by the seller after creation"`) does not exclude post-start
- * rejection. Storyboards do not exercise that edge today; sellers MAY
- * narrow it in their own enforcement if their upstream forbids it.
+ * `pending_start → rejected` covers seller rejection during setup after the
+ * buy is created. It does not permit rejection of an already active buy.
  */
-export const MEDIA_BUY_TRANSITIONS: ReadonlyMap<MediaBuyStatus, ReadonlySet<MediaBuyStatus>> = new Map<
+const LEGACY_MEDIA_BUY_TRANSITIONS: ReadonlyMap<MediaBuyStatus, ReadonlySet<MediaBuyStatus>> = new Map<
   MediaBuyStatus,
   ReadonlySet<MediaBuyStatus>
 >([
@@ -50,6 +52,31 @@ export const MEDIA_BUY_TRANSITIONS: ReadonlyMap<MediaBuyStatus, ReadonlySet<Medi
   ['rejected', new Set()],
   ['canceled', new Set()],
 ]);
+
+const CREATIVE_REVIEW_MEDIA_BUY_TRANSITIONS: ReadonlyMap<MediaBuyStatus, ReadonlySet<MediaBuyStatus>> = new Map([
+  ...LEGACY_MEDIA_BUY_TRANSITIONS,
+  [
+    'pending_start',
+    new Set<MediaBuyStatus>(['pending_creatives', ...LEGACY_MEDIA_BUY_TRANSITIONS.get('pending_start')!]),
+  ],
+]);
+
+/**
+ * Lifecycle graph for the served AdCP release. In 3.3, a seller review rejection
+ * can introduce buyer work before activation: `pending_start → pending_creatives`.
+ * Older releases keep their published graph. Active/paused buys cannot rewind.
+ * Accepts full-semver or release-precision versions, including 3.3 candidates.
+ */
+export function getMediaBuyTransitions(
+  adcpVersion = ADCP_VERSION
+): ReadonlyMap<MediaBuyStatus, ReadonlySet<MediaBuyStatus>> {
+  return isAdcpVersionAtLeast(adcpVersion, '3.3-beta')
+    ? CREATIVE_REVIEW_MEDIA_BUY_TRANSITIONS
+    : LEGACY_MEDIA_BUY_TRANSITIONS;
+}
+
+/** Lifecycle graph for the SDK's default AdCP release. */
+export const MEDIA_BUY_TRANSITIONS = getMediaBuyTransitions();
 
 /**
  * Legal `CreativeStatus` transitions per `creative-status.json`.
@@ -72,8 +99,12 @@ export const CREATIVE_ASSET_TRANSITIONS: ReadonlyMap<CreativeStatus, ReadonlySet
 ]);
 
 /** Boolean predicate for `MediaBuyStatus` transitions. Self-edges are illegal. */
-export function isLegalMediaBuyTransition(from: MediaBuyStatus, to: MediaBuyStatus): boolean {
-  return MEDIA_BUY_TRANSITIONS.get(from)?.has(to) ?? false;
+export function isLegalMediaBuyTransition(
+  from: MediaBuyStatus,
+  to: MediaBuyStatus,
+  adcpVersion = ADCP_VERSION
+): boolean {
+  return getMediaBuyTransitions(adcpVersion).get(from)?.has(to) ?? false;
 }
 
 /** Boolean predicate for `CreativeStatus` transitions. Self-edges are illegal. */
@@ -101,8 +132,8 @@ export function isLegalCreativeTransition(from: CreativeStatus, to: CreativeStat
  * `STANDARD_ERROR_CODES` — the buyer can adjust their request (re-fetch
  * current state, choose a different action) rather than escalating.
  */
-export function assertMediaBuyTransition(from: MediaBuyStatus, to: MediaBuyStatus): void {
-  if (isLegalMediaBuyTransition(from, to)) return;
+export function assertMediaBuyTransition(from: MediaBuyStatus, to: MediaBuyStatus, adcpVersion = ADCP_VERSION): void {
+  if (isLegalMediaBuyTransition(from, to, adcpVersion)) return;
   if (to === 'canceled') {
     throw new AdcpError('NOT_CANCELLABLE', {
       message: `Media buy in ${from} state cannot be canceled.`,

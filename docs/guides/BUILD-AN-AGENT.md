@@ -252,10 +252,18 @@ Six helper families adopters reach for. Pick what your agent shape needs:
 | `InMemoryImplicitAccountStore` (Shape A) / `createOAuthPassthroughResolver` (Shape B) / `createRosterAccountStore` (Shape C) | Reference `AccountStore` shapes. Shape A: `'implicit'` buyer-driven onboarding. Shape B: vendor OAuth + `/me/adaccounts`. Shape C: publisher-curated roster. |
 | `createTenantRegistry` (host-routed) / `createTenantStore` (account-routed) | Multi-tenant. Host-routed = one server per tenant + tenant-id keyed lookup. Account-routed = one server with built-in fail-closed tenant-isolation gate on `upsert` / `syncGovernance`. |
 | `BuyerAgentRegistry.signingOnly` / `bearerOnly` / `mixed` (+ `cached`) | Durable buyer-agent identity. Resolved `BuyerAgent` flows through `ctx.agent` to every `AccountStore` method and `tasks_get` polling. `BuyerAgent.status === 'suspended' \| 'blocked'` triggers `AGENT_SUSPENDED` / `AGENT_BLOCKED`; `sync_accounts.billing` is enforced against `BuyerAgent.billing_capabilities`. See [`docs/migration-buyer-agent-registry.md`](../migration-buyer-agent-registry.md). |
-| `MEDIA_BUY_TRANSITIONS` / `assertMediaBuyTransition` (+ creative pair) | Canonical lifecycle graph the storyboard runner uses. `assertMediaBuyTransition(from, to)` throws `AdcpError` with the spec-correct code (`NOT_CANCELLABLE` / `INVALID_STATE`). Replaces local copies of the status graph. |
+| `MEDIA_BUY_TRANSITIONS` / `getMediaBuyTransitions` / `assertMediaBuyTransition` (+ creative pair) | Canonical lifecycle graphs shared with the storyboard runner. `getMediaBuyTransitions(adcpVersion)` selects the served release; `MEDIA_BUY_TRANSITIONS` uses the SDK default. `assertMediaBuyTransition(from, to, adcpVersion?)` throws `AdcpError` with the spec-correct code (`NOT_CANCELLABLE` / `INVALID_STATE`). Replaces local copies of the status graph. |
 | `createMediaBuyStore({ store })`                                       | Opt-in `targeting_overlay` echo on `get_media_buys`. Sellers claiming `property-lists` / `collection-lists` MUST echo the persisted list reference. |
 
 The full migration recipe walking adopters through each is at [`docs/migration-6.6-to-6.7.md`](../migration-6.6-to-6.7.md). The `examples/hello_*` family demonstrates each helper in a runnable adapter.
+
+When serving AdCP 3.3 or its beta/RC candidates, pass the negotiated release to
+`isLegalMediaBuyTransition` or `assertMediaBuyTransition` as the optional third
+argument. A blocking creative review rejection can move a not-yet-active buy
+from `pending_start` to `pending_creatives`; active and paused buys still cannot
+rewind to a pending state. Omitting the version keeps the SDK default release's
+contract. The storyboard runner selects the graph from the seller's response
+version, falling back to the run's `adcpVersion` and then the SDK default.
 
 ### Exposing your agent over A2A (preview)
 

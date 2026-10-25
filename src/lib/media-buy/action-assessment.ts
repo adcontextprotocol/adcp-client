@@ -25,10 +25,13 @@ import {
   supportsChangeTermIdentity,
   withActionProposal,
   packageActionStatus,
+  isOperationalMediaBuyAction,
+  supportsCreativeStartPolicyAction,
 } from './action-contracts';
 import { evaluateChangeTermConstraints, type ConstraintEvaluationOptions } from './action-constraints';
 import { decomposeUpdateMediaBuy, hasUnmappedMutation, mutationShapeIssue } from './mutations';
 import { LEGACY_REQUIRES_PROPOSAL_MODE } from './available-actions';
+import { ADCP_VERSION } from '../version';
 
 export interface ActionAssessmentOptions extends ConstraintEvaluationOptions {
   /** Seller-served wire version. 3.1 term references are always opaque. Defaults to the current 3.2 shape. */
@@ -122,6 +125,18 @@ export function assessActionAvailability(
       'Invalid mutation field shape; validate against the selected wire schema.',
       'unknown'
     );
+  const startupControl = action === 'update_creative_start_policy';
+  if (
+    startupControl &&
+    options.request?.packages?.some(
+      pkg =>
+        pkg.start_requires_all_creatives_approved !== undefined &&
+        typeof pkg.start_requires_all_creatives_approved !== 'boolean'
+    )
+  )
+    return deny('condition_unresolved', 'The package start policy must be a boolean.', 'unknown');
+  if (startupControl && !supportsCreativeStartPolicyAction(options.adcpVersion ?? ADCP_VERSION))
+    return deny('condition_unresolved', 'Creative start policy controls require AdCP 3.3 or newer.', 'unknown');
   if (!buy) return deny('condition_unresolved', 'Current MediaBuy state is missing.', 'unknown');
   if (options.request?.packages?.length) {
     const requested = options.request.packages.map(p => p.package_id);
@@ -160,7 +175,7 @@ export function assessActionAvailability(
       'At least one requested field has no supported action mapping; executable-now assessment requires a fully mapped request.',
       'unknown'
     );
-  const metadataOnly = action === 'update_name';
+  const metadataOnly = isOperationalMediaBuyAction(action);
   const proposal = buy.accepted_proposal;
   const terms = proposal?.commercial_terms?.change_terms;
   if (terms === undefined && !metadataOnly)
@@ -188,7 +203,7 @@ export function assessActionAvailability(
   if (!metadataOnly && promise.status === 'unknown') return deny('condition_unresolved', promise.message, 'unknown');
   if (!metadataOnly && promise.status === 'not_negotiated')
     return deny('not_supported_on_buy', 'This action was not negotiated in the accepted proposal.');
-  const term = promise.status === 'promised' ? promise.term : undefined;
+  const term = !metadataOnly && promise.status === 'promised' ? promise.term : undefined;
   const packageLifecycle =
     ['pause', 'resume'].includes(action) &&
     options.request?.packages?.filter(p => p.paused !== undefined && (p.paused ? 'pause' : 'resume') === action);
@@ -241,6 +256,29 @@ export function assessActionAvailability(
   if (liveActionIssues(entries).length)
     return deny('condition_unresolved', 'The live action projection is invalid or ambiguous.', 'unknown');
   const entry = entries.find(e => e.action === action);
+  if (startupControl && entry) {
+    const ids = entry.applicable_package_ids;
+    if (
+      !ids?.length ||
+      !buy.packages ||
+      new Set(buy.packages.map(pkg => pkg.package_id)).size !== buy.packages.length ||
+      ids.some(id => !buy.packages!.some(pkg => pkg.package_id === id))
+    )
+      return deny(
+        'condition_unresolved',
+        'An exact current seller package scope is required for startup controls.',
+        'unknown'
+      );
+    for (const id of ids) {
+      const status = packageActionStatus(buy.packages.find(pkg => pkg.package_id === id));
+      if (status === undefined)
+        return deny('condition_unresolved', 'Current package lifecycle state is missing.', 'unknown');
+      if (!(NON_TERMINAL_ACTION_STATUSES as readonly string[]).includes(status))
+        return deny('wrong_status', 'The startup control is not available for a terminal package.');
+    }
+    if (entry.task !== 'control_media_buy')
+      return deny('mode_mismatch', 'Startup policy changes require the declared control_media_buy task.');
+  }
   if (options.adcpVersion && entry && !liveActionFitsVersion(entry, options.adcpVersion))
     return deny(
       'condition_unresolved',
@@ -265,7 +303,7 @@ export function assessActionAvailability(
   )
     return deny('condition_unresolved', 'The deliberately emitted term aliases disagree.', 'unknown');
   if (metadataOnly && entry.change_term_id !== undefined)
-    return deny('condition_unresolved', 'Metadata-only actions cannot identify a commercial change term.', 'unknown');
+    return deny('condition_unresolved', 'Operational actions cannot identify a commercial change term.', 'unknown');
   if ((entry.mode as string) === LEGACY_REQUIRES_PROPOSAL_MODE)
     return deny(
       'mode_mismatch',
