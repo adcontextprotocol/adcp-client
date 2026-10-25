@@ -104,3 +104,13 @@ export interface SigningProvider {
    */
   readonly fingerprint: string;
 }
+
+/** Capture identity and the bound signing callable without freezing the host provider. */
+export function freezeSigningProvider(provider: SigningProvider): SigningProvider {
+  const keyid = provider.keyid;
+  const algorithm = provider.algorithm;
+  const adcpUse = provider.adcpUse;
+  const fingerprint = provider.fingerprint;
+  const sign = provider.sign.bind(provider);
+  return Object.freeze({ keyid, algorithm, adcpUse, fingerprint, sign });
+}

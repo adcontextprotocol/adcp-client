@@ -30,6 +30,7 @@ type CallToolResponse = {
 };
 
 interface MCPTaskProtocolOptions {
+  headers?: Record<string, string>;
   transport?: {
     maxResponseBytes?: number;
     trustedFetchFn?: typeof fetch;
@@ -491,10 +492,9 @@ async function callToolOnClient(
  *
  * Task lifecycle methods (`tasks/get`, `tasks/result`, `tasks/list`,
  * `tasks/cancel`) are MCP protocol methods, not AdCP operations.
- * `extractAdcpOperation` returns `undefined` for them, so the signing fetch
- * passes them through unsigned regardless of whether an `AgentSigningContext`
- * is present in ALS. That matches the RFC 9421 signing profile, which only
- * covers AdCP tool calls (`tools/call` / `message/send`).
+ * The transport signing fetch evaluates them against the seller's separate
+ * `protocol_methods_*` lists (or the buyer's `always_sign_protocol_methods`),
+ * using exact JSON-RPC wire names rather than AdCP operation names.
  *
  * Re-throws auth errors (401) — only catches protocol capability errors.
  */
@@ -561,7 +561,7 @@ export async function listMCPTasks(
   debugLogs: DebugLogEntry[] = [],
   options: MCPTaskProtocolOptions = {}
 ): Promise<TaskInfo[]> {
-  const authHeaders = buildAuthHeaders(authToken);
+  const authHeaders = buildAuthHeaders(authToken, options.headers);
 
   return withResponseSizeLimit(options.transport?.maxResponseBytes, () =>
     withTransportDiagnostics(

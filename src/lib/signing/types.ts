@@ -21,6 +21,10 @@ export interface VerifierCapability {
    * AdCP tool names such as `create_media_buy`.
    */
   protocol_methods_required_for?: string[];
+  /** Protocol methods verified in shadow mode, using exact wire-name matching. */
+  protocol_methods_warn_for?: string[];
+  /** Protocol methods to sign when the buyer enables `sign_supported`. */
+  protocol_methods_supported_for?: string[];
 }
 
 export interface AdcpJsonWebKey {
