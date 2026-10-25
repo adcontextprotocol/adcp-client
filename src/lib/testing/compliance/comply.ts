@@ -2213,17 +2213,15 @@ export function extractFailures(
     // the loop above intentionally ignores skips. Preserve those gating
     // failures from the storyboard assertion surface instead of dropping them.
     for (const { assertion, owningStep } of collectDetachedAssertionFailures(result)) {
-      if (!owningStep) continue;
-
       failures.push({
         track,
         storyboard_id: result.storyboard_id,
-        step_id: owningStep.step_id,
-        step_title: owningStep.title,
-        task: owningStep.task,
+        step_id: owningStep?.step_id ?? `${result.storyboard_id}/storyboard`,
+        step_title: owningStep?.title ?? sb?.title ?? result.storyboard_id,
+        task: owningStep?.task ?? 'storyboard',
         error: assertion.error ?? assertion.description,
-        expected: findStoryboardStepExpected(sb, owningStep.step_id),
-        fix_command: buildFixCommand(agentRef, result.storyboard_id, owningStep.step_id, fixOptions),
+        expected: owningStep ? findStoryboardStepExpected(sb, owningStep.step_id) : undefined,
+        fix_command: buildFixCommand(agentRef, result.storyboard_id, owningStep?.step_id, fixOptions),
         validation: {
           check: 'assertion',
           description: `${assertion.assertion_id}: ${assertion.description}`,
@@ -2247,7 +2245,7 @@ function findStoryboardStepExpected(storyboard: Storyboard | undefined, stepId: 
 function buildFixCommand(
   agentRef: string,
   storyboardId: string,
-  stepId: string,
+  stepId: string | undefined,
   options: {
     complianceVersion?: string;
     complianceDir?: string;
@@ -2256,7 +2254,10 @@ function buildFixCommand(
     testKitPath?: string;
   }
 ): string {
-  const parts = ['adcp', 'storyboard', 'step', agentRef, storyboardId, stepId, '--json'];
+  const parts =
+    stepId === undefined
+      ? ['adcp', 'storyboard', 'run', agentRef, storyboardId, '--json']
+      : ['adcp', 'storyboard', 'step', agentRef, storyboardId, stepId, '--json'];
   if (options.complianceVersion) parts.push('--compliance-version', options.complianceVersion);
   if (options.complianceDir) parts.push('--compliance-dir', options.complianceDir);
   if (options.schemaRoot) parts.push('--schema-root', options.schemaRoot);

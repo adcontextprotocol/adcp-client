@@ -340,3 +340,28 @@ describe('extractFailures parity guard (#1708): multi-storyboard aggregation', (
     assert.equal(byId.get('parity_multi_c').validation.check, 'assertion');
   });
 });
+
+describe('extractFailures: storyboard-level assertions', () => {
+  test('preserves a gating assertion without inventing a failed seller step', () => {
+    const storyboard = buildStoryboardDef('parity_storyboard_assertion');
+    const result = buildStoryboardResult(storyboard.id);
+    result.overall_passed = false;
+    result.assertions = [
+      {
+        assertion_id: 'cross_step',
+        scope: 'storyboard',
+        passed: false,
+        description: 'Cross-step invariant failed',
+        error: 'State was incoherent',
+      },
+    ];
+    const failures = extractFailures([result], [storyboard], 'parity_test_agent');
+    assert.equal(result.failed_count, 0);
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0].step_id, `${storyboard.id}/storyboard`);
+    assert.equal(failures[0].task, 'storyboard');
+    assert.equal(failures[0].validation.check, 'assertion');
+    assert.equal(failures[0].error, 'State was incoherent');
+    assert.equal(failures[0].fix_command, `adcp storyboard run parity_test_agent ${storyboard.id} --json`);
+  });
+});

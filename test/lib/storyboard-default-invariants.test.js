@@ -1421,10 +1421,10 @@ describe('default-invariants: status.monotonic', () => {
   // ── proposal ───────────────────────────────────────────────
 
   test('proposal: committed is terminal', () => {
-    const proposalOf = (id, status) => ({ proposal_id: id, status });
+    const proposalOf = (id, status) => ({ proposal_id: id, proposal_status: status });
     const out = run([
-      step({ step_id: 's1', task: 'get_products', response: { proposal: proposalOf('p-1', 'committed') } }),
-      step({ step_id: 's2', task: 'get_products', response: { proposal: proposalOf('p-1', 'draft') } }),
+      step({ step_id: 's1', task: 'get_products', response: { proposals: [proposalOf('p-1', 'committed')] } }),
+      step({ step_id: 's2', task: 'get_products', response: { proposals: [proposalOf('p-1', 'draft')] } }),
     ]);
     assert.strictEqual(out[1].output[0].passed, false);
     assert.match(out[1].output[0].error, /proposal p-1: committed → draft/);
@@ -2803,5 +2803,101 @@ describe('default-invariants: impairment.coherence', () => {
     spec.onStep(ctx, step({ step_id: 'buy', task: 'create_media_buy', response: mb('mb-1') }));
     const out = spec.onEnd(ctx);
     assert.equal(out.length, 1, 'no deferred-coverage notice expected');
+  });
+});
+
+describe('discovery eligibility for lifecycle invariants (#3186)', () => {
+  function summary(id, task, response = {}, payload) {
+    const spec = getAssertion(id);
+    const ctx = { storyboard: {}, agentUrl: 'https://seller.example/mcp', options: {}, state: {} };
+    spec.onStart(ctx);
+    spec.onStep(ctx, {
+      step_id: 'discovery',
+      phase_id: 'test',
+      title: 'Read',
+      task,
+      passed: true,
+      duration_ms: 0,
+      validations: [],
+      context: {},
+      response,
+      ...(payload && { request: { payload } }),
+    });
+    return spec.onEnd(ctx);
+  }
+  for (const id of ['status.monotonic', 'impairment.coherence']) {
+    for (const task of [
+      'get_adcp_capabilities',
+      'list_property_lists',
+      'list_collection_items',
+      'get_content_standards',
+      'list_creative_formats',
+    ]) {
+      test(`${id} does not claim observations for ${task}`, () => assert.deepEqual(summary(id, task), []));
+    }
+  }
+  for (const task of [
+    'create_media_buy',
+    'update_media_buy',
+    'get_media_buys',
+    'sync_creatives',
+    'list_creatives',
+    'sync_accounts',
+    'list_accounts',
+    'si_initiate_session',
+    'si_send_message',
+    'si_terminate_session',
+    'sync_catalogs',
+    'list_catalogs',
+    'sync_audiences',
+  ]) {
+    test(`status.monotonic retains empty lifecycle coverage for ${task}`, () => {
+      const out = summary('status.monotonic', task);
+      assert.equal(out.length, 1);
+      assert.equal(out[0].observation_count, 0);
+    });
+  }
+  for (const task of [
+    'create_media_buy',
+    'update_media_buy',
+    'get_media_buys',
+    'sync_creatives',
+    'list_creatives',
+    'sync_audiences',
+    'sync_catalogs',
+    'list_catalogs',
+    'sync_event_sources',
+  ]) {
+    test(`impairment.coherence retains empty lifecycle coverage for ${task}`, () => {
+      const out = summary('impairment.coherence', task);
+      assert.equal(out.length, 1);
+      assert.equal(out[0].observation_count, 0);
+    });
+  }
+  test('product discovery is eligible only when a proposal is present', () => {
+    assert.deepEqual(summary('status.monotonic', 'get_products', { products: [] }), []);
+    const out = summary('status.monotonic', 'get_products', { products: [], proposals: [{}] });
+    assert.equal(out.length, 1);
+    assert.equal(out[0].observation_count, 0, 'a proposal without lifecycle state must not become a pass');
+    assert.deepEqual(summary('impairment.coherence', 'get_products', { products: [], proposals: [{}] }), []);
+  });
+  test('only an audience transition controller can observe impairment resource state', () => {
+    assert.deepEqual(
+      summary(
+        'impairment.coherence',
+        'comply_test_controller',
+        { success: true },
+        { scenario: 'force_creative_status', params: { creative_id: 'creative' } }
+      ),
+      []
+    );
+    const out = summary(
+      'impairment.coherence',
+      'comply_test_controller',
+      { success: true },
+      { scenario: 'force_audience_status', params: { audience_id: 'audience' } }
+    );
+    assert.equal(out.length, 1);
+    assert.equal(out[0].observation_count, 0, 'a missing transition state stays partial');
   });
 });

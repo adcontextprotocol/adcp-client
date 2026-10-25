@@ -9,6 +9,7 @@
  */
 
 import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
+import { parse as parseYaml } from 'yaml';
 import { basename, dirname, join, resolve } from 'path';
 import { loadStoryboardFile } from './loader';
 import { ADCP_VERSION } from '../../version';
@@ -572,10 +573,41 @@ function annotateStoryboardVersion(
   );
 }
 
+/** Support documents in the universal index are not executable bundles. */
+function isUniversalMetadataFile(path: string): boolean {
+  try {
+    const source = readFileSync(path, 'utf8');
+    const document: unknown = parseYaml(source);
+    // The published storyboard-schema guide consists entirely of comments.
+    // Keep genuinely empty or malformed files visible as missing coverage.
+    if (document === null && /^\s*#/m.test(source) && source.split(/\r?\n/).every(line => /^\s*(?:#.*)?$/.test(line)))
+      return true;
+    if (!document || typeof document !== 'object' || Array.isArray(document)) {
+      console.warn(
+        `[compliance] Universal file ${basename(path)} is not a storyboard mapping; retaining it for assessment.`
+      );
+      return false;
+    }
+    if (Object.hasOwn(document, 'phases') && !Array.isArray((document as Record<string, unknown>).phases)) {
+      console.warn(`[compliance] Universal file ${basename(path)} has invalid phases; retaining it for assessment.`);
+    }
+    if (!Object.hasOwn(document, 'phases') && ['agent', 'caller', 'steps'].some(key => Object.hasOwn(document, key))) {
+      console.warn(`[compliance] Universal file ${basename(path)} is missing phases; retaining it for assessment.`);
+      return false;
+    }
+    return !Object.hasOwn(document, 'phases');
+  } catch {
+    // An unreadable or malformed file is missing coverage, not metadata.
+    console.warn(`[compliance] Unable to classify universal file ${basename(path)}; retaining it for assessment.`);
+    return false;
+  }
+}
+
 function safeLoadUniversal(path: string): Storyboard[] {
   try {
     return [loadStoryboardFile(path)];
   } catch {
+    console.warn(`[compliance] Unable to load universal storyboard ${basename(path)}; retaining an untested bundle.`);
     return [];
   }
 }
@@ -631,6 +663,7 @@ export function listBundles(options: ResolveOptions = {}): BundleRef[] {
   const bundles: BundleRef[] = [];
 
   for (const name of index.universal) {
+    if (isUniversalMetadataFile(join(dir, 'universal', `${name}.yaml`))) continue;
     bundles.push({
       kind: 'universal',
       id: name,
@@ -842,6 +875,7 @@ export function resolveStoryboardsForCapabilities(
   };
 
   for (const name of index.universal) {
+    if (isUniversalMetadataFile(join(cacheDir, 'universal', `${name}.yaml`))) continue;
     push({
       kind: 'universal',
       id: name,

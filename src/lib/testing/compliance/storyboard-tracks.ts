@@ -136,13 +136,13 @@ export function mapStoryboardResultsToTrackResult(
     }
 
     // Phase scenarios retain their own verdicts. When the authoritative
-    // storyboard verdict fails despite every phase passing (for example, an
-    // onEnd assertion failure), add one storyboard-level scenario instead of
-    // falsely attributing the same failure to every phase.
+    // storyboard verdict fails without a counted failed step (including an
+    // all-skipped run), retain one storyboard-level scenario for diagnostics.
+    // It does not change the authoritative track grade or seller failure count.
     if (
       !sbResult.overall_passed &&
-      (sbResult.passed_count > 0 || assertionFailures.length > 0) &&
-      sbResult.phases.every(phase => phase.passed)
+      (sbResult.failed_count === 0 ||
+        ((sbResult.passed_count > 0 || assertionFailures.length > 0) && sbResult.phases.every(phase => phase.passed)))
     ) {
       scenarios.push({
         agent_url: sbResult.agent_url,

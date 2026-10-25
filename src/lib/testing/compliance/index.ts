@@ -32,6 +32,7 @@ export type {
   ComplianceSummaryArtifact,
   ComplianceSummaryFailure,
   ComplianceSummaryFailureKind,
+  ComplianceSummaryIncompleteStoryboard,
   BuildSummaryOptions,
   BuildCrashSummaryOptions,
 } from './summary';

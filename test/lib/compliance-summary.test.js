@@ -1097,3 +1097,109 @@ describe('buildCrashSummary', () => {
     assert.match(text, /capabilities parse error/);
   });
 });
+
+test('preserves a false zero-step storyboard verdict as incomplete without inventing a failed step', () => {
+  const result = passingResult();
+  result.overall_status = 'partial';
+  result.tracks = [
+    {
+      track: 'core',
+      status: 'partial',
+      scenarios: [
+        {
+          scenario: 'optional/storyboard',
+          overall_passed: false,
+          steps: [],
+          summary: 'Optional coverage was incomplete',
+        },
+      ],
+      skipped_scenarios: [],
+      observations: [],
+      duration_ms: 0,
+    },
+  ];
+  const summary = buildComplianceSummary(result, { sdkVersion: '16.5.0', adcpVersion: '3.2.6' });
+  assert.deepStrictEqual(summary.incomplete_storyboards, [
+    { track: 'core', storyboard_id: 'optional', reason: 'Optional coverage was incomplete' },
+  ]);
+  assert.strictEqual(summary.failed, 0);
+  assert.deepStrictEqual(summary.failures, []);
+  assert.match(formatComplianceSummaryText(summary), /STORYBOARD-INCOMPLETE optional/);
+  assert.doesNotMatch(formatComplianceSummaryText(summary), /STORYBOARD-FAIL /);
+  assert.match(formatComplianceSummaryMarkdown(summary), /Incomplete storyboard verdicts/);
+});
+
+test('does not duplicate a real storyboard assertion failure as incomplete coverage', () => {
+  const result = passingResult();
+  result.overall_status = 'failing';
+  result.failures = [
+    {
+      track: 'core',
+      storyboard_id: 'assertion',
+      step_id: 'assertion/storyboard',
+      step_title: 'Assertion',
+      task: 'storyboard',
+      error: 'Invariant failed',
+      fix_command: 'adcp storyboard run agent assertion --json',
+    },
+  ];
+  result.tracks = [
+    {
+      track: 'core',
+      status: 'fail',
+      scenarios: [{ scenario: 'assertion/storyboard', overall_passed: false, steps: [], summary: 'Invariant failed' }],
+      skipped_scenarios: [],
+      observations: [],
+      duration_ms: 0,
+    },
+  ];
+  const summary = buildComplianceSummary(result, { sdkVersion: '16.5.0', adcpVersion: '3.2.6' });
+  assert.strictEqual(summary.incomplete_storyboards, undefined);
+  assert.strictEqual(summary.failures.length, 1);
+});
+
+for (const phasePassed of [false, true]) {
+  test(`incomplete summary retains ${phasePassed ? 'all-skipped optional' : 'failed prerequisite'} storyboard verdicts`, () => {
+    const result = passingResult();
+    const board = {
+      storyboard_id: 'incomplete',
+      storyboard_title: 'Incomplete',
+      agent_url: result.agent_url,
+      overall_passed: false,
+      passed_count: 0,
+      failed_count: 0,
+      skipped_count: 1,
+      total_duration_ms: 0,
+      tested_at: result.tested_at,
+      assertions: [],
+      phases: [
+        {
+          phase_id: 'optional',
+          phase_title: 'Optional',
+          passed: phasePassed,
+          duration_ms: 0,
+          steps: [
+            {
+              step_id: 'skipped',
+              title: 'Skipped',
+              task: 'get_products',
+              passed: phasePassed,
+              skipped: true,
+              skip_reason: phasePassed ? 'missing_tool' : 'prerequisite_failed',
+              skip: { reason: phasePassed ? 'not_applicable' : 'prerequisite_failed', detail: 'Unavailable coverage' },
+              duration_ms: 0,
+              validations: [],
+              context: {},
+            },
+          ],
+        },
+      ],
+    };
+    result.tracks = [mapStoryboardResultsToTrackResult('core', [board], result.agent_profile)];
+    const summary = buildComplianceSummary(result, { sdkVersion: '16.5.0', adcpVersion: '3.2.6' });
+    assert.strictEqual(summary.incomplete_storyboards.length, 1);
+    assert.strictEqual(summary.incomplete_storyboards[0].storyboard_id, 'incomplete');
+    assert.strictEqual(summary.failed, 0);
+    assert.deepStrictEqual(summary.failures, []);
+  });
+}

@@ -481,6 +481,18 @@ const CANONICAL_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> 
 const MCP_SESSION_PROBE_REQUEST_TIMEOUT_MS = 5_000;
 
 const REPLAY_WEBHOOK_VECTOR_TASK = 'replay_webhook_vector';
+
+function isRunnerOwnedTask(task: string): boolean {
+  return (
+    task === VALIDATION_ONLY_TASK ||
+    task === MCP_SESSION_PROBE_TASK ||
+    task === 'assert_contribution' ||
+    task === REPLAY_WEBHOOK_VECTOR_TASK ||
+    TRUSTED_MATCH_PUBLISHER_AUTH_TASKS.has(task) ||
+    PROBE_TASKS.has(task) ||
+    WEBHOOK_ASSERTION_TASKS.has(task)
+  );
+}
 const REPLAY_TRUSTED_MATCH_CONTEXT_VECTOR_TASK = 'replay_trusted_match_context_vector';
 const WEBHOOK_REPLAY_DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -5864,9 +5876,7 @@ async function executeStoryboardPass(
           selectedOptions.agentTools &&
           (routingContext && step.requires_tool && !selectedOptions.agentTools.includes(step.requires_tool)
             ? step.requires_tool
-            : resolvedTask &&
-                resolvedTask !== MCP_SESSION_PROBE_TASK &&
-                !selectedOptions.agentTools.includes(resolvedTask)
+            : resolvedTask && !isRunnerOwnedTask(resolvedTask) && !selectedOptions.agentTools.includes(resolvedTask)
               ? resolvedTask
               : undefined);
         if (missingTool) {
@@ -6591,6 +6601,24 @@ async function executeStoryboardPass(
     return p.steps.some(s => !s.skipped && s.passed);
   });
   const requiredPhaseDefs = storyboard.phases.filter(phaseDef => !phaseDef.optional);
+  // Optional-only storyboards still prove coverage when a real step passed.
+  // Empty/skipped runs and failed prerequisites must never pass vacuously.
+  const optionalOnlyHasExecutedPass =
+    requiredPhaseDefs.length === 0 &&
+    failedCount === 0 &&
+    phaseResults.some(phase => phase.passed && phase.steps.some(step => !step.skipped && step.passed)) &&
+    phaseResults.every(phase => {
+      if (phase.passed) return true;
+      const branchSet = branchSetsByPhaseId.get(phase.phase_id);
+      const source = branchSet && contributionSources.get(branchSet.id);
+      // Only a successful contributing peer makes a failed alternative moot.
+      // An unrelated optional read cannot rescue an entirely failed branch set.
+      return (
+        branchSet?.semantics === 'any_of' &&
+        source?.phaseId !== phase.phase_id &&
+        phaseResults.some(peer => peer.phase_id === source?.phaseId && peer.passed)
+      );
+    });
   const requiredPhasesNonFailingSkipped =
     requiredPhaseDefs.length > 0 &&
     requiredPhaseDefs.every(phaseDef => {
@@ -6620,6 +6648,7 @@ async function executeStoryboardPass(
     !hasExecutableSteps ||
     (requiredPhaseDefs.every(phaseDef => phaseResults.find(p => p.phase_id === phaseDef.id)?.passed === true) &&
       (requiredPhaseHasExecutedPass ||
+        optionalOnlyHasExecutedPass ||
         requiredPhasesNonFailingSkipped ||
         (failedCount === 0 && requiredPhasesCoveredByCapabilityGates)));
   const storyboardWideFixtureUnavailable =

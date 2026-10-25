@@ -183,9 +183,9 @@ describe('oauth_metadata_graph storyboard integration', () => {
       });
 
       assert.deepStrictEqual(result.storyboards_executed, ['oauth_setup']);
-      assert.strictEqual(result.overall_status, 'partial', JSON.stringify(result, null, 2));
+      assert.strictEqual(result.overall_status, 'passing', JSON.stringify(result, null, 2));
       assert.strictEqual(result.tracks[0].track, 'security_transport');
-      assert.strictEqual(result.tracks[0].status, 'silent');
+      assert.strictEqual(result.tracks[0].status, 'pass');
       assert.strictEqual(result.summary.steps_failed, 0);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
