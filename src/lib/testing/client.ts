@@ -108,6 +108,8 @@ interface TestClientVersionOptions {
   maxResponseBytes?: number;
   requestTimeoutMs?: number;
   legacyCompatEnabled?: boolean;
+  connectionPartition?: string;
+  connectionReuse?: 'process';
 }
 
 /**
@@ -315,6 +317,8 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
       ...(requestScopeMode !== undefined && { requestScopeMode }),
       ...(requestSigningMode !== undefined && { requestSigningMode }),
       ...(options.auth?.type === 'oauth' && options.auth.storage && { oauthStorage: options.auth.storage }),
+      connectionPartition: transport?.connectionPartition,
+      connectionReuse: transport?.connectionReuse,
       ...(transport?.trustedFetchFn && { fetchFn: transport.trustedFetchFn }),
       ...(transport?.allowPrivateIp !== undefined && { allowPrivateIp: transport.allowPrivateIp }),
       ...(transport?.maxResponseBytes !== undefined && {
@@ -400,6 +404,8 @@ function testClientMatchesVersionOptions(client: TestClient, agentUrl: string, o
     meta.requestScopeMode === expectedRequestScopeMode &&
     meta.requestSigningMode === expectedRequestSigningMode &&
     meta.oauthStorage === expectedOAuthStorage &&
+    meta.connectionPartition === expectedTransport?.connectionPartition &&
+    meta.connectionReuse === expectedTransport?.connectionReuse &&
     meta.fetchFn === expectedTransport?.trustedFetchFn &&
     meta.allowPrivateIp === expectedTransport?.allowPrivateIp &&
     meta.maxResponseBytes === expectedTransport?.maxResponseBytes &&
@@ -627,7 +633,10 @@ export function seedTestClientSigningCapability(client: TestClient, profile: Age
     meta?.adcpVersion ??
     (typeof clientAccess.getAdcpVersion === 'function' ? clientAccess.getAdcpVersion.call(client) : undefined) ??
     adcpVersion;
-  const signingContext = buildAgentSigningContext(agent, { adcpVersion: effectiveVersion });
+  const signingContext = buildAgentSigningContext(agent, {
+    adcpVersion: effectiveVersion,
+    connectionPartition: meta?.connectionPartition,
+  });
   if (!signingContext) return;
   signingContext.cache.set(signingContext.capabilityCacheKey, {
     requestSigning: (raw as { request_signing?: VerifierCapability }).request_signing,

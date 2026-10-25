@@ -1,3 +1,4 @@
+import { withMCPConnectionPolicy } from '../protocols/mcp-connection-policy';
 import { hasUnsignedCapabilityBootstrap } from '../signing/protocol-methods';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import { normalizeMediaBuyResponse } from '../utils/creative-adapter';
@@ -3595,6 +3596,12 @@ export class SingleAgentClient {
    * Also computes the canonical base URL by stripping /mcp suffix.
    */
   private async ensureEndpointDiscovered(options?: ReadRequestOptions): Promise<AgentConfig> {
+    return withMCPConnectionPolicy(normalizeTransportOptions(options?.transport ?? this.config.transport), () =>
+      this.ensureEndpointDiscoveredWithConnectionPolicy(options)
+    );
+  }
+
+  private async ensureEndpointDiscoveredWithConnectionPolicy(options?: ReadRequestOptions): Promise<AgentConfig> {
     throwIfAborted(options?.signal);
     if (this.config._reuseConfiguredDiscovery?.()) this.synchronizeCapabilityEvidenceAuthorizationScope();
     const needsDiscovery = this.normalizedAgent._needsDiscovery;
@@ -3930,6 +3937,15 @@ export class SingleAgentClient {
    * Note: This is async and called lazily on first agent interaction
    */
   private async discoverMCPEndpoint(providedUri: string, options?: ReadRequestOptions): Promise<string> {
+    return withMCPConnectionPolicy(normalizeTransportOptions(options?.transport ?? this.config.transport), () =>
+      this.discoverMCPEndpointWithConnectionPolicy(providedUri, options)
+    );
+  }
+
+  private async discoverMCPEndpointWithConnectionPolicy(
+    providedUri: string,
+    options?: ReadRequestOptions
+  ): Promise<string> {
     throwIfAborted(options?.signal);
     const { connectMCPWithFallback } = await import('../protocols/mcp');
     const { probeModernMCPConnection } = await import('../protocols/mcp-modern');
@@ -7704,6 +7720,7 @@ export class SingleAgentClient {
       const account = canonicalAccountRoutingSnapshot(accountReference);
       const cache =
         !effectiveOptions.skipRequestValidation &&
+        !this.usesScopedDiscoveryTransport(effectiveOptions) &&
         !effectiveOptions.preserveGovernedPayload &&
         !inputHandler &&
         !request.push_notification_config &&
@@ -10449,6 +10466,23 @@ export class SingleAgentClient {
       parameters?: string[];
     }>;
   }> {
+    return withMCPConnectionPolicy(normalizeTransportOptions(options?.transport ?? this.config.transport), () =>
+      this.getAgentInfoWithConnectionPolicy(options)
+    );
+  }
+
+  private async getAgentInfoWithConnectionPolicy(options?: ReadRequestOptions): Promise<{
+    name: string;
+    description?: string;
+    protocol: 'mcp' | 'a2a';
+    url: string;
+    tools: Array<{
+      name: string;
+      description?: string;
+      inputSchema?: Record<string, unknown>;
+      parameters?: string[];
+    }>;
+  }> {
     throwIfAborted(options?.signal);
     const reuse = this.config._reuseConfiguredDiscovery?.() && !this.usesScopedDiscoveryTransport(options);
     if (!reuse) return this.getAgentInfoLive(options);
@@ -10575,7 +10609,7 @@ export class SingleAgentClient {
       }
 
       const modernTools =
-        !transport?.trustedFetchFn &&
+        !this.usesScopedDiscoveryTransport(options) &&
         this.discoveredMcpEra === 'legacy' &&
         Date.now() - this.discoveredMcpEraAt < 5 * 60 * 1000
           ? ({ handled: false } as const)
@@ -10760,6 +10794,12 @@ export class SingleAgentClient {
    * ```
    */
   async getCapabilities(options?: ReadRequestOptions): Promise<AdcpCapabilities> {
+    return withMCPConnectionPolicy(normalizeTransportOptions(options?.transport ?? this.config.transport), () =>
+      this.getCapabilitiesWithConnectionPolicy(options)
+    );
+  }
+
+  private async getCapabilitiesWithConnectionPolicy(options?: ReadRequestOptions): Promise<AdcpCapabilities> {
     throwIfAborted(options?.signal);
     this.synchronizeCapabilityEvidenceAuthorizationScope();
     const discoveryContext = (options as InternalReadRequestOptions | undefined)?.[CAPABILITY_DISCOVERY_CONTEXT];
@@ -11152,6 +11192,7 @@ export class SingleAgentClient {
     const effectiveAgent = this.normalizedAgent;
     return canonicalizeJson({
       authToken: effectiveAgent.auth_token ?? null,
+      connectionPartition: this.config.transport?.connectionPartition ?? null,
       headers: effectiveAgent.headers ?? null,
       oauthTokens: effectiveAgent.oauth_tokens ?? null,
       oauthClient: effectiveAgent.oauth_client ?? null,
@@ -11186,8 +11227,9 @@ export class SingleAgentClient {
   /** A comply() run owns its configured fetch; per-call transport changes still discover separately. */
   private usesScopedDiscoveryTransport(options?: ReadRequestOptions): boolean {
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
-    if (!this.config._reuseConfiguredDiscovery?.()) return transport?.trustedFetchFn !== undefined;
     const configured = normalizeTransportOptions(this.config.transport);
+    if (transport?.connectionPartition !== configured?.connectionPartition) return true;
+    if (!this.config._reuseConfiguredDiscovery?.()) return transport?.trustedFetchFn !== undefined;
     return (
       transport?.trustedFetchFn !== configured?.trustedFetchFn ||
       transport?.allowPrivateIp !== configured?.allowPrivateIp ||
@@ -11384,6 +11426,7 @@ export class SingleAgentClient {
       adcpVersion: this.resolvedAdcpVersion,
       wireAdcpVersion: this.config.wireAdcpVersion,
       authIdentity: config.authIdentity,
+      connectionPartition: transport?.connectionPartition,
       credentialKind: this.discoveryCredentialKind(),
       headers: withAmbientIdentityHeaders(this.normalizedAgent.headers),
       signing: this.discoverySigningFingerprint(),

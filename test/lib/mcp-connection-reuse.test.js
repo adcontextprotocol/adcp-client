@@ -24,11 +24,15 @@ const { closeMCPConnections, withScopedLegacyConnection } = require('../../dist/
 const { callMCPToolWithTasks } = require('../../dist/lib/protocols/mcp-tasks.js');
 const {
   probeModernMCPConnection,
-  tryCallModernMCPTool,
+  tryCallModernMCPTool: callModernMCPTool,
   tryListModernMCPTools,
 } = require('../../dist/lib/protocols/mcp-modern.js');
 
 const { withMCPConnectionScope, closeScopedConnections } = publicEntry;
+const { withMCPConnectionPolicy } = require('../../dist/lib/protocols/mcp-connection-policy.js');
+// These regression cases exercise explicitly shared sessions.
+const tryCallModernMCPTool = (...args) =>
+  withMCPConnectionPolicy({ connectionReuse: 'process' }, () => callModernMCPTool(...args));
 
 const TRACEPARENT = suffix => `00-0af7651916cd43dd8448eb211c80319c-b7ad6b716920333${suffix}-01`;
 

@@ -1,3 +1,4 @@
+import { assertMCPConnectionPolicy, withMCPConnectionPolicy } from './mcp-connection-policy';
 import { VersionUnsupportedError } from '../errors';
 // Unified Protocol Interface for AdCP
 export {
@@ -37,6 +38,7 @@ export async function closeScopedConnections(protocol: 'mcp' | 'a2a' = 'mcp'): P
 
 export { withMCPConnectionScope };
 export type { MCPCallOptions, MCPConnectionResult } from './mcp';
+export type { MCPTaskConnectionOptions } from './mcp-tasks';
 export { callA2ATool, createA2AClientFromCardUrl } from './a2a';
 export { DEFAULT_REQUEST_TIMEOUT_MS } from './abort';
 export { DEFAULT_MAX_RESPONSE_BYTES, SSE_CUMULATIVE_BUDGET_MULTIPLIER } from './responseSizeLimit';
@@ -50,8 +52,8 @@ export {
   serverSupportsTasks,
 } from './mcp-tasks';
 
-import { callMCPToolWithTasks, callMCPToolWithClient } from './mcp-tasks';
-import { callMCPToolWithOAuth } from './mcp';
+import { callMCPToolWithTasksInContext as callMCPToolWithTasks, callMCPToolWithClient } from './mcp-tasks';
+import { callMCPToolWithOAuthInContext as callMCPToolWithOAuth } from './mcp';
 import { callA2ATool } from './a2a';
 import type { AgentConfig, DebugLogEntry } from '../types';
 import type { PushNotificationConfig } from '../types/tools.generated';
@@ -229,6 +231,16 @@ export function applyVersionEnvelope(
  * reuses a fetch that was created on an earlier call with different limits.
  */
 export interface TransportOptions {
+  /** Caller-owned principal partition for MCP sessions. Never sent in headers or bodies.
+   * A nonempty partition opts into process-wide reuse for that partition outside a scope.
+   * Per-call transport replaces the constructor transport; repeat the partition when overriding it.
+   */
+  connectionPartition?: string;
+  /** Explicitly reuse unpartitioned MCP sessions across calls outside a connection scope.
+   * Only use when all callers with the same endpoint and credentials represent one principal.
+   * Without this opt-in or a partition, unscoped calls close their session after the operation.
+   */
+  connectionReuse?: 'process';
   /**
    * Maximum response body size (in octets) the SDK will read before aborting
    * with `ResponseTooLargeError`.
@@ -352,6 +364,7 @@ let warnedLegacyTransportFetch = false;
 
 /** @internal Normalize the pre-GA fetch hook rename without silently dropping JS callers. */
 export function normalizeTransportOptions(transport?: TransportOptions): TransportOptions | undefined {
+  assertMCPConnectionPolicy(transport);
   if (!transport?.fetchFn) return transport;
   if (transport.trustedFetchFn && transport.trustedFetchFn !== transport.fetchFn) {
     throw new TypeError('TransportOptions cannot set different fetchFn and trustedFetchFn implementations');
@@ -568,6 +581,17 @@ export class ProtocolClient {
     args: Record<string, unknown>,
     options: CallToolOptions = {}
   ): Promise<unknown> {
+    return withMCPConnectionPolicy(normalizeTransportOptions(options.transport), () =>
+      ProtocolClient.callToolWithConnectionPolicy(agent, toolName, args, options)
+    );
+  }
+
+  private static async callToolWithConnectionPolicy(
+    agent: AgentConfig,
+    toolName: string,
+    args: Record<string, unknown>,
+    options: CallToolOptions = {}
+  ): Promise<unknown> {
     const {
       debugLogs = [],
       webhookUrl,
@@ -683,7 +707,9 @@ export class ProtocolClient {
                     ...(versionEnvelopeMode !== 'auto' && { versionEnvelope: versionEnvelopeMode }),
                     transport,
                     signal,
-                    ...(transport?.requestTimeoutMs !== undefined && { requestTimeoutMs: transport.requestTimeoutMs }),
+                    ...(transport?.requestTimeoutMs !== undefined && {
+                      requestTimeoutMs: transport.requestTimeoutMs,
+                    }),
                     onTransportActivity,
                     transportActivityContext,
                   })
@@ -986,20 +1012,22 @@ export const createMCPClient = (
   // input — call it once to surface, then close over the envelope.
   const versionEnvelope = buildVersionEnvelopeForMode(versionEnvelopeMode, adcpVersion, serverVersion);
   return {
-    callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-      withResponseSizeLimit(transport?.maxResponseBytes, () =>
-        callMCPToolWithTasks(
-          agentUrl,
-          toolName,
-          applyPublishedSchemaCompatibility(toolName, applyVersionEnvelope(args, versionEnvelope), args),
-          authToken,
-          debugLogs,
-          headers,
-          {
-            ...(transport?.requestTimeoutMs !== undefined && { requestTimeoutMs: transport.requestTimeoutMs }),
-            ...(transport?.trustedFetchFn && { fetchFn: transport.trustedFetchFn }),
-            ...(transport?.allowPrivateIp !== undefined && { allowPrivateIp: transport.allowPrivateIp }),
-          }
+    callTool: async (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
+      withMCPConnectionPolicy(transport, () =>
+        withResponseSizeLimit(transport?.maxResponseBytes, () =>
+          callMCPToolWithTasks(
+            agentUrl,
+            toolName,
+            applyPublishedSchemaCompatibility(toolName, applyVersionEnvelope(args, versionEnvelope), args),
+            authToken,
+            debugLogs,
+            headers,
+            {
+              ...(transport?.requestTimeoutMs !== undefined && { requestTimeoutMs: transport.requestTimeoutMs }),
+              ...(transport?.trustedFetchFn && { fetchFn: transport.trustedFetchFn }),
+              ...(transport?.allowPrivateIp !== undefined && { allowPrivateIp: transport.allowPrivateIp }),
+            }
+          )
         )
       ),
   };
@@ -1017,23 +1045,25 @@ export const createA2AClient = (
   transport = normalizeTransportOptions(transport);
   const versionEnvelope = buildVersionEnvelopeForMode(versionEnvelopeMode, adcpVersion, serverVersion);
   return {
-    callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-      withResponseSizeLimit(transport?.maxResponseBytes, () =>
-        callA2ATool(
-          agentUrl,
-          toolName,
-          applyPublishedSchemaCompatibility(toolName, applyVersionEnvelope(parameters, versionEnvelope), parameters),
-          authToken,
-          debugLogs,
-          undefined,
-          headers,
-          undefined,
-          undefined,
-          undefined,
-          transport?.requestTimeoutMs,
-          transport?.trustedFetchFn,
-          transport?.allowPrivateIp,
-          transport?.legacyCompat
+    callTool: async (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
+      withMCPConnectionPolicy(transport, () =>
+        withResponseSizeLimit(transport?.maxResponseBytes, () =>
+          callA2ATool(
+            agentUrl,
+            toolName,
+            applyPublishedSchemaCompatibility(toolName, applyVersionEnvelope(parameters, versionEnvelope), parameters),
+            authToken,
+            debugLogs,
+            undefined,
+            headers,
+            undefined,
+            undefined,
+            undefined,
+            transport?.requestTimeoutMs,
+            transport?.trustedFetchFn,
+            transport?.allowPrivateIp,
+            transport?.legacyCompat
+          )
         )
       ),
   };

@@ -1,3 +1,4 @@
+import { mcpConnectionPartitionKey } from '../protocols/mcp-connection-policy';
 import { createHash, hkdfSync, randomBytes } from 'node:crypto';
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
 import type { AgentConfig, AgentRequestSigningConfig } from '../types/adcp';
@@ -87,7 +88,7 @@ export const signingContextStorage = globalAsyncLocalStorage<AgentSigningContext
 let rfcIdentityWarningEmitted = false;
 export function buildAgentSigningContext(
   agent: AgentConfig,
-  options: { cache?: CapabilityCache; adcpVersion?: string } = {}
+  options: { cache?: CapabilityCache; adcpVersion?: string; connectionPartition?: string } = {}
 ): AgentSigningContext | undefined {
   const configuredSigning = agent.request_signing;
   if (!configuredSigning) return undefined;
@@ -127,9 +128,13 @@ export function buildAgentSigningContext(
           .slice(0, 32)
       : deriveCacheFingerprint(identity);
   const adcpVersion = options.adcpVersion ?? ADCP_VERSION;
+  const connectionPartitionKey =
+    'connectionPartition' in options
+      ? mcpConnectionPartitionKey(options.connectionPartition)
+      : mcpConnectionPartitionKey();
   const capabilityCacheKey = buildCapabilityCacheKey(
     agent.agent_uri,
-    capabilityPrincipalScope(agent),
+    capabilityPrincipalScope(agent, connectionPartitionKey),
     cacheFingerprint,
     adcpVersion
   );
@@ -153,7 +158,7 @@ export function buildAgentSigningContext(
     )
     .digest('hex')
     .slice(0, 16);
-  const cacheKey = `sig=${cacheFingerprint};adcp=${adcpVersion};policy=${policyFingerprint}`;
+  const cacheKey = `sig=${cacheFingerprint};adcp=${adcpVersion};policy=${policyFingerprint}${connectionPartitionKey ? `;principal=${connectionPartitionKey}` : ''}`;
   const provider = signing.kind === 'provider' ? signing.provider : undefined;
 
   return {
@@ -175,7 +180,7 @@ export function buildAgentSigningContext(
  * credentials live outside `auth_token`; hashing the complete scope prevents
  * one principal from reusing another principal's signing policy.
  */
-function capabilityPrincipalScope(agent: AgentConfig): string | undefined {
+function capabilityPrincipalScope(agent: AgentConfig, connectionPartitionKey?: string): string | undefined {
   const credentials = agent.oauth_client_credentials;
   const headers = agent.headers
     ? Object.fromEntries(
@@ -186,6 +191,7 @@ function capabilityPrincipalScope(agent: AgentConfig): string | undefined {
     : undefined;
   const scope = {
     protocol: agent.protocol,
+    ...(connectionPartitionKey && { connectionPartition: connectionPartitionKey }),
     authToken: agent.auth_token,
     oauthAccessToken: agent.oauth_tokens?.access_token,
     oauthClientId: agent.oauth_client?.client_id,

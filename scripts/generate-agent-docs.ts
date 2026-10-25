@@ -1483,6 +1483,11 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`}`);
   ln();
   ln(`interface TransportOptions {`);
+  ln(`  // Local principal partition; never sent on the wire. Enables MCP process reuse.`);
+  ln(`  connectionPartition?: string;`);
+  ln(`  // Explicit opt-in when all unpartitioned callers share one principal.`);
+  ln(`  // Otherwise unscoped MCP calls close their session after the operation.`);
+  ln(`  connectionReuse?: 'process';`);
   ln(`  // Defaults to 4 MiB (DEFAULT_MAX_RESPONSE_BYTES); only 0 opts out`);
   ln(`  // (Infinity / negatives fall back to the default).`);
   ln(`  // SSE is bounded per event plus \`maxResponseBytes * 2\` cumulative per call.`);
