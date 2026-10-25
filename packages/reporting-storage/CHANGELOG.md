@@ -1,5 +1,14 @@
 # @adcp/reporting-storage
 
+## 0.2.1-beta.0
+
+### Patch Changes
+
+- Updated dependencies [505ddc9]
+- Updated dependencies [8a04f48]
+- Updated dependencies [8a04f48]
+  - @adcp/sdk@17.0.0-beta.0
+
 ## 0.2.0
 
 ### Minor Changes
