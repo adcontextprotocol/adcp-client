@@ -192,7 +192,15 @@ describe('persisted seller task tracking (#3338)', () => {
       task_id: identity.taskId,
     }));
     const client = clientFor(seller, activities);
-    client.detectServerVersion = async () => 'v3';
+    client.getCapabilities = async () => ({
+      version: 'v3',
+      majorVersions: [3],
+      supportedVersions: [client.getAdcpVersion()],
+      protocols: ['media_buy'],
+      features: {},
+      extensions: [],
+      _synthetic: false,
+    });
     const result = await client.executeCustomTask(identity.taskType, {}, undefined, {
       operationId: identity.operationId,
       timeout: 5000,
@@ -233,7 +241,15 @@ describe('persisted seller task tracking (#3338)', () => {
   test('attaches to a working result on the same client and rebuilds a dropped handle', async () => {
     const activities = [];
     const client = clientFor(seller, activities);
-    client.detectServerVersion = async () => 'v3';
+    client.getCapabilities = async () => ({
+      version: 'v3',
+      majorVersions: [3],
+      supportedVersions: [client.getAdcpVersion()],
+      protocols: ['media_buy'],
+      features: {},
+      extensions: [],
+      _synthetic: false,
+    });
     mock.method(ProtocolClient, 'callTool', async () => ({ status: 'working', task_id: identity.taskId }));
     const original = await client.executeCustomTask(identity.taskType, {}, undefined, {
       operationId: identity.operationId,
@@ -532,7 +548,15 @@ describe('persisted seller task tracking (#3338)', () => {
   for (const operationId of [undefined, 'resolve-parent-operation']) {
     test(`multi-page account resolution gives each physical dispatch its own id (${operationId})`, async () => {
       const client = clientFor(seller, []);
-      client.detectServerVersion = async () => 'v3';
+      client.getCapabilities = async () => ({
+        version: 'v3',
+        majorVersions: [3],
+        supportedVersions: [client.getAdcpVersion()],
+        protocols: ['media_buy'],
+        features: {},
+        extensions: [],
+        _synthetic: false,
+      });
       client.getCapabilities = async () =>
         parseCapabilitiesResponse({
           adcp: { major_versions: [3], supported_versions: ['3.1'] },
@@ -570,7 +594,15 @@ describe('persisted seller task tracking (#3338)', () => {
   test('an unconditional product-cache refetch gets a fresh operation id under the same deadline', async () => {
     const client = clientFor(seller, []);
     client.config.productCache = createProductCache();
-    client.detectServerVersion = async () => 'v3';
+    client.getCapabilities = async () => ({
+      version: 'v3',
+      majorVersions: [3],
+      supportedVersions: [client.getAdcpVersion()],
+      protocols: ['media_buy'],
+      features: {},
+      extensions: [],
+      _synthetic: false,
+    });
     client.getCapabilities = async () =>
       parseCapabilitiesResponse({
         adcp: { major_versions: [3], supported_versions: ['3.1'] },

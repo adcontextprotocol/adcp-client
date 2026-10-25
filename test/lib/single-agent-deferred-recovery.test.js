@@ -1627,7 +1627,15 @@ test('durable property-list credential rejection preserves explicit enforcement 
         client.validateTaskFeatures = async () => undefined;
         client.getEarlyResultForUnsupportedFeatures = async () => null;
         client.ensureEndpointDiscovered = async () => agent;
-        client.detectServerVersion = async () => 'v3';
+        client.getCapabilities = async () => ({
+          version: 'v3',
+          majorVersions: [3],
+          supportedVersions: [client.getAdcpVersion()],
+          protocols: ['media_buy'],
+          features: {},
+          extensions: [],
+          _synthetic: false,
+        });
         const tokenlessReference = { agent_url: 'https://property-lists.example/mcp', list_id: 'private-list' };
         const result = await client.getProducts({
           buying_mode: 'brief',
@@ -1693,7 +1701,15 @@ test('durable property-list requests own nested input before asynchronous prefli
     };
     client.getEarlyResultForUnsupportedFeatures = async () => null;
     client.ensureEndpointDiscovered = async () => agent;
-    client.detectServerVersion = async () => 'v3';
+    client.getCapabilities = async () => ({
+      version: 'v3',
+      majorVersions: [3],
+      supportedVersions: [client.getAdcpVersion()],
+      protocols: ['media_buy'],
+      features: {},
+      extensions: [],
+      _synthetic: false,
+    });
     const request = {
       buying_mode: 'brief',
       brief: 'Find inventory',

@@ -78,13 +78,13 @@ function makeClient(executeTask, config = {}) {
   client.cachedCapabilities = {
     version: 'v3',
     majorVersions: [3],
+    supportedVersions: [client.getAdcpVersion()],
     protocols: ['media_buy'],
     features: { canonicalCreatives: false },
     extensions: [],
     _synthetic: false,
   };
   client.ensureEndpointDiscovered = async () => agentConfig;
-  client.detectServerVersion = async () => 'v3';
   client.validateTaskFeatures = async () => {};
   client.executor.validateRequest = () => {};
   client.executor.executeTask = executeTask;
@@ -1392,7 +1392,7 @@ describe('canonical creative asynchronous boundaries', () => {
           metadata: { ...metadata('completed'), taskName: 'create_media_buy' },
         };
       },
-      { onActivity: activity => activities.push(activity) }
+      { adcpVersion: '3.1.29', onActivity: activity => activities.push(activity) }
     );
 
     await client.createMediaBuy(

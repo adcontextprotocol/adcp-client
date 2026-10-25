@@ -615,7 +615,15 @@ describe('principal task transport dispatch', () => {
         // configured endpoint so the shared TaskExecutor reaches the stub.
         client.client.normalizedAgent._needsDiscovery = false;
         client.client.normalizedAgent._needsCanonicalUrl = false;
-        client.client.detectServerVersion = async () => 'v3';
+        client.client.getCapabilities = async () => ({
+          version: 'v3',
+          majorVersions: [3],
+          supportedVersions: [client.client.getAdcpVersion()],
+          protocols: ['media_buy'],
+          features: {},
+          extensions: [],
+          _synthetic: false,
+        });
         assert.equal((await client.getPrincipal()).status, 'completed');
         assert.equal(
           (
@@ -659,7 +667,15 @@ describe('principal task transport dispatch', () => {
       );
       client.client.normalizedAgent._needsDiscovery = false;
       client.client.normalizedAgent._needsCanonicalUrl = false;
-      client.client.detectServerVersion = async () => 'v3';
+      client.client.getCapabilities = async () => ({
+        version: 'v3',
+        majorVersions: [3],
+        supportedVersions: [client.client.getAdcpVersion()],
+        protocols: ['media_buy'],
+        features: {},
+        extensions: [],
+        _synthetic: false,
+      });
 
       await assert.rejects(
         client.getPrincipal({ principal_id: 'self-asserted' }),
