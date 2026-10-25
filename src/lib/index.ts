@@ -1346,6 +1346,7 @@ export {
   legacyReportUsageResponse,
   validActionsForStatus,
   MEDIA_BUY_TRANSITIONS,
+  getMediaBuyTransitions,
   CREATIVE_ASSET_TRANSITIONS,
   isLegalMediaBuyTransition,
   isLegalCreativeTransition,

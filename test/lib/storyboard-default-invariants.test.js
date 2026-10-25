@@ -986,8 +986,9 @@ describe('default-invariants: status.monotonic', () => {
     };
   }
 
-  function run(steps) {
+  function run(steps, adcpVersion) {
     const ctx = makeCtx();
+    if (adcpVersion !== undefined) ctx.options.adcpVersion = adcpVersion;
     spec.onStart(ctx);
     return steps.map(s => ({ step: s.step_id, output: spec.onStep(ctx, s) }));
   }
@@ -1013,6 +1014,105 @@ describe('default-invariants: status.monotonic', () => {
     ]);
     assert.ok(out.every(r => r.output.every(o => o.passed)));
   });
+
+  for (const version of ['3.3-beta.0', '3.3.0-beta.0', '3.3']) {
+    test(`${version}: review rejection, buyer correction, and approval can precede activation`, () => {
+      const out = run(
+        [
+          step({
+            step_id: 'create',
+            task: 'create_media_buy',
+            response: {
+              media_buy_id: 'mb-review',
+              media_buy_status: 'pending_start',
+              status: 'completed',
+              packages: [],
+            },
+          }),
+          step({ step_id: 'rejected', response: { media_buys: [mb('mb-review', 'pending_creatives')] } }),
+          step({ step_id: 'resubmitted', response: { media_buys: [mb('mb-review', 'pending_start')] } }),
+          step({ step_id: 'approved', response: { media_buys: [mb('mb-review', 'active')] } }),
+        ],
+        version
+      );
+      assert.ok(
+        out.every(r => r.output.every(o => o.passed)),
+        JSON.stringify(out)
+      );
+    });
+  }
+
+  for (const version of ['3.0', '3.1', '3.2', '3.2.7']) {
+    test(`${version}: seller review does not relax the older lifecycle contract`, () => {
+      const out = run(
+        [
+          step({ step_id: 'waiting', response: { media_buys: [mb('mb-review', 'pending_start')] } }),
+          step({ step_id: 'rejected', response: { media_buys: [mb('mb-review', 'pending_creatives')] } }),
+        ],
+        version
+      );
+      assert.strictEqual(out[1].output[0].passed, false);
+      assert.match(out[1].output[0].error, /pending_start → pending_creatives/);
+      assert.ok(!out[1].output[0].hint.legal_next_states.includes('pending_creatives'));
+    });
+  }
+
+  test('the seller response version selects the graph for nested reads', () => {
+    const out = run([
+      step({ response: { adcp_version: '3.3-beta.0', media_buys: [mb('mb-review', 'pending_start')] } }),
+      step({ response: { adcp_version: '3.3-beta.0', media_buys: [mb('mb-review', 'pending_creatives')] } }),
+    ]);
+    assert.ok(
+      out.every(r => r.output.every(o => o.passed)),
+      JSON.stringify(out)
+    );
+  });
+
+  test('a seller downshift to 3.2 keeps the older graph despite a 3.3 request pin', () => {
+    const out = run(
+      [
+        step({ response: { adcp_version: '3.2', media_buys: [mb('mb-review', 'pending_start')] } }),
+        step({ response: { adcp_version: '3.2', media_buys: [mb('mb-review', 'pending_creatives')] } }),
+      ],
+      '3.3-beta.0'
+    );
+    assert.strictEqual(out[1].output[0].passed, false);
+    assert.ok(!out[1].output[0].hint.legal_next_states.includes('pending_creatives'));
+  });
+
+  test('a nested resource cannot override the negotiated response version', () => {
+    const out = run(
+      [
+        step({
+          response: { adcp_version: '3.2', media_buys: [mb('mb-review', 'pending_start', { adcp_version: '3.3' })] },
+        }),
+        step({
+          response: {
+            adcp_version: '3.2',
+            media_buys: [mb('mb-review', 'pending_creatives', { adcp_version: '3.3' })],
+          },
+        }),
+      ],
+      '3.3-beta.0'
+    );
+    assert.strictEqual(out[1].output[0].passed, false);
+    assert.ok(!out[1].output[0].hint.legal_next_states.includes('pending_creatives'));
+  });
+
+  for (const from of ['active', 'paused', 'completed', 'rejected', 'canceled']) {
+    for (const to of ['pending_start', 'pending_creatives']) {
+      test(`3.3 never permits ${from} -> ${to}`, () => {
+        const out = run(
+          [
+            step({ response: { media_buys: [mb('mb-review', from)] } }),
+            step({ response: { media_buys: [mb('mb-review', to)] } }),
+          ],
+          '3.3-beta.0'
+        );
+        assert.strictEqual(out[1].output[0].passed, false);
+      });
+    }
+  }
 
   test('reads media_buy_status (3.1 canonical) on create_media_buy responses', () => {
     const ctx = makeCtx();

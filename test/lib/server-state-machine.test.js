@@ -11,13 +11,15 @@ const assert = require('node:assert');
 const sdk = require('../../dist/lib/server/index.js');
 
 describe('server/state-machine exports', () => {
-  test('all six surface members are exported', () => {
+  test('all lifecycle surface members are exported', () => {
     assert.ok(sdk.MEDIA_BUY_TRANSITIONS instanceof Map, 'MEDIA_BUY_TRANSITIONS is a Map');
     assert.ok(sdk.CREATIVE_ASSET_TRANSITIONS instanceof Map, 'CREATIVE_ASSET_TRANSITIONS is a Map');
     assert.strictEqual(typeof sdk.isLegalMediaBuyTransition, 'function');
     assert.strictEqual(typeof sdk.isLegalCreativeTransition, 'function');
     assert.strictEqual(typeof sdk.assertMediaBuyTransition, 'function');
     assert.strictEqual(typeof sdk.assertCreativeTransition, 'function');
+    assert.strictEqual(typeof sdk.getMediaBuyTransitions, 'function');
+    assert.strictEqual(require('../../dist/lib/index.js').getMediaBuyTransitions, sdk.getMediaBuyTransitions);
   });
 
   test('terminals are correctly declared with no outbound edges', () => {
@@ -56,6 +58,59 @@ describe('isLegalMediaBuyTransition', () => {
   test('self-edges return false (including terminals)', () => {
     assert.strictEqual(isLegalMediaBuyTransition('active', 'active'), false);
     assert.strictEqual(isLegalMediaBuyTransition('canceled', 'canceled'), false);
+  });
+});
+
+describe('media-buy creative review transitions by AdCP version', () => {
+  const { getMediaBuyTransitions, isLegalMediaBuyTransition, assertMediaBuyTransition } = sdk;
+
+  test('the exported default graph and omitted version follow the SDK protocol pin', () => {
+    assert.strictEqual(getMediaBuyTransitions(), sdk.MEDIA_BUY_TRANSITIONS);
+    assert.strictEqual(
+      isLegalMediaBuyTransition('pending_start', 'pending_creatives'),
+      sdk.MEDIA_BUY_TRANSITIONS.get('pending_start').has('pending_creatives')
+    );
+  });
+
+  for (const version of ['3.3-beta', '3.3-beta.0', '3.3.0-beta.0', '3.3-rc.1', '3.3', '3.3.0', '3.4.0']) {
+    test(`${version}: review rejection can introduce buyer work before activation`, () => {
+      assert.strictEqual(getMediaBuyTransitions(version).get('pending_start').has('pending_creatives'), true);
+      assert.strictEqual(isLegalMediaBuyTransition('pending_start', 'pending_creatives', version), true);
+      assert.doesNotThrow(() => assertMediaBuyTransition('pending_start', 'pending_creatives', version));
+      assert.strictEqual(isLegalMediaBuyTransition('pending_creatives', 'pending_start', version), true);
+    });
+  }
+
+  for (const version of ['3.0', '3.1.29', '3.2', '3.2.7', '3.3.0-alpha.1', 'invalid', 'latest']) {
+    test(`${version}: the 3.3 review cycle is not enabled`, () => {
+      assert.strictEqual(isLegalMediaBuyTransition('pending_start', 'pending_creatives', version), false);
+      assert.throws(() => assertMediaBuyTransition('pending_start', 'pending_creatives', version), {
+        code: 'INVALID_STATE',
+        field: 'status',
+      });
+    });
+  }
+
+  for (const version of ['3.2.7', '3.3-beta.0', '3.3']) {
+    test(`${version}: activation and terminal protections remain intact`, () => {
+      for (const from of ['active', 'paused', 'completed', 'rejected', 'canceled']) {
+        for (const to of ['pending_start', 'pending_creatives']) {
+          assert.strictEqual(isLegalMediaBuyTransition(from, to, version), false, `${from} -> ${to}`);
+          assert.throws(() => assertMediaBuyTransition(from, to, version), { code: 'INVALID_STATE' });
+        }
+      }
+      for (const terminal of ['completed', 'rejected', 'canceled']) {
+        assert.strictEqual(getMediaBuyTransitions(version).get(terminal).size, 0);
+        assert.throws(() => assertMediaBuyTransition(terminal, 'canceled', version), { code: 'NOT_CANCELLABLE' });
+      }
+    });
+  }
+
+  test('selecting a candidate graph does not change older graphs', () => {
+    const stable = getMediaBuyTransitions('3.2');
+    const candidate = getMediaBuyTransitions('3.3-beta.0');
+    assert.notStrictEqual(stable, candidate);
+    assert.strictEqual(stable.get('pending_start').has('pending_creatives'), false);
   });
 });
 

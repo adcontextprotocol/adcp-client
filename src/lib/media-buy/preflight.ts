@@ -19,6 +19,7 @@ import {
   mediaBuyActionTasks,
   packageActionStatus,
   actionAllowedStatuses,
+  isOperationalMediaBuyAction,
 } from './action-contracts';
 import { assessActionAvailability, type ActionAssessmentOptions } from './action-assessment';
 import {
@@ -234,7 +235,7 @@ export function preflightUpdateMediaBuy(
     // legacy mode rejected above, so subsequent executable checks can use the
     // current protocol type.
     const liveEntry = lookup?.entry as MediaBuyAvailableAction | undefined;
-    if (strict || options.proposal !== undefined || resolvedAction.action === 'update_name') {
+    if (strict || options.proposal !== undefined || isOperationalMediaBuyAction(resolvedAction.action)) {
       const assessment = assessActionAvailability(assessmentBuy, resolvedAction.action, { ...options, request });
       if (assessment.status === 'currently_unavailable') {
         denials.push({ action: resolvedAction.action, reason: assessment.reason, assessment });

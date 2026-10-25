@@ -109,6 +109,31 @@ function taskRoutedFixture(name) {
 }
 
 describe('generate-media-buy-update-fields: task-routed actions', () => {
+  it('keeps startup policy on package control independently of creative assignment routing', () => {
+    const action = 'update_creative_start_policy';
+    const field = 'packages[].start_requires_all_creatives_approved';
+    const dir = taskRoutedFixture('creative-start-policy');
+    writeIdSchema(dir, schema => {
+      schema.anyOf.push({ type: 'string', const: REPORT_ACTION });
+      schema.anyOf.push({ type: 'string', const: action });
+      schema.enumMetadata[action] = { update_fields: [field] };
+    });
+    const schemaPath = path.join(dir, CANONICAL_SCHEMA);
+    const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+    schema.oneOf.push({ properties: { task: { const: 'control_media_buy' }, action: { enum: [action] } } });
+    schema.oneOf.push({
+      properties: { task: { const: 'sync_creatives' }, action: { enum: ['update_creative_assignments'] } },
+    });
+    fs.writeFileSync(schemaPath, JSON.stringify(schema));
+    const generated = evaluateModule(runGenerator(dir).source);
+    assert.deepEqual(generated.ACTIONS_BY_FIELD[field], [action]);
+    assert.deepEqual(generated.UPDATE_FIELDS_BY_ACTION[action].update_fields, [field]);
+    assert.ok(generated.STRUCTURED_ONLY_MEDIA_BUY_ACTIONS.includes(action));
+    const routes = canonicalMediaBuyActionTasks(schema);
+    assert.deepEqual(routes[action], ['control_media_buy']);
+    assert.deepEqual(routes.update_creative_assignments, ['sync_creatives']);
+  });
+
   it('retains separate task routes for const and enum branches without inventing update bindings', () => {
     for (const shape of ['const', 'enum']) {
       const dir = taskRoutedFixture(`task-routed-${shape}`);

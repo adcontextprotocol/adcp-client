@@ -46,7 +46,7 @@ import { STANDARD_ERROR_CODES } from '../../types/error-codes';
 import { getAuthoritativeMediaBuyStatus } from '../../utils/media-buy-status';
 import {
   CREATIVE_ASSET_TRANSITIONS as CREATIVE_ASSET_TRANSITIONS_TYPED,
-  MEDIA_BUY_TRANSITIONS as MEDIA_BUY_TRANSITIONS_TYPED,
+  getMediaBuyTransitions,
 } from '../../server/state-machine';
 import { registerAssertion } from './assertions';
 import { accountSyncContractAssertion } from './account-sync-contract';
@@ -621,10 +621,12 @@ export function registerDefaultInvariants(): void {
   // Source of truth for both graphs lives in `server/state-machine.ts` so
   // production sellers and the runner enforce identical edges. Wrap the typed
   // maps in `TransitionGraph` for the runner's string-keyed extractors.
-  const MEDIA_BUY_TRANSITIONS: TransitionGraph = {
-    transitions: MEDIA_BUY_TRANSITIONS_TYPED as ReadonlyMap<string, ReadonlySet<string>>,
-    enumFile: 'media-buy-status.json',
-  };
+  function mediaBuyTransitions(adcpVersion: string): TransitionGraph {
+    return {
+      transitions: getMediaBuyTransitions(adcpVersion) as ReadonlyMap<string, ReadonlySet<string>>,
+      enumFile: 'media-buy-status.json',
+    };
+  }
 
   const CREATIVE_ASSET_TRANSITIONS: TransitionGraph = {
     transitions: CREATIVE_ASSET_TRANSITIONS_TYPED as ReadonlyMap<string, ReadonlySet<string>>,
@@ -750,8 +752,8 @@ export function registerDefaultInvariants(): void {
     ['update_media_buy', extractMediaBuy],
     [
       'get_media_buys',
-      (out, body) => {
-        for (const buy of asArray(body.media_buys)) if (isObject(buy)) pushMediaBuy(out, buy);
+      (out, body, version) => {
+        for (const buy of asArray(body.media_buys)) if (isObject(buy)) pushMediaBuy(out, buy, false, version);
       },
     ],
     ['sync_creatives', extractCreatives],
@@ -786,7 +788,9 @@ export function registerDefaultInvariants(): void {
     // Product discovery only observes lifecycle state when it returns a proposal.
     if (!extract || (task === 'get_products' && asArray(body.proposals).length === 0)) return undefined;
     const observations: StatusObservation[] = [];
-    extract(observations, body, adcpVersion);
+    // A seller may downshift the requested version. Its response echo, when
+    // present, selects the contract actually served for nested read results too.
+    extract(observations, body, asString(body.adcp_version) ?? adcpVersion);
     return observations;
   }
 
@@ -813,7 +817,7 @@ export function registerDefaultInvariants(): void {
         resource_type: 'media_buy',
         resource_id: id,
         status,
-        graph: MEDIA_BUY_TRANSITIONS,
+        graph: mediaBuyTransitions(adcpVersion),
       });
     }
     // Each media_buy carries packages; each package can list creative_approvals
