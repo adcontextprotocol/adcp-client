@@ -20,7 +20,7 @@ npm install --save-exact @adcp/sdk@17.0.0-beta.0 @adcp/reporting-storage@0.2.1-b
 `0.2.1-beta.0` has the same storage code and SQL migrations as `0.2.0`; only its
 `@adcp/sdk` peer range changes (`^17.0.0-beta.0`). A `~0.2.0` range does not match
 the prerelease, so pin the exact version. If you are upgrading from SDK 16.4 or
-earlier, read the [`0.2.0` notes](../packages/reporting-storage/CHANGELOG.md#020)
+earlier, read the [`0.2.0` notes](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/CHANGELOG.md#020)
 for BigQuery sinks that omit `location`. No other storage change is required.
 
 ## Protocol and discovery
