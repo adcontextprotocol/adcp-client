@@ -269,6 +269,11 @@ jobs:
       SELLER_LOG_PATH: ${{ github.workspace }}/storyboard-seller-${{ matrix.language }}.log
 
     steps:
+      - name: Checkout candidate SDK harness
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
@@ -336,7 +341,7 @@ jobs:
             ADCP_PORT="${{ matrix.port }}" \
             STORYBOARD_RESULT_PATH="$STORYBOARD_RESULT_PATH" \
             SELLER_LOG_PATH="$SELLER_LOG_PATH" \
-            ./${{ matrix.harness }}
+            "$GITHUB_WORKSPACE/.github/scripts/run-reference-seller.sh" "${{ matrix.language }}" "${{ matrix.harness }}"
           status=$?
           set -e
 

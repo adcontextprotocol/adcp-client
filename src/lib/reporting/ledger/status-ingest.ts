@@ -1,3 +1,4 @@
+import { withReportingResponseVersion } from './response-version';
 import { z } from 'zod';
 
 import { ReportingConsumerStatusSchema, SyncReportingStatusRequestSchema } from '../../schemas';
@@ -185,7 +186,7 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
   options: SyncReportingStatusHandlerOptionsV1<TContext>
 ): SyncReportingStatusHandlerV1<TContext> {
   const activeReadsByAccount = new Map<string, number>();
-  return async (requestInput, context) => {
+  const handler: SyncReportingStatusHandlerV1<TContext> = async (requestInput, context) => {
     const envelope = validateSyncReportingStatusEnvelope(requestInput);
     if (!envelope.valid) {
       const ids = requestStatusIds(requestInput);
@@ -319,6 +320,7 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
       releaseReadSlot();
     }
   };
+  return withReportingResponseVersion('sync_reporting_status', handler);
 }
 
 async function validateStatus(

@@ -21,7 +21,7 @@ const { getSchemaValidatorByRef } = require('../dist/lib/validation/schema-loade
 const { toCanonicalOnlyResponse } = require('../dist/lib/v2/projection');
 const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
 const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
-const { ADCP_VERSION } = require('../dist/lib/version');
+const { ADCP_VERSION, toReleasePrecisionVersion } = require('../dist/lib/version');
 
 const PRODUCTS_ONLY_BRIEF_VECTORS = JSON.parse(
   readFileSync(
@@ -9066,7 +9066,7 @@ describe('tasks_get wire tool (B9)', () => {
         creatives_processed: 2,
       });
       assert.deepStrictEqual(legacy.structuredContent.progress, canonical.structuredContent.progress);
-      assert.strictEqual(legacy.structuredContent.adcp_version, '3.2');
+      assert.strictEqual(legacy.structuredContent.adcp_version, toReleasePrecisionVersion(ADCP_VERSION));
       assert.strictEqual(legacy.structuredContent.adcp_version, canonical.structuredContent.adcp_version);
 
       const legacyPinned = await server.dispatchTestRequest({
@@ -9172,7 +9172,7 @@ describe('tasks_get wire tool (B9)', () => {
       assert.strictEqual(status.structuredContent.status, 'submitted');
       assert.strictEqual(status.structuredContent.has_webhook, true);
       assert.strictEqual(status.structuredContent.result, undefined);
-      assert.strictEqual(status.structuredContent.adcp_version, '3.2');
+      assert.strictEqual(status.structuredContent.adcp_version, toReleasePrecisionVersion(ADCP_VERSION));
 
       const listed = await server.dispatchTestRequest({
         method: 'tools/call',

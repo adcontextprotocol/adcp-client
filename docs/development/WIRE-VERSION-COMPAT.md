@@ -58,3 +58,5 @@ Conformance validates current and unversioned response payloads without synthesi
 Adding another protocol major requires an explicit support decision and a reviewed wire translation layer. Keep translation, request/response schemas, and tests tied to the selected release. Validate responses against the version actually negotiated, preserve unsupported-field errors, and never silently downgrade to an end-of-life protocol.
 
 Removing a supported protocol version is an SDK breaking change. Use a major changeset and document the last SDK release that still supports it. Do not edit the package version manually.
+
+Preview clients discover capabilities with the version-neutral envelope before selecting an exact advertised preview or a maintained stable release. Standalone reporting status helpers preserve the selected context release, or the explicit caller release when no framework selection is present, on both successful and per-item failure replies.

@@ -382,7 +382,7 @@ import { canonicalize as canonicalizeJson } from '../utils/jcs';
 type ReadRequestOptions = Pick<TaskOptions, 'signal' | 'transport'>;
 type CapabilityProbeRequestOptions = Pick<
   TaskOptions,
-  'signal' | 'transport' | 'disableWebhook' | 'delegatedOperatorAuthorization'
+  'signal' | 'transport' | 'disableWebhook' | 'delegatedOperatorAuthorization' | 'versionEnvelope'
 >;
 type ToolSchemaMap = Map<string, Record<string, unknown>>;
 // Complete documents share the property map's scope and lifetime, without
@@ -11064,10 +11064,21 @@ export class SingleAgentClient {
         // and callback authorization provenance. The active OpenTelemetry
         // context remains in the async chain, correlating both physical tasks.
         const callerOptions = options as CapabilityProbeRequestOptions | undefined;
+        const isPreview = !!parseAdcpRelease(this.resolvedAdcpVersion)?.prerelease;
         const probeOptions: CapabilityProbeRequestOptions = {
+          // Discover the seller's release window before claiming a preview
+          // older sellers may reject. Ordinary calls still negotiate exact
+          // preview evidence or a maintained stable downgrade afterwards.
+          ...(isPreview && {
+            versionEnvelope: callerOptions?.versionEnvelope ?? this.config.versionEnvelope ?? 'none',
+            disableWebhook: true,
+          }),
           ...(options?.signal !== undefined && { signal: options.signal }),
           ...(options?.transport !== undefined && { transport: options.transport }),
-          ...(callerOptions?.disableWebhook !== undefined && { disableWebhook: callerOptions.disableWebhook }),
+          ...(callerOptions?.disableWebhook !== undefined &&
+            !isPreview && {
+              disableWebhook: callerOptions.disableWebhook,
+            }),
           ...(callerOptions?.delegatedOperatorAuthorization !== undefined && {
             delegatedOperatorAuthorization: { ...callerOptions.delegatedOperatorAuthorization },
           }),

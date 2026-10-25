@@ -217,7 +217,7 @@ async function startTimeoutAgent(options = {}) {
         options.capabilitiesResponse ?? {
           adcp: {
             major_versions: [3],
-            supported_versions: ['3.1-rc.10'],
+            supported_versions: [ADCP_VERSION],
             build_version: ADCP_VERSION,
             idempotency: { supported: false },
           },

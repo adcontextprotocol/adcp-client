@@ -161,3 +161,54 @@ test('proposal discovery enforces caller and account scope with request validati
     await seller.close();
   }
 });
+
+test('a preview buyer discovers a stable seller without sending an unsupported preview marker', async t => {
+  const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+  const { z } = require('zod');
+  const probes = [];
+  const requests = [];
+  const seller = new McpServer({ name: 'Stable-only seller', version: '1.0.0' });
+  seller.registerTool(
+    'get_adcp_capabilities',
+    { inputSchema: { adcp_major_version: z.literal(3).optional(), adcp_version: z.never().optional() } },
+    async params => {
+      probes.push(params);
+      return {
+        content: [],
+        structuredContent: {
+          status: 'completed',
+          adcp_version: '3.2',
+          adcp: { major_versions: [3], supported_versions: ['3.2'], idempotency: { supported: false } },
+          supported_protocols: ['media_buy'],
+          media_buy: { features: { canonical_creatives: true }, buying_modes: ['wholesale'] },
+        },
+      };
+    }
+  );
+  seller.registerTool(
+    'get_products',
+    { inputSchema: { adcp_version: z.literal('3.2'), buying_mode: z.literal('wholesale') } },
+    async params => {
+      requests.push(params);
+      return { content: [], structuredContent: { adcp_version: '3.2', products: [], cache_scope: 'public' } };
+    }
+  );
+  const [buyerTransport, sellerTransport] = InMemoryTransport.createLinkedPair();
+  const mcp = new Client({ name: 'Preview buyer', version: '1.0.0' });
+  await seller.connect(sellerTransport);
+  await mcp.connect(buyerTransport);
+  t.after(async () => {
+    await mcp.close();
+    await seller.close();
+  });
+  const buyer = AgentClient.fromMCPClient(mcp, {
+    adcpVersion: ADCP_VERSION,
+    validation: { requests: 'off', responses: 'off' },
+  });
+  const result = await buyer.getProducts({ buying_mode: 'wholesale' });
+  assert.equal(result.success, true, result.error);
+  assert.ok(probes.length > 0);
+  assert.ok(probes.every(probe => probe.adcp_version === undefined));
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].adcp_version, '3.2');
+});
