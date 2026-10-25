@@ -1,3 +1,4 @@
+import { withMCPConnectionPolicy } from '../protocols/mcp-connection-policy';
 import { VersionUnsupportedError } from '../errors';
 import {
   NeedsAuthorizationError,
@@ -3616,6 +3617,7 @@ export class TaskExecutor {
         }
         return await signingContextStorage.run(signingContext, () =>
           listMCPTasks(agent.agent_uri, getAuthToken(agent), undefined, {
+            signingContext,
             headers: agent.headers,
             transport: transport ?? this.config.transport,
             onTransportActivity: this.config.onTransportActivity,
@@ -3647,18 +3649,20 @@ export class TaskExecutor {
    * Task tracking methods (PR #78)
    */
   async listTasks(agent: AgentConfig, transport?: import('../protocols').TransportOptions): Promise<TaskInfo[]> {
-    if (agent.request_signing) assertSigningPolicy(agent.request_signing);
-    const transportSnapshot = snapshotTransportOptions(transport ?? this.config.transport);
-    try {
-      return await this.listTasksForAgent(agent, transportSnapshot);
-    } catch {
-      // Static message only — CodeQL's taint analysis treats `error` and
-      // every property of it as sensitive once it originates from an
-      // operation that touched `agent.oauth_client_credentials`. Surfaces
-      // the failure occurred; full detail is available via DEBUG=adcp:*.
-      console.warn('Failed to list tasks (see DEBUG=adcp:* logs for detail)');
-      return [];
-    }
+    return withMCPConnectionPolicy(transport ?? this.config.transport, async () => {
+      if (agent.request_signing) assertSigningPolicy(agent.request_signing);
+      const transportSnapshot = snapshotTransportOptions(transport ?? this.config.transport);
+      try {
+        return await this.listTasksForAgent(agent, transportSnapshot);
+      } catch {
+        // Static message only — CodeQL's taint analysis treats `error` and
+        // every property of it as sensitive once it originates from an
+        // operation that touched `agent.oauth_client_credentials`. Surfaces
+        // the failure occurred; full detail is available via DEBUG=adcp:*.
+        console.warn('Failed to list tasks (see DEBUG=adcp:* logs for detail)');
+        return [];
+      }
+    });
   }
 
   private async getTaskStatusWithRawResponse(

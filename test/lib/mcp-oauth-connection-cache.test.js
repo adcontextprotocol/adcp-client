@@ -6,9 +6,14 @@ const { randomUUID } = require('node:crypto');
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 
-const { callMCPToolWithOAuth, closeMCPConnections, closeOAuthConnections } = require('../../dist/lib/protocols/mcp.js');
+const {
+  callMCPToolWithOAuth: callOAuthTool,
+  closeMCPConnections,
+  closeOAuthConnections,
+} = require('../../dist/lib/protocols/mcp.js');
 const { ProtocolClient } = require('../../dist/lib/protocols/index.js');
 const { SingleAgentClient } = require('../../dist/lib/index.js');
+const callMCPToolWithOAuth = options => callOAuthTool({ ...options, connectionReuse: 'process' });
 
 function createStaticOAuthProvider(token) {
   return {
@@ -297,7 +302,7 @@ test('OAuth MCP cache separates different providers for the same agent URL', asy
   }
 });
 
-test('ProtocolClient default OAuth path reuses the stateful MCP session across workflow tools', async () => {
+test('ProtocolClient explicit process OAuth path reuses the stateful MCP session across workflow tools', async () => {
   await closeMCPConnections();
   const server = await startStatefulMcpOAuthStub();
   const agent = {
@@ -315,9 +320,9 @@ test('ProtocolClient default OAuth path reuses the stateful MCP session across w
   };
 
   try {
-    await ProtocolClient.callTool(agent, 'get_products', {});
-    await ProtocolClient.callTool(agent, 'create_media_buy', {});
-    await ProtocolClient.callTool(agent, 'sync_creatives', {});
+    await ProtocolClient.callTool(agent, 'get_products', {}, { transport: { connectionReuse: 'process' } });
+    await ProtocolClient.callTool(agent, 'create_media_buy', {}, { transport: { connectionReuse: 'process' } });
+    await ProtocolClient.callTool(agent, 'sync_creatives', {}, { transport: { connectionReuse: 'process' } });
 
     assert.strictEqual(
       server.state.methodCounts.get('initialize'),
@@ -350,22 +355,25 @@ test('ProtocolClient default OAuth path reuses the stateful MCP session across w
   }
 });
 
-test('SingleAgentClient default OAuth path reuses the stateful MCP session after discovery', async () => {
+test('SingleAgentClient explicit process OAuth path reuses the stateful MCP session after discovery', async () => {
   await closeMCPConnections();
   const server = await startStatefulMcpOAuthStub();
-  const client = new SingleAgentClient({
-    id: 'single-agent-default-oauth-session',
-    name: 'SingleAgent Default OAuth Session',
-    agent_uri: server.url,
-    protocol: 'mcp',
-    oauth_tokens: {
-      access_token: 'tok_single_agent',
-      refresh_token: 'rt_single_agent',
-      issuer: new URL(server.url).origin,
-      token_type: 'Bearer',
+  const client = new SingleAgentClient(
+    {
+      id: 'single-agent-default-oauth-session',
+      name: 'SingleAgent Default OAuth Session',
+      agent_uri: server.url,
+      protocol: 'mcp',
+      oauth_tokens: {
+        access_token: 'tok_single_agent',
+        refresh_token: 'rt_single_agent',
+        issuer: new URL(server.url).origin,
+        token_type: 'Bearer',
+      },
+      oauth_client: { client_id: 'client_single_agent' },
     },
-    oauth_client: { client_id: 'client_single_agent' },
-  });
+    { transport: { connectionReuse: 'process' } }
+  );
 
   try {
     await client.getCapabilities();

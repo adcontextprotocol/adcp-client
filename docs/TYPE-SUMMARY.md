@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-10-24
+> Generated at: 2026-10-25
 > @adcp/sdk v16.4.0
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -53,6 +53,11 @@ interface A2ALegacyCompatOptions {
 }
 
 interface TransportOptions {
+  // Local principal partition; never sent on the wire. Enables MCP process reuse.
+  connectionPartition?: string;
+  // Explicit opt-in when all unpartitioned callers share one principal.
+  // Otherwise unscoped MCP calls close their session after the operation.
+  connectionReuse?: 'process';
   // Defaults to 4 MiB (DEFAULT_MAX_RESPONSE_BYTES); only 0 opts out
   // (Infinity / negatives fall back to the default).
   // SSE is bounded per event plus `maxResponseBytes * 2` cumulative per call.

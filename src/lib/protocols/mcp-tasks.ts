@@ -1,3 +1,5 @@
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import { withMCPConnectionPolicy, type MCPConnectionPolicy } from './mcp-connection-policy';
 /**
  * MCP Tasks protocol integration for async tool calls.
  *
@@ -29,9 +31,18 @@ type CallToolResponse = {
   [key: string]: unknown;
 };
 
+/** Connection identity for URL/token native task follow-up calls. */
+export interface MCPTaskConnectionOptions extends MCPConnectionPolicy {
+  headers?: Record<string, string>;
+  signingContext?: AgentSigningContext;
+}
+
 interface MCPTaskProtocolOptions {
+  signingContext?: AgentSigningContext;
   headers?: Record<string, string>;
   transport?: {
+    connectionPartition?: string;
+    connectionReuse?: 'process';
     maxResponseBytes?: number;
     trustedFetchFn?: typeof fetch;
     requestTimeoutMs?: number;
@@ -178,7 +189,29 @@ export async function callMCPToolWithTasks(
   authToken?: string,
   debugLogs: DebugLogEntry[] = [],
   customHeaders?: Record<string, string>,
-  options?: {
+  options?: MCPConnectionPolicy & {
+    workingTimeout?: number;
+    signingContext?: AgentSigningContext;
+    signal?: AbortSignal;
+    requestTimeoutMs?: number;
+    fetchFn?: typeof fetch;
+    allowPrivateIp?: boolean;
+  }
+): Promise<unknown> {
+  return withMCPConnectionPolicy(options, () =>
+    callMCPToolWithTasksInContext(agentUrl, toolName, args, authToken, debugLogs, customHeaders, options)
+  );
+}
+
+/** @internal Dispatch within an SDK-owned connection-policy boundary. */
+export async function callMCPToolWithTasksInContext(
+  agentUrl: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  authToken?: string,
+  debugLogs: DebugLogEntry[] = [],
+  customHeaders?: Record<string, string>,
+  options?: MCPConnectionPolicy & {
     workingTimeout?: number;
     signingContext?: AgentSigningContext;
     signal?: AbortSignal;
@@ -409,7 +442,7 @@ async function callToolOnClient(
             try {
               const taskResult = await client.experimental.tasks.getTaskResult(
                 capturedTaskId,
-                undefined,
+                CallToolResultSchema,
                 requestOptions
               );
               const content = taskResult?.content as Array<{ type: string; text?: string }> | undefined;
@@ -503,10 +536,27 @@ export async function getMCPTaskStatus(
   taskId: string,
   authToken?: string,
   debugLogs: DebugLogEntry[] = [],
-  toolName?: string
+  toolName?: string,
+  options: MCPTaskConnectionOptions = {}
+): Promise<TaskInfo> {
+  return withMCPConnectionPolicy(options, () =>
+    signingContextStorage.run(options.signingContext, () =>
+      getMCPTaskStatusInContext(agentUrl, taskId, authToken, debugLogs, toolName, options)
+    )
+  );
+}
+
+/** @internal Dispatch within an SDK-owned connection-policy boundary. */
+export async function getMCPTaskStatusInContext(
+  agentUrl: string,
+  taskId: string,
+  authToken?: string,
+  debugLogs: DebugLogEntry[] = [],
+  toolName?: string,
+  options: MCPTaskConnectionOptions = {}
 ): Promise<TaskInfo> {
   validateTaskId(taskId);
-  const authHeaders = buildAuthHeaders(authToken);
+  const authHeaders = buildAuthHeaders(authToken, options.headers);
 
   return withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, `tasks/get:${taskId}`, async client => {
     const result = await client.experimental.tasks.getTask(taskId);
@@ -536,13 +586,29 @@ export async function getMCPTaskResult(
   agentUrl: string,
   taskId: string,
   authToken?: string,
-  debugLogs: DebugLogEntry[] = []
+  debugLogs: DebugLogEntry[] = [],
+  options: MCPTaskConnectionOptions = {}
+): Promise<unknown> {
+  return withMCPConnectionPolicy(options, () =>
+    signingContextStorage.run(options.signingContext, () =>
+      getMCPTaskResultInContext(agentUrl, taskId, authToken, debugLogs, options)
+    )
+  );
+}
+
+/** @internal Dispatch within an SDK-owned connection-policy boundary. */
+export async function getMCPTaskResultInContext(
+  agentUrl: string,
+  taskId: string,
+  authToken?: string,
+  debugLogs: DebugLogEntry[] = [],
+  options: MCPTaskConnectionOptions = {}
 ): Promise<unknown> {
   validateTaskId(taskId);
-  const authHeaders = buildAuthHeaders(authToken);
+  const authHeaders = buildAuthHeaders(authToken, options.headers);
 
   return withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, `tasks/result:${taskId}`, async client => {
-    const result = await client.experimental.tasks.getTaskResult(taskId);
+    const result = await client.experimental.tasks.getTaskResult(taskId, CallToolResultSchema);
     debugLogs.push({
       type: 'success',
       message: `MCP Tasks: getTaskResult ${taskId} received`,
@@ -563,38 +629,42 @@ export async function listMCPTasks(
 ): Promise<TaskInfo[]> {
   const authHeaders = buildAuthHeaders(authToken, options.headers);
 
-  return withResponseSizeLimit(options.transport?.maxResponseBytes, () =>
-    withTransportDiagnostics(
-      {
-        agentId: options.transportActivityContext?.agentId ?? 'unknown-agent',
-        protocol: 'mcp',
-        tool: 'tasks/list',
-        taskType: 'tasks/list',
-        ...options.transportActivityContext,
-        onTransportActivity: options.onTransportActivity,
-      },
-      () =>
-        withCachedConnection(
-          agentUrl,
-          authToken,
-          authHeaders,
-          debugLogs,
-          'tasks/list',
-          async client => {
-            const result = await client.experimental.tasks.listTasks();
-            debugLogs.push({
-              type: 'info',
-              message: `MCP Tasks: listTasks returned ${result.tasks.length} tasks`,
-              timestamp: new Date().toISOString(),
-            });
-            return result.tasks.map((task: any) => mapMCPTaskToTaskInfo(task));
-          },
-          options.transport?.trustedFetchFn,
+  return withMCPConnectionPolicy(options.transport, () =>
+    signingContextStorage.run(options.signingContext, () =>
+      withResponseSizeLimit(options.transport?.maxResponseBytes, () =>
+        withTransportDiagnostics(
           {
-            requestTimeoutMs: options.transport?.requestTimeoutMs,
-            allowPrivateIp: options.transport?.allowPrivateIp,
-          }
+            agentId: options.transportActivityContext?.agentId ?? 'unknown-agent',
+            protocol: 'mcp',
+            tool: 'tasks/list',
+            taskType: 'tasks/list',
+            ...options.transportActivityContext,
+            onTransportActivity: options.onTransportActivity,
+          },
+          () =>
+            withCachedConnection(
+              agentUrl,
+              authToken,
+              authHeaders,
+              debugLogs,
+              'tasks/list',
+              async client => {
+                const result = await client.experimental.tasks.listTasks();
+                debugLogs.push({
+                  type: 'info',
+                  message: `MCP Tasks: listTasks returned ${result.tasks.length} tasks`,
+                  timestamp: new Date().toISOString(),
+                });
+                return result.tasks.map((task: any) => mapMCPTaskToTaskInfo(task));
+              },
+              options.transport?.trustedFetchFn,
+              {
+                requestTimeoutMs: options.transport?.requestTimeoutMs,
+                allowPrivateIp: options.transport?.allowPrivateIp,
+              }
+            )
         )
+      )
     )
   );
 }
@@ -606,10 +676,26 @@ export async function cancelMCPTask(
   agentUrl: string,
   taskId: string,
   authToken?: string,
-  debugLogs: DebugLogEntry[] = []
+  debugLogs: DebugLogEntry[] = [],
+  options: MCPTaskConnectionOptions = {}
+): Promise<void> {
+  return withMCPConnectionPolicy(options, () =>
+    signingContextStorage.run(options.signingContext, () =>
+      cancelMCPTaskInContext(agentUrl, taskId, authToken, debugLogs, options)
+    )
+  );
+}
+
+/** @internal Dispatch within an SDK-owned connection-policy boundary. */
+export async function cancelMCPTaskInContext(
+  agentUrl: string,
+  taskId: string,
+  authToken?: string,
+  debugLogs: DebugLogEntry[] = [],
+  options: MCPTaskConnectionOptions = {}
 ): Promise<void> {
   validateTaskId(taskId);
-  const authHeaders = buildAuthHeaders(authToken);
+  const authHeaders = buildAuthHeaders(authToken, options.headers);
 
   await withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, `tasks/cancel:${taskId}`, async client => {
     await client.experimental.tasks.cancelTask(taskId);

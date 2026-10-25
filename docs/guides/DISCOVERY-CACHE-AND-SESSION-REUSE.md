@@ -5,7 +5,7 @@ A server-side caller that makes one AdCP call per incoming request, building a `
 Two independent mechanisms remove that cost:
 
 1. an **opt-in shared discovery cache** so client instances for the same agent and principal reuse one endpoint / `tools/list` / capabilities observation, and
-2. **reusable MCP connections** that per-call correlation headers, `AbortSignal`s and timeouts no longer split, plus a public **connection scope** to run a whole workflow on one session.
+2. **reusable MCP connections** inside a caller-owned connection scope, or with an explicit principal partition or process reuse opt-in. Per-call correlation headers, `AbortSignal`s and timeouts do not split these sessions.
 
 ## Shared discovery cache
 
@@ -54,6 +54,7 @@ The key is a SHA-256 over:
 | credential kind (anonymous, bearer, OAuth or header) | Keeps anonymous and authenticated discovery separate while allowing token rotation                                     |
 | configured `adcpVersion` / `wireAdcpVersion`         | negotiated version                                                                                                     |
 | every non-correlation, non-credential header         | unknown `x-*` tenant / routing / policy headers can select a different upstream view, so they fail closed into the key. This includes `baggage`, **ambient OpenTelemetry baggage included** |
+| `transport.connectionPartition` | Local caller principal partition; never sent on the wire |
 | request-signing identity and policy                  | `kind`, `kid`, `alg`, agent URL and signing policy; never the private key                                              |
 | configured `allowPrivateIp`, `maxResponseBytes`      | the transport policy the evidence was gathered under (per-call `transport` overrides included). These are the values the caller *configured*, not the effective ones: an unset `maxResponseBytes` keys as "unset" rather than as the 4 MiB default, so entries written before the default landed stay reusable. The MCP connection cache keys the *resolved* cap instead — see [Reusable MCP connections](#reusable-mcp-connections) |
 
@@ -97,11 +98,40 @@ const ok = await client.primeDiscoveryCache({
 
 Unlike [`primeCapabilities`](../TYPE-SUMMARY.md) — which stays client-bound and scope-keyed — seeded evidence outlives the instance. It returns `true` only once the backing cache accepted the entry, and `false` (seeding nothing) for synthetic, malformed, uncloneable or foreign-origin evidence. When the cache rejects the write or does not answer within the 2 second deadline, `false` means *not confirmed*, not *empty*: a write already handed to the backend may still land later, while one still queued behind earlier operations is dropped. After such a `false`, seed again or invalidate rather than assuming nothing was stored. Without `endpoint` the first call of a cold client still runs the endpoint probe once.
 
+## Multi-tenant intermediaries
+
+A shared seller credential cannot identify the end customer on whose behalf you call. An account ID in tool arguments does not isolate an MCP session. Use a caller-owned `connectionPartition` to reuse sessions for one principal without disclosing that principal in a header:
+
+```ts
+const client = new AgentClient(seller, {
+  transport: { connectionPartition: request.customerAuthorizationScopeId },
+  accountRegistryScope: request.customerAuthorizationScopeId,
+  discoveryCache: {
+    cache: discoveryCache,
+    authIdentity: request.customerAuthorizationScopeId,
+  },
+});
+```
+
+The partition is local configuration. It is hashed into MCP connection, discovery, and signing-policy cache keys and never sent in headers or tool arguments. Keep it stable for the same authorization scope, and use distinct values for different principals even when they share a seller token. Partitions also separate sessions within a single `withMCPConnectionScope` workflow.
+
+Outside a connection scope, calls now open and close their own MCP sessions by default. To retain process-wide reuse, provide a nonempty `connectionPartition`, or set `transport: { connectionReuse: 'process' }` when every caller with the same credentials and routing headers represents one principal. A supplied `trustedFetchFn` continues to use one-shot sessions outside an explicit scope, including with a partition or process opt-in.
+
+Successful calls and ordinary errors terminate one-shot sessions. When a call throws because it was cancelled or timed out, the SDK closes its client without sending DELETE, so it does not terminate work still running on the seller; remaining server session state follows the seller's TTL.
+
+Per-call `transport` replaces the constructor's complete transport object. Repeat `connectionPartition` (and any other settings) when passing an override; omitting it returns that call to one-shot behavior. Shared discovery still requires an explicit `authIdentity` and cache; the partition additionally separates entries, and a per-call partition change bypasses both the client's locally cached evidence and shared discovery for that call.
+
+The low-level `callMCPTool` request options and `MCPCallOptions` for `callMCPToolWithOAuth` accept `connectionPartition` and `connectionReuse` directly. Native task helpers accept a trailing connection-options argument with the same policy fields, `headers`, and `signingContext`. Repeat the creation call's routing headers and signing context on follow-up calls. Public low-level calls install their own policy, so calling them from an SDK callback does not inherit another principal. `checkGovernance()` calls without an explicit connection scope use one-shot sessions.
+
+For native MCP Tasks whose seller binds task ownership to the session, keep creation, polling, result retrieval, and cancellation inside the same connection scope, or use the same principal partition on every call. Generated agent and governance calls without a transport option use scopes for session continuity.
+
+Reuse a bounded set of principal partitions. Process sessions remain subject to the connection cache's LRU bound and have no idle expiry. Call `closeConnections()` from `@adcp/sdk/advanced` during shutdown, or use `withMCPConnectionScope` for sessions that close at workflow completion. These session options apply to MCP; they do not create A2A sessions. The local partition also separates shared discovery and signing-capability evidence for A2A. A low-level `connectMCP()` result remains caller-owned and must be closed by its caller.
+
 ## Reusable MCP connections
 
-This behavior applies by default, including calls that pass a signal or timeout outside a connection scope. The process-wide legacy/OAuth session cache retains at most 20 connections per cache with LRU eviction and has no idle expiry. For request workflows with many distinct credentials, use a scope to bound session lifetime. At process shutdown, `closeConnections()` from `@adcp/sdk/advanced` closes the process-wide connections.
+This reuse applies inside an explicit scope, or with `connectionPartition` or `connectionReuse: 'process'`. Other unscoped calls own one-shot sessions, including when they pass a signal or timeout. The process-wide legacy/OAuth session cache retains at most 20 connections per cache with LRU eviction and has no idle expiry. For request workflows with many distinct credentials, use a scope to bound session lifetime. At process shutdown, `closeConnections()` from `@adcp/sdk/advanced` closes the process-wide connections.
 
-A reusable session is keyed only by what changes the _connection_: endpoint, credential, tenant / routing headers, signing identity, `allowPrivateIp`, `maxResponseBytes`, a caller-injected fetch, and the workflow scope. These no longer choose or split a session:
+A reusable session is keyed only by what changes the _connection_: endpoint, credential, tenant / routing headers, signing identity, `allowPrivateIp`, `maxResponseBytes`, a caller-injected fetch, the local principal partition, and the workflow scope. These no longer choose or split a session:
 
 - **Correlation headers**: `traceparent`, `tracestate`, `x-request-id`, `x-correlation-id`, `x-trace-id`, `x-span-id`, `x-debug-id`, `x-client-request-id`, `x-b3-*`, `x-amzn-trace-id`, `x-cloud-trace-context`, `x-datadog-*`, `sentry-trace`, and vendor-prefixed `x-<vendor>-request-id` / `-correlation-id` / `-trace-id` / `-span-id` / `-debug-id`. Names suggesting credentials or tenant/routing identity (including `auth`, `token`, `tenant`, `account`, `workspace`, `seat`, `advertiser`, `publisher`, `buyer` and `seller`) are never treated as correlation. **`baggage` stays in the key**: it can carry tenant or routing members. Any header outside the list above also stays in the key (fail closed).
 - **`AbortSignal`** and **`requestTimeoutMs`**: they bound a call.

@@ -168,6 +168,8 @@ export interface AgentDiscoveryKeyInput {
   authIdentity: string;
   /** Kind of credential presented (`none`, `bearer`, `oauth`, `header`, ...); never its value. */
   credentialKind?: string;
+  /** Local caller principal partition; included only in the opaque digest. */
+  connectionPartition?: string;
   /** Request headers the client sends on every call (correlation and credential headers are dropped here). */
   headers?: Record<string, string>;
   /** Non-secret fingerprint of the request-signing identity, when configured. */
@@ -198,6 +200,7 @@ export function agentDiscoveryCacheKey(input: AgentDiscoveryKeyInput): string {
         adcpVersion: input.adcpVersion,
         wireAdcpVersion: input.wireAdcpVersion ?? null,
         authIdentity: input.authIdentity,
+        ...(input.connectionPartition !== undefined && { connectionPartition: input.connectionPartition }),
         credentialKind: input.credentialKind ?? null,
         headers,
         signing: input.signing ?? null,
