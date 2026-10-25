@@ -4,6 +4,7 @@ import type { ReportingAdjustment, ReportingControlTotal, ReportingRevision } fr
 import { ReportingAdjustmentSchema, ReportingRevisionSchema } from '../../schemas';
 import { canonicalize } from '../../utils/jcs';
 import { AdcpError } from '../../server/decisioning/async-outcome';
+import { listedReportingSourceProductIdsV1 } from '../source/applicability';
 import {
   canonicalJsonV1,
   reportingIsoDurationMillisecondsV1,
@@ -1523,9 +1524,13 @@ function validateConfigurationAgainstOffering(
     throw new Error('Unsupported reporting metric');
   if (configuration.requestedDimensions.some(value => !dimensionNames.has(value)))
     throw new Error('Unsupported reporting dimension');
-  const applicableProducts = new Set(offering.applicability.productIds);
+  const listedProducts = listedReportingSourceProductIdsV1(offering.applicability);
+  const applicableProducts = listedProducts === undefined ? undefined : new Set(listedProducts);
   const applicableKinds = new Set(offering.applicability.constituentKinds);
-  if (configuration.constituents.some(value => !applicableProducts.has(value.productId))) {
+  if (
+    applicableProducts !== undefined &&
+    configuration.constituents.some(value => !applicableProducts.has(value.productId))
+  ) {
     throw new Error('Reporting constituent product is outside its offering applicability');
   }
   if (configuration.constituents.some(value => !applicableKinds.has(value.constituentKind))) {

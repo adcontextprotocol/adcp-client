@@ -2379,6 +2379,10 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   );
   ln();
   ln(
+    `Source offering \`applicability\` keeps required \`productIds: string[]\`; opt into \`products: { kind: 'host_attested' }\` with an empty \`productIds\` array. Host attestation supports products created per buy: trusted \`resolveCoverage\` must authorize each product for the selected offering using its \`reporting_capabilities.reporting_delivery_offering_ids\`. Constituent kinds, product bindings, and frozen coverage remain enforced. SDK 16.5.0+ is required to read the new variants; existing declaration hashes are unchanged. See \`docs/guides/REPORTING-SOURCE-EXECUTOR.md\`.`
+  );
+  ln();
+  ln(
     `For complete seller production assembly, use async \`createPostgresReliableReportingProductionService\` from \`@adcp/reporting-storage/service\`. It owns the PostgreSQL Core/Managed stores, receipts, all three reporting notifications, webhook activity, migrations, probes, recovery, and capability publication. Supply \`activity.tenantScopeForAccount\`; Reconciled Billing offerings also require a trusted \`obligatedConsumers\` roster. Its scheduler and \`recoverOnce\` require explicit \`deploymentWide: true\` because recovery scans the whole namespace. See \`docs/guides/REPORTING-LEDGER.md\` and \`docs/guides/REPORTING-OPERATIONS.md\`.`
   );
   ln();
