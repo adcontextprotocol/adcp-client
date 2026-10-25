@@ -408,7 +408,10 @@ export interface DemandGrantAuthorization {
 export interface DemandGrantOptions {
   evaluator: TrustEvaluator;
   now?: () => number;
-  /** Only evaluated for nonexclusive uncovered claims, never fetch failures. */
+  /**
+   * Only evaluated for uncovered claims, never fetch failures, and never for a scope an
+   * `exclusive_grants: true` record names in any grant.
+   */
   sellerAuthorization?: (claim: DemandGrantClaim) => Promise<boolean>;
   /** Only for authoritative absence; never after a 200 or an exclusive record. */
   legacyAuthorization?: (claim: DemandGrantClaim) => Promise<boolean>;
@@ -530,7 +533,7 @@ export async function authorizeDemandGrant(
   // for this scope that did not match is published narrowing: it blocks the
   // seller's discretion. A grant whose grantee is not a registrable domain
   // covers no claim, so it does not count here; its scopes still count for
-  // exclusive_grants, which below refuses every uncovered claim.
+  // exclusive_grants.
   const covered = (record.record.grants ?? []).some(g => {
     const grantee = registrableGrantee(g.grantee);
     return (
@@ -539,7 +542,13 @@ export async function authorizeDemandGrant(
       grantsScope(g, claim.scope)
     );
   });
-  if (!covered && !record.record.exclusive_grants && (await options.sellerAuthorization?.(claim)))
+  // exclusive_grants makes grants[] exhaustive only for the scopes it names
+  // (any grant's scopes, registrable grantee or not). A scope no grant names,
+  // including every scope of a record with no grants, stays at the seller's
+  // discretion.
+  const exclusive =
+    record.record.exclusive_grants === true && (record.record.grants ?? []).some(g => grantsScope(g, claim.scope));
+  if (!covered && !exclusive && (await options.sellerAuthorization?.(claim)))
     return result('seller', [brand, account, operator]);
   throw new IdentityAuthorizationError('grant_absent');
 }
