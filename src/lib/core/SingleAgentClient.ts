@@ -169,6 +169,7 @@ import { getSignedRequestRejection } from '../protocols/signedRequestRejection';
 import { withAmbientIdentityHeaders } from '../protocols/mcp-call-context';
 import { ProtocolClient, normalizeTransportOptions } from '../protocols';
 import {
+  AgentRateLimitedError,
   AuthenticationCredentialsRejectedError,
   AuthenticationRequiredError,
   ConfigurationError,
@@ -3943,6 +3944,9 @@ export class SingleAgentClient {
    * - A validated MCP protected-resource metadata chain yields NeedsAuthorizationError
    * - Otherwise AuthenticationRequiredError carries the advertised challenge
    *
+   * Rate limiting (429, or 503 with Retry-After) stops probing at that URL and
+   * throws AgentRateLimitedError carrying the status and Retry-After.
+   *
    * Note: This is async and called lazily on first agent interaction
    */
   private async discoverMCPEndpoint(providedUri: string, options?: ReadRequestOptions): Promise<string> {
@@ -3957,7 +3961,7 @@ export class SingleAgentClient {
   ): Promise<string> {
     throwIfAborted(options?.signal);
     const { connectMCPWithFallback } = await import('../protocols/mcp');
-    const { probeModernMCPConnection } = await import('../protocols/mcp-modern');
+    const { probeModernMCPConnection, retryAfterOf } = await import('../protocols/mcp-modern');
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
     const usesScopedFetch = this.usesScopedDiscoveryTransport(options);
     const endpointEpoch = this.discoveryEpochSnapshot(options);
@@ -3983,6 +3987,8 @@ export class SingleAgentClient {
     type EndpointTestResult = {
       success: boolean;
       status?: number;
+      /** `Retry-After` from a 429/503 probe response, when the agent sent it. */
+      retryAfter?: string;
       error?: unknown;
     };
 
@@ -4037,7 +4043,8 @@ export class SingleAgentClient {
           (errObj?.status as number | undefined) ||
           ((errObj?.response as Record<string, unknown>)?.status as number | undefined) ||
           ((errObj?.cause as Record<string, unknown>)?.status as number | undefined);
-        return { success: false, status, error };
+        const retryAfter = retryAfterOf(error);
+        return { success: false, status, ...(retryAfter !== undefined && { retryAfter }), error };
       }
     };
 
@@ -4075,6 +4082,13 @@ export class SingleAgentClient {
       if (result.success) {
         firstWorkingUrl = url;
         break;
+      }
+
+      // The agent is throttling us (adcp-client#3442). Probing the remaining
+      // candidates would only spend more of its request budget, and the rate
+      // limit says nothing about whether this path is the MCP endpoint.
+      if (result.status === 429 || (result.status === 503 && result.retryAfter !== undefined)) {
+        throw new AgentRateLimitedError(url, result.status, result.retryAfter, result.error);
       }
 
       if (result.status === 401) {
