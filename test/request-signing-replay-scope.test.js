@@ -55,7 +55,7 @@ describe('InMemoryReplayStore: (keyid, @target-uri) scoping (adcp#2460)', () => 
     const store = new InMemoryReplayStore();
     const now = 1_776_520_800;
     const keyid = 'test-ed25519-2026';
-    const nonce = 'shared-nonce-across-endpoints';
+    const nonce = 'shared-nonce-across-endpoints_';
     const create = canonicalTargetUri('https://seller.example.com/adcp/create_media_buy');
     const update = canonicalTargetUri('https://seller.example.com/adcp/update_media_buy');
 
@@ -75,7 +75,7 @@ describe('InMemoryReplayStore: (keyid, @target-uri) scoping (adcp#2460)', () => 
     const store = new InMemoryReplayStore();
     const now = 1_776_520_800;
     const keyid = 'test-ed25519-2026';
-    const nonce = 'partition-probe-nonce';
+    const nonce = 'partition-probe-nonce_';
     const create = canonicalTargetUri('https://seller.example.com/adcp/create_media_buy');
     const update = canonicalTargetUri('https://seller.example.com/adcp/update_media_buy');
 

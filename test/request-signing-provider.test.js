@@ -126,7 +126,7 @@ describe('AdCP 3.2 empty-body request signing', () => {
     const signed = signRequest(
       request,
       { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwkFor('test-ed25519-2026') },
-      { ...options, nonce: 'empty-body-sync-nonce' }
+      { ...options, nonce: 'empty-body-sync-nonce_' }
     );
     assert.strictEqual((await verify(signed)).status, 'verified');
   });

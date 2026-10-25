@@ -221,6 +221,30 @@ test('webhook registrations own and fence delegated-operator authorization conte
 });
 
 describe('SingleAgentClient RFC 9421 webhook receiver', () => {
+  test('returns webhook_body_malformed for signed duplicate JSON and burns the nonce', async () => {
+    const { client, callbackUrl, signer } = await registeredRfcClient();
+    const rawBody = JSON.stringify(envelope()).replace('"products":[]', '"products":[],"products":[1]');
+    const signed = signWebhook(
+      { method: 'POST', url: callbackUrl, headers: { 'Content-Type': 'application/json' }, body: rawBody },
+      signer
+    );
+    const request = {
+      rawBody,
+      headers: signed.headers,
+      taskType: 'get_products',
+      operationId: 'op-rfc-1',
+      requestMethod: 'POST',
+      requestUrl: callbackUrl,
+    };
+    const first = await client.verifyAndParseWebhook(request);
+    assert.equal(first.ok, false);
+    assert.equal(first.code, 'webhook_body_malformed');
+    assert.equal(Boolean(first.retryable), false);
+    const replay = await client.verifyAndParseWebhook(request);
+    assert.equal(replay.ok, false);
+    assert.equal(replay.code, 'webhook_signature_replayed');
+  });
+
   test('preserves retries for transient discovery and publisher refresh failures', async () => {
     for (const verificationOptions of [
       {
@@ -2021,7 +2045,7 @@ describe('seller-pinned webhook JWK discovery cache', () => {
     const signed = signWebhook(
       { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
       signer,
-      { now: () => initialNow, nonce: 'expiring-auth-nonce' }
+      { now: () => initialNow, nonce: 'expiring-auth-nonce___' }
     );
 
     const result = await client.verifyAndParseWebhook({
@@ -2089,7 +2113,7 @@ describe('seller-pinned webhook JWK discovery cache', () => {
     const signed = signWebhook(
       { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
       signer,
-      { now: () => initialNow, nonce: 'expiring-replay-nonce' }
+      { now: () => initialNow, nonce: 'expiring-replay-nonce_' }
     );
 
     const result = await client.verifyAndParseWebhook({
@@ -2134,7 +2158,7 @@ describe('delegated-operator webhook authorization context', () => {
     const signed = signWebhook(
       { method: 'POST', url: callbackUrl, headers: { 'content-type': 'application/json' }, body: rawBody },
       signer,
-      { nonce }
+      { nonce: Buffer.from(nonce.padEnd(16, '_')).toString('base64url') }
     );
     return client.verifyAndParseWebhook({
       rawBody,

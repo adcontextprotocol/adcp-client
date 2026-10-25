@@ -771,7 +771,7 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
     });
 
     it('accepts identical nonces signed against two different @target-uri values', async () => {
-      const sharedNonce = 'scope-test-nonce-0001';
+      const sharedNonce = 'scope-test-nonce-0001__';
       const bodyA = mcpCreateMediaBuyBody();
       const resA = await postSigned({ url: serverA.url, body: bodyA, sign: true, nonce: sharedNonce });
       assert.strictEqual(resA.status, 200, 'first endpoint must accept the signed request');
@@ -1046,7 +1046,7 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
       });
       try {
         const body = mcpGetProductsBody();
-        const res = await postSigned({ url: started.url, body, sign: true, nonce: 'auto-identity-mismatch-01' });
+        const res = await postSigned({ url: started.url, body, sign: true, nonce: 'auto-identity-mismatch-01_' });
         assert.strictEqual(res.status, 401);
         assert.match(res.headers.get('www-authenticate'), /error="request_signature_invalid"/);
         assert.strictEqual((await res.json()).error, 'request_signature_invalid');
@@ -1069,7 +1069,7 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
       const started = await startServer(() => createAdcpServer(config));
       try {
         const body = mcpGetProductsBody();
-        const res = await postSigned({ url: started.url, body, sign: true, nonce: 'auto-identity-unmapped-01' });
+        const res = await postSigned({ url: started.url, body, sign: true, nonce: 'auto-identity-unmapped-01_' });
         assert.strictEqual(res.status, 401);
         assert.match(res.headers.get('www-authenticate'), /error="request_signature_invalid"/);
         assert.strictEqual((await res.json()).error, 'request_signature_invalid');

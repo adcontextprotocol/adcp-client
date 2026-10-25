@@ -68,7 +68,7 @@ test('D3: an RFC 9421 nonce first seen at created cannot be replayed at expires 
   const signed = signRequest(
     { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
     { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
-    { now: () => created, windowSeconds: 300, nonce: 'boundary-replay-probe' }
+    { now: () => created, windowSeconds: 300, nonce: 'boundary-replay-probe__' }
   );
   const replayStore = new InMemoryReplayStore();
   const verify = at =>

@@ -871,6 +871,9 @@ function mapSignatureErrorCode(
       return 'signature_digest_mismatch';
     case 'webhook_signature_replayed':
       return 'signature_replayed';
+    case 'webhook_body_malformed':
+      // The signature authenticated the bytes; their JSON payload is invalid.
+      return 'schema_violation';
     case 'webhook_signature_invalid':
       return 'signature_invalid';
     default: {

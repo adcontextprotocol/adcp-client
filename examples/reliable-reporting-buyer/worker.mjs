@@ -126,7 +126,9 @@ export async function startBuyerReporting(bindings) {
               ? 429
               : error.code === 'webhook_signature_revocation_stale'
                 ? 503
-                : 401;
+                : error.code === 'webhook_body_malformed'
+                  ? 400
+                  : 401;
       } else {
         console.warn('[buyer reporting] verifier unavailable');
       }

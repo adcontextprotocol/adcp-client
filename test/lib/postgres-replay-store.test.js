@@ -555,7 +555,7 @@ describe('PostgresReplayStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' 
       { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
       {
         now: () => now,
-        nonce: 'pg-replay-test-nonce',
+        nonce: 'pg-replay-test-nonce__',
       }
     );
 

@@ -501,7 +501,7 @@ describe('live-verifier integration: stale-revocation fail-closed', () => {
         kid: alreadyRevokedKid,
         privateKey: alreadyRevokedPrivate,
         clock,
-        nonce: 'garbage-during-revoked-cc',
+        nonce: 'garbage-during-revoked-cc_',
         url,
         body,
       });
@@ -570,7 +570,7 @@ describe('live-verifier integration: JWKS SSRF refusal propagates through verifi
       kid: 'test-ed25519-2026',
       privateKey: primaryPrivate,
       clock,
-      nonce: 'ssrf-nonce-aaaaaaaaa',
+      nonce: 'ssrf-nonce-aaaaaaaaa__',
       url,
       body,
     });

@@ -420,6 +420,10 @@ app.use(createExpressVerifier({
 
 The schema uses one table with `(keyid, scope, nonce)` as the primary key, indexes on `expires_at` and `(keyid, scope, expires_at)`, and a table-specific guarded-insert function. Each insert attempt is one round trip to that function, which tries a transaction-scoped advisory lock and handles the replay/cap/insert decision atomically. Busy scopes use bounded client-side retry between queries, so pooled connections remain available to unrelated scopes. Rerun `getReplayStoreMigration()` before deploying an SDK upgrade so the function stays current; the migration is idempotent. The sweeper exists because Postgres has no native row-level TTL — it's a `DELETE FROM replay_cache WHERE expires_at <= now()` you call on a schedule. Other backends (Redis, KeyDB, anything supporting atomic insert-if-absent with TTL) can implement the `ReplayStore` interface the same way.
 
+The request and RFC 9421 webhook verifiers require an unpadded Base64URL nonce containing at least 16 bytes. SDK signers generate one by default. If you override `nonce`, use at least 16 random bytes encoded with `randomBytes(16).toString('base64url')`; short labels and padded values are rejected with `request_signature_params_incomplete` or `webhook_signature_params_incomplete` before key discovery.
+
+After signature and digest verification succeed, the verifier records the nonce before checking JSON body well-formedness. An authenticated malformed body returns `request_body_malformed` or `webhook_body_malformed` at checklist step 14; sending that frame again returns the replay error. Duplicate keys, invalid UTF-8 body bytes, and leading BOMs are refused. Errors contain a fixed message and reason code, without submitted body bytes or duplicate key names. Request operation-resolution prechecks can reject ambiguous bodies earlier, before signature verification.
+
 On successful verification, `req.verifiedSigner` contains `{ keyid, agent_url?, verified_at }`. On failure, the middleware returns `401` with `WWW-Authenticate: Signature error="<code>"`.
 
 ### Operation resolution: MCP and A2A

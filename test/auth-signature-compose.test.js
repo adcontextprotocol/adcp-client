@@ -144,7 +144,7 @@ describe('verifySignatureAsAuthenticator', () => {
     const now = 1_776_520_800;
     const body = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_media_buy","arguments":{}}}';
     const url = 'https://seller.example.com/mcp';
-    const req = signedReq({ now, url, body, nonce: 'compose-verified-01' });
+    const req = signedReq({ now, url, body, nonce: 'compose-verified-01___' });
     const auth = verifySignatureAsAuthenticator(baseOptions({ now: () => now }));
     const result = await auth(req);
     assert.ok(result, 'should return a principal');
@@ -158,7 +158,7 @@ describe('verifySignatureAsAuthenticator', () => {
     const now = 1_776_520_800;
     const body = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_media_buy","arguments":{}}}';
     const url = 'https://seller.example.com/mcp';
-    const req = signedReq({ now, url, body, nonce: 'compose-invalid-01' });
+    const req = signedReq({ now, url, body, nonce: 'compose-invalid-01____' });
     // Corrupt the Signature header so crypto verify fails.
     const originalSig = req.headers.signature;
     req.headers.signature = originalSig.replace(/[A-Za-z0-9+/]/, c => (c === 'A' ? 'B' : 'A'));
@@ -173,7 +173,7 @@ describe('verifySignatureAsAuthenticator', () => {
     const now = 1_776_520_800;
     const body = '{}';
     const url = 'https://seller.example.com/mcp';
-    const req = signedReq({ now, url, body, nonce: 'compose-missing-01' });
+    const req = signedReq({ now, url, body, nonce: 'compose-missing-01____' });
     delete req.headers.signature;
     const auth = verifySignatureAsAuthenticator(baseOptions({ now: () => now }));
     await assert.rejects(
@@ -191,7 +191,7 @@ describe('verifySignatureAsAuthenticator', () => {
     // interpolating the principal so downstream tenant splits on ':' stay safe.
     const evilKid = 'bad:kid';
     const evilJwk = { ...primaryPublic, kid: evilKid };
-    const evilReq = signedReq({ now, url, body, nonce: 'keyid-unsafe-02' });
+    const evilReq = signedReq({ now, url, body, nonce: 'keyid-unsafe-02_______' });
     // Rewrite the Signature-Input keyid to reference the evil kid, and point
     // the resolver at an evil JWK. (Signature won't crypto-verify against this
     // key — we want to ensure the keyid check fires BEFORE crypto, i.e. this
@@ -234,7 +234,7 @@ describe('verifySignatureAsAuthenticator', () => {
     const now = 1_776_520_800;
     const body = '{}';
     const url = 'https://seller.example.com/mcp';
-    const req = signedReq({ now, url, body, nonce: 'makeprincipal-unmapped-01' });
+    const req = signedReq({ now, url, body, nonce: 'makeprincipal-unmapped-01_' });
     const auth = verifySignatureAsAuthenticator(
       baseOptions({
         now: () => now,
@@ -253,7 +253,7 @@ describe('verifySignatureAsAuthenticator', () => {
     const now = 1_776_520_800;
     const body = '{}';
     const url = 'https://seller.example.com/mcp';
-    const req = signedReq({ now, url, body, nonce: 'compose-makeprin-01' });
+    const req = signedReq({ now, url, body, nonce: 'compose-makeprin-01___' });
     const auth = verifySignatureAsAuthenticator(
       baseOptions({
         now: () => now,
@@ -323,7 +323,7 @@ describe('serve() + anyOf(verifyApiKey, verifySignatureAsAuthenticator)', () => 
           body,
         },
         { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: primaryPrivate },
-        { now: () => now, windowSeconds: 300, nonce: 'e2e-sig-only-01' }
+        { now: () => now, windowSeconds: 300, nonce: 'e2e-sig-only-01_______' }
       );
       const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
         method: 'POST',
@@ -432,7 +432,7 @@ describe('anyOf(verifyApiKey, verifySignatureAsAuthenticator)', () => {
     const now = 1_776_520_800;
     const body = '{}';
     const url = 'https://seller.example.com/mcp';
-    const req = signedReq({ now, url, body, nonce: 'compose-sig-only-01' });
+    const req = signedReq({ now, url, body, nonce: 'compose-sig-only-01___' });
     const composed = anyOf(
       verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } }),
       verifySignatureAsAuthenticator(baseOptions({ now: () => now }))
@@ -454,7 +454,7 @@ describe('anyOf(verifyApiKey, verifySignatureAsAuthenticator)', () => {
     const now = 1_776_520_800;
     const body = '{}';
     const url = 'https://seller.example.com/mcp';
-    const req = signedReq({ now, url, body, nonce: 'compose-both-01' });
+    const req = signedReq({ now, url, body, nonce: 'compose-both-01_______' });
     req.headers.authorization = 'Bearer sk_test';
     // API key listed first → wins on short-circuit; sig adapter never runs.
     const composed = anyOf(
@@ -470,7 +470,7 @@ describe('anyOf(verifyApiKey, verifySignatureAsAuthenticator)', () => {
     const now = 1_776_520_800;
     const body = '{}';
     const url = 'https://seller.example.com/mcp';
-    const req = signedReq({ now, url, body, nonce: 'compose-bad-sig-01' });
+    const req = signedReq({ now, url, body, nonce: 'compose-bad-sig-01____' });
     req.headers.signature = req.headers.signature.replace(/[A-Za-z0-9+/]/, c => (c === 'A' ? 'B' : 'A'));
     const composed = anyOf(verifyApiKey({ keys: {} }), verifySignatureAsAuthenticator(baseOptions({ now: () => now })));
     await assert.rejects(
@@ -514,7 +514,7 @@ describe('requireSignatureWhenPresent(signatureAuth, fallbackAuth)', () => {
     const now = 1_776_520_800;
     const body = '{}';
     const url = 'https://seller.example.com/mcp';
-    const req = signedReq({ now, url, body, nonce: 'require-sig-valid-01' });
+    const req = signedReq({ now, url, body, nonce: 'require-sig-valid-01__' });
     const composed = requireSignatureWhenPresent(
       verifySignatureAsAuthenticator(baseOptions({ now: () => now })),
       verifyApiKey({ keys: { sk_test: { principal: 'acct_42' } } })
@@ -580,7 +580,7 @@ describe('requireSignatureWhenPresent(signatureAuth, fallbackAuth)', () => {
     const now = 1_776_520_800;
     const body = '{}';
     const url = 'https://seller.example.com/mcp';
-    const req = signedReq({ now, url, body, nonce: 'null-sig-path-01' });
+    const req = signedReq({ now, url, body, nonce: 'null-sig-path-01______' });
     req.headers.authorization = 'Bearer sk_test'; // valid bearer MUST NOT rescue
     await assert.rejects(
       () => composed(req),
@@ -594,7 +594,7 @@ describe('requireSignatureWhenPresent(signatureAuth, fallbackAuth)', () => {
     const now = 1_776_520_800;
     const body = '{}';
     const url = 'https://seller.example.com/mcp';
-    const req = signedReq({ now, url, body, nonce: 'sig-only-header-01' });
+    const req = signedReq({ now, url, body, nonce: 'sig-only-header-01____' });
     delete req.headers['signature-input'];
     req.headers.authorization = 'Bearer sk_test'; // valid bearer MUST NOT rescue
     const composed = requireSignatureWhenPresent(
@@ -724,7 +724,7 @@ describe('serve() + requireSignatureWhenPresent', () => {
           body,
         },
         { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: primaryPrivate },
-        { now: () => now, windowSeconds: 300, nonce: 'e2e-require-badsig-01' }
+        { now: () => now, windowSeconds: 300, nonce: 'e2e-require-badsig-01_' }
       );
       signed.headers.Signature = signed.headers.Signature.replace(/[A-Za-z0-9+/]/, c => (c === 'A' ? 'B' : 'A'));
       const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
@@ -764,7 +764,7 @@ describe('serve() + requireSignatureWhenPresent', () => {
           body,
         },
         { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: primaryPrivate },
-        { now: () => now, windowSeconds: 300, nonce: 'e2e-require-good-01' }
+        { now: () => now, windowSeconds: 300, nonce: 'e2e-require-good-01___' }
       );
       const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
         method: 'POST',
