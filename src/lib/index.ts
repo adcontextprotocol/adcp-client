@@ -764,6 +764,7 @@ export {
   IdempotencyConflictError,
   IdempotencyExpiredError,
   ResponseTooLargeError,
+  AgentRateLimitedError,
   ActionNotAllowedError,
   PreparedFixturesDeniedError,
   adcpErrorToTypedError,
