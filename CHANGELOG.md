@@ -1,5 +1,92 @@
 # Changelog
 
+## 16.5.0
+
+### Minor Changes
+
+- a31d162: Keep universal support documents without phases out of executable compliance bundles. Malformed or unreadable coverage remains visible as untested with warnings. Lifecycle invariants now record eligibility only for tasks their extractors can observe; empty lifecycle observations still keep coverage partial. Read proposal lifecycle state from the published `proposals[].proposal_status` fields so real illegal transitions are detected. Optional-only storyboards pass only with real executed passing coverage and no failed phases except moot alternatives with a successful contributing peer.
+
+  Preserve storyboard-wide assertion failures in the failure list with a whole-storyboard rerun command. Add `incomplete_storyboards` to the versioned summary artifact for false zero-step verdicts that have no failed step, keeping incomplete coverage distinct from seller failures in JSON, text, and Markdown.
+
+  Observe persistent notifications on the subscriber URL from successful registration, retain trigger time boundaries, and match positive flat payload selectors exactly. Conflicting selectors and flat payload selectors on negative assertions now reject invalid authoring. Ordinary positive assertions cannot reuse an already observed physical delivery or logical retry; explicit delivery-count and retry assertions retain their full evidence. Runner-owned assertion and probe tasks now retain failed-prerequisite classification after a stateful failure instead of pretending the seller omitted a tool.
+
+- 4f5d366: Add optional authorization for fresh fixture preparation before seller contact (#3389).
+
+  `prepareStoryboardFixtures` accepts `PrepareStoryboardFixturesOptions.prepared_fixtures_preparation_authorizer`. Its new `PreparedFixturesPreparationLookup` carries `gate: 'prepare'` and the SDK-computed proposed `current` scope, with no fabricated stored binding, reference, or seller profile. The callback runs exactly once before client creation, initialization, discovery, controller activity, or catalog reads. Only literal `authorized: true` grants; other decisions throw `PreparedFixturesDeniedError('authorizer_denied')` with zero seller contact and private canonical audit evidence. Authorized dispatch detaches mutable account, brand, credential, route, and storyboard data across awaits; runtime transport and OAuth storage keep their host-owned identity. Scope drift refuses with `binding_mismatch` before fixture calls after discovery and before state can be minted.
+
+  This is additive on SDK 16: `PreparedFixturesLookup.binding` remains required, its gate union is unchanged, and `prepared_fixtures_authorizer` remains exclusively the every-lookup reuse hook. Supplying only that existing hook to preparation retains legacy behavior and does not authorize preparation. Hosts requiring the fresh gate must explicitly adopt the new option. A preparation grant never replaces later reuse authorization.
+
+  The preparation-only option is rejected before contact on run, step, and compliance entry points. Existing integrations that omit it retain their behavior. Host refusal details are not echoed at the preparation gate; audit sink failures never grant access.
+
+- 6c281d9: Add `transport.connectionPartition` to isolate MCP session reuse by a caller-owned principal without sending that value to the seller. The partition separates modern, legacy, and OAuth sessions, endpoint discovery, shared discovery, and signing-policy evidence. It also separates principals inside a workflow connection scope.
+
+  Unscoped MCP calls now own and close one-shot sessions by default, restoring isolation when callers share a seller credential and identify their customer only in tool arguments. To keep process-wide reuse, configure a stable nonempty partition or explicitly set `transport.connectionReuse: 'process'` for a single-principal caller. Explicit connection scopes retain workflow reuse. Injected fetch implementations remain one-shot outside a scope. Repeat the partition when replacing a constructor's transport with per-call options.
+
+  The public low-level MCP tool and native task helpers also detach from any enclosing caller policy and accept explicit partition/reuse settings. Calls such as unscoped seller-side `checkGovernance()` now own one-shot sessions. Product-cache reads and writes are bypassed when a per-call transport changes the configured principal.
+
+  Native task follow-ups accept explicit routing headers and signing context, detach inherited signing identities, and supply the official MCP SDK result schema when reading task results.
+
+- 3d53212: Allow reporting source offerings to declare `applicability: { productIds: [], products: { kind: 'host_attested' }, constituentKinds }` for products created per brief or buy. Trusted host coverage resolution remains responsible for per-product eligibility and account authorization; constituent kinds and product bindings remain enforced. Existing `applicability.productIds` declarations retain their validation, required array type, and capability hashes. Buyer declarations cannot supply applicability fields, and an adapter's executor cannot broaden a declared product allowlist.
+- 1dcd427: Automatically sign JSON-RPC protocol methods according to the seller's separate `protocol_methods_required_for`, `protocol_methods_warn_for`, and (with `sign_supported`) `protocol_methods_supported_for` lists. Add `always_sign_protocol_methods` for exact slash-path/PascalCase pilot overrides with inline or provider-backed keys, including before discovery. Preserve the separate AdCP-operation namespace and reject ambiguous method bodies before dispatch when protocol-method policy applies.
+
+  Sign compatibility `tasks_get` MCP and `tasks/get` A2A skill polls when the seller declares support for the buyer's signing profile, with fresh nonces, existing transport authentication, and version-appropriate body binding. A configured but invalid signing identity can now fail these polls instead of relying on unsigned bearer fallback. Best-effort A2A cancellation uses the shared signer, active AdCP wire pin, and Web Bot Auth advertisement gate. A Web Bot Auth cancellation is abandoned when cached profile support is unavailable.
+
+  Native SDK task listing now primes signing capabilities and retains configured authentication/routing headers. Partition transport, discovery, and testing-client reuse by signing overrides so cached wrappers retain the correct policy. Preserve unsigned functional-compliance bootstrap discovery by refusing A2A invocation-method overrides that would sign it.
+
+  Reject malformed signing flags before dispatch instead of silently downgrading to unsigned requests. Preserve the functional runner's unsigned capability-bootstrap policy even when cached protocol-method coverage includes all A2A messages.
+
+- 7b181ff: Enforce the AdCP nonce alphabet and 16-byte minimum in request and RFC 9421 webhook verification. Reject invalid nonces before key resolution or replay insertion. After authenticating a frame and its body digest, record its nonce before rejecting malformed JSON, so repeated malformed frames stop at replay detection without repeating cryptographic verification. Malformed request bodies now report checklist step 14 instead of step 11. The shared body check refuses invalid UTF-8 and leading BOMs to avoid parser disagreements. Webhook verification now reports `webhook_body_malformed` at checklist step 14. Preserve operation-resolution prechecks, unsigned-request policy, and rejection of invalid signatures or digests before replay insertion.
+
+  Signers overriding `nonce` must supply at least 16 random bytes encoded as unpadded Base64URL; padded or standard-alphabet Base64 now produces `*_signature_params_incomplete`. Consumers handling `WebhookSignatureErrorCode` exhaustively must add `webhook_body_malformed`.
+
+- 8c97223: Preserve native capability-discovery failures before storyboard applicability gates, including redacted protocol evidence and validated OAuth metadata. Reused failed evidence cannot become a healthy profile or seed a signing downgrade; subsequent discovery passes can recover. Schema-invalid successes remain available to ungated diagnostic storyboards, with schema notices, while explicit and implicit capability-gated execution now fails before inferring absence from malformed data. Invalid public profile tools are rejected before contact; valid legacy object-shaped tool entries remain supported. Storyboards containing sync_accounts, OAuth metadata, request-signing, or creative-build gates now stop at discovery_failed when capability evidence is schema-invalid. A rejected capability call also stops native comply storyboards before execution, except explicit capability diagnostics and the trusted auth-degraded security baseline.
+
+  Restart wholesale fixture enumeration when its scope, feed version, or pricing version changes. Discard every candidate and capture from the abandoned walk before selecting a new graph. Retries are bounded to three restarts and the existing cumulative page limit; continuous churn reports a runner-owned bounded-observation not_applicable gap instead of seller failure or a complete no-match. Preserve terminal schema, transport, and malformed-pagination failures.
+
+  Echo the authored context_key on collection set comparisons, including every failure branch, without changing the comparison verdict.
+
+  Preserve validated MCP NeedsAuthorizationError instances on core TaskResult.errorInstance, so SDK callers and native discovery retain interactive OAuth requirements after transport authentication failures.
+
+### Patch Changes
+
+- eaaa07f: Make response-size errors name `transport.maxResponseBytes` and explain how to raise it on the client or call for large legitimate reads. Keep the existing 4 MiB default and document a 64 MiB configuration for catalog, signal, media-buy, and delivery readers.
+- 47934c6: Adopt the signed AdCP 3.2.7 schema and compliance bundle, including evaluator off-list rejection coverage and the 3.2.6 stabilization changes below. Relative to 3.2.6, the 3.2.7 refresh adds no wire-schema shapes and preserves maintained AdCP 3.0/3.1 compatibility. Extend the reviewed commercial-term annotation snapshot to the identical 3.2.7 contract and refresh canonical storyboard provenance to the immutable 3.2.7 release.
+
+  Evaluator off-list rejection phases are now required when an agent advertises evaluator support. A wrong acceptance or observed off-list outbound call fails conformance; an unavailable valid build fixture produces a `fixture_unsatisfied` coverage gap with no executed security credit. Hosts can provision valid inputs through `test_kit.creative_build_probes`.
+
+  CLI migration: this SDK packages the exact AdCP 3.2.7 compliance corpus. Update explicit `--compliance-version 3.2.5` or `3.2.6` flags to `3.2.7`; runs that need historical fixture bytes must retain the SDK version that packages that corpus. Maintained AdCP 3.1 and 3.0 corpora remain included.
+
+  Resolve property and collection lists from standard MCP structured or JSON text responses, preserving upstream AdCP errors. Keep task completion separate from media-buy lifecycle observations in storyboard checks. Stop injecting task status into current, unversioned, and status-free compact responses during conformance validation, while retaining explicitly declared AdCP 3.0 compatibility. Admit canonical version metadata in closed response schemas without relaxing other fields.
+
+  Prepare build tooling for exact AdCP 3.3 beta and release-candidate pins without advertising 3.3 support from stable SDK 16.
+
+  When grading AdCP 3.0 sellers, select the matching AdCP 3.0 schema version so their status-optional responses are evaluated against that release.
+
+- 5a0a03f: Fix canonical format matching when a buyer's direct selector omits the product's `asset_source`, `buyer_asset_acceptance`, `composition_model`, `slots`, or `ssl_required`. These declarations remain on the product and do not need to be repeated to select it; omission does not supply defaults or assert contrary policy. Explicit conflicts still fail matching, and dimensions, duration, encoding limits, and unknown product constraints remain enforced.
+
+  This fixes the published AdCP 3.2.6 canonical_formats positive selector in storyboard validation and the shared canonical_format_satisfies fixture-discovery predicate. The same rule applies when legacy format IDs are projected for canonical matching. Seller rejection of a compatible selector remains a failure. Requests, product declarations, creative-manifest validation, and seed data are preserved.
+
+- e678796: Fix `authorizeDemandGrant` applying `exclusive_grants: true` to every scope. The rule is that `grants[]` is exhaustive only for the scopes it names (adcontextprotocol/adcp L2 "Grants in trust records": Absence). A claim in a scope that no grant in the record names, including any claim against an exclusive record with no grants, now stays at the seller's discretion through `sellerAuthorization`, as it does for a nonexclusive record. A scope that any grant names (including through `adcp:all` or `*`, and including grants whose grantee is not a registrable domain) is still exhaustive: an uncovered claim in it is refused with `grant_absent` and `sellerAuthorization` is not called.
+
+  Previously, a house that published only exclusive governance grants also blocked media-buying claims that the seller had authorized through its own onboarding. Matching grants, legacy `authorized_operators` handling, and fetch-failure behavior are unchanged.
+
+- ba711f1: Storyboard runner: stop sending `bid_price` to fixed-price options. The `create_media_buy` request builder added a floor-based `bid_price` to any `cpm` option the fixture didn't bid on, including options carrying `fixed_price`, so a fixed-price CPM seller was sent a bid it should never receive. It now adds a bid only for a `cpm` option without `fixed_price`. It judges the option the package actually sends, not just the discovery pick. And it adds none when the request or the first package carries `bidding`, which AdCP 3.2 sellers must reject alongside a legacy `bid_price` (`AMBIGUOUS_BIDDING_POLICY`). Pricing-option selection now prefers options with `fixed_price` instead of matching `pricing_model` against `cpm` and the non-existent `flat`.
+- acddab4: Preserve producer evidence when prepared fixture discovery fails (#3385).
+
+  Authorized full and standalone reuse now retain fixture-handle resolutions and a `fixture_preparation` diagnostic phase with the producer's errors and actual exchanges. The historical phase is outside graded `phases`, preserving consumer and JUnit failure counts. Protected captures are stripped from its public contexts; denied callers still receive only `PreparedFixturesDeniedError`, while the private audit sink retains failed producer evidence.
+
+  Discovery failures identify the attempted task and configured transport. SDK connection errors are never represented as seller responses, protocol rejections remain protocol failures, and malformed seller pages retain a schema diagnostic against the actual received payload before SDK projection. The terminal failed page is retained even beyond the bounded successful-page evidence history. Captured text payloads redact credential fields.
+
+- 7dca440: Preserve compact Product format intersections when converting generated schemas to OpenAPI with Zod 4.6 and later. Annotate the shared constraints to avoid duplicating them across every format branch, and require Zod 4.6.6 or later for development (locked to 4.6.7) to resolve its high-severity collection-validation advisory. The published peer range remains compatible with older Zod 4 consumers.
+
+  Generate a direct Zod namespace import so browser bundles can remove unused exports with patched Zod versions, keeping single-schema imports within the existing bundle-size limits.
+
+- 7dca440: Accept RFC 3339 date-times with numeric UTC offsets in generated AdCP task/core Zod schemas, matching the AdCP JSON Schema format validation. This includes Python UTC timestamps ending in `+00:00` and fractional seconds with offsets. Validation now follows the existing `ajv-formats` date-time predicate, which also accepts lowercase separators, space separators, and leap seconds.
+- 7d272f9: Implicit demand-grant authority now extends to the brand's house (adcp L2 §Grants in trust records, adcp#8169). `authorizeDemandGrant` returns `source: 'implicit'` when the account operator and the signer's operator share a registrable domain with the brand's domain or with the house `resolveBrandHouse` returns, so a house operating its own child brand no longer needs a grant to itself. A house that the brand names but that does not list the brand back resolves to `undefined` and still needs a grant. An uncoded throw from `resolveBrandHouse` is now a `TrustRecordUnavailableError` (`SERVICE_UNAVAILABLE`) instead of an uncoded error, so an outage is never `grant_absent`; an `IdentityAuthorizationError` or `AdcpError` it throws keeps its code.
+- a008b4e: Sync the generated registry types with the published registry OpenAPI: a refused prepared-fixture request now types its `PREPARED_FIXTURES_DENIED` error body. Also patches vulnerable transitive dependencies (`body-parser`, `fast-uri`, `ip-address`, `undici`) in the lockfile; no dependency ranges change.
+- 7f7de7c: Refresh the registry OpenAPI snapshot and generated types with the optional vendor-authored display name for measurement metrics. Use `name` for display when present; `metric_id` remains the identifier for joining, keying, and deduplication.
+- 80cec20: Keep every exported Zod schema compact when rendered to JSON Schema or OpenAPI on Zod 4.6. Zod 4.6 rewrites an intersection with a union (`A & (X | Y)`) as `(A & X) | (A & Y)`, copying `A` into every branch. The Product format declaration was already annotated to prevent this; inline union operands of every generated intersection now carry a description too, which brings the total rendered size of all exported schemas back to within 0.1% of Zod 4.4.3 (e.g. `PlacementSchema` 339 KB → 167 KB, `ProductSchema` 917 KB → 727 KB, postal-area schemas about 3.4× smaller). Validation is unchanged.
+
 ## 16.4.0
 
 ### Minor Changes
