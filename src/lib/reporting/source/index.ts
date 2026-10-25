@@ -1,5 +1,6 @@
 export * from './manifest';
 export * from './source';
+export * from './applicability';
 export * from './conformance';
 export * from './fixtures';
 export * from './builder';

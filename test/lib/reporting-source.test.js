@@ -8,6 +8,7 @@ const {
   BasicSourceBatchManifestV1Schema,
   ReportingContractIdentityV1Schema,
   ReportingSourceCapabilitiesV1Schema,
+  ReportingSourceOfferingV1Schema,
   ReportingSourceConformanceError,
   ReportingSourceScopeV1Schema,
   ReportingSourceSliceRequestV1Schema,
@@ -18,9 +19,11 @@ const {
   canonicalJsonV1,
   encodeReportingSourceManifestV1,
   redactedReportingSourceCapabilitiesV1,
+  redactedReportingSourceOfferingV1,
   redactedReportingSourceRequestV1,
   redactedReportingSourceResultV1,
   reportingCoverageDenominatorFingerprintV1,
+  reportingSourceCapabilitiesV1,
   runReportingSourceReplayConformanceV1,
   sourceBatchCoverageFingerprintV1,
   sourceBatchManifestReferenceV1,
@@ -31,6 +34,90 @@ const {
 } = require('../../dist/lib/reporting/source/index.js');
 
 describe('reporting source contract V1', () => {
+  test('preserves legacy offering declarations and capability hashes', () => {
+    assert.deepEqual(
+      ReportingSourceOfferingV1Schema.parse(redactedReportingSourceOfferingV1),
+      redactedReportingSourceOfferingV1
+    );
+    assert.deepEqual(
+      reportingSourceCapabilitiesV1(
+        [redactedReportingSourceOfferingV1],
+        redactedReportingSourceCapabilitiesV1.capabilityVersion
+      ),
+      redactedReportingSourceCapabilitiesV1
+    );
+  });
+
+  test('publishes strict listed and host-attested applicability alternatives', async () => {
+    const Ajv = require('ajv/dist/2020');
+    const schema = JSON.parse(
+      await readFile(path.resolve('dist/lib/reporting/source/schemas/reporting-source-offering-v1.json'), 'utf8')
+    );
+    const validate = new Ajv({ strict: false, validateFormats: false }).compile(schema);
+    const kinds = { constituentKinds: ['media_buy'] };
+    for (const applicability of [
+      { ...kinds, productIds: ['fixture-product'] },
+      { ...kinds, productIds: [], products: { kind: 'host_attested' } },
+    ]) {
+      const offering = { ...redactedReportingSourceOfferingV1, applicability };
+      assert.equal(ReportingSourceOfferingV1Schema.safeParse(offering).success, true);
+      assert.equal(validate(offering), true, JSON.stringify(validate.errors));
+    }
+    for (const applicability of [
+      kinds,
+      { ...kinds, productIds: [] },
+      { ...kinds, products: { kind: 'listed', productIds: [] } },
+      { ...kinds, products: { kind: 'all' } },
+      { ...kinds, products: { kind: 'host_attested' } },
+      { ...kinds, productIds: [], products: { kind: 'host_attested', fallback: true } },
+      { ...kinds, products: { kind: 'host_attested', productIds: ['fixture-product'] } },
+      { ...kinds, products: { kind: 'host_attested' }, productIds: ['fixture-product'] },
+      { ...kinds, products: { kind: 'listed', productIds: ['fixture-product'], fallback: true } },
+      { constituentKinds: [], productIds: [], products: { kind: 'host_attested' } },
+    ]) {
+      const offering = { ...redactedReportingSourceOfferingV1, applicability };
+      assert.equal(ReportingSourceOfferingV1Schema.safeParse(offering).success, false);
+      assert.equal(validate(offering), false, JSON.stringify(applicability));
+    }
+    for (const applicability of [
+      { ...kinds, productIds: ['fixture-product', 'fixture-product'] },
+      { constituentKinds: ['media_buy', 'media_buy'], productIds: [], products: { kind: 'host_attested' } },
+    ]) {
+      assert.throws(
+        () => reportingSourceCapabilitiesV1([{ ...redactedReportingSourceOfferingV1, applicability }]),
+        /Values must be unique/
+      );
+    }
+  });
+
+  test('conforms dynamic products only for host-attested offerings and still enforces kinds', async () => {
+    const request = structuredClone(redactedReportingSourceRequestV1());
+    const productId = 'per_buy_awareness_buy1__derived_product';
+    request.coverage.productIds = [productId];
+    request.coverage.constituents[0].productId = productId;
+    request.coverage.constituents[0].productBinding.productId = productId;
+    request.coverage.denominatorFingerprint = reportingCoverageDenominatorFingerprintV1(request.coverage.constituents);
+    const fixture = redactedReportingSourceResultV1('basic', request);
+    for (const [applicability, allowed] of [
+      [{ constituentKinds: ['media_buy'], productIds: ['fixture-product'] }, false],
+      [{ constituentKinds: ['media_buy'], productIds: [productId] }, true],
+      [{ constituentKinds: ['media_buy'], productIds: [], products: { kind: 'host_attested' } }, true],
+      [{ constituentKinds: ['package_item'], productIds: [], products: { kind: 'host_attested' } }, false],
+    ]) {
+      const capabilities = reportingSourceCapabilitiesV1([{ ...redactedReportingSourceOfferingV1, applicability }]);
+      const run = () =>
+        validateReportingSourceExecutionV1({
+          level: 'basic',
+          capabilities,
+          request,
+          result: fixture.result,
+          objectReader: fixture.objectReader,
+        });
+      if (allowed) await run();
+      else await assert.rejects(run, error => error.code === 'CAPABILITY_MISMATCH');
+    }
+  });
+
   test('publishes byte-for-byte canonical JSON golden vectors', () => {
     for (const vector of canonicalJsonUtf8V1GoldenVectors) {
       const bytes = Buffer.from(canonicalJsonV1(vector.value), 'utf8');

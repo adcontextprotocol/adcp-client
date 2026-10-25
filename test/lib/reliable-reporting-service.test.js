@@ -205,6 +205,160 @@ function serviceFixture(overrides = {}) {
 }
 
 describe('ReliableReportingService', () => {
+  test('installs and executes per-buy products from trusted host-attested coverage', async () => {
+    const calls = [];
+    const reportingAdapter = adapter(calls);
+    reportingAdapter.sourceOffering.applicability = {
+      constituentKinds: ['media_buy'],
+      productIds: [],
+      products: { kind: 'host_attested' },
+    };
+    const originalOffering = structuredClone(reportingAdapter.sourceOffering);
+    const products = ['per_buy_awareness_buy1__product_a', 'per_buy_awareness_buy1__product_b'];
+    const { service, store } = serviceFixture({
+      adapters: { fixture: reportingAdapter },
+      resolveCoverage: account => ({
+        constituents: products.map(productId => {
+          const constituent = authorizedConstituent(account.id);
+          return {
+            ...constituent,
+            constituentId: `constituent-${account.id}-${productId}`,
+            productId,
+            productBinding: {
+              ...constituent.productBinding,
+              bindingId: `binding-${productId}`,
+              bindingSha256: createHash('sha256').update(productId).digest('hex'),
+              productId,
+            },
+          };
+        }),
+      }),
+    });
+    const context = { account: { id: 'account-a', ctx_metadata: {} } };
+    const installed = await service.installConfiguration(configuration(), context);
+    assert.deepEqual(
+      installed.constituents.map(value => value.productId),
+      products
+    );
+    assert.equal(new Set(installed.constituents.map(value => value.constituentId)).size, 2);
+    assert.deepEqual(installed.mediaBuyIds, ['media-buy-account-a']);
+    await service.installConfiguration(configuration({ expectedCurrency: 'EUR' }), {
+      account: { id: 'account-b', ctx_metadata: {} },
+    });
+
+    const now = new Date();
+    const boundary = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const anchor = new Date(boundary - 86_400_000).toISOString();
+    store.configurations.get(installed.configurationId).schedule.anchor = anchor;
+    store.configurations.get(installed.configurationId).installedAt = anchor;
+    await service.runCycle({ accountId: 'account-a', maxObligations: 1, maxWorkerIterations: 1 });
+    assert.equal(calls.length, 1);
+    assert.deepEqual(
+      calls[0].request.constituents.map(value => value.constituent_id),
+      products.map(productId => `constituent-account-a-${productId}`)
+    );
+    assert.deepEqual(calls[0].request.media_buy_ids, ['media-buy-account-a']);
+    assert.equal(JSON.stringify(calls).includes('account-b'), false);
+    assert.equal(store.revisions.size, 1, 'dynamic products must produce a validated revision');
+
+    products.push('per_buy_awareness_buy2__product_c');
+    await assert.rejects(service.installConfiguration(configuration(), context), /immutable/i);
+    const next = await service.installConfiguration(configuration({ delivery_config_version: 2 }), context);
+    assert.deepEqual(
+      next.constituents.map(value => value.productId),
+      products
+    );
+    assert.equal(
+      store.configurations.get(installed.configurationId).constituents.length,
+      2,
+      'existing generation keeps its frozen denominator'
+    );
+    assert.deepEqual(reportingAdapter.sourceOffering, originalOffering, 'no catalogue rebuild needed');
+  });
+
+  test('host-attested offerings retain trusted coverage ownership and product-binding checks', async () => {
+    const context = { account: { id: 'account-a', ctx_metadata: {} } };
+    const reportingAdapter = adapter();
+    reportingAdapter.sourceOffering.applicability = {
+      constituentKinds: ['media_buy'],
+      productIds: [],
+      products: { kind: 'host_attested' },
+    };
+    for (const declaration of [
+      { constituents: [authorizedConstituent('account-b')] },
+      { mediaBuyIds: ['media-buy-account-b'] },
+      { applicability: { products: { kind: 'host_attested' } } },
+      { products: { kind: 'host_attested' } },
+      { productIds: ['other-product'] },
+    ]) {
+      const { service } = serviceFixture({ adapters: { fixture: reportingAdapter } });
+      await assert.rejects(
+        service.installConfiguration({ ...configuration(), ...declaration }, context),
+        /must not supply trusted lineage field/
+      );
+    }
+    for (const mutate of [
+      constituent => {
+        constituent.productBinding.productId = 'other-product';
+      },
+      constituent => {
+        constituent.productBinding.mediaBuyId = 'media-buy-account-b';
+      },
+    ]) {
+      const { service } = serviceFixture({
+        adapters: { fixture: reportingAdapter },
+        resolveCoverage: account => {
+          const constituent = authorizedConstituent(account.id);
+          mutate(constituent);
+          return { constituents: [constituent] };
+        },
+      });
+      await assert.rejects(service.installConfiguration(configuration(), context), /contradicts its product binding/);
+    }
+  });
+
+  test('listed offerings reject products outside their applicability and buyer-written overrides', async () => {
+    for (const applicability of [
+      { constituentKinds: ['media_buy'], productIds: ['other-product'] },
+      { constituentKinds: ['media_buy'], productIds: ['fixture-product'] },
+    ]) {
+      const reportingAdapter = adapter();
+      reportingAdapter.sourceOffering.applicability = applicability;
+      const { service } = serviceFixture({ adapters: { fixture: reportingAdapter } });
+      const install = () =>
+        service.installConfiguration(configuration(), { account: { id: 'account-a', ctx_metadata: {} } });
+      if (applicability.productIds.includes('fixture-product')) await install();
+      else await assert.rejects(install, /product is outside its offering applicability/);
+      await assert.rejects(
+        service.installConfiguration(
+          { ...configuration(), applicability: { products: { kind: 'host_attested' } } },
+          { account: { id: 'account-a', ctx_metadata: {} } }
+        ),
+        /trusted lineage field applicability/
+      );
+    }
+  });
+
+  test('an injected executor can narrow but cannot broaden declared product applicability', () => {
+    const listed = productIds => ({ constituentKinds: ['media_buy'], productIds });
+    const hostAttested = { constituentKinds: ['media_buy'], productIds: [], products: { kind: 'host_attested' } };
+    for (const [declared, routed, allowed] of [
+      [listed(['fixture-product']), hostAttested, false],
+      [listed(['fixture-product']), listed(['other-product']), false],
+      [listed(['fixture-product', 'other-product']), listed(['fixture-product']), true],
+      [hostAttested, listed(['fixture-product']), true],
+      [hostAttested, hostAttested, true],
+    ]) {
+      const { fetchSlice: _fetch, ...reportingAdapter } = adapter();
+      reportingAdapter.sourceOffering.applicability = declared;
+      const executorOffering = { ...reportingAdapter.sourceOffering, applicability: routed };
+      reportingAdapter.executor = createInlineReportingSourceExecutor(() => [], executorOffering);
+      const create = () => serviceFixture({ adapters: { fixture: reportingAdapter } });
+      if (allowed) assert.doesNotThrow(create);
+      else assert.throws(create, /must not broaden its declared product applicability/);
+    }
+  });
+
   test('installs account-isolated configurations with trusted frozen currency', async () => {
     const { service, store, currencies } = serviceFixture();
     const account = { account: { id: 'account-a', ctx_metadata: { access_token: 'must-not-copy' } } };

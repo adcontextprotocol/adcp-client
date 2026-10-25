@@ -25,6 +25,7 @@ import {
   type ReportingSourceSliceRequestV1,
   type ReportingSourceStagedObjectReaderV1,
 } from './source';
+import { listedReportingSourceProductIdsV1 } from './applicability';
 
 export type ReportingSourceManifestLevelV1 = 'basic' | 'evidenced';
 export const REPORTING_CROSS_FINALITY_BRIDGE_VERSION_V1 = 'reporting.cross_finality_bridge.v1' as const;
@@ -416,9 +417,11 @@ export function validateReportingSourceRequestAgainstCapabilitiesV1(
     elapsed <= 0
   )
     throw new ReportingSourceConformanceError('CAPABILITY_MISMATCH', 'Requested window exceeds offering bounds');
+  const listedProducts = listedReportingSourceProductIdsV1(offering.applicability);
+  const applicableProducts = listedProducts === undefined ? undefined : new Set(listedProducts);
   for (const constituent of request.coverage.constituents)
     if (
-      !offering.applicability.productIds.includes(constituent.productId) ||
+      (applicableProducts !== undefined && !applicableProducts.has(constituent.productId)) ||
       !offering.applicability.constituentKinds.includes(constituent.constituentKind)
     )
       throw new ReportingSourceConformanceError(

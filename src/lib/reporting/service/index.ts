@@ -46,6 +46,7 @@ import {
   rotateReportingRoster,
 } from './scheduler-support';
 import type { InlineReportingReplayRetentionV1 } from '../source';
+import { listedReportingSourceProductIdsV1 } from '../source/applicability';
 import { assertReportingCalendarDaySource, reportingCalendarDayOrigin } from '../ledger/schedule';
 import {
   ReportingCoverageConstituentIdentityV1Schema,
@@ -421,6 +422,14 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     const routedOffering = routed[0]!;
     if (canonicalize(routedOffering.contract) !== canonicalize(sourceOffering.contract)) {
       throw new TypeError('Reporting adapter executor offering contract differs from its declared source offering');
+    }
+    const declaredProducts = listedReportingSourceProductIdsV1(sourceOffering.applicability);
+    const routedProducts = listedReportingSourceProductIdsV1(routedOffering.applicability);
+    if (declaredProducts !== undefined) {
+      const allowed = new Set(declaredProducts);
+      if (routedProducts === undefined || routedProducts.some(productId => !allowed.has(productId))) {
+        throw new TypeError('Reporting adapter executor must not broaden its declared product applicability');
+      }
     }
     // Validated against the routed offering, so the narrowing the inline
     // executor applies (media_buy applicability, one format) is authoritative.
@@ -1476,6 +1485,9 @@ function assertNoUntrustedLineageFields(configuration: Record<string, unknown>):
     'ctx_metadata',
     'constituents',
     'mediaBuyIds',
+    'applicability',
+    'products',
+    'productIds',
   ]) {
     if (Object.prototype.hasOwnProperty.call(configuration, field)) {
       throw new TypeError(`Reporting configuration must not supply trusted lineage field ${field}`);
