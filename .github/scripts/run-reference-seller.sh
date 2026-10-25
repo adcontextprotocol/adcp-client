@@ -20,7 +20,7 @@ cat > "$task_runner_dir/runner" <<'RUNNER'
 set -euo pipefail
 if [[ "${1:-}" == storyboard && "${2:-}" == run ]]; then
   touch "$ADCP_INTEROP_RUNNER_MARKER"
-  exec "$ADCP_INTEROP_REAL_RUNNER" storyboard run --adcp-version 3.2.7 "${@:3}"
+  exec "$ADCP_INTEROP_REAL_RUNNER" storyboard run --compliance-version 3.2.7 "${@:3}"
 fi
 exec "$ADCP_INTEROP_REAL_RUNNER" "$@"
 RUNNER
