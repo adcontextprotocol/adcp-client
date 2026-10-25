@@ -1,5 +1,31 @@
 # Changelog
 
+## 17.0.0-beta.0
+
+### Major Changes
+
+- 8a04f48: Breaking in SDK 17: project the AAO HTML-markup legacy formats (`display_html` and every `display_WxH_html`) to `display_tag` with inline-markup delivery instead of `html5`, following adcontextprotocol/adcp#8339. `html5` describes a seller-hosted zip bundle. These formats take HTML markup that the seller renders verbatim. The public helpers' return values and projected wire shapes change in this major release; SDK 16 keeps its existing mapping.
+  - **Discovery.** The bundled catalog now annotates these formats with an `html_creative` `display_tag` slot and `supported_delivery_types: ['inline_markup']`. The projector copies the new catalog hint `canonical.supported_delivery_types` into `params.supported_delivery_types`, alongside the format's fixed width and height.
+  - **Legacy delivery.** A `display_tag` inline-markup creative selects the seller's exact `display_WxH_html` ref. Selection matches the size from `format_parameters`, or from the creative's single rendered `zip`/`html`/`display_tag` asset size when `format_parameters` is absent. The markup is emitted byte-for-byte as the legacy `html` asset's `content` under `html_creative`. A `display_tag` creative only matches refs that accept its delivery type, so inline markup never routes to the tag-URL `display_js`, and a tag URL never routes to an `_html` format.
+  - **Canonical reads.** On the canonical wire, a legacy `html_creative` asset reads back as an inline-markup `display_tag` asset with `markup_type: 'standard'`.
+  - **Behavior change (intended).** An `html5` zip creative no longer matches a product that offers only these formats. `resolveCanonicalFormatKind` and `canonicalDeclarationFromBareId` now return `display_tag` for `_html` ids, including the `assetType: 'html5'` local alias. `display_js` is unchanged.
+  - **Migration.** Code that classified HTML snippets as `html5` must send `display_tag` with an `inline_markup` asset, and code branching on the bare-ID helpers' return values must accept `display_tag`. Delivery filtering also refuses inline-markup or paired-redirect creatives when a legacy ref accepts only tag URLs. The legacy wire preserves markup bytes but cannot carry `markup_type` or `macro_declarations`. See `docs/migration-16-to-17.md`.
+  - **Multi-size projection.** Declarations whose first legacy ref has no size in its ID retain their seller-asserted refs and the lossy-multi-size diagnostic instead of expanding into potentially unrelated catalog families.
+
+- 8a04f48: Adopt the signed AdCP 3.3.0-beta.0 bundle for SDK 17 beta, regenerating public types, runtime schemas and tool metadata. Add typed `listCollections` and `listProposals` client and server APIs, exact advertised-preview negotiation, and fail-closed account resolution on served 3.3 routes. Retain stable AdCP 3.2.7, 3.1.29 and 3.0.25 schema/compliance bundles. SDK 17 previews publish under `beta`; npm `latest` remains on SDK 16. Identity/Web Bot Auth and reporting storage retain their experimental policies. See `docs/migration-16-to-17.md` for the protocol and creative migration.
+
+  The standalone commercial-terms verifier enforces the 3.3 collection-list reference uniqueness rules and fails closed on definition-pin flows that need current-source verification. Until that verification is implemented, use the seller-served stable 3.2.7 contract for those snapshot-verification flows. Default preview servers advertise their exact supported release window, and the new synchronous discovery tools suppress automatic task webhook registration.
+
+  Capability discovery uses a version-neutral probe for preview clients so stable sellers can advertise their supported releases before ordinary requests negotiate a downgrade. Standalone reporting status and consumer-status handlers preserve the selected wire release on replies, including failure envelopes, instead of stamping the SDK primary preview on stable callers.
+
+  Refuse canonical inline-markup creatives with `macro_declarations` when targeting legacy HTML delivery, preserving macro resolution semantics through an explicit projection error instead of silently dropping declarations.
+
+### Minor Changes
+
+- 505ddc9: Add version-aware media-buy lifecycle validation for AdCP 3.3 creative review. `getMediaBuyTransitions(adcpVersion)` and the optional version argument on the existing transition helpers permit `pending_start` to return to `pending_creatives` when seller review creates buyer work before activation. Older releases retain their existing graph, and active, paused, and terminal-state protections remain unchanged. The storyboard `status.monotonic` invariant uses the same release-specific graph, honoring the seller's response version before the requested pin, including nested media-buy reads.
+
+  Support `update_creative_start_policy` as an operational action in buyer preflight and seller action projection, with explicit live seller authority and exact package scope rather than a fabricated commercial change term. Require the 3.3 contract, preserve independent `sync_creatives` routing, and consume the startup field's task and update bindings from schema generation without changing the SDK's default AdCP pin.
+
 ## 16.5.0
 
 ### Minor Changes
