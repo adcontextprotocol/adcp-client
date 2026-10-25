@@ -7,3 +7,5 @@ Adopt the signed AdCP 3.3.0-beta.0 bundle for SDK 17 beta, regenerating public t
 The standalone commercial-terms verifier enforces the 3.3 collection-list reference uniqueness rules and fails closed on definition-pin flows that need current-source verification. Until that verification is implemented, use the seller-served stable 3.2.7 contract for those snapshot-verification flows. Default preview servers advertise their exact supported release window, and the new synchronous discovery tools suppress automatic task webhook registration.
 
 Capability discovery uses a version-neutral probe for preview clients so stable sellers can advertise their supported releases before ordinary requests negotiate a downgrade. Standalone reporting status and consumer-status handlers preserve the selected wire release on replies, including failure envelopes, instead of stamping the SDK primary preview on stable callers.
+
+Refuse canonical inline-markup creatives with `macro_declarations` when targeting legacy HTML delivery, preserving macro resolution semantics through an explicit projection error instead of silently dropping declarations.

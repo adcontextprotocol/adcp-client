@@ -1257,7 +1257,7 @@ function projectLegacyAssetKeys(assetsValue: unknown, definition: V1FormatDefini
  * Legacy HTML-markup formats (`display_html`, `display_WxH_html`) take markup
  * as an `html` asset; canonically it is a `display_tag` inline-markup asset
  * (adcontextprotocol/adcp#8339). Carry the bytes into the legacy `content`.
- * `delivery_type`, `markup_type` and `macro_declarations` have no legacy field.
+ * `delivery_type` and `markup_type` have no legacy field; declared macros must be refused.
  */
 function renderedSizeFields(asset: Record<string, unknown>): Record<string, unknown> {
   // The 3.3 schema makes fixed dimensions and responsive sizes exclusive.
@@ -1270,7 +1270,12 @@ function renderedSizeFields(asset: Record<string, unknown>): Record<string, unkn
   return asset.sizes !== undefined ? { sizes: asset.sizes } : {};
 }
 
-function projectInlineMarkupToLegacyHtml(assetsValue: unknown, definition: V1FormatDefinition | undefined): unknown {
+function projectInlineMarkupToLegacyHtml(
+  assetsValue: unknown,
+  definition: V1FormatDefinition | undefined,
+  operation: string,
+  creativeId: string
+): unknown {
   const assets = record(assetsValue);
   if (!assets || !Array.isArray(definition?.assets)) return assetsValue;
   const slots = definition.assets.filter(slot => record(slot) !== undefined);
@@ -1283,6 +1288,13 @@ function projectInlineMarkupToLegacyHtml(assetsValue: unknown, definition: V1For
       const asset = record(value);
       if (asset?.asset_type !== 'display_tag' || asset.delivery_type !== 'inline_markup') return [key, value];
       if (typeof asset.markup !== 'string') return [key, value];
+      if (asset.macro_declarations !== undefined) {
+        throw new CreativeFormatProjectionError(
+          operation,
+          creativeId,
+          'legacy HTML cannot preserve macro_declarations; use canonical display_tag delivery for declared macros'
+        );
+      }
       changed = true;
       return [
         key,
@@ -1344,7 +1356,8 @@ function legacyHtmlToInlineMarkup(creative: Record<string, unknown>, paramsValue
 function projectCreative<T extends Record<string, unknown>>(
   creative: T,
   formatId: V1FormatId,
-  legacyFormatDefinitions?: readonly V1FormatDefinition[]
+  legacyFormatDefinitions?: readonly V1FormatDefinition[],
+  operation = 'creative_delivery'
 ): T {
   const next: Record<string, unknown> = { ...creative };
   delete next.format_kind;
@@ -1372,7 +1385,12 @@ function projectCreative<T extends Record<string, unknown>>(
     // A bare-id alias can establish markup representation, but only an exact
     // or caller-supplied definition establishes the seller's asset slot IDs.
     next.assets = projectLegacyAssetKeys(
-      projectInlineMarkupToLegacyHtml(creative.assets, markupDefinition),
+      projectInlineMarkupToLegacyHtml(
+        creative.assets,
+        markupDefinition,
+        operation,
+        typeof creative.creative_id === 'string' ? creative.creative_id : '(unknown)'
+      ),
       definition
     );
   }
@@ -1723,7 +1741,8 @@ export function projectCreativeForDelivery<T extends CreativeAsset>(
       return projectCreative(
         creativeRecord,
         selectedOriginal,
-        legacyFormatDefinitions
+        legacyFormatDefinitions,
+        operation
       ) as unknown as LegacyProjectedCreative<T>;
     }
     throw new CreativeFormatProjectionError(
@@ -1734,7 +1753,12 @@ export function projectCreativeForDelivery<T extends CreativeAsset>(
   }
   const formatId = selectLegacyRef(creativeRecord, selectorContainer, canonicalFormatLegacyResolver, operation);
   if (formatId)
-    return projectCreative(creativeRecord, formatId, legacyFormatDefinitions) as unknown as LegacyProjectedCreative<T>;
+    return projectCreative(
+      creativeRecord,
+      formatId,
+      legacyFormatDefinitions,
+      operation
+    ) as unknown as LegacyProjectedCreative<T>;
 
   if (typeof creativeRecord.format_kind === 'string') {
     const creativeId = typeof creativeRecord.creative_id === 'string' ? creativeRecord.creative_id : '(unknown)';
@@ -1776,14 +1800,16 @@ export function projectCreativeForDelivery<T extends CreativeAsset>(
       return projectCreative(
         creativeRecord,
         resolved[0]!,
-        legacyFormatDefinitions
+        legacyFormatDefinitions,
+        operation
       ) as unknown as LegacyProjectedCreative<T>;
     const pinned = optionReference(creativeRecord.format_option_ref) !== undefined;
     if (candidates.length === 1 && !pinned) {
       return projectCreative(
         creativeRecord,
         candidates[0]!.ref,
-        legacyFormatDefinitions
+        legacyFormatDefinitions,
+        operation
       ) as unknown as LegacyProjectedCreative<T>;
     }
     if (candidates.length > 1) {

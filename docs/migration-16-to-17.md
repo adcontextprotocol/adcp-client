@@ -90,9 +90,10 @@ the SDK preserves that URL and converts inline markup to legacy HTML. It keeps
 the asset keys unless an exact or caller-supplied format definition identifies
 the seller's slots; a matching bare ID alone does not establish those slot names.
 
-The legacy HTML asset has no fields for `markup_type` or `macro_declarations`.
-Those metadata fields do not round-trip; when a legacy HTML creative is converted
-for a canonical request, its markup type defaults to `standard`. Existing legacy
+The legacy HTML asset has no field for `macro_declarations`. SDK 17 refuses that
+conversion before dispatch; deliver creatives with declared macros through the
+canonical `display_tag` contract. Legacy HTML also has no `markup_type` field;
+when converted for a canonical request, its markup type defaults to `standard`. Existing legacy
 request assets remain unchanged on the legacy wire. Explicit seller declarations
 retain their format kind and delivery types.
 

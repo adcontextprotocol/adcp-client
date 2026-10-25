@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   CreativeFormatProjectionError,
+  projectCreativeForDelivery,
   projectMediaBuyCreativesForDelivery,
   projectSyncCreativesForDelivery,
 } = require('../../dist/lib/v2/projection/index.js');
@@ -418,6 +419,43 @@ describe('inline-markup display_tag creatives round-trip to the HTML-markup lega
     assert.deepEqual(projected.assets, {
       html_creative: { asset_type: 'html', content: MARKUP, width: 300, height: 250 },
     });
+  });
+
+  test('refuses declared macros on both legacy mutation projections and preserves them on canonical delivery', () => {
+    const creative = inlineMarkupCreative({ width: 300, height: 250 });
+    creative.assets.html_creative.markup = '<div>%%TOKEN%%</div>';
+    creative.assets.html_creative.macro_declarations = [
+      {
+        declaration_id: 'unresolved-token',
+        token: '%%TOKEN%%',
+        dialect: 'unknown',
+        dialect_semantic: 'token',
+        mapping_status: 'unresolved',
+        operation: 'preserve',
+        location: { field: 'markup', occurrence: 0, context: 'opaque' },
+        encoding: { kind: 'none', depth: 0 },
+        required: false,
+        unavailable_behavior: 'preserve',
+      },
+    ];
+    for (const [operation, project] of [
+      ['sync_creatives', () => syncLegacy(creative, sizedHtmlRefs)],
+      [
+        'create_media_buy',
+        () =>
+          projectLegacy({ packages: [{ product_id: 'html-sizes', format_ids: sizedHtmlRefs, creatives: [creative] }] }),
+      ],
+    ]) {
+      assert.throws(project, error => {
+        assert.ok(error instanceof CreativeFormatProjectionError);
+        assert.equal(error.operation, operation);
+        assert.equal(error.creativeId, creative.creative_id);
+        assert.match(error.message, /macro_declarations.*canonical display_tag/);
+        return true;
+      });
+    }
+    const canonical = projectCreativeForDelivery(creative, { format_ids: sizedHtmlRefs }, 'canonical');
+    assert.deepEqual(canonical.assets, creative.assets);
   });
 
   test('maps a differently named inline-markup slot onto html_creative', () => {
