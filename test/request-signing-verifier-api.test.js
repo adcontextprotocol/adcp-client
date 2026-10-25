@@ -238,7 +238,7 @@ describe('verifier API v3: operation optional + VerifyResult discriminated union
     const signed = signRequest(
       { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
       { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: primaryPrivate },
-      { now: () => now, windowSeconds: 300, nonce: 'api-shape-test-xxxx' }
+      { now: () => now, windowSeconds: 300, nonce: 'api-shape-test-xxxx___' }
     );
     const result = await verifyRequestSignature(
       { method: 'POST', url, headers: signed.headers, body },
@@ -486,7 +486,7 @@ describe('verifier API v3: operation optional + VerifyResult discriminated union
     const signed = signRequest(
       { method: 'POST', url: webhookUrl, headers: { 'Content-Type': 'application/json' }, body },
       { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: primaryPrivate },
-      { now: () => now, windowSeconds: 300, nonce: 'webhook-signed-zzzz' }
+      { now: () => now, windowSeconds: 300, nonce: 'webhook-signed-zzzz___' }
     );
     const result = await verifyRequestSignature(
       { method: 'POST', url: webhookUrl, headers: signed.headers, body },
@@ -503,7 +503,7 @@ describe('verifier API v3: operation optional + VerifyResult discriminated union
     const signed = signRequest(
       { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
       { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: primaryPrivate },
-      { now: () => now, windowSeconds: 300, nonce: 'agent-url-test-yyyy' }
+      { now: () => now, windowSeconds: 300, nonce: 'agent-url-test-yyyy___' }
     );
     const result = await verifyRequestSignature(
       { method: 'POST', url, headers: signed.headers, body },

@@ -66,7 +66,8 @@ export type WebhookSignatureErrorCode =
   | 'webhook_signature_rate_abuse'
   | 'webhook_signature_invalid'
   | 'webhook_signature_digest_mismatch'
-  | 'webhook_signature_replayed';
+  | 'webhook_signature_replayed'
+  | 'webhook_body_malformed';
 
 export class WebhookSignatureError extends ADCPError {
   readonly code: WebhookSignatureErrorCode;

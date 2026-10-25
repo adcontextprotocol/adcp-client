@@ -27,8 +27,11 @@ import { buildSignatureBase, canonicalTargetUri, getHeaderValue } from './canoni
 import { contentDigestMatches, type SfBinaryEncoding } from './content-digest';
 import { RequestSignatureError, WebhookSignatureError } from './errors';
 import { AgentResolverError } from './agent-resolver/errors';
+import { StrictJsonError } from './agent-resolver/strict-json';
+import { assertSignedBodyWellFormed } from './body-validation';
 import { BrandJsonResolverError } from './brand-jwks';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
+import { isValidSigningNonce } from './nonce';
 import { jwkToPublicKey, verifySignatureAsync } from './crypto';
 import type { JwksResolution, JwksResolver } from './jwks';
 import { assertPublisherPins, type PublisherSigningKeyPin } from './publisher-pins';
@@ -111,7 +114,7 @@ export interface VerifyWebhookResult {
 /**
  * Verify an inbound webhook's RFC 9421 signature.
  *
- * Checklist steps 1–13 plus sub-step 9a, matching the canonical numbering
+ * Checklist steps 1–14 plus sub-step 9a, matching the canonical numbering
  * in `security.mdx#verifier-checklist-for-webhooks` (and the `failed_step`
  * values on the conformance vectors at
  * `test-vectors/webhook-signing/negative/`). Throws
@@ -393,6 +396,19 @@ export async function verifyWebhookSignature(
     );
   }
 
+  // Step 14: authenticate and burn the nonce before rejecting malformed JSON.
+  // A replay of this validly signed frame then stops before crypto verification.
+  try {
+    assertSignedBodyWellFormed(request.body);
+  } catch (err) {
+    if (err instanceof StrictJsonError) {
+      throw new WebhookSignatureError('webhook_body_malformed', 14, 'Signed webhook body is not strict JSON', {
+        reason: err.code,
+      });
+    }
+    throw err;
+  }
+
   // A durable replay backend can block across the delegation boundary. The
   // delivery is not accepted until that atomic insert has completed, so check
   // the authorization one final time at the actual acceptance boundary.
@@ -444,6 +460,13 @@ function requireParams(parsed: ParsedSignatureInput): void {
       'webhook_signature_params_incomplete',
       2,
       `Signature-Input missing required parameter(s): ${missing.join(', ')}.`
+    );
+  }
+  if (!isValidSigningNonce(parsed.params.nonce)) {
+    throw new WebhookSignatureError(
+      'webhook_signature_params_incomplete',
+      2,
+      'Signature nonce must be unpadded Base64URL containing at least 16 bytes'
     );
   }
 }

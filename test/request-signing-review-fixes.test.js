@@ -258,7 +258,7 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
     assert.strictEqual(result.keyid, 'test-ed25519-2026');
   });
 
-  test('strict signed JSON rejects duplicate keys without committing the nonce', async () => {
+  test('strict signed JSON rejects duplicate keys after committing the nonce', async () => {
     const now = 1776520800;
     const url = 'https://seller.example.com/adcp/create_media_buy';
     const nonce = 'duplicate-json-key-nonce';
@@ -272,11 +272,11 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
       operation: 'create_media_buy',
       adcpVersion: '3.2.1',
     };
-    const signBody = body =>
+    const signBody = (body, signingNonce = nonce) =>
       signRequest(
         { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
         { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
-        { now: () => now, windowSeconds: 300, nonce, binaryEncoding: 'rfc8941-base64' }
+        { now: () => now, windowSeconds: 300, nonce: signingNonce, binaryEncoding: 'rfc8941-base64' }
       );
 
     const duplicateBody = '{"plan_id":"first","plan_id":"second"}';
@@ -288,8 +288,13 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
 
     const validBody = '{"plan_id":"valid"}';
     const valid = signBody(validBody);
+    await assert.rejects(
+      () => verifyRequestSignature({ method: 'POST', url, headers: valid.headers, body: validBody }, options),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_replayed'
+    );
+    const fresh = signBody(validBody, Buffer.alloc(16, 1).toString('base64url'));
     const result = await verifyRequestSignature(
-      { method: 'POST', url, headers: valid.headers, body: validBody },
+      { method: 'POST', url, headers: fresh.headers, body: validBody },
       options
     );
     assert.strictEqual(result.keyid, 'test-ed25519-2026');
@@ -413,7 +418,13 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
         body,
       },
       { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: privateJwk },
-      { now: () => now, windowSeconds: 300, nonce, coverContentDigest: true, binaryEncoding: 'legacy-base64url' }
+      {
+        now: () => now,
+        windowSeconds: 300,
+        nonce: Buffer.from(nonce.padEnd(16, '_')).toString('base64url'),
+        coverContentDigest: true,
+        binaryEncoding: 'legacy-base64url',
+      }
     );
   const verifyAt = (signed, body, now, capabilityDigest, adcpVersion) =>
     verifyRequestSignature(
@@ -500,7 +511,7 @@ describe('AdCP 3.2 RFC 8941 binary profile', () => {
       return { headers: { ...headers, Signature: `sig1=:${encoded}:` } };
     };
 
-    const strict = resignWithDigest('rfc8941-base64', 'digest-alphabet-nonce');
+    const strict = resignWithDigest('rfc8941-base64', 'digest-alphabet-nonce__');
     for (const digestPolicy of ['either', 'required']) {
       await assert.rejects(() => verifyAt(strict, body, now, digestPolicy, '3.2'), isMalformedAtStep(11));
     }

@@ -93,7 +93,7 @@ describe('verifySignatureAsAuthenticator default stores', () => {
 
   it('accepts a valid signature when replayStore/revocationStore are omitted', async () => {
     const auth = verifySignatureAsAuthenticator(baseOptionsWithoutStores());
-    const req = signedReq({ now, url, body, nonce: 'default-stores-01' });
+    const req = signedReq({ now, url, body, nonce: 'default-stores-01_____' });
     const result = await auth(req);
     assert.ok(result, 'should return a principal');
     assert.strictEqual(result.principal, 'signing:test-ed25519-2026');
@@ -727,7 +727,7 @@ describe('createExpressVerifier default stores', () => {
 
   it('accepts a valid signature when replayStore/revocationStore are omitted', async () => {
     const middleware = createExpressVerifier(baseOptionsWithoutStores());
-    const req = expressReq(sign('express-default-stores-01', body), body);
+    const req = expressReq(sign('express-default-stores-01_', body), body);
     const res = fakeRes();
     let nextCalled = false;
     await middleware(req, res, err => {
