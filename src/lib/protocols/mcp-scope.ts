@@ -1,12 +1,13 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-type ScopeCleanup = () => Promise<void>;
+type ScopeCleanup = (terminateSession: boolean) => Promise<void>;
 
 interface MCPConnectionScope {
   id: number;
   cacheKey: string;
   pending: Set<Promise<unknown>>;
   cleanups: Map<string, ScopeCleanup>;
+  signal?: AbortSignal;
 }
 
 const scopeStorage = new AsyncLocalStorage<MCPConnectionScope>();
@@ -58,7 +59,7 @@ export async function closeCurrentMCPConnectionScope(): Promise<boolean> {
   // the same workflow can register a fresh connection for the outer finally.
   const cleanups = [...scope.cleanups.values()];
   scope.cleanups.clear();
-  await Promise.allSettled(cleanups.map(cleanup => cleanup()));
+  await Promise.allSettled(cleanups.map(cleanup => cleanup(!scope.signal?.aborted)));
   return true;
 }
 
@@ -82,11 +83,23 @@ export async function closeCurrentMCPConnectionScope(): Promise<boolean> {
  * });
  * ```
  */
-export async function withMCPConnectionScope<T>(fn: () => Promise<T>, options: { isolate?: boolean } = {}): Promise<T> {
+export async function withMCPConnectionScope<T>(
+  fn: () => Promise<T>,
+  options: {
+    isolate?: boolean;
+    /** @internal Preserve seller work when an implicit task scope aborts. */ signal?: AbortSignal;
+  } = {}
+): Promise<T> {
   if (scopeStorage.getStore() && options.isolate !== true) return fn();
 
   const id = ++nextScopeId;
-  const scope: MCPConnectionScope = { id, cacheKey: `scope:${id}`, pending: new Set(), cleanups: new Map() };
+  const scope: MCPConnectionScope = {
+    id,
+    cacheKey: `scope:${id}`,
+    pending: new Set(),
+    cleanups: new Map(),
+    signal: options.signal,
+  };
   activeScopeKeys.add(scope.cacheKey);
   return scopeStorage.run(scope, async () => {
     try {

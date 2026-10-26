@@ -1301,7 +1301,8 @@ function projectInlineMarkupToLegacyHtml(
         {
           asset_type: 'html',
           content: asset.markup,
-          ...renderedSizeFields(asset),
+          // Rendered dimensions select the legacy ref; they are not part of
+          // the legacy HTML asset contract (introduced only in AdCP 3.3).
           ...(asset.provenance !== undefined && { provenance: asset.provenance }),
         },
       ];

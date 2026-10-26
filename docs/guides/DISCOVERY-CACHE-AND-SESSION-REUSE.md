@@ -115,7 +115,16 @@ const client = new AgentClient(seller, {
 
 The partition is local configuration. It is hashed into MCP connection, discovery, and signing-policy cache keys and never sent in headers or tool arguments. Keep it stable for the same authorization scope, and use distinct values for different principals even when they share a seller token. Partitions also separate sessions within a single `withMCPConnectionScope` workflow.
 
-Outside a connection scope, calls now open and close their own MCP sessions by default. To retain process-wide reuse, provide a nonempty `connectionPartition`, or set `transport: { connectionReuse: 'process' }` when every caller with the same credentials and routing headers represents one principal. A supplied `trustedFetchFn` continues to use one-shot sessions outside an explicit scope, including with a partition or process opt-in.
+Outside a connection scope, calls now open and close their own MCP sessions by default. To retain process-wide reuse, provide a nonempty `connectionPartition`, or set `transport: { connectionReuse: 'process' }` when every caller with the same credentials and routing headers represents one principal. Low-level calls with a supplied `trustedFetchFn` continue to use one-shot sessions outside a scope, including with a partition or process opt-in.
+
+High-level `SingleAgentClient` task and discovery methods create a scope for
+one operation when the caller has not configured reuse. Endpoint discovery,
+`tools/list`, capability preflight, and dispatch share that operation's sessions,
+which close when it finishes. Caller-owned scopes and explicit process reuse
+keep their existing lifetimes. A cold legacy endpoint still needs one v2 era
+classification handshake and one v1 Tasks-capable session; the credential- and
+policy-scoped classification is cached for five minutes, so later operations
+can go straight to their v1 session. Different credentials remain isolated.
 
 Successful calls and ordinary errors terminate one-shot sessions. When a call throws because it was cancelled or timed out, the SDK closes its client without sending DELETE, so it does not terminate work still running on the seller; remaining server session state follows the seller's TTL.
 

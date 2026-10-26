@@ -347,10 +347,10 @@ async function getOrCreateConnection(
           throw new Error(`MCP ${label} completed after connection teardown`);
         }
         connectionCache.set(cacheKey, client);
-        registerMCPConnectionScopeCleanup('legacy', cacheKey, async () => {
+        registerMCPConnectionScopeCleanup('legacy', cacheKey, async terminateSession => {
           if (connectionCache.get(cacheKey) !== client) return;
           connectionCache.delete(cacheKey);
-          await closeMCPClient(client);
+          await closeMCPClient(client, terminateSession);
         });
         evictLeastRecentlyUsed();
         return client;
@@ -451,10 +451,10 @@ async function getOrCreateOAuthConnection(
           throw new Error('OAuth MCP connection completed after connection teardown');
         }
         oauthConnectionCache.set(cacheKey, client);
-        registerMCPConnectionScopeCleanup('oauth', cacheKey, async () => {
+        registerMCPConnectionScopeCleanup('oauth', cacheKey, async terminateSession => {
           if (oauthConnectionCache.get(cacheKey) !== client) return;
           oauthConnectionCache.delete(cacheKey);
-          await closeMCPClient(client);
+          await closeMCPClient(client, terminateSession);
         });
         evictLeastRecentlyUsedOAuth();
         return client;

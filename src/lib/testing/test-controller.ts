@@ -7,6 +7,7 @@
 
 import type { TestClient } from './client';
 import { getLogger, resolveAccount } from './client';
+import { ProtocolFeatureUnsupportedError } from '../errors';
 import type { AgentProfile, TaskResult, TestOptions } from './types';
 import type { RecordedCall } from '../upstream-recorder/types';
 import type {
@@ -161,6 +162,10 @@ export async function detectController(
 
     return { detected: false };
   } catch (error) {
+    // A refused protocol pin invalidates the run, rather than establishing
+    // that an advertised controller is unavailable.
+    if (error instanceof ProtocolFeatureUnsupportedError && error.adcpError.details?.feature === 'adcp_version')
+      throw error;
     getLogger().warn(
       { tool: TOOL_NAME, error: error instanceof Error ? error.message : String(error) },
       'comply_test_controller list_scenarios failed — treating as unavailable'

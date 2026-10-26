@@ -28,7 +28,7 @@ const tallies = new Map();
 function tally(path) {
   let value = tallies.get(path);
   if (!value) {
-    value = { initialize: 0, lists: 0, capabilityCalls: 0, requests: 0 };
+    value = { initialize: 0, lists: 0, capabilityCalls: 0, requests: 0, deletes: 0, exchanges: [] };
     tallies.set(path, value);
   }
   return value;
@@ -45,12 +45,14 @@ before(async () => {
     const path = new URL(req.url, 'http://x').pathname;
     const state = tally(path);
     if (req.method === 'DELETE') {
+      state.deletes++;
       res.writeHead(200).end();
       return;
     }
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const message = raw ? JSON.parse(raw) : {};
+    state.exchanges.push({ method: message.method, authorization: req.headers.authorization });
     state.requests++;
     if (message.method === 'notifications/initialized') {
       res.writeHead(202).end();
@@ -91,6 +93,9 @@ before(async () => {
       };
     } else if (message.method === 'tools/call' && message.params?.name === 'get_adcp_capabilities') {
       state.capabilityCalls++;
+      if (path.startsWith('/cancel-call') && state.capabilityCalls === 2) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
       result = {
         content: [{ type: 'text', text: JSON.stringify(CAPABILITIES_PAYLOAD) }],
         structuredContent: CAPABILITIES_PAYLOAD,
@@ -136,6 +141,61 @@ function makeClient(agentUri, discoveryCache, agentOverrides = {}, configOverrid
 function sharing(cache, authIdentity = 'tenant-a', extra = {}) {
   return { cache, authIdentity, ...extra };
 }
+
+test('short-lived clients share discovery and dispatch setup within a call (#3444)', async () => {
+  const uri = freshAgentUri('/short-lived');
+  const state = tally(pathOf(uri));
+  const config = { adcpVersion: '3.2.1', wireAdcpVersion: '3.2' };
+  const first = makeClient(uri, undefined, { id: 'same-id', auth_token: 'buyer-a' }, config);
+  const result = await first.executeTask('get_adcp_capabilities', {});
+  assert.equal(result.success, true);
+  assert.equal(state.initialize, 2, 'one era-classification handshake plus one shared discovery/call session');
+  assert.equal(state.lists, 1);
+  assert.equal(state.capabilityCalls, 2);
+
+  const requestsBeforeSecondClient = state.exchanges.length;
+  const second = makeClient(uri, undefined, { id: 'same-id', auth_token: 'buyer-b' }, config);
+  assert.equal((await second.executeTask('get_adcp_capabilities', {})).success, true);
+  assert.equal(state.initialize, 4, 'a different bearer gets its own classification and session');
+  assert.ok(
+    state.exchanges.slice(requestsBeforeSecondClient).every(exchange => exchange.authorization === 'Bearer buyer-b')
+  );
+
+  const third = makeClient(uri, undefined, { id: 'same-id', auth_token: 'buyer-a' }, config);
+  assert.equal((await third.executeTask('get_adcp_capabilities', {})).success, true);
+  assert.equal(state.initialize, 5, 'a known legacy credential needs only the shared discovery/call session');
+  assert.equal(state.lists, 3);
+  assert.equal(state.capabilityCalls, 6);
+});
+
+test('getCapabilities shares discovery setup without an explicit connection scope', async () => {
+  const uri = freshAgentUri('/capabilities-session');
+  const capabilities = await makeClient(uri).getCapabilities();
+  assert.equal(capabilities.version, 'v3');
+  assert.equal(tally(pathOf(uri)).initialize, 2);
+  assert.equal(tally(pathOf(uri)).lists, 1);
+  assert.equal(tally(pathOf(uri)).capabilityCalls, 1);
+});
+
+test('an aborted implicit client scope closes locally without terminating seller work', async () => {
+  const uri = freshAgentUri('/cancel-call');
+  const state = tally(pathOf(uri));
+  const client = makeClient(uri, undefined, {}, { adcpVersion: '3.2.1', wireAdcpVersion: '3.2' });
+  const controller = new AbortController();
+  const pending = client.executeTask('get_adcp_capabilities', {}, undefined, { signal: controller.signal });
+  // Capture rejection immediately while waiting for the dispatched request.
+  const settled = pending.then(
+    result => ({ result }),
+    error => ({ error })
+  );
+  while (state.capabilityCalls < 2) await new Promise(resolve => setTimeout(resolve, 5));
+  const deletesBeforeAbort = state.deletes;
+  controller.abort();
+  const outcome = await settled;
+  if (outcome.error) assert.match(outcome.error.message, /abort|cancel|timeout/i);
+  else assert.equal(outcome.result.success, false);
+  assert.equal(state.deletes, deletesBeforeAbort, 'cancellation must not send a session DELETE');
+});
 
 describe('shared discovery cache', () => {
   test('two clients for the same agent URL and auth identity make one capabilities round trip within the TTL', async () => {

@@ -3574,6 +3574,7 @@ async function prepareStoryboardFixturesBody(
   options = preparationOptions;
   try {
     let profile = options._profile;
+    let discoveryStep: TestStepResult | undefined;
     const suppliedFailure =
       profile &&
       describeProfileDiscoveryFailure(
@@ -3588,8 +3589,9 @@ async function prepareStoryboardFixturesBody(
         { status: 'failed', detail: suppliedFailure.error ?? 'agent discovery failed' }
       );
     }
-    if (!profile && !resolution.reusedShared) {
+    if (!profile) {
       const discovered = await getOrDiscoverStoryboardProfile(client, options);
+      discoveryStep = discovered.evidence ?? discovered.step;
       if (discovered.step.passed === false) {
         const failed = buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step, discovered.profile);
         return await finishPreparation(
@@ -3610,6 +3612,46 @@ async function prepareStoryboardFixturesBody(
       };
     }
     if (!scopeStillMatches()) return await refusePreparation(driftRefusal);
+    const unmetDetail =
+      evaluateStoryboardCapabilityGates(storyboard, profile, options.agentTools, options.adcpVersion) ??
+      (storyboard.required_tools?.length &&
+      options.agentTools &&
+      !hasAnyRequiredTool(storyboard.required_tools, options.agentTools)
+        ? `agent does not advertise any of [${storyboard.required_tools.join(', ')}]`
+        : null);
+    if (unmetDetail !== null) {
+      const duration = discoveryStep?.duration_ms ?? 0;
+      return await finishPreparation(
+        {
+          phase: {
+            phase_id: 'discovery',
+            phase_title: 'Agent capability discovery',
+            passed: true,
+            duration_ms: duration,
+            steps: [
+              {
+                storyboard_id: storyboard.id,
+                phase_id: 'discovery',
+                step_id: 'discovery',
+                title: discoveryStep ? 'Agent capability discovery' : 'Supplied agent capability profile',
+                task: discoveryStep?.task ?? '',
+                passed: true,
+                duration_ms: duration,
+                validations: [],
+                context: {},
+                extraction: discoveryStep?.extraction ?? { path: 'none' },
+                ...(discoveryStep?.request && { request: discoveryStep.request }),
+                ...(discoveryStep?.response_record && { response_record: discoveryStep.response_record }),
+              },
+            ],
+          },
+          allPassed: true,
+          passedCount: 1,
+          failedCount: 0,
+        },
+        { status: 'unsupported', reason: 'not_applicable', detail: unmetDetail }
+      );
+    }
     const context = createRunContext(storyboard, options).context;
     const seeding = await runControllerSeeding(client, storyboard, options, context);
     if (!seeding) {
