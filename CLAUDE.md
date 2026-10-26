@@ -134,9 +134,9 @@ Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to 
 
 **IMPORTANT**: This project uses **Changesets** for version management and releases.
 
-### 🧪 SDK 16 is in changesets pre-mode (beta)
+### 🧪 SDK 17 is in changesets pre-mode (beta)
 
-`.changeset/pre.json` puts releases into pre-mode with the `beta` tag. Every release from `main` publishes as `16.0.0-beta.N` under the npm `beta` dist-tag, and `latest` stays on 15.x. This repo uses `@changesets/cli` 3.x, whose `pre.json` holds only `mode` and `tag` (3.x drops the 2.x `initialVersions`/`changesets` fields). Don't add them back. Pre-mode ends with `npx changeset pre exit` once the first adopter's SDK 16 cutover activates cleanly. That's a release-owner decision, so don't run it unprompted.
+`.changeset/pre.json` puts `main` into pre-mode with the `beta` tag. Every release from `main` publishes as `17.0.0-beta.N` under the npm `beta` dist-tag, and `latest` stays on SDK 16, which is maintained from the `16.x` branch (see [`docs/development/NPM-DIST-TAGS.md`](./docs/development/NPM-DIST-TAGS.md)). This repo uses `@changesets/cli` 3.x, whose `pre.json` holds only `mode` and `tag` (3.x drops the 2.x `initialVersions`/`changesets` fields). Don't add them back. Leaving pre-mode with `npx changeset pre exit` is a release-owner decision, so don't run it unprompted.
 
 ### 📦 When to Create a Changeset
 

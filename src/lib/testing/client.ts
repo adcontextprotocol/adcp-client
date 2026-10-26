@@ -1,3 +1,4 @@
+import { hasUnsignedCapabilityBootstrap } from '../signing/protocol-methods';
 /**
  * Test client utilities for AdCP Agent E2E Testing
  */
@@ -107,6 +108,8 @@ interface TestClientVersionOptions {
   maxResponseBytes?: number;
   requestTimeoutMs?: number;
   legacyCompatEnabled?: boolean;
+  connectionPartition?: string;
+  connectionReuse?: 'process';
 }
 
 /**
@@ -314,6 +317,8 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
       ...(requestScopeMode !== undefined && { requestScopeMode }),
       ...(requestSigningMode !== undefined && { requestSigningMode }),
       ...(options.auth?.type === 'oauth' && options.auth.storage && { oauthStorage: options.auth.storage }),
+      connectionPartition: transport?.connectionPartition,
+      connectionReuse: transport?.connectionReuse,
       ...(transport?.trustedFetchFn && { fetchFn: transport.trustedFetchFn }),
       ...(transport?.allowPrivateIp !== undefined && { allowPrivateIp: transport.allowPrivateIp }),
       ...(transport?.maxResponseBytes !== undefined && {
@@ -399,6 +404,8 @@ function testClientMatchesVersionOptions(client: TestClient, agentUrl: string, o
     meta.requestScopeMode === expectedRequestScopeMode &&
     meta.requestSigningMode === expectedRequestSigningMode &&
     meta.oauthStorage === expectedOAuthStorage &&
+    meta.connectionPartition === expectedTransport?.connectionPartition &&
+    meta.connectionReuse === expectedTransport?.connectionReuse &&
     meta.fetchFn === expectedTransport?.trustedFetchFn &&
     meta.allowPrivateIp === expectedTransport?.allowPrivateIp &&
     meta.maxResponseBytes === expectedTransport?.maxResponseBytes &&
@@ -498,6 +505,8 @@ function requestSigningReuseMode(config: AgentRequestSigningConfig | undefined):
         jwksUri: config.jwks_uri,
         signSupported: config.sign_supported === true,
         alwaysSign: config.always_sign ?? [],
+        alwaysSignProtocolMethods: config.always_sign_protocol_methods ?? [],
+        unsignedCapabilityBootstrap: hasUnsignedCapabilityBootstrap(config),
       })
     )
     .digest('hex')
@@ -624,7 +633,10 @@ export function seedTestClientSigningCapability(client: TestClient, profile: Age
     meta?.adcpVersion ??
     (typeof clientAccess.getAdcpVersion === 'function' ? clientAccess.getAdcpVersion.call(client) : undefined) ??
     adcpVersion;
-  const signingContext = buildAgentSigningContext(agent, { adcpVersion: effectiveVersion });
+  const signingContext = buildAgentSigningContext(agent, {
+    adcpVersion: effectiveVersion,
+    connectionPartition: meta?.connectionPartition,
+  });
   if (!signingContext) return;
   signingContext.cache.set(signingContext.capabilityCacheKey, {
     requestSigning: (raw as { request_signing?: VerifierCapability }).request_signing,
@@ -1360,7 +1372,7 @@ export function validateResponseSchema(toolName: string, data: unknown, response
   // responses. See `utils/envelope-status-compat.ts`.
   const compatData =
     data && typeof data === 'object' && !Array.isArray(data)
-      ? injectLegacyEnvelopeStatus(data as Record<string, unknown>, { toolName })
+      ? injectLegacyEnvelopeStatus(data as Record<string, unknown>, { toolName, adcpVersion: responseAdcpVersion })
       : data;
   const result = schema.safeParse(prepareResponseForSchemaValidation(toolName, compatData, responseAdcpVersion));
   if (result.success) {

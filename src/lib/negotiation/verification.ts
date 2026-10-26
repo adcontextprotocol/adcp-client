@@ -1589,6 +1589,39 @@ function validateCommercialTermsSemantics(
 
   const issues: Array<{ path: string; message: string }> = [];
   if (!Array.isArray(terms.purchases)) return issues;
+  if (isRecord(schema.properties) && 'definition_pins' in schema.properties) {
+    const referencesDefinition = (value: unknown): boolean => {
+      if (Array.isArray(value)) return value.some(referencesDefinition);
+      if (!isRecord(value)) return false;
+      if (
+        ['placement_selection', 'collection_selection', 'signal_targeting', 'signal_targeting_groups'].some(
+          key => value[key] !== undefined
+        )
+      )
+        return true;
+      if (
+        typeof value.publisher_domain === 'string' &&
+        ('format_option_id' in value || 'placement_id' in value || 'collection_id' in value)
+      )
+        return true;
+      if (typeof value.data_provider_domain === 'string' && 'signal_id' in value) return true;
+      return Object.entries(value).some(
+        ([key, child]) => key !== 'ext' && key !== 'context' && referencesDefinition(child)
+      );
+    };
+    for (const [index, purchase] of terms.purchases.entries()) {
+      if (
+        isRecord(purchase) &&
+        (referencesDefinition(purchase.format_option_refs) || referencesDefinition(purchase.targeting_overlay))
+      )
+        issues.push({
+          path: `/commercial_terms/purchases/${index}`,
+          message:
+            'third-party definition references require current-source pin verification, which this beta snapshot verifier does not provide',
+        });
+    }
+    if (issues.length) return issues;
+  }
   // Budget, min-spend, and bidding amounts in the reviewed schemas are scalar
   // amounts in this shared currency. Their closed schemas reject a separate
   // currency property; there is no second denomination to compare here.

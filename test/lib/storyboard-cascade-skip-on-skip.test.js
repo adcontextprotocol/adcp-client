@@ -1614,3 +1614,171 @@ describe('runStoryboard cascade-skip matrix: coverage report', () => {
     );
   });
 });
+
+describe('runner-owned webhook cascade classification (#3207)', () => {
+  for (const task of ['expect_webhook', 'expect_no_webhook', 'expect_webhook_retry_keys_stable']) {
+    test(`${task} reports a failed prerequisite rather than an unadvertised seller tool`, async () => {
+      const agent = await startFakeAgent();
+      try {
+        const storyboard = storyboardWith([
+          step('failure', '__test_fail'),
+          step('observe', task, { timeout_seconds: 0 }),
+        ]);
+        const result = await runStoryboard(agent.url, storyboard, {
+          protocol: 'mcp',
+          allow_http: true,
+          agentTools: ['__test_fail'],
+          _profile: { name: 'Cascade', tools: [{ name: '__test_fail' }] },
+          webhook_receiver: {},
+        });
+        const observed = result.phases[0].steps[1];
+        assert.equal(observed.skipped, true);
+        assert.equal(observed.passed, false);
+        assert.equal(observed.skip_reason, 'prerequisite_failed');
+        assert.equal(observed.skip.reason, 'prerequisite_failed');
+        assert.equal(result.overall_passed, false);
+      } finally {
+        await stopAgent(agent);
+      }
+    });
+  }
+});
+
+test('an optional-only storyboard with no executed coverage does not pass', async () => {
+  const agent = await startFakeAgent();
+  try {
+    const storyboard = storyboardWithPhases([
+      { id: 'optional', title: 'Optional', optional: true, steps: [step('missing', '__test_missing')] },
+    ]);
+    const result = await runWith(agent, storyboard, []);
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.passed_count, 0);
+    assert.equal(result.overall_passed, false);
+  } finally {
+    await stopAgent(agent);
+  }
+});
+
+test('a passing optional phase cannot conceal a failed prerequisite in another optional phase', async () => {
+  const agent = await startFakeAgent();
+  try {
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'missing_state',
+        title: 'Missing state',
+        optional: true,
+        steps: [step('missing', '__test_missing'), step('downstream', '__test_assert')],
+      },
+      {
+        id: 'independent',
+        title: 'Independent read',
+        optional: true,
+        depends_on: [],
+        steps: [step('read', '__test_setup', { stateful: false })],
+      },
+    ]);
+    const result = await runWith(agent, storyboard, ['__test_assert', '__test_setup']);
+    assert.equal(result.failed_count, 0);
+    assert.ok(result.passed_count > 0);
+    assert.ok(result.phases[0].steps.some(step => step.skip_reason === 'prerequisite_failed'));
+    assert.equal(result.overall_passed, false);
+  } finally {
+    await stopAgent(agent);
+  }
+});
+
+test('a passing optional phase cannot conceal an executed failure in a sibling optional phase', async () => {
+  const agent = await startFakeAgent();
+  try {
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'failure',
+        title: 'Failure',
+        optional: true,
+        steps: [step('bad', '__test_fail'), step('peer', '__test_missing_peer')],
+      },
+      {
+        id: 'read',
+        title: 'Read',
+        optional: true,
+        depends_on: [],
+        steps: [step('read', '__test_setup', { stateful: false })],
+      },
+    ]);
+    const result = await runWith(agent, storyboard, ['__test_fail', '__test_setup']);
+    assert.equal(result.failed_count, 0, 'optional failures do not count as required seller failures');
+    assert.equal(result.phases[0].passed, false);
+    assert.ok(result.passed_count > 0);
+    assert.equal(result.overall_passed, false);
+  } finally {
+    await stopAgent(agent);
+  }
+});
+
+for (const winningBranch of [false, true]) {
+  test(`an optional any_of set ${winningBranch ? 'passes with a contributing peer' : 'cannot be rescued by an unrelated read'}`, async () => {
+    const agent = await startFakeAgent();
+    try {
+      const branch_set = { id: 'alternative', semantics: 'any_of' };
+      const storyboard = storyboardWithPhases([
+        { id: 'a', title: 'A', optional: true, branch_set, steps: [step('a', '__test_fail')] },
+        {
+          id: 'b',
+          title: 'B',
+          optional: true,
+          branch_set,
+          steps: [step('b', winningBranch ? '__test_setup' : '__test_fail', { contributes_to: 'alternative' })],
+        },
+        {
+          id: 'independent',
+          title: 'Read',
+          optional: true,
+          depends_on: [],
+          steps: [step('read', '__test_setup', { stateful: false })],
+        },
+      ]);
+      const result = await runWith(agent, storyboard, ['__test_fail', '__test_setup']);
+      assert.equal(result.failed_count, 0);
+      assert.ok(result.passed_count > 0);
+      assert.equal(result.overall_passed, winningBranch);
+    } finally {
+      await stopAgent(agent);
+    }
+  });
+}
+
+test('an optional contributing phase that later fails cannot be excused as its own any_of peer', async () => {
+  const agent = await startFakeAgent();
+  try {
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'contributor',
+        title: 'Contributor',
+        optional: true,
+        branch_set: { id: 'alternative', semantics: 'any_of' },
+        steps: [step('contribute', '__test_setup', { contributes_to: 'alternative' }), step('bad', '__test_fail')],
+      },
+      {
+        id: 'gate',
+        title: 'Gate',
+        optional: true,
+        depends_on: [],
+        steps: [
+          {
+            id: 'gate',
+            title: 'Gate',
+            task: 'assert_contribution',
+            validations: [{ check: 'any_of', allowed_values: ['alternative'], description: 'One branch contributed' }],
+          },
+        ],
+      },
+    ]);
+    const result = await runWith(agent, storyboard, ['__test_fail', '__test_setup']);
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.phases[0].passed, false);
+    assert.equal(result.phases[1].passed, true);
+    assert.equal(result.overall_passed, false);
+  } finally {
+    await stopAgent(agent);
+  }
+});

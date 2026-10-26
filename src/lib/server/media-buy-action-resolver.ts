@@ -53,7 +53,12 @@ export interface SellerActionResolutionOptions {
   /** Separately assess this request without replacing the full live projection. */
   request?: UpdateMediaBuyRequestLike;
   /** Noncommercial metadata authority is explicit, never fabricated as a proposal term. */
-  metadata?: { update_name?: SellerActionDecision };
+  metadata?: {
+    update_name?: SellerActionDecision;
+    /** Seller-owned scope identifies packages which have never been enabled
+     * for serving. Aggregate buy status cannot establish that fact. */
+    update_creative_start_policy?: SellerActionDecision;
+  };
   now?: number;
 }
 export interface SellerActionResolution {
@@ -343,6 +348,51 @@ export const mediaBuyActionResolver = {
                 reason: 'condition_unresolved',
                 certainty: 'unknown',
                 message: 'Explicit seller metadata gates must all admit this action.',
+              }
+        );
+    }
+    const startup = input.metadata?.update_creative_start_policy;
+    if (startup) {
+      const scope = Array.isArray(startup.applicable_package_ids) ? startup.applicable_package_ids : undefined;
+      const entry: LiveMediaBuyAction = {
+        action: 'update_creative_start_policy',
+        mode: 'self_serve',
+        task: startup.task ?? 'control_media_buy',
+        ...(scope && { applicable_package_ids: [...scope] }),
+        ...(startup.sla && { sla: structuredClone(startup.sla) }),
+      };
+      // The supplied seller scope is the authority. A non-mutating probe lets
+      // the same package/version/task checks validate the full projection even
+      // when there is no particular buyer request yet.
+      const request = scope
+        ? { packages: scope.map(package_id => ({ package_id, start_requires_all_creatives_approved: false })) }
+        : undefined;
+      const result = assessActionAvailability(
+        { ...input.buy, available_actions: [entry] },
+        entry.action as MediaBuyAction,
+        {
+          adcpVersion: input.adcpVersion ?? ADCP_VERSION,
+          request,
+        }
+      );
+      if (
+        input.wireVersion !== '3.1' &&
+        startup.authorization === true &&
+        startup.governance === true &&
+        startup.policy === true &&
+        result.status === 'available_now'
+      )
+        available_actions.push(entry);
+      else
+        unavailable.push(
+          result.status === 'currently_unavailable'
+            ? result
+            : {
+                status: 'currently_unavailable',
+                action: 'update_creative_start_policy',
+                reason: 'condition_unresolved',
+                certainty: 'unknown',
+                message: 'Explicit seller startup gates and a supported wire projection must admit this action.',
               }
         );
     }

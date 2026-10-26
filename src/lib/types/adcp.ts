@@ -328,7 +328,8 @@ export interface AdcpPrivateJsonWebKey {
  * outbound MCP/A2A calls are gated by the seller's advertised
  * `request_signing` capability block (fetched once via `get_adcp_capabilities`
  * and cached): operations listed in `required_for` / `supported_for` (or
- * `always_sign`) are signed with this key per RFC 9421.
+ * `always_sign`) are signed with this key per RFC 9421. Protocol methods use
+ * the separate `protocol_methods_*` lists and `always_sign_protocol_methods`.
  *
  * Content-digest coverage is resolved per request from the seller's
  * advertised `covers_content_digest` policy: `required` covers, `forbidden`
@@ -352,7 +353,14 @@ export interface AgentRequestSigningOperationOverrides {
    */
   always_sign?: string[];
   /**
-   * When true, also sign operations the seller lists in `supported_for` (but
+   * Exact JSON-RPC methods to sign even before seller capability discovery.
+   * Uses slash-path/PascalCase wire names, e.g. `tasks/cancel` or `CancelTask`.
+   * Separate from AdCP operation overrides; `tools/call` is forbidden.
+   */
+  always_sign_protocol_methods?: string[];
+  /**
+   * When true, also sign operations/methods listed in `supported_for` or
+   * `protocol_methods_supported_for` (but
    * not `required_for`). Defaults to false — conservative "sign what the
    * seller asks for" behavior.
    */

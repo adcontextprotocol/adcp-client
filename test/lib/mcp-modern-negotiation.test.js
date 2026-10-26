@@ -238,7 +238,7 @@ test('modern discovery is reused within the same authorization context', async t
     { transport: { fetchFn: countingFetch } }
   );
   const beforeOAuthDiscovery = discoverRequests;
-  const oauthInfo = await oauthClient.getAgentInfo();
+  const oauthInfo = await withMCPConnectionScope(() => oauthClient.getAgentInfo());
   assert.ok(oauthInfo.tools.some(tool => tool.name === 'echo'));
   assert.equal(
     discoverRequests,

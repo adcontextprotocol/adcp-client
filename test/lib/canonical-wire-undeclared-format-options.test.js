@@ -1177,3 +1177,32 @@ describe('canonical wire: composed resolvers keep the origin of their stored rou
     assert.strictEqual(pkg.format_kind, option.format_kind);
   });
 });
+
+test('a per-call principal partition bypasses the configured product cache', async () => {
+  const seller = await canonicalSeller(
+    [pairedProduct()],
+    { productCache: createProductCache(), transport: { connectionPartition: 'principal-a' } },
+    { cacheScope: 'account' }
+  );
+  try {
+    const request = { buying_mode: 'brief', brief: 'Display', account: ACCOUNT };
+    await seller.agent.getProducts(request);
+    await seller.agent.getProducts(request);
+    assert.strictEqual(seller.captured.productReads.length, 1);
+    await seller.agent.getProducts(request, { transport: { connectionPartition: 'principal-b' } });
+    await seller.agent.getProducts(request, { transport: { connectionPartition: 'principal-b' } });
+    assert.strictEqual(
+      seller.captured.productReads.length,
+      3,
+      'another principal must neither read nor populate the configured cache'
+    );
+    await seller.agent.getProducts(request);
+    assert.strictEqual(
+      seller.captured.productReads.length,
+      3,
+      'the original principal retains its own cached response'
+    );
+  } finally {
+    await seller.close();
+  }
+});

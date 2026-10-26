@@ -1982,13 +1982,14 @@ function assertResolvedAccountMatchesRef<T extends { id: string }>(
   ref: AccountReference | undefined,
   account: T | null,
   logger: AdcpLogger,
-  implicitIdentity: ImplicitIdentityPolicy = STRICT_IMPLICIT_IDENTITY_POLICY
+  implicitIdentity: ImplicitIdentityPolicy = STRICT_IMPLICIT_IDENTITY_POLICY,
+  servedAdcpVersion?: string
 ): T | null {
   if (account == null) return null;
   if (normalizeAccountResolution(resolution) === 'implicit' && ref && 'brand' in ref) {
     const field = implicitIdentityMismatch(account as T & Partial<Extract<AccountReference, { brand: unknown }>>, ref);
     if (field === undefined) return account;
-    if (implicitIdentity.strict) return null;
+    if (implicitIdentity.strict || isAdcpVersionAtLeast(servedAdcpVersion, '3.3.0-beta.0')) return null;
     // Server-side only: the mismatched account id goes to the adopter's logger
     // metadata, never into a buyer-facing response.
     warnAccountReferenceDeprecation(
@@ -3348,7 +3349,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             toResolveCtx(ctx, ctx.toolName, ctx.toolName === 'sync_accounts' ? structuredClone(ctx.input) : ctx.input)
           ),
           fwLogger,
-          implicitIdentityPolicy
+          implicitIdentityPolicy,
+          ctx.servedAdcpVersion
         );
         resolved = account != null;
         resolvedAccountId = account?.id;
@@ -3916,7 +3918,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             accountRef,
             resolvedAccount,
             fwLogger,
-            implicitIdentityPolicy
+            implicitIdentityPolicy,
+            extra?.servedAdcpVersion
           );
 
           // Record the resolved account's explicit mode (if any). Used by the
@@ -4349,7 +4352,8 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
             ref as AccountReference,
             await platform.accounts.resolve(ref as AccountReference, resolveCtx),
             logger,
-            implicitIdentityPolicy
+            implicitIdentityPolicy,
+            extra?.servedAdcpVersion
           );
           if (resolved) {
             resolvedAccountId = resolved.id;
@@ -6199,6 +6203,8 @@ export const ENTITY_TO_RESOURCE_KIND: Readonly<Record<string, ResourceKind>> = {
  * @internal Exported for the coverage test; not part of the public API.
  */
 export const INTENTIONALLY_UNHYDRATED_ENTITIES: ReadonlySet<string> = new Set([
+  // Governance budget periods have no ResourceKind or standalone hydration operation.
+  'governance_budget_period',
   'vendor_pricing_option', // Scoped to issuing vendor agent; adopters seed pricing context themselves.
   'governance_plan', // No SDK ResourceKind yet; campaign-governance follow-up.
   'governance_check', // Transient request envelope; not stored.
@@ -6769,6 +6775,22 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           value => value
         );
       },
+    }),
+    ...(lifecycle?.listCollections && {
+      listCollections: async (
+        ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['listCollections']>>
+      ) =>
+        projectSync(
+          () => lifecycle.listCollections!(params, ctxFor(ctx, params)),
+          value => value
+        ),
+    }),
+    ...(lifecycle?.listProposals && {
+      listProposals: async (...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['listProposals']>>) =>
+        projectSync(
+          () => lifecycle.listProposals!(params, ctxFor(ctx, params)),
+          value => value
+        ),
     }),
     ...(lifecycle?.requestProposals && {
       requestProposals: async (
@@ -9208,7 +9230,8 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
         accountRef,
         await accounts.resolve(accountRef, resolveCtx),
         logger,
-        implicitIdentityPolicy
+        implicitIdentityPolicy,
+        ctx.servedAdcpVersion
       );
       if (!resolved) {
         const suggestion = accountNotFoundSuggestion(accounts.resolution);
@@ -9252,7 +9275,8 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
         accountRef,
         await accounts.resolve(accountRef, resolveCtx),
         logger,
-        implicitIdentityPolicy
+        implicitIdentityPolicy,
+        ctx.servedAdcpVersion
       );
       if (!resolved) {
         const suggestion = accountNotFoundSuggestion(accounts.resolution);

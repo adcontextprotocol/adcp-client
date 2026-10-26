@@ -120,6 +120,28 @@ Start with one atomic offering per publication class and semantic contract. Choo
 
 Conservative first defaults are a single source-day window, scheduled polling with polling fallback, no async jobs unless the source requires them, and `basic` manifest support. Declare only metrics, dimensions, formats, and attribution settings the adapter can satisfy exactly.
 
+### Products created per brief or buy
+
+For a fixed catalogue, keep `applicability: { productIds: ['product-id'], constituentKinds: ['media_buy'] }`. Products outside that list are rejected.
+
+If product IDs are created per brief or buy, declare host-attested eligibility:
+
+```ts
+applicability: {
+  constituentKinds: ['media_buy'],
+  productIds: [],
+  products: { kind: 'host_attested' },
+}
+```
+
+The trusted host's `resolveCoverage(account, configuration)` must authorize the denominator for that resolved account and check that each product's `reporting_capabilities.reporting_delivery_offering_ids` includes the selected offering. The SDK does not own or query the seller's product catalogue. Raw ledger/source integrations must perform the same authorization before installing configurations or submitting source requests. Source conformance checks the declared applicability mode; it cannot independently verify a host's catalogue assertion.
+
+Host attestation replaces only the offering's enumerated product check. Constituent kinds, exact coverage, account scope, product bindings, and frozen configuration generations still apply. Keep the real product ID in each media-buy or package constituent and its binding; several products in one media buy retain distinct constituent identities. Raw executors may also support `product` constituents, which have no media-buy/package binding by design: the trusted host must authorize those product identities directly. An injected executor may narrow a declared product list but cannot broaden it or replace it with host attestation.
+
+New products can enter a new configuration generation without rewriting the offering; increment `delivery_config_version` when the denominator changes. Reinstalling the same version with different coverage fails the existing immutability check. Existing generations retain their frozen denominator. Keep an offering's applicability compatible with its active generations: changing back to a list that omits their products makes source conformance reject those requests. Use a distinct offering ID for incompatible changes.
+
+This is an opt-in extension of the source v1 schema in SDK 16.5.0. Existing declarations, required `productIds: string[]` types, and capability hashes are unchanged. Host-attested declarations require an empty `productIds` array and the explicit `products` marker; a nonempty list with that marker is rejected. Hosts and readers of source offering declarations must upgrade before using host attestation; older strict v1 validators reject it. Published source capabilities retain the explicit `host_attested` declaration, which means per-product eligibility is attested by the host, rather than declaring universal applicability. `listedReportingSourceProductIdsV1(applicability)` returns the list for legacy declarations or `undefined` for host attestation.
+
 `null` and missing data are not zero delivery. A complete zero-row source result uses `explicitZero: true`; an unavailable full-coverage result returns `PARTIAL_RESULT` or `NOT_READY`.
 
 All reporting periods and `eventTimeRange` values use half-open `[start, end)` semantics. `eventTimeRange.end === period.end` means rows were observed up to the exclusive period boundary; it never admits an event at that instant.

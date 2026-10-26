@@ -77,6 +77,8 @@ export const TOOL_PROTOCOL_MAP: Readonly<Record<string, AdcpProtocol>> = {
   // media-buy (explicit listing — anything not here falls back to media-buy)
   get_products: 'media-buy',
   list_products: 'media-buy',
+  list_collections: 'media-buy',
+  list_proposals: 'media-buy',
   request_proposals: 'media-buy',
   refine_proposals: 'media-buy',
   decline_proposals: 'media-buy',

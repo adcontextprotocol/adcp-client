@@ -266,7 +266,7 @@ describe('HttpsJwksResolver', () => {
       const signed = signRequest(
         { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
         { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: primaryPrivate },
-        { now: () => clock, windowSeconds: 300, nonce: 'rotation-before-aaaa' }
+        { now: () => clock, windowSeconds: 300, nonce: 'rotation-before-aaaa__' }
       );
       const result1 = await verifyRequestSignature(
         { method: 'POST', url, headers: signed.headers, body },
@@ -300,7 +300,7 @@ describe('HttpsJwksResolver', () => {
       const signedRotated = signRequest(
         { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
         { keyid: rotatedKid, alg: 'ed25519', privateKey: rotatedPrivate },
-        { now: () => clock, windowSeconds: 300, nonce: 'rotation-after-bbbb' }
+        { now: () => clock, windowSeconds: 300, nonce: 'rotation-after-bbbb___' }
       );
       const result2 = await verifyRequestSignature(
         { method: 'POST', url, headers: signedRotated.headers, body },
@@ -579,7 +579,7 @@ describe('HttpsRevocationStore', () => {
       const signedBefore = signRequest(
         { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
         { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: primaryPrivate },
-        { now: () => clock, windowSeconds: 300, nonce: 'revoke-before-aaaaaaa' }
+        { now: () => clock, windowSeconds: 300, nonce: 'revoke-before-aaaaaaa_' }
       );
       const before = await verifyRequestSignature(
         { method: 'POST', url, headers: signedBefore.headers, body },
@@ -608,7 +608,7 @@ describe('HttpsRevocationStore', () => {
       const signedAfter = signRequest(
         { method: 'POST', url, headers: { 'Content-Type': 'application/json' }, body },
         { keyid: 'test-ed25519-2026', alg: 'ed25519', privateKey: primaryPrivate },
-        { now: () => clock, windowSeconds: 300, nonce: 'revoke-after-bbbbbbbb' }
+        { now: () => clock, windowSeconds: 300, nonce: 'revoke-after-bbbbbbbb_' }
       );
       await assert.rejects(
         () =>

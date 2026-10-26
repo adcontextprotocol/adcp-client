@@ -11,6 +11,67 @@ const {
   runStoryboardStep,
 } = require('../../dist/lib/testing');
 const { withExternalSchemaRoot } = require('../../dist/lib/validation/schema-loader');
+const { ADCP_VERSION } = require('../../dist/lib/version');
+
+function publishedEvaluatorStoryboard() {
+  return parseStoryboard(
+    fs.readFileSync(
+      path.join(__dirname, '../../compliance/cache', ADCP_VERSION, 'protocols/creative/scenarios/evaluator_auth.yaml'),
+      'utf8'
+    )
+  );
+}
+
+for (const stepId of ['reject_unaccepted_agent_url', 'reject_unaccepted_feature_agent']) {
+  for (const outbound of [false, true]) {
+    test(`published evaluator rejection ${stepId} requires zero off-list calls: ${outbound}`, async () => {
+      const calls = [];
+      const opts = options(creative(route('build', ['build'])), []);
+      opts.adcpVersion = ADCP_VERSION;
+      opts._controllerCapabilities = { detected: true, scenarios: ['query_upstream_traffic'] };
+      let recorded = [];
+      const client = createTestClient('https://agent.example/mcp', 'mcp', opts);
+      client.resetContext = () => {};
+      client.executeTask = async (task, request) => {
+        if (task === 'comply_test_controller') {
+          assert.equal(request.scenario, 'query_upstream_traffic');
+          return { success: true, data: { success: true, attestation_mode: 'raw', recorded_calls: recorded } };
+        }
+        assert.equal(task, 'build_creative');
+        assert.equal(request.target_capability_id, 'build');
+        assert.deepEqual(request.creative_manifest, { format_kind: 'image', assets: {} });
+        calls.push(request);
+        const url = request.evaluator.feature_agent?.agent_url ?? request.evaluator.agent_url;
+        recorded = outbound ? [{ timestamp: new Date().toISOString(), endpoint: `POST ${url}`, url }] : [];
+        return { success: false, data: { errors: [{ code: 'EVALUATOR_AGENT_NOT_ACCEPTED', message: 'Rejected' }] } };
+      };
+      client.buildCreativeLegacy = request => client.executeTask('build_creative', request);
+      opts._client = client;
+      const result = await runStoryboardStep('https://agent.example/mcp', publishedEvaluatorStoryboard(), stepId, opts);
+      assert.equal(calls.length, 1);
+      assert.equal(result.passed, !outbound, JSON.stringify(result.validations));
+      const traffic = result.validations.find(validation => validation.check === 'upstream_traffic');
+      assert.ok(traffic, 'the published traffic assertion must run');
+      assert.equal(traffic.passed, !outbound);
+    });
+  }
+}
+
+test('published evaluator storyboard gives missing fixtures zero executed security coverage', async () => {
+  const calls = [];
+  const result = await runStoryboard(
+    'https://agent.example/mcp',
+    publishedEvaluatorStoryboard(),
+    options(
+      { supports_evaluator: true, supports_transformation: true, supported_formats: [route('build', ['build'])] },
+      calls
+    )
+  );
+  assert.equal(result.passed_count, 0);
+  assert.equal(result.failed_count, 0);
+  assert.equal(result.coverage_gaps[0].reason, 'fixture_unsatisfied');
+  assert.deepEqual(calls, []);
+});
 
 function missingCatalogSchemaRoot(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'creative-probe-missing-catalog-'));

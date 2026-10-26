@@ -84,9 +84,9 @@ type NegotiationCapabilities = Pick<AdcpCapabilities, 'supportedVersions' | 'ser
 /**
  * Pick the highest AdCP release both the client and the seller support.
  *
- * - Returns `undefined` when there is no authoritative evidence to negotiate
- *   on (no capabilities, or capabilities synthesized after a failed
- *   discovery call). Callers keep their pre-negotiation behavior.
+ * - Stable clients return `undefined` when there is no authoritative evidence
+ *   (missing or synthetic capabilities). Preview clients fail closed instead:
+ *   only an exact supported_versions entry establishes preview support.
  * - Returns an {@link AdcpNegotiationFailure} when the seller advertises
  *   releases but none of them is on or below the client's line.
  *
@@ -99,9 +99,13 @@ export function negotiateAdcpRelease(
   clientVersion: string,
   capabilities: NegotiationCapabilities | undefined
 ): NegotiatedAdcpRelease | AdcpNegotiationFailure | undefined {
-  if (!capabilities || capabilities._synthetic) return undefined;
   const client = parseAdcpRelease(clientVersion);
   if (!client) return undefined;
+  if (!capabilities || capabilities._synthetic) {
+    // Preview contracts are exact opt-ins. Missing or synthetic discovery
+    // cannot establish that the seller implements this beta's wire shape.
+    return client.prerelease ? { reason: 'no_common_version', advertised: [] } : undefined;
+  }
 
   const advertised = (capabilities.supportedVersions ?? []).filter(v => typeof v === 'string');
   if (advertised.length > 0) {
@@ -113,6 +117,7 @@ export function negotiateAdcpRelease(
         // Same line. A prerelease speaks only its own exact shape, on either
         // side: a beta client and a GA seller of that line do not match.
         if (release.prerelease !== client.prerelease) continue;
+        if (client.prerelease && release.patch !== client.patch) continue;
         return { version: clientVersion, source: 'same_release', downgraded: false };
       }
       if (release.minor > client.minor || release.prerelease !== undefined) continue;
@@ -133,6 +138,11 @@ export function negotiateAdcpRelease(
     (typeof capabilities._raw?.adcp_version === 'string' ? capabilities._raw.adcp_version : undefined);
   const servedRelease = served !== undefined ? parseAdcpRelease(served) : undefined;
   if (servedRelease && servedRelease.major === client.major) {
+    if (client.prerelease && (servedRelease.minor >= client.minor || servedRelease.prerelease !== undefined)) {
+      // A served-version echo is not supported_versions evidence for a
+      // preview. It may describe a different beta or an eventual GA shape.
+      return { reason: 'no_common_version', advertised: served ? [served] : [] };
+    }
     if (servedRelease.minor >= client.minor) {
       return { version: clientVersion, source: 'served_version', downgraded: false };
     }
@@ -147,7 +157,7 @@ export function negotiateAdcpRelease(
     if (client.minor === 0) return { version: clientVersion, source: 'legacy_v3', downgraded: false };
     return { version: '3.0', source: 'legacy_v3', downgraded: true };
   }
-  return undefined;
+  return client.prerelease ? { reason: 'no_common_version', advertised: [] } : undefined;
 }
 
 export function isNegotiationFailure(

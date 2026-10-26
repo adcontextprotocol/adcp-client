@@ -46,7 +46,7 @@ import { STANDARD_ERROR_CODES } from '../../types/error-codes';
 import { getAuthoritativeMediaBuyStatus } from '../../utils/media-buy-status';
 import {
   CREATIVE_ASSET_TRANSITIONS as CREATIVE_ASSET_TRANSITIONS_TYPED,
-  MEDIA_BUY_TRANSITIONS as MEDIA_BUY_TRANSITIONS_TYPED,
+  getMediaBuyTransitions,
 } from '../../server/state-machine';
 import { registerAssertion } from './assertions';
 import { accountSyncContractAssertion } from './account-sync-contract';
@@ -621,10 +621,12 @@ export function registerDefaultInvariants(): void {
   // Source of truth for both graphs lives in `server/state-machine.ts` so
   // production sellers and the runner enforce identical edges. Wrap the typed
   // maps in `TransitionGraph` for the runner's string-keyed extractors.
-  const MEDIA_BUY_TRANSITIONS: TransitionGraph = {
-    transitions: MEDIA_BUY_TRANSITIONS_TYPED as ReadonlyMap<string, ReadonlySet<string>>,
-    enumFile: 'media-buy-status.json',
-  };
+  function mediaBuyTransitions(adcpVersion: string): TransitionGraph {
+    return {
+      transitions: getMediaBuyTransitions(adcpVersion) as ReadonlyMap<string, ReadonlySet<string>>,
+      enumFile: 'media-buy-status.json',
+    };
+  }
 
   const CREATIVE_ASSET_TRANSITIONS: TransitionGraph = {
     transitions: CREATIVE_ASSET_TRANSITIONS_TYPED as ReadonlyMap<string, ReadonlySet<string>>,
@@ -727,74 +729,69 @@ export function registerDefaultInvariants(): void {
    * and walks arrays where present. Unknown tasks produce no observations —
    * the assertion is silent on tasks it doesn't recognize.
    */
+  type StatusExtractor = (out: StatusObservation[], body: Record<string, unknown>, version: string) => void;
+  const extractMediaBuy: StatusExtractor = (out, body, version) => pushMediaBuy(out, body, true, version);
+  const extractCreatives: StatusExtractor = (out, body) => {
+    for (const creative of asArray(body.creatives)) if (isObject(creative)) pushCreative(out, creative);
+  };
+  const extractAccounts: StatusExtractor = (out, body) => {
+    for (const account of asArray(body.accounts)) if (isObject(account)) pushAccount(out, account);
+  };
+  const extractSession: StatusExtractor = (out, body) => pushSiSession(out, body);
+  const extractCatalog: StatusExtractor = (out, body) => {
+    for (const catalog of asArray(body.catalogs)) {
+      if (!isObject(catalog)) continue;
+      for (const item of asArray(catalog.items)) if (isObject(item)) pushCatalogItem(out, item);
+    }
+    for (const item of asArray(body.items)) if (isObject(item)) pushCatalogItem(out, item);
+  };
+  // Eligibility and extraction share this dispatch table. Known lifecycle reads
+  // remain eligible even when their result contains no usable observations.
+  const statusExtractors = new Map<string, StatusExtractor>([
+    ['create_media_buy', extractMediaBuy],
+    ['update_media_buy', extractMediaBuy],
+    [
+      'get_media_buys',
+      (out, body, version) => {
+        for (const buy of asArray(body.media_buys)) if (isObject(buy)) pushMediaBuy(out, buy, false, version);
+      },
+    ],
+    ['sync_creatives', extractCreatives],
+    ['list_creatives', extractCreatives],
+    ['sync_accounts', extractAccounts],
+    ['list_accounts', extractAccounts],
+    ['si_initiate_session', extractSession],
+    ['si_send_message', extractSession],
+    ['si_terminate_session', extractSession],
+    ['sync_catalogs', extractCatalog],
+    ['list_catalogs', extractCatalog],
+    [
+      'get_products',
+      (out, body) => {
+        for (const proposal of asArray(body.proposals)) if (isObject(proposal)) pushProposal(out, proposal);
+      },
+    ],
+    [
+      'sync_audiences',
+      (out, body) => {
+        for (const audience of asArray(body.audiences)) if (isObject(audience)) pushAudience(out, audience);
+      },
+    ],
+  ]);
+
   function extractStatusObservations(
     task: string,
     body: Record<string, unknown>,
     adcpVersion: string
-  ): StatusObservation[] {
-    const obs: StatusObservation[] = [];
-
-    // Media-buy: create/update_media_buy return top-level status + packages
-    // with per-creative approval_status. get_media_buys returns media_buys[].
-    if (task === 'create_media_buy' || task === 'update_media_buy') {
-      pushMediaBuy(obs, body, true, adcpVersion);
-    } else if (task === 'get_media_buys') {
-      for (const mb of asArray(body.media_buys)) {
-        if (isObject(mb)) pushMediaBuy(obs, mb);
-      }
-    }
-
-    // Creative asset lifecycle: sync_creatives and list_creatives.
-    if (task === 'sync_creatives' || task === 'list_creatives') {
-      for (const c of asArray(body.creatives)) {
-        if (isObject(c)) pushCreative(obs, c);
-      }
-    }
-
-    // Account: sync_accounts and list_accounts. Embedded `account` objects on
-    // media-buy responses do not carry a lifecycle status — they're just
-    // references (brand, operator) — so we don't read them here.
-    if (task === 'sync_accounts' || task === 'list_accounts') {
-      for (const a of asArray(body.accounts)) {
-        if (isObject(a)) pushAccount(obs, a);
-      }
-    }
-
-    // SI session: si_initiate_session / si_send_message return top-level
-    // `session_id` + `status`.
-    if (task === 'si_initiate_session' || task === 'si_send_message' || task === 'si_terminate_session') {
-      pushSiSession(obs, body);
-    }
-
-    // Catalog items: sync_catalogs / list_catalogs return `items[]` per catalog.
-    if (task === 'sync_catalogs' || task === 'list_catalogs') {
-      for (const cat of asArray(body.catalogs)) {
-        if (!isObject(cat)) continue;
-        for (const item of asArray(cat.items)) {
-          if (isObject(item)) pushCatalogItem(obs, item);
-        }
-      }
-      for (const item of asArray(body.items)) {
-        if (isObject(item)) pushCatalogItem(obs, item);
-      }
-    }
-
-    // Proposal: get_products may return a `proposal` object when the
-    // caller is refining toward commitment.
-    if (task === 'get_products' && isObject(body.proposal)) {
-      pushProposal(obs, body.proposal);
-    }
-
-    // Audience lifecycle: sync_audiences is both the write and discovery path
-    // (discovery-only calls omit the request `audiences` array but still return
-    // `audiences[]`). No separate list_audiences task exists.
-    if (task === 'sync_audiences') {
-      for (const a of asArray(body.audiences)) {
-        if (isObject(a)) pushAudience(obs, a);
-      }
-    }
-
-    return obs;
+  ): StatusObservation[] | undefined {
+    const extract = statusExtractors.get(task);
+    // Product discovery only observes lifecycle state when it returns a proposal.
+    if (!extract || (task === 'get_products' && asArray(body.proposals).length === 0)) return undefined;
+    const observations: StatusObservation[] = [];
+    // A seller may downshift the requested version. Its response echo, when
+    // present, selects the contract actually served for nested read results too.
+    extract(observations, body, asString(body.adcp_version) ?? adcpVersion);
+    return observations;
   }
 
   function pushMediaBuy(
@@ -820,7 +817,7 @@ export function registerDefaultInvariants(): void {
         resource_type: 'media_buy',
         resource_id: id,
         status,
-        graph: MEDIA_BUY_TRANSITIONS,
+        graph: mediaBuyTransitions(adcpVersion),
       });
     }
     // Each media_buy carries packages; each package can list creative_approvals
@@ -904,7 +901,7 @@ export function registerDefaultInvariants(): void {
 
   function pushProposal(obs: StatusObservation[], record: Record<string, unknown>): void {
     const id = asString(record.proposal_id);
-    const status = asString(record.status);
+    const status = asString(record.proposal_status);
     if (id && status) {
       obs.push({
         resource_type: 'proposal',
@@ -957,15 +954,15 @@ export function registerDefaultInvariants(): void {
       const body = (stepResult as unknown as { response?: unknown }).response;
       if (!body || typeof body !== 'object') return [];
       if (extractAdcpError(stepResult)) return [];
-      ctx.state.statusMonotonicEligibleStepCount =
-        ((ctx.state.statusMonotonicEligibleStepCount as number | undefined) ?? 0) + 1;
-
-      const history = ctx.state.history as Map<string, MonotonicState>;
       const observations = extractStatusObservations(
         stepResult.task,
         body as Record<string, unknown>,
         ctx.options.adcpVersion ?? ADCP_VERSION
       );
+      if (observations === undefined) return [];
+      ctx.state.statusMonotonicEligibleStepCount =
+        ((ctx.state.statusMonotonicEligibleStepCount as number | undefined) ?? 0) + 1;
+      const history = ctx.state.history as Map<string, MonotonicState>;
       const description = 'Resource statuses transition only along spec lifecycle edges';
 
       for (const ob of observations) {
@@ -1208,6 +1205,13 @@ export function registerDefaultInvariants(): void {
       if (!body || typeof body !== 'object') return [];
       if (extractAdcpError(stepResult)) return [];
 
+      const impairmentObservations = extractImpairmentObservations(
+        stepResult.task,
+        body as Record<string, unknown>,
+        stepResult.request?.payload
+      );
+      const snapshots = extractBuySnapshots(stepResult.task, body as Record<string, unknown>, stepResult.step_id);
+      if (impairmentObservations === undefined && snapshots === undefined) return [];
       const state = getImpairmentState(ctx);
       state.eligibleStepCount += 1;
 
@@ -1228,11 +1232,7 @@ export function registerDefaultInvariants(): void {
       // monotonic's graphs intentionally enumerate only spec-stable enum
       // values, but those new offline states are exactly what this invariant
       // needs to observe.
-      for (const ob of extractImpairmentObservations(
-        stepResult.task,
-        body as Record<string, unknown>,
-        stepResult.request?.payload
-      )) {
+      for (const ob of impairmentObservations ?? []) {
         const key = `${ob.resource_type}:${ob.resource_id}`;
         state.resourceStatus.set(key, { status: ob.status, stepId: stepResult.step_id });
         const offline = IMPAIRMENT_OFFLINE_STATUS.get(ob.resource_type);
@@ -1286,8 +1286,7 @@ export function registerDefaultInvariants(): void {
       }
 
       // Extract media-buy snapshots and run the three coherence checks.
-      const snapshots = extractBuySnapshots(stepResult.task, body as Record<string, unknown>, stepResult.step_id);
-      if (snapshots.length === 0) return deferredCoverageResults;
+      if (!snapshots || snapshots.length === 0) return deferredCoverageResults;
       state.observedBuySnapshot = true;
 
       const description = 'media_buy.impairments[] coheres with resource state and buy health';
@@ -1480,7 +1479,7 @@ export function registerDefaultInvariants(): void {
     task: string,
     body: Record<string, unknown>,
     requestPayload?: unknown
-  ): { resource_type: string; resource_id: string; status: string }[] {
+  ): { resource_type: string; resource_id: string; status: string }[] | undefined {
     const out: { resource_type: string; resource_id: string; status: string }[] = [];
     if (task === 'sync_creatives' || task === 'list_creatives') {
       for (const c of asArray(body.creatives)) {
@@ -1522,17 +1521,20 @@ export function registerDefaultInvariants(): void {
         const status = health ? asString(health.status) : undefined;
         if (id && status) out.push({ resource_type: 'event_source', resource_id: id, status });
       }
-    } else if (task === 'comply_test_controller' && body.success === true && isObject(requestPayload)) {
+    } else if (task === 'comply_test_controller' && isObject(requestPayload)) {
       // `force_audience_status` is the deterministic compliance surface for
       // seller-initiated audience transitions. The transition response is a
       // StateTransitionSuccess, so the authoritative status is
       // `current_state`; the entity id remains in the request params. Pair
       // the runner's recorded request and response instead of inventing a
       // protocol-visible audience read task solely for grading.
-      if (requestPayload.scenario !== 'force_audience_status' || !isObject(requestPayload.params)) return out;
+      if (requestPayload.scenario !== 'force_audience_status') return undefined;
+      if (body.success !== true || !isObject(requestPayload.params)) return out;
       const id = asString(requestPayload.params.audience_id);
       const status = asString(body.current_state);
       if (id && status) out.push({ resource_type: 'audience', resource_id: id, status });
+    } else {
+      return undefined;
     }
     return out;
   }
@@ -1551,7 +1553,7 @@ export function registerDefaultInvariants(): void {
    * an offline exclude can still silently break the suppression promise,
    * which is a separate (forward-looking) signal class.
    */
-  function extractBuySnapshots(task: string, body: Record<string, unknown>, stepId: string): BuySnapshot[] {
+  function extractBuySnapshots(task: string, body: Record<string, unknown>, stepId: string): BuySnapshot[] | undefined {
     const out: BuySnapshot[] = [];
     if (task === 'create_media_buy' || task === 'update_media_buy') {
       const snap = readBuySnapshot(body, stepId);
@@ -1562,6 +1564,8 @@ export function registerDefaultInvariants(): void {
         const snap = readBuySnapshot(mb, stepId);
         if (snap) out.push(snap);
       }
+    } else {
+      return undefined;
     }
     return out;
   }

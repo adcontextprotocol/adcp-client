@@ -1,3 +1,4 @@
+import { mcpConnectionPartitionKey } from '../protocols/mcp-connection-policy';
 import { createHash, hkdfSync, randomBytes } from 'node:crypto';
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
 import type { AgentConfig, AgentRequestSigningConfig } from '../types/adcp';
@@ -7,9 +8,10 @@ import {
   defaultCapabilityCache,
   type CachedCapability,
 } from './capability-cache';
-import type { SigningProvider } from './provider';
+import { freezeSigningProvider, type SigningProvider } from './provider';
 import type { AdcpSignAlg } from './types';
 import { ADCP_VERSION } from '../version';
+import { assertSigningPolicy, hasUnsignedCapabilityBootstrap } from './protocol-methods';
 
 const CAPABILITY_SCOPE_SALT = randomBytes(32);
 
@@ -86,10 +88,26 @@ export const signingContextStorage = globalAsyncLocalStorage<AgentSigningContext
 let rfcIdentityWarningEmitted = false;
 export function buildAgentSigningContext(
   agent: AgentConfig,
-  options: { cache?: CapabilityCache; adcpVersion?: string } = {}
+  options: { cache?: CapabilityCache; adcpVersion?: string; connectionPartition?: string } = {}
 ): AgentSigningContext | undefined {
-  const signing = agent.request_signing;
-  if (!signing) return undefined;
+  const configuredSigning = agent.request_signing;
+  if (!configuredSigning) return undefined;
+  assertSigningPolicy(configuredSigning);
+  const policySnapshot = {
+    ...(Array.isArray(configuredSigning.always_sign) && { always_sign: [...configuredSigning.always_sign] }),
+    ...(configuredSigning.always_sign_protocol_methods && {
+      always_sign_protocol_methods: [...configuredSigning.always_sign_protocol_methods],
+    }),
+  };
+  const signing: AgentRequestSigningConfig =
+    configuredSigning.kind === 'provider'
+      ? {
+          ...configuredSigning,
+          ...policySnapshot,
+          provider: freezeSigningProvider(configuredSigning.provider),
+          ...(configuredSigning.public_key && { public_key: snapshotJwk(configuredSigning.public_key) }),
+        }
+      : { ...configuredSigning, ...policySnapshot, private_key: snapshotJwk(configuredSigning.private_key) };
   if (signing.profile !== 'web-bot-auth' && !rfcIdentityWarningEmitted) {
     rfcIdentityWarningEmitted = true;
     process.emitWarning(
@@ -110,9 +128,13 @@ export function buildAgentSigningContext(
           .slice(0, 32)
       : deriveCacheFingerprint(identity);
   const adcpVersion = options.adcpVersion ?? ADCP_VERSION;
+  const connectionPartitionKey =
+    'connectionPartition' in options
+      ? mcpConnectionPartitionKey(options.connectionPartition)
+      : mcpConnectionPartitionKey();
   const capabilityCacheKey = buildCapabilityCacheKey(
     agent.agent_uri,
-    capabilityPrincipalScope(agent),
+    capabilityPrincipalScope(agent, connectionPartitionKey),
     cacheFingerprint,
     adcpVersion
   );
@@ -123,7 +145,20 @@ export function buildAgentSigningContext(
   // requests with the other tenant's key (same `kid`, different material),
   // an impersonation. The hash includes `algorithm` so an Ed25519/P-256
   // swap on the same `kid+fingerprint` doesn't alias either.
-  const cacheKey = `sig=${cacheFingerprint};adcp=${adcpVersion}`;
+  // Cached transports capture a signing policy. Equal keys with different
+  // caller overrides must not reuse a fetch wrapper holding the older policy.
+  const policyFingerprint = createHash('sha256')
+    .update(
+      JSON.stringify({
+        alwaysSign: signing.always_sign ?? [],
+        alwaysSignProtocolMethods: signing.always_sign_protocol_methods ?? [],
+        signSupported: signing.sign_supported === true,
+        unsignedCapabilityBootstrap: hasUnsignedCapabilityBootstrap(signing),
+      })
+    )
+    .digest('hex')
+    .slice(0, 16);
+  const cacheKey = `sig=${cacheFingerprint};adcp=${adcpVersion};policy=${policyFingerprint}${connectionPartitionKey ? `;principal=${connectionPartitionKey}` : ''}`;
   const provider = signing.kind === 'provider' ? signing.provider : undefined;
 
   return {
@@ -145,7 +180,7 @@ export function buildAgentSigningContext(
  * credentials live outside `auth_token`; hashing the complete scope prevents
  * one principal from reusing another principal's signing policy.
  */
-function capabilityPrincipalScope(agent: AgentConfig): string | undefined {
+function capabilityPrincipalScope(agent: AgentConfig, connectionPartitionKey?: string): string | undefined {
   const credentials = agent.oauth_client_credentials;
   const headers = agent.headers
     ? Object.fromEntries(
@@ -156,6 +191,7 @@ function capabilityPrincipalScope(agent: AgentConfig): string | undefined {
     : undefined;
   const scope = {
     protocol: agent.protocol,
+    ...(connectionPartitionKey && { connectionPartition: connectionPartitionKey }),
     authToken: agent.auth_token,
     oauthAccessToken: agent.oauth_tokens?.access_token,
     oauthClientId: agent.oauth_client?.client_id,
@@ -237,4 +273,8 @@ function inlineFingerprint(kid: string, d: string | undefined): string {
     );
   }
   return createHash('sha256').update(kid).update('\0').update(d).digest('hex').slice(0, 16);
+}
+
+function snapshotJwk<T extends { key_ops?: unknown }>(jwk: T): T {
+  return { ...jwk, ...(Array.isArray(jwk.key_ops) && { key_ops: [...jwk.key_ops] }) };
 }

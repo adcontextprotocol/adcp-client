@@ -45,6 +45,7 @@ function makeClient(config = {}) {
   inner.cachedCapabilities = {
     version: 'v3',
     majorVersions: [3],
+    supportedVersions: ['3.2'],
     protocols: ['media_buy'],
     features: {
       inlineCreativeManagement: false,

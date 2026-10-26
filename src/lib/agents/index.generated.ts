@@ -11,6 +11,10 @@ import type {
   GetProductsResponse,
   ListProductsRequest,
   ListProductsResponse,
+  ListProposalsRequest,
+  ListProposalsResponse,
+  ListCollectionsRequest,
+  ListCollectionsResponse,
   RequestProposalsRequest,
   RequestProposalsResponse,
   RefineProposalsRequest,
@@ -225,6 +229,20 @@ export class Agent {
    */
   async listProducts(params: ListProductsRequest): Promise<ListProductsResponse> {
     return this.callTool<ListProductsResponse>('list_products', params);
+  }
+
+  /**
+   * Official AdCP list_proposals tool schema
+   */
+  async listProposals(params: ListProposalsRequest): Promise<ListProposalsResponse> {
+    return this.callTool<ListProposalsResponse>('list_proposals', params);
+  }
+
+  /**
+   * Official AdCP list_collections tool schema
+   */
+  async listCollections(params: ListCollectionsRequest): Promise<ListCollectionsResponse> {
+    return this.callTool<ListCollectionsResponse>('list_collections', params);
   }
 
   /**
@@ -732,6 +750,20 @@ export class AgentCollection {
    */
   async listProducts(params: ListProductsRequest): Promise<ListProductsResponse[]> {
     return this.callToolOnAll<ListProductsResponse>('list_products', params);
+  }
+
+  /**
+   * Official AdCP list_proposals tool schema (across multiple agents)
+   */
+  async listProposals(params: ListProposalsRequest): Promise<ListProposalsResponse[]> {
+    return this.callToolOnAll<ListProposalsResponse>('list_proposals', params);
+  }
+
+  /**
+   * Official AdCP list_collections tool schema (across multiple agents)
+   */
+  async listCollections(params: ListCollectionsRequest): Promise<ListCollectionsResponse[]> {
+    return this.callToolOnAll<ListCollectionsResponse>('list_collections', params);
   }
 
   /**

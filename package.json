@@ -1,6 +1,6 @@
 {
   "name": "@adcp/sdk",
-  "version": "16.4.0",
+  "version": "17.0.0-beta.0",
   "description": "AdCP SDK — client, server, and compliance harnesses for the AdContext Protocol (MCP + A2A)",
   "workspaces": [
     ".",
@@ -558,7 +558,8 @@
     ".claude-plugin/**/*",
     "compliance/cache/3.0.25/**/*",
     "compliance/cache/3.1.29/**/*",
-    "compliance/cache/3.2.6/**/*",
+    "compliance/cache/3.2.7/**/*",
+    "compliance/cache/3.3.0-beta.0/**/*",
     "ADCP_VERSION",
     "docs/README.md",
     "docs/TYPE-SUMMARY.md",
@@ -639,7 +640,7 @@
     "test:protocol-comparison": "node test/utils/comprehensive-protocol-comparison.js",
     "test:status-report": "node test/utils/final-status-report.js",
     "sync-schemas": "tsx scripts/sync-schemas.ts",
-    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.1.29 && npm run sync-schemas -- 3.0.25",
+    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.2.7 && npm run sync-schemas -- 3.1.29 && npm run sync-schemas -- 3.0.25",
     "sync:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --update",
     "check:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --check",
     "sync-registry-schemas": "tsx scripts/generate-registry-types.ts --sync",
@@ -818,7 +819,7 @@
     "launch-editor": "^2.14.2",
     "markdown-it": "^14.3.3"
   },
-  "adcp_version": "3.2.6",
+  "adcp_version": "3.3.0-beta.0",
   "sideEffects": [
     "**/default-invariants.*"
   ]

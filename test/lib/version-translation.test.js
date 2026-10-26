@@ -13,6 +13,7 @@ const assert = require('node:assert/strict');
 
 const {
   SingleAgentClient,
+  AgentClient,
   ProtocolClient,
   ProtocolFeatureUnsupportedError,
   VersionUnsupportedError,
@@ -90,6 +91,37 @@ describe('negotiateAdcpRelease', () => {
   test('a prerelease client does not match a GA seller of its line', () => {
     assert.equal(negotiateAdcpRelease('3.2.0-beta.6', caps(['3.1', '3.2'])).version, '3.1');
     assert.equal(negotiateAdcpRelease('3.2.0-beta.6', caps(['3.2.0-beta.6'])).source, 'same_release');
+  });
+
+  test('a 3.3 preview requires its exact advertised prerelease and otherwise selects stable 3.2', () => {
+    const preview = '3.3.0-beta.0';
+    for (const exact of [preview, '3.3-beta.0']) {
+      assert.deepEqual(negotiateAdcpRelease(preview, caps(['3.2', exact])), {
+        version: preview,
+        source: 'same_release',
+        downgraded: false,
+      });
+    }
+    for (const other of ['3.3', '3.3-beta', '3.3-beta.1', '3.3.1-beta.0', '3.3-rc.0']) {
+      assert.deepEqual(negotiateAdcpRelease(preview, caps(['3.2', other])), {
+        version: '3.2',
+        source: 'supported_versions',
+        downgraded: true,
+      });
+    }
+  });
+
+  test('a preview cannot be inferred from missing, synthetic, or served-only discovery', () => {
+    const preview = '3.3.0-beta.0';
+    for (const evidence of [
+      undefined,
+      caps([preview], { _synthetic: true }),
+      ...['3.3-beta.0', '3.3-beta.1', '3.3', '3.2-beta.6'].map(servedVersion => caps(undefined, { servedVersion })),
+    ]) {
+      assert.equal(negotiateAdcpRelease(preview, evidence).reason, 'no_common_version');
+    }
+    assert.equal(negotiateAdcpRelease(preview, caps(undefined, { servedVersion: '3.2' })).version, '3.2');
+    assert.equal(negotiateAdcpRelease(preview, caps(undefined)).version, '3.0');
   });
 
   test('reports no common release when the seller is only newer', () => {
@@ -304,6 +336,21 @@ describe('convertResponse', () => {
     assert.equal(drifts[0].fromVersion, '3.1');
   });
 
+  test('moves an un-echoed 3.1 lifecycle alias but not a 3.1 task status (adcp-client#3432)', () => {
+    const lifecycle = { status: 'pending_creatives', media_buy_id: 'mb_1', packages: [] };
+    const moved = convertResponse('create_media_buy', lifecycle, { fromVersion: '3.1', toVersion: CLIENT_VERSION });
+    assert.equal(moved.data.media_buy_status, 'pending_creatives');
+    assert.equal(moved.drifts[0].type, 'media_buy_status_alias_moved');
+
+    for (const status of ['completed', 'rejected', 'canceled']) {
+      const taskStatus = { status, media_buy_id: 'mb_1', packages: [] };
+      const kept = convertResponse('create_media_buy', taskStatus, { fromVersion: '3.1', toVersion: CLIENT_VERSION });
+      assert.equal(kept.data, taskStatus, status);
+      assert.ok(!('media_buy_status' in kept.data), status);
+      assert.ok(!kept.drifts.some(d => d.type === 'media_buy_status_alias_moved'), status);
+    }
+  });
+
   test('copies the 3.1 root delivery currency onto each media buy', () => {
     const response = {
       currency: 'USD',
@@ -374,6 +421,36 @@ function captureDispatch(t, response = { status: 'completed' }) {
 }
 
 describe('SingleAgentClient against an older seller', () => {
+  test('both public buyers refuse an unadvertised beta before any tool dispatch', async t => {
+    const calls = captureDispatch(t);
+    for (const evidence of [
+      caps(['3.3-beta.1']),
+      caps(undefined, { servedVersion: '3.3-beta.0' }),
+      caps(['3.3-beta.0'], { _synthetic: true }),
+    ]) {
+      for (const useWrapper of [false, true]) {
+        const client = makeClient(evidence, { adcpVersion: '3.3.0-beta.0' });
+        let buyer = client;
+        if (useWrapper) {
+          buyer = new AgentClient(client.agent, { adcpVersion: '3.3.0-beta.0' });
+          buyer.client = client;
+        }
+        await assert.rejects(() => buyer.listCollections(), ProtocolFeatureUnsupportedError);
+      }
+    }
+    assert.deepEqual(calls, []);
+  });
+
+  test('a beta buyer retains the 3.0 downgrade for real metadata-free v3 discovery', async t => {
+    const calls = captureDispatch(t);
+    const client = makeClient(caps(undefined), { adcpVersion: '3.3.0-beta.0' });
+    await assert.rejects(() => client.listCollections(), ProtocolFeatureUnsupportedError);
+    assert.deepEqual(calls, []);
+    const negotiated = client.negotiateCallRelease(caps(undefined), undefined);
+    assert.equal(negotiated.version, '3.0');
+    assert.equal(negotiated.downgraded, true);
+  });
+
   test('converts the request down, sends the negotiated release and reports the drops', async t => {
     const calls = captureDispatch(t, {
       structuredContent: { adcp_version: '3.1', status: 'active', media_buy_id: 'mb_1', packages: [] },

@@ -328,6 +328,27 @@ Useful flags:
 - `--strict-flags`: Exit non-zero if any removed flag (e.g. `--platform-type`, removed in 5.1) is passed — recommended for CI
 - `--oauth`: Complete the browser OAuth flow inline when the saved alias has no valid tokens (MCP only — requires a saved alias)
 
+The versioned compliance summary reports actual storyboard-wide assertion failures in
+`failures`, with a command to rerun the whole storyboard. A false storyboard verdict
+without a failed step or assertion appears separately in `incomplete_storyboards`
+and as `STORYBOARD-INCOMPLETE` in text output. CI consumers that require complete
+coverage should inspect `overall_status`, `completeness`, and
+`incomplete_storyboards` as well as `failures`; partial coverage can exit zero.
+
+Discovery-only runs do not count as lifecycle observations. A lifecycle task that
+runs without observable state still leaves its lifecycle coverage partial. An
+optional-only storyboard passes only when a passing optional phase executes real
+coverage and no prerequisite fails; skipping every step does not earn a pass.
+
+Persistent notification assertions observe the URL from a successful subscriber
+registration. Positive `expect_webhook` payload selectors may use `filter.body`
+or flat selectors; conflicting values are rejected. Negative `expect_no_webhook`
+payload selectors require `filter.body`. Each ordinary positive assertion needs
+a fresh delivery or logical notification; explicit delivery-count and retry
+assertions can inspect the full delivery history. The flat account-change
+`change_id: '*'` selector means presence, while a nested `filter.body.change_id`
+matches its value exactly.
+
 > **Removed in 5.1:** `--platform-type` / `--list-platform-types` / `--storyboards` options. Agent selection is now driven by `get_adcp_capabilities` (`supported_protocols` + `specialisms`). Use `--storyboards` above to target a specific bundle.
 
 ### OAuth-protected agents

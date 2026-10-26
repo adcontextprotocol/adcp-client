@@ -255,7 +255,14 @@ describe('MCP tools/call — maxResponseBytes', () => {
     // the delta rather than an absolute: non-zero means a new session.
     async function handshakesFor(transport) {
       const before = initializeCount;
-      await ProtocolClient.callTool(agent, 'get_adcp_capabilities', {}, transport ? { transport } : undefined);
+      await ProtocolClient.callTool(
+        agent,
+        'get_adcp_capabilities',
+        {},
+        {
+          transport: { connectionReuse: 'process', ...transport },
+        }
+      );
       return initializeCount - before;
     }
 

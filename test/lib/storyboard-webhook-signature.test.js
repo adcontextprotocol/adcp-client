@@ -48,7 +48,7 @@ function generateEd25519Keypair(kid) {
 // Signed fake publisher
 // ────────────────────────────────────────────────────────────
 
-async function startSignedPublisher({ signerKey, tag } = {}) {
+async function startSignedPublisher({ signerKey, tag, duplicateBody = false } = {}) {
   const server = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const c of req) chunks.push(c);
@@ -91,10 +91,11 @@ async function startSignedPublisher({ signerKey, tag } = {}) {
 
     if (toolName === '__test_fire_webhook') {
       const url = args.push_notification_config?.url;
-      const body = JSON.stringify({
+      let body = JSON.stringify({
         idempotency_key: 'evt_signed_' + '0123456789abcdef'.slice(0, 16),
         task: { task_id: args.task_id ?? 'mb-1', status: 'completed' },
       });
+      if (duplicateBody) body = body.replace('"task":', '"task":{},"task":');
       // Pass `tag` through when the test wants a deliberately wrong tag —
       // exercises the receiver's tag-mismatch rejection without
       // post-signing header mutation.
@@ -197,6 +198,38 @@ describe('runStoryboard: expect_webhook_signature_valid (E2E with signed publish
       `expected pass; got: ${JSON.stringify(assertStep.validations)} skip: ${JSON.stringify(assertStep.skip)}`
     );
     assert.strictEqual(assertStep.validations[0].check, 'expect_webhook_signature_valid');
+  });
+
+  test('grades a signed duplicate-key body as schema_violation', async () => {
+    const { privateJwk, publicJwk } = generateEd25519Keypair('key_webhook_v1');
+    publisher = await startSignedPublisher({
+      signerKey: { keyid: 'key_webhook_v1', alg: 'ed25519', privateKey: privateJwk },
+      duplicateBody: true,
+    });
+    const storyboard = storyboardWith([
+      {
+        id: 'trigger',
+        title: 'Trigger signed duplicate JSON',
+        task: '__test_fire_webhook',
+        auth: 'none',
+        sample_request: { push_notification_config: { url: '{{runner.webhook_url:trigger}}' } },
+      },
+      {
+        id: 'assert_sig',
+        title: 'Reject duplicate JSON',
+        task: 'expect_webhook_signature_valid',
+        triggered_by: 'trigger',
+        timeout_seconds: 2,
+      },
+    ]);
+    const result = await runStoryboard(publisher.url, storyboard, {
+      ...RUN_OPTIONS_BASE,
+      webhook_receiver: {},
+      webhook_signing: { jwks: new StaticJwksResolver([publicJwk]) },
+    });
+    const step = result.phases[0].steps[1];
+    assert.equal(step.passed, false);
+    assert.equal(step.validations[0].actual.code, 'schema_violation');
   });
 
   test('fails with signature_tag_invalid when publisher uses the wrong tag', async () => {

@@ -192,6 +192,7 @@ export type {
 
 export {
   MEDIA_BUY_TRANSITIONS,
+  getMediaBuyTransitions,
   CREATIVE_ASSET_TRANSITIONS,
   isLegalMediaBuyTransition,
   isLegalCreativeTransition,

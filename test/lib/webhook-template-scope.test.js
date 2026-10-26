@@ -118,7 +118,15 @@ describe('webhook template scoping', () => {
       validation: { requests: 'off', responses: 'off' },
     });
     client.ensureEndpointDiscovered = async () => agent;
-    client.detectServerVersion = async () => 'v3';
+    client.getCapabilities = async () => ({
+      version: 'v3',
+      majorVersions: [3],
+      supportedVersions: [client.getAdcpVersion()],
+      protocols: ['media_buy'],
+      features: {},
+      extensions: [],
+      _synthetic: false,
+    });
 
     await client.createMediaBuy({
       account: { account_id: 'acc_1' },
@@ -160,7 +168,15 @@ describe('webhook template scoping', () => {
       validation: { requests: 'off', responses: 'off' },
     });
     client.ensureEndpointDiscovered = async () => agent;
-    client.detectServerVersion = async () => 'v3';
+    client.getCapabilities = async () => ({
+      version: 'v3',
+      majorVersions: [3],
+      supportedVersions: [client.getAdcpVersion()],
+      protocols: ['media_buy'],
+      features: {},
+      extensions: [],
+      _synthetic: false,
+    });
 
     await client.createMediaBuy({
       account: { account_id: 'acc_1' },
@@ -190,7 +206,15 @@ describe('webhook template scoping', () => {
       validation: { requests: 'off', responses: 'off' },
     });
     client.ensureEndpointDiscovered = async () => agent;
-    client.detectServerVersion = async () => 'v3';
+    client.getCapabilities = async () => ({
+      version: 'v3',
+      majorVersions: [3],
+      supportedVersions: [client.getAdcpVersion()],
+      protocols: ['media_buy'],
+      features: {},
+      extensions: [],
+      _synthetic: false,
+    });
 
     await client.createMediaBuy({
       account: { account_id: 'acc_1' },
@@ -378,7 +402,15 @@ describe('webhook template scoping', () => {
       validation: { requests: 'off', responses: 'off' },
     });
     client.ensureEndpointDiscovered = async () => agent;
-    client.detectServerVersion = async () => 'v3';
+    client.getCapabilities = async () => ({
+      version: 'v3',
+      majorVersions: [3],
+      supportedVersions: [client.getAdcpVersion()],
+      protocols: ['media_buy'],
+      features: {},
+      extensions: [],
+      _synthetic: false,
+    });
 
     await client.createMediaBuy({
       account: { account_id: 'acc_1' },

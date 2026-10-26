@@ -479,7 +479,7 @@ describe('version scoping', { skip: !legacyAvailable }, () => {
     const caps = {
       supported_protocols: ['media_buy'],
       specialisms: ['sales-guaranteed'],
-      supported_versions: ['3.1', '3.2', '3.2.1'],
+      supported_versions: ['3.1', '3.2', '3.2.1', ADCP_VERSION],
       major_versions: [3],
     };
     for (const version of ['3.1.29', ADCP_VERSION]) {
@@ -1059,7 +1059,8 @@ describe('real AdCP 3.2 bundle aggregates', { skip: !scenariosAvailable }, () =>
     // Distinct storyboard ids are fewer, because the same scenario is carried
     // in more than one bundle directory — both numbers are asserted so the
     // claim cannot drift silently in either direction.
-    const root = path.join(__dirname, '..', '..', 'compliance', 'cache', ADCP_VERSION);
+    // This census records the historical 3.2 scope claim.
+    const root = path.join(__dirname, '..', '..', 'compliance', 'cache', '3.2.7');
     const walk = dir =>
       fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
         const full = path.join(dir, entry.name);

@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 const PREVIEW_VERSION = /^\d+\.\d+(?:\.\d+)?-(?:alpha|beta|rc)(?:\.[0-9A-Za-z.-]+)?$/;
 const PREVIEW_TYPE_BUNDLE = /^v\d+(?:-\d+)*-(?:alpha|beta|rc)(?:-|$)/;
-const MAINTAINED_COMPLIANCE_ROOTS = ['3.0.25', '3.1.29'];
+const MAINTAINED_COMPLIANCE_ROOTS = ['3.0.25', '3.1.29', '3.2.7'];
 
 function currentBundleKey(version) {
   return version.includes('-') ? version : version.split('.').slice(0, 2).join('.');
@@ -31,7 +31,7 @@ export function assertPublishProtocolArtifacts({ packageInfo, manifest, currentP
     throw new Error('npm pack did not return package file metadata');
   }
 
-  const allowedSchemaRoots = new Set(['3.0', '3.1', currentBundleKey(currentProtocolVersion)]);
+  const allowedSchemaRoots = new Set(['3.0', '3.1', '3.2', currentBundleKey(currentProtocolVersion)]);
   const violations = [];
   const schemaRoots = new Set();
   const complianceRoots = new Set();

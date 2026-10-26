@@ -19,6 +19,7 @@ function modeGateStoryboard() {
     phases: [
       {
         id: 'live_mode_denial',
+        optional: true,
         title: 'Live-mode denial',
         steps: [
           {

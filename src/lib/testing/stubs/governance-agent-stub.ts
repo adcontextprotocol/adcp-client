@@ -10,6 +10,7 @@
  * - Starts on an ephemeral port (HTTP or HTTPS), shuts down cleanly
  */
 
+import { ADCP_VERSION, toReleasePrecisionVersion } from '../../version';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
@@ -317,7 +318,8 @@ export class GovernanceAgentStub {
           {
             type: 'text' as const,
             text: JSON.stringify({
-              adcp: { major_versions: [3] },
+              adcp_version: toReleasePrecisionVersion(ADCP_VERSION),
+              adcp: { major_versions: [3], supported_versions: [toReleasePrecisionVersion(ADCP_VERSION)] },
               supported_protocols: ['governance'],
             }),
           },

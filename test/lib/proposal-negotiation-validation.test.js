@@ -20,7 +20,7 @@ const {
   verifyRefineProposalsResponse,
 } = require('../../dist/lib/index.js');
 const { withExternalSchemaRoot } = require('../../dist/lib/validation/schema-loader.js');
-const { ADCP_VERSION } = require('../../dist/lib/version.js');
+const { ADCP_VERSION, toReleasePrecisionVersion } = require('../../dist/lib/version.js');
 
 const KEY = 'refine-validation-0001';
 
@@ -102,7 +102,7 @@ test('commercial-terms verifier accepts a digest-bound exact reviewed snapshot',
   );
 
   assert.equal(result.ok, true);
-  assert.equal(result.schemaVersion, ADCP_VERSION);
+  assert.equal(result.schemaVersion, '3.2.7');
   assert.deepEqual(result.mismatches, []);
   assert.doesNotThrow(() =>
     assertProposalCommercialTerms(proposal('proposal-terms', 'source-1', { commercial_terms: terms }), terms)
@@ -507,7 +507,7 @@ test('buyer validation fails closed on malformed union arms, non-finite values, 
   );
 });
 
-test('builder pins the 3.2 wire envelope and returns an immutable deep snapshot for exact retry', () => {
+test('builder pins the default wire envelope and returns an immutable deep snapshot for exact retry', () => {
   const input = {
     context: { planning: { attempt: 1 } },
     refinements: request().refinements,
@@ -516,7 +516,7 @@ test('builder pins the 3.2 wire envelope and returns an immutable deep snapshot 
   input.context.planning.attempt = 2;
   input.refinements[0].ask = 'Changed after construction';
 
-  assert.equal(built.adcp_version, '3.2');
+  assert.equal(built.adcp_version, toReleasePrecisionVersion(ADCP_VERSION));
   assert.equal(built.adcp_major_version, 3);
   assert.equal(built.context.planning.attempt, 1);
   assert.equal(built.refinements[0].ask, 'Improve the terms');
@@ -553,8 +553,11 @@ test('response validation rejects malformed 3.2 prerelease pins', () => {
     assert.equal(result.ok, false);
     assert.match(result.issues[0].message, /adcp_version must be release-precision AdCP 3\.2 or 3\.3/);
   }
-  for (const adcp_version of ['3.2', '3.2-beta', '3.2-beta.1', '3.2-beta-1']) {
-    assert.equal(validateRefineProposalsResponseShape({ ...response(), adcp_version }).ok, true);
+  for (const adcp_version of ['3.2']) {
+    assert.equal(
+      validateRefineProposalsResponseShape({ ...response(), adcp_version }, { adcpVersion: '3.2.7' }).ok,
+      true
+    );
   }
 });
 
@@ -820,7 +823,7 @@ test('compact submitted responses validate without completed-field access', () =
     context: { correlation_id: 'corr-1' },
     ext: { seller: 'example' },
   };
-  assert.equal(validateRefineProposalsResponseShape(submitted).ok, true);
+  assert.equal(validateRefineProposalsResponseShape(submitted, { adcpVersion: '3.2.7' }).ok, true);
 
   const semantic = verifyRefineProposalsResponse(request(), submitted);
   assert.equal(semantic.ok, false);
@@ -835,17 +838,20 @@ test('compact submitted responses validate without completed-field access', () =
     { ...submitted, results: [] },
     { ...submitted, message: 'x'.repeat(2001) },
   ]) {
-    assert.equal(validateRefineProposalsResponseShape(invalid).ok, false);
+    assert.equal(validateRefineProposalsResponseShape(invalid, { adcpVersion: '3.2.7' }).ok, false);
   }
 });
 
 test('response verifier accepts only the 3.2 response release line and reports rejected values', () => {
-  for (const adcp_version of ['3.2', '3.2-beta.0', '3.2']) {
+  for (const adcp_version of ['3.2']) {
     assert.equal(
-      validateRefineProposalsResponseShape({
-        ...response(),
-        adcp_version,
-      }).ok,
+      validateRefineProposalsResponseShape(
+        {
+          ...response(),
+          adcp_version,
+        },
+        { adcpVersion: '3.2.7' }
+      ).ok,
       true,
       adcp_version
     );

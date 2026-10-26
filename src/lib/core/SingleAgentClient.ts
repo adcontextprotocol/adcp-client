@@ -1,3 +1,5 @@
+import { withMCPConnectionPolicy } from '../protocols/mcp-connection-policy';
+import { hasUnsignedCapabilityBootstrap } from '../signing/protocol-methods';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import { normalizeMediaBuyResponse } from '../utils/creative-adapter';
 import { normalizeFormatsResponse } from '../utils/format-renders';
@@ -38,6 +40,7 @@ import {
   getVersionAdapter,
   isNegotiationFailure,
   negotiateAdcpRelease,
+  parseAdcpRelease,
   releaseDefinesTool,
   resolveAdapterKey,
   type AccountIdentityDowngrade,
@@ -52,6 +55,10 @@ import type {
   GetProductsRequest,
   GetProductsResponse,
   ListProductsRequest,
+  ListCollectionsRequest,
+  ListCollectionsResponse,
+  ListProposalsRequest,
+  ListProposalsResponse,
   PropertyListReference,
   ListCreativeFormatsRequest,
   ListCreativeFormatsResponse,
@@ -162,6 +169,7 @@ import { getSignedRequestRejection } from '../protocols/signedRequestRejection';
 import { withAmbientIdentityHeaders } from '../protocols/mcp-call-context';
 import { ProtocolClient, normalizeTransportOptions } from '../protocols';
 import {
+  AgentRateLimitedError,
   AuthenticationCredentialsRejectedError,
   AuthenticationRequiredError,
   ConfigurationError,
@@ -375,7 +383,7 @@ import { canonicalize as canonicalizeJson } from '../utils/jcs';
 type ReadRequestOptions = Pick<TaskOptions, 'signal' | 'transport'>;
 type CapabilityProbeRequestOptions = Pick<
   TaskOptions,
-  'signal' | 'transport' | 'disableWebhook' | 'delegatedOperatorAuthorization'
+  'signal' | 'transport' | 'disableWebhook' | 'delegatedOperatorAuthorization' | 'versionEnvelope'
 >;
 type ToolSchemaMap = Map<string, Record<string, unknown>>;
 // Complete documents share the property map's scope and lifetime, without
@@ -518,6 +526,8 @@ const CANONICAL_CREATIVE_ACTIVITY_TASKS = new Set([
 const RECORDLESS_HMAC_READ_ONLY_TASKS = new Set([
   'get_adcp_capabilities',
   'list_products',
+  'list_collections',
+  'list_proposals',
   'list_creative_formats',
   'preview_creative',
   'list_transformers',
@@ -1158,6 +1168,8 @@ function assertRawMethodForGovernedPayload(taskType: string, options?: TaskOptio
 const PRIMARY_ADCP_TASK_NAMES = {
   get_products: true,
   list_products: true,
+  list_collections: true,
+  list_proposals: true,
   request_proposals: true,
   refine_proposals: true,
   decline_proposals: true,
@@ -3594,6 +3606,12 @@ export class SingleAgentClient {
    * Also computes the canonical base URL by stripping /mcp suffix.
    */
   private async ensureEndpointDiscovered(options?: ReadRequestOptions): Promise<AgentConfig> {
+    return withMCPConnectionPolicy(normalizeTransportOptions(options?.transport ?? this.config.transport), () =>
+      this.ensureEndpointDiscoveredWithConnectionPolicy(options)
+    );
+  }
+
+  private async ensureEndpointDiscoveredWithConnectionPolicy(options?: ReadRequestOptions): Promise<AgentConfig> {
     throwIfAborted(options?.signal);
     if (this.config._reuseConfiguredDiscovery?.()) this.synchronizeCapabilityEvidenceAuthorizationScope();
     const needsDiscovery = this.normalizedAgent._needsDiscovery;
@@ -3926,12 +3944,24 @@ export class SingleAgentClient {
    * - A validated MCP protected-resource metadata chain yields NeedsAuthorizationError
    * - Otherwise AuthenticationRequiredError carries the advertised challenge
    *
+   * Rate limiting (429, or 503 with Retry-After) stops probing at that URL and
+   * throws AgentRateLimitedError carrying the status and Retry-After.
+   *
    * Note: This is async and called lazily on first agent interaction
    */
   private async discoverMCPEndpoint(providedUri: string, options?: ReadRequestOptions): Promise<string> {
+    return withMCPConnectionPolicy(normalizeTransportOptions(options?.transport ?? this.config.transport), () =>
+      this.discoverMCPEndpointWithConnectionPolicy(providedUri, options)
+    );
+  }
+
+  private async discoverMCPEndpointWithConnectionPolicy(
+    providedUri: string,
+    options?: ReadRequestOptions
+  ): Promise<string> {
     throwIfAborted(options?.signal);
     const { connectMCPWithFallback } = await import('../protocols/mcp');
-    const { probeModernMCPConnection } = await import('../protocols/mcp-modern');
+    const { probeModernMCPConnection, retryAfterOf } = await import('../protocols/mcp-modern');
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
     const usesScopedFetch = this.usesScopedDiscoveryTransport(options);
     const endpointEpoch = this.discoveryEpochSnapshot(options);
@@ -3957,6 +3987,8 @@ export class SingleAgentClient {
     type EndpointTestResult = {
       success: boolean;
       status?: number;
+      /** `Retry-After` from a 429/503 probe response, when the agent sent it. */
+      retryAfter?: string;
       error?: unknown;
     };
 
@@ -4011,7 +4043,8 @@ export class SingleAgentClient {
           (errObj?.status as number | undefined) ||
           ((errObj?.response as Record<string, unknown>)?.status as number | undefined) ||
           ((errObj?.cause as Record<string, unknown>)?.status as number | undefined);
-        return { success: false, status, error };
+        const retryAfter = retryAfterOf(error);
+        return { success: false, status, ...(retryAfter !== undefined && { retryAfter }), error };
       }
     };
 
@@ -4049,6 +4082,13 @@ export class SingleAgentClient {
       if (result.success) {
         firstWorkingUrl = url;
         break;
+      }
+
+      // The agent is throttling us (adcp-client#3442). Probing the remaining
+      // candidates would only spend more of its request budget, and the rate
+      // limit says nothing about whether this path is the MCP endpoint.
+      if (result.status === 429 || (result.status === 503 && result.retryAfter !== undefined)) {
+        throw new AgentRateLimitedError(url, result.status, result.retryAfter, result.error);
       }
 
       if (result.status === 401) {
@@ -7149,7 +7189,20 @@ export class SingleAgentClient {
     if (this.config.wireAdcpVersion !== undefined || options?.wireAdcpVersion !== undefined) return undefined;
     if (options?.preserveGovernedPayload || this.config.experimentalIdentity33) return undefined;
     const negotiated = negotiateAdcpRelease(this.resolvedAdcpVersion, capabilities);
-    if (!negotiated || isNegotiationFailure(negotiated) || negotiated.source === 'legacy_v3') return undefined;
+    if (isNegotiationFailure(negotiated) && parseAdcpRelease(this.resolvedAdcpVersion)?.prerelease) {
+      const requiredVersion = toReleasePrecisionWire(this.resolvedAdcpVersion);
+      throw new ProtocolFeatureUnsupportedError(['adcp_version'], [], this.agent.agent_uri, {
+        message: `The seller has not advertised the exact AdCP ${requiredVersion} preview. No request was sent.`,
+        suggestion: 'Choose a stable AdCP release the seller supports or wait for it to advertise this exact preview.',
+        details: {
+          feature: 'adcp_version',
+          required_version: requiredVersion,
+          capability_path: 'adcp.supported_versions',
+        },
+      });
+    }
+    if (!negotiated || isNegotiationFailure(negotiated)) return undefined;
+    if (negotiated.source === 'legacy_v3' && !parseAdcpRelease(this.resolvedAdcpVersion)?.prerelease) return undefined;
     return negotiated;
   }
 
@@ -7703,6 +7756,7 @@ export class SingleAgentClient {
       const account = canonicalAccountRoutingSnapshot(accountReference);
       const cache =
         !effectiveOptions.skipRequestValidation &&
+        !this.usesScopedDiscoveryTransport(effectiveOptions) &&
         !effectiveOptions.preserveGovernedPayload &&
         !inputHandler &&
         !request.push_notification_config &&
@@ -7832,6 +7886,36 @@ export class SingleAgentClient {
       params,
       inputHandler,
       options
+    );
+  }
+
+  /** Read the seller's collection catalog using AdCP 3.3. @experimental */
+  async listCollections(
+    params: ListCollectionsRequest = {},
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListCollectionsResponse>> {
+    return this.executeAndHandle<ListCollectionsResponse>(
+      'list_collections',
+      'onListCollectionsStatusChange',
+      params,
+      inputHandler,
+      { ...options, disableWebhook: true }
+    );
+  }
+
+  /** Read proposals in an authorized account using AdCP 3.3. @experimental */
+  async listProposals(
+    params: ListProposalsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListProposalsResponse>> {
+    return this.executeAndHandle<ListProposalsResponse>(
+      'list_proposals',
+      'onListProposalsStatusChange',
+      params,
+      inputHandler,
+      { ...options, disableWebhook: true }
     );
   }
 
@@ -9656,6 +9740,10 @@ export class SingleAgentClient {
         return this.getProducts(params as CanonicalGetProductsRequest, inputHandler, options);
       case 'list_products':
         return this.listProducts(params as ListProductsRequest, inputHandler, options);
+      case 'list_collections':
+        return this.listCollections(params as ListCollectionsRequest, inputHandler, options);
+      case 'list_proposals':
+        return this.listProposals(params as ListProposalsRequest, inputHandler, options);
       case 'create_media_buy':
         return (await this.createMediaBuy(
           params as MutatingRequestInput<CanonicalCreateMediaBuyRequest>,
@@ -10448,6 +10536,23 @@ export class SingleAgentClient {
       parameters?: string[];
     }>;
   }> {
+    return withMCPConnectionPolicy(normalizeTransportOptions(options?.transport ?? this.config.transport), () =>
+      this.getAgentInfoWithConnectionPolicy(options)
+    );
+  }
+
+  private async getAgentInfoWithConnectionPolicy(options?: ReadRequestOptions): Promise<{
+    name: string;
+    description?: string;
+    protocol: 'mcp' | 'a2a';
+    url: string;
+    tools: Array<{
+      name: string;
+      description?: string;
+      inputSchema?: Record<string, unknown>;
+      parameters?: string[];
+    }>;
+  }> {
     throwIfAborted(options?.signal);
     const reuse = this.config._reuseConfiguredDiscovery?.() && !this.usesScopedDiscoveryTransport(options);
     if (!reuse) return this.getAgentInfoLive(options);
@@ -10574,7 +10679,7 @@ export class SingleAgentClient {
       }
 
       const modernTools =
-        !transport?.trustedFetchFn &&
+        !this.usesScopedDiscoveryTransport(options) &&
         this.discoveredMcpEra === 'legacy' &&
         Date.now() - this.discoveredMcpEraAt < 5 * 60 * 1000
           ? ({ handled: false } as const)
@@ -10759,6 +10864,12 @@ export class SingleAgentClient {
    * ```
    */
   async getCapabilities(options?: ReadRequestOptions): Promise<AdcpCapabilities> {
+    return withMCPConnectionPolicy(normalizeTransportOptions(options?.transport ?? this.config.transport), () =>
+      this.getCapabilitiesWithConnectionPolicy(options)
+    );
+  }
+
+  private async getCapabilitiesWithConnectionPolicy(options?: ReadRequestOptions): Promise<AdcpCapabilities> {
     throwIfAborted(options?.signal);
     this.synchronizeCapabilityEvidenceAuthorizationScope();
     const discoveryContext = (options as InternalReadRequestOptions | undefined)?.[CAPABILITY_DISCOVERY_CONTEXT];
@@ -10967,10 +11078,21 @@ export class SingleAgentClient {
         // and callback authorization provenance. The active OpenTelemetry
         // context remains in the async chain, correlating both physical tasks.
         const callerOptions = options as CapabilityProbeRequestOptions | undefined;
+        const isPreview = !!parseAdcpRelease(this.resolvedAdcpVersion)?.prerelease;
         const probeOptions: CapabilityProbeRequestOptions = {
+          // Discover the seller's release window before claiming a preview
+          // older sellers may reject. Ordinary calls still negotiate exact
+          // preview evidence or a maintained stable downgrade afterwards.
+          ...(isPreview && {
+            versionEnvelope: callerOptions?.versionEnvelope ?? this.config.versionEnvelope ?? 'none',
+            disableWebhook: true,
+          }),
           ...(options?.signal !== undefined && { signal: options.signal }),
           ...(options?.transport !== undefined && { transport: options.transport }),
-          ...(callerOptions?.disableWebhook !== undefined && { disableWebhook: callerOptions.disableWebhook }),
+          ...(callerOptions?.disableWebhook !== undefined &&
+            !isPreview && {
+              disableWebhook: callerOptions.disableWebhook,
+            }),
           ...(callerOptions?.delegatedOperatorAuthorization !== undefined && {
             delegatedOperatorAuthorization: { ...callerOptions.delegatedOperatorAuthorization },
           }),
@@ -11151,6 +11273,7 @@ export class SingleAgentClient {
     const effectiveAgent = this.normalizedAgent;
     return canonicalizeJson({
       authToken: effectiveAgent.auth_token ?? null,
+      connectionPartition: this.config.transport?.connectionPartition ?? null,
       headers: effectiveAgent.headers ?? null,
       oauthTokens: effectiveAgent.oauth_tokens ?? null,
       oauthClient: effectiveAgent.oauth_client ?? null,
@@ -11185,8 +11308,9 @@ export class SingleAgentClient {
   /** A comply() run owns its configured fetch; per-call transport changes still discover separately. */
   private usesScopedDiscoveryTransport(options?: ReadRequestOptions): boolean {
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
-    if (!this.config._reuseConfiguredDiscovery?.()) return transport?.trustedFetchFn !== undefined;
     const configured = normalizeTransportOptions(this.config.transport);
+    if (transport?.connectionPartition !== configured?.connectionPartition) return true;
+    if (!this.config._reuseConfiguredDiscovery?.()) return transport?.trustedFetchFn !== undefined;
     return (
       transport?.trustedFetchFn !== configured?.trustedFetchFn ||
       transport?.allowPrivateIp !== configured?.allowPrivateIp ||
@@ -11361,6 +11485,8 @@ export class SingleAgentClient {
       kid: (provider ? provider.keyid : (signing as { kid?: string }).kid) ?? null,
       alg: (provider ? provider.algorithm : (signing as { alg?: string }).alg) ?? null,
       alwaysSign: signing.always_sign ?? null,
+      alwaysSignProtocolMethods: signing.always_sign_protocol_methods ?? null,
+      unsignedCapabilityBootstrap: hasUnsignedCapabilityBootstrap(signing),
       signSupported: signing.sign_supported ?? null,
     };
   }
@@ -11381,6 +11507,7 @@ export class SingleAgentClient {
       adcpVersion: this.resolvedAdcpVersion,
       wireAdcpVersion: this.config.wireAdcpVersion,
       authIdentity: config.authIdentity,
+      connectionPartition: transport?.connectionPartition,
       credentialKind: this.discoveryCredentialKind(),
       headers: withAmbientIdentityHeaders(this.normalizedAgent.headers),
       signing: this.discoverySigningFingerprint(),

@@ -1,5 +1,45 @@
 # @adcp/reporting-storage
 
+## 0.2.1-beta.0
+
+### Patch Changes
+
+- Updated dependencies [505ddc9]
+- Updated dependencies [8a04f48]
+- Updated dependencies [8a04f48]
+  - @adcp/sdk@17.0.0-beta.0
+
+## 0.2.0
+
+### Minor Changes
+
+- eaaa07f: Discover and cache the BigQuery dataset location on the first warehouse sink run when `location` is omitted. Use it for load submissions and replay job lookups so regional datasets work without an explicit location. Metadata failures stop the run before warehouse work and identify the required permission and explicit `location` option. Explicit locations continue to skip metadata access.
+
+  Migration: sinks that omit `location`, including US/EU datasets, now need `bigquery.datasets.get` and a client wrapper exposing `dataset.getMetadata()`. Set `location` explicitly to skip that requirement. Empty location strings are rejected; omit the option to discover it. The `ADCP_BIGQUERY_SINK_LOCATION_UNSET` warning is replaced by discovery and actionable failures. No database migration is required.
+
+### Patch Changes
+
+- Updated dependencies [eaaa07f]
+- Updated dependencies [47934c6]
+- Updated dependencies [5a0a03f]
+- Updated dependencies [a31d162]
+- Updated dependencies [e678796]
+- Updated dependencies [ba711f1]
+- Updated dependencies [acddab4]
+- Updated dependencies [4f5d366]
+- Updated dependencies [7dca440]
+- Updated dependencies [7dca440]
+- Updated dependencies [7d272f9]
+- Updated dependencies [6c281d9]
+- Updated dependencies [a008b4e]
+- Updated dependencies [7f7de7c]
+- Updated dependencies [3d53212]
+- Updated dependencies [1dcd427]
+- Updated dependencies [7b181ff]
+- Updated dependencies [8c97223]
+- Updated dependencies [80cec20]
+  - @adcp/sdk@16.5.0
+
 ## 0.1.0
 
 ### Minor Changes

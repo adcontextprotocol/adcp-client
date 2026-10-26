@@ -1,3 +1,4 @@
+const { toReleasePrecisionVersion } = require('../../dist/lib/version.js');
 /**
  * ComplyOptions.routeStoryboard — per-storyboard routing for comply()
  * (adcontextprotocol/adcp#7758, #7779).
@@ -200,7 +201,7 @@ async function startAgent(name) {
       return okTool(res, rpc.id, {
         adcp: {
           major_versions: [3],
-          supported_versions: [ADCP_VERSION.split('.').slice(0, 2).join('.')],
+          supported_versions: [toReleasePrecisionVersion(ADCP_VERSION)],
           build_version: ADCP_VERSION,
           idempotency: { supported: false },
         },

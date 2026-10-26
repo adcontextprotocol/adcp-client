@@ -50,6 +50,10 @@ function fixture(edit: (s: string) => string = s => s): string {
     '}).passthrough());',
     '',
     'export const RequestProposalsAsyncSubmittedSchema = CompactTaskSubmittedSchema;',
+    '',
+    'export const RefineProposalsAsyncSubmittedSchema = CompactTaskSubmittedSchema;',
+    '',
+    'export const TailSchema = z.string();',
   ].join('\\n'));
 }
 function swap(from: string, to: string) {

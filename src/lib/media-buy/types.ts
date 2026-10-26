@@ -36,7 +36,9 @@ import type { CANONICAL_ACTION_TASKS } from './action-metadata.generated';
 export type MediaBuyActionId =
   | MediaBuyAvailableAction['action']
   | MediaBuyUpdateFieldAction
-  | keyof typeof CANONICAL_ACTION_TASKS;
+  | keyof typeof CANONICAL_ACTION_TASKS
+  /** Runtime routes and bindings still come from the negotiated schema metadata. */
+  | 'update_creative_start_policy';
 
 /**
  * @deprecated Use `SLAWindow`. Kept as an import-compatibility alias for the
@@ -85,6 +87,7 @@ export interface MediaBuyActionContext {
     canceled?: boolean;
     paused?: boolean;
     status?: string;
+    start_requires_all_creatives_approved?: boolean;
     daily_budget_cap?: number | null;
     min_spend_target?: number | null;
   }>;
@@ -143,6 +146,8 @@ export interface UpdateMediaBuyRequestLike {
     end_time?: string;
     paused?: boolean;
     canceled?: true;
+    /** AdCP 3.3 initial package-start control; omission preserves the policy. */
+    start_requires_all_creatives_approved?: boolean;
     targeting_overlay?:
       | NonNullable<ControlMediaBuyRequest['packages']>[number]['targeting_overlay']
       | { frequency_cap?: unknown; [k: string]: unknown };

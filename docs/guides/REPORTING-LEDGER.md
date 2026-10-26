@@ -103,6 +103,14 @@ buyer's orders out of another buyer's report. `mediaBuyIds` is always derived
 from the returned constituents, so a buyer-named order ID can never reach
 `fetchSlice`. `expectedCurrency`, `expectedSourceTimezone`, and
 `expectedMediaBuyIds` are optional assertions and fail closed on conflict.
+For products created per brief or buy, source offerings may declare
+`applicability.products: { kind: 'host_attested' }`. In that mode,
+`resolveCoverage` must also verify each product declares the selected offering
+in `reporting_capabilities.reporting_delivery_offering_ids`. The SDK retains
+constituent-kind and product-binding checks, and freezes the returned
+denominator for each configuration generation. Existing `productIds` lists
+keep their allowlist behavior. See [source offering applicability](./REPORTING-SOURCE-EXECUTOR.md#products-created-per-brief-or-buy)
+for the new shapes and reader compatibility requirements.
 The service rejects credential-shaped keys and `ctx_metadata` anywhere in the
 returned `sourceScope`, then applies the source contract and existing ledger
 immutability checks. Return the resulting secret-free configuration state from

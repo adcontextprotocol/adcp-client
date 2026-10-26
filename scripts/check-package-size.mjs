@@ -122,12 +122,16 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // account-reduction helpers. Measured in CI at 20,533,600 bytes on the rebased
 // tree; allow about 40 KB of compressor variance and the follow-up adapter
 // module set. Unpacked, file-count, schema and declaration budgets stay fixed.
-// The opt-in x-adcp-applies-when tool-schema projection (adcp-client#3415)
-// adds one utility module and its server wiring. Measured in CI at 20,576,520
-// bytes; allow about 33 KB of compressor variance. Unpacked, file-count,
-// schema and declaration budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 20_610_000;
-const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
+// MCP principal partitions add four runtime/declaration artifacts and explicit
+// native-task routing/signing context declarations. CI measures 20,581,610
+// packed bytes; retain about 43 KB of compressor variance for this additive
+// surface. All unpacked, file-count, schema and declaration limits stay fixed.
+// SDK 17 retains stable 3.2.7 alongside the signed 3.3 beta bundle.
+// Measured: 25,702,691 packed bytes, 146,739,833 unpacked bytes and 8,293
+// files, including a new 774,320-byte bundled schema archive. These caps
+// preserve small release-note/compression margins and the archive-only policy.
+const MAX_PACKED_TARBALL_BYTES = 26_000_000;
+const MAX_UNPACKED_PACKAGE_BYTES = 144 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
 // schemas with its generated task surface and current compliance artifacts;
@@ -288,8 +292,9 @@ const MAX_PACKED_FILE_COUNT =
   2 + // The maintained bundle replacement adds the hosted-grader kit and compact macro-bearing URL schema.
   13 + // Property-list identifier, server, and certification modules (three dual-format sets) and adoption guide.
   4 + // Property-list reference probe (one dual-format runtime/declaration module set).
-  5; // Creative build probe: one dual-format runtime/declaration module (+4) and one guide (+1).
-const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
+  5 + // Creative build probe: one dual-format runtime/declaration module (+4) and one guide (+1).
+  1840; // SDK 17: 3.3 schemas/compliance, per-tool type entrypoints and migration/release notes.
+const MAX_BUNDLED_SCHEMA_BYTES = 2000 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
 const EXPECTED_ESM_SCHEMA_FACADE = "export * from './schemas.generated.js';\n";

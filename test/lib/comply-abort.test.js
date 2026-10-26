@@ -217,7 +217,7 @@ async function startTimeoutAgent(options = {}) {
         options.capabilitiesResponse ?? {
           adcp: {
             major_versions: [3],
-            supported_versions: ['3.1-rc.10'],
+            supported_versions: [ADCP_VERSION],
             build_version: ADCP_VERSION,
             idempotency: { supported: false },
           },
@@ -382,7 +382,10 @@ describe('comply() storyboard assertion aggregation', () => {
       assert.ok(track.scenarios.some(scenario => !scenario.overall_passed));
       assert.strictEqual(json.summary.steps_passed, 1);
       assert.strictEqual(json.summary.steps_failed, 0);
-      assert.strictEqual(json.failures, undefined);
+      assert.strictEqual(json.failures.length, 1);
+      assert.strictEqual(json.failures[0].step_id, 'assertion_only_failure/storyboard');
+      assert.strictEqual(json.failures[0].task, 'storyboard');
+      assert.match(json.failures[0].fix_command, /adcp storyboard run .* assertion_only_failure --json/);
       assert.strictEqual(json.bundle_results, undefined, 'targeted storyboard runs must not imply bundle coverage');
       for (const observation of [trackObservation, rootObservation, testedTrackObservation]) {
         assert.ok(observation, 'expected assertion failure observation at every aggregate projection');
@@ -421,13 +424,13 @@ describe('comply() timeout_ms option', () => {
           kind: 'universal',
           id: 'slow-timeout-one',
           storyboard_ids: ['slow_timeout_one'],
-          status: 'partial',
+          status: 'passing',
         },
         {
           kind: 'universal',
           id: 'slow-timeout-two',
           storyboard_ids: ['slow_timeout_two'],
-          status: 'partial',
+          status: 'passing',
         },
       ]);
     } finally {

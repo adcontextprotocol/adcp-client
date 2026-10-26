@@ -1,6 +1,6 @@
 /**
  * Reviewed non-JSON-Schema semantics from the 3.2 beta.8 / rc.2 / rc.3 / rc.4 / rc.6 / rc.7 / 3.2.1 / 3.2.3 /
- * 3.2.4 / 3.2.5 / 3.2.6 bundles.
+ * 3.2.4 / 3.2.5 / 3.2.6 / 3.2.7 / 3.3.0-beta.0 bundles.
  * These are semantic contracts, NOT a binding-field allowlist: properties and
  * comparison always come from the selected runtime schema. Additions to these
  * annotations require a deliberate implementation/review instead of AJV silently
@@ -205,6 +205,52 @@ export const COMMERCIAL_SEMANTIC_OVERRIDES_BY_RELEASE: Readonly<Record<string, R
     },
   },
   '3.2.6': {
+    'media-buy/product-purchase.json': {
+      verifier_constraints: {
+        accepted_snapshot_terms:
+          'Inside canonical-proposal.commercial_terms, each purchase MUST carry resolved start_time and end_time and MUST preserve every applicable measurement term and performance standard. Omission of measurement_terms or performance_standards means the accepted offer declared none.',
+        pricing_identity: {
+          pricing_option_id: 'equals_pricing.pricing_option_id_when_pricing_present',
+          on_violation: 'reject_before_commitment',
+        },
+      },
+    },
+  },
+  '3.2.7': {
+    'media-buy/product-purchase.json': {
+      verifier_constraints: {
+        accepted_snapshot_terms:
+          'Inside canonical-proposal.commercial_terms, each purchase MUST carry resolved start_time and end_time and MUST preserve every applicable measurement term and performance standard. Omission of measurement_terms or performance_standards means the accepted offer declared none.',
+        pricing_identity: {
+          pricing_option_id: 'equals_pricing.pricing_option_id_when_pricing_present',
+          on_violation: 'reject_before_commitment',
+        },
+      },
+    },
+  },
+  '3.3.0-beta.0': {
+    'core/targeting.json/properties/collection_lists': {
+      unique_by: ['agent_url', 'list_id'],
+      spec: 'docs/governance/collection/index.mdx#combining-several-collection-lists-experimental',
+    },
+    'core/targeting.json/properties/collection_lists_exclude': {
+      unique_by: ['agent_url', 'list_id'],
+      spec: 'docs/governance/collection/index.mdx#combining-several-collection-lists-experimental',
+    },
+    'media-buy/commercial-terms.json/properties/definition_pins': {
+      unique_by: ['ref_kind', 'reference'],
+      verifier_constraints: {
+        pin_coverage: 'for_new_media_buy_and_media_buy_update_every_covered_reference_in_purchases_has_exactly_one_pin',
+        pin_authority: 'seller_authored_only',
+      },
+    },
+    'core/definition-pin.json': {
+      verifier_constraints: {
+        pin_projection:
+          "content_digest is computed over the published entry minus its kind's exclusion list, with the kind's named set arrays de-duplicated and sorted by JCS bytes",
+        on_violation: 'REFERENCE_DEFINITION_CHANGED',
+      },
+    },
     'media-buy/product-purchase.json': {
       verifier_constraints: {
         accepted_snapshot_terms:

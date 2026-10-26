@@ -95,6 +95,9 @@ def run(upstream, installation, node, output, mode):
     require(isinstance(seller_protocol, str) and bool(seller_protocol), "checkout protocol present")
     require(package["adcp_version"] == seller_protocol, "installed seller matches checkout protocol")
     require(lock["version"] == package["version"], "installed artifact")
+    # The independent Python wheel validates the maintained stable contract.
+    # Keep the candidate SDK's primary pin above; select the served contract separately.
+    served_protocol = pins["adcp_schema_version"]
     admin = os.environ["REPORTING_INTEROP_PG_URL"]
     fields = conninfo_to_dict(admin)
     database = f"adcp_reverse_{mode}_{secrets.token_hex(8)}"
@@ -121,7 +124,7 @@ def run(upstream, installation, node, output, mode):
             str(node), "--require", str(here / "storage-compat.cjs"), str(here / "managed-seller.cjs"),
             "--upstream", str(upstream), "--mode", mode,
             "--package-lock", str(lock_path), "--expected-version", package["version"],
-            "--expected-integrity", lock["integrity"], "--adcp-version", seller_protocol,
+            "--expected-integrity", lock["integrity"], "--adcp-version", served_protocol,
             "--port", str(port), "--ready-file", str(ready_file),
         ], cwd=output, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
             env=environment(DATABASE_URL=url, ADCP_INTEROP_INSTALLATION=str(installation),
@@ -144,7 +147,7 @@ def run(upstream, installation, node, output, mode):
         require(ready["startup_proof_sha256"] == hashlib.sha256(proof.encode()).hexdigest(), "startup proof")
         require(ready["auth_binding_sha256"] == hashlib.sha256(token.encode()).hexdigest(), "authentication binding")
         require(ready["seller_package"]["integrity"] == lock["integrity"] and
-                ready["seller_package"]["adcp_version"] == seller_protocol, "artifact identity")
+                ready["seller_package"]["adcp_version"] == served_protocol, "artifact identity and served contract")
         client = subprocess.run([
             sys.executable, "-I", str(here / "managed-buyer.py"), f"http://127.0.0.1:{port}/mcp",
             str(destination), str(here.parents[1] / "test/fixtures/reporting-interop"), mode,
@@ -158,7 +161,7 @@ def run(upstream, installation, node, output, mode):
         with psycopg.connect(conninfo, connect_timeout=10) as connection:
             pg_version = connection.execute("SHOW server_version").fetchone()[0]
         return {"status": "passed", "mode": mode, "postgres_version": pg_version,
-                "seller_version": package["version"], "seller_adcp_version": seller_protocol, "buyer": result}
+                "seller_version": package["version"], "seller_adcp_version": seller_protocol, "served_adcp_version": served_protocol, "buyer": result}
 
 
 def interrupted(_signal, _frame):

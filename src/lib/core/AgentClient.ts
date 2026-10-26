@@ -54,6 +54,10 @@ import type {
   GetProductsRequest,
   GetProductsResponse,
   ListProductsRequest,
+  ListCollectionsRequest,
+  ListCollectionsResponse,
+  ListProposalsRequest,
+  ListProposalsResponse,
   RequestProposalsRequest,
   RequestProposalsResponse,
   DeclineProposalsRequest,
@@ -225,6 +229,8 @@ export type V2AugmentedGetProductsResponse = CanonicalGetProductsResponse;
 export type TaskResponseTypeMap = {
   get_products: CanonicalGetProductsResponse;
   list_products: ListProductsResponseWithSupplyPath;
+  list_collections: ListCollectionsResponse;
+  list_proposals: ListProposalsResponse;
   request_proposals: RequestProposalsResponse;
   refine_proposals: RefineProposalsResponse;
   decline_proposals: DeclineProposalsResponse;
@@ -280,6 +286,8 @@ export type AdcpTaskName = keyof TaskResponseTypeMap;
 export type TaskRequestTypeMap = {
   get_products: CanonicalGetProductsRequest;
   list_products: ListProductsRequest;
+  list_collections: ListCollectionsRequest;
+  list_proposals: ListProposalsRequest;
   request_proposals: MutatingRequestInput<RequestProposalsRequest>;
   refine_proposals: RefineProposalsInput;
   decline_proposals: MutatingRequestInput<DeclineProposalsRequest>;
@@ -919,6 +927,38 @@ export class AgentClient {
       params,
       inputHandler,
       this.withSession('list_products', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Read the seller's collection catalog using AdCP 3.3. */
+  async listCollections(
+    params: ListCollectionsRequest = {},
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListCollectionsResponse>> {
+    const result = await this.client.executeTask(
+      'list_collections',
+      params,
+      inputHandler,
+      this.withSession('list_collections', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Read proposals in an authorized account using AdCP 3.3. */
+  async listProposals(
+    params: ListProposalsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListProposalsResponse>> {
+    const result = await this.client.executeTask(
+      'list_proposals',
+      params,
+      inputHandler,
+      this.withSession('list_proposals', options)
     );
     this.retainSession(result);
     return result;

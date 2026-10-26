@@ -1,6 +1,6 @@
 // Generated entity-hydration field map — do NOT edit by hand
 //
-// Source: `schemas/cache/3.2.6/manifest.json` + per-tool request
+// Source: `schemas/cache/3.3.0-beta.0/manifest.json` + per-tool request
 // schemas. Every top-level `x-entity`-tagged string field on a request
 // schema lands here. The runtime hydrator (`from-platform.ts` →
 // `hydrateForTool`) walks this map plus the hand-curated
@@ -22,6 +22,7 @@ export interface EntityHydrationField {
 
 export const TOOL_ENTITY_FIELDS: Readonly<Record<string, ReadonlyArray<EntityHydrationField>>> = {
   accept_proposal: [
+    { field: "predecessor_media_buy_id", xEntity: "media_buy" },
     { field: "proposal_id", xEntity: "proposal" },
   ],
   acquire_rights: [
@@ -39,7 +40,11 @@ export const TOOL_ENTITY_FIELDS: Readonly<Record<string, ReadonlyArray<EntityHyd
     { field: "refine_from_build_variant_id", xEntity: "build_variant" },
     { field: "transformer_id", xEntity: "transformer" },
   ],
+  buy_products: [
+    { field: "predecessor_media_buy_id", xEntity: "media_buy" },
+  ],
   check_governance: [
+    { field: "budget_period_id", xEntity: "governance_budget_period" },
     { field: "plan_id", xEntity: "governance_plan" },
   ],
   control_media_buy: [
@@ -47,6 +52,7 @@ export const TOOL_ENTITY_FIELDS: Readonly<Record<string, ReadonlyArray<EntityHyd
   ],
   create_media_buy: [
     { field: "plan_id", xEntity: "governance_plan" },
+    { field: "predecessor_media_buy_id", xEntity: "media_buy" },
     { field: "proposal_id", xEntity: "proposal" },
   ],
   delete_collection_list: [
@@ -63,6 +69,9 @@ export const TOOL_ENTITY_FIELDS: Readonly<Record<string, ReadonlyArray<EntityHyd
   ],
   get_media_buy_delivery: [
     { field: "reporting_revision_id", xEntity: "reporting_revision" },
+  ],
+  get_media_buys: [
+    { field: "predecessor_media_buy_id", xEntity: "media_buy" },
   ],
   get_property_list: [
     { field: "list_id", xEntity: "property_list" },

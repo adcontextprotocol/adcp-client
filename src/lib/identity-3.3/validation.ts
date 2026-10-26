@@ -39,7 +39,7 @@ export function validateIdentity33Payload(
       )
         object.required = object.required.filter((field: string) => field !== 'authentication');
       if (name === 'reason' && Array.isArray(object.enum) && object.enum.includes('destination_state_changed'))
-        object.enum = [...object.enum, 'relationship_changed', 'relationship_expiring'];
+        object.enum = [...new Set([...object.enum, 'relationship_changed', 'relationship_expiring'])];
       if (object.properties?.url && object.properties?.authentication)
         object.properties.signing_profile = { type: 'string', enum: ['adcp/webhook-signing/v1', 'web-bot-auth'] };
       if (

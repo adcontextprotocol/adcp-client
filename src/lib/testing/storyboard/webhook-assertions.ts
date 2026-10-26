@@ -29,6 +29,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { webhookObservationKeys } from './webhook-receiver';
 import { injectContext, type RunnerVariables } from './context';
 import type {
   HttpProbeResult,
@@ -177,6 +179,136 @@ function collectNotificationConfigs(
   }
   for (const nested of Object.values(record)) collectNotificationConfigs(nested, configs);
   return configs;
+}
+
+interface NotificationRegistrationGroup {
+  scope: string;
+  accountId?: string;
+  agentLevel: boolean;
+  configs: Record<string, unknown>[];
+}
+
+/** Actual wire registration groups; clearing a group shadows its older subscribers. */
+function notificationRegistrationGroups(task: string, value: unknown): NotificationRegistrationGroup[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const payload = value as Record<string, unknown>;
+  const groups: NotificationRegistrationGroup[] = [];
+  const add = (value: unknown, agentLevel: boolean) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const record = value as Record<string, unknown>;
+    if (!Array.isArray(record.notification_configs)) return;
+    const account =
+      record.account && typeof record.account === 'object' && !Array.isArray(record.account)
+        ? (record.account as Record<string, unknown>)
+        : record;
+    const accountId = account.account_id;
+    const brand = account.brand ?? payload.brand;
+    const brandDomain = brand && typeof brand === 'object' ? (brand as Record<string, unknown>).domain : brand;
+    const countries = brand && typeof brand === 'object' ? (brand as Record<string, unknown>).countries : undefined;
+    const unit = account.operator_unit;
+    const unitId = unit && typeof unit === 'object' ? (unit as Record<string, unknown>).id : unit;
+    const scope = agentLevel
+      ? 'agent'
+      : typeof accountId === 'string'
+        ? JSON.stringify(['account', accountId])
+        : JSON.stringify([
+            'account',
+            typeof brandDomain === 'string' ? brandDomain.toLowerCase() : null,
+            brand && typeof brand === 'object' ? ((brand as Record<string, unknown>).brand_id ?? null) : null,
+            Array.isArray(countries) ? [...(countries as string[])].sort() : null,
+            typeof account.operator === 'string' ? account.operator.toLowerCase() : null,
+            unitId ?? null,
+            account.currency ?? null,
+            account.timezone ?? null,
+            account.sandbox ?? false,
+          ]);
+    groups.push({
+      scope,
+      ...(typeof accountId === 'string' && { accountId }),
+      agentLevel,
+      configs: record.notification_configs.filter(
+        (config): config is Record<string, unknown> => !!config && typeof config === 'object' && !Array.isArray(config)
+      ),
+    });
+  };
+  if (task === 'sync_agent_notification_configs') add(payload, true);
+  else if (task === 'sync_accounts') {
+    if (Array.isArray(payload.accounts)) for (const account of payload.accounts) add(account, false);
+    else add(payload, false);
+  }
+  return groups;
+}
+
+function registeredNotificationConfig(
+  priors: Iterable<StoryboardStepResult>,
+  subscriberId: string,
+  accountId: unknown
+): { config?: Record<string, unknown>; known: boolean } {
+  const replaced = new Set<string>();
+  let known = false;
+  for (const prior of [...priors].reverse()) {
+    if (!prior.passed || prior.skipped || prior.expect_error || prior.adcp_error) continue;
+    const payload = prior.request?.payload as Record<string, unknown> | undefined;
+    const response =
+      prior.response && typeof prior.response === 'object' ? (prior.response as Record<string, unknown>) : undefined;
+    if (
+      payload?.dry_run === true ||
+      response?.dry_run === true ||
+      response?.adcp_error ||
+      (prior.task === 'sync_accounts' &&
+        !Array.isArray(response?.accounts) &&
+        Array.isArray(response?.errors) &&
+        response.errors.length > 0) ||
+      response?.success === false ||
+      response?.action === 'failed' ||
+      response?.action === 'error'
+    )
+      continue;
+    for (const group of notificationRegistrationGroups(prior.task, payload)) {
+      const scopes = [group.scope];
+      if (!group.agentLevel && Array.isArray(response?.accounts)) {
+        const results = response.accounts.filter(
+          (value): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
+        );
+        const result = results.find(value =>
+          notificationRegistrationGroups('sync_accounts', {
+            accounts: [
+              {
+                ...value,
+                ...(!group.accountId && { account: value.account ?? { ...value, account_id: undefined } }),
+                notification_configs: [],
+              },
+            ],
+          }).some(candidate => candidate.scope === group.scope)
+        );
+        const failed = (value: Record<string, unknown>) =>
+          value.action === 'error' ||
+          value.action === 'failed' ||
+          (Array.isArray(value.errors) && value.errors.length > 0);
+        if (result && failed(result)) continue;
+        if (typeof result?.account_id === 'string') {
+          group.accountId ??= result.account_id;
+          scopes.push(JSON.stringify(['account', result.account_id]));
+        }
+        // An ambiguous partial batch cannot prove this replacement persisted.
+        // Shadow its old state rather than resurrecting an earlier subscriber.
+        if (!result && results.some(failed)) {
+          replaced.add(group.scope);
+          continue;
+        }
+      }
+      const config = group.configs.find(
+        candidate =>
+          candidate.subscriber_id === subscriberId &&
+          (accountId === undefined || group.agentLevel || group.accountId === accountId)
+      );
+      if (config) known = true;
+      if (scopes.some(scope => replaced.has(scope))) continue;
+      for (const scope of scopes) replaced.add(scope);
+      if (config) return { config, known: true };
+    }
+  }
+  return { known };
 }
 
 function notificationSetupMatchesAssertion(setup: StoryboardStep, assertion: StoryboardStep): boolean {
@@ -342,39 +474,69 @@ export async function executeWebhookAssertionStep(
   const filter = buildFilter(step, context, runnerVars);
   let observedChanges: Set<string> | undefined;
   let subscriptionFailure: ReturnType<typeof singleFailure> | undefined;
+  const subscription =
+    typeof filter.body?.subscriber_id === 'string'
+      ? registeredNotificationConfig(
+          runState.priorStepResults.values(),
+          filter.body.subscriber_id,
+          filter.body.account_id
+        )
+      : { known: false, config: undefined };
+  const assertionIndex = allSteps.find(entry => entry.step.id === step.id)?.globalIndex ?? Number.POSITIVE_INFINITY;
+  const declaredRegistration = allSteps.some(
+    entry =>
+      entry.globalIndex < assertionIndex &&
+      (entry.step.task === 'sync_accounts' || entry.step.task === 'sync_agent_notification_configs') &&
+      notificationSetupMatchesAssertion(entry.step, step)
+  );
+  const consumesObservation =
+    step.task === 'expect_webhook' && step.expect_max_deliveries_per_logical_event === undefined;
   if (
-    step.task === 'expect_webhook' &&
-    filter.body?.notification_type === 'account.change_recorded' &&
+    (step.task === 'expect_webhook' || step.task === 'expect_no_webhook') &&
+    typeof filter.body?.notification_type === 'string' &&
     typeof filter.body.subscriber_id === 'string' &&
-    filter.body.subscriber_id.length > 0
+    filter.body.subscriber_id.length > 0 &&
+    (subscription.known || declaredRegistration || filter.body.notification_type === 'account.change_recorded')
   ) {
-    const config = [...runState.priorStepResults.values()]
-      .reverse()
-      .filter(prior => prior.passed && !prior.skipped && prior.task === 'sync_accounts')
-      .flatMap(prior => collectNotificationConfigs(prior.request?.payload))
-      .find(
-        candidate =>
-          candidate.subscriber_id === filter.body!.subscriber_id &&
-          (filter.body!.account_id === undefined || candidate.account_id === filter.body!.account_id)
-      );
+    const config = subscription.config;
     const base = receiver.base_url.replace(/\/$/, '');
-    if (
+    if (step.task === 'expect_no_webhook') {
+      // Watch every receiver path, including obsolete URLs after replacement or
+      // clear. Preserve payload and trigger-time filters; consume no evidence.
+    } else if (
       typeof config?.url !== 'string' ||
       config.active === false ||
       !Array.isArray(config.event_types) ||
-      !config.event_types.includes('account.change_recorded') ||
+      !config.event_types.includes(filter.body.notification_type) ||
       !config.url.startsWith(`${base}/step/`)
     ) {
       subscriptionFailure = singleFailure(
         step,
         'no_webhook_received',
-        'No successful account-change registration targets this receiver.',
+        'No successful notification registration targets this receiver for the selected subscriber and event.',
         'registered subscriber URL',
         null
       );
     } else {
-      filter.path = config.url.slice(base.length);
+      const registered = new URL(config.url);
+      const receiverUrl = new URL(base);
+      if (
+        registered.origin !== receiverUrl.origin ||
+        !registered.pathname.startsWith(`${receiverUrl.pathname.replace(/\/$/, '')}/step/`) ||
+        registered.hash
+      ) {
+        subscriptionFailure = singleFailure(
+          step,
+          'no_webhook_received',
+          'The registered notification URL does not target this receiver.',
+          'registered subscriber URL',
+          null
+        );
+      } else
+        filter.path = registered.pathname.slice(receiverUrl.pathname.replace(/\/$/, '').length) + registered.search;
     }
+    delete filter.step_id;
+    if (step.filter?.operation_id === undefined) delete filter.operation_id;
     if (step.triggered_by) {
       const started = runState.stepRequestStarts?.get(step.triggered_by);
       const boundary = started === undefined ? NaN : Date.parse(started);
@@ -388,11 +550,19 @@ export async function executeWebhookAssertionStep(
         );
       } else filter.received_at_or_after = boundary;
     }
-    const key = `account-change-observations:${String(filter.body.subscriber_id)}`;
-    observedChanges = runnerVars.runState.get(key) as Set<string> | undefined;
-    if (!observedChanges) runnerVars.runState.set(key, (observedChanges = new Set()));
-    filter.exclude_account_changes = observedChanges;
+    if (consumesObservation && filter.body.notification_type === 'account.change_recorded') {
+      const key = `account-change-observations:${String(filter.body.subscriber_id)}`;
+      observedChanges = runnerVars.runState.get(key) as Set<string> | undefined;
+      if (!observedChanges) runnerVars.runState.set(key, (observedChanges = new Set()));
+      filter.exclude_account_changes = observedChanges;
+    }
   }
+
+  const observationKey = 'webhook-positive-observations';
+  const observedNotifications =
+    (runnerVars.runState.get(observationKey) as Set<string> | undefined) ?? new Set<string>();
+  runnerVars.runState.set(observationKey, observedNotifications);
+  if (consumesObservation) filter.exclude_notifications = observedNotifications;
 
   let validations: ValidationResult[];
   let passed: boolean;
@@ -406,6 +576,7 @@ export async function executeWebhookAssertionStep(
         const outcome = await runExpectWebhook(step, filter, receiver);
         validations = outcome.validations;
         passed = outcome.passed;
+        let changeKey: string | undefined;
         if (passed && observedChanges && outcome.webhook) {
           const body = outcome.webhook.body as { account_id: string; change_id: string };
           if (
@@ -424,7 +595,28 @@ export async function executeWebhookAssertionStep(
                 null
               ).validations
             );
-          } else observedChanges.add(JSON.stringify([body.account_id, body.change_id]));
+          } else changeKey = JSON.stringify([body.account_id, body.change_id]);
+        }
+        if (passed && outcome.webhook) {
+          const keys = webhookObservationKeys(outcome.webhook);
+          if (
+            (changeKey !== undefined && observedChanges?.has(changeKey)) ||
+            (filter.exclude_notifications && keys.some(key => observedNotifications.has(key)))
+          ) {
+            passed = false;
+            validations.push(
+              ...singleFailure(
+                step,
+                'no_webhook_received',
+                'This logical webhook delivery was already used by an earlier assertion.',
+                'a new webhook delivery',
+                null
+              ).validations
+            );
+          } else {
+            if (changeKey !== undefined) observedChanges!.add(changeKey);
+            for (const key of keys) observedNotifications.add(key);
+          }
         }
         break;
       }
@@ -505,17 +697,30 @@ function buildFilter(step: StoryboardStep, context: StoryboardContext, runnerVar
       if (typeof resolved.operation_id === 'string') {
         filter.operation_id = resolved.operation_id;
       }
-      if (resolved.notification_type === 'account.change_recorded' && typeof resolved.subscriber_id === 'string') {
-        filter.body = { notification_type: resolved.notification_type, subscriber_id: resolved.subscriber_id };
-        if (resolved.change_id === '*') filter.present = ['change_id'];
-        else if (resolved.change_id !== undefined) filter.body.change_id = resolved.change_id;
-      }
-      if (resolved.body && typeof resolved.body === 'object' && !Array.isArray(resolved.body)) {
-        const body = resolved.body as Record<string, unknown>;
-        if (filter.body && Object.keys(filter.body).some(key => key in body && body[key] !== filter.body![key])) {
-          throw new ConfigurationError('Conflicting flat and nested webhook selectors.', 'filter');
-        }
-        filter.body = { ...body, ...filter.body };
+      const flat = Object.fromEntries(
+        Object.entries(resolved).filter(([key]) => key !== 'operation_id' && key !== 'body')
+      );
+      if (step.task === 'expect_no_webhook' && Object.keys(flat).length > 0)
+        throw new ConfigurationError(
+          'Flat payload selectors are not supported for expect_no_webhook; use filter.body.',
+          'filter'
+        );
+      if (
+        resolved.body !== undefined &&
+        (!resolved.body || typeof resolved.body !== 'object' || Array.isArray(resolved.body))
+      )
+        throw new ConfigurationError('Webhook filter.body must be an object.', 'filter.body');
+      const body = (resolved.body ?? {}) as Record<string, unknown>;
+      if (Object.keys(flat).some(key => Object.hasOwn(body, key) && !isDeepStrictEqual(body[key], flat[key])))
+        throw new ConfigurationError('Conflicting flat and nested webhook selectors.', 'filter');
+      filter.body = { ...body, ...flat };
+      if (
+        filter.body.notification_type === 'account.change_recorded' &&
+        flat.change_id === '*' &&
+        !Object.hasOwn(body, 'change_id')
+      ) {
+        filter.present = ['change_id'];
+        delete filter.body.change_id;
       }
     }
   }
@@ -871,6 +1076,9 @@ function mapSignatureErrorCode(
       return 'signature_digest_mismatch';
     case 'webhook_signature_replayed':
       return 'signature_replayed';
+    case 'webhook_body_malformed':
+      // The signature authenticated the bytes; their JSON payload is invalid.
+      return 'schema_violation';
     case 'webhook_signature_invalid':
       return 'signature_invalid';
     default: {

@@ -191,6 +191,9 @@ describe('CC integration: token exchange + bearer attach', () => {
 });
 
 describe('CC integration: mid-session 401 retry', () => {
+  // These assertions exercise a live session after authentication changes.
+  const options = { transport: { connectionReuse: 'process' } };
+
   for (const challenge of ['Bearer error="invalid_token"', undefined]) {
     test(`mid-session token rotation on a signed request: ${challenge ? 'Bearer' : 'bare'} 401 refreshes and retries`, async () => {
       await resetGlobalState();
@@ -212,7 +215,7 @@ describe('CC integration: mid-session 401 retry', () => {
         };
 
         // Prime: first call exchanges tok_1, MCP accepts it.
-        await ProtocolClient.callTool(agent, 'ping', {});
+        await ProtocolClient.callTool(agent, 'ping', {}, options);
         assert.strictEqual(tokenServer.state.issued, 1);
 
         // Simulate the AS rotating out tok_1 and minting tok_2 — the next token
@@ -224,7 +227,7 @@ describe('CC integration: mid-session 401 retry', () => {
         // tok_2 → retries → success. Exactly one extra token POST + one extra
         // MCP call beyond the 401.
         const callsBeforeRetry = mcpServer.state.calls.length;
-        const result = await ProtocolClient.callTool(agent, 'ping', {});
+        const result = await ProtocolClient.callTool(agent, 'ping', {}, options);
         assert.ok(result, 'retry succeeded');
 
         assert.strictEqual(tokenServer.state.issued, 2, 'force-refresh triggered a second exchange');
@@ -267,9 +270,9 @@ describe('CC integration: mid-session 401 retry', () => {
           agent_url: 'https://buyer.example',
           always_sign: ['ping'],
         };
-        await ProtocolClient.callTool(agent, 'ping', {});
+        await ProtocolClient.callTool(agent, 'ping', {}, options);
         mcpServer.state.acceptedTokens.clear();
-        await assert.rejects(ProtocolClient.callTool(agent, 'ping', {}), error => {
+        await assert.rejects(ProtocolClient.callTool(agent, 'ping', {}, options), error => {
           assert.strictEqual(error.requestSigned, true);
           assert.match(error.responseBody, /invalid_token/);
           assert.doesNotMatch(error.message, /provide auth_token/);
@@ -292,7 +295,7 @@ describe('CC integration: mid-session 401 retry', () => {
     try {
       const agent = makeAgent({ agentUrl: mcpServer.url, tokenUrl: tokenServer.url });
 
-      await assert.rejects(() => ProtocolClient.callTool(agent, 'ping', {}));
+      await assert.rejects(() => ProtocolClient.callTool(agent, 'ping', {}, options));
 
       // At most one initial exchange + one force-refresh = two token POSTs.
       // More than that means the retry loop is unbounded.

@@ -24,9 +24,9 @@ test('AdCP semver pins normalize to release-precision wire values', () => {
   assert.equal(toReleasePrecisionVersion('3.1-beta.7'), '3.1-beta.7');
 });
 
-test('3.2 GA pin advertises 3.2.1+ and the 3.2 alias, never the withdrawn 3.2.0 or any 3.2 preview', () => {
-  assert.equal(ADCP_VERSION, '3.2.6');
-  assert.equal(toReleasePrecisionVersion(ADCP_VERSION), '3.2');
+test('3.3 beta pin retains stable 3.2 aliases and advertises only its exact preview', () => {
+  assert.equal(ADCP_VERSION, '3.3.0-beta.0');
+  assert.equal(toReleasePrecisionVersion(ADCP_VERSION), '3.3-beta.0');
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.0.25'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.1.18'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.1.24'));
@@ -38,10 +38,16 @@ test('3.2 GA pin advertises 3.2.1+ and the 3.2 alias, never the withdrawn 3.2.0 
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2.4'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2.5'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2.6'));
+  assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2.7'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2'));
   assert.ok(!COMPATIBLE_ADCP_VERSIONS.includes('3.2.0'));
   assert.ok(!COMPATIBLE_ADCP_VERSIONS.includes('3.2.0-' + 'rc.7'));
   assert.ok(!COMPATIBLE_ADCP_VERSIONS.includes('3.2-' + 'rc.7'));
   assert.ok(!COMPATIBLE_ADCP_VERSIONS.includes('3.2-beta'));
-  assert.ok(!COMPATIBLE_ADCP_VERSIONS.some(version => /-(?:beta|rc)/.test(version)));
+  assert.deepEqual(
+    COMPATIBLE_ADCP_VERSIONS.filter(version => /-(?:beta|rc)/.test(version)),
+    ['3.3.0-beta.0', '3.3-beta.0']
+  );
+  assert.ok(!COMPATIBLE_ADCP_VERSIONS.includes('3.3-beta'));
+  assert.ok(!COMPATIBLE_ADCP_VERSIONS.includes('3.3'));
 });

@@ -1,3 +1,4 @@
+import { mcpConnectionPartitionKey, shouldReuseMCPConnection } from './mcp-connection-policy';
 /**
  * MCP 2026-07-28 client path.
  *
@@ -192,6 +193,8 @@ function connectionCacheKey(
   // `maxResponseBytes: 0` call leave the session's listener unwrapped for
   // every later caller (adcp-client#3253).
   parts.push(responseSizeCapCacheKey());
+  const partitionKey = mcpConnectionPartitionKey();
+  if (partitionKey) parts.push(`partition:${partitionKey}`);
   const scopeKey = currentMCPConnectionScopeKey();
   if (scopeKey) parts.push(scopeKey);
   return parts.join('::');
@@ -392,9 +395,20 @@ async function createNegotiatedClient(
         adcpVersion: options.signingContext.adcpVersion,
       }) as typeof fetch)
     : diagnosticFetch;
+  const transportFetch = wrapFetchWithCapture(withPerRequestTraceHeaders(signedFetch));
+  // The SDK's HTTP errors carry the status but not the response headers. Keep
+  // the last throttling response's Retry-After so a failed connect reports it.
+  let throttleRetryAfter: string | undefined;
   const transport = new StreamableHTTPClientTransport(new URL(options.agentUrl), {
     requestInit: { headers: splitConnectionHeaders(authHeaders).identity, redirect: 'manual' },
-    fetch: wrapFetchWithCapture(withPerRequestTraceHeaders(signedFetch)),
+    fetch: async (input, init) => {
+      const response = await transportFetch(input, init);
+      throttleRetryAfter =
+        response.status === 429 || response.status === 503
+          ? (response.headers.get('retry-after') ?? undefined)
+          : undefined;
+      return response;
+    },
     ...(options.authProvider && {
       authProvider: options.authProvider as ModernOAuthClientProvider,
     }),
@@ -424,7 +438,7 @@ async function createNegotiatedClient(
     if (prior && !skipProbe) clientsUsingCachedDiscovery.add(client);
     if (!prior) {
       const discover = client.getDiscoverResult();
-      if (generation === connectionGeneration) {
+      if (generation === connectionGeneration && useCachedDiscovery) {
         if (client.getProtocolEra() === 'modern' && discover) cacheModernDiscovery(cacheKey, discover);
         else modernDiscoveries.delete(cacheKey);
       }
@@ -472,8 +486,30 @@ async function createNegotiatedClient(
     if (isNegotiationAuthFailure(error) && !skipProbe && presentedStaticCredential(authHeaders, options.authProvider)) {
       return createNegotiatedClient(cacheKey, options, authHeaders, useCachedDiscovery, true);
     }
-    throw error;
+    throw withRetryAfter(error, throttleRetryAfter);
   }
+}
+
+/**
+ * Attach a throttling response's `Retry-After` to the 429/503 error it caused,
+ * as a non-enumerable `retryAfter` string. Read it with {@link retryAfterOf}.
+ */
+function withRetryAfter(error: unknown, retryAfter: string | undefined): unknown {
+  if (retryAfter === undefined || !error || typeof error !== 'object') return error;
+  const status = httpStatusOf(error);
+  if (status !== 429 && status !== 503) return error;
+  try {
+    Object.defineProperty(error, 'retryAfter', { value: retryAfter, enumerable: false, configurable: true });
+  } catch {
+    // A frozen error keeps its original shape; Retry-After is best effort.
+  }
+  return error;
+}
+
+/** `Retry-After` recorded on an MCP connect error by {@link withRetryAfter}, if any. */
+export function retryAfterOf(error: unknown): string | undefined {
+  const value = error && typeof error === 'object' ? (error as { retryAfter?: unknown }).retryAfter : undefined;
+  return typeof value === 'string' ? value : undefined;
 }
 
 async function getOrCreateModernConnection(
@@ -591,12 +627,12 @@ async function attemptModernCall(
   // A caller-injected fetch is a per-call network trust boundary, so outside a
   // caller-owned scope it keeps its own one-shot session. Signal, deadline and
   // correlation headers only bound the call and never force a new session.
-  const oneShot = options.fetchFn !== undefined && currentMCPConnectionScopeKey() === undefined;
+  const oneShot = !shouldReuseMCPConnection(options.fetchFn !== undefined);
   let client: Client;
   let callSucceeded = false;
   try {
     client = oneShot
-      ? await createNegotiatedClient(cacheKey, options, authHeaders)
+      ? await createNegotiatedClient(cacheKey, options, authHeaders, false)
       : await getOrCreateModernConnection(cacheKey, options, authHeaders);
   } catch (error) {
     const status = httpStatusOf(error);
@@ -764,7 +800,7 @@ export async function probeModernMCPConnection(
     options.handleLegacy,
     options.allowPrivateIp
   );
-  const scoped = currentMCPConnectionScopeKey() !== undefined;
+  const scoped = shouldReuseMCPConnection(options.fetchFn !== undefined);
   let client: Client | undefined;
   return runWithMCPCallContext(
     callContextFor({ customHeaders, requestTimeoutMs: options.requestTimeoutMs }),
@@ -828,7 +864,7 @@ export async function tryListModernMCPTools(
     options.handleLegacy,
     options.allowPrivateIp
   );
-  const scoped = currentMCPConnectionScopeKey() !== undefined;
+  const scoped = shouldReuseMCPConnection(options.fetchFn !== undefined);
   // Inside a workflow the endpoint's era is already known from the probe or an
   // earlier call; outside one, listing keeps re-verifying a stale verdict.
   if (scoped && isKnownLegacy(cacheKey)) return { handled: false };
@@ -868,7 +904,7 @@ export async function tryListModernMCPTools(
         client = await acquire(() =>
           scoped
             ? getOrCreateModernConnection(cacheKey, connectionOptions, authHeaders)
-            : createNegotiatedClient(cacheKey, connectionOptions, authHeaders)
+            : createNegotiatedClient(cacheKey, connectionOptions, authHeaders, false)
         );
         return await listTools(client);
       } catch (error) {

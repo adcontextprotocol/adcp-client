@@ -20,6 +20,31 @@ import type {
 import type { MediaBuyActionId, SLAWindow } from './types';
 
 export const NON_TERMINAL_ACTION_STATUSES = ['pending_creatives', 'pending_start', 'active', 'paused'] as const;
+/** These controls derive authority from the live seller projection, not commercial terms. */
+export function isOperationalMediaBuyAction(action: string): boolean {
+  return action === 'update_name' || action === 'update_creative_start_policy';
+}
+
+export function supportsCreativeStartPolicyAction(version: string): boolean {
+  // Compare against one fixed lower bound without adding runtime dependencies
+  // to the browser action helpers. Core numbers and every prerelease/build
+  // identifier are validated before comparison, including numeric leading zeroes.
+  if (typeof version !== 'string' || version.length > 256) return false;
+  const match = /^v?(\d+)\.(\d+)(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/.exec(version.trim());
+  if (!match) return false;
+  const core = [match[1]!, match[2]!, match[3] ?? '0'];
+  if (core.some(value => !/^(?:0|[1-9]\d*)$/.test(value) || !Number.isSafeInteger(Number(value)))) return false;
+  const prerelease = match[4]?.split('.');
+  if (prerelease?.some(id => !id || (/^\d+$/.test(id) && id.length > 1 && id.startsWith('0')))) return false;
+  if (match[5]?.split('.').some(id => !id)) return false;
+  const [major, minor, patch] = core.map(Number);
+  if (major !== 3) return major! > 3;
+  if (minor !== 3) return minor! > 3;
+  if (patch! > 0 || !prerelease) return true;
+  // Numeric prerelease identifiers sort before nonnumeric ones. With equal
+  // 3.3.0 cores, comparing the first identifier suffices for the bound "beta".
+  return !/^\d+$/.test(prerelease[0]!) && prerelease[0]! >= 'beta';
+}
 const MODES = ['self_serve', 'conditional_self_serve', 'seller_managed', 'requires_approval'];
 const CANONICAL_TASKS = new Set<string>(Object.values(CANONICAL_ACTION_TASKS).flat());
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -353,6 +378,7 @@ export function supportsRc3Actions(version: string): boolean {
 }
 /** Check wire feature introductions independently of whether an action has commercial terms. */
 export function liveActionFitsVersion(entry: LiveMediaBuyAction, version: string): boolean {
+  if (entry.action === 'update_creative_start_policy' && !supportsCreativeStartPolicyAction(version)) return false;
   if (/^3\.[01](?:\.|-|$)/.test(version) && (!legacyActionSupported(entry.action) || entry.task !== undefined))
     return false;
   if (!supportsChangeTermIdentity(version) && (entry.change_term_id !== undefined || entry.mode === 'seller_managed'))
@@ -368,7 +394,8 @@ export function actionFitsErrorDetails(action: string, version: string): boolean
   if (/^3\.[01](?:\.|-|$)/.test(version)) return legacyActionSupported(action);
   return (
     (LEGACY_AVAILABLE_ACTIONS as readonly string[]).includes(action) ||
-    (action === 'update_media_buy_frequency_cap' && supportsRc3Actions(version))
+    (action === 'update_media_buy_frequency_cap' && supportsRc3Actions(version)) ||
+    (action === 'update_creative_start_policy' && supportsCreativeStartPolicyAction(version))
   );
 }
 

@@ -148,7 +148,7 @@ describe('TrackStatus silent rollup', () => {
     assert.deepStrictEqual(result.observations, []);
   });
 
-  it('keeps an all-skipped failed storyboard neutral without a synthetic failure', () => {
+  it('keeps an all-skipped storyboard grade neutral while retaining its incomplete verdict', () => {
     const result = mapStoryboardResultsToTrackResult(
       'core',
       [
@@ -173,7 +173,10 @@ describe('TrackStatus silent rollup', () => {
     assert.strictEqual(result.status, 'skip');
     assert.deepStrictEqual(
       result.scenarios.map(scenario => [scenario.scenario, scenario.overall_passed]),
-      [['fixture/optional-only', true]]
+      [
+        ['fixture/optional-only', true],
+        ['fixture/storyboard', false],
+      ]
     );
     assert.deepStrictEqual(result.observations, []);
   });

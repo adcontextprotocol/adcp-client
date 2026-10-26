@@ -481,6 +481,18 @@ const CANONICAL_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> 
 const MCP_SESSION_PROBE_REQUEST_TIMEOUT_MS = 5_000;
 
 const REPLAY_WEBHOOK_VECTOR_TASK = 'replay_webhook_vector';
+
+function isRunnerOwnedTask(task: string): boolean {
+  return (
+    task === VALIDATION_ONLY_TASK ||
+    task === MCP_SESSION_PROBE_TASK ||
+    task === 'assert_contribution' ||
+    task === REPLAY_WEBHOOK_VECTOR_TASK ||
+    TRUSTED_MATCH_PUBLISHER_AUTH_TASKS.has(task) ||
+    PROBE_TASKS.has(task) ||
+    WEBHOOK_ASSERTION_TASKS.has(task)
+  );
+}
 const REPLAY_TRUSTED_MATCH_CONTEXT_VECTOR_TASK = 'replay_trusted_match_context_vector';
 const WEBHOOK_REPLAY_DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -1364,7 +1376,8 @@ async function resolveTaskCompletionOutputs(
   outputs: readonly { path?: string | undefined }[],
   client: TestClient,
   webhookReceiver: WebhookReceiver | undefined,
-  originatingTaskName: string
+  originatingTaskName: string,
+  responseAdcpVersion: string | undefined
 ): Promise<TaskCompletionResolution> {
   const hasTaskCompletionPath = outputs.some(
     o => typeof o.path === 'string' && o.path.startsWith(TASK_COMPLETION_PATH_PREFIX)
@@ -1459,7 +1472,10 @@ async function resolveTaskCompletionOutputs(
     if (winner.kind === 'poll') {
       const polled = winner.result;
       if (polled.success === false) return { attempted: true, taskFailed: true };
-      return { attempted: true, data: normalizeTaskCompletionData(polled.data, originatingTaskName) };
+      return {
+        attempted: true,
+        data: normalizeTaskCompletionData(polled.data, originatingTaskName, responseAdcpVersion),
+      };
     }
     // Webhook win.
     const waitResult = winner.result;
@@ -1474,7 +1490,10 @@ async function resolveTaskCompletionOutputs(
     // attribute to `capture_task_failed`, not silently fall through to a
     // capture against an undefined `result`.
     if (webhookBody?.status === 'completed') {
-      return { attempted: true, data: normalizeTaskCompletionData(webhookBody.result, originatingTaskName) };
+      return {
+        attempted: true,
+        data: normalizeTaskCompletionData(webhookBody.result, originatingTaskName, responseAdcpVersion),
+      };
     }
     return { attempted: true, taskFailed: true };
   } catch {
@@ -1484,13 +1503,14 @@ async function resolveTaskCompletionOutputs(
   }
 }
 
-function normalizeTaskCompletionData(data: unknown, taskName: string): unknown {
+function normalizeTaskCompletionData(data: unknown, taskName: string, adcpVersion: string | undefined): unknown {
   if (data == null || typeof data !== 'object' || Array.isArray(data)) return data;
   const original = data as Record<string, unknown>;
-  const compat = injectLegacyEnvelopeStatus(original, { toolName: taskName });
+  const compatOptions = { toolName: taskName, adcpVersion };
+  const compat = injectLegacyEnvelopeStatus(original, compatOptions);
   if (!('status' in original) && 'status' in compat) {
     const { status: _status, ...rest } = compat;
-    return normalizeLegacyMediaBuyStatusForReturn(rest, { toolName: taskName });
+    return normalizeLegacyMediaBuyStatusForReturn(rest, compatOptions);
   }
   if (
     (taskName === 'create_media_buy' || taskName === 'update_media_buy') &&
@@ -1498,9 +1518,9 @@ function normalizeTaskCompletionData(data: unknown, taskName: string): unknown {
     compat.status === 'completed' &&
     typeof compat.media_buy_status === 'string'
   ) {
-    return normalizeLegacyMediaBuyStatusForReturn({ ...compat, status: original.status }, { toolName: taskName });
+    return normalizeLegacyMediaBuyStatusForReturn({ ...compat, status: original.status }, compatOptions);
   }
-  return normalizeLegacyMediaBuyStatusForReturn(compat, { toolName: taskName });
+  return normalizeLegacyMediaBuyStatusForReturn(compat, compatOptions);
 }
 
 function readEnvIntOrDefault(value: string | undefined, fallback: number): number {
@@ -5864,9 +5884,7 @@ async function executeStoryboardPass(
           selectedOptions.agentTools &&
           (routingContext && step.requires_tool && !selectedOptions.agentTools.includes(step.requires_tool)
             ? step.requires_tool
-            : resolvedTask &&
-                resolvedTask !== MCP_SESSION_PROBE_TASK &&
-                !selectedOptions.agentTools.includes(resolvedTask)
+            : resolvedTask && !isRunnerOwnedTask(resolvedTask) && !selectedOptions.agentTools.includes(resolvedTask)
               ? resolvedTask
               : undefined);
         if (missingTool) {
@@ -6591,6 +6609,24 @@ async function executeStoryboardPass(
     return p.steps.some(s => !s.skipped && s.passed);
   });
   const requiredPhaseDefs = storyboard.phases.filter(phaseDef => !phaseDef.optional);
+  // Optional-only storyboards still prove coverage when a real step passed.
+  // Empty/skipped runs and failed prerequisites must never pass vacuously.
+  const optionalOnlyHasExecutedPass =
+    requiredPhaseDefs.length === 0 &&
+    failedCount === 0 &&
+    phaseResults.some(phase => phase.passed && phase.steps.some(step => !step.skipped && step.passed)) &&
+    phaseResults.every(phase => {
+      if (phase.passed) return true;
+      const branchSet = branchSetsByPhaseId.get(phase.phase_id);
+      const source = branchSet && contributionSources.get(branchSet.id);
+      // Only a successful contributing peer makes a failed alternative moot.
+      // An unrelated optional read cannot rescue an entirely failed branch set.
+      return (
+        branchSet?.semantics === 'any_of' &&
+        source?.phaseId !== phase.phase_id &&
+        phaseResults.some(peer => peer.phase_id === source?.phaseId && peer.passed)
+      );
+    });
   const requiredPhasesNonFailingSkipped =
     requiredPhaseDefs.length > 0 &&
     requiredPhaseDefs.every(phaseDef => {
@@ -6620,6 +6656,7 @@ async function executeStoryboardPass(
     !hasExecutableSteps ||
     (requiredPhaseDefs.every(phaseDef => phaseResults.find(p => p.phase_id === phaseDef.id)?.passed === true) &&
       (requiredPhaseHasExecutedPass ||
+        optionalOnlyHasExecutedPass ||
         requiredPhasesNonFailingSkipped ||
         (failedCount === 0 && requiredPhasesCoveredByCapabilityGates)));
   const storyboardWideFixtureUnavailable =
@@ -9756,7 +9793,12 @@ async function executeStep(
 
   // Convention-based extraction (for non-error steps, or when expect_error succeeded)
   if (passed && hasData && taskResult && !(effectiveStep.task === 'sync_accounts' && request.dry_run === true)) {
-    const extracted = extractContextWithProvenance(effectiveStep.task, taskResult.data, step.id);
+    const extracted = extractContextWithProvenance(
+      effectiveStep.task,
+      taskResult.data,
+      step.id,
+      options._serverAdcpVersion ?? options.adcpVersion
+    );
     const conventionUnset: string[] = [];
     for (const group of extracted.clearGroups ?? []) {
       if (group.when && !group.when.values.includes(updatedContext[group.when.key])) continue;
@@ -9823,7 +9865,8 @@ async function executeStep(
       step.context_outputs,
       client,
       runState.webhookReceiver,
-      effectiveStep.task
+      effectiveStep.task,
+      options._serverAdcpVersion ?? options.adcpVersion
     );
     // `'data' in resolution` distinguishes "polled, artifact had no data"
     // (use undefined → outputs fail with capture_path_not_resolvable) from

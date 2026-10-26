@@ -290,6 +290,8 @@ import { ADCP_VERSION, LIBRARY_VERSION } from '../version';
 import type {
   GetProductsRequestSchema,
   ListProductsRequestSchema,
+  ListCollectionsRequestSchema,
+  ListProposalsRequestSchema,
   RequestProposalsRequestSchema,
   DeclineProposalsRequestSchema,
   BuyProductsRequestSchema,
@@ -372,6 +374,8 @@ import type {
 import type {
   GetProductsResponse,
   ListProductsResponse,
+  ListCollectionsResponse,
+  ListProposalsResponse,
   RequestProposalsResponse,
   DeclineProposalsResponse,
   BuyProductsResponse,
@@ -696,6 +700,16 @@ export function requireSessionKey<TAccount = unknown>(ctx: HandlerContext<TAccou
  * builder only fires on the Success arm.
  */
 export interface AdcpToolMap {
+  list_collections: {
+    params: z.input<typeof ListCollectionsRequestSchema>;
+    result: ServerPayload<ListCollectionsResponse>;
+    response: ListCollectionsResponse;
+  };
+  list_proposals: {
+    params: z.input<typeof ListProposalsRequestSchema>;
+    result: ServerPayload<ListProposalsResponse>;
+    response: ListProposalsResponse;
+  };
   list_products: {
     params: z.input<typeof ListProductsRequestSchema>;
     result: ServerPayload<ListProductsResponse>;
@@ -1119,6 +1133,8 @@ type DomainHandler<K extends AdcpServerToolName, TAccount> = (
 export interface MediaBuyHandlers<TAccount = unknown> {
   getProducts?: DomainHandler<'get_products', TAccount>;
   listProducts?: DomainHandler<'list_products', TAccount>;
+  listCollections?: DomainHandler<'list_collections', TAccount>;
+  listProposals?: DomainHandler<'list_proposals', TAccount>;
   requestProposals?: DomainHandler<'request_proposals', TAccount>;
   declineProposals?: DomainHandler<'decline_proposals', TAccount>;
   buyProducts?: DomainHandler<'buy_products', TAccount>;
@@ -1645,6 +1661,7 @@ export const MEDIA_BUY_MCP_TOOL_PROFILE = [
   'get_reporting_status',
   'get_task_status',
   'list_accounts',
+  'list_collections',
   'list_creatives',
   'list_products',
   'list_tasks',
@@ -1662,6 +1679,7 @@ export const MEDIA_BUY_MCP_TOOL_PROFILE = [
   'sync_governance',
   'sync_reporting_status',
   'sync_reporting_receipts',
+  'list_proposals',
 ] as const;
 
 export type AdcpMcpToolProfile = 'auto' | 'media-buy' | 'all';
@@ -1941,7 +1959,7 @@ export interface AdcpServerConfig<TAccount = unknown> {
 
   /**
    * Opt in to strict buyer-supplied account references. Default `false` in
-   * SDK 14; becomes the default in the next major release.
+   * SDK 14 on older routes. AdCP 3.3 routes always require verified references.
    *
    * When `true`:
    * - A request that carries `account` on a server without `resolveAccount`
@@ -3469,6 +3487,8 @@ function fieldPathToPointer(path: string | undefined): string {
 const TOOL_META: Record<string, ToolMeta> = {
   // Media Buy
   list_products: { wrap: null, annotations: RO },
+  list_collections: { wrap: null, annotations: RO },
+  list_proposals: { wrap: null, annotations: RO },
   request_proposals: { wrap: null, annotations: IDEMP },
   refine_proposals: { wrap: null, annotations: IDEMP },
   decline_proposals: { wrap: null, annotations: IDEMP },
@@ -3573,6 +3593,7 @@ const CALLER_SCOPED_MUTATION_TOOLS = new Set([
 
 const COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS = [
   'list_products',
+  'list_proposals',
   'request_proposals',
   'refine_proposals',
   'decline_proposals',
@@ -3761,6 +3782,8 @@ type HandlerEntry = { handlerKey: string; toolName: string };
 const MEDIA_BUY_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'getProducts', toolName: 'get_products' },
   { handlerKey: 'listProducts', toolName: 'list_products' },
+  { handlerKey: 'listCollections', toolName: 'list_collections' },
+  { handlerKey: 'listProposals', toolName: 'list_proposals' },
   { handlerKey: 'requestProposals', toolName: 'request_proposals' },
   { handlerKey: 'declineProposals', toolName: 'decline_proposals' },
   { handlerKey: 'buyProducts', toolName: 'buy_products' },
@@ -3902,6 +3925,23 @@ function filterCapabilitiesForToolAvailability(
   release: string,
   isAvailable: (toolName: string, release: string) => boolean
 ): void {
+  if (data.media_buy?.lifecycle_tools) {
+    data.media_buy.lifecycle_tools = data.media_buy.lifecycle_tools.filter(tool => isAvailable(tool, release));
+    if (data.media_buy.lifecycle_tools.length === 0) delete data.media_buy.lifecycle_tools;
+  }
+  const experimentalTools = [
+    ['list_collections', ['media_buy.collection_catalog', 'media_buy.collection_cards']],
+    ['list_proposals', ['media_buy.open_opportunities']],
+  ] as const;
+  const features = new Set(data.experimental_features ?? []);
+  for (const [tool, requiredFeatures] of experimentalTools) {
+    for (const feature of requiredFeatures) {
+      if (registeredTools.has(tool) && isAvailable(tool, release)) features.add(feature);
+      else features.delete(feature);
+    }
+  }
+  if (features.size > 0) data.experimental_features = [...features];
+  else delete data.experimental_features;
   const unavailableProtocols = new Set<string>();
   data.supported_protocols = data.supported_protocols.filter(protocol => {
     const candidates = (PROTOCOL_VERSIONED_TOOLS[protocol] ?? []).filter(tool => registeredTools.has(tool));
@@ -6621,12 +6661,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         const definedForRelease = releaseDefinesTool(toolName, requestRelease);
         if (!definedForRelease || !toolAvailableForRelease(toolName, requestRelease.validationVersion)) {
           return finalize(
-            adcpError('VERSION_UNSUPPORTED', {
-              message: `${toolName} is ${definedForRelease ? 'not available' : 'not defined'} in the selected AdCP release ${requestRelease.validationVersion}.`,
-              details: {
-                supported_versions: supportedVersionsForTool(toolName, toolVersionRanges, capConfig, adcpVersion),
-              },
-            })
+            adcpError(
+              toolName === 'list_collections' && !definedForRelease ? 'UNSUPPORTED_FEATURE' : 'VERSION_UNSUPPORTED',
+              {
+                message: `${toolName} is ${definedForRelease ? 'not available' : 'not defined'} in the selected AdCP release ${requestRelease.validationVersion}.`,
+                details: {
+                  supported_versions: supportedVersionsForTool(toolName, toolVersionRanges, capConfig, adcpVersion),
+                },
+              }
+            )
           );
         }
         for (const field of ['push_notification_config', 'reporting_webhook', 'artifact_webhook']) {
@@ -7189,16 +7232,20 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
         // --- Account resolution ---
         let unresolvedAccountPassThrough = false;
+        // AdCP 3.3 requires unresolved discovery references to fail closed.
+        // Keep the explicit legacy compatibility policy on older routes.
+        const requireVerifiedAccountReferences =
+          strictAccountReferences || isAdcpVersionAtLeast(requestRelease.validationVersion, '3.3.0-beta.0');
         // `list_accounts.account` is a filter. Strict mode treats it as one;
         // the SDK 14.0 default still resolves it as the request's account.
         const suppliedAccountRef =
-          hasAccount && params.account != null && !(strictAccountReferences && toolName === 'list_accounts');
+          hasAccount && params.account != null && !(requireVerifiedAccountReferences && toolName === 'list_accounts');
         if (suppliedAccountRef && toolName === 'list_accounts') {
           warnAccountReferenceDeprecation(
             logger,
             'ADCP_LIST_ACCOUNTS_FILTER_RESOLVED',
             '[adcp/createAdcpServer] DEPRECATED: list_accounts.account is resolved as the request account ' +
-              '(SDK 14.0 behavior). The next major release, or strictAccountReferences: true, treats it as a ' +
+              '(SDK 14.0 behavior). AdCP 3.3 routes, or strictAccountReferences: true, treat it as a ' +
               'filter: resolveAccount is not called for it and ctx.account comes from resolveAccountFromAuth.',
             { tool: toolName }
           );
@@ -7256,7 +7303,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // buyer-supplied reference. The rc.7 `list_creative_formats`
           // selector has always been refused; other tools keep the SDK 14.0
           // pass-through unless the seller opts in to strict references.
-          if (strictAccountReferences || toolName === 'list_creative_formats') {
+          if (requireVerifiedAccountReferences || toolName === 'list_creative_formats') {
             return finalize(
               adcpError('ACCOUNT_NOT_FOUND', {
                 message: 'The specified account cannot be resolved',
@@ -7272,7 +7319,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               'ADCP_UNRESOLVED_ACCOUNT_REFERENCE',
               '[adcp/createAdcpServer] DEPRECATED: a request carried a buyer-supplied account reference, but no ' +
                 'resolveAccount is configured. The reference reached the handler unverified (ctx.account is ' +
-                'undefined). The next major release refuses it with ACCOUNT_NOT_FOUND. Configure a ' +
+                'undefined). AdCP 3.3 routes refuse it with ACCOUNT_NOT_FOUND. Configure a ' +
                 'reference-aware resolveAccount that returns null for unknown or unauthorized references, then ' +
                 'set strictAccountReferences: true. See ' +
                 'https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/account-resolution.md',
@@ -7340,12 +7387,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // handler satisfies the seller's declared requirement.
           !unresolvedAccountPassThrough
         ) {
-          if (!strictAccountReferences) {
+          if (!requireVerifiedAccountReferences) {
             warnAccountReferenceDeprecation(
               logger,
               'ADCP_REQUIRED_FOR_PRODUCTS_NOT_ENFORCED',
               '[adcp/createAdcpServer] DEPRECATED: this seller declares account.required_for_products, but ' +
-                `${toolName} ran without an account (SDK 14.0 behavior). The next major release, or ` +
+                `${toolName} ran without an account (SDK 14.0 behavior). AdCP 3.3 routes, or ` +
                 'strictAccountReferences: true, refuses it with ACCOUNT_REQUIRED.',
               { tool: toolName }
             );
@@ -7528,6 +7575,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               })
             );
           }
+        }
+
+        // Proposal discovery is account-private even with schema validation off.
+        if (toolName === 'list_proposals') {
+          if (authenticatedPrincipalForContext(ctx.authInfo, ctx.agent) === undefined)
+            return finalize(
+              adcpError('AUTH_MISSING', { message: 'list_proposals requires an authenticated buyer principal' })
+            );
+          if (ctx.account == null) return finalize(accountRequiredError(toolName));
         }
 
         // Compact lifecycle mutations are account- and principal-scoped.
@@ -9310,13 +9366,21 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   if (
     !resolveAccount &&
     process.env.NODE_ENV !== 'production' &&
-    ['get_products', 'get_signals', 'request_proposals', 'create_media_buy'].some(tool => registeredToolNames.has(tool))
+    [
+      'get_products',
+      'list_products',
+      'list_collections',
+      'list_proposals',
+      'get_signals',
+      'request_proposals',
+      'create_media_buy',
+    ].some(tool => registeredToolNames.has(tool))
   ) {
     logger.warn(
       strictAccountReferences
         ? 'Account-carrying tools are registered without resolveAccount. Supplied references will fail with ACCOUNT_NOT_FOUND.'
         : 'Account-carrying tools are registered without resolveAccount. Supplied references reach handlers unverified; ' +
-            'this is deprecated and they will fail with ACCOUNT_NOT_FOUND in the next major release. ' +
+            'AdCP 3.3 routes refuse them with ACCOUNT_NOT_FOUND. ' +
             'Configure a reference-aware resolveAccount and set strictAccountReferences: true.'
     );
   }
@@ -9388,11 +9452,20 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           replay_ttl_seconds: idempotency.ttlSeconds,
         };
 
+  // Preview buyers require explicit exact-release evidence; the default
+  // preview server advertises the same bundled window it actually serves.
+  const advertisedSupportedVersions = capConfig?.supported_versions?.length
+    ? capConfig.supported_versions
+    : protocolTaskRelease?.prerelease
+      ? bundledReleasesForMajors(capConfig?.major_versions ?? [protocolTaskRelease.major], protocolTaskRelease).map(
+          release => release.value
+        )
+      : undefined;
   const capabilitiesData: GetAdCPCapabilitiesResponse = {
     status: 'completed',
     adcp: {
       major_versions: capConfig?.major_versions ?? [3],
-      ...(capConfig?.supported_versions?.length && { supported_versions: [...capConfig.supported_versions] }),
+      ...(advertisedSupportedVersions?.length && { supported_versions: [...advertisedSupportedVersions] }),
       idempotency: idempotencyCapability,
       ...(capConfig?.capability_changes && { capability_changes: structuredClone(capConfig.capability_changes) }),
     },
@@ -9706,7 +9779,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         data,
         registeredToolNames,
         release.validationVersion,
-        toolAvailableForRelease
+        (tool, version) =>
+          releaseDefinesTool(tool, { validationVersion: version }) && toolAvailableForRelease(tool, version)
       );
       const selected = parseAdcpRelease(release.validationVersion);
       if (

@@ -407,18 +407,16 @@ test('rc.3 deliberately supports the revised accepted-snapshot contract without 
   const { getSchemaDocumentByRef } = require('../../dist/lib/validation/schema-loader.js');
   const { commercialTermsSchemaSupportError } = require('../../dist/lib/negotiation/commercial-terms-schema.js');
   const contract = require('../fixtures/proposal-commercial-terms/rc3-product-purchase-validation.json');
-  for (const version of ['3.2.0-rc.2', '3.2.1', '3.2.3', '3.2.4', '3.2.5', '3.2.6', '3.2.7']) {
+  for (const version of ['3.2.0-rc.2', '3.2.1', '3.2.3', '3.2.4', '3.2.5', '3.2.6', '3.2.7', '3.2.8']) {
     const load = ref => {
-      const source = getSchemaDocumentByRef(ref)?.schema;
+      const source = getSchemaDocumentByRef(ref, '3.2.7')?.schema;
       if (!source) return undefined;
-      const document = JSON.parse(
-        JSON.stringify(source).replaceAll(`/schemas/${ADCP_VERSION}/`, `/schemas/${version}/`)
-      );
+      const document = JSON.parse(JSON.stringify(source).replaceAll('/schemas/3.2.7/', `/schemas/${version}/`));
       if (ref === 'media-buy/product-purchase.json') document['x-adcp-validation'] = contract;
       return document;
     };
     const error = commercialTermsSchemaSupportError(load('media-buy/commercial-terms.json'), version, load);
-    if (['3.2.1', '3.2.3', '3.2.4', '3.2.5', '3.2.6'].includes(version)) assert.equal(error, undefined);
+    if (['3.2.1', '3.2.3', '3.2.4', '3.2.5', '3.2.6', '3.2.7'].includes(version)) assert.equal(error, undefined);
     else assert.match(error, /unreviewed commercial-term validation semantics/);
   }
 });
@@ -603,4 +601,38 @@ test('commercial keyword validation cannot poison ordinary schema-ref validators
   assert.equal(raw(terms), true);
   assert.equal(verify(candidate(terms), terms).ok, false);
   assert.equal(getSchemaValidatorByRef('media-buy/commercial-terms.json')(terms), true);
+});
+
+test('3.3 collection-list uniqueness uses reference identity even when access tokens differ', () => {
+  const terms = structuredClone(current);
+  terms.purchases[0].targeting_overlay = {
+    collection_lists: [
+      { agent_url: 'https://lists.example', list_id: 'same', auth_token: 'a' },
+      { agent_url: 'https://lists.example', list_id: 'same', auth_token: 'b' },
+    ],
+  };
+  const result = verify(candidate(terms), terms);
+  assert.equal(result.ok, false);
+  assert.ok(result.mismatches.some(m => m.path.includes('collection_lists/1')));
+});
+
+test('3.3 snapshot verification refuses definition pins and references needing current-source verification', () => {
+  for (const pinPresent of [false, true]) {
+    const terms = structuredClone(current);
+    if (pinPresent)
+      terms.definition_pins = [
+        {
+          ref_kind: 'publisher_format_option',
+          reference: { publisher_domain: 'publisher.example', format_option_id: 'display' },
+          content_digest: '0'.repeat(64),
+        },
+      ];
+    else
+      terms.purchases[0].format_option_refs = [
+        { scope: 'publisher', publisher_domain: 'publisher.example', format_option_id: 'display' },
+      ];
+    const result = verify(candidate(terms), terms);
+    assert.equal(result.ok, false);
+    assert.ok(result.mismatches.some(m => m.message.includes('current-source')));
+  }
 });

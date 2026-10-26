@@ -31,6 +31,26 @@ function validate(
     ];
     return false;
   }
+  if (Array.isArray(metadata.unique_by) && Array.isArray(data)) {
+    const seen = new Set<string>();
+    for (const [index, entry] of data.entries()) {
+      if (!record(entry)) continue;
+      const key = canonicalize(metadata.unique_by.map(field => entry[String(field)] ?? null));
+      if (seen.has(key)) return fail(`/${index}`, 'reference identities must be unique');
+      seen.add(key);
+    }
+  }
+  // This synchronous snapshot comparator cannot re-resolve third-party
+  // definitions. Refuse pins rather than certify stale source digests.
+  if (
+    record(metadata.verifier_constraints) &&
+    (metadata.verifier_constraints.pin_projection !== undefined ||
+      metadata.verifier_constraints.pin_coverage !== undefined)
+  )
+    return fail(
+      '',
+      'definition pins require current-source verification, which this beta snapshot verifier does not provide'
+    );
   if (record(metadata.disjoint_place_fields) && record(data)) {
     const { include, exclude, identity } = metadata.disjoint_place_fields;
     if (typeof include === 'string' && typeof exclude === 'string' && Array.isArray(identity)) {

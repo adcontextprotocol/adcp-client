@@ -621,6 +621,34 @@ describe('TaskExecutor — A2A update_media_buy canceled domain payload (#2009)'
 
     assert.strictEqual(result.success, true, 'should succeed, not terminal-fail');
     assert.strictEqual(result.status, 'completed');
+    // The request went out at the SDK's default (3.1+) release and the seller
+    // did not echo a version, so a bare `canceled` is the 3.1+ task status.
+    // The SDK returns it as sent and does not invent a media-buy lifecycle
+    // (adcp-client#3432).
+    assert.deepStrictEqual(result.data, payload);
+    assert.notStrictEqual(result.error, 'Task canceled');
+  });
+
+  test('3.0 exchange: completed A2A task artifact domain status="canceled" is the media-buy lifecycle', async () => {
+    const payload = {
+      media_buy_id: 'mb_canceled',
+      status: 'canceled',
+      revision: 2,
+      affected_packages: [],
+      context: { correlation_id: 'corr-1' },
+      _message: 'Completed update_media_buy',
+    };
+    ProtocolClient.callTool = mock.fn(async () => a2aWrappedCompletedArtifactData(payload));
+
+    const executor = new TaskExecutor({ strictSchemaValidation: false, adcpVersion: '3.0' });
+    const result = await executor.executeTask(mockAgent, 'update_media_buy', {
+      media_buy_id: 'mb_canceled',
+      canceled: true,
+      cancellation_reason: 'buyer_cancel',
+    });
+
+    assert.strictEqual(result.success, true, 'should succeed, not terminal-fail');
+    assert.strictEqual(result.status, 'completed');
     assert.deepStrictEqual(result.data, { ...payload, media_buy_status: 'canceled' });
     assert.notStrictEqual(result.error, 'Task canceled');
   });

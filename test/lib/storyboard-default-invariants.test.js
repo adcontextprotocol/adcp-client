@@ -986,8 +986,9 @@ describe('default-invariants: status.monotonic', () => {
     };
   }
 
-  function run(steps) {
+  function run(steps, adcpVersion) {
     const ctx = makeCtx();
+    if (adcpVersion !== undefined) ctx.options.adcpVersion = adcpVersion;
     spec.onStart(ctx);
     return steps.map(s => ({ step: s.step_id, output: spec.onStep(ctx, s) }));
   }
@@ -1013,6 +1014,105 @@ describe('default-invariants: status.monotonic', () => {
     ]);
     assert.ok(out.every(r => r.output.every(o => o.passed)));
   });
+
+  for (const version of ['3.3-beta.0', '3.3.0-beta.0', '3.3']) {
+    test(`${version}: review rejection, buyer correction, and approval can precede activation`, () => {
+      const out = run(
+        [
+          step({
+            step_id: 'create',
+            task: 'create_media_buy',
+            response: {
+              media_buy_id: 'mb-review',
+              media_buy_status: 'pending_start',
+              status: 'completed',
+              packages: [],
+            },
+          }),
+          step({ step_id: 'rejected', response: { media_buys: [mb('mb-review', 'pending_creatives')] } }),
+          step({ step_id: 'resubmitted', response: { media_buys: [mb('mb-review', 'pending_start')] } }),
+          step({ step_id: 'approved', response: { media_buys: [mb('mb-review', 'active')] } }),
+        ],
+        version
+      );
+      assert.ok(
+        out.every(r => r.output.every(o => o.passed)),
+        JSON.stringify(out)
+      );
+    });
+  }
+
+  for (const version of ['3.0', '3.1', '3.2', '3.2.7']) {
+    test(`${version}: seller review does not relax the older lifecycle contract`, () => {
+      const out = run(
+        [
+          step({ step_id: 'waiting', response: { media_buys: [mb('mb-review', 'pending_start')] } }),
+          step({ step_id: 'rejected', response: { media_buys: [mb('mb-review', 'pending_creatives')] } }),
+        ],
+        version
+      );
+      assert.strictEqual(out[1].output[0].passed, false);
+      assert.match(out[1].output[0].error, /pending_start → pending_creatives/);
+      assert.ok(!out[1].output[0].hint.legal_next_states.includes('pending_creatives'));
+    });
+  }
+
+  test('the seller response version selects the graph for nested reads', () => {
+    const out = run([
+      step({ response: { adcp_version: '3.3-beta.0', media_buys: [mb('mb-review', 'pending_start')] } }),
+      step({ response: { adcp_version: '3.3-beta.0', media_buys: [mb('mb-review', 'pending_creatives')] } }),
+    ]);
+    assert.ok(
+      out.every(r => r.output.every(o => o.passed)),
+      JSON.stringify(out)
+    );
+  });
+
+  test('a seller downshift to 3.2 keeps the older graph despite a 3.3 request pin', () => {
+    const out = run(
+      [
+        step({ response: { adcp_version: '3.2', media_buys: [mb('mb-review', 'pending_start')] } }),
+        step({ response: { adcp_version: '3.2', media_buys: [mb('mb-review', 'pending_creatives')] } }),
+      ],
+      '3.3-beta.0'
+    );
+    assert.strictEqual(out[1].output[0].passed, false);
+    assert.ok(!out[1].output[0].hint.legal_next_states.includes('pending_creatives'));
+  });
+
+  test('a nested resource cannot override the negotiated response version', () => {
+    const out = run(
+      [
+        step({
+          response: { adcp_version: '3.2', media_buys: [mb('mb-review', 'pending_start', { adcp_version: '3.3' })] },
+        }),
+        step({
+          response: {
+            adcp_version: '3.2',
+            media_buys: [mb('mb-review', 'pending_creatives', { adcp_version: '3.3' })],
+          },
+        }),
+      ],
+      '3.3-beta.0'
+    );
+    assert.strictEqual(out[1].output[0].passed, false);
+    assert.ok(!out[1].output[0].hint.legal_next_states.includes('pending_creatives'));
+  });
+
+  for (const from of ['active', 'paused', 'completed', 'rejected', 'canceled']) {
+    for (const to of ['pending_start', 'pending_creatives']) {
+      test(`3.3 never permits ${from} -> ${to}`, () => {
+        const out = run(
+          [
+            step({ response: { media_buys: [mb('mb-review', from)] } }),
+            step({ response: { media_buys: [mb('mb-review', to)] } }),
+          ],
+          '3.3-beta.0'
+        );
+        assert.strictEqual(out[1].output[0].passed, false);
+      });
+    }
+  }
 
   test('reads media_buy_status (3.1 canonical) on create_media_buy responses', () => {
     const ctx = makeCtx();
@@ -1421,10 +1521,10 @@ describe('default-invariants: status.monotonic', () => {
   // ── proposal ───────────────────────────────────────────────
 
   test('proposal: committed is terminal', () => {
-    const proposalOf = (id, status) => ({ proposal_id: id, status });
+    const proposalOf = (id, status) => ({ proposal_id: id, proposal_status: status });
     const out = run([
-      step({ step_id: 's1', task: 'get_products', response: { proposal: proposalOf('p-1', 'committed') } }),
-      step({ step_id: 's2', task: 'get_products', response: { proposal: proposalOf('p-1', 'draft') } }),
+      step({ step_id: 's1', task: 'get_products', response: { proposals: [proposalOf('p-1', 'committed')] } }),
+      step({ step_id: 's2', task: 'get_products', response: { proposals: [proposalOf('p-1', 'draft')] } }),
     ]);
     assert.strictEqual(out[1].output[0].passed, false);
     assert.match(out[1].output[0].error, /proposal p-1: committed → draft/);
@@ -2803,5 +2903,101 @@ describe('default-invariants: impairment.coherence', () => {
     spec.onStep(ctx, step({ step_id: 'buy', task: 'create_media_buy', response: mb('mb-1') }));
     const out = spec.onEnd(ctx);
     assert.equal(out.length, 1, 'no deferred-coverage notice expected');
+  });
+});
+
+describe('discovery eligibility for lifecycle invariants (#3186)', () => {
+  function summary(id, task, response = {}, payload) {
+    const spec = getAssertion(id);
+    const ctx = { storyboard: {}, agentUrl: 'https://seller.example/mcp', options: {}, state: {} };
+    spec.onStart(ctx);
+    spec.onStep(ctx, {
+      step_id: 'discovery',
+      phase_id: 'test',
+      title: 'Read',
+      task,
+      passed: true,
+      duration_ms: 0,
+      validations: [],
+      context: {},
+      response,
+      ...(payload && { request: { payload } }),
+    });
+    return spec.onEnd(ctx);
+  }
+  for (const id of ['status.monotonic', 'impairment.coherence']) {
+    for (const task of [
+      'get_adcp_capabilities',
+      'list_property_lists',
+      'list_collection_items',
+      'get_content_standards',
+      'list_creative_formats',
+    ]) {
+      test(`${id} does not claim observations for ${task}`, () => assert.deepEqual(summary(id, task), []));
+    }
+  }
+  for (const task of [
+    'create_media_buy',
+    'update_media_buy',
+    'get_media_buys',
+    'sync_creatives',
+    'list_creatives',
+    'sync_accounts',
+    'list_accounts',
+    'si_initiate_session',
+    'si_send_message',
+    'si_terminate_session',
+    'sync_catalogs',
+    'list_catalogs',
+    'sync_audiences',
+  ]) {
+    test(`status.monotonic retains empty lifecycle coverage for ${task}`, () => {
+      const out = summary('status.monotonic', task);
+      assert.equal(out.length, 1);
+      assert.equal(out[0].observation_count, 0);
+    });
+  }
+  for (const task of [
+    'create_media_buy',
+    'update_media_buy',
+    'get_media_buys',
+    'sync_creatives',
+    'list_creatives',
+    'sync_audiences',
+    'sync_catalogs',
+    'list_catalogs',
+    'sync_event_sources',
+  ]) {
+    test(`impairment.coherence retains empty lifecycle coverage for ${task}`, () => {
+      const out = summary('impairment.coherence', task);
+      assert.equal(out.length, 1);
+      assert.equal(out[0].observation_count, 0);
+    });
+  }
+  test('product discovery is eligible only when a proposal is present', () => {
+    assert.deepEqual(summary('status.monotonic', 'get_products', { products: [] }), []);
+    const out = summary('status.monotonic', 'get_products', { products: [], proposals: [{}] });
+    assert.equal(out.length, 1);
+    assert.equal(out[0].observation_count, 0, 'a proposal without lifecycle state must not become a pass');
+    assert.deepEqual(summary('impairment.coherence', 'get_products', { products: [], proposals: [{}] }), []);
+  });
+  test('only an audience transition controller can observe impairment resource state', () => {
+    assert.deepEqual(
+      summary(
+        'impairment.coherence',
+        'comply_test_controller',
+        { success: true },
+        { scenario: 'force_creative_status', params: { creative_id: 'creative' } }
+      ),
+      []
+    );
+    const out = summary(
+      'impairment.coherence',
+      'comply_test_controller',
+      { success: true },
+      { scenario: 'force_audience_status', params: { audience_id: 'audience' } }
+    );
+    assert.equal(out.length, 1);
+    assert.equal(out[0].observation_count, 0, 'a missing transition state stays partial');
   });
 });

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 import { toPublishedJsonSchema } from './json-schema';
+import { ReportingSourceApplicabilityV1Schema, listedReportingSourceProductIdsV1 } from './applicability';
 import {
   canonicalJsonV1,
   REPORTING_SOURCE_CONTRACT_VERSION_V1,
@@ -93,13 +94,7 @@ const CommonOfferingFields = {
   offeringId: ReportingExternalIdV1Schema,
   publicationNamespace: z.string().regex(/^[a-z][a-z0-9_.:-]{0,127}$/),
   adapterBuild: ReportingAdapterBuildIdentityV1Schema,
-  applicability: z.strictObject({
-    productIds: z.array(ReportingExternalIdV1Schema).min(1).max(10_000),
-    constituentKinds: z
-      .array(z.enum(['product', 'package_item', 'media_buy']))
-      .min(1)
-      .max(3),
-  }),
+  applicability: ReportingSourceApplicabilityV1Schema,
   contract: ReportingContractIdentityV1Schema,
   sourceTimezone: z.strictObject({
     ownership: z.literal('source_scope'),
@@ -203,7 +198,8 @@ export const ReportingSourceCapabilitiesV1Schema = z
         context,
         ['offerings', index, 'dimensions']
       );
-      unique(offering.applicability.productIds, context, ['offerings', index, 'applicability', 'productIds']);
+      const productIds = listedReportingSourceProductIdsV1(offering.applicability);
+      if (productIds) unique(productIds, context, ['offerings', index, 'applicability', 'productIds']);
       unique(offering.applicability.constituentKinds, context, [
         'offerings',
         index,

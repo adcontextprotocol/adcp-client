@@ -617,10 +617,11 @@ function generateLlmsTxt(
   ln();
 
   // --- Client vs. server routing ---
-  ln(`## Start here: AdCP 3.2`);
+  const protocolVersion = readFileSync(path.join(ROOT, 'ADCP_VERSION'), 'utf8').trim();
+  ln(`## Start here: AdCP ${protocolVersion}`);
   ln();
   ln(
-    `The SDK requires Node.js \`^20.19.0 || >=22.12.0\`. Install this reference's release train with \`npm install @adcp/sdk@${installVersion}\`; use the documentation from the exact published SDK version you install. For reproducible CLI runs, pin that exact SDK version. After installation, \`node -p "require('@adcp/sdk').ADCP_VERSION"\` reports its protocol pin; \`ls node_modules/@adcp/sdk/compliance/cache\` lists its packaged compliance versions. The legacy \`adcp-3.2\` npm tag selects SDK 14 and does not receive the refreshed compliance caches.`
+    `The SDK requires Node.js \`^20.19.0 || >=22.12.0\`. Install this reference's release train with \`npm install @adcp/sdk@${installVersion}\`; use the documentation from the exact published SDK version you install. For reproducible CLI runs, pin that exact SDK version. After installation, \`node -p "require('@adcp/sdk').ADCP_VERSION"\` reports its protocol pin; \`ls node_modules/@adcp/sdk/compliance/cache\` lists its packaged compliance versions. The \`adcp-3.2\` npm tag selects the maintained SDK 16 line. SDK 17 previews use \`beta\` and are intended for development and staging.`
   );
   ln();
   ln(
@@ -1483,6 +1484,11 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`}`);
   ln();
   ln(`interface TransportOptions {`);
+  ln(`  // Local principal partition; never sent on the wire. Enables MCP process reuse.`);
+  ln(`  connectionPartition?: string;`);
+  ln(`  // Explicit opt-in when all unpartitioned callers share one principal.`);
+  ln(`  // Otherwise unscoped MCP calls close their session after the operation.`);
+  ln(`  connectionReuse?: 'process';`);
   ln(`  // Defaults to 4 MiB (DEFAULT_MAX_RESPONSE_BYTES); only 0 opts out`);
   ln(`  // (Infinity / negatives fall back to the default).`);
   ln(`  // SSE is bounded per event plus \`maxResponseBytes * 2\` cumulative per call.`);
@@ -2371,6 +2377,10 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln();
   ln(
     `Account identity comes only from the framework-resolved context. Trusted host callbacks derive adapter routing, credential-free \`sourceScope\`, source timezone, currency, and the authorized constituent denominator. A declaration cannot supply \`account\`, \`sourceScope\`, \`sourceTimezone\`, \`contract\`, \`currency\`, \`constituents\`, or \`mediaBuyIds\`; \`mediaBuyIds\` is derived from \`resolveCoverage\`, so a buyer cannot name another buyer's media buys on a shared upstream network. Currency is frozen into configuration and obligation lineage. Capabilities are Core-only and derived from installed adapters and handlers; managed delivery, reconciled billing, receipts, webhook activity, and notifications are not advertised. Installation requires \`platform.accounts.upsert\`, which owns the advertised \`sync_accounts\` configuration path.`
+  );
+  ln();
+  ln(
+    `Source offering \`applicability\` keeps required \`productIds: string[]\`; opt into \`products: { kind: 'host_attested' }\` with an empty \`productIds\` array. Host attestation supports products created per buy: trusted \`resolveCoverage\` must authorize each product for the selected offering using its \`reporting_capabilities.reporting_delivery_offering_ids\`. Constituent kinds, product bindings, and frozen coverage remain enforced. SDK 16.5.0+ is required to read the new variants; existing declaration hashes are unchanged. See \`docs/guides/REPORTING-SOURCE-EXECUTOR.md\`.`
   );
   ln();
   ln(

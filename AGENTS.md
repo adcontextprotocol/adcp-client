@@ -4,7 +4,7 @@ This document contains essential guidelines for AI coding assistants (Claude, Co
 
 ## Start Here
 
-**Protocol overview** — Read `docs/llms.txt` for a single-file summary of AdCP: all 46 tools, key types, error codes, common flows, and test scenarios. Also available at https://adcontextprotocol.github.io/adcp-client/llms.txt
+**Protocol overview** — Read `docs/llms.txt` for a single-file summary of AdCP: all 72 tools, key types, error codes, common flows, and test scenarios. Also available at https://adcontextprotocol.github.io/adcp-client/llms.txt
 
 **Type reference** — Read `docs/TYPE-SUMMARY.md` for curated type signatures (AgentConfig, TaskResult, ConversationContext, and all tool request/response shapes).
 
@@ -265,7 +265,7 @@ npm run generate-zod-schemas  # Generate runtime validation
 
 ### Wire-version compat (v3 SDK ↔ legacy sellers)
 
-The SDK speaks one AdCP major (`ADCP_VERSION` in `src/lib/version.ts`, currently `3.2.5`) on its public surface and adapts to legacy sellers underneath. AdCP 2 support has been removed following its August 1, 2026 end of life. Maintained AdCP 3 compatibility and the policy for future major-version support are documented in [`docs/development/WIRE-VERSION-COMPAT.md`](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/development/WIRE-VERSION-COMPAT.md). Touch that doc whenever you add to `src/lib/adapters/legacy/`, `src/lib/types/v*-*/`, or `schemas/cache/<version>/`.
+The SDK speaks one AdCP major (`ADCP_VERSION` in `src/lib/version.ts`, currently `3.3.0-beta.0`) on its public surface and adapts to legacy sellers underneath. AdCP 2 support has been removed following its August 1, 2026 end of life. Maintained AdCP 3 compatibility and the policy for future major-version support are documented in [`docs/development/WIRE-VERSION-COMPAT.md`](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/development/WIRE-VERSION-COMPAT.md). Touch that doc whenever you add to `src/lib/adapters/legacy/`, `src/lib/types/v*-*/`, or `schemas/cache/<version>/`.
 
 ## Testing Strategies
 

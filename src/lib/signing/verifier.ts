@@ -16,8 +16,10 @@ import {
 } from './content-digest';
 import { RequestSignatureError } from './errors';
 import { AgentResolverError } from './agent-resolver/errors';
-import { parseStrictJson, StrictJsonError } from './agent-resolver/strict-json';
+import { StrictJsonError } from './agent-resolver/strict-json';
+import { assertSignedBodyWellFormed } from './body-validation';
 import { parseSignature, parseSignatureInput, type ParsedSignatureInput } from './parser';
+import { isValidSigningNonce } from './nonce';
 import { jwkToPublicKey, verifySignatureAsync } from './crypto';
 import { isUnresolvableOperation, type UnresolvableOperation } from './operation-resolution';
 import type { JwksResolver } from './jwks';
@@ -328,23 +330,6 @@ export async function verifyRequestSignature(
     }
   }
 
-  // A valid digest authenticates bytes, not their interpretation. Reject
-  // duplicate keys and other strict-JSON failures before committing the
-  // nonce so different parsers cannot assign different meaning to one signed
-  // body.
-  if (request.body !== undefined && request.body.trim() !== '') {
-    try {
-      parseStrictJson(request.body);
-    } catch (err) {
-      if (err instanceof StrictJsonError) {
-        throw new RequestSignatureError('request_body_malformed', 11, 'Signed request body is not strict JSON', {
-          reason: err.code,
-        });
-      }
-      throw err;
-    }
-  }
-
   if (authorizationValidUntil !== undefined && currentTime() >= authorizationValidUntil) {
     throw new RequestSignatureError(
       'request_signature_brand_origin_mismatch',
@@ -353,7 +338,7 @@ export async function verifyRequestSignature(
     );
   }
 
-  // Step 12: commit the (keyid, nonce) into the replay cache now that all
+  // Step 13: commit the (keyid, nonce) into the replay cache now that all
   // prior checks have passed. Floor the TTL at one max-window + skew so a
   // signer minting tiny validity windows can't replay outside the configured
   // replay horizon, and so cross-replica eventual consistency has headroom.
@@ -365,16 +350,30 @@ export async function verifyRequestSignature(
   if (insertResult === 'replayed') {
     throw new RequestSignatureError(
       'request_signature_replayed',
-      12,
+      13,
       `Replay of (keyid=${jwk.kid}, nonce=${parsedInput.params.nonce}) within signature window`
     );
   }
   if (insertResult === 'rate_abuse') {
     throw new RequestSignatureError(
       'request_signature_rate_abuse',
-      12,
+      13,
       `Per-keyid replay cache cap exceeded for keyid=${jwk.kid}`
     );
+  }
+
+  // Step 14: a valid signature and digest authenticate bytes, not their
+  // interpretation. Burn the authenticated nonce before rejecting ambiguous
+  // JSON so replaying that frame cannot repeatedly consume crypto work.
+  try {
+    assertSignedBodyWellFormed(request.body);
+  } catch (err) {
+    if (err instanceof StrictJsonError) {
+      throw new RequestSignatureError('request_body_malformed', 14, 'Signed request body is not strict JSON', {
+        reason: err.code,
+      });
+    }
+    throw err;
   }
 
   if (authorizationValidUntil !== undefined && currentTime() >= authorizationValidUntil) {
@@ -532,6 +531,13 @@ function requireParams(parsed: ParsedSignatureInput): void {
       'request_signature_params_incomplete',
       2,
       `Signature-Input missing required parameter(s): ${missing.join(', ')}`
+    );
+  }
+  if (!isValidSigningNonce(parsed.params.nonce)) {
+    throw new RequestSignatureError(
+      'request_signature_params_incomplete',
+      2,
+      'Signature nonce must be unpadded Base64URL containing at least 16 bytes'
     );
   }
 }

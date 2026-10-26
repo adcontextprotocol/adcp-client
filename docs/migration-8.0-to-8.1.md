@@ -409,11 +409,16 @@ variant `<id>_<suffix>` instead of you re-deriving the suffix:
 
 ```ts
 resolveCanonicalFormatKind('display_300x250', { assetType: 'image' }); // 'image'
-resolveCanonicalFormatKind('display_300x250', { assetType: 'html' }); // 'html5'
+resolveCanonicalFormatKind('display_300x250', { assetType: 'html' }); // 'display_tag' as of SDK 17
 resolveCanonicalFormatKind('display', { assetType: 'javascript' }); // 'display_tag'
 // canonical-kind aliases work too: 'html5' → '_html', 'display_tag' → '_js'.
 // Still fails closed if <id>_<suffix> isn't a catalog entry.
 ```
+
+SDK 17 corrects the HTML-markup mapping from `html5` to inline-markup
+`display_tag`. The `html5` hint remains an alias for `_html` IDs, whose canonical
+kind is now `display_tag`; zip bundles remain `html5`. See the
+[16 → 17 migration guide](migration-16-to-17.md).
 
 Pass `{ agentUrl }` to preserve the deployed owner when a seller emitted an
 unambiguous AAO standard id under its own creative-agent URL. For the

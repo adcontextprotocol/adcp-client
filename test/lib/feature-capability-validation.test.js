@@ -291,12 +291,16 @@ describe('SingleAgentClient feature API exists', () => {
   });
 
   test('reuses fresh scoped evidence with synthetic provenance and tool schemas intact', async () => {
-    const client = new SingleAgentClient({
-      id: 'test',
-      name: 'Test',
-      agent_uri: 'https://seller.example.com/mcp',
-      protocol: 'mcp',
-    });
+    // Synthetic major-only evidence is supported on the stable compatibility line.
+    const client = new SingleAgentClient(
+      {
+        id: 'test',
+        name: 'Test',
+        agent_uri: 'https://seller.example.com/mcp',
+        protocol: 'mcp',
+      },
+      { adcpVersion: '3.2.7' }
+    );
     const scope = client.getCapabilityEvidenceScope();
     client.ensureEndpointDiscovered = async () => client.getAgent();
     const capabilities = makeCapabilities({
