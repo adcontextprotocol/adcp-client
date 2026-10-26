@@ -93,8 +93,13 @@ before(async () => {
       };
     } else if (message.method === 'tools/call' && message.params?.name === 'get_adcp_capabilities') {
       state.capabilityCalls++;
-      if ((path.startsWith('/cancel-call') || path.startsWith('/timeout-call')) && state.capabilityCalls === 2) {
-        await new Promise(resolve => setTimeout(resolve, 200));
+      const delay =
+        state.capabilityDelayMs ??
+        ((path.startsWith('/cancel-call') || path.startsWith('/timeout-call')) && state.capabilityCalls === 2
+          ? 200
+          : 0);
+      if (delay > 0) {
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
       result = {
         content: [{ type: 'text', text: JSON.stringify(CAPABILITIES_PAYLOAD) }],
@@ -251,7 +256,7 @@ test('an injected fetch shares setup within one operation with and without a pri
 });
 
 test('a timeout swallowed by an isolated status handler still preserves seller work', async () => {
-  const uri = freshAgentUri('/timeout-call');
+  const uri = freshAgentUri('/isolated-handler-timeout');
   const state = tally(pathOf(uri));
   let handlerError;
   const client = makeClient(
@@ -267,14 +272,18 @@ test('a timeout swallowed by an isolated status handler still preserves seller w
       },
       handlers: {
         onGetProductsStatusChange: async () => {
+          // Discovery may make several calls; stall the handler's request
+          // rather than relying on its global capability-call number.
+          state.capabilityDelayMs = 500;
           await client.getAdcpCapabilities({}, undefined, {
-            transport: { allowPrivateIp: true, requestTimeoutMs: 50 },
+            transport: { allowPrivateIp: true, requestTimeoutMs: 100 },
           });
         },
       },
     }
   );
   await client.getCapabilities();
+  await client.getAdcpCapabilities({});
   const deletesBeforeCall = state.deletes;
   const result = await client.getProducts({ buying_mode: 'brief', brief: 'Find available inventory' });
   assert.equal(result.success, true, result.error);
