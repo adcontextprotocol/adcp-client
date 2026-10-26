@@ -1170,10 +1170,6 @@ export type {
   UpdateRightsResponse as LegacyUpdateRightsResponse,
 } from './types/core.generated';
 
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type GetMediaBuyArtifactsRequest = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type GetMediaBuyArtifactsResponse = never;
 export type {
   FormatReferenceStructuredObject as LegacyFormatReferenceStructuredObject,
   FormatReferenceStructuredObject as LegacyFormatID,
@@ -1182,18 +1178,10 @@ export type {
 export type FormatReferenceStructuredObject = never;
 /** @deprecated Legacy creative routing identity is available as `LegacyFormatID`. */
 export type FormatID = never;
-/** @deprecated Use `LegacyBuildCreativeRequest`; canonical build support awaits a canonical protocol request. */
-export type BuildCreativeRequest = never;
-/** @deprecated Use `LegacyBuildCreativeResponse`. */
-export type BuildCreativeResponse = never;
 /** @deprecated Use `LegacyBuildCreativePayload`. */
 export type BuildCreativePayload = never;
 /** @deprecated Use `LegacyBuildCreativeMultiPayload`. */
 export type BuildCreativeMultiPayload = never;
-/** @deprecated Use `LegacyListCreativeFormatsRequest`. */
-export type ListCreativeFormatsRequest = never;
-/** @deprecated Use `LegacyListCreativeFormatsResponse`. */
-export type ListCreativeFormatsResponse = never;
 /** @deprecated Use `LegacyListCreativeFormatsPayload`. */
 export type ListCreativeFormatsPayload = never;
 /** @deprecated Use `LegacyListCreativeFormatsResponsePayload`. */
@@ -1223,49 +1211,9 @@ export type UpdateMediaBuyAsyncResponseData = never;
 /** @deprecated Use `LegacySyncCreativesAsyncResponseData`. */
 export type SyncCreativesAsyncResponseData = never;
 /** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type ListContentStandardsRequest = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type ListContentStandardsResponse = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type GetContentStandardsRequest = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type GetContentStandardsResponse = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type CreateContentStandardsRequest = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type CreateContentStandardsResponse = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type UpdateContentStandardsRequest = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type UpdateContentStandardsResponse = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type CalibrateContentRequest = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type CalibrateContentResponse = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type ValidateContentDeliveryRequest = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type ValidateContentDeliveryResponse = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type GetCreativeFeaturesRequest = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type GetCreativeFeaturesResponse = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
 export type ContentStandards = never;
 /** @deprecated Use `LegacyArtifact` from the migration surface. */
 export type Artifact = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type GetRightsRequest = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type GetRightsResponse = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type AcquireRightsRequest = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type AcquireRightsResponse = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type UpdateRightsRequest = never;
-/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
-export type UpdateRightsResponse = never;
 export type {
   AccountStatus,
   CreativeStatus,

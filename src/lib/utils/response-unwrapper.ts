@@ -6,6 +6,7 @@
  */
 
 import type { z } from 'zod';
+import { isTaskStatusResponse } from './task-status-response';
 import { getBestUnionErrors } from './union-errors';
 
 /**
@@ -245,6 +246,7 @@ function isStructuredGetProductsRejection(response: unknown, toolName?: string, 
 }
 
 export function isTerminalAdcpError(response: unknown, toolName?: string, responseAdcpVersion?: string): boolean {
+  if (isTaskStatusResponse(response, toolName)) return false;
   const obj = response as Record<string, unknown> | null | undefined;
   if (isStructuredGetProductsRejection(obj, toolName, responseAdcpVersion)) return false;
   if (obj?.status === 'failed' || obj?.status === 'rejected') return true;
@@ -264,6 +266,7 @@ export function isTerminalAdcpError(response: unknown, toolName?: string, respon
  * unsuccessful, so callers must evaluate both layers.
  */
 export function isAdcpOperationSuccess(response: unknown, toolName?: string, responseAdcpVersion?: string): boolean {
+  if (isTaskStatusResponse(response, toolName)) return true;
   const obj = response as Record<string, unknown> | null | undefined;
   return (
     obj?.success !== false &&
@@ -296,7 +299,9 @@ export function unwrapProtocolResponse(
   // Extract response from protocol wrapper
   let unwrapped: any;
   let mcpExtractionPath: McpExtractionPath | undefined;
-  if (protocol === 'mcp') {
+  if (isTaskStatusResponse(protocolResponse, toolName)) {
+    unwrapped = protocolResponse;
+  } else if (protocol === 'mcp') {
     const outcome = unwrapMCPResponse(protocolResponse);
     unwrapped = outcome.result;
     mcpExtractionPath = outcome.extractionPath;

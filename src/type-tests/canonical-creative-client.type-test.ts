@@ -180,7 +180,6 @@ void recursivelyCanonical.creative_manifest.label;
 void recursivelyCanonical.product_card.format_id;
 // @ts-expect-error Recursive canonicalization removes nested creative-manifest identity.
 void recursivelyCanonical.creative_manifest.target_format_ids;
-// @ts-expect-error Raw content-standard artifact shapes are unavailable under unqualified root names.
 const primaryContentStandardsRequest: RootListContentStandardsRequest = legacyListContentStandardsRequest;
 void primaryContentStandardsRequest;
 void rootPackage.format_option_refs;
@@ -305,7 +304,8 @@ single.executeTask('sync_reporting_status', syncReportingStatusRequest).then(res
 // @ts-expect-error Every protected primary task has its exact request type.
 single.executeTask('sync_plans', { not_a_sync_plans_field: true });
 single.executeCustomTask('sync_catalogs', {});
-// @ts-expect-error Less-common raw tasks use executeCustomTask explicitly.
+single.executeTask('sync_catalogs', { account: { account_id: 'account_1' } });
+// @ts-expect-error The typed catalog request requires an account.
 single.executeTask('sync_catalogs', {});
 
 agent.updateMediaBuy(canonicalUpdate);
@@ -322,10 +322,8 @@ agent.executeTask('get_creative_delivery', getCreativeDeliveryRequest);
 single.executeTask('get_creative_delivery', getCreativeDeliveryRequest);
 collection.getCreativeDelivery(getCreativeDeliveryRequest);
 
-// @ts-expect-error Artifact-bearing content-standard methods are explicitly legacy-only.
 agent.listContentStandards(legacyListContentStandardsRequest);
 agent.listContentStandardsLegacy(legacyListContentStandardsRequest);
-// @ts-expect-error Legacy-bearing standard tasks are excluded from the primary typed task map.
 agent.executeTask('list_content_standards', legacyListContentStandardsRequest);
 
 // @ts-expect-error Primary SDK methods do not accept legacy creative request shapes.
@@ -349,15 +347,11 @@ collection.updateMediaBuy(legacyUpdate);
 // @ts-expect-error Multi-agent sync fan-out is canonical-only.
 collection.syncCreatives(legacySync);
 
-// @ts-expect-error Legacy format catalogs are available only through explicitly named migration APIs.
 agent.listCreativeFormats({});
 agent.listCreativeFormatsLegacy({});
-// @ts-expect-error Legacy format catalogs are available only through explicitly named migration APIs.
 single.listCreativeFormats({});
 single.listCreativeFormatsLegacy({});
-// @ts-expect-error Raw legacy task names cannot be smuggled through the primary generic task API.
 agent.executeTask('list_creative_formats', {});
-// @ts-expect-error Raw legacy task names cannot be smuggled through the primary generic task API.
 single.executeTask('list_creative_formats', {});
 
 // @ts-expect-error CreativeAgentClient does not expose an unqualified legacy named-format API.
@@ -371,7 +365,6 @@ multi.discoverFormatsLegacy();
 SingleAgentClient.discoverCreativeFormats('https://creative.example/mcp');
 SingleAgentClient.discoverCreativeFormatsLegacy('https://creative.example/mcp');
 
-// @ts-expect-error Legacy creative build has no unqualified primary method.
 agent.buildCreative(buildRequest);
 agent.buildCreativeLegacy(buildRequest);
 single.previewCreative(canonicalPreviewRequest);
@@ -397,14 +390,11 @@ single.previewCreative({
 });
 declare const previewResponse: PreviewCreativeResponse;
 void previewResponse;
-// @ts-expect-error Raw legacy build is excluded from primary generic execution.
 agent.executeTask('build_creative', buildRequest);
 // @ts-expect-error Raw legacy preview is excluded from primary generic execution.
 single.executeTask('preview_creative', previewRequest);
 agent.listTransformersLegacy(listTransformersRequest);
-// @ts-expect-error Legacy transformer discovery has no unqualified primary method.
 agent.listTransformers(listTransformersRequest);
-// @ts-expect-error Legacy transformer discovery is excluded from primary generic execution.
 single.executeTask('list_transformers', listTransformersRequest);
 
 // @ts-expect-error Canonical creative reads cannot request the legacy response field.
