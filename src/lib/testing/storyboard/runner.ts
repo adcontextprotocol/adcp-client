@@ -3604,7 +3604,13 @@ async function prepareStoryboardFixturesBody(
           step: failedStep?.step ?? 'Discover preparation topology',
           passed: false,
           duration_ms: failedStep?.duration_ms ?? 0,
-          error: redactOAuthUrlsInText(error instanceof Error ? error.message : String(error)),
+          error: redactOAuthUrlsInText(
+            error instanceof DiscoveryFailure
+              ? `Discovery failed for agent "${error.agentKey}" (${redactOAuthUrlForOutput(error.url)}): ${error.underlying}`
+              : error instanceof Error
+                ? error.message
+                : String(error)
+          ),
         });
       }
       for (const routeProfile of routingContext.profiles.values()) {

@@ -213,6 +213,7 @@ test('a failed peer discovery stays terminal and retains the failed exchange bef
     discovery_resilient: true,
   });
   assert.equal(state.disposition.status, 'failed');
+  assert.doesNotMatch(state.disposition.detail, /set `StoryboardRunOptions.discovery_resilient/);
   assert.match(state.disposition.detail, /[Ss]chema validation failed.*supported_protocols/);
   const failed = state.phase.steps.find(step => !step.passed);
   assert.equal(failed.request.operation, 'get_adcp_capabilities');

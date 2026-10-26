@@ -1390,9 +1390,23 @@ function projectCreative<T extends Record<string, unknown>>(
       typeof creative.creative_id === 'string' ? creative.creative_id : '(unknown)'
     );
     const refSize = legacyRefParameterConstraints(formatId);
-    if (legacyAssets !== creative.assets && refSize.width === undefined && refSize.height === undefined) {
+    const acceptsDimensions =
+      Array.isArray(markupDefinition?.accepts_parameters) && markupDefinition.accepts_parameters.includes('dimensions');
+    const hasFixedRender =
+      Array.isArray(markupDefinition?.renders) &&
+      markupDefinition.renders.some(
+        render => typeof render.dimensions?.width === 'number' || typeof render.dimensions?.height === 'number'
+      );
+    if (
+      legacyAssets !== creative.assets &&
+      acceptsDimensions &&
+      !hasFixedRender &&
+      refSize.width === undefined &&
+      refSize.height === undefined
+    ) {
       // Generic HTML refs have no size in their id. Preserve an unambiguous
-      // rendered size in the legacy ref instead of adding 3.3 HTML-asset fields.
+      // rendered size only when the definition accepts parameterized dimensions,
+      // instead of adding 3.3 HTML-asset fields or changing a fixed format's id.
       const inlineAssets = Object.fromEntries(
         Object.entries(record(creative.assets) ?? {}).filter(([, value]) => {
           const asset = record(value);

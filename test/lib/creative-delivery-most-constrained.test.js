@@ -486,6 +486,49 @@ describe('inline-markup display_tag creatives round-trip to the HTML-markup lega
     }
   });
 
+  for (const [acceptsDimensions, fixedRender] of [
+    [false, false],
+    [false, true],
+    [true, true],
+    [true, false],
+  ]) {
+    test(`custom HTML refs honor their parameter contract (dimensions: ${acceptsDimensions}, fixed render: ${fixedRender})`, () => {
+      const creative = inlineMarkupCreative({ width: 300, height: 250 });
+      const ref = bare('mrec_html', 'https://seller.example');
+      const selector = {
+        format_options: [
+          {
+            format_kind: 'display_tag',
+            params: { supported_delivery_types: ['inline_markup'] },
+            v1_format_ref: [ref],
+          },
+        ],
+      };
+      const definition = {
+        format_id: ref,
+        assets: [{ asset_id: 'html_creative', asset_type: 'html' }],
+        ...(acceptsDimensions && { accepts_parameters: ['dimensions'] }),
+        ...(fixedRender && { renders: [{ dimensions: { width: 300, height: 250 } }] }),
+      };
+      const original = structuredClone({ creative, selector, definition });
+      const projected = projectCreativeForDelivery(
+        creative,
+        selector,
+        'legacy',
+        'creative_delivery',
+        undefined,
+        undefined,
+        [definition]
+      );
+      assert.deepEqual(projected.format_id, {
+        ...ref,
+        ...(acceptsDimensions && !fixedRender && { width: 300, height: 250 }),
+      });
+      assert.deepEqual(projected.assets.html_creative, { asset_type: 'html', content: MARKUP });
+      assert.deepEqual({ creative, selector, definition }, original);
+    });
+  }
+
   test('refuses declared macros on both legacy mutation projections and preserves them on canonical delivery', () => {
     const creative = inlineMarkupCreative({ width: 300, height: 250 });
     creative.assets.html_creative.markup = '<div>%%TOKEN%%</div>';
