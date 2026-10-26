@@ -213,6 +213,7 @@ describe('durable provider write inventory', { skip: !url && 'PostgreSQL URL not
       await held.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['adcp-reporting-account:cancelled']);
       const controller = new AbortController();
       const pending = store.registerObjectWritePlan(plan('cancelled'), { signal: controller.signal });
+      const rejection = assert.rejects(pending);
       // Observe the actual PostgreSQL waiter, rather than guessing with a sleep. Bound to the session that holds
       // the lock, so another file's advisory-lock waiter in the same cluster cannot satisfy it.
       const {
@@ -228,7 +229,7 @@ describe('durable provider write inventory', { skip: !url && 'PostgreSQL URL not
       }
       controller.abort();
       await held.query('COMMIT');
-      await assert.rejects(pending);
+      await rejection;
     } finally {
       await held.query('ROLLBACK');
       held.release();

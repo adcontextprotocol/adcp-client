@@ -392,7 +392,7 @@ describe('REPORTING_ROW_STORAGE_MIGRATION', { skip: !DATABASE_URL && 'PostgreSQL
       );
     });
 
-    test('a fresh install and an upgraded install end with the same chunk and row-set columns', async () => {
+    test('a fresh install and an upgraded install end with the same chunk and row-set columns', async t => {
       const shape = async queryable =>
         (
           await queryable.query(
@@ -412,17 +412,38 @@ describe('REPORTING_ROW_STORAGE_MIGRATION', { skip: !DATABASE_URL && 'PostgreSQL
         ).rows,
         triggers: (
           await queryable.query(
-            `SELECT tgname FROM pg_trigger WHERE tgrelid::regclass::text LIKE '%adcp_reporting_row_%'
-                AND NOT tgisinternal ORDER BY tgname`
+            `SELECT t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+              WHERE c.relnamespace = current_schema()::regnamespace
+                AND c.relname LIKE 'adcp_reporting_row_%' AND NOT t.tgisinternal ORDER BY t.tgname`
           )
         ).rows,
         bounds: (
           await queryable.query(
-            `SELECT conname FROM pg_constraint WHERE conname LIKE 'adcp_reporting_row_chunks_%_bounds' ORDER BY conname`
+            `SELECT conname FROM pg_constraint WHERE connamespace = current_schema()::regnamespace
+                AND conname LIKE 'adcp_reporting_row_chunks_%_bounds' ORDER BY conname`
           )
         ).rows,
       });
-      assert.deepEqual(await structure(legacy), await structure(pool));
+      const expectedStructure = await structure(pool);
+      assert.deepEqual(await structure(legacy), expectedStructure);
+
+      // Parallel PostgreSQL suites own other schemas in this database. Their
+      // matching relation/constraint names must not enter either snapshot.
+      const foreignSchema = `adcp_reporting_row_storage_foreign_${process.pid}`;
+      await bootstrapPool.query(`CREATE SCHEMA "${foreignSchema}"`);
+      t.after(() => bootstrapPool.query(`DROP SCHEMA "${foreignSchema}" CASCADE`));
+      await bootstrapPool.query(`
+        CREATE TABLE "${foreignSchema}".adcp_reporting_row_chunks (
+          object_ref text CONSTRAINT adcp_reporting_row_chunks_foreign_bounds CHECK (length(object_ref) <= 1024)
+        );
+        CREATE FUNCTION "${foreignSchema}".foreign_trigger() RETURNS trigger LANGUAGE plpgsql
+          AS $$ BEGIN RETURN NEW; END $$;
+        CREATE TRIGGER adcp_reporting_row_foreign_trigger BEFORE INSERT
+          ON "${foreignSchema}".adcp_reporting_row_chunks FOR EACH ROW
+          EXECUTE FUNCTION "${foreignSchema}".foreign_trigger();
+      `);
+      assert.deepEqual(await structure(legacy), expectedStructure, 'upgraded snapshot ignores other schemas');
+      assert.deepEqual(await structure(pool), expectedStructure, 'fresh snapshot ignores other schemas');
     });
   });
 

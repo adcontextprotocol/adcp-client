@@ -882,7 +882,7 @@ export async function discoverAgentProfile(
   signal?: AbortSignal,
   /** Compliance/schema line selected by the caller. Defaults to the client pin. */
   schemaAdcpVersion?: string
-): Promise<{ profile: AgentProfile; step: TestStepResult; caughtError?: unknown }> {
+): Promise<{ profile: AgentProfile; step: TestStepResult; caughtError?: unknown; evidence?: TestStepResult }> {
   const scopeKey = hasTestClientScope() ? client.getCapabilityEvidenceScope().scopeKey : undefined;
   const {
     result: agentInfo,
@@ -1046,12 +1046,15 @@ export async function discoverAgentProfile(
   ) {
     seedTestClientSigningCapability(client, profile, schemaAdcpVersion);
   }
+  // Preparation can terminate on applicability immediately after discovery,
+  // so retain its actual exchange separately from the compact rollup step.
+  const evidence = step.passed && !failure ? { ...step } : undefined;
   if (step.passed && !failure) {
     delete step.request;
     delete step.response_record;
     delete step.adcp_error;
   }
-  return { profile, step, ...(caughtError !== undefined && { caughtError }) };
+  return { profile, step, ...(caughtError !== undefined && { caughtError }), ...(evidence && { evidence }) };
 }
 
 /**

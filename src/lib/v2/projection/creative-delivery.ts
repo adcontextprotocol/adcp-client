@@ -1394,17 +1394,54 @@ function projectCreative<T extends Record<string, unknown>>(
     }
   }
   if (Object.hasOwn(creative, 'assets')) {
+    const legacyAssets = projectInlineMarkupToLegacyHtml(
+      creative.assets,
+      markupDefinition,
+      operation,
+      typeof creative.creative_id === 'string' ? creative.creative_id : '(unknown)'
+    );
+    const refSize = legacyRefParameterConstraints(formatId);
+    const acceptsDimensions =
+      Array.isArray(markupDefinition?.accepts_parameters) && markupDefinition.accepts_parameters.includes('dimensions');
+    const hasFixedRender =
+      Array.isArray(markupDefinition?.renders) &&
+      markupDefinition.renders.some(
+        render => typeof render.dimensions?.width === 'number' || typeof render.dimensions?.height === 'number'
+      );
+    if (
+      legacyAssets !== creative.assets &&
+      acceptsDimensions &&
+      !hasFixedRender &&
+      refSize.width === undefined &&
+      refSize.height === undefined
+    ) {
+      // Generic HTML refs have no size in their id. Preserve an unambiguous
+      // rendered size only when the definition accepts parameterized dimensions,
+      // instead of adding 3.3 HTML-asset fields or changing a fixed format's id.
+      const inlineAssets = Object.fromEntries(
+        Object.entries(record(creative.assets) ?? {}).filter(([, value]) => {
+          const asset = record(value);
+          return asset?.asset_type === 'display_tag' && asset.delivery_type === 'inline_markup';
+        })
+      );
+      const size = assetRenderedSize({ assets: inlineAssets });
+      const requested = creativeFormatParameterConstraints(creative);
+      if (
+        typeof size?.width === 'number' &&
+        typeof size.height === 'number' &&
+        Number.isSafeInteger(size.width) &&
+        Number.isSafeInteger(size.height) &&
+        size.width > 0 &&
+        size.height > 0 &&
+        (requested?.width === undefined || requested.width === size.width) &&
+        (requested?.height === undefined || requested.height === size.height)
+      ) {
+        next.format_id = { ...formatId, width: size.width, height: size.height };
+      }
+    }
     // A bare-id alias can establish markup representation, but only an exact
     // or caller-supplied definition establishes the seller's asset slot IDs.
-    next.assets = projectLegacyAssetKeys(
-      projectInlineMarkupToLegacyHtml(
-        creative.assets,
-        markupDefinition,
-        operation,
-        typeof creative.creative_id === 'string' ? creative.creative_id : '(unknown)'
-      ),
-      definition
-    );
+    next.assets = projectLegacyAssetKeys(legacyAssets, definition);
   }
   return next as T;
 }
