@@ -1254,10 +1254,9 @@ function projectLegacyAssetKeys(assetsValue: unknown, definition: V1FormatDefini
 }
 
 /**
- * Legacy HTML-markup formats (`display_html`, `display_WxH_html`) take markup
- * as an `html` asset; canonically it is a `display_tag` inline-markup asset
- * (adcontextprotocol/adcp#8339). Carry the bytes into the legacy `content`.
- * `delivery_type` and `markup_type` have no legacy field; declared macros must be refused.
+ * Rendered dimensions of a legacy `html` asset carried onto a canonical
+ * `display_tag`. Only the read toward the canonical surface uses this; the
+ * legacy projection below never emits them.
  */
 function renderedSizeFields(asset: Record<string, unknown>): Record<string, unknown> {
   // The 3.3 schema makes fixed dimensions and responsive sizes exclusive.
@@ -1270,6 +1269,20 @@ function renderedSizeFields(asset: Record<string, unknown>): Record<string, unkn
   return asset.sizes !== undefined ? { sizes: asset.sizes } : {};
 }
 
+/**
+ * Legacy HTML-markup formats (`display_html`, `display_WxH_html`) take markup
+ * as an `html` asset; canonically it is a `display_tag` inline-markup asset
+ * (adcontextprotocol/adcp#8339). Carry the bytes into the legacy `content`.
+ * `delivery_type` and `markup_type` have no legacy field; declared macros must be refused.
+ *
+ * The asset's rendered `width`, `height` and `sizes` are AdCP 3.3 fields
+ * (`x-added-in: 3.3.0` on `html-asset.json`), and the legacy wire never serves
+ * a peer on 3.2 or later: `resolveCreativeFormatWireMode` and the server's
+ * per-request wire mode put every 3.2+ release on the canonical wire, where a
+ * 3.3 peer gets them on the `display_tag`. So they are dropped here rather
+ * than copied. They still select the sized legacy ref, which is how a
+ * pre-3.3 seller learns the size (adcontextprotocol/adcp-client#3436).
+ */
 function projectInlineMarkupToLegacyHtml(
   assetsValue: unknown,
   definition: V1FormatDefinition | undefined,
@@ -1301,7 +1314,6 @@ function projectInlineMarkupToLegacyHtml(
         {
           asset_type: 'html',
           content: asset.markup,
-          ...renderedSizeFields(asset),
           ...(asset.provenance !== undefined && { provenance: asset.provenance }),
         },
       ];

@@ -97,7 +97,10 @@ including when the local `assetType: 'html5'` hint selects an `_html` ID.
 Actual zip creatives remain `html5` and cannot match HTML-markup-only products.
 
 Legacy delivery preserves the seller's format URL and size and emits the markup
-bytes in `html_creative.content`. Tag URLs and inline markup select only legacy
+bytes in `html_creative.content`. The rendered `width`, `height` and `sizes` are
+AdCP 3.3 asset fields, so they are not copied onto the legacy `html` asset: the
+selected `display_WxH_html` ref carries the size. Sellers on 3.3 get the
+canonical `display_tag` with those fields. Tag URLs and inline markup select only legacy
 refs that accept their delivery type. A paired redirect or inline-markup creative
 cannot use a ref that accepts only tag URLs. Multi-size tag-URL declarations keep
 their seller-asserted refs rather than expanding into inline-markup HTML formats.
