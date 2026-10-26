@@ -1,5 +1,37 @@
 # Changelog
 
+## 17.0.0-beta.1
+
+### Patch Changes
+
+- 23ac341: Apply storyboard root capability predicates and required-tools applicability before fixture preparation reads catalogs or seeds controllers. Routed preparation uses the same tool union and capability owners as execution. Unmet gates return an unsupported, not-applicable disposition with discovery evidence, after the preparation authorizer has run.
+
+  Propagate unsupported AdCP version pins from controller detection instead of reporting an unavailable controller; `comply()` rejects with the typed version refusal. Generic HTML format references retain a unique fixed rendered size as their width/height parameters only when the format advertises dimension parameters and has no fixed rendered size. Sized and custom fixed references remain unchanged.
+
+  Reuse discovery and dispatch connections within each high-level client operation and avoid repeating cached legacy-era classification handshakes. Caller-owned scopes and explicit connection reuse policies continue to control their own sessions; credentials and transport policies remain partitioned. Aborts and request timeouts preserve seller work even when an isolated status handler catches the error. Injected fetches reuse setup within an operation with or without a principal partition.
+
+- 023d4f6: Stop copying AdCP 3.3 rendered dimensions onto the legacy `html` asset (adcp-client#3436). When SDK 17 projects a canonical inline-markup `display_tag` creative onto an HTML-markup legacy format (`display_html` or `display_WxH_html`, adcontextprotocol/adcp#8339), the legacy `html_creative` is now `{ asset_type: 'html', content }`, plus `provenance` when the asset has it. The asset's `width`, `height` and `sizes` are no longer copied. This matches the AdCP vector `inline-markup-selects-the-exact-sized-legacy-ref`.
+
+  Those fields were added in AdCP 3.3, and the legacy wire only serves sellers before 3.2. In 17.0.0-beta.0 the version translation then refused the copied fields, so `syncCreatives`, `createMediaBuy` and `updateMediaBuy` threw `ProtocolFeatureUnsupportedError` for any sized inline-markup creative sent to a 3.0 or 3.1 seller.
+
+  Unchanged:
+  - The rendered size, or `format_parameters.width`/`height`, still selects the sized legacy ref, and the selected `display_WxH_html` ref carries the size.
+  - Sellers on 3.2 or later are on the canonical wire, which this change does not touch. A 3.3 seller gets the `display_tag` with its rendered size as sent.
+  - Reading a legacy `html_creative` canonically still moves the asset's own `width`/`height`/`sizes` onto the `display_tag`, and invents no size from the format ref.
+
+- d57b2b9: Legacy creative projection failures (`ADCP_CREATIVE_FORMAT_PROJECTION_FAILED`) now say which constraint failed. An `html5` creative offered only HTML-markup formats points at the SDK 17 `display_tag` inline-markup migration. A `display_tag` delivery type the seller's refs don't accept names both delivery types, and a rendered size with no matching ref names the size. Ambiguous sized refs suggest `format_parameters.width`/`height`. Error codes and selection behaviour are unchanged; only the message text differs.
+- b27fd8d: Report rate limiting during MCP endpoint discovery instead of a wrong-path error. When a probe answers HTTP 429, or 503 with `Retry-After`, discovery stops at that URL and throws the new `AgentRateLimitedError` (`code: 'RATE_LIMITED'`) with the status, the probed URL, and `retryAfter` / `retryAfterMs` when the agent sent a well-formed `Retry-After`. It no longer probes the remaining candidate URLs, which only spent more of the seller's request budget, and no longer adds the "agent_uri does not include the MCP endpoint path" hint. Other discovery failures, 401 handling, and successful discovery are unchanged.
+- 3483bea: Stop fabricating `media_buy_status` from the task status when a 3.1+ seller omits the optional response `adcp_version` echo (adcp-client#3432). A conformant seller may answer `create_media_buy` or `update_media_buy` with `{ status: 'completed', media_buy_id, ... }`. From AdCP 3.1, that top-level `status` is the task envelope status. The SDK used to treat any un-echoed response as possibly 3.0, so it copied `completed`, `rejected` or `canceled` into `media_buy_status`. Buyers then saw a buy reported as finished, and the storyboard `status.monotonic` invariant rejected a legal create → `active` readback (the symptom from #3395).
+
+  The response helpers now use the release the request was sent at (the buyer's `adcpVersion` pin, the release negotiated from it, or the SDK default) when the payload carries no version echo. This applies to the buyer client, `tasks/get` results, the AdCP 3.1 response adapter, response validation and the storyboard runner. `LegacyEnvelopeStatusOptions` and `extractContext` accept an optional `adcpVersion` for this.
+
+  Behaviour change for adopters: on a 3.1+ exchange, an un-echoed `status: 'completed' | 'rejected' | 'canceled'` is returned as sent, with no `media_buy_status` added. Read the media-buy lifecycle from `media_buy_status` when the seller sends it.
+
+  Unchanged:
+  - A 3.0 exchange (pinned or negotiated) still moves a lifecycle sent in `status` into `media_buy_status`.
+  - An explicit `adcp_version` or `adcp_major_version` echo from the seller still takes precedence over the requested release.
+  - Unambiguous lifecycle values such as `active` keep the existing legacy move.
+
 ## 17.0.0-beta.0
 
 ### Major Changes
