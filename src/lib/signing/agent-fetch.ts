@@ -264,7 +264,7 @@ export interface BuildAgentSigningFetchOptions {
  *   1. Sign immediately when the payload carries webhook authentication.
  *   2. Resolve the AdCP operation and exact JSON-RPC protocol method.
  *   3. Consult each capability namespace independently; either can request
- *      signing. Legacy SDK task polls sign when the seller supports signing.
+ *      signing. SDK AdCP task polls sign when the seller supports signing.
  *   4. Resolve the seller's content-digest policy into a per-request toggle.
  *   5. Delegate to `createSigningFetch` with the decision baked in.
  */
@@ -291,17 +291,17 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
     }
     const operation = extractAdcpOperation(init?.body);
     if (operation === 'get_adcp_capabilities' && hasUnsignedCapabilityBootstrap(signing)) return false;
-    const isPollOperation = operation === 'tasks_get' || operation === 'tasks/get';
+    const isPollOperation = operation === 'get_task_status' || operation === 'tasks_get' || operation === 'tasks/get';
     const methods = policyMethods ?? (isPollOperation ? jsonRpcMethodsForSigning(init?.body) : []);
     const profileCompatible =
       signing.profile === 'web-bot-auth'
         ? signingListIncludes(capability?.profiles, 'web-bot-auth')
         : capability?.profiles === undefined || signingListIncludes(capability.profiles, 'adcp/request-signing/v1');
-    const legacyPoll =
+    const signedPoll =
       profileCompatible &&
       capability?.supported === true &&
-      ((operation === 'tasks_get' && methods.includes('tools/call')) ||
-        (operation === 'tasks/get' &&
+      (((operation === 'tasks_get' || operation === 'get_task_status') && methods.includes('tools/call')) ||
+        ((operation === 'tasks/get' || operation === 'get_task_status') &&
           methods.some(method =>
             ['message/send', 'message/stream', 'SendMessage', 'SendStreamingMessage'].includes(method)
           )));
@@ -311,7 +311,7 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
         signingListIncludes(capability?.profiles, 'web-bot-auth')) ||
       shouldSignOperation(operation, capability, signing) ||
       methods.some(method => shouldSignProtocolMethod(method, capability, signing)) ||
-      legacyPoll;
+      signedPoll;
     if (sign && signing.profile === 'web-bot-auth' && !signingListIncludes(capability?.profiles, 'web-bot-auth'))
       throw new TypeError('Seller did not advertise the Web Bot Auth request signing profile');
     return sign;

@@ -113,6 +113,59 @@ describe('advertised AdCP task-status tool (#3446)', () => {
     assert.equal(calls.mock.callCount(), 0);
   });
 
+  test('cross-agent polling discovers once per observation without sharing authorization or transport scopes', async () => {
+    const parent = new SingleAgentClient(
+      { id: 'buyer', name: 'Buyer', protocol: 'mcp', agent_uri: 'https://buyer.example/mcp' },
+      { headers: { 'x-parent-only': 'parent-credential' } }
+    );
+    const target = {
+      id: 'seller',
+      name: 'Seller',
+      protocol: 'mcp',
+      agent_uri: 'https://seller.example/mcp',
+      headers: { 'x-target-only': 'target-credential' },
+    };
+    const firstFetch = async () => assert.fail('transport is stubbed');
+    const secondFetch = async () => assert.fail('transport is stubbed');
+    const discoveries = mock.method(SingleAgentClient.prototype, 'getCapabilities', async function (options) {
+      assert.deepEqual(this.getAgent().headers, target.headers);
+      return { discoveredTools: options.transport.trustedFetchFn === firstFetch ? ['get_task_status'] : [] };
+    });
+    let attempt = 0;
+    const calls = mock.method(ProtocolClient, 'callTool', async (agent, tool, _params, options) => {
+      assert.deepEqual(agent.headers, target.headers);
+      assert.equal(tool, options.transport.trustedFetchFn === firstFetch ? 'get_task_status' : 'tasks_get');
+      return status(++attempt % 3 ? 'working' : 'completed');
+    });
+    for (const trustedFetchFn of [firstFetch, secondFetch]) {
+      const result = await parent.executor.pollTaskCompletion(target, 'work-1', 0, { trustedFetchFn });
+      assert.equal(result.success, true, result.error);
+    }
+    assert.equal(discoveries.mock.callCount(), 2, 'each observation discovers once, under its own scope');
+    assert.equal(calls.mock.callCount(), 6);
+  });
+
+  test('polling honors schema-only tool evidence installed by the discovery cache', async () => {
+    const agent = { id: 'seller', name: 'Seller', protocol: 'mcp', agent_uri: 'https://seller.example/mcp' };
+    const client = new SingleAgentClient(agent, { adcpVersion: '3.2.7' });
+    mock.method(client, 'ensureEndpointDiscovered', async () => agent);
+    client.cachedCapabilities = {
+      version: 'v3',
+      majorVersions: [3],
+      protocols: ['media_buy'],
+      features: {},
+      extensions: [],
+      _synthetic: false,
+    };
+    client.cachedToolSchemas = new Map([['get_task_status', { task_id: { type: 'string' } }]]);
+    mock.method(client, 'getAgentInfo', async () => assert.fail('installed discovery evidence should be used'));
+    mock.method(ProtocolClient, 'callTool', async (_agent, tool) => {
+      assert.equal(tool, 'get_task_status');
+      return status();
+    });
+    assert.equal((await client.getTaskStatus('work-1')).status, 'completed');
+  });
+
   test('official MCP client discovers and polls a seller that registers only get_task_status', async () => {
     const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
     const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
@@ -187,4 +240,30 @@ describe('advertised AdCP task-status tool (#3446)', () => {
       });
     }
   }
+
+  for (const state of ['failed', 'canceled', 'rejected']) {
+    test(`typed status-query data cannot override an A2A ${state} transport result`, () => {
+      const { ProtocolResponseParser } = require('../../dist/lib/core/ProtocolResponseParser.js');
+      const response = {
+        result: {
+          kind: 'task',
+          id: 'query-task',
+          status: { state },
+          artifacts: [{ artifactId: 'status', parts: [{ kind: 'data', data: status('working') }] }],
+        },
+      };
+      assert.equal(new ProtocolResponseParser().getStatus(response, 'get_task_status'), state);
+    });
+  }
+
+  test('typed status-query data cannot override an MCP tool error', () => {
+    const { ProtocolResponseParser } = require('../../dist/lib/core/ProtocolResponseParser.js');
+    assert.equal(
+      new ProtocolResponseParser().getStatus(
+        { isError: true, structuredContent: status('working') },
+        'get_task_status'
+      ),
+      'failed'
+    );
+  });
 });

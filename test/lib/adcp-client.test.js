@@ -121,17 +121,17 @@ describe('AdCPClient', () => {
       // Verify agent has fluent API methods
       assert.ok(typeof agent.getProducts === 'function');
       assert.ok(typeof agent.listCreativeFormatsLegacy === 'function');
-      assert.strictEqual(agent.listCreativeFormats, undefined);
+      assert.ok(typeof agent.listCreativeFormats === 'function');
       assert.ok(typeof agent.previewCreative === 'function');
-      assert.strictEqual(agent.buildCreative, undefined);
-      assert.strictEqual(agent.listTransformers, undefined);
+      assert.ok(typeof agent.buildCreative === 'function');
+      assert.ok(typeof agent.listTransformers === 'function');
       assert.ok(typeof agent.previewCreativeLegacy === 'function');
       assert.ok(typeof agent.buildCreativeLegacy === 'function');
       assert.ok(typeof agent.listTransformersLegacy === 'function');
-      assert.strictEqual(agent.listContentStandards, undefined);
-      assert.strictEqual(agent.getContentStandards, undefined);
-      assert.strictEqual(agent.calibrateContent, undefined);
-      assert.strictEqual(agent.validateContentDelivery, undefined);
+      assert.ok(typeof agent.listContentStandards === 'function');
+      assert.ok(typeof agent.getContentStandards === 'function');
+      assert.ok(typeof agent.calibrateContent === 'function');
+      assert.ok(typeof agent.validateContentDelivery === 'function');
       assert.ok(typeof agent.listContentStandardsLegacy === 'function');
       assert.ok(typeof agent.getContentStandardsLegacy === 'function');
       assert.ok(typeof agent.calibrateContentLegacy === 'function');

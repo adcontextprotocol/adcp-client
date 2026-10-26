@@ -194,6 +194,7 @@ function clientWithCaps(caps, adcpVersion, clientOptions = {}, agentConfig = AGE
     ...clientOptions,
   });
   agent.getCapabilities = async () => caps;
+  agent.client.getCapabilities = async () => caps;
   const negotiate = agent.negotiateMediaBuyLifecycle.bind(agent);
   agent.negotiateMediaBuyLifecycle = options =>
     negotiate({ legacyPurchaseSellerSessionScope: 'test-authenticated-seller-session', ...options });
