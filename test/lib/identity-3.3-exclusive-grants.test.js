@@ -1,7 +1,7 @@
-// exclusive_grants makes grants[] exhaustive only for the scopes it names
-// (adcontextprotocol/adcp L2 "Grants in trust records": Absence). A scope no
-// grant names stays at the seller's discretion, as does every scope of an
-// exclusive record that publishes no grants.
+// exclusive_grants on the house's record makes grants[] the complete list,
+// whatever the scope (adcontextprotocol/adcp L2 "Grants in trust records":
+// Absence). Without it, an uncovered claim is at the seller's discretion, and
+// a grant that does not cover the claim never narrows that discretion.
 process.env.NODE_ENV = 'test';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -47,48 +47,43 @@ function authorize(brandRecord) {
   return { run, sellerCalls: () => sellerCalls };
 }
 
-test('an exclusive record leaves a scope no grant names at the seller discretion', async () => {
+test('an exclusive record refuses an uncovered claim in a scope no grant names', async () => {
   const { run, sellerCalls } = authorize({
     grants: [grant('other-agency.com', ['adcp:governance'])],
     exclusive_grants: true,
   });
-  assert.equal((await run).source, 'seller');
-  assert.equal(sellerCalls(), 1);
+  await assert.rejects(run, isGrantAbsent);
+  assert.equal(sellerCalls(), 0);
 });
 
 test('an exclusive record refuses an uncovered claim in a scope a grant names', async () => {
   const { run, sellerCalls } = authorize({
-    grants: [grant('other-agency.com', ['adcp:governance', 'adcp:media_buying'])],
+    grants: [grant('other-agency.com', ['adcp:media_buying'])],
     exclusive_grants: true,
   });
   await assert.rejects(run, isGrantAbsent);
   assert.equal(sellerCalls(), 0);
 });
 
-test('adcp:all and * name every scope they cover for exclusivity', async () => {
-  for (const scopes of [['adcp:all'], ['*']]) {
-    const { run, sellerCalls } = authorize({ grants: [grant('other-agency.com', scopes)], exclusive_grants: true });
-    await assert.rejects(run, isGrantAbsent, `scopes ${scopes}`);
-    assert.equal(sellerCalls(), 0);
+test('an exclusive record with no grants authorizes no one', async () => {
+  const { run, sellerCalls } = authorize({ grants: [], exclusive_grants: true });
+  await assert.rejects(run, isGrantAbsent);
+  assert.equal(sellerCalls(), 0);
+});
+
+test('a nonexclusive record leaves an uncovered claim to the seller, even beside a near-miss grant', async () => {
+  for (const grants of [
+    [],
+    [grant('other-agency.com', ['adcp:media_buying'])],
+    [grant('agency.com', ['adcp:governance'])],
+  ]) {
+    const { run, sellerCalls } = authorize({ grants });
+    assert.equal((await run).source, 'seller');
+    assert.equal(sellerCalls(), 1);
   }
 });
 
-test('a non-registrable grantee still names its scopes for exclusivity', async () => {
-  const { run, sellerCalls } = authorize({
-    grants: [grant('github.io', ['adcp:media_buying'])],
-    exclusive_grants: true,
-  });
-  await assert.rejects(run, isGrantAbsent);
-  assert.equal(sellerCalls(), 0);
-});
-
-test('an exclusive record with no grants names no scope', async () => {
-  const { run, sellerCalls } = authorize({ grants: [], exclusive_grants: true });
-  assert.equal((await run).source, 'seller');
-  assert.equal(sellerCalls(), 1);
-});
-
-test('a matching grant in an exclusive scope still authorizes', async () => {
+test('a matching grant authorizes under an exclusive record', async () => {
   const { run, sellerCalls } = authorize({
     grants: [grant('agency.com', ['adcp:media_buying'])],
     exclusive_grants: true,
