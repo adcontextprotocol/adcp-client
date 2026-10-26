@@ -93,11 +93,15 @@ before(async () => {
       };
     } else if (message.method === 'tools/call' && message.params?.name === 'get_adcp_capabilities') {
       state.capabilityCalls++;
+      if (state.holdCapabilityResponse) {
+        state.heldCapabilityCalls = (state.heldCapabilityCalls ?? 0) + 1;
+        // Keep the request pending until the client cancels it, so this
+        // measures cancellation rather than a delayed successful response.
+        await new Promise(resolve => res.once('close', resolve));
+        return;
+      }
       const delay =
-        state.capabilityDelayMs ??
-        ((path.startsWith('/cancel-call') || path.startsWith('/timeout-call')) && state.capabilityCalls === 2
-          ? 200
-          : 0);
+        (path.startsWith('/cancel-call') || path.startsWith('/timeout-call')) && state.capabilityCalls === 2 ? 200 : 0;
       if (delay > 0) {
         await new Promise(resolve => setTimeout(resolve, delay));
       }
@@ -115,6 +119,9 @@ before(async () => {
     res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': `session-${path.slice(1)}` });
     res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id ?? null, result }));
   });
+  // Lazy schema loading can exceed the default five-second idle timeout on
+  // loaded runners. Keep the fixture session alive until explicit cleanup.
+  server.keepAliveTimeout = 0;
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   origin = `http://127.0.0.1:${server.address().port}`;
 });
@@ -259,6 +266,8 @@ test('a timeout swallowed by an isolated status handler still preserves seller w
   const uri = freshAgentUri('/isolated-handler-timeout');
   const state = tally(pathOf(uri));
   let handlerError;
+  let handlerCalls = 0;
+  let handlerResult;
   const client = makeClient(
     uri,
     undefined,
@@ -272,10 +281,9 @@ test('a timeout swallowed by an isolated status handler still preserves seller w
       },
       handlers: {
         onGetProductsStatusChange: async () => {
-          // Discovery may make several calls; stall the handler's request
-          // rather than relying on its global capability-call number.
-          state.capabilityDelayMs = 500;
-          await client.getAdcpCapabilities({}, undefined, {
+          handlerCalls++;
+          state.holdCapabilityResponse = true;
+          handlerResult = await client.getAdcpCapabilities({}, undefined, {
             transport: { allowPrivateIp: true, requestTimeoutMs: 100 },
           });
         },
@@ -287,7 +295,17 @@ test('a timeout swallowed by an isolated status handler still preserves seller w
   const deletesBeforeCall = state.deletes;
   const result = await client.getProducts({ buying_mode: 'brief', brief: 'Find available inventory' });
   assert.equal(result.success, true, result.error);
-  assert.ok(handlerError, 'the post-completion handler timed out');
+  const diagnostic = JSON.stringify({
+    status: result.status,
+    handlerCalls,
+    handlerResult,
+    capabilityCalls: state.capabilityCalls,
+    heldCapabilityCalls: state.heldCapabilityCalls,
+    exchanges: state.exchanges,
+  });
+  assert.equal(handlerCalls, 1, `the completed operation invokes its handler: ${diagnostic}`);
+  assert.equal(state.heldCapabilityCalls, 1, `the handler reaches its pending tool call: ${diagnostic}`);
+  assert.ok(handlerError, `the post-completion handler timed out: ${diagnostic}`);
   assert.equal(handlerError.code, -32001);
   assert.equal(state.deletes, deletesBeforeCall, 'handling the timeout must not allow DELETE on scope exit');
 });
