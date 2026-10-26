@@ -38,6 +38,18 @@ class MemoryLedgerStore {
   finalityBaselineReconstructions = 0;
 
   async putConfiguration(value) {
+    if (value.historyStart !== undefined) {
+      const schedule = reportingPeriodSchedule(value);
+      if (
+        !Number.isSafeInteger(value.historyStartOrdinal) ||
+        schedule.boundary(value.historyStartOrdinal) !== Date.parse(value.historyStart)
+      ) {
+        throw new TypeError('Reporting historyStart must match its schedule ordinal');
+      }
+      value = { ...value, historyStart: new Date(value.historyStart).toISOString() };
+    } else if (value.historyStartOrdinal !== undefined) {
+      throw new TypeError('Reporting historyStartOrdinal requires historyStart');
+    }
     const existing = [...this.configurations.values()].find(
       item =>
         item.account.account_id === value.account.account_id &&
@@ -52,12 +64,23 @@ class MemoryLedgerStore {
     return { inserted: !existing, value: structuredClone(existing ?? value) };
   }
   async extendConfigurationHistory(input) {
+    input = { ...input, historyStart: new Date(input.historyStart).toISOString() };
     const stored = this.configurations.get(input.configurationId);
     if (!stored) throw new Error('Unknown reporting configuration');
     const schedule = reportingPeriodSchedule(stored);
     const previous =
       stored.historyStart ??
-      new Date(schedule.boundary(Math.max(0, schedule.ceil(Date.parse(stored.installedAt))))).toISOString();
+      new Date(
+        schedule.boundary(
+          Math.max(0, schedule.ceil(Math.max(Date.parse(stored.schedule.anchor), Date.parse(stored.installedAt))))
+        )
+      ).toISOString();
+    if (
+      !Number.isSafeInteger(input.historyStartOrdinal) ||
+      schedule.boundary(input.historyStartOrdinal) !== Date.parse(input.historyStart)
+    ) {
+      throw new TypeError('Reporting historyStart must match its schedule ordinal');
+    }
     if (Date.parse(input.historyStart) > Date.parse(previous))
       throw new RangeError('Reporting historyStart may only move earlier');
     const value = { ...stored, historyStart: input.historyStart, historyStartOrdinal: input.historyStartOrdinal };

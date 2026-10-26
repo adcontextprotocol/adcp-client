@@ -1436,6 +1436,31 @@ test('calendar regression: public coverage rejects a legacy fall ceil with the w
   );
 });
 
+test('calendar regression: legacy history rejects interior offset changes before changing ownership', async t => {
+  const installedAt = '2026-11-05T12:00:00.000Z';
+  const historyStart = '2025-11-05T05:00:00.000Z';
+  t.mock.timers.enable({ apis: ['Date'], now: new Date(installedAt) });
+  const { store, producer, input } = fixture(
+    { zone: 'America/New_York', boundaries: ['2026-11-04T05:00:00.000Z'] },
+    { offeringChanges: { retentionDays: 400 } }
+  );
+  const legacy = retainedConfiguration(input, installedAt, true);
+  await store.putConfiguration(legacy);
+  assert.deepEqual(await producer.planObligations(installedAt), []);
+  await assert.rejects(producer.installConfiguration(input, { historyStart }), /extendConfigurationHistory/);
+  assert.deepEqual(await store.listConfigurations(), [legacy]);
+
+  // Both winter endpoints match the stored fixed-width grid. The intervening
+  // spring and fall boundaries must still be checked before granting history.
+  await assert.rejects(
+    producer.extendConfigurationHistory({ configurationId: legacy.configurationId, historyStart }),
+    /install a new configuration generation/
+  );
+  assert.deepEqual(await store.listConfigurations(), [legacy], 'rejected history must not mutate ownership');
+  assert.deepEqual(await store.listObligations(), [], 'rejected history must not write a partial backlog');
+  assert.deepEqual(await producer.planObligations(installedAt), [], 'the rejected request must leave planning usable');
+});
+
 test('calendar regression: offering withdrawal does not suppress accepted obligations', async t => {
   const calendar = calendars[0];
   t.mock.timers.enable({ apis: ['Date'], now: new Date(calendar.boundaries[0]) });
@@ -1570,4 +1595,45 @@ test('calendar regression: numeric planning retains its behavior after offering 
     planned.map(value => value.period),
     [{ start: '2026-03-07T00:00:00.000Z', end: '2026-03-08T00:00:00.000Z', sourceTimezone: 'UTC' }]
   );
+});
+
+test('calendar history exact replays survive a timezone-data upgrade without resolving new periods', async t => {
+  const calendar = calendars[0];
+  t.mock.timers.enable({ apis: ['Date'], now: new Date(calendar.boundaries[1]) });
+  const f = fixture(calendar);
+  const historyStart = calendar.boundaries[0];
+  const installed = await f.producer.installConfiguration(f.input, { historyStart });
+  const before = structuredClone(await f.store.listConfigurations());
+  const timezoneVersion = Object.getOwnPropertyDescriptor(process.versions, 'tz');
+  Object.defineProperty(process.versions, 'tz', { ...timezoneVersion, value: `${process.versions.tz}-upgraded` });
+  try {
+    assert.throws(() => reportingPeriodSchedule(installed), /timezone rules differ/);
+    assert.deepEqual(await f.producer.installConfiguration(f.input), installed);
+    for (const requested of [historyStart, '2026-03-07T00:00:00-05:00']) {
+      assert.deepEqual(await f.producer.installConfiguration(f.input, { historyStart: requested }), installed);
+      assert.deepEqual(
+        await f.producer.extendConfigurationHistory({
+          configurationId: installed.configurationId,
+          historyStart: requested,
+        }),
+        installed
+      );
+    }
+    // An unaligned request still needs the frozen resolver to prove that it
+    // selects the existing boundary; only an equal instant can skip it.
+    const unaligned = new Date(Date.parse(historyStart) - 1).toISOString();
+    await assert.rejects(
+      f.producer.installConfiguration(f.input, { historyStart: unaligned }),
+      /timezone rules differ/
+    );
+    await assert.rejects(
+      f.producer.extendConfigurationHistory({ configurationId: installed.configurationId, historyStart: unaligned }),
+      /timezone rules differ/
+    );
+    assert.deepEqual(await f.store.listConfigurations(), before);
+    assert.deepEqual(await f.store.listObligations(), []);
+    assert.deepEqual(f.sourceCalls, []);
+  } finally {
+    Object.defineProperty(process.versions, 'tz', timezoneVersion);
+  }
 });

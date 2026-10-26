@@ -4665,6 +4665,8 @@ describe('Reliable Reporting history ownership (#3453)', () => {
     assert.equal((await service.runCycle({ accountId: account.id })).planned, 3);
     assert.equal(store.revisions.size, 5);
     assert.equal((await service.installConfiguration(input, { account })).historyStart, iso(5));
+    assert.deepEqual(await service.installConfiguration(input, { account, historyStart: iso(2) }), extended);
+    assert.deepEqual(await service.installConfiguration(input, { account, historyStart: iso(1) }), extended);
     await assert.rejects(
       service.extendConfigurationHistory({ configurationId: installed.configurationId, historyStart: iso(3) }),
       /only move earlier/
@@ -4765,6 +4767,22 @@ describe('Reliable Reporting history ownership (#3453)', () => {
     );
   });
 
+  test('reports unpublished historical periods against their original public deadlines while execution is paused', async t => {
+    clock(t);
+    const { service } = serviceFixture();
+    await service.installConfiguration(historyInput(), { account, historyStart: iso(3) });
+    const result = await service.runCycle({ accountId: account.id, maxHistorySlicesPerSource: 0 });
+    assert.equal(result.planned, 3);
+    assert.equal(result.claimed, 0);
+    const status = await service.platform.getReportingStatus(
+      { account: { account_id: account.id }, view: 'periods', period: { start: iso(3), end: iso(0) } },
+      { account }
+    );
+    assert.equal(status.periods.length, 3);
+    assert.equal(status.periods.filter(period => period.health === 'action_required').length, 2);
+    assert.equal(status.periods.filter(period => period.health === 'delayed').length, 1);
+  });
+
   test('shares a source budget across configurations and resumes bounded planning', async t => {
     clock(t);
     const { service, store } = serviceFixture();
@@ -4783,6 +4801,73 @@ describe('Reliable Reporting history ownership (#3453)', () => {
       assert.equal(result.claimed, 1);
     }
     assert.equal(store.obligations.size, 10);
+  });
+
+  test('applies history budgets to newly owned periods before a future anchor', async t => {
+    clock(t);
+    const { service, store } = serviceFixture();
+    const input = historyInput();
+    input.schedule.anchor = iso(-3);
+    const installed = await service.installConfiguration(input, {
+      account,
+      historyStart: new Date(now).toISOString(),
+    });
+    assert.equal(installed.historyStart, iso(-1));
+    t.mock.timers.setTime(now + 3 * day);
+    const paused = await service.producer.planObligations(new Date().toISOString(), {
+      account_id: account.id,
+      maxHistoryObligationsPerSource: 0,
+    });
+    assert.deepEqual(paused, []);
+    const planned = await service.producer.planObligations(new Date().toISOString(), {
+      account_id: account.id,
+      maxHistoryObligationsPerSource: 2,
+    });
+    assert.equal(planned.length, 2);
+    assert.ok(planned.every(value => Date.parse(value.period.start) > Date.parse(installed.installedAt)));
+    assert.ok(planned.every(value => value.periodOrdinal < 0 && value.history));
+    const stopped = await service.producer.runWorker({ account_id: account.id, maxHistorySlicesPerSource: 0 });
+    assert.equal(stopped.claimed, 0);
+    const bounded = await service.producer.runWorker({ account_id: account.id, maxHistorySlicesPerSource: 1 });
+    assert.equal(bounded.claimed, 1);
+    assert.equal(bounded.revisionsCommitted, 1);
+    assert.equal((await store.listObligations(account.id)).filter(value => value.state === 'pending').length, 1);
+  });
+
+  test('preserves the private history retry window when its first durable write fails once', async t => {
+    clock(t);
+    const calls = [];
+    const { service, store } = serviceFixture({ adapters: { fixture: adapter(calls) } });
+    await service.installConfiguration(historyInput(), { account, historyStart: iso(5) });
+    const [planned] = await service.producer.planObligations(new Date(now).toISOString(), {
+      account_id: account.id,
+      maxObligations: 1,
+    });
+    t.mock.timers.setTime(now + 2 * day);
+    const update = store.updateObligation.bind(store);
+    let updateCalls = 0;
+    store.updateObligation = async (...args) => {
+      updateCalls += 1;
+      if (updateCalls === 1) throw new Error('transient ledger write failure');
+      return update(...args);
+    };
+    const first = await service.producer.runWorker({ account_id: account.id, maxIterations: 1 });
+    assert.equal(first.failed, 1);
+    assert.equal(updateCalls, 2, 'the recovery write must persist the obligation after the first write fails');
+    assert.equal(calls.length, 0, 'the retry deadline must be durable before source execution');
+    const recovered = await store.getObligation(planned.reporting_obligation_id);
+    assert.equal(recovered.state, 'pending');
+    assert.equal(recovered.historyRecoveryDeadlineAt, new Date(now + 3 * day).toISOString());
+    assert.equal(recovered.recoveryDeadlineAt, planned.recoveryDeadlineAt, 'the public deadline stays unchanged');
+    assert.equal(recovered.nextAttemptAt, new Date(now + 2 * day + 30_000).toISOString());
+
+    t.mock.timers.setTime(now + 2 * day + 60_000);
+    const retry = await service.producer.runWorker({ account_id: account.id, maxIterations: 1 });
+    assert.equal(retry.revisionsCommitted, 1);
+    assert.equal(calls.length, 1);
+    const published = await store.getObligation(planned.reporting_obligation_id);
+    assert.equal(published.historyRecoveryDeadlineAt, recovered.historyRecoveryDeadlineAt);
+    assert.equal(published.state, 'terminal');
   });
 
   test('marks backfill requests and retries source failures inside a fresh history retry window', async t => {

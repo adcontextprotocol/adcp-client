@@ -927,6 +927,11 @@ export interface ReportingLedgerStore {
    * port, and commit what it returns.
    */
   resolveTransitionFinalityBaseline?(reporting_obligation_id: string): Promise<ReportingObservedFinalityV1>;
+  /**
+   * Insert an immutable generation or return its existing identity. History metadata must be persisted
+   * with a matching schedule boundary/ordinal. Under the same account fence as extension, reject newly
+   * owned history that overlaps another generation; existing handoff overlap may remain unchanged.
+   */
   putConfiguration(
     configuration: ReportingLedgerConfigurationV1
   ): Promise<{ inserted: boolean; value: ReportingLedgerConfigurationV1 }>;

@@ -129,17 +129,75 @@ describe('PostgreSQL reporting history ownership', { skip: !databaseUrl && 'Post
     assert.equal(planned.obligations.length, 4);
   });
 
-  test('refuses a conflicting history entitlement during concurrent installation', async () => {
+  test('preserves requested history during concurrent installation', async () => {
     const configuration = input('history-install-race');
+    const requests = [2, 4];
     const outcomes = await Promise.allSettled(
-      [2, 4].map(daysAgo => producer.installConfiguration(configuration, { historyStart: iso(daysAgo) }))
+      requests.map(daysAgo => producer.installConfiguration(configuration, { historyStart: iso(daysAgo) }))
     );
-    assert.equal(outcomes.filter(value => value.status === 'fulfilled').length, 1);
-    const refused = outcomes.find(value => value.status === 'rejected');
-    assert.match(refused.reason.message, /extendConfigurationHistory/);
+    assert.ok(outcomes.some(value => value.status === 'fulfilled'));
     const [stored] = await store.listConfigurations('history-install-race');
-    const accepted = outcomes.find(value => value.status === 'fulfilled');
-    assert.equal(stored.historyStart, accepted.value.historyStart);
+    for (let index = 0; index < outcomes.length; index += 1) {
+      const outcome = outcomes[index];
+      if (outcome.status === 'fulfilled') {
+        assert.equal(stored.historyStart, outcome.value.historyStart);
+        assert.ok(
+          Date.parse(outcome.value.historyStart) <= Date.parse(iso(requests[index])),
+          'a successful install must own all requested history'
+        );
+      } else {
+        assert.match(outcome.reason.message, /extendConfigurationHistory/);
+      }
+    }
+  });
+
+  test('normalizes store history boundaries and refuses inconsistent ordinals', async () => {
+    const installed = await producer.installConfiguration(input('history-store-boundary'), { historyStart: iso(4) });
+    await assert.rejects(
+      store.putConfiguration({ ...installed, historyStartOrdinal: installed.historyStartOrdinal + 1 }),
+      /schedule ordinal/
+    );
+    const offset = new Date(Date.parse(iso(5)) - 5 * 3_600_000).toISOString().replace('Z', '-05:00');
+    const extended = await store.extendConfigurationHistory({
+      configurationId: installed.configurationId,
+      historyStart: offset,
+      historyStartOrdinal: -5,
+    });
+    assert.equal(extended.historyStart, iso(5));
+    assert.equal((await store.listConfigurations('history-store-boundary'))[0].historyStart, iso(5));
+  });
+
+  test('supports indexed live-first claims with a pending history backlog', async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('SET enable_seqscan = off');
+      const result = await client.query(
+        `EXPLAIN (FORMAT JSON)
+        SELECT obligation_id FROM adcp_reporting_obligations
+        WHERE state = 'pending' AND account_id = $1 AND next_attempt_at <= $2
+          AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
+        ORDER BY (COALESCE(data->>'history', 'false') = 'true'), next_attempt_at, obligation_id
+        FOR UPDATE SKIP LOCKED LIMIT 1`,
+        ['history-install', new Date().toISOString()]
+      );
+      const nodes = [];
+      const walk = node => {
+        nodes.push(node);
+        for (const child of node.Plans ?? []) walk(child);
+      };
+      walk(result.rows[0]['QUERY PLAN'][0].Plan);
+      assert.ok(
+        nodes.some(node => node['Index Name'] === 'adcp_reporting_obligations_account_priority_due'),
+        JSON.stringify(nodes)
+      );
+      assert.ok(
+        nodes.every(node => node['Node Type'] !== 'Sort'),
+        'priority claims must not sort the complete due backlog'
+      );
+    } finally {
+      await client.query('RESET enable_seqscan');
+      client.release();
+    }
   });
 
   test('serializes concurrent extensions without losing earlier ownership or rewriting obligations', async () => {

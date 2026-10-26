@@ -18,7 +18,7 @@ import {
   type ReportingSourceOfferingV1,
   type ReportingSourceSliceRequestV1,
 } from '../source';
-import { reportingLedgerSuccessor } from './coverage';
+import { assertReportingLedgerHistoryDoesNotOverlap, reportingLedgerSuccessor } from './coverage';
 import {
   assertReportingCalendarDayPeriod,
   assertReportingCalendarDaySource,
@@ -113,11 +113,16 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           throw new Error('Reporting configuration generation is immutable');
         }
         if (installOptions.historyStart !== undefined) {
+          const requested = historyInstant(installOptions.historyStart);
+          const ownedStart = replay.historyStart !== undefined ? Date.parse(replay.historyStart) : undefined;
+          if (ownedStart !== undefined && requested === ownedStart) return replay;
+          if (requested > Date.now()) throw new RangeError('Reporting historyStart must not be in the future');
+          // A rolling or stale install entitlement cannot reduce existing ownership.
+          if (ownedStart !== undefined && requested >= ownedStart) return replay;
           const schedule = reportingPeriodSchedule(replay);
-          const start = new Date(
-            schedule.boundary(schedule.ceil(historyInstant(installOptions.historyStart)))
-          ).toISOString();
-          if (start !== replay.historyStart) {
+          const start = schedule.boundary(schedule.ceil(requested));
+          const previous = ownedStart ?? schedule.boundary(Math.max(0, schedule.ceil(Date.parse(replay.installedAt))));
+          if (start < previous) {
             throw new Error('Use extendConfigurationHistory to change an installed history boundary');
           }
         }
@@ -168,11 +173,18 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           )
         );
       }
+      assertReportingLedgerHistoryDoesNotOverlap(configuration, existing);
       const stored = (await options.store.putConfiguration(configuration)).value;
-      if (configuration.historyStart !== undefined && stored.historyStart !== configuration.historyStart) {
-        // Concurrent installs share the immutable identity but may request different entitlements.
-        // The first writer owns installation; never silently discard the other host's requested history.
-        throw new Error('Use extendConfigurationHistory to change an installed history boundary');
+      if (configuration.historyStart !== undefined) {
+        const storedSchedule = stored.historyStart === undefined ? reportingPeriodSchedule(stored) : undefined;
+        const storedStart =
+          stored.historyStart !== undefined
+            ? Date.parse(stored.historyStart)
+            : storedSchedule!.boundary(Math.max(0, storedSchedule!.ceil(Date.parse(stored.installedAt))));
+        if (storedStart > Date.parse(configuration.historyStart)) {
+          // Never silently discard history when a competing install wins with a later boundary.
+          throw new Error('Use extendConfigurationHistory to change an installed history boundary');
+        }
       }
       return stored;
     },
@@ -186,8 +198,9 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       );
       if (!configuration) throw new Error('Unknown reporting configuration');
       if (configuration.historyStart !== undefined) {
-        const schedule = reportingPeriodSchedule(configuration);
         const requested = historyInstant(input.historyStart);
+        if (requested === Date.parse(configuration.historyStart)) return configuration;
+        const schedule = reportingPeriodSchedule(configuration);
         if (schedule.boundary(schedule.ceil(requested)) === Date.parse(configuration.historyStart)) {
           // A no-op remains replayable after source retention advances or the offering is withdrawn.
           return configuration;
@@ -350,6 +363,11 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       if (settlementGrace > MAX_SETTLEMENT_GRACE_MS) {
         throw new RangeError(`settlementGraceMilliseconds must not exceed ${MAX_SETTLEMENT_GRACE_MS}`);
       }
+      // Persisted generations remain queued even when their offering is withdrawn.
+      const historyOfferingIds = new Set([
+        ...offeringById.keys(),
+        ...(await options.store.listConfigurations(workerOptions.account_id)).map(value => value.offeringId),
+      ]);
       const owner = `reporting-worker-${randomUUID()}`;
       const counts = { claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0, reconcilesDeferred: 0 };
       // Publishing a projection is downstream of the durable write, and it
@@ -402,7 +420,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           owner,
           now: nowValue.toISOString(),
           leaseMilliseconds: DEFAULT_LEASE_MS,
-          excludeHistoryOfferingIds: [...offeringById.keys()].filter(
+          excludeHistoryOfferingIds: [...new Set([...historyOfferingIds, ...historyBySource.keys()])].filter(
             id => (historyBySource.get(id) ?? 0) >= maxHistory
           ),
           ...(workerOptions.account_id ? { account_id: workerOptions.account_id } : {}),
@@ -431,8 +449,8 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
                 nowValue.getTime() + obligation.schedule.recoveryWindowMilliseconds
               )
             ).toISOString();
-            await options.store.updateObligation(obligation, lease);
             activeRecoveryDeadlineAt = obligation.historyRecoveryDeadlineAt;
+            await options.store.updateObligation(obligation, lease);
           }
           const offering = requiredOffering(offeringById, obligation.offeringId);
           if (isReportingCalendarDay(obligation.schedule, obligation.period.sourceTimezone)) {
@@ -704,6 +722,11 @@ function normalizeConfigurationHistory(
   }
   if (isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone)) {
     assertReportingCalendarDaySource(configuration.schedule, configuration.sourceTimezone, offering, now, start);
+    // Legacy generations retain fixed-width boundaries. Prove the whole newly
+    // owned span under this generation's resolver before changing ownership;
+    // matching offsets at the two endpoints do not rule out an interior DST change.
+    const previousFirst = configuration.historyStartOrdinal ?? Math.max(0, schedule.ceil(previousStart));
+    for (let selected = ordinal; selected < previousFirst; selected += 1) schedule.period(selected);
   } else if (configuration.schedule.alignment && configuration.schedule.alignment !== 'billing_cycle') {
     // A fixed-width generation may have passed today's offset check but differ in the newly owned past.
     if (reportingUtcOffsetChangesV1(configuration.sourceTimezone, start, Math.max(now, start))) {
@@ -748,7 +771,8 @@ function planObligation(
     ...(configuration.finalityPolicy ? { finalityPolicy: structuredClone(configuration.finalityPolicy) } : {}),
     ...(configuration.canonicalization ? { canonicalization: structuredClone(configuration.canonicalization) } : {}),
     periodOrdinal,
-    ...(configuration.historyStart !== undefined && start < Date.parse(configuration.installedAt)
+    ...(configuration.historyStart !== undefined &&
+    periodOrdinal < Math.max(0, schedule.ceil(Date.parse(configuration.installedAt)))
       ? { history: true as const }
       : {}),
     period: {

@@ -33,6 +33,55 @@ const { validateResponse } = require('../../dist/lib/validation/schema-validator
 
 const { MemoryLedgerStore } = require('../helpers/memory-reporting-ledger-store.js');
 
+test('history extension preserves an existing daily-to-hourly straddling handoff', async () => {
+  const store = new MemoryLedgerStore();
+  const predecessor = {
+    configurationId: 'daily-history-predecessor',
+    account: { account_id: 'history-handoff-account' },
+    delivery_config_id: 'history-handoff',
+    delivery_config_version: 1,
+    sourceTimezone: 'UTC',
+    installedAt: '2026-10-20T00:00:00.000Z',
+    semanticFingerprint: `sha256:${'a'.repeat(64)}`,
+    schedule: { anchor: '2026-10-20T00:00:00.000Z', periodMilliseconds: 86_400_000 },
+  };
+  const successor = {
+    ...predecessor,
+    configurationId: 'hourly-history-successor',
+    delivery_config_version: 2,
+    installedAt: '2026-10-21T10:30:00.000Z',
+    semanticFingerprint: `sha256:${'b'.repeat(64)}`,
+    schedule: { anchor: '2026-10-21T00:00:00.000Z', periodMilliseconds: 3_600_000 },
+  };
+  await store.putConfiguration(predecessor);
+  await store.putConfiguration(successor);
+
+  // The daily predecessor owns its whole final day through October 22, while
+  // the hourly successor starts at 11:00 on October 21. Extending the earlier
+  // prefix must preserve that already-valid overlap at the handoff.
+  const extended = await store.extendConfigurationHistory({
+    configurationId: predecessor.configurationId,
+    historyStart: '2026-10-18T00:00:00.000Z',
+    historyStartOrdinal: -2,
+  });
+  assert.deepEqual(extended, {
+    ...predecessor,
+    historyStart: '2026-10-18T00:00:00.000Z',
+    historyStartOrdinal: -2,
+  });
+  await assert.rejects(
+    store.extendConfigurationHistory({
+      configurationId: successor.configurationId,
+      historyStart: '2026-10-21T10:00:00.000Z',
+      historyStartOrdinal: 10,
+    }),
+    /overlaps/,
+    'the newly requested successor hour is owned by the predecessor'
+  );
+  assert.deepEqual(await store.listConfigurations(), [extended, successor]);
+  assert.deepEqual(await store.listObligations(), []);
+});
+
 function sha(value) {
   return createHash('sha256').update(canonicalJsonV1(value)).digest('hex');
 }
@@ -83,6 +132,72 @@ function healthObligation() {
     semanticFingerprint: `sha256:${'a'.repeat(64)}`,
     createdAt: request.period.end,
   };
+}
+
+async function withdrawnHistoryBudgetFixture(t) {
+  const day = 86_400_000;
+  const now = Date.parse('2026-10-26T12:00:00Z');
+  const boundary = now - day / 2;
+  t.mock.timers.enable({ apis: ['Date'], now });
+  const store = new MemoryLedgerStore();
+  const request = redactedReportingSourceRequestV1();
+  const activeOffering = {
+    ...structuredClone(redactedReportingSourceOfferingV1),
+    offeringId: 'active-history-offering',
+  };
+  const source = createInlineReportingSourceExecutor(() => [], activeOffering);
+  const installingProducer = createReportingProducer({
+    store,
+    source,
+    offerings: [redactedReportingSourceOfferingV1, activeOffering],
+    contact: { name: 'Reporting operations' },
+  });
+  const input = {
+    account: request.account,
+    sourceScope: request.sourceScope,
+    delivery_config_id: request.delivery_config_id,
+    delivery_config_version: request.delivery_config_version,
+    offeringId: request.offeringId,
+    report_definition_id: request.report_definition_id,
+    feedPurpose: 'analytics',
+    requiredFinality: 'snapshot',
+    requestedMetrics: request.requestedMetrics,
+    requestedDimensions: request.requestedDimensions,
+    constituents: request.coverage.constituents,
+    mediaBuyIds: request.coverage.mediaBuyIds,
+    sourceTimezone: 'UTC',
+    schedule: {
+      anchor: new Date(boundary).toISOString(),
+      periodMilliseconds: day,
+      deliverySlaMilliseconds: 0,
+      recoveryWindowMilliseconds: day,
+    },
+    sourceSettings: request.sourceSettings,
+    contract: request.contract,
+  };
+  await installingProducer.installConfiguration(input, {
+    historyStart: new Date(boundary - 4 * day).toISOString(),
+  });
+  t.mock.timers.tick(1);
+  await installingProducer.installConfiguration(
+    { ...input, delivery_config_id: 'active-history-config', offeringId: activeOffering.offeringId },
+    { historyStart: new Date(boundary - day).toISOString() }
+  );
+  await installingProducer.planObligations();
+  const claims = [];
+  const claimObligation = store.claimObligation.bind(store);
+  store.claimObligation = async input => {
+    const lease = await claimObligation(input);
+    if (lease) claims.push(lease.obligation.offeringId);
+    return lease;
+  };
+  const producer = createReportingProducer({
+    store,
+    source,
+    offerings: [activeOffering],
+    contact: { name: 'Reporting operations' },
+  });
+  return { store, producer, claims, activeOffering };
 }
 
 describe('seller reporting ledger', () => {
@@ -987,6 +1102,35 @@ describe('seller reporting ledger', () => {
       () => withdrawn.installConfiguration({ ...legacyBilling, delivery_config_version: 99 }),
       /Unknown reporting source offering/
     );
+  });
+
+  test('pauses persisted history for withdrawn offerings when the history budget is zero', async t => {
+    const { store, producer, claims } = await withdrawnHistoryBudgetFixture(t);
+    const before = await store.listObligations();
+    assert.equal(before.length, 5);
+    assert.ok(before.every(value => value.history));
+
+    const result = await producer.runWorker({ maxIterations: 10, maxHistorySlicesPerSource: 0 });
+
+    assert.equal(result.claimed, 0);
+    assert.deepEqual(claims, [], 'a withdrawn offering must be excluded before it is leased');
+    assert.deepEqual(await store.listObligations(), before);
+  });
+
+  test('caps withdrawn offering history claims and continues active offering work', async t => {
+    const { store, producer, claims, activeOffering } = await withdrawnHistoryBudgetFixture(t);
+
+    const result = await producer.runWorker({ maxIterations: 10, maxHistorySlicesPerSource: 1 });
+
+    assert.deepEqual(claims, [redactedReportingSourceOfferingV1.offeringId, activeOffering.offeringId]);
+    assert.equal(result.claimed, 2);
+    assert.equal(result.failed, 1, 'the withdrawn source failure stays isolated to its one budgeted attempt');
+    assert.equal(result.revisionsCommitted, 1, 'active offering history still publishes after the withdrawn source');
+    const withdrawn = (await store.listObligations()).filter(
+      value => value.offeringId === redactedReportingSourceOfferingV1.offeringId
+    );
+    assert.equal(withdrawn.filter(value => value.attemptCount > 0).length, 1);
+    assert.equal(withdrawn.filter(value => value.attemptCount === 0).length, 3);
   });
 
   test('replays a configuration fingerprinted before instant normalization', async () => {

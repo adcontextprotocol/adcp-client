@@ -195,7 +195,17 @@ export function assertReportingLedgerHistoryDoesNotOverlap(
     );
     return [schedule.boundary(first), Number.isFinite(end) ? schedule.boundary(schedule.ceil(end)) : Infinity];
   };
-  const [start, end] = range(configuration);
+  const [start, ownershipEnd] = range(configuration);
+  const previous = configurations.find(value => value.configurationId === configuration.configurationId);
+  const schedule = reportingPeriodSchedule(configuration);
+  const previousStart =
+    previous?.historyStart !== undefined
+      ? Date.parse(previous.historyStart)
+      : schedule.boundary(Math.max(0, schedule.ceil(Date.parse(configuration.installedAt))));
+  // Generation handoffs may already overlap when schedules change. Only the
+  // newly added prefix may acquire ownership; preserve existing straddling periods.
+  const end = Math.min(ownershipEnd, previousStart);
+  if (start >= end) return;
   for (const other of all) {
     if (
       other.configurationId === configuration.configurationId ||
@@ -203,6 +213,9 @@ export function assertReportingLedgerHistoryDoesNotOverlap(
       other.delivery_config_id !== configuration.delivery_config_id
     )
       continue;
+    // This lower bound proves disjointness even when a sealed sibling's
+    // timezone rules cannot be resolved on the current runtime.
+    if (Date.parse(other.historyStart ?? other.installedAt) >= end) continue;
     const [otherStart, otherEnd] = range(other);
     if (start < end && otherStart < otherEnd && start < otherEnd && otherStart < end) {
       throw new RangeError('Reporting history overlaps another configuration generation');

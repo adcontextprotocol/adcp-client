@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { canonicalize, DEFAULT_UNKNOWN_ERROR_RECOVERY, getErrorRecovery, type ErrorRecovery } from '@adcp/sdk';
 import type { ReportingAdjustmentReceipt, ReportingMaterialization, ReportingReceipt } from '@adcp/sdk/types';
-import { canonicalJsonV1 } from '@adcp/sdk/reporting/source';
+import { canonicalJsonV1, ReportingInstantV1Schema } from '@adcp/sdk/reporting/source';
 import {
   isWellFormedUnicodeString,
   evaluateReportingLedgerCoverageV1,
@@ -156,6 +156,15 @@ CREATE INDEX IF NOT EXISTS adcp_reporting_obligations_due
 CREATE INDEX IF NOT EXISTS adcp_reporting_obligations_account_due
   ON adcp_reporting_obligations (account_id, next_attempt_at, obligation_id)
   WHERE state = 'pending';
+
+-- Match live-first claims without sorting the entire pending history backlog.
+CREATE INDEX IF NOT EXISTS adcp_reporting_obligations_priority_due
+  ON adcp_reporting_obligations ((COALESCE(data->>'history', 'false') = 'true'), next_attempt_at, obligation_id)
+  WHERE state = 'pending';
+CREATE INDEX IF NOT EXISTS adcp_reporting_obligations_account_priority_due
+  ON adcp_reporting_obligations (account_id, (COALESCE(data->>'history', 'false') = 'true'), next_attempt_at, obligation_id)
+  WHERE state = 'pending';
+
 CREATE INDEX IF NOT EXISTS adcp_reporting_obligations_account_period
   ON adcp_reporting_obligations (account_id, period_start, obligation_id);
 CREATE INDEX IF NOT EXISTS adcp_reporting_obligations_changed
@@ -795,6 +804,19 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
   }
 
   async putConfiguration(configuration: ReportingLedgerConfigurationV1) {
+    if (configuration.historyStart !== undefined) {
+      const historyStart = new Date(ReportingInstantV1Schema.parse(configuration.historyStart)).toISOString();
+      const schedule = reportingPeriodSchedule(configuration);
+      if (
+        !Number.isSafeInteger(configuration.historyStartOrdinal) ||
+        schedule.boundary(configuration.historyStartOrdinal!) !== Date.parse(historyStart)
+      ) {
+        throw new TypeError('Reporting historyStart must match its schedule ordinal');
+      }
+      configuration = { ...configuration, historyStart };
+    } else if (configuration.historyStartOrdinal !== undefined) {
+      throw new TypeError('Reporting historyStartOrdinal requires historyStart');
+    }
     return this.transaction(
       async client => {
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
@@ -861,6 +883,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     historyStart: string;
     historyStartOrdinal: number;
   }): Promise<ReportingLedgerConfigurationV1> {
+    input = { ...input, historyStart: new Date(ReportingInstantV1Schema.parse(input.historyStart)).toISOString() };
     const found = await this.query<JsonRow<ReportingLedgerConfigurationV1>>(
       'SELECT data FROM adcp_reporting_configurations WHERE configuration_id = $1',
       [input.configurationId]
