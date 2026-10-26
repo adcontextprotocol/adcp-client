@@ -54,7 +54,7 @@ function syncLegacy(creative, format_ids) {
 }
 
 describe('creative delivery picks the most constrained legacy ref', () => {
-  test('rendered dimensions survive legacy HTML → canonical markup → sized legacy delivery', () => {
+  test('rendered dimensions survive legacy HTML → canonical markup and select the sized legacy ref', () => {
     const size = { width: 300, height: 250 };
     const original = {
       packages: [
@@ -82,6 +82,7 @@ describe('creative delivery picks the most constrained legacy ref', () => {
     }
     const legacy = syncLegacy(canonical, [bare('display_300x250_html'), bare('display_300x600_html')]);
     assert.equal(legacy.format_id.id, 'display_300x250_html');
+    // The sized ref carries the size; the 3.3 asset dimensions stay off the legacy wire (#3436).
     assert.deepEqual(legacy.assets.html_creative, { asset_type: 'html', content: '<div>markup</div>' });
     assert.deepEqual(original, before);
   });
