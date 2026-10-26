@@ -6,6 +6,7 @@ import { canonicalJsonV1 } from '@adcp/sdk/reporting/source';
 import {
   isWellFormedUnicodeString,
   evaluateReportingLedgerCoverageV1,
+  assertReportingLedgerHistoryDoesNotOverlap,
   reportingLedgerEffectivePeriod,
   reportingLedgerScopeClosed,
   assertReportingConsumerMismatchEscalation,
@@ -116,6 +117,9 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_configurations (
   created_at TIMESTAMPTZ NOT NULL,
   UNIQUE (account_id, delivery_config_id, delivery_config_version)
 );
+
+-- History ownership is independent of the immutable generation and real install time.
+ALTER TABLE adcp_reporting_configurations ADD COLUMN IF NOT EXISTS history_start TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS adcp_reporting_obligations (
   obligation_id TEXT PRIMARY KEY,
@@ -804,11 +808,21 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         if ((newer.rows[0]?.highest ?? -1) > configuration.delivery_config_version) {
           throw new Error('Reporting configuration version cannot regress');
         }
+        if (configuration.historyStart !== undefined) {
+          const generations = await client.query<JsonRow<ReportingLedgerConfigurationV1>>(
+            'SELECT data FROM adcp_reporting_configurations WHERE account_id = $1 AND delivery_config_id = $2',
+            [configuration.account.account_id, configuration.delivery_config_id]
+          );
+          assertReportingLedgerHistoryDoesNotOverlap(
+            configuration,
+            generations.rows.map(row => row.data)
+          );
+        }
         const inserted = await client.query<JsonRow<ReportingLedgerConfigurationV1>>(
           `INSERT INTO adcp_reporting_configurations
            (configuration_id, account_id, delivery_config_id, delivery_config_version,
-            semantic_fingerprint, data, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, clock_timestamp())
+            semantic_fingerprint, data, created_at, history_start)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, clock_timestamp(), $7)
          ON CONFLICT DO NOTHING RETURNING data`,
           [
             configuration.configurationId,
@@ -817,6 +831,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             configuration.delivery_config_version,
             configuration.semanticFingerprint,
             JSON.stringify(configuration),
+            configuration.historyStart ?? null,
           ]
         );
         const value =
@@ -838,6 +853,57 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         return { inserted: inserted.rowCount === 1, value: clone(value) };
       },
       { preBeginAdvisoryLock: accountLock(configuration.account.account_id) }
+    );
+  }
+
+  async extendConfigurationHistory(input: {
+    configurationId: string;
+    historyStart: string;
+    historyStartOrdinal: number;
+  }): Promise<ReportingLedgerConfigurationV1> {
+    const found = await this.query<JsonRow<ReportingLedgerConfigurationV1>>(
+      'SELECT data FROM adcp_reporting_configurations WHERE configuration_id = $1',
+      [input.configurationId]
+    );
+    const target = found.rows[0]?.data;
+    if (!target) throw new Error('Unknown reporting configuration');
+    return this.transaction(
+      async client => {
+        // The account fence also serializes generation installation and history extension.
+        const result = await client.query<JsonRow<ReportingLedgerConfigurationV1>>(
+          'SELECT data FROM adcp_reporting_configurations WHERE account_id = $1 AND delivery_config_id = $2',
+          [target.account.account_id, target.delivery_config_id]
+        );
+        const configurations = result.rows.map(row => row.data);
+        const stored = configurations.find(value => value.configurationId === input.configurationId);
+        if (!stored) throw new Error('Unknown reporting configuration');
+        const schedule = reportingPeriodSchedule(stored);
+        const previous =
+          stored.historyStart ??
+          new Date(
+            schedule.boundary(
+              Math.max(0, schedule.ceil(Math.max(Date.parse(stored.schedule.anchor), Date.parse(stored.installedAt))))
+            )
+          ).toISOString();
+        if (
+          !Number.isSafeInteger(input.historyStartOrdinal) ||
+          schedule.boundary(input.historyStartOrdinal) !== Date.parse(input.historyStart)
+        ) {
+          throw new TypeError('Reporting historyStart must match its schedule ordinal');
+        }
+        if (compareReportingInstants(input.historyStart, previous) > 0) {
+          throw new RangeError('Reporting historyStart may only move earlier');
+        }
+        if (stored.historyStart === input.historyStart) return clone(stored);
+        const value = { ...stored, historyStart: input.historyStart, historyStartOrdinal: input.historyStartOrdinal };
+        assertReportingLedgerHistoryDoesNotOverlap(value, configurations);
+        await client.query(
+          'UPDATE adcp_reporting_configurations SET history_start = $2, data = $3::jsonb WHERE configuration_id = $1',
+          [input.configurationId, input.historyStart, JSON.stringify(value)]
+        );
+        return clone(value);
+      },
+      { preBeginAdvisoryLock: accountLock(target.account.account_id) }
     );
   }
 
@@ -1059,6 +1125,7 @@ ${managedDueArm}       )
     now: string;
     leaseMilliseconds: number;
     account_id?: string;
+    excludeHistoryOfferingIds?: string[];
   }): Promise<ReportingLedgerLeaseV1 | null> {
     positiveInteger(input.leaseMilliseconds, 'leaseMilliseconds');
     if (!Number.isFinite(Date.parse(input.now))) throw new TypeError('now must be an RFC 3339 instant');
@@ -1070,7 +1137,9 @@ ${managedDueArm}       )
           WHERE state = 'pending' AND next_attempt_at <= $2
             AND ($4::text IS NULL OR account_id = $4)
             AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
-          ORDER BY next_attempt_at, obligation_id
+            AND (COALESCE(data->>'history', 'false') <> 'true'
+              OR NOT (data->>'offeringId' = ANY($5::text[])))
+          ORDER BY (COALESCE(data->>'history', 'false') = 'true'), next_attempt_at, obligation_id
           FOR UPDATE SKIP LOCKED LIMIT 1
        )
        UPDATE adcp_reporting_obligations obligation
@@ -1078,7 +1147,7 @@ ${managedDueArm}       )
               lease_expires_at = clock_timestamp() + ($3::bigint * INTERVAL '1 millisecond')
          FROM candidate WHERE obligation.obligation_id = candidate.obligation_id
        RETURNING obligation.data, obligation.lease_generation::text, obligation.lease_expires_at`,
-      [input.owner, input.now, input.leaseMilliseconds, input.account_id ?? null]
+      [input.owner, input.now, input.leaseMilliseconds, input.account_id ?? null, input.excludeHistoryOfferingIds ?? []]
     );
     const row = result.rows[0];
     return row
@@ -3835,7 +3904,7 @@ ${managedDueArm}       )
                         // prove the handoff exclusively from frozen obligations.
                         period: {
                           start: configurations
-                            .map(configuration => configuration.installedAt)
+                            .map(configuration => configuration.historyStart ?? configuration.installedAt)
                             .sort(compareReportingInstants)[0],
                           end: ledgerAsOf,
                         },

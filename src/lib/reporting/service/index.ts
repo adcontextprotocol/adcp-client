@@ -115,6 +115,8 @@ type LedgerInstallInput = Omit<
   | 'installedAt'
   | 'semanticFingerprint'
   | 'calendarRules'
+  | 'historyStart'
+  | 'historyStartOrdinal'
   | 'account'
   | 'sourceScope'
   | 'sourceTimezone'
@@ -141,12 +143,16 @@ export interface ReliableReportingConfigurationInputV1 extends LedgerInstallInpu
 export interface ReliableReportingInstallContextV1<TCtxMeta = Record<string, unknown>> {
   /** Must be the framework-resolved account from RequestContext. */
   account: Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'>;
+  /** Trusted host history entitlement; never copy from buyer configuration input. */
+  historyStart?: string;
 }
 
 interface ReliableReportingSchedulerBaseOptionsV1 {
   intervalMilliseconds: number;
   maxObligationsPerAccount?: number;
   maxWorkerIterationsPerAccount?: number;
+  maxHistoryObligationsPerSource?: number;
+  maxHistorySlicesPerSource?: number;
   /** Bounded transactional notification claims per auxiliary pass. Defaults to 25. */
   notificationRecoveryLimit?: number;
   /** Independent notification recovery workers. Defaults to 4. */
@@ -192,6 +198,10 @@ interface ReliableReportingCycleBaseOptionsV1 {
   now?: Date;
   maxObligations?: number;
   maxWorkerIterations?: number;
+  /** Per source offering planning budget in this cycle; defaults to maxObligations. Zero pauses planning history. */
+  maxHistoryObligationsPerSource?: number;
+  /** Per source offering execution budget in this cycle; defaults to 10. Zero pauses executing history. */
+  maxHistorySlicesPerSource?: number;
   retryDelayMilliseconds?: number;
   executionDeadlineMilliseconds?: number;
   settlementGraceMilliseconds?: number;
@@ -344,6 +354,11 @@ export interface ReliableReportingServiceV1<TCtxMeta = Record<string, unknown>> 
     configuration: ReliableReportingConfigurationInputV1,
     context: ReliableReportingInstallContextV1<TCtxMeta>
   ): Promise<ReportingLedgerConfigurationV1>;
+  /** Trusted host operation; does not change the generation version or installedAt. */
+  extendConfigurationHistory(input: {
+    configurationId: string;
+    historyStart: string;
+  }): Promise<ReportingLedgerConfigurationV1>;
   /**
    * Returns the same platform object, narrowed to also carry `reporting`.
    * The input type is preserved: widening to `DecisioningPlatform` would erase
@@ -657,17 +672,24 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       void _currency;
       void _timezone;
       void _mediaBuyIds;
-      return producer.installConfiguration({
-        ...ledgerInput,
-        schedule: { ...ledgerInput.schedule, ...scheduleIdentity },
-        account: { account_id: context.account.id },
-        sourceScope,
-        sourceTimezone: normalizedTimezone,
-        sourceSettings: { ...sourceSettings, currency: normalizedCurrency },
-        contract: structuredClone(offering.contract),
-        constituents,
-        mediaBuyIds,
-      });
+      return producer.installConfiguration(
+        {
+          ...ledgerInput,
+          schedule: { ...ledgerInput.schedule, ...scheduleIdentity },
+          account: { account_id: context.account.id },
+          sourceScope,
+          sourceTimezone: normalizedTimezone,
+          sourceSettings: { ...sourceSettings, currency: normalizedCurrency },
+          contract: structuredClone(offering.contract),
+          constituents,
+          mediaBuyIds,
+        },
+        { ...(context.historyStart !== undefined ? { historyStart: context.historyStart } : {}) }
+      );
+    },
+
+    extendConfigurationHistory(input) {
+      return producer.extendConfigurationHistory(input);
     },
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -698,6 +720,9 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       const planned = await producer.planObligations(planningNow.toISOString(), {
         ...(accountId !== undefined ? { account_id: accountId } : {}),
         ...(cycle.maxObligations !== undefined ? { maxObligations: cycle.maxObligations } : {}),
+        ...(cycle.maxHistoryObligationsPerSource !== undefined
+          ? { maxHistoryObligationsPerSource: cycle.maxHistoryObligationsPerSource }
+          : {}),
       });
       cycle.signal?.throwIfAborted();
       const result = await producer.runWorker({
@@ -705,6 +730,9 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         ...(cycle.now ? { now: () => cycle.now! } : {}),
         ...(accountId !== undefined ? { account_id: accountId } : {}),
         ...(cycle.maxWorkerIterations !== undefined ? { maxIterations: cycle.maxWorkerIterations } : {}),
+        ...(cycle.maxHistorySlicesPerSource !== undefined
+          ? { maxHistorySlicesPerSource: cycle.maxHistorySlicesPerSource }
+          : {}),
         ...(cycle.retryDelayMilliseconds !== undefined ? { retryDelayMilliseconds: cycle.retryDelayMilliseconds } : {}),
         ...(cycle.executionDeadlineMilliseconds !== undefined
           ? { executionDeadlineMilliseconds: cycle.executionDeadlineMilliseconds }
@@ -824,6 +852,12 @@ async function schedulerLoop<TCtxMeta>(
         await service.runCycle({
           ...(accountId === undefined ? { deploymentWide: true as const } : { accountId }),
           signal,
+          ...(options.maxHistoryObligationsPerSource !== undefined
+            ? { maxHistoryObligationsPerSource: options.maxHistoryObligationsPerSource }
+            : {}),
+          ...(options.maxHistorySlicesPerSource !== undefined
+            ? { maxHistorySlicesPerSource: options.maxHistorySlicesPerSource }
+            : {}),
           ...(options.maxObligationsPerAccount !== undefined
             ? { maxObligations: options.maxObligationsPerAccount }
             : {}),
@@ -1351,9 +1385,9 @@ function assertSupportedScheduleSemantics(
   // that changed and changed back: today's offset matches the anchor's, every
   // boundary the window samples is local midnight, and the periods in between
   // silently land at 01:00 local while the planner still schedules them.
-  // Obligations begin at `max(anchor, installedAt)` (producer.ts), so nothing
-  // before installation is ever generated and history the planner will not
-  // touch must not refuse a configuration. Scanning from the anchor rejected
+  // Default ownership begins at `max(anchor, installedAt)` (producer.ts), with
+  // explicit history validated separately. History the planner will not touch
+  // must not refuse a configuration. Scanning from the anchor rejected
   // the protocol's own 1970 origin for any zone that ran DST decades ago —
   // Asia/Shanghai, Asia/Seoul — while the same offering accepted a recent
   // anchor, which is the same schedule. Validate the operational span instead,
@@ -1478,6 +1512,8 @@ function trustedTimezone(value: string): string {
 function assertNoUntrustedLineageFields(configuration: Record<string, unknown>): void {
   for (const field of [
     'account',
+    'historyStart',
+    'historyStartOrdinal',
     'sourceScope',
     'sourceTimezone',
     'contract',

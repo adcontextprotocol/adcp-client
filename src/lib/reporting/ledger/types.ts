@@ -134,6 +134,10 @@ export interface ReportingLedgerConfigurationV1 {
   sourceSettings: ReportingSourceSliceRequestV1['sourceSettings'];
   contract: ReportingSourceSliceRequestV1['contract'];
   installedAt: string;
+  /** Trusted host ownership boundary, aligned upward to the schedule; absent means installedAt. */
+  historyStart?: string;
+  /** Frozen ordinal for historyStart, including ordinals before the schedule anchor. */
+  historyStartOrdinal?: number;
   supersededAt?: string;
   semanticFingerprint: string;
 }
@@ -152,6 +156,10 @@ export interface ReportingLedgerObligationV1 {
   finalityPolicy?: ReportingLedgerConfigurationV1['finalityPolicy'];
   canonicalization?: ReportingLedgerConfigurationV1['canonicalization'];
   periodOrdinal: number;
+  /** Pre-install ownership; runs after live work and under a per-source worker budget. */
+  history?: true;
+  /** Private backfill retry deadline, frozen durably on its first execution attempt. */
+  historyRecoveryDeadlineAt?: string;
   period: { start: string; end: string; sourceTimezone: string };
   /** Immutable schedule lineage used to reproduce the exact wire period boundaries. */
   schedule: ReportingLedgerConfigurationV1['schedule'];
@@ -923,6 +931,16 @@ export interface ReportingLedgerStore {
     configuration: ReportingLedgerConfigurationV1
   ): Promise<{ inserted: boolean; value: ReportingLedgerConfigurationV1 }>;
   listConfigurations(account_id?: string): Promise<ReportingLedgerConfigurationV1[]>;
+  /**
+   * Atomically move ownership earlier, or return an equal boundary unchanged. Refuse later boundaries,
+   * unknown configurations and overlap with another generation. Preserve installedAt, fingerprint,
+   * calendarRules and all existing obligations. Optional for stores without history extension support.
+   */
+  extendConfigurationHistory?(input: {
+    configurationId: string;
+    historyStart: string;
+    historyStartOrdinal: number;
+  }): Promise<ReportingLedgerConfigurationV1>;
   putObligation(
     obligation: ReportingLedgerObligationV1
   ): Promise<{ inserted: boolean; value: ReportingLedgerObligationV1 }>;
@@ -949,6 +967,8 @@ export interface ReportingLedgerStore {
     now: string;
     leaseMilliseconds: number;
     account_id?: string;
+    /** Claim live work first; omit history for these source offering IDs once their cycle budget is spent. */
+    excludeHistoryOfferingIds?: string[];
   }): Promise<ReportingLedgerLeaseV1 | null>;
   releaseObligationLease(lease: ReportingLedgerLeaseV1): Promise<void>;
   commitRevision(
@@ -1168,17 +1188,30 @@ export interface ReportingProducerV1 {
   installConfiguration(
     input: Omit<
       ReportingLedgerConfigurationV1,
-      'configurationId' | 'installedAt' | 'semanticFingerprint' | 'calendarRules'
-    >
+      | 'configurationId'
+      | 'installedAt'
+      | 'semanticFingerprint'
+      | 'calendarRules'
+      | 'historyStart'
+      | 'historyStartOrdinal'
+    >,
+    options?: { historyStart?: string }
   ): Promise<ReportingLedgerConfigurationV1>;
+  /** Trusted host operation. Ownership may only move earlier within the source retention window. */
+  extendConfigurationHistory(input: {
+    configurationId: string;
+    historyStart: string;
+  }): Promise<ReportingLedgerConfigurationV1>;
   planObligations(
     now?: string,
-    options?: { account_id?: string; maxObligations?: number }
+    options?: { account_id?: string; maxObligations?: number; maxHistoryObligationsPerSource?: number }
   ): Promise<ReportingLedgerObligationV1[]>;
   runWorker(options?: {
     signal?: AbortSignal;
     now?: () => Date;
     maxIterations?: number;
+    /** Maximum history claims per source offering in this worker pass. Defaults to 10; zero pauses history. */
+    maxHistorySlicesPerSource?: number;
     retryDelayMilliseconds?: number;
     executionDeadlineMilliseconds?: number;
     settlementGraceMilliseconds?: number;
