@@ -457,3 +457,35 @@ export * from './error-details.aliases';
 // with `npm run generate-wellknown-schemas` when the spec bumps.
 export type { BrandJson, AdagentsJson } from './wellknown-schemas.generated';
 export { BrandJsonSchema, AdagentsJsonSchema } from './wellknown-schemas.generated';
+
+// Complete wire request/response types for the typed manifest tool methods.
+export type {
+  SearchBrandsRequest,
+  SearchBrandsResponse,
+  ValidatePropertyDeliveryRequest,
+  ValidatePropertyDeliveryResponse,
+  VerifyBrandClaimRequest,
+  VerifyBrandClaimResponse,
+  VerifyBrandClaimsRequestBulk as VerifyBrandClaimsRequest,
+  VerifyBrandClaimsResponseBulk as VerifyBrandClaimsResponse,
+} from './core.generated';
+export type {
+  ComplyTestControllerRequest,
+  ComplyTestControllerResponse,
+  GetPrincipalRequest,
+  GetPrincipalResponse,
+  GetTaskStatusRequest,
+  GetTaskStatusResponse,
+  ListTasksRequest,
+  ListTasksResponse,
+  ListTransformersRequest,
+  ListTransformersResponse,
+  ReportPlanAdjustmentRequest,
+  ReportPlanAdjustmentResponse,
+  SyncAgentNotificationConfigsRequest,
+  SyncAgentNotificationConfigsResponse,
+  SyncPrincipalRequest,
+  SyncPrincipalResponse,
+  ValidateInputRequest,
+  ValidateInputResponse,
+} from './tools.generated';

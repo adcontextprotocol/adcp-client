@@ -1,3 +1,5 @@
+import type * as ToolTypes from '../types/tools.generated';
+import type * as CoreTypes from '../types/core.generated';
 import { withMCPConnectionPolicy } from '../protocols/mcp-connection-policy';
 import { hasUnsignedCapabilityBootstrap } from '../signing/protocol-methods';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
@@ -1214,18 +1216,16 @@ const PRIMARY_ADCP_TASK_NAMES = {
   sync_principal: true,
   context_match: true,
   identity_match: true,
-} satisfies Record<AdcpTaskName, true>;
+} satisfies Partial<Record<AdcpTaskName, true>>;
 
+// Preserve the existing custom-task escape hatch for tools newly given typed methods.
 const STANDARD_ADCP_TASK_NAMES = new Set<string>([
   ...Object.keys(PRIMARY_ADCP_TASK_NAMES),
   'list_creative_formats',
   'list_transformers',
   'preview_creative',
   'build_creative',
-  // These standard protocol tools still carry legacy creative `format_id`
-  // identity through artifacts, manifests, standards, or rights constraints.
-  // They are available only through explicitly named *Legacy APIs until a
-  // lossless canonical projection exists.
+  // Wire-level creative and content tools also have typed primary methods.
   'list_content_standards',
   'get_content_standards',
   'create_content_standards',
@@ -2542,6 +2542,21 @@ export class SingleAgentClient {
       ...(config.wireAdcpVersion !== undefined && { wireAdcpVersion: config.wireAdcpVersion }),
       ...(config.versionEnvelope !== undefined && { versionEnvelope: config.versionEnvelope }),
       transport: config.transport,
+      resolveTaskStatusTool: async (pollAgent, options) => {
+        const client =
+          pollAgent.id === this.normalizedAgent.id
+            ? this
+            : new SingleAgentClient(pollAgent, {
+                adcpVersion: this.resolvedAdcpVersion,
+                transport: options.transport,
+              });
+        const capabilities = await client.getCapabilities(options);
+        return capabilities.discoveredTools?.includes('get_task_status')
+          ? 'get_task_status'
+          : pollAgent.protocol === 'mcp'
+            ? 'tasks_get'
+            : 'tasks/get';
+      },
     });
 
     // Create async handler if handlers are provided
@@ -3288,8 +3303,14 @@ export class SingleAgentClient {
     return this.executor.trackTask<T>(agent, snapshot);
   }
 
-  /** Poll through the same discovered/canonical protocol endpoint used for dispatch. @internal */
-  async getTaskStatus(
+  /** Execute the typed AdCP get_task_status tool, including its result and error fields. */
+  getTaskStatus(
+    params: ToolTypes.GetTaskStatusRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetTaskStatusResponse>>;
+  /** Poll one task and map its status to TaskInfo. Preserved for existing callers. */
+  getTaskStatus(
     taskId: string,
     transport?: import('../protocols').TransportOptions,
     signal?: AbortSignal,
@@ -3297,7 +3318,27 @@ export class SingleAgentClient {
       wireAdcpVersion?: string;
       versionEnvelope?: import('../protocols').VersionEnvelopeMode;
     }
-  ): Promise<TaskInfo> {
+  ): Promise<TaskInfo>;
+  async getTaskStatus(
+    taskIdOrParams: string | ToolTypes.GetTaskStatusRequest,
+    transportOrHandler?: import('../protocols').TransportOptions | InputHandler,
+    signalOrOptions?: AbortSignal | TaskOptions,
+    wireOptions?: {
+      wireAdcpVersion?: string;
+      versionEnvelope?: import('../protocols').VersionEnvelopeMode;
+    }
+  ): Promise<TaskInfo | TaskResult<ToolTypes.GetTaskStatusResponse>> {
+    if (typeof taskIdOrParams !== 'string') {
+      return this.executeTaskUnprojected<ToolTypes.GetTaskStatusResponse>(
+        'get_task_status',
+        taskIdOrParams,
+        transportOrHandler as InputHandler | undefined,
+        signalOrOptions as TaskOptions | undefined
+      );
+    }
+    const taskId = taskIdOrParams;
+    const transport = transportOrHandler as import('../protocols').TransportOptions | undefined;
+    const signal = signalOrOptions as AbortSignal | undefined;
     // Transport options define the outbound trust boundary. Own them before
     // endpoint discovery yields so caller mutation cannot change the fetch or
     // private-address policy between discovery and tasks/get.
@@ -8943,6 +8984,9 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions & { agent?: AgentConfig }
   ): Promise<TaskResult<SyncPlansResponse>> {
+    if (!options?.agent && !this.config.governance?.campaign?.agent) {
+      return this.executeTaskUnprojected<SyncPlansResponse>('sync_plans', params, inputHandler, options);
+    }
     const agent = options?.agent ?? this.getGovernanceAgent();
     // Pre-send schema check on the unadapted shape, mirroring the public-task
     // executeTask path. Without this call, governance/protocol entry points
@@ -8963,6 +9007,9 @@ export class SingleAgentClient {
     params: GetPlanAuditLogsRequest,
     options?: TaskOptions & { agent?: AgentConfig }
   ): Promise<TaskResult<GetPlanAuditLogsResponse>> {
+    if (!options?.agent && !this.config.governance?.campaign?.agent) {
+      return this.executeTaskUnprojected<GetPlanAuditLogsResponse>('get_plan_audit_logs', params, undefined, options);
+    }
     const agent = options?.agent ?? this.getGovernanceAgent();
     this.executor.validateRequest('get_plan_audit_logs', params);
     return this.executor.executeTask<GetPlanAuditLogsResponse>(
@@ -9015,6 +9062,591 @@ export class SingleAgentClient {
       );
     }
     return agent;
+  }
+
+  /** Accept a committed proposal to create or amend a media buy, or apply a negotiated cancellation. */
+  async acceptProposal(
+    params: MutatingRequestInput<ToolTypes.AcceptProposalRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.AcceptProposalResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.AcceptProposalResponse>(
+      'accept_proposal',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP acquire_rights tool. */
+  async acquireRights(
+    params: MutatingRequestInput<CoreTypes.AcquireRightsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.AcquireRightsResponse>> {
+    return this.executeTaskUnprojected<CoreTypes.AcquireRightsResponse>(
+      'acquire_rights',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Generate, transform, refine, retrieve, or adapt creative manifests for advertised creative capabilities. */
+  async buildCreative(
+    params: MutatingRequestInput<ToolTypes.BuildCreativeRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.BuildCreativeResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.BuildCreativeResponse>(
+      'build_creative',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Create a media buy directly from published seller products and record its accepted commercial snapshot. */
+  async buyProducts(
+    params: MutatingRequestInput<ToolTypes.BuyProductsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.BuyProductsResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.BuyProductsResponse>('buy_products', params, inputHandler, options);
+  }
+
+  /** Execute the AdCP calibrate_content tool. */
+  async calibrateContent(
+    params: MutatingRequestInput<ToolTypes.CalibrateContentRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.CalibrateContentResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.CalibrateContentResponse>(
+      'calibrate_content',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP check_governance tool. */
+  async checkGovernance(
+    params: ToolTypes.CheckGovernanceRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.CheckGovernanceResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.CheckGovernanceResponse>(
+      'check_governance',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Control a seller compliance scenario. Intended for conformance testing. */
+  async complyTestController(
+    params: ToolTypes.ComplyTestControllerRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ComplyTestControllerResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.ComplyTestControllerResponse>(
+      'comply_test_controller',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Rename, pause, resume, cancel, or adjust delivery controls within accepted proposal change rights. */
+  async controlMediaBuy(
+    params: MutatingRequestInput<ToolTypes.ControlMediaBuyRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ControlMediaBuyResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.ControlMediaBuyResponse>(
+      'control_media_buy',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP create_collection_list tool. */
+  async createCollectionList(
+    params: MutatingRequestInput<ToolTypes.CreateCollectionListRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.CreateCollectionListResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.CreateCollectionListResponse>(
+      'create_collection_list',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP create_content_standards tool. */
+  async createContentStandards(
+    params: MutatingRequestInput<ToolTypes.CreateContentStandardsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.CreateContentStandardsResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.CreateContentStandardsResponse>(
+      'create_content_standards',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Terminally decline one or more proposals and record the buyer's reason. */
+  async declineProposals(
+    params: MutatingRequestInput<ToolTypes.DeclineProposalsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.DeclineProposalsResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.DeclineProposalsResponse>(
+      'decline_proposals',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP delete_collection_list tool. */
+  async deleteCollectionList(
+    params: MutatingRequestInput<ToolTypes.DeleteCollectionListRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.DeleteCollectionListResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.DeleteCollectionListResponse>(
+      'delete_collection_list',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Retrieve spend, credit or balance status, and invoice history for an operator-billed account. */
+  async getAccountFinancials(
+    params: ToolTypes.GetAccountFinancialsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetAccountFinancialsResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.GetAccountFinancialsResponse>(
+      'get_account_financials',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP get_brand_identity tool. */
+  async getBrandIdentity(
+    params: CoreTypes.GetBrandIdentityRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.GetBrandIdentityResponse>> {
+    return this.executeTaskUnprojected<CoreTypes.GetBrandIdentityResponse>(
+      'get_brand_identity',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP get_collection_list tool. */
+  async getCollectionList(
+    params: ToolTypes.GetCollectionListRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetCollectionListResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.GetCollectionListResponse>(
+      'get_collection_list',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP get_content_standards tool. */
+  async getContentStandards(
+    params: ToolTypes.GetContentStandardsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetContentStandardsResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.GetContentStandardsResponse>(
+      'get_content_standards',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Evaluate a creative manifest and return scored safety, content, quality, and governance features. */
+  async getCreativeFeatures(
+    params: ToolTypes.GetCreativeFeaturesRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetCreativeFeaturesResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.GetCreativeFeaturesResponse>(
+      'get_creative_features',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP get_media_buy_artifacts tool. */
+  async getMediaBuyArtifacts(
+    params: ToolTypes.GetMediaBuyArtifactsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetMediaBuyArtifactsResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.GetMediaBuyArtifactsResponse>(
+      'get_media_buy_artifacts',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Check reporting health, enumerate expected periods and all retained revisions, or resolve one exact reporting revision. */
+  async getReportingStatus(
+    params: ToolTypes.GetReportingStatusRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetReportingStatusResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.GetReportingStatusResponse>(
+      'get_reporting_status',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP get_rights tool. */
+  async getRights(
+    params: CoreTypes.GetRightsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.GetRightsResponse>> {
+    return this.executeTaskUnprojected<CoreTypes.GetRightsResponse>('get_rights', params, inputHandler, options);
+  }
+
+  /** Execute the AdCP list_collection_lists tool. */
+  async listCollectionLists(
+    params: ToolTypes.ListCollectionListsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ListCollectionListsResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.ListCollectionListsResponse>(
+      'list_collection_lists',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP list_content_standards tool. */
+  async listContentStandards(
+    params: ToolTypes.ListContentStandardsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ListContentStandardsResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.ListContentStandardsResponse>(
+      'list_content_standards',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP list_creative_formats tool. */
+  async listCreativeFormats(
+    params: ToolTypes.ListCreativeFormatsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ListCreativeFormatsResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.ListCreativeFormatsResponse>(
+      'list_creative_formats',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Discover account-scoped creative transformers and their selectable configuration options. */
+  async listTransformers(
+    params: ToolTypes.ListTransformersRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ListTransformersResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.ListTransformersResponse>(
+      'list_transformers',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Log batches of marketing events against a configured event source for measurement and attribution. */
+  async logEvent(
+    params: MutatingRequestInput<ToolTypes.LogEventRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.LogEventResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.LogEventResponse>('log_event', params, inputHandler, options);
+  }
+
+  /** Revise draft proposals, finalize them into committed, inventory-held snapshots, or extend a committed hold. */
+  async refineProposals(
+    params: TaskRequestFor<'refine_proposals'>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<TaskResponseTypeMap['refine_proposals']>> {
+    return this.executeTask('refine_proposals', params, inputHandler, options);
+  }
+
+  /** Execute the AdCP report_plan_adjustment tool. */
+  async reportPlanAdjustment(
+    params: MutatingRequestInput<ToolTypes.ReportPlanAdjustmentRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ReportPlanAdjustmentResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.ReportPlanAdjustmentResponse>(
+      'report_plan_adjustment',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP report_plan_outcome tool. */
+  async reportPlanOutcome(
+    params: MutatingRequestInput<ToolTypes.ReportPlanOutcomeRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ReportPlanOutcomeResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.ReportPlanOutcomeResponse>(
+      'report_plan_outcome',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Report vendor-service consumption and final measurements for revenue tracking and billing reconciliation. */
+  async reportUsage(
+    params: MutatingRequestInput<ToolTypes.ReportUsageRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ReportUsageResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.ReportUsageResponse>('report_usage', params, inputHandler, options);
+  }
+
+  /** Ask a seller to create one or more draft media-plan proposals from a campaign brief. */
+  async requestProposals(
+    params: MutatingRequestInput<ToolTypes.RequestProposalsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.RequestProposalsResponse>> {
+    return this.executeTask('request_proposals', params, inputHandler, options);
+  }
+
+  /** Execute the AdCP search_brands tool. */
+  async searchBrands(
+    params: CoreTypes.SearchBrandsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.SearchBrandsResponse>> {
+    return this.executeTaskUnprojected<CoreTypes.SearchBrandsResponse>('search_brands', params, inputHandler, options);
+  }
+
+  /** Register, replace, pause, or clear caller-scoped webhooks for agent-level notifications. */
+  async syncAgentNotificationConfigs(
+    params: MutatingRequestInput<ToolTypes.SyncAgentNotificationConfigsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.SyncAgentNotificationConfigsResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.SyncAgentNotificationConfigsResponse>(
+      'sync_agent_notification_configs',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** List or synchronize buyer-managed account catalog feeds, suppress or restore specific items, and read current availability state. */
+  async syncCatalogs(
+    params: MutatingRequestInput<ToolTypes.SyncCatalogsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.SyncCatalogsResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.SyncCatalogsResponse>('sync_catalogs', params, inputHandler, options);
+  }
+
+  /** List or synchronize account event sources with upsert and optional replacement semantics. */
+  async syncEventSources(
+    params: MutatingRequestInput<ToolTypes.SyncEventSourcesRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.SyncEventSourcesResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.SyncEventSourcesResponse>(
+      'sync_event_sources',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Bind or replace the governance agent used for approval across specific advertiser accounts. */
+  async syncGovernance(
+    params: MutatingRequestInput<ToolTypes.SyncGovernanceRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.SyncGovernanceResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.SyncGovernanceResponse>(
+      'sync_governance',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Record a consumer's independently verified reporting totals and destination evidence in the seller ledger. */
+  async syncReportingReceipts(
+    params: MutatingRequestInput<ToolTypes.SyncReportingReceiptsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.SyncReportingReceiptsResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.SyncReportingReceiptsResponse>(
+      'sync_reporting_receipts',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Tell a seller whether expected reporting was received, omitted, missing, unreadable, or contradictory. */
+  async syncReportingStatus(
+    params: MutatingRequestInput<ToolTypes.SyncReportingStatusRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.SyncReportingStatusResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.SyncReportingStatusResponse>(
+      'sync_reporting_status',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP update_collection_list tool. */
+  async updateCollectionList(
+    params: MutatingRequestInput<ToolTypes.UpdateCollectionListRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.UpdateCollectionListResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.UpdateCollectionListResponse>(
+      'update_collection_list',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP update_content_standards tool. */
+  async updateContentStandards(
+    params: MutatingRequestInput<ToolTypes.UpdateContentStandardsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.UpdateContentStandardsResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.UpdateContentStandardsResponse>(
+      'update_content_standards',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP update_rights tool. */
+  async updateRights(
+    params: MutatingRequestInput<CoreTypes.UpdateRightsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.UpdateRightsResponse>> {
+    return this.executeTaskUnprojected<CoreTypes.UpdateRightsResponse>('update_rights', params, inputHandler, options);
+  }
+
+  /** Execute the AdCP validate_content_delivery tool. */
+  async validateContentDelivery(
+    params: ToolTypes.ValidateContentDeliveryRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ValidateContentDeliveryResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.ValidateContentDeliveryResponse>(
+      'validate_content_delivery',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Preflight a creative manifest against canonical formats, products, third-party formats, or agent capabilities. */
+  async validateInput(
+    params: ToolTypes.ValidateInputRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ValidateInputResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.ValidateInputResponse>(
+      'validate_input',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP validate_property_delivery tool. */
+  async validatePropertyDelivery(
+    params: CoreTypes.ValidatePropertyDeliveryRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.ValidatePropertyDeliveryResponse>> {
+    return this.executeTaskUnprojected<CoreTypes.ValidatePropertyDeliveryResponse>(
+      'validate_property_delivery',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP verify_brand_claim tool. */
+  async verifyBrandClaim(
+    params: CoreTypes.VerifyBrandClaimRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.VerifyBrandClaimResponse>> {
+    return this.executeTaskUnprojected<CoreTypes.VerifyBrandClaimResponse>(
+      'verify_brand_claim',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Execute the AdCP verify_brand_claims tool. */
+  async verifyBrandClaims(
+    params: CoreTypes.VerifyBrandClaimsRequestBulk,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.VerifyBrandClaimsResponseBulk>> {
+    return this.executeTaskUnprojected<CoreTypes.VerifyBrandClaimsResponseBulk>(
+      'verify_brand_claims',
+      params,
+      inputHandler,
+      options
+    );
   }
 
   // ====== PROTOCOL TASKS ======
@@ -9770,6 +10402,8 @@ export class SingleAgentClient {
         return this.getMediaBuyDelivery(params as GetMediaBuyDeliveryRequest, inputHandler, options);
       case 'get_creative_delivery':
         return this.getCreativeDelivery(params as GetCreativeDeliveryRequest, inputHandler, options);
+      case 'preview_creative':
+        return this.previewCreative(params as CanonicalPreviewCreativeRequest, inputHandler, options);
       case 'get_principal':
         return this.getPrincipal(params as GetPrincipalRequest, inputHandler, options);
       case 'sync_principal':
@@ -10355,7 +10989,22 @@ export class SingleAgentClient {
    * });
    * ```
    */
-  async listTasks(): Promise<TaskInfo[]> {
+  /** Query the seller's typed AdCP list_tasks tool. Pass {} for an unfiltered query. */
+  listTasks(
+    params: ToolTypes.ListTasksRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ListTasksResponse>>;
+  /** List locally tracked tasks. Preserved for existing callers. */
+  listTasks(): Promise<TaskInfo[]>;
+  async listTasks(
+    params?: ToolTypes.ListTasksRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskInfo[] | TaskResult<ToolTypes.ListTasksResponse>> {
+    if (params !== undefined) {
+      return this.executeTaskUnprojected<ToolTypes.ListTasksResponse>('list_tasks', params, inputHandler, options);
+    }
     const tasks = await this.executor.getTaskList(this.agent.id);
     return tasks.map(task =>
       assertNativeRequestProposalsTask(

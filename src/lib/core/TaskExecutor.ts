@@ -1069,6 +1069,11 @@ export class TaskExecutor {
        * dispatches. Per-call options can override individual fields.
        */
       transport?: import('../protocols').TransportOptions;
+      /** Resolve the advertised AdCP work-status tool using the client's scoped discovery evidence. */
+      resolveTaskStatusTool?: (
+        agent: AgentConfig,
+        options: { transport?: import('../protocols').TransportOptions; signal?: AbortSignal }
+      ) => Promise<'get_task_status' | 'tasks_get' | 'tasks/get'>;
     } = {}
   ) {
     if (
@@ -1803,7 +1808,7 @@ export class TaskExecutor {
       throwIfAborted(postDispatchOptions.signal);
 
       // Emit protocol_response activity
-      const respStatus = this.responseParser.getStatus(response) as string | undefined;
+      const respStatus = this.responseParser.getStatus(response, taskName) as string | undefined;
       taskState.serverTaskId = this.responseParser.getTaskId(response);
       await this.config.onActivity?.({
         type: 'protocol_response',
@@ -2043,7 +2048,7 @@ export class TaskExecutor {
     requireDeferredSettlementResumeAuthorization = false,
     refinementServedVersion?: string
   ): Promise<TaskResult<T>> {
-    const status = this.responseParser.getStatus(response) as ADCPStatus;
+    const status = this.responseParser.getStatus(response, taskName) as ADCPStatus;
     const serverTaskId = this.responseParser.getTaskId(response);
     const task = this.activeTasks.get(taskId);
     if (task && serverTaskId) task.serverTaskId = serverTaskId;
@@ -3677,10 +3682,8 @@ export class TaskExecutor {
     versionEnvelope?: import('../protocols').VersionEnvelopeMode,
     operationId?: string
   ): Promise<TaskStatusPollResult> {
-    // AdCP `tasks/get` is the cross-protocol work-status interface
-    // (`schemas/cache/<v>/bundled/core/tasks-get-{request,response}.json`).
-    // MCP tool names cannot contain `/`, so MCP servers advertise the
-    // SDK-owned `tasks_get` alias; A2A continues to use the spec slash name.
+    // Prefer the advertised AdCP `get_task_status` tool. Older sellers use
+    // `tasks_get` over MCP or `tasks/get` over A2A; all share the same envelope.
     //
     // The previous implementation tried MCP's `experimental.tasks.getTask`
     // first for MCP agents and fell through to the AdCP tool path on
@@ -3688,9 +3691,7 @@ export class TaskExecutor {
     // lifecycle (MCP analog of A2A `Task.state`) — not AdCP work
     // lifecycle. For submitted-arm polling we need work status; the
     // two interfaces are not substitutes, so we always use the AdCP
-    // tool here. MCP sellers that haven't registered `tasks_get` as
-    // an AdCP tool will surface a tool-not-found error rather than
-    // silently polling the wrong lifecycle.
+    // tool here, never the native MCP transport-task endpoint.
     //
     // The request param is `task_id` (snake_case per AdCP 3.0); the
     // response is the spec's flat shape, mapped to `TaskInfo` via
@@ -3703,7 +3704,13 @@ export class TaskExecutor {
     // sellers ignore the unknown request field; the response mapper
     // falls back to the informal `additionalProperties` passthrough
     // for those.
-    const toolName = agent.protocol === 'mcp' ? 'tasks_get' : 'tasks/get';
+    const effectiveTransport = transport ?? this.config.transport;
+    const toolName = this.config.resolveTaskStatusTool
+      ? await this.config.resolveTaskStatusTool(agent, { transport: effectiveTransport, signal })
+      : agent.protocol === 'mcp'
+        ? 'tasks_get'
+        : 'tasks/get';
+    throwIfAborted(signal);
     const response = (await ProtocolClient.callTool(
       agent,
       toolName,
