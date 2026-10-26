@@ -423,6 +423,8 @@ export interface DemandGrantOptions {
    */
   resolveBrandHouse?: (brand: DemandGrantClaim['brand']) => Promise<{ domain: string; brand_id: string } | undefined>;
 }
+/** Candidate intermediary records fetched in parallel for one authorization. */
+const INTERMEDIARY_FETCH_CONCURRENCY = 8;
 function grantsScope(grant: TrustGrant, scope: string): boolean {
   return grant.scopes.some(
     granted => granted === '*' || granted === scope || (granted === 'adcp:all' && scope.startsWith('adcp:'))
@@ -525,15 +527,25 @@ export async function authorizeDemandGrant(
     if (grantee === operator) return result('trust', [brand, operator], [grant]);
     firsts.push({ grant, grantee });
   }
+  // Each distinct intermediary record is fetched once, at most
+  // INTERMEDIARY_FETCH_CONCURRENCY at a time, so N candidate chains cost about
+  // ceil(N / concurrency) fetch timeouts rather than N.
+  const grantees = [...new Set(firsts.map(f => f.grantee))];
+  const records = new Map<string, Awaited<ReturnType<TrustEvaluator['get']>> | { failed: unknown }>();
+  for (let i = 0; i < grantees.length; i += INTERMEDIARY_FETCH_CONCURRENCY) {
+    const batch = grantees.slice(i, i + INTERMEDIARY_FETCH_CONCURRENCY);
+    const settled = await Promise.allSettled(batch.map(grantee => options.evaluator.get(grantee)));
+    settled.forEach((outcome, j) =>
+      records.set(batch[j]!, outcome.status === 'fulfilled' ? outcome.value : { failed: outcome.reason })
+    );
+  }
   let outage: unknown;
   for (const { grant: first, grantee } of firsts) {
-    let intermediary: Awaited<ReturnType<TrustEvaluator['get']>>;
-    try {
-      intermediary = await options.evaluator.get(grantee);
-    } catch (cause) {
+    const intermediary = records.get(grantee)!;
+    if ('failed' in intermediary) {
       // Another chain may still authorize; an unreadable link is an outage
       // only if none does.
-      outage ??= cause;
+      outage ??= intermediary.failed;
       continue;
     }
     if (intermediary.status !== 'present') continue;

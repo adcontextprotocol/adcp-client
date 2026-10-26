@@ -91,3 +91,42 @@ test('a matching grant authorizes under an exclusive record', async () => {
   assert.equal((await run).source, 'trust');
   assert.equal(sellerCalls(), 0);
 });
+
+test('candidate intermediaries are fetched once each and in parallel', async () => {
+  const houseGrants = Array.from({ length: 12 }, (_, i) => grant(`agency${i}.com`, ['adcp:media_buying']));
+  houseGrants.push(grant('agency0.com', ['adcp:media_buying']));
+  const fetches = new Map();
+  let inFlight = 0,
+    maxInFlight = 0;
+  const trust = new identity.TrustEvaluator({
+    now: () => now,
+    fetchOptions: {
+      trustedFetchFn: async url => {
+        const host = new URL(url).hostname;
+        fetches.set(host, (fetches.get(host) ?? 0) + 1);
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise(resolve => setTimeout(resolve, 20));
+        inFlight--;
+        const records = { 'house.com': { grants: houseGrants }, 'signer.com': agent('https://buyer.signer.com') };
+        const record = records[host] ?? { grants: [] };
+        return new Response(JSON.stringify(record), { status: 200 });
+      },
+    },
+  });
+  await assert.rejects(
+    identity.authorizeDemandGrant(
+      {
+        signerOrigin: 'https://buyer.signer.com',
+        brand: { domain: 'house.com', brand_id: 'brand', countries: ['US'] },
+        accountOperator: 'house.com',
+        scope: 'adcp:media_buying',
+      },
+      { evaluator: trust, now: () => now }
+    ),
+    isGrantAbsent
+  );
+  for (let i = 0; i < 12; i++) assert.equal(fetches.get(`agency${i}.com`), 1, `agency${i}.com fetched once`);
+  assert.ok(maxInFlight > 1, 'intermediaries are fetched concurrently');
+  assert.ok(maxInFlight <= 8 + 1, 'concurrency stays bounded');
+});
