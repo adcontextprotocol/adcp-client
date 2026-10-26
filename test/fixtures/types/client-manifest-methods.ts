@@ -67,6 +67,7 @@ for (const client of [agent, single]) {
   const generic: Promise<TaskResult<GetTaskStatusResponse>> = client.executeTask('get_task_status', {
     task_id: 'work',
   });
+  void [status, mapped, local, remote, synced, found, verified, generic];
   // @ts-expect-error task_id is required by the typed protocol tool.
   client.getTaskStatus({});
   // @ts-expect-error search terms are typed.

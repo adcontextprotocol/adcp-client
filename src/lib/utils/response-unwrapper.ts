@@ -6,7 +6,7 @@
  */
 
 import type { z } from 'zod';
-import { isTaskStatusResponse } from './task-status-response';
+import { isTaskStatusResponse } from '../core/task-status';
 import { getBestUnionErrors } from './union-errors';
 
 /**

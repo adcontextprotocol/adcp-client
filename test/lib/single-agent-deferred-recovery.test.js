@@ -2346,6 +2346,7 @@ test('committed submitted resume reconstructs polling after restart without redi
       validation: { requests: 'off', responses: 'off' },
     });
     firstClient.ensureCanonicalUrlResolved = async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' });
+    firstClient.getCapabilities = async () => ({ discoveredTools: [] });
     firstClient.registerDurableSettlementRecovery(recover);
     const submitted = await firstClient.resumeDeferredTask(token, { approved: true });
     assert.equal(submitted.status, 'submitted');
@@ -2358,6 +2359,7 @@ test('committed submitted resume reconstructs polling after restart without redi
       validation: { requests: 'off', responses: 'off' },
     });
     restarted.ensureCanonicalUrlResolved = async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' });
+    restarted.getCapabilities = async () => ({ discoveredTools: [] });
     restarted.registerDurableSettlementRecovery(recover);
     const reconstructed = await restarted.resumeDeferredTask(token, { approved: 'must-not-redispatch' });
     assert.equal(reconstructed.status, 'submitted');
@@ -2446,6 +2448,7 @@ test('pending terminal polling checkpoints before one replica enters durable rec
       validation: { requests: 'off', responses: 'off' },
     });
     client.ensureCanonicalUrlResolved = async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' });
+    client.getCapabilities = async () => ({ discoveredTools: [] });
     client.registerDurableSettlementRecovery(recover);
     return client;
   };
@@ -2536,6 +2539,7 @@ test('local pending-poll failures retain the seller work handle until an authori
       validation: { requests: 'off', responses: 'off' },
     });
     client.ensureCanonicalUrlResolved = async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' });
+    client.getCapabilities = async () => ({ discoveredTools: [] });
     client.registerDurableSettlementRecovery(async (_recoveredOperationId, observation) => {
       recoveryCalls += 1;
       return { settled: true, status: 'completed', result: observation.result };
@@ -2639,6 +2643,7 @@ test('pending polling keeps input and auth pauses nonresumable without an A2A co
           validation: { requests: 'off', responses: 'off' },
         });
         client.ensureCanonicalUrlResolved = async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' });
+        client.getCapabilities = async () => ({ discoveredTools: [] });
         client.registerDurableSettlementRecovery(async (_recoveredOperationId, observation) => {
           recoveryCalls += 1;
           return { settled: true, status: 'completed', result: observation.result };
@@ -2732,6 +2737,7 @@ test('terminal track checkpoints raw seller output for public token finalization
       },
     });
     client.ensureCanonicalUrlResolved = async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' });
+    client.getCapabilities = async () => ({ discoveredTools: [] });
     client.registerDurableSettlementRecovery(async (_recoveredOperationId, observation) => {
       recoveryCalls += 1;
       return { settled: true, status: 'completed', result: observation.result };

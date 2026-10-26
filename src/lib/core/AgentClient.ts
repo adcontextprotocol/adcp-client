@@ -2012,10 +2012,9 @@ export class AgentClient {
   async getPlanAuditLogs(
     params: ToolTypes.GetPlanAuditLogsRequest,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: TaskOptions & { agent?: AgentConfig }
   ): Promise<TaskResult<ToolTypes.GetPlanAuditLogsResponse>> {
-    const result = await this.client.executeTask(
-      'get_plan_audit_logs',
+    const result = await this.client.getPlanAuditLogs(
       params,
       inputHandler,
       this.withSession('get_plan_audit_logs', options)
@@ -2236,14 +2235,9 @@ export class AgentClient {
   async syncPlans(
     params: MutatingRequestInput<ToolTypes.SyncPlansRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: TaskOptions & { agent?: AgentConfig }
   ): Promise<TaskResult<ToolTypes.SyncPlansResponse>> {
-    const result = await this.client.executeTask(
-      'sync_plans',
-      params,
-      inputHandler,
-      this.withSession('sync_plans', options)
-    );
+    const result = await this.client.syncPlans(params, inputHandler, this.withSession('sync_plans', options));
     this.retainSession(result);
     return result;
   }
@@ -2881,7 +2875,7 @@ export class AgentClient {
     taskName: K,
     params: TaskRequestFor<K>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: TaskOptions & { agent?: K extends 'sync_plans' | 'get_plan_audit_logs' ? AgentConfig : never }
   ): Promise<TaskResult<TaskResponseTypeMap[K]>>;
 
   async executeTask(
@@ -2933,6 +2927,10 @@ export class AgentClient {
         return this.getCreativeDelivery(params as GetCreativeDeliveryRequest, inputHandler, options);
       case 'preview_creative':
         return this.previewCreative(params as CanonicalPreviewCreativeRequest, inputHandler, options);
+      case 'sync_plans':
+        return this.syncPlans(params as MutatingRequestInput<SyncPlansRequest>, inputHandler, options);
+      case 'get_plan_audit_logs':
+        return this.getPlanAuditLogs(params as GetPlanAuditLogsRequest, inputHandler, options);
       case 'get_principal':
         return this.getPrincipal(params as GetPrincipalRequest, inputHandler, options);
       case 'sync_principal':
@@ -2990,7 +2988,7 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ToolTypes.ListTasksResponse>>;
-  /** List locally tracked tasks. Preserved for existing callers. */
+  /** List local tasks only. Pass {} to query the seller's list_tasks tool. */
   listTasks(): Promise<TaskInfo[]>;
   async listTasks(
     params?: ToolTypes.ListTasksRequest,

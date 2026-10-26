@@ -688,6 +688,8 @@ interface TaskStatusPollResult {
   rawResponse: Record<string, unknown>;
 }
 
+type AdcpTaskStatusTool = 'get_task_status' | 'tasks_get' | 'tasks/get';
+
 class TaskBindingMismatchError extends Error {
   constructor(
     message: string,
@@ -1072,7 +1074,7 @@ export class TaskExecutor {
       resolveTaskStatusTool?: (
         agent: AgentConfig,
         options: { transport?: import('../protocols').TransportOptions; signal?: AbortSignal }
-      ) => Promise<'get_task_status' | 'tasks_get' | 'tasks/get'>;
+      ) => Promise<AdcpTaskStatusTool>;
     } = {}
   ) {
     if (
@@ -3670,6 +3672,17 @@ export class TaskExecutor {
     });
   }
 
+  private async resolveTaskStatusTool(
+    agent: AgentConfig,
+    transport?: import('../protocols').TransportOptions,
+    signal?: AbortSignal
+  ): Promise<AdcpTaskStatusTool> {
+    if (this.config.resolveTaskStatusTool) {
+      return this.config.resolveTaskStatusTool(agent, { transport: transport ?? this.config.transport, signal });
+    }
+    return agent.protocol === 'mcp' ? 'tasks_get' : 'tasks/get';
+  }
+
   private async getTaskStatusWithRawResponse(
     agent: AgentConfig,
     taskId: string,
@@ -3679,7 +3692,8 @@ export class TaskExecutor {
     serverVersion?: 'v2' | 'v3',
     wireAdcpVersion?: string,
     versionEnvelope?: import('../protocols').VersionEnvelopeMode,
-    operationId?: string
+    operationId?: string,
+    pollingTool?: AdcpTaskStatusTool
   ): Promise<TaskStatusPollResult> {
     // Prefer the advertised AdCP `get_task_status` tool. Older sellers use
     // `tasks_get` over MCP or `tasks/get` over A2A; all share the same envelope.
@@ -3703,12 +3717,7 @@ export class TaskExecutor {
     // sellers ignore the unknown request field; the response mapper
     // falls back to the informal `additionalProperties` passthrough
     // for those.
-    const effectiveTransport = transport ?? this.config.transport;
-    const toolName = this.config.resolveTaskStatusTool
-      ? await this.config.resolveTaskStatusTool(agent, { transport: effectiveTransport, signal })
-      : agent.protocol === 'mcp'
-        ? 'tasks_get'
-        : 'tasks/get';
+    const toolName = pollingTool ?? (await this.resolveTaskStatusTool(agent, transport, signal));
     throwIfAborted(signal);
     const response = (await ProtocolClient.callTool(
       agent,
@@ -3804,6 +3813,9 @@ export class TaskExecutor {
     }
     const pollStartTime = Date.now();
     const correlationId = metadataTaskId ?? taskId;
+    // Keep discovery local to this observation session and its transport/auth scope.
+    // Cross-agent polling must not construct and rediscover a client on every tick.
+    let pollingTool: AdcpTaskStatusTool | undefined;
     const withServerTaskId = (metadata: TaskResultMetadata): TaskResultMetadata => ({
       ...metadata,
       serverTaskId: taskId,
@@ -3877,6 +3889,7 @@ export class TaskExecutor {
       let status: TaskInfo;
       let rawResponse: Record<string, unknown> | undefined;
       try {
+        pollingTool ??= await this.resolveTaskStatusTool(agent, transportSnapshot, signal);
         const pollResult = await this.getTaskStatusWithRawResponse(
           agent,
           taskId,
@@ -3886,7 +3899,8 @@ export class TaskExecutor {
           serverVersion,
           wireAdcpVersion,
           versionEnvelope,
-          metadataTaskId
+          metadataTaskId,
+          pollingTool
         );
         status = pollResult.task;
         rawResponse = pollResult.rawResponse;

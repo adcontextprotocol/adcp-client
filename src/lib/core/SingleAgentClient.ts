@@ -1159,6 +1159,8 @@ function assertRawMethodForGovernedPayload(taskType: string, options?: TaskOptio
   }
 }
 
+// Historical custom-task restrictions stay intentionally partial: newly typed
+// tools must retain their existing executeCustomTask workarounds.
 const PRIMARY_ADCP_TASK_NAMES = {
   get_products: true,
   list_products: true,
@@ -2538,10 +2540,14 @@ export class SingleAgentClient {
             ? this
             : new SingleAgentClient(pollAgent, {
                 adcpVersion: this.resolvedAdcpVersion,
+                wireAdcpVersion: this.config.wireAdcpVersion,
+                versionEnvelope: this.config.versionEnvelope,
+                userAgent: this.config.userAgent,
+                discoveryCache: this.config.discoveryCache,
+                onTransportActivity: this.config.onTransportActivity,
                 transport: options.transport,
               });
-        const capabilities = await client.getCapabilities(options);
-        return capabilities.discoveredTools?.includes('get_task_status')
+        return (await client.advertisesTool('get_task_status', options))
           ? 'get_task_status'
           : pollAgent.protocol === 'mcp'
             ? 'tasks_get'
@@ -8937,12 +8943,32 @@ export class SingleAgentClient {
    * Uses the governance agent from config.governance.campaign.agent by default.
    * Pass an explicit agent via options.agent to override.
    */
-  async getPlanAuditLogs(
+  getPlanAuditLogs(
     params: GetPlanAuditLogsRequest,
     options?: TaskOptions & { agent?: AgentConfig }
+  ): Promise<TaskResult<GetPlanAuditLogsResponse>>;
+  getPlanAuditLogs(
+    params: GetPlanAuditLogsRequest,
+    inputHandler: InputHandler | undefined,
+    options?: TaskOptions & { agent?: AgentConfig }
+  ): Promise<TaskResult<GetPlanAuditLogsResponse>>;
+  async getPlanAuditLogs(
+    params: GetPlanAuditLogsRequest,
+    inputHandlerOrOptions?: InputHandler | (TaskOptions & { agent?: AgentConfig }),
+    taskOptions?: TaskOptions & { agent?: AgentConfig }
   ): Promise<TaskResult<GetPlanAuditLogsResponse>> {
+    const inputHandler = typeof inputHandlerOrOptions === 'function' ? inputHandlerOrOptions : undefined;
+    const options =
+      inputHandlerOrOptions === undefined || typeof inputHandlerOrOptions === 'function'
+        ? taskOptions
+        : inputHandlerOrOptions;
     if (!options?.agent && !this.config.governance?.campaign?.agent) {
-      return this.executeTaskUnprojected<GetPlanAuditLogsResponse>('get_plan_audit_logs', params, undefined, options);
+      return this.executeTaskUnprojected<GetPlanAuditLogsResponse>(
+        'get_plan_audit_logs',
+        params,
+        inputHandler,
+        options
+      );
     }
     const agent = options?.agent ?? this.getGovernanceAgent();
     this.executor.validateRequest('get_plan_audit_logs', params);
@@ -8950,7 +8976,7 @@ export class SingleAgentClient {
       agent,
       'get_plan_audit_logs',
       params,
-      undefined,
+      inputHandler,
       options
     );
   }
@@ -8996,6 +9022,15 @@ export class SingleAgentClient {
       );
     }
     return agent;
+  }
+
+  private async advertisesTool(taskName: string, options?: ReadRequestOptions): Promise<boolean> {
+    const context: CapabilityDiscoveryContext = {};
+    const capabilities = await this.getCapabilities({
+      ...options,
+      [CAPABILITY_DISCOVERY_CONTEXT]: context,
+    } as InternalReadRequestOptions);
+    return capabilities.discoveredTools?.includes(taskName) === true || context.toolSchemas?.has(taskName) === true;
   }
 
   /** Accept a committed proposal to create or amend a media buy, or apply a negotiated cancellation. */
@@ -10293,7 +10328,7 @@ export class SingleAgentClient {
     taskName: K,
     params: TaskRequestFor<K>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: TaskOptions & { agent?: K extends 'sync_plans' | 'get_plan_audit_logs' ? AgentConfig : never }
   ): Promise<TaskResult<TaskResponseTypeMap[K]>>;
   async executeTask(
     taskName: string,
@@ -10334,6 +10369,10 @@ export class SingleAgentClient {
         return this.getCreativeDelivery(params as GetCreativeDeliveryRequest, inputHandler, options);
       case 'preview_creative':
         return this.previewCreative(params as CanonicalPreviewCreativeRequest, inputHandler, options);
+      case 'sync_plans':
+        return this.syncPlans(params as MutatingRequestInput<SyncPlansRequest>, inputHandler, options);
+      case 'get_plan_audit_logs':
+        return this.getPlanAuditLogs(params as GetPlanAuditLogsRequest, inputHandler, options);
       case 'get_principal':
         return this.getPrincipal(params as GetPrincipalRequest, inputHandler, options);
       case 'sync_principal':
@@ -10457,6 +10496,15 @@ export class SingleAgentClient {
       const serverVersion = await this.detectServerVersion(detectionOptions);
       detectedServerVersion = serverVersion;
       detectedServerVersionSynthetic = capabilityDiscoveryContext.capabilities?._synthetic;
+      if (
+        (taskName === 'sync_plans' || taskName === 'get_plan_audit_logs') &&
+        capabilityDiscoveryContext.capabilities?.discoveredTools?.includes(taskName) !== true &&
+        capabilityDiscoveryContext.toolSchemas?.has(taskName) !== true
+      ) {
+        throw new ConfigurationError(
+          `No governance agent configured and this agent does not advertise ${taskName}. Pass options.agent or configure governance.campaign.agent.`
+        );
+      }
       const negotiatedRelease = this.negotiateCallRelease(capabilityDiscoveryContext.capabilities, options);
       this.assertToolAvailableAtRelease(taskName, negotiatedRelease, capabilityDiscoveryContext.toolSchemas);
       this.assertRequestSupportedByTargetVersion(
@@ -10925,7 +10973,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ToolTypes.ListTasksResponse>>;
-  /** List locally tracked tasks. Preserved for existing callers. */
+  /** List local tasks only. Pass {} to query the seller's list_tasks tool. */
   listTasks(): Promise<TaskInfo[]>;
   async listTasks(
     params?: ToolTypes.ListTasksRequest,

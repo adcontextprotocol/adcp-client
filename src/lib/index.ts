@@ -1152,11 +1152,9 @@ export type {
   PriceGuidance,
 } from './types/tools.generated';
 
-// Legacy creative identity also appears indirectly in content-standard
-// artifacts, creative-feature manifests, media-buy artifacts, and rights
-// constraints. Keep those raw protocol shapes behind explicit migration
-// names; the primary clients intentionally do not expose these tasks until a
-// lossless canonical projection is defined.
+// Retain migration aliases for wire-level content, artifact, feature, and rights
+// shapes. Their ordinary request/response names and typed client methods are
+// also available for the tools supported by the negotiated AdCP release.
 export type {
   GetMediaBuyArtifactsRequest as LegacyGetMediaBuyArtifactsRequest,
   GetMediaBuyArtifactsResponse as LegacyGetMediaBuyArtifactsResponse,

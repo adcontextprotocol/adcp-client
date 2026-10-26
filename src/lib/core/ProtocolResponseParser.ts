@@ -4,7 +4,7 @@
  */
 
 import type { InputRequest } from './ConversationTypes';
-import { isTaskStatusResponse } from '../utils/task-status-response';
+import { isTaskStatusResponse } from './task-status';
 import { getLatestA2ADataPartFromTask } from '../utils/a2a-artifacts';
 import {
   ADCP_STATUS,
@@ -224,11 +224,18 @@ export class ProtocolResponseParser {
    * Get ADCP status from response
    */
   getStatus(response: any, toolName?: string): ADCPStatus | null {
+    if (toolName === 'get_task_status' && response?.isError === true) return ADCP_STATUS.FAILED;
     // A live A2A pause is the continuation authority. Artifacts may contain
     // earlier partial AdCP statuses (for example `submitted`) and must not
     // mask the Task's current input/auth-required state.
     const a2aTaskState = response?.result?.kind === 'task' ? response.result.status?.state : undefined;
     if (a2aTaskState === ADCP_STATUS.INPUT_REQUIRED || a2aTaskState === ADCP_STATUS.AUTH_REQUIRED) {
+      return a2aTaskState;
+    }
+    if (
+      toolName === 'get_task_status' &&
+      [ADCP_STATUS.FAILED, ADCP_STATUS.CANCELED, ADCP_STATUS.REJECTED].includes(a2aTaskState)
+    ) {
       return a2aTaskState;
     }
 
