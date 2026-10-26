@@ -24,6 +24,7 @@ import { is401Error } from '../errors';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import {
   currentMCPConnectionScopeKey,
+  markMCPConnectionScopeInterrupted,
   isMCPConnectionScopeCacheKeyActive,
   registerMCPConnectionScopeCleanup,
   registerMCPConnectionScopePending,
@@ -545,12 +546,12 @@ function createSharedModernConnection(
         generation === connectionGeneration
       ) {
         modernConnections.set(cacheKey, client);
-        registerMCPConnectionScopeCleanup('modern', cacheKey, async () => {
+        registerMCPConnectionScopeCleanup('modern', cacheKey, async terminateSession => {
           if (modernConnections.get(cacheKey) !== client) return;
           modernConnections.delete(cacheKey);
           legacyConnectionExpiresAt.delete(cacheKey);
           modernDiscoveries.delete(cacheKey);
-          await closeModernClient(client);
+          await closeModernClient(client, terminateSession);
         });
         if (client.getProtocolEra() === 'legacy') {
           legacyConnectionExpiresAt.set(cacheKey, Date.now() + LEGACY_CLASSIFICATION_TTL_MS);
@@ -581,7 +582,10 @@ function createSharedModernConnection(
 async function retireFailedConnection(cacheKey: string, client: Client, error: unknown): Promise<void> {
   // An abort or timeout is scoped to the request that carried it, and that
   // request is cancelled, so the session stays available to other callers.
-  if (isAbortOrTimeoutError(error)) return;
+  if (isAbortOrTimeoutError(error)) {
+    markMCPConnectionScopeInterrupted();
+    return;
+  }
   if (modernConnections.get(cacheKey) === client) {
     modernConnections.delete(cacheKey);
     legacyConnectionExpiresAt.delete(cacheKey);
@@ -801,6 +805,10 @@ export async function probeModernMCPConnection(
     options.allowPrivateIp
   );
   const scoped = shouldReuseMCPConnection(options.fetchFn !== undefined);
+  // A fresh v1 connection below still verifies reachability. Repeating the v2
+  // classification handshake would initialize a second legacy session solely
+  // to discard it, even though this credential/policy already has a verdict.
+  if (isKnownLegacy(cacheKey)) return { connected: false };
   let client: Client | undefined;
   return runWithMCPCallContext(
     callContextFor({ customHeaders, requestTimeoutMs: options.requestTimeoutMs }),

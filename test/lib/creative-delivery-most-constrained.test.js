@@ -54,7 +54,7 @@ function syncLegacy(creative, format_ids) {
 }
 
 describe('creative delivery picks the most constrained legacy ref', () => {
-  test('rendered dimensions survive legacy HTML → canonical markup → sized legacy delivery', () => {
+  test('rendered dimensions survive legacy HTML → canonical markup and select the sized legacy ref', () => {
     const size = { width: 300, height: 250 };
     const original = {
       packages: [
@@ -82,7 +82,8 @@ describe('creative delivery picks the most constrained legacy ref', () => {
     }
     const legacy = syncLegacy(canonical, [bare('display_300x250_html'), bare('display_300x600_html')]);
     assert.equal(legacy.format_id.id, 'display_300x250_html');
-    assert.deepEqual(legacy.assets.html_creative, original.packages[0].creatives[0].assets.html_creative);
+    // The sized ref carries the size; the 3.3 asset dimensions stay off the legacy wire (#3436).
+    assert.deepEqual(legacy.assets.html_creative, { asset_type: 'html', content: '<div>markup</div>' });
     assert.deepEqual(original, before);
   });
 
@@ -93,7 +94,10 @@ describe('creative delivery picks the most constrained legacy ref', () => {
     const refs = [bare('display_300x250_html'), bare('display_300x600_html')];
     const projected = syncLegacy(creative, refs);
     assert.equal(projected.format_id.id, 'display_300x250_html');
-    assert.deepEqual(projected.assets.html_creative.sizes, creative.assets.html_creative.sizes);
+    assert.deepEqual(projected.assets.html_creative, {
+      asset_type: 'html',
+      content: creative.assets.html_creative.markup,
+    });
     creative.assets.html_creative.sizes.push({ width: 300, height: 600 });
     assert.throws(() => syncLegacy(creative, refs), CreativeFormatProjectionError);
     assert.throws(() => syncLegacy(creative, [bare('display_160x600_html')]), CreativeFormatProjectionError);
@@ -417,9 +421,114 @@ describe('inline-markup display_tag creatives round-trip to the HTML-markup lega
     assert.deepEqual(projected.format_id, bare('display_300x250_html'));
     assert.equal(projected.format_kind, undefined);
     assert.deepEqual(projected.assets, {
-      html_creative: { asset_type: 'html', content: MARKUP, width: 300, height: 250 },
+      html_creative: { asset_type: 'html', content: MARKUP },
     });
   });
+
+  test('preserves an asset-only rendered size on a generic legacy HTML ref', () => {
+    const creative = inlineMarkupCreative({ width: 300, height: 250 });
+    const original = structuredClone(creative);
+    const generic = bare('display_html');
+    const projected = projectCreativeForDelivery(creative, { format_ids: [generic] }, 'legacy');
+    assert.deepEqual(projected.format_id, sized('display_html', 300, 250));
+    assert.deepEqual(projected.assets.html_creative, { asset_type: 'html', content: MARKUP });
+    assert.deepEqual(creative, original);
+    assert.deepEqual(projectCreativeForDelivery(creative, { format_ids: [generic] }, 'canonical'), original);
+    assert.deepEqual(generic, bare('display_html'));
+  });
+
+  test('preserves a generic HTML size through sync and media-buy mutation projections', () => {
+    const creative = inlineMarkupCreative({ width: 320, height: 50 });
+    const original = structuredClone(creative);
+    const projected = syncLegacy(creative, [bare('display_html')]);
+    assert.deepEqual(projected.format_id, sized('display_html', 320, 50));
+    assert.deepEqual(projected.assets.html_creative, { asset_type: 'html', content: MARKUP });
+    for (const operation of ['create_media_buy', 'update_media_buy']) {
+      const result = projectMediaBuyCreativesForDelivery(
+        { packages: [{ product_id: 'generic-html', format_ids: [bare('display_html')], creatives: [creative] }] },
+        'legacy',
+        operation
+      ).packages[0].creatives[0];
+      assert.deepEqual(result.format_id, projected.format_id);
+      assert.deepEqual(result.assets, projected.assets);
+    }
+    assert.deepEqual(creative, original);
+  });
+
+  test('does not invent a fixed generic HTML size from responsive or unrelated assets', () => {
+    for (const creative of [
+      inlineMarkupCreative({
+        sizes: [
+          { width: 300, height: 250 },
+          { width: 300, height: 600 },
+        ],
+      }),
+      inlineMarkupCreative(undefined, {
+        assets: {
+          html_creative: inlineMarkupCreative().assets.html_creative,
+          bundle: { asset_type: 'zip', width: 300, height: 250 },
+        },
+      }),
+    ]) {
+      const original = structuredClone(creative);
+      const projected = projectCreativeForDelivery(creative, { format_ids: [bare('display_html')] }, 'legacy');
+      assert.deepEqual(projected.format_id, bare('display_html'));
+      assert.deepEqual(projected.assets.html_creative, { asset_type: 'html', content: MARKUP });
+      assert.deepEqual(creative, original);
+    }
+  });
+
+  test('preserves existing legacy ref dimensions and leaves fixed-size ids bare', () => {
+    const creative = inlineMarkupCreative({ width: 300, height: 250 });
+    for (const ref of [sized('display_html', 300, 250), bare('display_300x250_html')]) {
+      const projected = projectCreativeForDelivery(creative, { format_ids: [ref] }, 'legacy');
+      assert.deepEqual(projected.format_id, ref);
+      assert.deepEqual(projected.assets.html_creative, { asset_type: 'html', content: MARKUP });
+    }
+  });
+
+  for (const [acceptsDimensions, fixedRender] of [
+    [false, false],
+    [false, true],
+    [true, true],
+    [true, false],
+  ]) {
+    test(`custom HTML refs honor their parameter contract (dimensions: ${acceptsDimensions}, fixed render: ${fixedRender})`, () => {
+      const creative = inlineMarkupCreative({ width: 300, height: 250 });
+      const ref = bare('mrec_html', 'https://seller.example');
+      const selector = {
+        format_options: [
+          {
+            format_kind: 'display_tag',
+            params: { supported_delivery_types: ['inline_markup'] },
+            v1_format_ref: [ref],
+          },
+        ],
+      };
+      const definition = {
+        format_id: ref,
+        assets: [{ asset_id: 'html_creative', asset_type: 'html' }],
+        ...(acceptsDimensions && { accepts_parameters: ['dimensions'] }),
+        ...(fixedRender && { renders: [{ dimensions: { width: 300, height: 250 } }] }),
+      };
+      const original = structuredClone({ creative, selector, definition });
+      const projected = projectCreativeForDelivery(
+        creative,
+        selector,
+        'legacy',
+        'creative_delivery',
+        undefined,
+        undefined,
+        [definition]
+      );
+      assert.deepEqual(projected.format_id, {
+        ...ref,
+        ...(acceptsDimensions && !fixedRender && { width: 300, height: 250 }),
+      });
+      assert.deepEqual(projected.assets.html_creative, { asset_type: 'html', content: MARKUP });
+      assert.deepEqual({ creative, selector, definition }, original);
+    });
+  }
 
   test('refuses declared macros on both legacy mutation projections and preserves them on canonical delivery', () => {
     const creative = inlineMarkupCreative({ width: 300, height: 250 });
@@ -464,7 +573,7 @@ describe('inline-markup display_tag creatives round-trip to the HTML-markup lega
     const projected = syncLegacy(creative, sizedHtmlRefs);
     assert.deepEqual(projected.format_id, bare('display_320x50_html'));
     assert.deepEqual(projected.assets, {
-      html_creative: { asset_type: 'html', content: MARKUP, width: 320, height: 50 },
+      html_creative: { asset_type: 'html', content: MARKUP },
     });
   });
 
@@ -480,7 +589,7 @@ describe('inline-markup display_tag creatives round-trip to the HTML-markup lega
     });
     const creative = projected.packages[0].creatives[0];
     assert.deepEqual(creative.format_id, bare('display_300x600_html'));
-    assert.deepEqual(creative.assets.html_creative, { asset_type: 'html', content: MARKUP, width: 300, height: 600 });
+    assert.deepEqual(creative.assets.html_creative, { asset_type: 'html', content: MARKUP });
   });
 
   test('prefers the inline-markup HTML ref over a tag-URL display_js ref of the same kind', () => {
