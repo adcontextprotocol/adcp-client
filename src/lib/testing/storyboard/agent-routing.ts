@@ -47,7 +47,7 @@ import { redactOAuthUrlForOutput, redactOAuthUrlsInText } from './oauth-metadata
 import { selectProbeTask } from './test-kit';
 import type { TestClient } from '../client';
 import { getOrCreateClient, getOrDiscoverStoryboardProfile } from '../client';
-import type { AgentProfile } from '../types';
+import type { AgentProfile, TestStepResult } from '../types';
 import { TASK_FEATURE_MAP, type AdcpProtocol } from '../../utils/capabilities';
 import type { AgentEntry, Storyboard, StoryboardRunOptions, StoryboardStep } from './types';
 import { applyNativeA2AComplianceTransportOptions } from './native-a2a-compliance';
@@ -202,6 +202,8 @@ export interface AgentRoutingContext {
   clients: Map<string, TestClient>;
   /** Per-agent discovered profile (`get_adcp_capabilities` result). */
   profiles: Map<string, AgentProfile>;
+  /** Actual discovery exchanges, retained separately from compact rollup steps. */
+  discoverySteps?: ReadonlyMap<string, TestStepResult>;
   /** Protocol → keys of agents that claim it. */
   protocolIndex: Map<AdcpProtocol, string[]>;
   /** Resolved (key → URL) for echo on the storyboard result. */
@@ -233,7 +235,8 @@ export class DiscoveryFailure extends Error {
     message: string,
     public readonly agentKey: string,
     public readonly url: string,
-    public readonly underlying: string
+    public readonly underlying: string,
+    public readonly step?: TestStepResult
   ) {
     super(message);
     this.name = 'DiscoveryFailure';
@@ -272,6 +275,7 @@ export async function discoverAgentRouting(options: StoryboardRunOptions): Promi
 
   // Parallel discovery — one tenant's slowness does not block another.
   const profiles = new Map<string, AgentProfile>();
+  const discoverySteps = new Map<string, TestStepResult>();
   const discoveryFailures: DiscoveryFailure[] = [];
   if (options._routingProfiles) {
     for (const [key] of entries) {
@@ -284,6 +288,7 @@ export async function discoverAgentRouting(options: StoryboardRunOptions): Promi
     return {
       clients,
       profiles,
+      discoverySteps,
       protocolIndex: buildProtocolIndex(profiles),
       agentMap,
       discoveryFailures,
@@ -294,8 +299,8 @@ export async function discoverAgentRouting(options: StoryboardRunOptions): Promi
     entries.map(async ([key, entry]) => {
       const perAgentOptions = buildAgentOptions(entry, options);
       try {
-        const { profile, step } = await getOrDiscoverStoryboardProfile(clients.get(key)!, perAgentOptions);
-        return { key, profile, step };
+        const { profile, step, evidence } = await getOrDiscoverStoryboardProfile(clients.get(key)!, perAgentOptions);
+        return { key, profile, step, evidence };
       } catch (err) {
         return {
           key,
@@ -303,6 +308,7 @@ export async function discoverAgentRouting(options: StoryboardRunOptions): Promi
           step: {
             step: 'Discover agent capabilities',
             passed: false,
+            duration_ms: 0,
             error: scrubAuthSecrets((err as Error)?.message || String(err)),
           },
         };
@@ -310,6 +316,7 @@ export async function discoverAgentRouting(options: StoryboardRunOptions): Promi
     })
   );
   for (const r of discoveryResults) {
+    discoverySteps.set(r.key, 'evidence' in r && r.evidence ? r.evidence : r.step);
     if (!r.profile || r.step.passed === false) {
       // Bound the attacker-influenced upstream string. A malicious agent
       // could return an arbitrarily large error body during the discovery
@@ -329,7 +336,7 @@ export async function discoverAgentRouting(options: StoryboardRunOptions): Promi
         : `${baseMessage}\n\nIf this is hello-cluster / exploratory CI and you want unrelated storyboards to complete despite this failure, ` +
           `set \`StoryboardRunOptions.discovery_resilient: true\`. Do NOT set it in production — a topology with a broken tenant ` +
           `is a hard misconfiguration there.`;
-      const failure = new DiscoveryFailure(message, r.key, agents[r.key]!.url, detail);
+      const failure = new DiscoveryFailure(message, r.key, agents[r.key]!.url, detail, { ...r.step, error: detail });
       if (!resilient) throw failure;
       discoveryFailures.push(failure);
       continue;
@@ -340,6 +347,7 @@ export async function discoverAgentRouting(options: StoryboardRunOptions): Promi
   return {
     clients,
     profiles,
+    discoverySteps,
     protocolIndex: buildProtocolIndex(profiles),
     agentMap,
     discoveryFailures,

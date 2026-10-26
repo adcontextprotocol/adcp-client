@@ -424,6 +424,68 @@ describe('inline-markup display_tag creatives round-trip to the HTML-markup lega
     });
   });
 
+  test('preserves an asset-only rendered size on a generic legacy HTML ref', () => {
+    const creative = inlineMarkupCreative({ width: 300, height: 250 });
+    const original = structuredClone(creative);
+    const generic = bare('display_html');
+    const projected = projectCreativeForDelivery(creative, { format_ids: [generic] }, 'legacy');
+    assert.deepEqual(projected.format_id, sized('display_html', 300, 250));
+    assert.deepEqual(projected.assets.html_creative, { asset_type: 'html', content: MARKUP });
+    assert.deepEqual(creative, original);
+    assert.deepEqual(projectCreativeForDelivery(creative, { format_ids: [generic] }, 'canonical'), original);
+    assert.deepEqual(generic, bare('display_html'));
+  });
+
+  test('preserves a generic HTML size through sync and media-buy mutation projections', () => {
+    const creative = inlineMarkupCreative({ width: 320, height: 50 });
+    const original = structuredClone(creative);
+    const projected = syncLegacy(creative, [bare('display_html')]);
+    assert.deepEqual(projected.format_id, sized('display_html', 320, 50));
+    assert.deepEqual(projected.assets.html_creative, { asset_type: 'html', content: MARKUP });
+    for (const operation of ['create_media_buy', 'update_media_buy']) {
+      const result = projectMediaBuyCreativesForDelivery(
+        { packages: [{ product_id: 'generic-html', format_ids: [bare('display_html')], creatives: [creative] }] },
+        'legacy',
+        operation
+      ).packages[0].creatives[0];
+      assert.deepEqual(result.format_id, projected.format_id);
+      assert.deepEqual(result.assets, projected.assets);
+    }
+    assert.deepEqual(creative, original);
+  });
+
+  test('does not invent a fixed generic HTML size from responsive or unrelated assets', () => {
+    for (const creative of [
+      inlineMarkupCreative({
+        sizes: [
+          { width: 300, height: 250 },
+          { width: 300, height: 600 },
+        ],
+      }),
+      inlineMarkupCreative(undefined, {
+        assets: {
+          html_creative: inlineMarkupCreative().assets.html_creative,
+          bundle: { asset_type: 'zip', width: 300, height: 250 },
+        },
+      }),
+    ]) {
+      const original = structuredClone(creative);
+      const projected = projectCreativeForDelivery(creative, { format_ids: [bare('display_html')] }, 'legacy');
+      assert.deepEqual(projected.format_id, bare('display_html'));
+      assert.deepEqual(projected.assets.html_creative, { asset_type: 'html', content: MARKUP });
+      assert.deepEqual(creative, original);
+    }
+  });
+
+  test('preserves existing legacy ref dimensions and leaves fixed-size ids bare', () => {
+    const creative = inlineMarkupCreative({ width: 300, height: 250 });
+    for (const ref of [sized('display_html', 300, 250), bare('display_300x250_html')]) {
+      const projected = projectCreativeForDelivery(creative, { format_ids: [ref] }, 'legacy');
+      assert.deepEqual(projected.format_id, ref);
+      assert.deepEqual(projected.assets.html_creative, { asset_type: 'html', content: MARKUP });
+    }
+  });
+
   test('refuses declared macros on both legacy mutation projections and preserves them on canonical delivery', () => {
     const creative = inlineMarkupCreative({ width: 300, height: 250 });
     creative.assets.html_creative.markup = '<div>%%TOKEN%%</div>';

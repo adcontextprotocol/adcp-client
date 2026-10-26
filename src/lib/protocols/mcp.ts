@@ -35,6 +35,7 @@ import {
 import { closeModernMCPConnections, tryCallModernMCPTool } from './mcp-modern';
 import {
   currentMCPConnectionScopeKey,
+  markMCPConnectionScopeInterrupted,
   isMCPConnectionScopeCacheKeyActive,
   registerMCPConnectionScopeCleanup,
   registerMCPConnectionScopePending,
@@ -548,7 +549,10 @@ async function withCachedOAuthConnectionImpl<T>(
     // An abort or timeout is scoped to the request that carried it (its HTTP
     // request is cancelled through the call context), so the shared session
     // stays available to other callers.
-    if (isAbortOrTimeoutError(error)) throw error;
+    if (isAbortOrTimeoutError(error)) {
+      markMCPConnectionScopeInterrupted();
+      throw error;
+    }
 
     if (is401Error(error)) {
       options.debugLogs.push({
@@ -660,7 +664,10 @@ async function withCachedConnectionImpl<T>(
     // An abort or timeout is scoped to the request that carried it: its HTTP
     // request is cancelled through the call context, and the shared session
     // stays available to other callers.
-    if (isAbortOrTimeoutError(error)) throw error;
+    if (isAbortOrTimeoutError(error)) {
+      markMCPConnectionScopeInterrupted();
+      throw error;
+    }
 
     // Auth errors won't be fixed by reconnecting — fail fast
     if (is401Error(error)) {

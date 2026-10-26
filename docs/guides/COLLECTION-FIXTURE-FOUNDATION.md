@@ -563,8 +563,12 @@ guarantees:
   earlier calls; their evidence goes only to the private audit sink.
 
   After authorization and capability discovery, preparation evaluates the same
-  root `requires_capability`, `requires_all_capabilities`, and `required_tools`
-  applicability gates as execution. `required_tools` accepts any listed tool.
+  root `requires_capability`, `requires_all_capabilities`, `required_any_of_tools`,
+  and `required_tools` applicability gates as execution. `required_tools` accepts
+  any listed tool; every `required_any_of_tools` family must have a match.
+  Routed preparation unions advertised tools across routes. Root capability
+  predicates belong to `default_agent` when set; otherwise each selected step
+  route is evaluated separately, and preparation skips only when all decline.
   Unmet gates return `status: 'unsupported', reason: 'not_applicable'` with a
   discovery phase before any catalog read or controller seeding. Hosts can pass
   the preparation authorizer directly without doing their own discovery first.

@@ -5615,8 +5615,11 @@ export class SingleAgentClient {
 
   /** One task owns discovery and dispatch sessions unless the caller already owns reuse. */
   private withConnectionScope<T>(options: ReadRequestOptions | undefined, run: () => Promise<T>): Promise<T> {
-    return withMCPConnectionPolicy(normalizeTransportOptions(options?.transport ?? this.config.transport), () =>
-      shouldReuseMCPConnection() ? run() : withMCPConnectionScope(run, { signal: options?.signal })
+    const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
+    return withMCPConnectionPolicy(transport, () =>
+      shouldReuseMCPConnection(transport?.trustedFetchFn !== undefined)
+        ? run()
+        : withMCPConnectionScope(run, { signal: options?.signal, preserveOnInterruption: true })
     );
   }
 

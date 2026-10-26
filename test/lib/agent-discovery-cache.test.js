@@ -93,7 +93,7 @@ before(async () => {
       };
     } else if (message.method === 'tools/call' && message.params?.name === 'get_adcp_capabilities') {
       state.capabilityCalls++;
-      if (path.startsWith('/cancel-call') && state.capabilityCalls === 2) {
+      if ((path.startsWith('/cancel-call') || path.startsWith('/timeout-call')) && state.capabilityCalls === 2) {
         await new Promise(resolve => setTimeout(resolve, 200));
       }
       result = {
@@ -101,6 +101,9 @@ before(async () => {
         structuredContent: CAPABILITIES_PAYLOAD,
         isError: false,
       };
+    } else if (message.method === 'tools/call' && message.params?.name === 'get_products') {
+      const data = { status: 'completed', products: [], cache_scope: 'account' };
+      result = { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data, isError: false };
     } else {
       result = { content: [{ type: 'text', text: '{}' }], isError: false };
     }
@@ -195,6 +198,89 @@ test('an aborted implicit client scope closes locally without terminating seller
   if (outcome.error) assert.match(outcome.error.message, /abort|cancel|timeout/i);
   else assert.equal(outcome.result.success, false);
   assert.equal(state.deletes, deletesBeforeAbort, 'cancellation must not send a session DELETE');
+});
+
+for (const callerOwnedScope of [false, true]) {
+  test(`request timeout preserves seller work in an implicit scope (caller-owned scope: ${callerOwnedScope})`, async () => {
+    const { withMCPConnectionScope } = require('../../dist/lib/protocols/mcp-scope');
+    const uri = freshAgentUri('/timeout-call');
+    const state = tally(pathOf(uri));
+    const client = makeClient(uri, undefined, {}, { adcpVersion: '3.2.1', wireAdcpVersion: '3.2' });
+    await client.getCapabilities();
+    const deletesBeforeTimeout = state.deletes;
+    const call = async () => {
+      await assert.rejects(
+        client.getAdcpCapabilities({}, undefined, {
+          transport: { allowPrivateIp: true, requestTimeoutMs: 50 },
+        }),
+        error => error.code === -32001 || error.code === 'REQUEST_TIMEOUT'
+      );
+      assert.equal(state.deletes, deletesBeforeTimeout, 'a timed-out request must not immediately DELETE its session');
+    };
+    if (callerOwnedScope) await withMCPConnectionScope(call);
+    else await call();
+    assert.equal(
+      state.deletes,
+      deletesBeforeTimeout + (callerOwnedScope ? 1 : 0),
+      'a caller-owned scope keeps its normal final session termination'
+    );
+  });
+}
+
+test('an injected fetch shares setup within one operation with and without a principal partition', async () => {
+  for (const connectionPartition of [undefined, 'buyer-a']) {
+    const uri = freshAgentUri('/injected-fetch');
+    const client = makeClient(
+      uri,
+      undefined,
+      {},
+      {
+        transport: {
+          allowPrivateIp: true,
+          trustedFetchFn: (input, init) => fetch(input, init),
+          ...(connectionPartition && { connectionPartition }),
+        },
+      }
+    );
+    assert.equal((await client.getCapabilities()).version, 'v3');
+    const state = tally(pathOf(uri));
+    assert.equal(state.initialize, 2, 'partitioned injected fetches still share discovery and dispatch setup');
+    assert.equal(state.lists, 1);
+    assert.equal(state.capabilityCalls, 1);
+  }
+});
+
+test('a timeout swallowed by an isolated status handler still preserves seller work', async () => {
+  const uri = freshAgentUri('/timeout-call');
+  const state = tally(pathOf(uri));
+  let handlerError;
+  const client = makeClient(
+    uri,
+    undefined,
+    {},
+    {
+      adcpVersion: '3.2.1',
+      wireAdcpVersion: '3.2',
+      isolateStatusHandlerErrors: true,
+      onStatusHandlerError: error => {
+        handlerError = error;
+      },
+      handlers: {
+        onGetProductsStatusChange: async () => {
+          await client.getAdcpCapabilities({}, undefined, {
+            transport: { allowPrivateIp: true, requestTimeoutMs: 50 },
+          });
+        },
+      },
+    }
+  );
+  await client.getCapabilities();
+  const deletesBeforeCall = state.deletes;
+  const result = await client.getProducts({ buying_mode: 'brief', brief: 'Find available inventory' });
+  assert.equal(result.success, true, result.error);
+  assert.ok(handlerError, 'the post-completion handler timed out');
+  assert.equal(handlerError.code, -32001);
+  assert.equal(state.deletes, deletesBeforeCall, 'handling the timeout must not allow DELETE on scope exit');
 });
 
 describe('shared discovery cache', () => {

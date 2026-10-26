@@ -3550,9 +3550,10 @@ async function prepareStoryboardFixturesBody(
   // agent, and resolving the client from run options sent the catalog
   // request under the RUN bearer while the route declared its own — the
   // credential the seller actually saw was not the configured one.
-  const preparationOptions = resolvePreparationRouteOptions(agentUrls[0]!, options);
+  const runOptions = options;
+  const preparationOptions = resolvePreparationRouteOptions(agentUrls[0]!, runOptions);
   const resolution = getOrCreateClientResolution(agentUrls[0]!, preparationOptions);
-  const client = resolution.client;
+  let client = resolution.client;
   // The route projection is a DISPATCH concern. Binding it would fold the
   // route credential in twice here (once lifted to `auth`, once under
   // `agents`) and only once in the run, so an identically-routed reuse
@@ -3575,6 +3576,53 @@ async function prepareStoryboardFixturesBody(
   try {
     let profile = options._profile;
     let discoveryStep: TestStepResult | undefined;
+    let routingContext: AgentRoutingContext | undefined;
+    const failDiscovery = (step: TestStepResult, failedProfile?: AgentProfile) => {
+      const failed = buildDiscoveryFailedResult(agentUrls, storyboard, step, failedProfile);
+      return finishPreparation(
+        { phase: failed.phases[0]!, allPassed: false, passedCount: 0, failedCount: 1 },
+        { status: 'failed', detail: step.error ?? 'agent discovery failed before fixture preparation' }
+      );
+    };
+    // An ungated preparation only owns its established first-route fixture
+    // work. Discover the rest of a topology only when applicability needs it.
+    if (
+      runOptions.agents &&
+      (storyboardCapabilityPredicates(storyboard).length > 0 ||
+        storyboard.required_tools?.length ||
+        storyboard.required_any_of_tools?.length)
+    ) {
+      try {
+        validateAgentsMap(agentUrl, storyboard, runOptions);
+        // A preparation cannot infer absence from a failed route, even when
+        // exploratory execution opted into resilient partial discovery.
+        routingContext = await buildRoutingContext(storyboard, { ...runOptions, discovery_resilient: false });
+      } catch (error) {
+        const failedStep = error instanceof DiscoveryFailure ? error.step : undefined;
+        return await failDiscovery({
+          ...failedStep,
+          step: failedStep?.step ?? 'Discover preparation topology',
+          passed: false,
+          duration_ms: failedStep?.duration_ms ?? 0,
+          error: redactOAuthUrlsInText(error instanceof Error ? error.message : String(error)),
+        });
+      }
+      for (const routeProfile of routingContext.profiles.values()) {
+        const failure = describeProfileDiscoveryFailure(
+          routeProfile,
+          runOptions._requireValidCapabilityEvidence === true,
+          runOptions._allowCapabilityDiagnostic === true
+        );
+        if (failure) return await failDiscovery(failure, routeProfile);
+      }
+      const firstKey = Object.keys(runOptions.agents)[0]!;
+      profile = routingContext.profiles.get(firstKey)!;
+      client = routingContext.clients.get(firstKey)!;
+      discoveryStep = routingContext.discoverySteps?.get(firstKey);
+      // Seeding still belongs to the first route. Its own options must not
+      // inherit the cross-route applicability union or a caller's profile.
+      options = { ...options, _profile: profile, agentTools: normalizeAgentToolNames(profile.tools) };
+    }
     const suppliedFailure =
       profile &&
       describeProfileDiscoveryFailure(
@@ -3612,41 +3660,99 @@ async function prepareStoryboardFixturesBody(
       };
     }
     if (!scopeStillMatches()) return await refusePreparation(driftRefusal);
+    let capabilityUnmet: string | null;
+    const applicabilityTools = routingContext
+      ? [...new Set([...routingContext.profiles.values()].flatMap(p => normalizeAgentToolNames(p.tools) ?? []))]
+      : options.agentTools;
+    try {
+      if (routingContext && runOptions.agents) {
+        const dispatch = createRoutingDispatcher(routingContext, runOptions, runOptions.agents);
+        const defaultProfile = runOptions.default_agent
+          ? routingContext.profiles.get(runOptions.default_agent)
+          : undefined;
+        const rootDetails = storyboard.phases.flatMap(phase =>
+          phase.steps
+            .filter(step => step.task !== VALIDATION_ONLY_TASK)
+            .map(step => {
+              // Resolve every authored route before accepting an applicability
+              // verdict: a broken route is a failure, never capability absence.
+              const selected = dispatch.nextFor(step);
+              const owner = runOptions.default_agent ? defaultProfile : selected.profile;
+              return evaluateStoryboardCapabilityGates(
+                storyboard,
+                owner,
+                normalizeAgentToolNames(owner?.tools),
+                runOptions.adcpVersion
+              );
+            })
+        );
+        capabilityUnmet =
+          rootDetails.length > 0 && rootDetails.every(detail => detail !== null) ? rootDetails[0]! : null;
+      } else {
+        capabilityUnmet = evaluateStoryboardCapabilityGates(
+          storyboard,
+          profile,
+          options.agentTools,
+          options.adcpVersion
+        );
+      }
+    } catch (error) {
+      return await failDiscovery({
+        step: 'Resolve preparation routes',
+        passed: false,
+        duration_ms: 0,
+        error: redactOAuthUrlsInText(error instanceof Error ? error.message : String(error)),
+      });
+    }
+    const missingFamily =
+      applicabilityTools &&
+      storyboard.required_any_of_tools?.find(family => !hasAnyRequiredTool(family.tools, applicabilityTools));
     const unmetDetail =
-      evaluateStoryboardCapabilityGates(storyboard, profile, options.agentTools, options.adcpVersion) ??
+      capabilityUnmet ??
+      (missingFamily
+        ? `missing_required_tool_family: needs ${missingFamily.tools.join(' or ')}` +
+          (missingFamily.rationale ? ` (${missingFamily.rationale})` : '')
+        : null) ??
       (storyboard.required_tools?.length &&
-      options.agentTools &&
-      !hasAnyRequiredTool(storyboard.required_tools, options.agentTools)
+      applicabilityTools &&
+      !hasAnyRequiredTool(storyboard.required_tools, applicabilityTools)
         ? `agent does not advertise any of [${storyboard.required_tools.join(', ')}]`
         : null);
     if (unmetDetail !== null) {
-      const duration = discoveryStep?.duration_ms ?? 0;
+      const observations =
+        routingContext && runOptions.agents
+          ? Object.entries(runOptions.agents).map(([key, entry]) => ({
+              key,
+              url: entry.url,
+              step: routingContext!.discoverySteps?.get(key),
+            }))
+          : [{ key: 'discovery', url: agentUrls[0]!, step: discoveryStep }];
+      const steps: StoryboardStepResult[] = observations.map(({ key, url, step }) => ({
+        storyboard_id: storyboard.id,
+        phase_id: 'discovery',
+        step_id: key,
+        title: step ? 'Agent capability discovery' : 'Supplied agent capability profile',
+        task: step?.task ?? '',
+        passed: true,
+        duration_ms: step?.duration_ms ?? 0,
+        validations: [],
+        context: {},
+        ...(routingContext && { agent_url: redactOAuthUrlForOutput(url) }),
+        extraction: step?.extraction ?? { path: 'none' },
+        ...(step?.request && { request: step.request }),
+        ...(step?.response_record && { response_record: step.response_record }),
+      }));
       return await finishPreparation(
         {
           phase: {
             phase_id: 'discovery',
             phase_title: 'Agent capability discovery',
             passed: true,
-            duration_ms: duration,
-            steps: [
-              {
-                storyboard_id: storyboard.id,
-                phase_id: 'discovery',
-                step_id: 'discovery',
-                title: discoveryStep ? 'Agent capability discovery' : 'Supplied agent capability profile',
-                task: discoveryStep?.task ?? '',
-                passed: true,
-                duration_ms: duration,
-                validations: [],
-                context: {},
-                extraction: discoveryStep?.extraction ?? { path: 'none' },
-                ...(discoveryStep?.request && { request: discoveryStep.request }),
-                ...(discoveryStep?.response_record && { response_record: discoveryStep.response_record }),
-              },
-            ],
+            duration_ms: steps.reduce((total, step) => total + step.duration_ms, 0),
+            steps,
           },
           allPassed: true,
-          passedCount: 1,
+          passedCount: steps.length,
           failedCount: 0,
         },
         { status: 'unsupported', reason: 'not_applicable', detail: unmetDetail }

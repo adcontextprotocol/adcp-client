@@ -121,7 +121,9 @@ High-level `SingleAgentClient` task and discovery methods create a scope for
 one operation when the caller has not configured reuse. Endpoint discovery,
 `tools/list`, capability preflight, and dispatch share that operation's sessions,
 which close when it finishes. Caller-owned scopes and explicit process reuse
-keep their existing lifetimes. A cold legacy endpoint still needs one v2 era
+keep their existing lifetimes. A supplied `trustedFetchFn` shares sessions
+within this operation scope, including when a principal partition is set;
+it never enables process-wide session reuse. A cold legacy endpoint still needs one v2 era
 classification handshake and one v1 Tasks-capable session; the credential- and
 policy-scoped classification is cached for five minutes, so later operations
 can go straight to their v1 session. Different credentials remain isolated.

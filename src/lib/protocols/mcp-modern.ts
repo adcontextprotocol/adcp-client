@@ -24,6 +24,7 @@ import { is401Error } from '../errors';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import {
   currentMCPConnectionScopeKey,
+  markMCPConnectionScopeInterrupted,
   isMCPConnectionScopeCacheKeyActive,
   registerMCPConnectionScopeCleanup,
   registerMCPConnectionScopePending,
@@ -581,7 +582,10 @@ function createSharedModernConnection(
 async function retireFailedConnection(cacheKey: string, client: Client, error: unknown): Promise<void> {
   // An abort or timeout is scoped to the request that carried it, and that
   // request is cancelled, so the session stays available to other callers.
-  if (isAbortOrTimeoutError(error)) return;
+  if (isAbortOrTimeoutError(error)) {
+    markMCPConnectionScopeInterrupted();
+    return;
+  }
   if (modernConnections.get(cacheKey) === client) {
     modernConnections.delete(cacheKey);
     legacyConnectionExpiresAt.delete(cacheKey);
