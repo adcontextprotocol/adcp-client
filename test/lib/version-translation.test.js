@@ -604,6 +604,91 @@ describe('SingleAgentClient against an older seller', () => {
   });
 });
 
+describe('sized inline-markup creatives to a seller before AdCP 3.3 (adcp-client#3436)', () => {
+  const AAO = 'https://creative.adcontextprotocol.org/';
+  const MARKUP =
+    '<ins class="acme" style="width:300px;height:250px"><script src="https://ads.acme.example/t.js"></script></ins>';
+  const formatIds = ['display_300x250_html', 'display_300x600_html'].map(id => ({ agent_url: AAO, id }));
+  const creative = () => ({
+    creative_id: 'cr_markup',
+    name: 'Markup',
+    format_kind: 'display_tag',
+    assets: {
+      html_creative: {
+        asset_type: 'display_tag',
+        delivery_type: 'inline_markup',
+        markup_type: 'standard',
+        markup: MARKUP,
+        width: 300,
+        height: 250,
+      },
+    },
+  });
+  const legacyCreative = {
+    creative_id: 'cr_markup',
+    name: 'Markup',
+    format_id: { agent_url: AAO, id: 'display_300x250_html' },
+    assets: { html_creative: { asset_type: 'html', content: MARKUP } },
+  };
+
+  for (const [label, sellerCaps, wire] of [
+    ['3.0', caps(['3.0']), '3.0'],
+    ['3.1 without canonical creatives', caps(['3.0', '3.1'], { features: { canonicalCreatives: false } }), '3.1'],
+  ]) {
+    test(`${label}: the size selects the legacy ref and is not sent as 3.3 asset fields`, async t => {
+      const calls = captureDispatch(t, { structuredContent: { adcp_version: wire, creatives: [] } });
+      const client = makeClient(sellerCaps, { adcpVersion: '3.3.0-beta.0' });
+
+      const synced = await client.syncCreatives(
+        { account: ACCOUNT, idempotency_key: 'markup-sync-000001', creatives: [creative()] },
+        undefined,
+        { creativeFormatProjection: { selectorContainers: [{ format_ids: formatIds }] } }
+      );
+      assert.equal(synced.success, true, synced.error);
+      await client.createMediaBuy(
+        mediaBuyRequest({
+          bidding: undefined,
+          name: undefined,
+          packages: [
+            {
+              product_id: 'prod_html',
+              pricing_option_id: 'po_1',
+              budget: 1000,
+              format_ids: formatIds,
+              creatives: [creative()],
+            },
+          ],
+        })
+      );
+
+      assert.deepEqual(
+        calls.map(call => [call.taskName, call.options.wireAdcpVersion]),
+        [
+          ['sync_creatives', wire],
+          ['create_media_buy', wire],
+        ]
+      );
+      assert.deepEqual(calls[0].params.creatives, [legacyCreative]);
+      assert.deepEqual(calls[1].params.packages[0].creatives, [legacyCreative]);
+      const drops = (synced.debug_logs ?? []).filter(entry => entry.type === 'version_downgrade_fields_dropped');
+      assert.deepEqual(drops, [], 'nothing left for the version translation to remove');
+    });
+  }
+
+  test('a 3.3 seller receives the canonical display_tag with its rendered size', async t => {
+    const calls = captureDispatch(t, { structuredContent: { creatives: [] } });
+    const client = makeClient(caps(['3.2', '3.3.0-beta.0']), { adcpVersion: '3.3.0-beta.0' });
+    await client.syncCreatives(
+      { account: ACCOUNT, idempotency_key: 'markup-sync-000002', creatives: [creative()] },
+      undefined,
+      { creativeFormatProjection: { selectorContainers: [{ format_ids: formatIds }] } }
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].options.wireAdcpVersion, undefined);
+    assert.deepEqual(calls[0].params.creatives, [creative()]);
+  });
+});
+
 describe("account keys under accountIdentityDowngrade: 'reduce'", () => {
   const CAD = { brand: { domain: 'nike.com', countries: ['CA'] }, operator: 'agency.example', currency: 'CAD' };
   const USD = { brand: { domain: 'nike.com', countries: ['US'] }, operator: 'agency.example', currency: 'USD' };

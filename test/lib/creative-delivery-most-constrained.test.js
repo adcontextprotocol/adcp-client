@@ -54,7 +54,7 @@ function syncLegacy(creative, format_ids) {
 }
 
 describe('creative delivery picks the most constrained legacy ref', () => {
-  test('rendered dimensions survive legacy HTML → canonical markup → sized legacy delivery', () => {
+  test('rendered dimensions survive legacy HTML → canonical markup and select the sized legacy ref', () => {
     const size = { width: 300, height: 250 };
     const original = {
       packages: [
@@ -82,7 +82,8 @@ describe('creative delivery picks the most constrained legacy ref', () => {
     }
     const legacy = syncLegacy(canonical, [bare('display_300x250_html'), bare('display_300x600_html')]);
     assert.equal(legacy.format_id.id, 'display_300x250_html');
-    assert.deepEqual(legacy.assets.html_creative, original.packages[0].creatives[0].assets.html_creative);
+    // The sized ref carries the size; the 3.3 asset dimensions stay off the legacy wire (#3436).
+    assert.deepEqual(legacy.assets.html_creative, { asset_type: 'html', content: '<div>markup</div>' });
     assert.deepEqual(original, before);
   });
 
@@ -93,7 +94,7 @@ describe('creative delivery picks the most constrained legacy ref', () => {
     const refs = [bare('display_300x250_html'), bare('display_300x600_html')];
     const projected = syncLegacy(creative, refs);
     assert.equal(projected.format_id.id, 'display_300x250_html');
-    assert.deepEqual(projected.assets.html_creative.sizes, creative.assets.html_creative.sizes);
+    assert.equal(projected.assets.html_creative.sizes, undefined);
     creative.assets.html_creative.sizes.push({ width: 300, height: 600 });
     assert.throws(() => syncLegacy(creative, refs), CreativeFormatProjectionError);
     assert.throws(() => syncLegacy(creative, [bare('display_160x600_html')]), CreativeFormatProjectionError);
@@ -417,7 +418,7 @@ describe('inline-markup display_tag creatives round-trip to the HTML-markup lega
     assert.deepEqual(projected.format_id, bare('display_300x250_html'));
     assert.equal(projected.format_kind, undefined);
     assert.deepEqual(projected.assets, {
-      html_creative: { asset_type: 'html', content: MARKUP, width: 300, height: 250 },
+      html_creative: { asset_type: 'html', content: MARKUP },
     });
   });
 
@@ -464,7 +465,7 @@ describe('inline-markup display_tag creatives round-trip to the HTML-markup lega
     const projected = syncLegacy(creative, sizedHtmlRefs);
     assert.deepEqual(projected.format_id, bare('display_320x50_html'));
     assert.deepEqual(projected.assets, {
-      html_creative: { asset_type: 'html', content: MARKUP, width: 320, height: 50 },
+      html_creative: { asset_type: 'html', content: MARKUP },
     });
   });
 
@@ -480,7 +481,7 @@ describe('inline-markup display_tag creatives round-trip to the HTML-markup lega
     });
     const creative = projected.packages[0].creatives[0];
     assert.deepEqual(creative.format_id, bare('display_300x600_html'));
-    assert.deepEqual(creative.assets.html_creative, { asset_type: 'html', content: MARKUP, width: 300, height: 600 });
+    assert.deepEqual(creative.assets.html_creative, { asset_type: 'html', content: MARKUP });
   });
 
   test('prefers the inline-markup HTML ref over a tag-URL display_js ref of the same kind', () => {
