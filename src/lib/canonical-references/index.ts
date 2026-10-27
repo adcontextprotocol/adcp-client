@@ -989,6 +989,7 @@ function detectDraft(
 
 function getDraft07Ajv(): Ajv {
   const ajv = new Ajv({
+    inlineRefs: false,
     strict: false,
     allErrors: true,
     validateSchema: true,
@@ -1001,6 +1002,7 @@ function getDraft07Ajv(): Ajv {
 
 function getDraft2020Ajv(): InstanceType<typeof Ajv2020> {
   const ajv = new Ajv2020({
+    inlineRefs: false,
     strict: false,
     allErrors: true,
     validateSchema: true,

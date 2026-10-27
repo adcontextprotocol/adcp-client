@@ -372,34 +372,22 @@ describe('schema-loader per-version state', () => {
     );
   });
 
-  test('ensureCoreLoaded narrowing keeps v3 bundled validators intact when canonical ids overlap', () => {
-    // Regression guard for the v2.5-schemas branch: when ensureCoreLoaded was
-    // narrowed from "skip all fileIndex entries" to "skip only response tool
-    // files" so v2.5 flat-tree fragments register, v3's bundled-path
-    // validators must still resolve through getValidator unchanged. Current
-    // protocol bundles deliberately give bundled and modular documents the
-    // same canonical $id, so preloading the modular tree must not shadow the
-    // selected, fully resolved bundle. Targets the currently-shipped bundle
-    // (ADCP_VERSION); on 3.0.x it pinned '3.0.1'.
+  test('runtime validators prefer modular roots without changing public bundled document selection', () => {
     _resetValidationLoader(ADCP_VERSION);
-    const v = getValidator('create_media_buy', 'request', ADCP_VERSION);
-    assert.ok(v, 'v3 create_media_buy::request must compile after narrowing');
-    // The selected bundled document has the canonical id plus the bundle-only
-    // marker and definitions. The modular document shares the id, so the id
-    // alone cannot prove which document AJV compiled.
-    const schema = v.schema;
-    assert.strictEqual(
-      schema.$id,
+    const validator = getValidator('create_media_buy', 'request', ADCP_VERSION);
+    assert.ok(validator);
+    assert.equal(
+      validator.schema.$id,
       `https://adcontextprotocol.org/schemas/${ADCP_VERSION}/media-buy/create-media-buy-request.json`
     );
-    assert.ok(
-      schema._bundled && typeof schema._bundled === 'object',
-      'selected tool schema must retain the bundle marker'
+    assert.equal(
+      validator.schema._bundled,
+      undefined,
+      'compile the authored ref graph rather than a dereferenced giant'
     );
-    assert.ok(
-      schema.$defs && Object.keys(schema.$defs).length > 0,
-      'selected tool schema must retain bundled definitions'
-    );
+    const { getToolSchemaDocument } = require('../../dist/lib/validation/schema-loader.js');
+    const document = getToolSchemaDocument('create_media_buy', 'request', ADCP_VERSION);
+    assert.ok(document.schema._bundled, 'public schema documents retain their bundled annotations');
   });
 
   test('canonical bundled response ids preserve response-root relaxation', () => {

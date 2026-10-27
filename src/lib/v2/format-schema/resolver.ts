@@ -328,7 +328,7 @@ function validateJsonSchema(
     };
   }
 
-  const ajv = new Ajv2019({ strict: false, allErrors: true, validateSchema: true });
+  const ajv = new Ajv2019({ inlineRefs: false, strict: false, allErrors: true, validateSchema: true });
   addFormats(ajv);
   ajv.addMetaSchema(draft7MetaSchema);
   ajv.addMetaSchema({ ...draft7MetaSchema, $id: 'https://json-schema.org/draft-07/schema#' });
