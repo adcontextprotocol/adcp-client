@@ -7,7 +7,7 @@ import { parseStrictJson } from '../signing/agent-resolver/strict-json';
 import { parse as parseDomain } from 'tldts';
 import schemas from './schemas.draft';
 import type { TrustRecord, TrustAgent, TrustGrant, AgentGrantDeniedDetails } from './types';
-const ajv = new Ajv({ strict: false, allErrors: false });
+const ajv = new Ajv({ inlineRefs: false, strict: false, allErrors: false });
 addFormats(ajv);
 for (const schema of schemas) ajv.addSchema(schema);
 export function validateIdentity33Schema(id: string, value: unknown): boolean {

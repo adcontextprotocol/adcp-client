@@ -1,5 +1,6 @@
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
+import { compactSchemaForValidation } from '../validation/compact-schema';
 import type { TaskResult } from '../core/ConversationTypes';
 import type { ConformanceToolName, OracleVerdict } from './types';
 import { loadResponseSchema, type ConformanceSchemaOptions } from './schemaLoader';
@@ -85,7 +86,7 @@ const FS_PATH_SIGNATURES = [/\/Users\/[^ "']+/, /\/home\/[^ "']+/, /[A-Z]:\\\\Us
 let cachedAjv: Ajv | null = null;
 function getAjv(): Ajv {
   if (cachedAjv) return cachedAjv;
-  const ajv = new Ajv({ allErrors: true, strict: false, validateFormats: true });
+  const ajv = new Ajv({ inlineRefs: false, allErrors: true, strict: false, validateFormats: true });
   addFormats(ajv);
   cachedAjv = ajv;
   return ajv;
@@ -102,7 +103,7 @@ function responseValidator(tool: ConformanceToolName, options?: ConformanceSchem
   const cached = compiledValidators.get(cacheKey);
   if (cached) return cached;
   const schema = loadResponseSchema(tool, options);
-  const validator = getAjv().compile(schema);
+  const validator = getAjv().compile(compactSchemaForValidation(schema));
   compiledValidators.set(cacheKey, validator);
   return validator;
 }
