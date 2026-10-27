@@ -966,22 +966,70 @@ function creativeFormatParameterConstraints(
   return { width, height, durationMs };
 }
 
-function legacyRefParameterConstraints(ref: V1FormatId): CreativeFormatParameterConstraints {
-  // Catalog dimensions fill missing constraints without changing the seller's wire reference.
+/** Read one media asset matching the creative kind, outside opaque metadata. */
+function primaryMediaConstraints(creative: Record<string, unknown>): CreativeFormatParameterConstraints | undefined {
+  const assetType =
+    creative.format_kind === 'image'
+      ? 'image'
+      : creative.format_kind === 'video_hosted'
+        ? 'video'
+        : creative.format_kind === 'audio_hosted'
+          ? 'audio'
+          : undefined;
+  if (!assetType) return undefined;
+  const assets = Object.values(record(creative.assets) ?? {}).flatMap(value =>
+    (Array.isArray(value) ? value : [value]).flatMap(item => {
+      const asset = record(item);
+      return asset?.asset_type === assetType ? [asset] : [];
+    })
+  );
+  if (assets.length !== 1) return undefined;
+  const asset = assets[0]!;
+  const width = assetType === 'audio' ? undefined : positiveConstraint(asset.width);
+  const height = assetType === 'audio' ? undefined : positiveConstraint(asset.height);
+  const durationMs = assetType === 'image' ? undefined : positiveConstraint(asset.duration_ms);
+  return width === undefined && height === undefined && durationMs === undefined
+    ? undefined
+    : { width, height, durationMs };
+}
+
+function positiveConstraint(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function legacyRefParameterConstraints(ref: V1FormatId, selectorParams?: unknown): CreativeFormatParameterConstraints {
+  // Catalog and option facts fill missing constraints without changing the seller's wire reference.
   const params =
     typeof ref.width !== 'number' || typeof ref.height !== 'number'
       ? record(canonicalDeclarationFromBareId(ref.id, { agentUrl: ref.agent_url })?.params)
       : undefined;
+  const selector = record(selectorParams);
+  const sizes = Array.isArray(selector?.sizes) ? selector.sizes : [];
+  const size = sizes.length === 1 ? record(sizes[0]) : undefined;
   return {
-    width: typeof ref.width === 'number' ? ref.width : typeof params?.width === 'number' ? params.width : undefined,
+    width:
+      typeof ref.width === 'number'
+        ? ref.width
+        : typeof params?.width === 'number'
+          ? params.width
+          : (positiveConstraint(selector?.width) ?? positiveConstraint(size?.width)),
     height:
-      typeof ref.height === 'number' ? ref.height : typeof params?.height === 'number' ? params.height : undefined,
-    durationMs: ref.duration_ms,
+      typeof ref.height === 'number'
+        ? ref.height
+        : typeof params?.height === 'number'
+          ? params.height
+          : (positiveConstraint(selector?.height) ?? positiveConstraint(size?.height)),
+    durationMs:
+      ref.duration_ms ?? positiveConstraint(selector?.duration_ms_exact) ?? positiveConstraint(selector?.duration_ms),
   };
 }
 
-function refContradictsConstraints(ref: V1FormatId, constraints: CreativeFormatParameterConstraints): boolean {
-  const refConstraints = legacyRefParameterConstraints(ref);
+function refContradictsConstraints(
+  ref: V1FormatId,
+  constraints: CreativeFormatParameterConstraints,
+  selectorParams?: unknown
+): boolean {
+  const refConstraints = legacyRefParameterConstraints(ref, selectorParams);
   if (
     constraints.width !== undefined &&
     refConstraints.width !== undefined &&
@@ -1006,8 +1054,12 @@ function refContradictsConstraints(ref: V1FormatId, constraints: CreativeFormatP
   return false;
 }
 
-function refPinsConstraints(ref: V1FormatId, constraints: CreativeFormatParameterConstraints): boolean {
-  const refConstraints = legacyRefParameterConstraints(ref);
+function refPinsConstraints(
+  ref: V1FormatId,
+  constraints: CreativeFormatParameterConstraints,
+  selectorParams?: unknown
+): boolean {
+  const refConstraints = legacyRefParameterConstraints(ref, selectorParams);
   if (constraints.width !== undefined && refConstraints.width === undefined) return false;
   if (constraints.height !== undefined && refConstraints.height === undefined) return false;
   if (constraints.durationMs !== undefined && typeof refConstraints.durationMs !== 'number') return false;
@@ -1026,8 +1078,8 @@ function legacyIdPinsDimensions(ref: V1FormatId): boolean | undefined {
   );
 }
 
-function refConstraintKey(ref: V1FormatId): string {
-  const constraints = legacyRefParameterConstraints(ref);
+function refConstraintKey(ref: V1FormatId, selectorParams?: unknown): string {
+  const constraints = legacyRefParameterConstraints(ref, selectorParams);
   return [
     agentIdentity(ref.agent_url),
     constraints.width ?? '',
@@ -1039,7 +1091,9 @@ function refConstraintKey(ref: V1FormatId): string {
 /**
  * Most-constrained-wins for a canonical creative facing several legacy refs of
  * its kind. Compare explicit dimensions or the catalog-backed ID's dimensions
- * with the creative's own `format_parameters`. Drop contradictory refs,
+ * with the creative's explicit parameters, or unambiguous primary media facts when
+ * several refs remain. Seller option params fill facts absent from a ref and its
+ * catalog entry. Drop contradictory refs,
  * prefer refs that pin them, and among refs imposing identical constraints (a
  * seller listing `display_html` at 300x250 next to `display_300x250_html`)
  * prefer the legacy id whose own declaration pins that size over a generic
@@ -1051,14 +1105,25 @@ function preferMostConstrainedLegacyCandidates(
   creative: Record<string, unknown>
 ): LegacyCandidate[] {
   let remaining = candidates;
-  const constraints = creativeFormatParameterConstraints(creative);
+  const mediaKind = ['image', 'video_hosted', 'audio_hosted'].includes(String(creative.format_kind));
+  // Intrinsic media facts choose among alternatives; a lone ref may rely on seller scaling.
+  const constraints =
+    creativeFormatParameterConstraints(creative) ??
+    (remaining.length > 1 ? primaryMediaConstraints(creative) : undefined);
   if (constraints) {
-    remaining = remaining.filter(candidate => !refContradictsConstraints(candidate.ref, constraints));
-    const pinned = remaining.filter(candidate => refPinsConstraints(candidate.ref, constraints));
+    remaining = remaining.filter(
+      candidate =>
+        !refContradictsConstraints(candidate.ref, constraints, mediaKind ? candidate.selectorParams : undefined)
+    );
+    const pinned = remaining.filter(candidate =>
+      refPinsConstraints(candidate.ref, constraints, mediaKind ? candidate.selectorParams : undefined)
+    );
     if (pinned.length > 0) remaining = pinned;
   }
   if (remaining.length <= 1) return remaining;
-  const constraintKeys = new Set(remaining.map(candidate => refConstraintKey(candidate.ref)));
+  const constraintKeys = new Set(
+    remaining.map(candidate => refConstraintKey(candidate.ref, mediaKind ? candidate.selectorParams : undefined))
+  );
   if (constraintKeys.size !== 1) return remaining;
   const specific = remaining.filter(candidate => legacyIdPinsDimensions(candidate.ref) === true);
   return specific.length > 0 && specific.length < remaining.length ? specific : remaining;
