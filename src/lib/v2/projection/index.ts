@@ -138,6 +138,8 @@ export {
   type PackageFormatSelectorDimensionDiagnostic,
 } from './write-side';
 
+export { getCreativeDeliveryDiagnostics } from './legacy-metadata';
+
 export type {
   V1FormatId,
   V2ProductFormatDeclaration,

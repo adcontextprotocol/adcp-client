@@ -43,6 +43,13 @@ import type { CanonicalFormatDeclaration } from './legacy-metadata';
 import type { UndeclaredFormatOptionSelector } from './legacy-routes';
 import { canonicalize as canonicalizeJson } from '../../utils/jcs';
 import { lookupV1Format, type V1FormatDefinition } from './catalog';
+import {
+  downgradePixelTracker,
+  pixelTrackerDrift,
+  rememberCreativeDeliveryDiagnostics,
+  type LegacyPixelTracker,
+} from './legacy-metadata';
+import type { VersionDrift } from '../../adapters/version/types';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, Extract<keyof T, K>> : never;
 
@@ -1183,28 +1190,45 @@ function selectLegacyRef(
   return matching.length === 1 ? matching[0]!.ref : undefined;
 }
 
-function projectLegacyAssetKeys(assetsValue: unknown, definition: V1FormatDefinition | undefined): unknown {
+function legacyUrlTrackerSlotMatches(
+  slot: NonNullable<V1FormatDefinition['assets']>[number],
+  tracker: LegacyPixelTracker
+): boolean {
+  return (
+    slot.asset_type === 'url' &&
+    slot.requirements?.url_type === 'tracker_pixel' &&
+    (slot.asset_id === tracker.assetId || slot.requirements.role === tracker.assetId)
+  );
+}
+
+function projectLegacyAssetKeys(
+  assetsValue: unknown,
+  definition: V1FormatDefinition | undefined
+): { assets: unknown; drifts: VersionDrift[] } {
+  const unchanged = { assets: assetsValue, drifts: [] };
   const assets = record(assetsValue);
-  if (!assets || !Array.isArray(definition?.assets)) return assetsValue;
+  if (!assets || !Array.isArray(definition?.assets)) return unchanged;
   const slots = definition.assets.filter(slot => record(slot) !== undefined);
-  // Group membership needs a separate mapping contract; never flatten it into
-  // a standalone slot just because the asset types happen to agree.
-  if (slots.some(slot => slot.item_type !== undefined && slot.item_type !== 'individual')) return assetsValue;
+  // Group membership needs its own mapping contract.
+  if (slots.some(slot => slot.item_type !== undefined && slot.item_type !== 'individual')) return unchanged;
   const declaredIds = new Set(slots.map(slot => slot.asset_id));
   const availableSlots = slots.filter(
-    slot =>
-      (slot.item_type === undefined || slot.item_type === 'individual') &&
-      typeof slot.asset_id === 'string' &&
-      slot.asset_id.length > 0 &&
-      !Object.hasOwn(assets, slot.asset_id)
+    slot => typeof slot.asset_id === 'string' && slot.asset_id.length > 0 && !Object.hasOwn(assets, slot.asset_id)
   );
   const targetBySource = new Map<string, string>();
   const sourcesByTarget = new Map<string, string[]>();
+  const trackersBySource = new Map<string, LegacyPixelTracker>();
   for (const [key, value] of Object.entries(assets)) {
-    if (declaredIds.has(key)) continue;
+    const tracker = downgradePixelTracker(value);
+    if (declaredIds.has(key)) {
+      const slot = slots.find(slot => slot.asset_id === key);
+      if (tracker && slot && legacyUrlTrackerSlotMatches(slot, tracker)) trackersBySource.set(key, tracker);
+      continue;
+    }
     const asset = record(value);
     if (!asset || typeof asset.asset_type !== 'string') continue;
     const matches = availableSlots.filter(slot => {
+      if (tracker && legacyUrlTrackerSlotMatches(slot, tracker)) return true;
       if (slot.asset_type !== asset.asset_type) return false;
       if (asset.asset_type === 'url') {
         return typeof asset.url_type === 'string' && asset.url_type === slot.requirements?.url_type;
@@ -1220,19 +1244,38 @@ function projectLegacyAssetKeys(assetsValue: unknown, definition: V1FormatDefini
       return true;
     });
     if (matches.length !== 1) continue;
-    const target = matches[0]!.asset_id!;
+    const slot = matches[0]!;
+    const target = slot.asset_id!;
     targetBySource.set(key, target);
+    if (tracker && legacyUrlTrackerSlotMatches(slot, tracker)) trackersBySource.set(key, tracker);
     const sources = sourcesByTarget.get(target) ?? [];
     sources.push(key);
     sourcesByTarget.set(target, sources);
   }
-  // Resolve against the original keys. Two assets competing for one slot must
-  // both survive, and object insertion order must never choose a winner.
+  // Never choose a winner when several assets compete for one slot.
   for (const sources of sourcesByTarget.values()) {
-    if (sources.length > 1) for (const source of sources) targetBySource.delete(source);
+    if (sources.length > 1) {
+      for (const source of sources) {
+        targetBySource.delete(source);
+        trackersBySource.delete(source);
+      }
+    }
   }
-  if (targetBySource.size === 0) return assetsValue;
-  return Object.fromEntries(Object.entries(assets).map(([key, value]) => [targetBySource.get(key) ?? key, value]));
+  if (targetBySource.size === 0 && trackersBySource.size === 0) return unchanged;
+  const drifts: VersionDrift[] = [];
+  for (const [key, tracker] of trackersBySource) {
+    const drift = pixelTrackerDrift(`assets.${key}`, tracker);
+    if (drift) drifts.push(drift);
+  }
+  return {
+    assets: Object.fromEntries(
+      Object.entries(assets).map(([key, value]) => [
+        targetBySource.get(key) ?? key,
+        trackersBySource.get(key)?.asset ?? value,
+      ])
+    ),
+    drifts,
+  };
 }
 
 function projectCreative<T extends Record<string, unknown>>(
@@ -1249,7 +1292,12 @@ function projectCreative<T extends Record<string, unknown>>(
     return ref !== undefined && sameLegacyIdentity(ref, formatId);
   });
   const definition = supplied?.length ? (supplied.length === 1 ? supplied[0] : undefined) : lookupV1Format(formatId);
-  if (Object.hasOwn(creative, 'assets')) next.assets = projectLegacyAssetKeys(creative.assets, definition);
+  if (Object.hasOwn(creative, 'assets')) {
+    const projected = projectLegacyAssetKeys(creative.assets, definition);
+    next.assets = projected.assets;
+    transferLegacyCreativeMetadata(creative, next);
+    rememberCreativeDeliveryDiagnostics(next, projected.drifts);
+  }
   return next as T;
 }
 
@@ -1570,6 +1618,7 @@ export function projectCreativeForDelivery<T extends CreativeAsset>(
   const inputRecord = creative as unknown as Record<string, unknown>;
   const originalLegacyRef = legacyRef(inputRecord.format_id);
   const creativeRecord = canonicalizeCreative(inputRecord, selectorContainer, operation, legacyFormatConverter);
+  transferLegacyCreativeMetadata(inputRecord, creativeRecord);
   if (wireMode === 'canonical') return creativeRecord as unknown as CanonicalProjectedCreative<T>;
   if (originalLegacyRef) {
     const selectedOriginal = selectLegacyRef(inputRecord, selectorContainer, canonicalFormatLegacyResolver, operation);
