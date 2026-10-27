@@ -151,6 +151,25 @@ server handlers are `mediaBuy.listCollections` and `mediaBuy.listProposals`,
 or optional methods on `MediaBuyLifecyclePlatform`. Their synchronous results
 use `outcome` and do not acquire a synthetic task `status` field.
 
+## Postgres replay store
+
+`PostgresReplayStore` inserts through a table-specific guarded function
+(`<table>_insert_guarded`) that keeps the replay check, the per-key cap and the
+insert on one backend. A database created by an earlier SDK has the table but
+not the function. Every insert then fails with "PostgresReplayStore database
+migration is outdated", and signed requests answer 503 (Web Bot Auth) or are
+refused. Rerun the migration for each replay table before deploying SDK 17:
+
+```ts
+import { getReplayStoreMigration } from '@adcp/sdk/signing/server';
+
+await pool.query(getReplayStoreMigration('adcp_replay_cache')); // your table name
+```
+
+The migration is idempotent. If you manage schema with numbered migration
+files, add a new file with the current `getReplayStoreMigration()` output; a
+file copied from an older SDK does not create the function.
+
 ## Account resolution and optional declarations
 
 On a served AdCP 3.3 route, buyer-supplied account references require a
@@ -254,6 +273,14 @@ For AdCP 3.0 buyers, `create_media_buy` and `update_media_buy` responses move
 `media_buy_status` back into lifecycle `status` before schema projection. A buy
 waiting on creatives therefore returns `status: 'pending_creatives'`; 3.1+
 responses keep task `status` separate from `media_buy_status`.
+
+This projection applies to responses the framework emits. A webhook your
+platform builds itself from a copy of the response, such as an inline completion
+callback to a 3.0 buyer, does not pass through it. Apply the same mapping so the
+webhook `result` matches the buyer-visible response: for a 3.0 buyer, carry the
+media buy status as `status` and omit `media_buy_status`. A test comparing the
+webhook `result` with the synchronous response catches drift. Exporting the
+projection for seller-emitted webhooks is tracked in #3475.
 
 ## Receivers with their own delivery webhook verification
 
