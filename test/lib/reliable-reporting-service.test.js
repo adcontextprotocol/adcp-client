@@ -2617,7 +2617,17 @@ describe('ReliableReportingService', () => {
 
     const emptyFinality = adapter();
     emptyFinality.deliveryOffering.supported_finality = [];
-    assert.throws(() => serviceFixture({ adapters: { fixture: emptyFinality } }), /at least one supported finality/);
+    assert.throws(
+      () => serviceFixture({ adapters: { fixture: emptyFinality } }),
+      error => {
+        assert.equal(error.name, 'ZodError');
+        assert.deepEqual(
+          error.issues.map(({ code, path, minimum }) => ({ code, path, minimum })),
+          [{ code: 'too_small', path: ['supported_finality'], minimum: 1 }]
+        );
+        return true;
+      }
+    );
 
     const duplicateFinality = adapter();
     duplicateFinality.deliveryOffering.supported_finality = ['snapshot', 'snapshot'];
