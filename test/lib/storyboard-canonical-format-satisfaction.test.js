@@ -395,7 +395,7 @@ describe('canonical_format_satisfaction storyboard validation', () => {
     assert.match(result.observations[0].detail, /orientation/);
   });
 
-  test('requires selectors to include richer canonical params such as video_codecs', () => {
+  test('an omitted richer canonical param such as video_codecs inherits the product value; a stated one must be contained', () => {
     const product = {
       product_id: 'video_codec',
       format_options: [
@@ -407,9 +407,9 @@ describe('canonical_format_satisfaction storyboard validation', () => {
       ],
     };
 
-    const omitted = run(check(false), {
+    const omitted = run(check(true), {
       products: [product],
-      success: false,
+      success: true,
       request: {
         packages: [
           {
@@ -422,7 +422,25 @@ describe('canonical_format_satisfaction storyboard validation', () => {
       },
     });
     assert.strictEqual(omitted.passed, true, omitted.error);
-    assert.match(omitted.observations[0].detail, /video_codecs/);
+
+    const conflicting = run(check(false), {
+      products: [product],
+      success: false,
+      request: {
+        packages: [
+          {
+            product_id: 'video_codec',
+            pricing_option_id: 'cpm',
+            budget: 1000,
+            format_options: [
+              { format_kind: 'video_hosted', params: { duration_ms_exact: 15000, video_codecs: ['vp9'] } },
+            ],
+          },
+        ],
+      },
+    });
+    assert.strictEqual(conflicting.passed, true, conflicting.error);
+    assert.match(conflicting.observations[0].detail, /video_codecs/);
 
     const selected = run(check(true), {
       products: [product],

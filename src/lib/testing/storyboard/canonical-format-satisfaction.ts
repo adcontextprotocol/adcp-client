@@ -58,16 +58,6 @@ const HANDLED_CANONICAL_PARAM_KEYS = new Set([
   'duration_ms_range',
 ]);
 const ARRAY_SUBSET_PARAM_KEYS = new Set(['video_codecs', 'audio_codecs', 'mime_types', 'file_types', 'formats']);
-// A selector need not repeat the option's production, manifest or delivery
-// policy (#3362). Omission makes no contrary assertion; explicit selections
-// still go through the same comparison as every other declared parameter.
-const OMITTABLE_DECLARATION_PARAMS = new Set([
-  'asset_source',
-  'buyer_asset_acceptance',
-  'composition_model',
-  'slots',
-  'ssl_required',
-]);
 
 export function validateCanonicalFormatSatisfaction(
   validation: StoryboardValidation,
@@ -592,14 +582,12 @@ function requireRemainingParamContainment(
     if (HANDLED_CANONICAL_PARAM_KEYS.has(key) || productValue === undefined) continue;
     if (Array.isArray(productValue) && productValue.length === 0) continue;
 
-    if (requestParams[key] === undefined) {
-      if (OMITTABLE_DECLARATION_PARAMS.has(key)) continue;
-      return {
-        ok: false,
-        bug_class: 'directionality',
-        detail: `Under-specified selector: product constrains params.${key}, but the request selector omits ${key}`,
-      };
-    }
+    // Product satisfaction requires a selector to declare only the product's
+    // fixed size and duration (checked above). A parameter the selector omits
+    // inherits the product's constraint and adds none of its own (AdCP
+    // canonical formats: Product satisfaction; "Narrows", absent parameter).
+    // A parameter the selector states must be contained, and a conflict fails.
+    if (requestParams[key] === undefined) continue;
 
     const requestValue = requestParams[key];
     if (ARRAY_SUBSET_PARAM_KEYS.has(key)) {
