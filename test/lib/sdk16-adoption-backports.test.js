@@ -109,3 +109,23 @@ test('targeting key lists exactly enumerate bundled schema properties', () => {
     assert.ok(Object.isFrozen(sdk[`${name}Keys`]));
   }
 });
+
+for (const lifecycle of ['canceled', 'completed', 'rejected']) {
+  test(`legacy update handler retains ${lifecycle} lifecycle meaning for a3.2 buyer`, async t => {
+    const server = createAdcpServer({
+      name: 'legacy-status',
+      version: '1',
+      adcpVersion: '3.2.7',
+      idempotency: 'disabled',
+      validation: { requests: 'off', responses: 'off' },
+      mediaBuy: { updateMediaBuy: async () => ({ media_buy_id: 'mb-3431', status: lifecycle }) },
+    });
+    t.after(() => server.close());
+    const response = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'update_media_buy', arguments: { adcp_version: '3.2' } },
+    });
+    assert.equal(response.structuredContent.status, 'completed');
+    assert.equal(response.structuredContent.media_buy_status, lifecycle);
+  });
+}

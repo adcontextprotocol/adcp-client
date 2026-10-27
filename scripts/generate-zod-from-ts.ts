@@ -143,9 +143,11 @@ const TS7056_SCHEMAS: Array<{
   objectShape?: boolean;
   typeSource?: 'tools' | 'core' | 'v2-projection';
   typedInput?: boolean;
+  unionShape?: boolean;
 }> = [
   { name: 'AdCPAsyncResponseDataSchema' },
   { name: 'MCPWebhookPayloadSchema' },
+  { name: 'AssetVariantSchema', tsType: 'AssetVariant', typeSource: 'core', unionShape: true },
   {
     name: 'MediaBuyDeliveryWebhookResultSchema',
     tsType: 'MediaBuyDeliveryWebhookResult',
@@ -254,7 +256,14 @@ function postProcessTS7056Annotations(content: string): string {
     core: new Set<string>(),
     v2Projection: new Set<string>(),
   };
-  for (const { name, tsType, objectShape, typeSource = 'tools', typedInput = false } of TS7056_SCHEMAS) {
+  for (const {
+    name,
+    tsType,
+    objectShape,
+    typeSource = 'tools',
+    typedInput = false,
+    unionShape = false,
+  } of TS7056_SCHEMAS) {
     const pattern = new RegExp(`export const ${name} = `);
     if (!pattern.test(result)) {
       throw new Error(
@@ -317,6 +326,7 @@ function postProcessTS7056Annotations(content: string): string {
     } else {
       annotation = 'z.ZodType';
     }
+    if (unionShape) annotation += " & Pick<z.ZodUnion<readonly z.ZodType[]>, 'options'>";
     const projectionGuard = tsType
       ? '// @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.\n'
       : '';
@@ -524,7 +534,10 @@ function isTupleType(type: ts.TypeNode): boolean {
  * unrelated same-named field elsewhere in a generated schema. An exact tuple
  * already enforces its cardinality, and must remain a tuple for compatibility.
  */
-function collectArrayMaxItemsConstraints(source: string): ArrayMaxItemsConstraint[] {
+function collectArrayMaxItemsConstraints(
+  source: string,
+  tagName: 'maxItems' | 'minItems' = 'maxItems'
+): ArrayMaxItemsConstraint[] {
   const sourceFile = ts.createSourceFile(
     'adcp-generated-types.ts',
     source,
@@ -578,9 +591,9 @@ function collectArrayMaxItemsConstraints(source: string): ArrayMaxItemsConstrain
   };
 
   const collectMember = (member: ts.PropertySignature, schemaName: string, path: string[]): void => {
-    const maxItems = jsDocNumberTag(member, 'maxItems');
+    const maxItems = jsDocNumberTag(member, tagName);
     const minItems = jsDocNumberTag(member, 'minItems');
-    if (maxItems !== undefined && minItems !== maxItems && !isTupleType(member.type!)) {
+    if (maxItems !== undefined && (tagName === 'minItems' || (minItems !== maxItems && !isTupleType(member.type!)))) {
       constraints.push({ schemaName, path, maxItems });
     }
     visitType(member.type!, schemaName, path);
@@ -600,9 +613,9 @@ function collectArrayMaxItemsConstraints(source: string): ArrayMaxItemsConstrain
     }
     if (!ts.isTypeAliasDeclaration(statement)) continue;
 
-    const maxItems = jsDocNumberTag(statement, 'maxItems');
+    const maxItems = jsDocNumberTag(statement, tagName);
     const minItems = jsDocNumberTag(statement, 'minItems');
-    if (maxItems !== undefined && minItems !== maxItems && !isTupleType(statement.type)) {
+    if (maxItems !== undefined && (tagName === 'minItems' || (minItems !== maxItems && !isTupleType(statement.type)))) {
       constraints.push({ schemaName: statement.name.text, path: [], maxItems });
     }
     visitType(statement.type, statement.name.text, []);
@@ -613,7 +626,7 @@ function collectArrayMaxItemsConstraints(source: string): ArrayMaxItemsConstrain
     const key = `${constraint.schemaName}:${constraint.path.join('.')}`;
     const existing = unique.get(key);
     if (existing && existing.maxItems !== constraint.maxItems) {
-      throw new Error(`Conflicting @maxItems values for ${key}: ${existing.maxItems} and ${constraint.maxItems}.`);
+      throw new Error(`Conflicting @${tagName} values for ${key}: ${existing.maxItems} and ${constraint.maxItems}.`);
     }
     unique.set(key, constraint);
   }
@@ -664,11 +677,11 @@ function fixedZodTupleLength(node: ts.Expression): number | undefined {
   return undefined;
 }
 
-function zodArrayMaxItems(node: ts.Expression): number | undefined {
+function zodArrayMaxItems(node: ts.Expression, method: 'max' | 'min' = 'max'): number | undefined {
   let current = node;
   while (ts.isCallExpression(current) && ts.isPropertyAccessExpression(current.expression)) {
     if (
-      current.expression.name.text === 'max' &&
+      current.expression.name.text === method &&
       current.arguments.length === 1 &&
       ts.isNumericLiteral(current.arguments[0])
     ) {
@@ -734,8 +747,45 @@ function collectObjectPropertyValues(expression: ts.Expression, path: readonly s
  * generation. This is intentionally source-driven rather than a list of
  * known fields so newly added schema bounds receive runtime validation.
  */
-function postProcessArrayMaxItems(content: string, typeSource: string): string {
-  const constraints = collectArrayMaxItemsConstraints(typeSource);
+/** Restore minItems only along the canonical asset union's schema dependency graph. */
+function postProcessAssetMinimumItems(content: string, typeSource: string): string {
+  const source = ts.createSourceFile('asset-schema-graph.ts', content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const definitions = new Map<string, ts.Expression>();
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.initializer)
+        definitions.set(declaration.name.text, declaration.initializer);
+    }
+  }
+  if (!definitions.has('AssetVariantSchema')) throw new Error('AssetVariantSchema is missing from generation.');
+  const reachable = new Set<string>();
+  const pending = ['AssetVariantSchema'];
+  while (pending.length > 0) {
+    const name = pending.pop()!;
+    if (reachable.has(name)) continue;
+    reachable.add(name);
+    const initializer = definitions.get(name);
+    if (!initializer) continue;
+    const visit = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) && definitions.has(node.text) && !reachable.has(node.text)) pending.push(node.text);
+      ts.forEachChild(node, visit);
+    };
+    visit(initializer);
+  }
+  return postProcessArrayMaxItems(content, typeSource, 'min', reachable);
+}
+
+function postProcessArrayMaxItems(
+  content: string,
+  typeSource: string,
+  method: 'max' | 'min' = 'max',
+  selectedSchemas?: ReadonlySet<string>
+): string {
+  const tagName = method === 'max' ? 'maxItems' : 'minItems';
+  const constraints = collectArrayMaxItemsConstraints(typeSource, tagName).filter(
+    constraint => !selectedSchemas || selectedSchemas.has(`${constraint.schemaName}Schema`)
+  );
   if (constraints.length === 0) return content;
 
   const sourceFile = ts.createSourceFile(
@@ -756,15 +806,19 @@ function postProcessArrayMaxItems(content: string, typeSource: string): string {
       const array = findZodArrayBase(value);
       if (!array) {
         const tupleLength = fixedZodTupleLength(value);
-        if (tupleLength !== undefined && tupleLength <= constraint.maxItems) fixedTupleSatisfiesBound = true;
+        if (
+          tupleLength !== undefined &&
+          (method === 'max' ? tupleLength <= constraint.maxItems : tupleLength >= constraint.maxItems)
+        )
+          fixedTupleSatisfiesBound = true;
         continue;
       }
       foundArray = true;
-      const existingMax = zodArrayMaxItems(value);
+      const existingMax = zodArrayMaxItems(value, method);
       if (existingMax !== undefined) {
         if (existingMax !== constraint.maxItems) {
           throw new Error(
-            `Conflicting generated Zod maxItems values at ${constraint.schemaName}.${constraint.path.join('.')}: ` +
+            `Conflicting generated Zod ${tagName} values at ${constraint.schemaName}.${constraint.path.join('.')}: ` +
               `${existingMax} and ${constraint.maxItems}.`
           );
         }
@@ -773,14 +827,14 @@ function postProcessArrayMaxItems(content: string, typeSource: string): string {
       const existing = insertions.get(array.end);
       if (existing !== undefined && existing !== constraint.maxItems) {
         throw new Error(
-          `Conflicting generated Zod maxItems values at ${constraint.schemaName}.${constraint.path.join('.')}.`
+          `Conflicting generated Zod ${tagName} values at ${constraint.schemaName}.${constraint.path.join('.')}.`
         );
       }
       insertions.set(array.end, constraint.maxItems);
     }
     if (!foundArray && !fixedTupleSatisfiesBound) {
       throw new Error(
-        `Unable to restore @maxItems for ${constraint.schemaName}.${constraint.path.join('.')}: ` +
+        `Unable to restore @${tagName} for ${constraint.schemaName}.${constraint.path.join('.')}: ` +
           'the generated schema did not contain a ZodArray.'
       );
     }
@@ -789,7 +843,7 @@ function postProcessArrayMaxItems(content: string, typeSource: string): string {
   return [...insertions.entries()]
     .sort(([left], [right]) => right - left)
     .reduce(
-      (result, [position, maxItems]) => result.slice(0, position) + `.max(${maxItems})` + result.slice(position),
+      (result, [position, maxItems]) => result.slice(0, position) + `.${method}(${maxItems})` + result.slice(position),
       content
     );
 }
@@ -6271,6 +6325,7 @@ async function generateZodSchemas() {
     zodSchemas = postProcessUnionIntersectionOperands(zodSchemas);
 
     // Post-process: Add explicit z.ZodType annotations to schemas that trip TS7056.
+    zodSchemas = postProcessAssetMinimumItems(zodSchemas, combinedSource);
     zodSchemas = postProcessTS7056Annotations(zodSchemas);
 
     // Import the module namespace directly so bundlers can remove unused Zod
@@ -6327,6 +6382,7 @@ if (require.main === module) {
 }
 
 export const __test__ = {
+  postProcessAssetMinimumItems,
   postProcessJsonSchemaDateTimeFormats,
   postProcessPureInitializers,
   postProcessPrimitiveIntersections,

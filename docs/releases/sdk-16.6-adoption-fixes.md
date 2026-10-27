@@ -20,6 +20,8 @@ are stripped along with bank details and framework auth/context metadata before
 responses or replay caching. Nested account and operator identity objects use
 closed protocol schemas and are emitted as detached validated snapshots.
 
-Global daypart-union and nonempty Zod output tightening stays on SDK 17. The
+Global daypart-union and nonempty Zod output tightening stays on SDK 17.
+AssetVariant alone restores reachable protocol minItems and shallow output
+typing, fixing the published TypeScript repro while preserving union options. The
 shared stable report body reflects the existing tolerant poll Zod output;
 version-aware delivery parsing uses strict authoritative JSON schemas.
