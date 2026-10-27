@@ -1,5 +1,42 @@
 # @adcp/reporting-storage
 
+## 0.3.0-beta.1
+
+### Minor Changes
+
+- 14a83dd: Support trusted-host reporting history before a configuration was installed (#3453). Pass `historyStart` in the service install context (or producer install options), and call `extendConfigurationHistory({ configurationId, historyStart })` to move ownership earlier without a new configuration generation. Source retention, schedule alignment, historical calendar compatibility, and generation overlap are validated. Coverage and consumer status include historical ownership while installedAt, fingerprints and existing publications stay unchanged.
+
+  Live planning and execution take priority over history. `maxHistorySlicesPerSource` defaults to 10 claims per source offering per worker pass; `maxHistoryObligationsPerSource` optionally bounds history planning. Zero pauses either history operation. Budgets are local to each pass; hosts and adapters still coordinate shared upstream quotas. Backfill retries have a durable private recovery window from the first execution attempt without changing public period-based deadlines.
+
+  Migration: upgrade the SDK and storage package together and reapply `REPORTING_LEDGER_MIGRATION` before starting the new workers. It adds the nullable `adcp_reporting_configurations.history_start` audit column and live-priority claim indexes idempotently; existing configurations keep their original ownership. Do not grant or extend history until all workers are upgraded. Custom stores opting into history must persist the history boundary and ordinal, implement atomic monotonic extension and generation-overlap checks at both install and extension, and honor live-first claims and `excludeHistoryOfferingIds`. See the reporting ledger guide for the API and pacing contract.
+
+### Patch Changes
+
+- b4682cb: Address SDK 17 adoption feedback (#3460): preserve the media-buy lifecycle for 3.0 buyers; include collection/proposal account notification types; validate account-change drains at the negotiated release; retain compatible legacy format pairings when a sibling option cannot be mapped; expose shared AssetVariant and targeting key arrays; generate exclusive daypart clock forms and nonempty Zod output types; and shorten unavailable-version diagnostics.
+
+  Document all added union/enum members, vendor-metric planning behavior, and pnpm peer convergence in `docs/migration-16-to-17.md`. Release reporting-storage alongside this SDK beta, with `@adcp/reporting-storage@0.3.0-beta.1` requiring SDK `^17.0.0-beta.2`. Install both beta tags together with `--save-exact`; stable storage 0.2.0 continues to require SDK 16. No storage migrations change in this fix.
+
+  Zod validation now enforces protocol-authored `minItems` throughout, including render-guidance positions, and preserves nonempty array output types as `[T, ...T[]]`. Empty arrays previously accepted contrary to the schema now fail validation.
+
+- Updated dependencies [7700d50]
+- Updated dependencies [ca0bf28]
+- Updated dependencies [64d7970]
+- Updated dependencies [7dd3b86]
+- Updated dependencies [dc54bf8]
+- Updated dependencies [64d7970]
+- Updated dependencies [21fed85]
+- Updated dependencies [b6538e5]
+- Updated dependencies [f49c85c]
+- Updated dependencies [b4682cb]
+- Updated dependencies [5c16f99]
+- Updated dependencies [dad64c2]
+- Updated dependencies [9f9da45]
+- Updated dependencies [14a83dd]
+- Updated dependencies [b4682cb]
+- Updated dependencies [b4682cb]
+- Updated dependencies [bd09edd]
+  - @adcp/sdk@17.0.0-beta.2
+
 ## 0.2.1-beta.0
 
 ### Patch Changes

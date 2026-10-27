@@ -1,5 +1,72 @@
 # Changelog
 
+## 17.0.0-beta.2
+
+### Major Changes
+
+- b4682cb: Preserve AdCP 3.2+ account identity fields in `accounts.upsert` responses: `account`, `operator_unit`, `revision`, `identity_change`, `identity_change_preview`, `currency`, and `timezone` (#3466). Add these fields to `SyncAccountsResultRow`, allow settings-update results anchored by `account` without a flat brand/operator pair, and allow unresolved failed rows without an invented lifecycle status.
+
+  Keep the entire request-only `destination_billing_entity` out of framework and raw response-builder output, including replay-cached responses. Current `billing_entity` metadata still passes through with write-only bank details stripped.
+
+  `SyncAccountsResultRow` now distinguishes the two identity anchors and requires lifecycle status for successful rows. Consumers reading a result must narrow its identity and check failed rows before assuming `brand`, `operator`, or `status` are present.
+
+  Validate nested account/operator identity objects before emission so accidentally retained internal fields cannot enter responses or replay caches when whole-response validation is off.
+
+  This result-type change belongs to the SDK 17 major preview migration. Adopters extending the former interface should use an intersection alias (`type MyRow = SyncAccountsResultRow & { upstreamId?: string }`). Identity snapshots are detached before validation/emission; raw response builders also strip top-level framework auth and context metadata.
+
+### Minor Changes
+
+- 64d7970: Expose every manifest tool through typed AgentClient and SingleAgentClient methods and executeTask request/response maps. Add non-deprecated methods and usable public request/response types for supported creative, content-standards, and rights tools while keeping their Legacy aliases. Typed getTaskStatus({ task_id }) and listTasks({}) overloads query the seller without changing existing string-status and local-task-list APIs. Preserve existing executeCustomTask workarounds for newly typed tools.
+
+  Direct SingleAgentClient governance methods use a configured governance agent, or require the client's own agent to advertise the requested governance tool. Generic preview_creative execution follows the canonical preview method; callers requiring raw named-format payloads can use previewCreativeLegacy().
+
+- b4682cb: Add `parseMediaBuyDeliveryWebhook` for already-authenticated delivery reports (#3461). Validate the envelope and result separately at the caller's trusted AdCP release, including the 3.0 report-schema fallback, and return readable schema paths. Bare reports remain rejected by default; explicit compatibility mode returns `wireFormat: 'bare_delivery_report'` without synthesizing an envelope.
+
+  Reuse the parser for registered reporting deliveries after signature verification, with a per-call `adcpVersion` option. Add a shared `MediaBuyDeliveryReport` type and payload-only Zod schema for polled and pushed ingestion, restore required webhook row fields such as `by_package`, and expose schema-ref validators with opt-in complete diagnostics. Document that report notification type and envelope task status are independent; full polling response schemas retain their inherited required task status.
+
+  Registered reporting failures now distinguish invalid results (`webhook_result_invalid`) from invalid envelopes and unsupported payloads. Prepare reporting schema configuration before consuming signature nonces, and derive routing metadata from the trusted callback registration while preserving the seller's original envelope IDs.
+
+- 5c16f99: Align `authorizeDemandGrant` with the one delegation-chain rule (adcontextprotocol/adcp#8473, an erratum to ratified R6), and run its cross-SDK vectors.
+  - **Implicit authority:** `account.operator` and the signer's operator only need to each be the brand or its house. A brand-operated account with the house's own agent signing (or the reverse) is implicit; before, both had to equal the same domain.
+  - **Chains:** at most two grants from the house's record to the signer's operator, every grant covering the claim, with `account.operator` the brand, the house, or the first grant's grantee. Brand- and house-operated accounts can now use a two-grant chain, and the brand's own record can supply the second grant. When several candidate chains exist, an unreadable intermediary record is an outage only if no other chain authorizes.
+  - **Exclusivity:** `exclusive_grants: true` on the house's record makes `grants[]` the complete list whatever the scope, so an uncovered claim is `grant_absent` and `sellerAuthorization` is never called. This reverses the per-scope reading shipped in 16.5.0. Without it, an uncovered claim is at the seller's discretion, and a grant that does not cover the claim no longer narrows that discretion.
+
+  `test/lib/identity-3.3-delegation-chain-vectors.test.js` runs all 48 vectors from `static/test-vectors/delegation-chains.json` (vendored, pinned in `test/fixtures/delegation-chains/PINNED.json`).
+
+- 14a83dd: Support trusted-host reporting history before a configuration was installed (#3453). Pass `historyStart` in the service install context (or producer install options), and call `extendConfigurationHistory({ configurationId, historyStart })` to move ownership earlier without a new configuration generation. Source retention, schedule alignment, historical calendar compatibility, and generation overlap are validated. Coverage and consumer status include historical ownership while installedAt, fingerprints and existing publications stay unchanged.
+
+  Live planning and execution take priority over history. `maxHistorySlicesPerSource` defaults to 10 claims per source offering per worker pass; `maxHistoryObligationsPerSource` optionally bounds history planning. Zero pauses either history operation. Budgets are local to each pass; hosts and adapters still coordinate shared upstream quotas. Backfill retries have a durable private recovery window from the first execution attempt without changing public period-based deadlines.
+
+  Migration: upgrade the SDK and storage package together and reapply `REPORTING_LEDGER_MIGRATION` before starting the new workers. It adds the nullable `adcp_reporting_configurations.history_start` audit column and live-priority claim indexes idempotently; existing configurations keep their original ownership. Do not grant or extend history until all workers are upgraded. Custom stores opting into history must persist the history boundary and ordinal, implement atomic monotonic extension and generation-overlap checks at both install and extension, and honor live-first claims and `excludeHistoryOfferingIds`. See the reporting ledger guide for the API and pacing contract.
+
+- b4682cb: Address SDK 17 adoption feedback (#3460): preserve the media-buy lifecycle for 3.0 buyers; include collection/proposal account notification types; validate account-change drains at the negotiated release; retain compatible legacy format pairings when a sibling option cannot be mapped; expose shared AssetVariant and targeting key arrays; generate exclusive daypart clock forms and nonempty Zod output types; and shorten unavailable-version diagnostics.
+
+  Document all added union/enum members, vendor-metric planning behavior, and pnpm peer convergence in `docs/migration-16-to-17.md`. Release reporting-storage alongside this SDK beta, with `@adcp/reporting-storage@0.3.0-beta.1` requiring SDK `^17.0.0-beta.2`. Install both beta tags together with `--save-exact`; stable storage 0.2.0 continues to require SDK 16. No storage migrations change in this fix.
+
+  Zod validation now enforces protocol-authored `minItems` throughout, including render-guidance positions, and preserves nonempty array output types as `[T, ...T[]]`. Empty arrays previously accepted contrary to the schema now fail validation.
+
+### Patch Changes
+
+- 7700d50: Avoid multi-megabyte generated JSON Schema validator functions and the associated Node24/V8 Maglev memory spikes (#3457). Compile available authored modular tool graphs with separate referenced validators, retain response-envelope relaxation and bundled-only custom-root support, and factor large self-contained conformance schemas into private local definitions before compiling. Public schema documents and compact archive serialization remain unchanged. AJV construction sites now retain referenced validator functions instead of inlining them.
+
+  Together with cached compliance storyboard lookups, this also reduces the cold validation cost reported in #3455 without changing process-wide V8 settings.
+
+  Validation diagnostics retain AJV's original function-relative `schemaPath` spelling; private origin IDs stay internal. Runtime schema paths may change with compiler factoring and are diagnostic details, not stable selectors into the public bundled document. `schemaId` records the effective rejecting resource where available, including embedded IDs; unavailable origin metadata falls back conservatively to the compiled tool root. Required-field pointers escape slashes and tildes per RFC 6901.
+
+- ca0bf28: Fix canonical-format storyboard grading to resolve every supplied format selector route independently before applying precedence (#3454). Co-present product references, legacy format IDs and direct canonical selectors must select identical product-option sets; unresolved or conflicting secondary routes now correctly satisfy authored negative cases instead of being ignored.
+- 7dd3b86: Cache a bounded storyboard index per resolved compliance/schema authority (#3455). Warm `getComplianceStoryboardById` calls no longer read and parse every YAML in the bundle. List and id lookups return detached storyboards with trusted loader provenance preserved; replacing the bundle index invalidates its cache.
+- dc54bf8: Prepare artifact-delivery webhook validators before signature verification, matching the reporting receiver's nonce-safe configuration preflight. Missing or ambiguous schema configuration returns `webhook_verification_unavailable` without consuming a valid signature nonce, so correcting configuration permits retrying the original signed bytes. Preserve existing creative-conversion advisories when transferring diagnostics onto an already projected object.
+- 64d7970: Use the advertised `get_task_status` tool for all SDK task polling, including submitted continuations and persisted task tracking. Preserve `tasks_get` (MCP) and `tasks/get` (A2A) for sellers that do not advertise the protocol tool.
+
+  Resolve the tool once per polling session and preserve the existing supported-seller request-signing rule for the new polling name on both MCP and A2A.
+
+- 21fed85: Convert creative pixel trackers for AdCP 3.0 delivery and explicit legacy URL tracker slots. Preserve tracker URLs, report lossy event or JavaScript conversions, and refuse slot collisions.
+- b6538e5: Select among multiple legacy image, hosted video and audio formats using unambiguous primary media dimensions or duration when explicit creative parameters supply no constraints. Read seller option constraints for opaque legacy IDs while preserving single-reference scaling and exact duration matching.
+- f49c85c: Persist buy and package creation context in `createMediaBuyStore` and backfill missing resource context on `get_media_buys`. Preserve opaque null values, empty objects and creation context through targeting updates without replacing seller echoes or the read request's context.
+- dad64c2: Keep accepted seller work alive when an implicit MCP task scope returns a successful nonterminal result (`submitted`, `working`, `input-required`, `auth-required`, or `deferred`). Close the local client and remove scoped cache entries without issuing a destructive session DELETE. Completed tasks and explicit caller-owned workflow scopes retain their normal session termination policy; credential and connection partitions are unchanged.
+- 9f9da45: Convert repeatable pixel-tracker arrays when an explicit legacy format requires a URL tracker slot, including already named slots. Preserve every tracker and report lossy conversion diagnostics at each array index. Keep mixed roles and partially convertible arrays unchanged rather than forcing them into one slot.
+- bd09edd: Expose the trusted SDK-selected release as optional `TaskResult.metadata.wireAdcpVersion`, including same-release negotiation without changing request stamps or validation overrides. Account-change drains validate against that known wire contract before considering the seller's echo; a custom reader's explicit validation pin also takes precedence over an unverified echo. An older echo cannot relax 3.3 changed-path requirements when negotiation or an explicit wire override established the release. Sellers without authoritative release metadata retain the existing echo/client fallback.
+
 ## 17.0.0-beta.1
 
 ### Patch Changes
