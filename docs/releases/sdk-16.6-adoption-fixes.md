@@ -25,3 +25,9 @@ AssetVariant alone restores reachable protocol minItems and shallow output
 typing, fixing the published TypeScript repro while preserving union options. The
 shared stable report body reflects the existing tolerant poll Zod output;
 version-aware delivery parsing uses strict authoritative JSON schemas.
+
+Asset bounds also apply when the shared catalog, provenance, inline-markup,
+tag/redirect and tracker schemas are used outside AssetVariant. Direct Zod
+consumers now reject those protocol-invalid empty arrays consistently with the
+existing authoritative wire schemas. Typed input and per-branch union helpers
+remain available.

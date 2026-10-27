@@ -12,3 +12,9 @@ const schema: SchemaAsset = types;
 const roundTrip: AssetVariant = schema;
 const options: readonly z.ZodType[] = AssetVariantSchema.options;
 void [parsed, asset, root, types, schema, roundTrip, options];
+
+const imageShape = AssetVariantSchema.options[0].shape;
+declare const unknownValue: unknown;
+// @ts-expect-error The stable asset input remains typed rather than unknown.
+const input: z.input<typeof AssetVariantSchema> = unknownValue;
+void [imageShape, input];

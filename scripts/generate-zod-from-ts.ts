@@ -326,11 +326,21 @@ function postProcessTS7056Annotations(content: string): string {
     } else {
       annotation = 'z.ZodType';
     }
-    if (unionShape) annotation += " & Pick<z.ZodUnion<readonly z.ZodType[]>, 'options'>";
     const projectionGuard = tsType
       ? '// @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.\n'
       : '';
-    result = result.replace(pattern, `${projectionGuard}export const ${name}: ${annotation} = `);
+    if (unionShape) {
+      // Keep exact branch helpers without making z.output instantiate the union.
+      const source = ts.createSourceFile('asset-union.ts', result, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+      const initializer = findSchemaVariable(source, name);
+      if (!initializer) throw new Error(`Unable to preserve union options for ${name}.`);
+      const start = result.lastIndexOf('export const ', initializer.getStart(source));
+      const privateName = `${name}OptionsSource`;
+      const replacement = `const ${privateName} = ${initializer.getText(source)};\n${projectionGuard}export const ${name}: ${annotation} & Pick<typeof ${privateName}, 'options'> = ${privateName}`;
+      result = result.slice(0, start) + replacement + result.slice(initializer.end);
+    } else {
+      result = result.replace(pattern, `${projectionGuard}export const ${name}: ${annotation} = `);
+    }
   }
   // Inject `import type { ... } from './tools.generated'` for the typed-zod
   // entries. The compound schemas reference response types defined there.

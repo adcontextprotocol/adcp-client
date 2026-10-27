@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-10-27T04:18:42.519Z
+// Generated at: 2026-10-27T04:28:04.703Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -13647,8 +13647,9 @@ export const CanonicalProductActionSchema = /* @__PURE__ */ (() => (z.object({
     terms_ref: z.string().optional()
 }).passthrough()))();
 
+const AssetVariantSchemaOptionsSource = /* @__PURE__ */ (() => (z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, DisplayTagAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, ZipAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema, PublishedPostAssetSchema, CardAssetSchema, PixelTrackerAssetSchema, VASTTrackerAssetSchema, DAASTTrackerAssetSchema])))();
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const AssetVariantSchema: z.ZodType<AssetVariant & Record<string, unknown>, AssetVariant & Record<string, unknown>> & Pick<z.ZodUnion<readonly z.ZodType[]>, 'options'> = /* @__PURE__ */ (() => (z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, DisplayTagAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, ZipAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema, PublishedPostAssetSchema, CardAssetSchema, PixelTrackerAssetSchema, VASTTrackerAssetSchema, DAASTTrackerAssetSchema])))();
+export const AssetVariantSchema: z.ZodType<AssetVariant & Record<string, unknown>, AssetVariant & Record<string, unknown>> & Pick<typeof AssetVariantSchemaOptionsSource, 'options'> = /* @__PURE__ */ (() => (AssetVariantSchemaOptionsSource))();
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const TargetingOverlaySchema: z.ZodObject<{ [K in keyof TargetingOverlay]-?: undefined extends TargetingOverlay[K] ? z.ZodOptional<z.ZodType<Exclude<TargetingOverlay[K], undefined>, Exclude<TargetingOverlay[K], undefined>>> : z.ZodType<TargetingOverlay[K], TargetingOverlay[K]> }, z.core.$loose> & z.ZodType<TargetingOverlay & Record<string, unknown>, TargetingOverlay & Record<string, unknown>> = /* @__PURE__ */ (() => ((() => {
