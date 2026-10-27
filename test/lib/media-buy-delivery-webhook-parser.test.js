@@ -202,6 +202,63 @@ test('inline notification enum compatibility export remains available', () => {
   ]);
 });
 
+async function registeredReceiver(deliveryKind = 'reporting') {
+  const taskType = deliveryKind === 'reporting' ? 'media_buy_delivery' : 'artifact_delivery';
+  const { SingleAgentClient, InMemoryWebhookRegistrationStore } = require('../../dist/lib');
+  const { StaticJwksResolver } = require('../../dist/lib/signing/jwks');
+  const { signWebhook } = require('../../dist/lib/signing/client');
+  const { keys } = require('../fixtures/webhook-signing-vectors/keys.json');
+  const key = keys.find(key => key.kid === 'test-ed25519-webhook-2026');
+  const { _private_d_for_test_only: d, ...publicKey } = key;
+  const agent = {
+    id: 'reporting-3461-seller',
+    name: 'Seller',
+    agent_uri: 'https://seller.example/mcp',
+    protocol: 'mcp',
+  };
+  const store = new InMemoryWebhookRegistrationStore();
+  const operationId = 'trusted-report-route';
+  const url = 'https://buyer.example/reports';
+  const now = Date.now();
+  await store.putIfAbsent({
+    agentId: agent.id,
+    agentUrl: agent.agent_uri,
+    protocol: 'mcp',
+    operationId,
+    taskType,
+    callbackUrl: url,
+    method: 'POST',
+    mode: 'rfc9421',
+    deliveryKind,
+    authorizationContextVersion: 1,
+    createdAt: now,
+    expiresAt: now + 60000,
+  });
+  const client = new SingleAgentClient(agent, {
+    webhookRegistrationStore: store,
+    webhookVerification: { jwks: new StaticJwksResolver([publicKey]) },
+  });
+  return {
+    client,
+    options(body, adcpVersion) {
+      const rawBody = JSON.stringify(body);
+      const signed = signWebhook(
+        { method: 'POST', url, headers: { 'content-type': 'application/json' }, body: rawBody },
+        { keyid: key.kid, alg: 'ed25519', privateKey: { ...publicKey, d } }
+      );
+      return {
+        rawBody,
+        headers: signed.headers,
+        operationId,
+        taskType,
+        requestMethod: 'POST',
+        requestUrl: url,
+        adcpVersion,
+      };
+    },
+  };
+}
+
 test('published ESM entry points expose the shared schema and discriminated parser result', () => {
   const { spawnSync } = require('node:child_process');
   const { resolve } = require('node:path');
@@ -228,4 +285,35 @@ test('published ESM entry points expose the shared schema and discriminated pars
 test('shared body schema preserves webhook-specific scheduling fields', () => {
   const body = report({ notification_type: 'adjusted', sequence_number: 4 });
   assert.deepEqual(MediaBuyDeliveryReportSchema.parse(body), body);
+});
+
+test('artifact schema configuration failures also preserve the signed delivery nonce', async t => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { withExternalSchemaRoot } = require('../../dist/lib/validation/schema-loader');
+  const receiver = await registeredReceiver('artifact');
+  const body = {
+    idempotency_key: 'artifact-preflight-regression-3461',
+    media_buy_id: 'mb1',
+    batch_id: 'batch1',
+    timestamp: '2026-10-20T00:00:00Z',
+    artifacts: [],
+  };
+  const options = receiver.options(body);
+  const emptyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-artifact-preflight-'));
+  t.after(() => fs.rmSync(emptyRoot, { recursive: true, force: true }));
+  fs.writeFileSync(
+    path.join(emptyRoot, 'preflight.json'),
+    JSON.stringify({ $id: `/schemas/${ADCP_VERSION}/core/preflight.json`, type: 'object' })
+  );
+  const failed = await withExternalSchemaRoot(ADCP_VERSION, emptyRoot, () =>
+    receiver.client.verifyAndParseWebhook(options)
+  );
+  assert.equal(failed.code, 'webhook_verification_unavailable');
+  const accepted = await receiver.client.verifyAndParseWebhook(options);
+  assert.equal(accepted.ok, true, JSON.stringify(accepted));
+  assert.deepEqual(accepted.result, body);
+  const replay = await receiver.client.verifyAndParseWebhook(options);
+  assert.equal(replay.code, 'webhook_signature_replayed');
 });

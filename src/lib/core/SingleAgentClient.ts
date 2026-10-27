@@ -4506,6 +4506,25 @@ export class SingleAgentClient {
         };
       }
     }
+    let artifactPayloadValidator: ((payload: unknown) => boolean) | undefined;
+    if (registration?.deliveryKind === 'artifact') {
+      try {
+        const loader = require('../validation/schema-loader') as typeof import('../validation/schema-loader');
+        artifactPayloadValidator = loader.getSchemaValidatorByRef(
+          'content-standards/artifact-webhook-payload.json',
+          this.resolvedAdcpVersion
+        );
+        if (!artifactPayloadValidator) throw new ConfigurationError('Bundled artifact webhook schema is unavailable.');
+      } catch (cause) {
+        // Receiver configuration must not consume a valid delivery's replay nonce.
+        return {
+          ok: false,
+          code: 'webhook_verification_unavailable',
+          message: 'Artifact webhook schema configuration is unavailable.',
+          cause,
+        };
+      }
+    }
     if (registration?.mode === 'rfc9421') {
       const { verifyWebBotAuth, selectSignatureProfile, WebBotAuthError, WebBotAuthUnavailableError } =
         loadWebBotAuth();
@@ -4711,7 +4730,9 @@ export class SingleAgentClient {
       const schemaRef = isReport
         ? 'media-buy/media-buy-delivery-webhook-result.json'
         : 'content-standards/artifact-webhook-payload.json';
-      const validator = loader.getSchemaValidatorByRef(schemaRef, this.resolvedAdcpVersion);
+      const validator = isReport
+        ? loader.getSchemaValidatorByRef(schemaRef, this.resolvedAdcpVersion)
+        : artifactPayloadValidator;
       const envelopeValidator = isReport
         ? loader.getSchemaValidatorByRef('core/mcp-webhook-payload.json', this.resolvedAdcpVersion)
         : undefined;
