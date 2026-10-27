@@ -135,9 +135,17 @@ function authorizedConstituent(accountId) {
 /** A fixture whose offering and resolver agree on one non-UTC source timezone. */
 function zonedFixture(
   timezone,
-  { alignment = 'source_timezone', periodDuration = 'P1D', minimumWindow, periodTimezone, accountResolved } = {}
+  {
+    alignment = 'source_timezone',
+    periodDuration = 'P1D',
+    minimumWindow,
+    periodTimezone,
+    accountResolved,
+    retentionDays,
+  } = {}
 ) {
   const zoned = adapter();
+  if (retentionDays !== undefined) zoned.sourceOffering.retentionDays = retentionDays;
   // `account_resolved` leaves the zone unknown until the account is resolved,
   // so the construction-time gate cannot see it and install-time validation is
   // what runs. Pinning it instead makes construction the decisive gate.
@@ -4571,5 +4579,461 @@ describe('ReliableReportingService maintenance hook', () => {
     store.migrations = Object.freeze(['-- create the ledger']);
     assert.deepEqual(serviceFixture({ store }).service.setup.migrations, ['-- create the ledger']);
     assert.deepEqual(serviceFixture().service.setup.migrations, []);
+  });
+});
+
+describe('Reliable Reporting history ownership (#3453)', () => {
+  const account = { id: 'account-a', ctx_metadata: {} };
+  const day = 86_400_000;
+  const now = Date.parse('2026-11-05T12:00:00Z');
+  const iso = daysAgo => new Date(now - daysAgo * day - day / 2).toISOString();
+  const historyInput = () =>
+    configuration({
+      schedule: {
+        anchor: iso(1),
+        periodMilliseconds: day,
+        deliverySlaMilliseconds: 0,
+        recoveryWindowMilliseconds: day,
+      },
+    });
+  const clock = t => t.mock.timers.enable({ apis: ['Date'], now });
+
+  test('owns and publishes pre-install periods, including periods before the anchor', async t => {
+    clock(t);
+    const { service, store } = serviceFixture();
+    const input = historyInput();
+    const installed = await service.installConfiguration(input, { account, historyStart: iso(4) });
+    assert.equal(installed.installedAt, new Date(now).toISOString());
+    assert.equal(installed.historyStart, iso(4));
+    assert.equal(installed.historyStartOrdinal, -3);
+    assert.deepEqual(await service.installConfiguration(input, { account }), installed);
+    assert.deepEqual(await service.installConfiguration(input, { account, historyStart: iso(4) }), installed);
+
+    const {
+      evaluateReportingLedgerCoverageV1,
+      relevantReportingLedgerConfigurations,
+    } = require('@adcp/sdk/reporting/ledger');
+    const query = { account_id: account.id, view: 'summary', period: { start: iso(4), end: iso(0) } };
+    assert.equal(relevantReportingLedgerConfigurations([installed], iso(4), iso(0)).length, 1);
+    assert.equal(
+      evaluateReportingLedgerCoverageV1(query, [installed], [], new Date(now).toISOString()).complete,
+      false
+    );
+    const result = await service.runCycle({ accountId: account.id });
+    assert.equal(result.planned, 4);
+    assert.equal(result.revisionsCommitted, 4);
+    const obligations = await store.listObligations(account.id);
+    assert.ok(obligations.every(value => value.history));
+    assert.equal(
+      evaluateReportingLedgerCoverageV1(query, [installed], obligations, new Date(now).toISOString()).complete,
+      true
+    );
+    const status = await service.platform.getReportingStatus(
+      { account: { account_id: account.id }, view: 'periods', period: query.period },
+      { account }
+    );
+    assert.equal(status.periods.length, 4);
+    assert.ok(status.periods.every(value => value.health === 'complete'));
+    assert.equal((await service.runCycle({ accountId: account.id })).planned, 0);
+    const foreign = await service.platform.getReportingStatus(
+      { account: { account_id: 'account-b' }, view: 'periods', period: query.period },
+      { account: { id: 'account-b' } }
+    );
+    assert.equal(foreign.periods.length, 0);
+  });
+
+  test('extends ownership without changing the generation, calendar identity, or publications', async t => {
+    clock(t);
+    const { service, store } = serviceFixture();
+    const input = historyInput();
+    const installed = await service.installConfiguration(input, { account, historyStart: iso(2) });
+    await service.runCycle({ accountId: account.id });
+    const before = structuredClone([...store.revisions.values()]);
+    const extended = await service.extendConfigurationHistory({
+      configurationId: installed.configurationId,
+      historyStart: iso(5),
+    });
+    assert.equal(extended.configurationId, installed.configurationId);
+    assert.equal(extended.installedAt, installed.installedAt);
+    assert.equal(extended.semanticFingerprint, installed.semanticFingerprint);
+    assert.deepEqual(extended.calendarRules, installed.calendarRules);
+    assert.deepEqual([...store.revisions.values()], before);
+    assert.deepEqual(
+      await service.extendConfigurationHistory({ configurationId: installed.configurationId, historyStart: iso(5) }),
+      extended
+    );
+    assert.equal((await service.runCycle({ accountId: account.id })).planned, 3);
+    assert.equal(store.revisions.size, 5);
+    assert.equal((await service.installConfiguration(input, { account })).historyStart, iso(5));
+    assert.deepEqual(await service.installConfiguration(input, { account, historyStart: iso(2) }), extended);
+    assert.deepEqual(await service.installConfiguration(input, { account, historyStart: iso(1) }), extended);
+    await assert.rejects(
+      service.extendConfigurationHistory({ configurationId: installed.configurationId, historyStart: iso(3) }),
+      /only move earlier/
+    );
+    await assert.rejects(
+      service.installConfiguration(input, { account, historyStart: iso(6) }),
+      /extendConfigurationHistory/
+    );
+  });
+
+  test('keeps the default ownership boundary and accepts trusted extension after install', async t => {
+    clock(t);
+    const { service } = serviceFixture();
+    const installed = await service.installConfiguration(historyInput(), { account });
+    assert.equal(installed.historyStart, undefined);
+    assert.equal((await service.runCycle({ accountId: account.id })).planned, 0);
+    await service.extendConfigurationHistory({ configurationId: installed.configurationId, historyStart: iso(2) });
+    assert.equal((await service.runCycle({ accountId: account.id })).revisionsCommitted, 2);
+    await assert.rejects(
+      service.installConfiguration({ ...historyInput(), historyStart: iso(2) }, { account }),
+      /trusted lineage/
+    );
+  });
+
+  test('refuses invalid, future and out-of-retention instants before persisting ownership', async t => {
+    clock(t);
+    const { service, store } = serviceFixture();
+    for (const historyStart of [
+      '2026-02-30T00:00:00Z',
+      '2026-11-01',
+      '2026-11-01T00:00:00.0001Z',
+      new Date(now + day).toISOString(),
+      iso(31),
+    ]) {
+      await assert.rejects(
+        service.installConfiguration(historyInput(), { account, historyStart }),
+        /historyStart|retentionDays/
+      );
+      assert.equal(store.configurations.size, 0);
+    }
+    // Retention is an exact rolling instant, so snapping must not silently admit an expired request.
+    await assert.rejects(
+      service.installConfiguration(historyInput(), {
+        account,
+        historyStart: new Date(now - 30 * day - 1).toISOString(),
+      }),
+      /retentionDays/
+    );
+    const installed = await service.installConfiguration(historyInput(), {
+      account,
+      historyStart: new Date(now - 30 * day).toISOString(),
+    });
+    assert.equal(installed.historyStart, iso(29));
+    await assert.rejects(
+      service.extendConfigurationHistory({ configurationId: installed.configurationId, historyStart: iso(31) }),
+      /retentionDays/
+    );
+    await assert.rejects(
+      service.extendConfigurationHistory({ configurationId: 'missing', historyStart: iso(1) }),
+      /Unknown/
+    );
+  });
+
+  test('plans and executes live work before an existing history backlog and honors zero budgets', async t => {
+    clock(t);
+    const { service, store } = serviceFixture();
+    await service.installConfiguration(historyInput(), { account, historyStart: iso(8) });
+    await service.producer.planObligations(new Date(now).toISOString(), { maxHistoryObligationsPerSource: 8 });
+    assert.equal(store.obligations.size, 8);
+    t.mock.timers.setTime(now + 2 * day);
+    const live = await service.runCycle({
+      accountId: account.id,
+      maxObligations: 1,
+      maxWorkerIterations: 1,
+      maxHistorySlicesPerSource: 0,
+    });
+    assert.equal(live.planned, 1);
+    assert.equal(live.revisionsCommitted, 1);
+    const published = [...store.revisions.values()][0];
+    assert.equal((await store.getObligation(published.reporting_obligation_id)).history, undefined);
+    const history = await service.runCycle({
+      accountId: account.id,
+      maxHistoryObligationsPerSource: 0,
+      maxHistorySlicesPerSource: 2,
+      maxWorkerIterations: 20,
+    });
+    assert.equal(history.claimed, 2);
+    assert.equal(history.revisionsCommitted, 2);
+    assert.equal(
+      (
+        await service.runCycle({
+          accountId: account.id,
+          maxHistoryObligationsPerSource: 0,
+          maxHistorySlicesPerSource: 0,
+        })
+      ).claimed,
+      0
+    );
+  });
+
+  test('reports unpublished historical periods against their original public deadlines while execution is paused', async t => {
+    clock(t);
+    const { service } = serviceFixture();
+    await service.installConfiguration(historyInput(), { account, historyStart: iso(3) });
+    const result = await service.runCycle({ accountId: account.id, maxHistorySlicesPerSource: 0 });
+    assert.equal(result.planned, 3);
+    assert.equal(result.claimed, 0);
+    const status = await service.platform.getReportingStatus(
+      { account: { account_id: account.id }, view: 'periods', period: { start: iso(3), end: iso(0) } },
+      { account }
+    );
+    assert.equal(status.periods.length, 3);
+    assert.equal(status.periods.filter(period => period.health === 'action_required').length, 2);
+    assert.equal(status.periods.filter(period => period.health === 'delayed').length, 1);
+  });
+
+  test('shares a source budget across configurations and resumes bounded planning', async t => {
+    clock(t);
+    const { service, store } = serviceFixture();
+    await service.installConfiguration(historyInput(), { account, historyStart: iso(5) });
+    await service.installConfiguration(
+      { ...historyInput(), delivery_config_id: 'second' },
+      { account, historyStart: iso(5) }
+    );
+    for (let pass = 0; pass < 5; pass += 1) {
+      const result = await service.runCycle({
+        accountId: account.id,
+        maxHistoryObligationsPerSource: 2,
+        maxHistorySlicesPerSource: 1,
+      });
+      assert.equal(result.planned, 2);
+      assert.equal(result.claimed, 1);
+    }
+    assert.equal(store.obligations.size, 10);
+  });
+
+  test('applies history budgets to newly owned periods before a future anchor', async t => {
+    clock(t);
+    const { service, store } = serviceFixture();
+    const input = historyInput();
+    input.schedule.anchor = iso(-3);
+    const installed = await service.installConfiguration(input, {
+      account,
+      historyStart: new Date(now).toISOString(),
+    });
+    assert.equal(installed.historyStart, iso(-1));
+    t.mock.timers.setTime(now + 3 * day);
+    const paused = await service.producer.planObligations(new Date().toISOString(), {
+      account_id: account.id,
+      maxHistoryObligationsPerSource: 0,
+    });
+    assert.deepEqual(paused, []);
+    const planned = await service.producer.planObligations(new Date().toISOString(), {
+      account_id: account.id,
+      maxHistoryObligationsPerSource: 2,
+    });
+    assert.equal(planned.length, 2);
+    assert.ok(planned.every(value => Date.parse(value.period.start) > Date.parse(installed.installedAt)));
+    assert.ok(planned.every(value => value.periodOrdinal < 0 && value.history));
+    const stopped = await service.producer.runWorker({ account_id: account.id, maxHistorySlicesPerSource: 0 });
+    assert.equal(stopped.claimed, 0);
+    const bounded = await service.producer.runWorker({ account_id: account.id, maxHistorySlicesPerSource: 1 });
+    assert.equal(bounded.claimed, 1);
+    assert.equal(bounded.revisionsCommitted, 1);
+    assert.equal((await store.listObligations(account.id)).filter(value => value.state === 'pending').length, 1);
+  });
+
+  test('preserves the private history retry window when its first durable write fails once', async t => {
+    clock(t);
+    const calls = [];
+    const { service, store } = serviceFixture({ adapters: { fixture: adapter(calls) } });
+    await service.installConfiguration(historyInput(), { account, historyStart: iso(5) });
+    const [planned] = await service.producer.planObligations(new Date(now).toISOString(), {
+      account_id: account.id,
+      maxObligations: 1,
+    });
+    t.mock.timers.setTime(now + 2 * day);
+    const update = store.updateObligation.bind(store);
+    let updateCalls = 0;
+    store.updateObligation = async (...args) => {
+      updateCalls += 1;
+      if (updateCalls === 1) throw new Error('transient ledger write failure');
+      return update(...args);
+    };
+    const first = await service.producer.runWorker({ account_id: account.id, maxIterations: 1 });
+    assert.equal(first.failed, 1);
+    assert.equal(updateCalls, 2, 'the recovery write must persist the obligation after the first write fails');
+    assert.equal(calls.length, 0, 'the retry deadline must be durable before source execution');
+    const recovered = await store.getObligation(planned.reporting_obligation_id);
+    assert.equal(recovered.state, 'pending');
+    assert.equal(recovered.historyRecoveryDeadlineAt, new Date(now + 3 * day).toISOString());
+    assert.equal(recovered.recoveryDeadlineAt, planned.recoveryDeadlineAt, 'the public deadline stays unchanged');
+    assert.equal(recovered.nextAttemptAt, new Date(now + 2 * day + 30_000).toISOString());
+
+    t.mock.timers.setTime(now + 2 * day + 60_000);
+    const retry = await service.producer.runWorker({ account_id: account.id, maxIterations: 1 });
+    assert.equal(retry.revisionsCommitted, 1);
+    assert.equal(calls.length, 1);
+    const published = await store.getObligation(planned.reporting_obligation_id);
+    assert.equal(published.historyRecoveryDeadlineAt, recovered.historyRecoveryDeadlineAt);
+    assert.equal(published.state, 'terminal');
+  });
+
+  test('marks backfill requests and retries source failures inside a fresh history retry window', async t => {
+    clock(t);
+    const calls = [];
+    const reportingAdapter = adapter();
+    const source = createInlineReportingSourceExecutor(reportingAdapter.fetchSlice, reportingAdapter.sourceOffering);
+    const executor = {
+      capabilities: source.capabilities,
+      read: source.read.bind(source),
+      execute: async (request, context) => {
+        calls.push(structuredClone(request));
+        return calls.length === 1
+          ? { ok: false, error: { code: 'NOT_READY', retry: 'retryable', message: 'not ready' } }
+          : source.execute(request, context);
+      },
+    };
+    delete reportingAdapter.fetchSlice;
+    reportingAdapter.executor = executor;
+    const { service, store } = serviceFixture({ adapters: { fixture: reportingAdapter } });
+    await service.installConfiguration(historyInput(), { account, historyStart: iso(5) });
+    await service.producer.planObligations(new Date(now).toISOString(), { account_id: account.id, maxObligations: 1 });
+    // A paced backlog may wait longer than the ordinary recovery window before its first attempt.
+    t.mock.timers.setTime(now + 2 * day);
+    const first = await service.producer.runWorker({ account_id: account.id, maxIterations: 1 });
+    assert.equal(first.notReady, 1);
+    assert.equal(calls[0].trigger.kind, 'backfill');
+    assert.equal([...store.obligations.values()][0].state, 'pending');
+    const deadline = [...store.obligations.values()][0].historyRecoveryDeadlineAt;
+    t.mock.timers.setTime(now + 2 * day + 60_000);
+    const retry = await service.producer.runWorker({ account_id: account.id });
+    assert.equal(retry.revisionsCommitted, 1);
+    assert.equal(calls[1].trigger.kind, 'retry');
+    assert.equal([...store.obligations.values()][0].historyRecoveryDeadlineAt, deadline);
+  });
+
+  test('keeps source-local daily boundaries through past DST changes and history extension', async t => {
+    clock(t);
+    const { service, store } = zonedFixture('America/New_York');
+    const input = historyInput();
+    input.expectedSourceTimezone = 'America/New_York';
+    input.schedule.anchor = '2026-11-04T05:00:00Z';
+    const installed = await service.installConfiguration(input, { account, historyStart: '2026-10-30T12:00:00Z' });
+    assert.equal(installed.historyStart, '2026-10-31T04:00:00.000Z');
+    await service.runCycle({ accountId: account.id });
+    const transition = [...store.obligations.values()].find(value => value.period.start === '2026-11-01T04:00:00.000Z');
+    assert.equal(transition.period.end, '2026-11-02T05:00:00.000Z');
+    await service.extendConfigurationHistory({
+      configurationId: installed.configurationId,
+      historyStart: '2026-10-28T04:00:00Z',
+    });
+    const result = await service.runCycle({ accountId: account.id });
+    assert.equal(result.planned, 3);
+    assert.equal(result.failed, 0);
+  });
+
+  test('plans a full year of history using both past DST transitions', async t => {
+    clock(t);
+    const { service, store } = zonedFixture('America/New_York', { retentionDays: 400 });
+    const input = historyInput();
+    input.expectedSourceTimezone = 'America/New_York';
+    input.schedule.anchor = '2026-11-04T05:00:00Z';
+    await service.installConfiguration(input, { account, historyStart: '2025-11-05T05:00:00Z' });
+    const planned = await service.producer.planObligations(new Date(now).toISOString(), {
+      maxHistoryObligationsPerSource: 400,
+    });
+    assert.equal(planned.length, 365);
+    const durations = new Set(
+      [...store.obligations.values()].map(value => Date.parse(value.period.end) - Date.parse(value.period.start))
+    );
+    assert.deepEqual(
+      [...durations].sort(),
+      [23, 24, 25].map(hours => hours * 3_600_000)
+    );
+  });
+
+  test('validates source calendar days backward across the entire history entitlement', async t => {
+    clock(t);
+    const { service, store } = zonedFixture('Pacific/Apia', { retentionDays: 6_000 });
+    const input = historyInput();
+    input.expectedSourceTimezone = 'Pacific/Apia';
+    input.schedule.anchor = '2026-11-04T11:00:00Z';
+    // Apia skipped 2011-12-30. It is outside the ordinary install-time horizon,
+    // but falls inside this account's newly requested history.
+    await assert.rejects(
+      service.installConfiguration(input, { account, historyStart: '2011-12-29T10:00:00Z' }),
+      /unrepresentable/
+    );
+    assert.equal(store.configurations.size, 0);
+  });
+
+  test('accepts consumer status for owned history on calendar and fixed schedules only', async t => {
+    clock(t);
+    const { service } = serviceFixture({ resolveConsumerId: () => 'history-buyer' });
+    const installed = await service.installConfiguration(historyInput(), { account, historyStart: iso(4) });
+    const {
+      configurationId,
+      installedAt,
+      semanticFingerprint,
+      calendarRules,
+      historyStart,
+      historyStartOrdinal,
+      ...ledgerInput
+    } = installed;
+    const numeric = await service.producer.installConfiguration(
+      {
+        ...ledgerInput,
+        delivery_config_id: 'fixed-history',
+        schedule: historyInput().schedule,
+      },
+      { historyStart: iso(4) }
+    );
+    for (const configuration of [installed, numeric]) {
+      const result = await service.platform.syncReportingStatus(
+        {
+          account: { account_id: account.id },
+          idempotency_key: `history-status-${configuration.delivery_config_id}`,
+          statuses: [4, 5].map(daysAgo => ({
+            reporting_status_id: `history-status-${configuration.delivery_config_id}-${daysAgo}`,
+            delivery_config_id: configuration.delivery_config_id,
+            delivery_config_version: configuration.delivery_config_version,
+            report_definition_id: configuration.report_definition_id,
+            period: { start: iso(daysAgo), end: iso(daysAgo - 1), source_timezone: 'UTC' },
+            consumer_status: 'obligation_missing',
+            status_as_of: new Date(now).toISOString(),
+          })),
+        },
+        { account }
+      );
+      assert.equal(result.results[0].result, 'recorded', JSON.stringify(result));
+      assert.equal(result.results[1].result, 'failed', 'history must not grant an earlier unowned period');
+    }
+  });
+
+  test('replays installed history after the source retention window has advanced', async t => {
+    clock(t);
+    const { service } = serviceFixture();
+    const input = historyInput();
+    const installed = await service.installConfiguration(input, { account, historyStart: iso(29) });
+    t.mock.timers.setTime(now + 10 * day);
+    assert.deepEqual(await service.installConfiguration(input, { account, historyStart: iso(29) }), installed);
+    assert.deepEqual(
+      await service.extendConfigurationHistory({ configurationId: installed.configurationId, historyStart: iso(29) }),
+      installed
+    );
+    await assert.rejects(
+      service.extendConfigurationHistory({ configurationId: installed.configurationId, historyStart: iso(30) }),
+      /retentionDays/
+    );
+  });
+
+  test('refuses overlapping history on a successor but allows extending its predecessor', async t => {
+    clock(t);
+    const { service } = serviceFixture();
+    const first = await service.installConfiguration(historyInput(), { account, historyStart: iso(3) });
+    const secondInput = { ...historyInput(), delivery_config_version: 2 };
+    await assert.rejects(service.installConfiguration(secondInput, { account, historyStart: iso(4) }), /overlaps/);
+    const second = await service.installConfiguration(secondInput, { account });
+    await assert.rejects(
+      service.extendConfigurationHistory({ configurationId: second.configurationId, historyStart: iso(4) }),
+      /overlaps/
+    );
+    assert.equal(
+      (await service.extendConfigurationHistory({ configurationId: first.configurationId, historyStart: iso(5) }))
+        .historyStart,
+      iso(5)
+    );
   });
 });

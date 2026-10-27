@@ -190,6 +190,7 @@ export interface PostgresReliableReportingProductionServiceV1<TCtxMeta = Record<
   };
   readonly running: boolean;
   installConfiguration: ReliableReportingServiceV1<TCtxMeta>['installConfiguration'];
+  extendConfigurationHistory: ReliableReportingServiceV1<TCtxMeta>['extendConfigurationHistory'];
   install<TPlatform extends DecisioningPlatform<unknown, TCtxMeta>>(
     platform: TPlatform
   ): TPlatform & { reporting: ReliableReportingPlatform<TCtxMeta> };
@@ -514,6 +515,7 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
       return core.running || auxiliaryPromise !== undefined;
     },
     installConfiguration: core.installConfiguration.bind(core),
+    extendConfigurationHistory: core.extendConfigurationHistory.bind(core),
     install<TPlatform extends DecisioningPlatform<unknown, TCtxMeta>>(target: TPlatform) {
       if (typeof target.accounts.upsert !== 'function') {
         throw new TypeError('Reliable reporting requires accounts.upsert');

@@ -67,7 +67,7 @@ export function relevantReportingLedgerConfigurations(
   const start = Date.parse(periodStart);
   const end = Date.parse(periodEnd);
   return configurations.filter(configuration => {
-    const installed = Date.parse(configuration.installedAt);
+    const installed = Date.parse(configuration.historyStart ?? configuration.installedAt);
     const successor = reportingLedgerSuccessor(configuration, configurations);
     const superseded = Math.min(
       successor ? Date.parse(successor.installedAt) : Number.POSITIVE_INFINITY,
@@ -109,7 +109,7 @@ export function evaluateReportingLedgerCoverageV1(
   let complete = true;
   let retainedFrom: string | undefined;
   for (const configuration of configurations.filter(value => reportingLedgerConfigurationMatchesScope(query, value))) {
-    const installedAt = Date.parse(configuration.installedAt);
+    const installedAt = Date.parse(configuration.historyStart ?? configuration.installedAt);
     const successor = reportingLedgerSuccessor(configuration, configurations);
     const ownershipEnd = Math.min(
       successor ? Date.parse(successor.installedAt) : Number.POSITIVE_INFINITY,
@@ -140,7 +140,7 @@ export function evaluateReportingLedgerCoverageV1(
       }
       continue;
     }
-    const firstOwned = Math.max(0, schedule.ceil(installedAt));
+    const firstOwned = configuration.historyStartOrdinal ?? Math.max(0, schedule.ceil(installedAt));
     const ownershipLast = Number.isFinite(ownershipEnd) ? schedule.ceil(ownershipEnd) - 1 : Number.POSITIVE_INFINITY;
     if (ownershipLast < firstOwned) continue;
     const end = Number.isFinite(ownershipLast) ? schedule.boundary(ownershipLast + 1) : Number.POSITIVE_INFINITY;
@@ -170,4 +170,55 @@ export function evaluateReportingLedgerCoverageV1(
     if (!complete) break;
   }
   return { complete, retainedFrom: retainedFrom ?? period.start };
+}
+
+/**
+ * Store-side guard, evaluated under the same account lock as generation writes.
+ * @experimental Storage-facing building block; see docs/guides/REPORTING-STABILITY.md.
+ */
+export function assertReportingLedgerHistoryDoesNotOverlap(
+  configuration: ReportingLedgerConfigurationV1,
+  configurations: readonly ReportingLedgerConfigurationV1[]
+): void {
+  if (configuration.historyStart === undefined) return;
+  const all = [
+    ...configurations.filter(value => value.configurationId !== configuration.configurationId),
+    configuration,
+  ];
+  const range = (value: ReportingLedgerConfigurationV1): [number, number] => {
+    const schedule = reportingPeriodSchedule(value);
+    const first = value.historyStartOrdinal ?? Math.max(0, schedule.ceil(Date.parse(value.installedAt)));
+    const successor = reportingLedgerSuccessor(value, all);
+    const end = Math.min(
+      successor ? Date.parse(successor.installedAt) : Infinity,
+      value.supersededAt ? Date.parse(value.supersededAt) : Infinity
+    );
+    return [schedule.boundary(first), Number.isFinite(end) ? schedule.boundary(schedule.ceil(end)) : Infinity];
+  };
+  const [start, ownershipEnd] = range(configuration);
+  const previous = configurations.find(value => value.configurationId === configuration.configurationId);
+  const schedule = reportingPeriodSchedule(configuration);
+  const previousStart =
+    previous?.historyStart !== undefined
+      ? Date.parse(previous.historyStart)
+      : schedule.boundary(Math.max(0, schedule.ceil(Date.parse(configuration.installedAt))));
+  // Generation handoffs may already overlap when schedules change. Only the
+  // newly added prefix may acquire ownership; preserve existing straddling periods.
+  const end = Math.min(ownershipEnd, previousStart);
+  if (start >= end) return;
+  for (const other of all) {
+    if (
+      other.configurationId === configuration.configurationId ||
+      other.account.account_id !== configuration.account.account_id ||
+      other.delivery_config_id !== configuration.delivery_config_id
+    )
+      continue;
+    // This lower bound proves disjointness even when a sealed sibling's
+    // timezone rules cannot be resolved on the current runtime.
+    if (Date.parse(other.historyStart ?? other.installedAt) >= end) continue;
+    const [otherStart, otherEnd] = range(other);
+    if (start < end && otherStart < otherEnd && start < otherEnd && otherStart < end) {
+      throw new RangeError('Reporting history overlaps another configuration generation');
+    }
+  }
 }

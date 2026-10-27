@@ -478,9 +478,10 @@ function isExactPeriod(
   let ordinal: bigint;
   let firstOwnedOrdinal: bigint;
   const effectiveFrom =
-    compareReportingInstants(scheduleAnchor, configuration.installedAt) >= 0
+    configuration.historyStart ??
+    (compareReportingInstants(scheduleAnchor, configuration.installedAt) >= 0
       ? scheduleAnchor
-      : configuration.installedAt;
+      : configuration.installedAt);
   if (compareReportingInstants(period.start, effectiveFrom) < 0) return false;
   if (isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone)) {
     const schedule = reportingPeriodSchedule(configuration);
@@ -499,10 +500,13 @@ function isExactPeriod(
       first + (compareReportingInstants(effectiveFrom, new Date(schedule.boundary(first)).toISOString()) > 0 ? 1 : 0)
     );
   } else {
-    const selected = reportingPeriodOrdinal(period.start, scheduleAnchor, duration);
+    // The aligned history boundary lies on the same grid and lets the exact
+    // bigint helpers retain their nonnegative ordinal contract.
+    const eligibilityAnchor = configuration.historyStart ?? scheduleAnchor;
+    const selected = reportingPeriodOrdinal(period.start, eligibilityAnchor, duration);
     if (selected === null || !reportingInstantHasDuration(period.start, period.end, duration)) return false;
     ordinal = selected;
-    firstOwnedOrdinal = reportingDurationCeilOrdinal(scheduleAnchor, effectiveFrom, duration);
+    firstOwnedOrdinal = reportingDurationCeilOrdinal(eligibilityAnchor, effectiveFrom, duration);
   }
   return ordinal >= firstOwnedOrdinal;
 }

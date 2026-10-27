@@ -10,7 +10,7 @@ const HORIZON = 400 * DAY;
 type Schedule = ReportingLedgerConfigurationV1['schedule'];
 type ConfigurationInput = Omit<
   ReportingLedgerConfigurationV1,
-  'configurationId' | 'installedAt' | 'semanticFingerprint' | 'calendarRules'
+  'configurationId' | 'installedAt' | 'semanticFingerprint' | 'calendarRules' | 'historyStart' | 'historyStartOrdinal'
 >;
 
 interface PeriodSchedule {
@@ -134,12 +134,12 @@ export function frozenCalendarObligationsCoverOwnership(
     }
   >
 ): boolean {
-  const first = configuration.calendarRules?.firstOwnedOrdinal;
-  const firstBoundary = configuration.calendarRules?.firstOwnedBoundary;
+  const first = configuration.historyStartOrdinal ?? configuration.calendarRules?.firstOwnedOrdinal;
+  const firstBoundary = configuration.historyStart ?? configuration.calendarRules?.firstOwnedBoundary;
   const firstBoundaryMs = firstBoundary ? Date.parse(firstBoundary) : Number.NaN;
   if (
     !Number.isSafeInteger(first) ||
-    first! < 0 ||
+    (first! < 0 && configuration.historyStart === undefined) ||
     !Number.isFinite(firstBoundaryMs) ||
     !Number.isFinite(ownershipEnd)
   ) {
@@ -312,6 +312,8 @@ export function reportingPeriodSchedule(configuration: ReportingLedgerConfigurat
   const {
     configurationId: _id,
     installedAt: _installedAt,
+    historyStart: _historyStart,
+    historyStartOrdinal: _historyStartOrdinal,
     semanticFingerprint,
     calendarRules,
     ...input
@@ -366,9 +368,11 @@ export function assertReportingCalendarDaySource(
   schedule: Schedule,
   sourceTimezone: string,
   source: ReportingSourceOfferingV1,
-  now: number
+  now: number,
+  historyStart?: number
 ): void {
-  const { calendar, first, last } = calendarOrdinals(schedule, sourceTimezone, now);
+  const { calendar, first: liveFirst, last } = calendarOrdinals(schedule, sourceTimezone, now);
+  const first = historyStart === undefined ? liveFirst : Math.min(liveFirst, calendar.ceil(historyStart));
   for (let ordinal = first; ordinal < last; ordinal += 1) {
     assertReportingCalendarDayPeriod(
       schedule,

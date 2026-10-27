@@ -116,6 +116,99 @@ returned `sourceScope`, then applies the source contract and existing ledger
 immutability checks. Return the resulting secret-free configuration state from
 your `sync_accounts` implementation.
 
+### Reporting history before installation
+
+Trusted host code can grant an account reporting history independently of when
+its configuration was installed. Supply the entitlement in the install context,
+then extend it when the account upgrades:
+
+```ts
+const installed = await reporting.installConfiguration(declaration, {
+  account: ctx.account,
+  historyStart: accountEntitlement.historyStart, // ISO instant from trusted commercial state
+});
+
+await reporting.extendConfigurationHistory({
+  configurationId: installed.configurationId,
+  historyStart: upgradedEntitlement.historyStart,
+});
+
+await reporting.runCycle({
+  accountId: ctx.account.id,
+  maxHistorySlicesPerSource: 5,
+});
+```
+
+Without `historyStart`, ownership still starts at the first scheduled boundary
+at or after `max(anchor, installedAt)`. With it, ownership starts at the first
+boundary **at or after the requested instant**, even when that boundary predates
+the anchor. Source-calendar days use source-local boundaries, including 23- and
+25-hour days. The entire historical span is validated against the source's
+window bounds and calendar rules before ownership is accepted.
+
+The requested instant must fall within the source offering's rolling
+`retentionDays` window (`now - retentionDays * 24 hours`) and must not be in the
+future. Out-of-range requests are refused, never silently clamped. Instants
+require a timezone and at most millisecond precision. Extension can move the
+aligned boundary earlier or leave it unchanged; it cannot move it later.
+An unchanged replay remains valid as source retention advances.
+
+History changes preserve the configuration ID, version, semantic fingerprint,
+real `installedAt`, frozen calendar rules, and existing obligations and
+publications. Reinstalling without a history option returns the current stored
+ownership. A repeated install requesting a later history start also keeps the
+already owned earlier range, so rolling entitlement timestamps do not shrink
+ownership or break replay. Use `extendConfigurationHistory` for an earlier
+boundary. On a successor version, omit `historyStart`; extend the earliest
+relevant stored generation separately when the entitlement grows. History cannot overlap
+another generation's owned periods: extend the earliest relevant generation to
+recover periods before a successor's handoff. Coverage and status count the
+entire continuous owned range, so unplanned closed history counts as a coverage
+gap just like missing live obligations. Run a cycle after install or extension
+to populate it. Public deadlines remain tied to the historical period:
+unpublished periods past their public recovery deadline report `action_required`
+/ `REPORT_OVERDUE`, including period status notifications, until publication
+satisfies them. Recent historical periods retain the normal waiting/delayed
+progression. The private retry
+window controls execution retries and does not postpone buyer-visible deadlines.
+Pausing history intentionally leaves those obligations outstanding. Source
+retention is checked when history is granted; delayed execution may age beyond
+the source's availability, so schedule the oldest slices promptly and leave
+headroom when choosing entitlement boundaries.
+
+Planning visits live periods across all configurations before history. Execution
+also claims live work first, including when history is already queued. Each
+worker pass executes at most `maxHistorySlicesPerSource` historical claims per
+source offering, defaulting to **10**; zero pauses history execution. The same
+option is accepted by `start()`. The optional
+`maxHistoryObligationsPerSource` limits historical planning; by default history
+shares the existing `maxObligations` cap (1,000). Zero pauses historical planning.
+Fully plan historical ownership before a tzdb/ICU runtime upgrade, or retain
+a worker with the generation's pinned runtime rules until planning is complete;
+frozen calendar ownership cannot be silently reinterpreted after an upgrade.
+Both budgets include retries, where applicable, and are shared by configurations
+using the same offering within that pass. Scheduler budgets apply to each
+account cycle, and concurrent workers have separate budgets. The adapter or host
+must coordinate any shared upstream API quota across accounts and workers using
+the source's `rateLimitConstraints`; these limits do not implement a distributed
+rate limiter. Initial history requests use the source contract's `backfill`
+trigger; retries use `retry` and receive a durable private retry window from the
+first execution attempt while public deadlines remain period-based.
+
+The low-level producer accepts `installConfiguration(input, { historyStart })`
+and exposes the same extension method. A custom ledger store must persist
+`historyStart` and `historyStartOrdinal`, implement atomic
+`extendConfigurationHistory`, enforce newly owned range overlap checks atomically
+at both install and extension, and honor live priority and
+`excludeHistoryOfferingIds` in `claimObligation`. PostgreSQL supplies these
+operations; reapply `REPORTING_LEDGER_MIGRATION` to add its nullable
+`history_start` audit column (mirroring the configuration JSON) and live-priority
+claim indexes before upgrading the workers. Existing rows retain their original
+ownership. Grant or extend history only after every worker has been upgraded;
+older workers cannot honor the new retry windows and pacing contract. For long feeds using the inline source executor, configure
+`inlineReplayRetention` or supply a durable executor so a year of history does
+not exhaust its default 100-slice lifetime scope limit.
+
 For tenant-partitioned jobs, call `runCycle({ accountId })`, or configure
 `start({ accountIds: [...] })`. Every planner and worker call receives that
 same account boundary. A deployment-owned worker must explicitly pass

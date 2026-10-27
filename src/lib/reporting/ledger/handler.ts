@@ -1317,11 +1317,14 @@ function nextActivePeriodStart(
   ledgerAsOf: string
 ): string[] {
   const asOf = Date.parse(ledgerAsOf);
-  const installed = Date.parse(configuration.installedAt);
+  const installed = Date.parse(configuration.historyStart ?? configuration.installedAt);
   const ownershipEnd = reportingLedgerConfigurationOwnershipEnd(configuration, configurations);
   if (installed > asOf || ownershipEnd <= asOf) return [];
   const schedule = reportingPeriodSchedule(configuration);
-  const ordinal = Math.max(0, schedule.ceil(installed), schedule.floor(asOf) + 1);
+  const ordinal = Math.max(
+    configuration.historyStartOrdinal ?? Math.max(0, schedule.ceil(installed)),
+    schedule.floor(asOf) + 1
+  );
   const start = schedule.boundary(ordinal);
   if (start >= ownershipEnd) return [];
   schedule.period(ordinal);
@@ -1335,7 +1338,7 @@ function nextObligationDue(
   ledgerAsOf: string
 ): string[] {
   const schedule = reportingPeriodSchedule(configuration);
-  const installed = Date.parse(configuration.installedAt);
+  const installed = Date.parse(configuration.historyStart ?? configuration.installedAt);
   const ownershipEnd = reportingLedgerConfigurationOwnershipEnd(configuration, configurations);
   const period = reportingLedgerEffectivePeriod(query, ledgerAsOf);
   const periodStart = Date.parse(period.start);
@@ -1344,7 +1347,7 @@ function nextObligationDue(
   // official/finalization cutoff may control source readiness, but rc.4
   // explicitly forbids using it as obligation expected_at.
   const expectedOffset = configuration.schedule.deliverySlaMilliseconds;
-  const firstOwned = Math.max(0, schedule.ceil(installed));
+  const firstOwned = configuration.historyStartOrdinal ?? Math.max(0, schedule.ceil(installed));
   const lastOwned = schedule.ceil(ownershipEnd) - 1;
   if (lastOwned < firstOwned) return [];
   const end = Number.isFinite(lastOwned) ? schedule.boundary(lastOwned + 1) : Number.POSITIVE_INFINITY;

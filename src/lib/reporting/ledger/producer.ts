@@ -12,12 +12,13 @@ import {
   reportingScheduleOriginV1,
   reportingUtcOffsetChangesV1,
   REPORTING_SOURCE_CONTRACT_VERSION_V1,
+  ReportingInstantV1Schema,
   validateReportingSourceExecutionV1,
   type ReportingSourceManifestV1,
   type ReportingSourceOfferingV1,
   type ReportingSourceSliceRequestV1,
 } from '../source';
-import { reportingLedgerSuccessor } from './coverage';
+import { assertReportingLedgerHistoryDoesNotOverlap, reportingLedgerSuccessor } from './coverage';
 import {
   assertReportingCalendarDayPeriod,
   assertReportingCalendarDaySource,
@@ -70,7 +71,10 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
   }
 
   return {
-    async installConfiguration(input) {
+    async installConfiguration(input, installOptions = {}) {
+      if (Object.hasOwn(input, 'historyStart') || Object.hasOwn(input, 'historyStartOrdinal')) {
+        throw new TypeError('Reporting history must be supplied through trusted install options');
+      }
       const normalizedInput = {
         ...structuredClone(input),
         schedule: {
@@ -108,6 +112,20 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
         if (!replayFingerprints.includes(replay.semanticFingerprint)) {
           throw new Error('Reporting configuration generation is immutable');
         }
+        if (installOptions.historyStart !== undefined) {
+          const requested = historyInstant(installOptions.historyStart);
+          const ownedStart = replay.historyStart !== undefined ? Date.parse(replay.historyStart) : undefined;
+          if (ownedStart !== undefined && requested === ownedStart) return replay;
+          if (requested > Date.now()) throw new RangeError('Reporting historyStart must not be in the future');
+          // A rolling or stale install entitlement cannot reduce existing ownership.
+          if (ownedStart !== undefined && requested >= ownedStart) return replay;
+          const schedule = reportingPeriodSchedule(replay);
+          const start = schedule.boundary(schedule.ceil(requested));
+          const previous = ownedStart ?? schedule.boundary(Math.max(0, schedule.ceil(Date.parse(replay.installedAt))));
+          if (start < previous) {
+            throw new Error('Use extendConfigurationHistory to change an installed history boundary');
+          }
+        }
         return replay;
       }
       // Only a genuinely new generation is held to current rules, and only a
@@ -144,13 +162,66 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           ? reportingCalendarDayFingerprint(normalizedInput, calendarRules)
           : semanticFingerprint,
       };
-      return (await options.store.putConfiguration(configuration)).value;
+      if (installOptions.historyStart !== undefined) {
+        Object.assign(
+          configuration,
+          normalizeConfigurationHistory(
+            configuration,
+            installOptions.historyStart,
+            requiredOffering(offeringById, configuration.offeringId),
+            Date.parse(installedAt)
+          )
+        );
+      }
+      assertReportingLedgerHistoryDoesNotOverlap(configuration, existing);
+      const stored = (await options.store.putConfiguration(configuration)).value;
+      if (configuration.historyStart !== undefined) {
+        const storedSchedule = stored.historyStart === undefined ? reportingPeriodSchedule(stored) : undefined;
+        const storedStart =
+          stored.historyStart !== undefined
+            ? Date.parse(stored.historyStart)
+            : storedSchedule!.boundary(Math.max(0, storedSchedule!.ceil(Date.parse(stored.installedAt))));
+        if (storedStart > Date.parse(configuration.historyStart)) {
+          // Never silently discard history when a competing install wins with a later boundary.
+          throw new Error('Use extendConfigurationHistory to change an installed history boundary');
+        }
+      }
+      return stored;
+    },
+
+    async extendConfigurationHistory(input) {
+      if (!options.store.extendConfigurationHistory) {
+        throw new TypeError('Reporting ledger store does not support history extension');
+      }
+      const configuration = (await options.store.listConfigurations()).find(
+        value => value.configurationId === input.configurationId
+      );
+      if (!configuration) throw new Error('Unknown reporting configuration');
+      if (configuration.historyStart !== undefined) {
+        const requested = historyInstant(input.historyStart);
+        if (requested === Date.parse(configuration.historyStart)) return configuration;
+        const schedule = reportingPeriodSchedule(configuration);
+        if (schedule.boundary(schedule.ceil(requested)) === Date.parse(configuration.historyStart)) {
+          // A no-op remains replayable after source retention advances or the offering is withdrawn.
+          return configuration;
+        }
+      }
+      const history = normalizeConfigurationHistory(
+        configuration,
+        input.historyStart,
+        requiredOffering(offeringById, configuration.offeringId),
+        Date.now()
+      );
+      return options.store.extendConfigurationHistory({ configurationId: input.configurationId, ...history });
     },
 
     async planObligations(now = new Date().toISOString(), planOptions = {}) {
       const nowMs = instant(now, 'now');
       const maxObligations = planOptions.maxObligations ?? 1_000;
       positiveInteger(maxObligations, 'maxObligations');
+      const maxHistory = planOptions.maxHistoryObligationsPerSource ?? maxObligations;
+      nonnegativeInteger(maxHistory, 'maxHistoryObligationsPerSource');
+      const historyBySource = new Map<string, number>();
       const created: ReportingLedgerObligationV1[] = [];
       let attempted = 0;
       const configurations = (await options.store.listConfigurations(planOptions.account_id)).sort(
@@ -161,98 +232,113 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       );
       const obligationsByAccount = new Map<string, ReportingLedgerObligationV1[]>();
       const retiredByAccount = new Map<string, { configurationId: string; periodOrdinal: number }[]>();
-      for (const configuration of configurations) {
-        const successor = reportingLedgerSuccessor(configuration, configurations);
-        const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
-        const effectiveFrom = Math.max(anchor, instant(configuration.installedAt, 'installedAt'));
-        let schedule: ReturnType<typeof reportingPeriodSchedule>;
-        try {
-          schedule = reportingPeriodSchedule(configuration);
-        } catch (error) {
-          const predecessor = configurations.find(
-            candidate =>
-              reportingLedgerSuccessor(candidate, configurations)?.configurationId === configuration.configurationId
-          );
-          if (
-            isFrozenCalendarRulesMismatch(error) &&
-            !successor &&
-            predecessor &&
-            runtimeCanResolveCalendarGeneration(predecessor)
-          ) {
-            // During a timezone-data rollout an old replica must finish the
-            // predecessor's final owned period without trying to author the
-            // successor installed by a new-runtime replica.
+      // Complete the live pass across all configurations before filling history budgets.
+      for (const historyPass of [false, true]) {
+        for (const configuration of configurations) {
+          const successor = reportingLedgerSuccessor(configuration, configurations);
+          const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
+          const effectiveFrom = configuration.historyStart
+            ? instant(configuration.historyStart, 'historyStart')
+            : Math.max(anchor, instant(configuration.installedAt, 'installedAt'));
+          let schedule: ReturnType<typeof reportingPeriodSchedule>;
+          try {
+            schedule = reportingPeriodSchedule(configuration);
+          } catch (error) {
+            const predecessor = configurations.find(
+              candidate =>
+                reportingLedgerSuccessor(candidate, configurations)?.configurationId === configuration.configurationId
+            );
+            if (
+              isFrozenCalendarRulesMismatch(error) &&
+              !successor &&
+              predecessor &&
+              runtimeCanResolveCalendarGeneration(predecessor)
+            ) {
+              // During a timezone-data rollout an old replica must finish the
+              // predecessor's final owned period without trying to author the
+              // successor installed by a new-runtime replica.
+              continue;
+            }
+            if (
+              !isFrozenCalendarRulesMismatch(error) ||
+              !(await supersededCalendarGenerationIsDurablyCovered(options.store, configuration, successor))
+            ) {
+              throw error;
+            }
+            // The host can no longer reproduce this generation's calendar, but
+            // its contiguous frozen obligations prove every closed period it
+            // owned before the successor was installed is durable. Do not let a
+            // safely sealed predecessor poison planning for the new generation.
             continue;
           }
-          if (
-            !isFrozenCalendarRulesMismatch(error) ||
-            !(await supersededCalendarGenerationIsDurablyCovered(options.store, configuration, successor))
-          ) {
-            throw error;
+          const generationEndValue = Math.min(
+            successor ? instant(successor.installedAt, 'successor.installedAt') : Number.POSITIVE_INFINITY,
+            configuration.supersededAt ? instant(configuration.supersededAt, 'supersededAt') : Number.POSITIVE_INFINITY
+          );
+          const generationEnd = Number.isFinite(generationEndValue) ? generationEndValue : undefined;
+          const effectiveUntil = Math.min(nowMs, generationEnd ?? nowMs);
+          const ownedFirst = configuration.historyStartOrdinal ?? Math.max(0, schedule.ceil(effectiveFrom));
+          const liveFirst = Math.max(0, schedule.ceil(instant(configuration.installedAt, 'installedAt')));
+          const first = historyPass ? ownedFirst : Math.max(ownedFirst, liveFirst);
+          const ownershipLast = generationEnd ? schedule.ceil(effectiveUntil) - 1 : Number.POSITIVE_INFINITY;
+          if (ownershipLast < first) continue;
+          const latestClosed =
+            schedule.floor(
+              Number.isFinite(ownershipLast) ? Math.min(nowMs, schedule.boundary(ownershipLast + 1)) : nowMs
+            ) - 1;
+          const last = Math.min(ownershipLast, latestClosed, historyPass ? liveFirst - 1 : Number.POSITIVE_INFINITY);
+          let accountObligations = obligationsByAccount.get(configuration.account.account_id);
+          if (!accountObligations) {
+            accountObligations = await options.store.listObligations(configuration.account.account_id);
+            obligationsByAccount.set(configuration.account.account_id, accountObligations);
           }
-          // The host can no longer reproduce this generation's calendar, but
-          // its contiguous frozen obligations prove every closed period it
-          // owned before the successor was installed is durable. Do not let a
-          // safely sealed predecessor poison planning for the new generation.
-          continue;
-        }
-        const generationEndValue = Math.min(
-          successor ? instant(successor.installedAt, 'successor.installedAt') : Number.POSITIVE_INFINITY,
-          configuration.supersededAt ? instant(configuration.supersededAt, 'supersededAt') : Number.POSITIVE_INFINITY
-        );
-        const generationEnd = Number.isFinite(generationEndValue) ? generationEndValue : undefined;
-        const effectiveUntil = Math.min(nowMs, generationEnd ?? nowMs);
-        const first = Math.max(0, schedule.ceil(effectiveFrom));
-        const ownershipLast = generationEnd ? schedule.ceil(effectiveUntil) - 1 : Number.POSITIVE_INFINITY;
-        if (ownershipLast < first) continue;
-        const latestClosed =
-          schedule.floor(
-            Number.isFinite(ownershipLast) ? Math.min(nowMs, schedule.boundary(ownershipLast + 1)) : nowMs
-          ) - 1;
-        const last = Math.min(ownershipLast, latestClosed);
-        let accountObligations = obligationsByAccount.get(configuration.account.account_id);
-        if (!accountObligations) {
-          accountObligations = await options.store.listObligations(configuration.account.account_id);
-          obligationsByAccount.set(configuration.account.account_id, accountObligations);
-        }
-        let accountRetired = retiredByAccount.get(configuration.account.account_id);
-        if (!accountRetired) {
-          accountRetired =
-            (await options.store.listRetiredObligationOrdinals?.(configuration.account.account_id)) ?? [];
-          retiredByAccount.set(configuration.account.account_id, accountRetired);
-        }
-        // Retired periods count as covered: their records were deleted by
-        // retention and must never be planned again.
-        const existingOrdinals = [
-          ...accountObligations
-            .filter(value => value.configurationId === configuration.configurationId)
-            .map(value => value.periodOrdinal),
-          ...accountRetired
-            .filter(value => value.configurationId === configuration.configurationId)
-            .map(value => value.periodOrdinal),
-        ];
-        const candidates = missingOrdinals(first, last, existingOrdinals, maxObligations - attempted);
-        for (const ordinal of candidates) {
-          attempted += 1;
-          const obligation = planObligation(configuration, ordinal, now);
-          const written = await options.store.putObligation(obligation);
-          if (written.inserted) {
-            created.push(written.value);
-            await reconcileReportingStatusLifecycleV1({
-              store: options.store,
-              reporting_obligation_id: written.value.reporting_obligation_id,
-              // A fallback clock, never a pinned cutoff. `now` is this host's
-              // instant: a host running fast pinned a cutoff ahead of the
-              // database, the watermark was stamped with it, and every
-              // database-timestamped change inside that skew — a revocation,
-              // a receipt — landed behind the watermark and never made the
-              // obligation due again, so a `complete` transition and its
-              // webhook stood over state that had already contradicted it.
-              now: () => new Date(now),
-              subscribers: options.subscribers,
-            });
+          let accountRetired = retiredByAccount.get(configuration.account.account_id);
+          if (!accountRetired) {
+            accountRetired =
+              (await options.store.listRetiredObligationOrdinals?.(configuration.account.account_id)) ?? [];
+            retiredByAccount.set(configuration.account.account_id, accountRetired);
           }
-          if (attempted >= maxObligations) return created;
+          // Retired periods count as covered: their records were deleted by
+          // retention and must never be planned again.
+          const existingOrdinals = [
+            ...accountObligations
+              .filter(value => value.configurationId === configuration.configurationId)
+              .map(value => value.periodOrdinal),
+            ...accountRetired
+              .filter(value => value.configurationId === configuration.configurationId)
+              .map(value => value.periodOrdinal),
+          ];
+          const historyRemaining = maxHistory - (historyBySource.get(configuration.offeringId) ?? 0);
+          const candidates = missingOrdinals(
+            first,
+            last,
+            existingOrdinals,
+            Math.min(maxObligations - attempted, historyPass ? historyRemaining : maxObligations)
+          );
+          for (const ordinal of candidates) {
+            attempted += 1;
+            if (historyPass)
+              historyBySource.set(configuration.offeringId, (historyBySource.get(configuration.offeringId) ?? 0) + 1);
+            const obligation = planObligation(configuration, ordinal, now);
+            const written = await options.store.putObligation(obligation);
+            if (written.inserted) {
+              created.push(written.value);
+              await reconcileReportingStatusLifecycleV1({
+                store: options.store,
+                reporting_obligation_id: written.value.reporting_obligation_id,
+                // A fallback clock, never a pinned cutoff. `now` is this host's
+                // instant: a host running fast pinned a cutoff ahead of the
+                // database, the watermark was stamped with it, and every
+                // database-timestamped change inside that skew — a revocation,
+                // a receipt — landed behind the watermark and never made the
+                // obligation due again, so a `complete` transition and its
+                // webhook stood over state that had already contradicted it.
+                now: () => new Date(now),
+                subscribers: options.subscribers,
+              });
+            }
+            if (attempted >= maxObligations) return created;
+          }
         }
       }
       return created;
@@ -261,6 +347,9 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
     async runWorker(workerOptions = {}) {
       const now = workerOptions.now ?? (() => new Date());
       const maxIterations = workerOptions.maxIterations ?? 25;
+      const maxHistory = workerOptions.maxHistorySlicesPerSource ?? 10;
+      nonnegativeInteger(maxHistory, 'maxHistorySlicesPerSource');
+      const historyBySource = new Map<string, number>();
       const retryDelay = workerOptions.retryDelayMilliseconds ?? 30_000;
       const executionDeadline = workerOptions.executionDeadlineMilliseconds ?? EXECUTION_DEADLINE_MS;
       const settlementGrace = workerOptions.settlementGraceMilliseconds ?? DEFAULT_SETTLEMENT_GRACE_MS;
@@ -274,6 +363,11 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       if (settlementGrace > MAX_SETTLEMENT_GRACE_MS) {
         throw new RangeError(`settlementGraceMilliseconds must not exceed ${MAX_SETTLEMENT_GRACE_MS}`);
       }
+      // Persisted generations remain queued even when their offering is withdrawn.
+      const historyOfferingIds = new Set([
+        ...offeringById.keys(),
+        ...(await options.store.listConfigurations(workerOptions.account_id)).map(value => value.offeringId),
+      ]);
       const owner = `reporting-worker-${randomUUID()}`;
       const counts = { claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0, reconcilesDeferred: 0 };
       // Publishing a projection is downstream of the durable write, and it
@@ -326,14 +420,38 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           owner,
           now: nowValue.toISOString(),
           leaseMilliseconds: DEFAULT_LEASE_MS,
+          excludeHistoryOfferingIds: [...new Set([...historyOfferingIds, ...historyBySource.keys()])].filter(
+            id => (historyBySource.get(id) ?? 0) >= maxHistory
+          ),
           ...(workerOptions.account_id ? { account_id: workerOptions.account_id } : {}),
         });
         if (!lease) break;
+        if (lease.obligation.history && (historyBySource.get(lease.obligation.offeringId) ?? 0) >= maxHistory) {
+          await options.store.releaseObligationLease(lease);
+          throw new TypeError('Reporting ledger store must honor excludeHistoryOfferingIds');
+        }
         counts.claimed += 1;
+        if (lease.obligation.history) {
+          const sourceId = lease.obligation.offeringId;
+          historyBySource.set(sourceId, (historyBySource.get(sourceId) ?? 0) + 1);
+        }
         let executionDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
-        let activeRecoveryDeadlineAt = lease.obligation.recoveryDeadlineAt;
+        // Public deadlines stay period-based. A paced backlog gets a private
+        // retry window starting at first execution, frozen before source I/O.
+        let activeRecoveryDeadlineAt =
+          lease.obligation.historyRecoveryDeadlineAt ?? lease.obligation.recoveryDeadlineAt;
         try {
           const obligation = lease.obligation;
+          if (obligation.history && !obligation.historyRecoveryDeadlineAt) {
+            obligation.historyRecoveryDeadlineAt = new Date(
+              Math.max(
+                Date.parse(obligation.recoveryDeadlineAt),
+                nowValue.getTime() + obligation.schedule.recoveryWindowMilliseconds
+              )
+            ).toISOString();
+            activeRecoveryDeadlineAt = obligation.historyRecoveryDeadlineAt;
+            await options.store.updateObligation(obligation, lease);
+          }
           const offering = requiredOffering(offeringById, obligation.offeringId);
           if (isReportingCalendarDay(obligation.schedule, obligation.period.sourceTimezone)) {
             try {
@@ -361,7 +479,10 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
                 instant(obligation.recoveryDeadlineAt, 'recoveryDeadlineAt') -
                 instant(obligation.expectedAt, 'expectedAt');
               activeRecoveryDeadlineAt = new Date(
-                instant(scheduledAt, 'nextPublicationAt') + recoveryWindow
+                Math.max(
+                  obligation.history ? Date.parse(activeRecoveryDeadlineAt) : Number.NEGATIVE_INFINITY,
+                  instant(scheduledAt, 'nextPublicationAt') + recoveryWindow
+                )
               ).toISOString();
             }
           }
@@ -565,6 +686,56 @@ async function supersededCalendarGenerationIsDurablyCovered(
   );
 }
 
+function historyInstant(value: string): number {
+  const parsed = ReportingInstantV1Schema.safeParse(value);
+  if (!parsed.success) {
+    throw new TypeError('historyStart must be a valid RFC 3339 instant with at most millisecond precision');
+  }
+  return instant(parsed.data, 'historyStart');
+}
+
+/** History is mutable host metadata and must never participate in generation fingerprints. */
+function normalizeConfigurationHistory(
+  configuration: ReportingLedgerConfigurationV1,
+  requested: string,
+  offering: ReportingSourceOfferingV1,
+  now: number
+): { historyStart: string; historyStartOrdinal: number } {
+  const requestedMs = historyInstant(requested);
+  if (requestedMs < now - offering.retentionDays * 86_400_000) {
+    throw new RangeError('Reporting historyStart is outside source retentionDays');
+  }
+  if (requestedMs > now) throw new RangeError('Reporting historyStart must not be in the future');
+  const schedule = reportingPeriodSchedule(configuration);
+  const ordinal = schedule.ceil(requestedMs);
+  const start = schedule.boundary(ordinal);
+  const previousStart = configuration.historyStart
+    ? Date.parse(configuration.historyStart)
+    : schedule.boundary(
+        Math.max(
+          0,
+          schedule.ceil(Math.max(Date.parse(configuration.schedule.anchor), Date.parse(configuration.installedAt)))
+        )
+      );
+  if (requestedMs > previousStart || start > previousStart) {
+    throw new RangeError('Reporting historyStart may only move earlier');
+  }
+  if (isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone)) {
+    assertReportingCalendarDaySource(configuration.schedule, configuration.sourceTimezone, offering, now, start);
+    // Legacy generations retain fixed-width boundaries. Prove the whole newly
+    // owned span under this generation's resolver before changing ownership;
+    // matching offsets at the two endpoints do not rule out an interior DST change.
+    const previousFirst = configuration.historyStartOrdinal ?? Math.max(0, schedule.ceil(previousStart));
+    for (let selected = ordinal; selected < previousFirst; selected += 1) schedule.period(selected);
+  } else if (configuration.schedule.alignment && configuration.schedule.alignment !== 'billing_cycle') {
+    // A fixed-width generation may have passed today's offset check but differ in the newly owned past.
+    if (reportingUtcOffsetChangesV1(configuration.sourceTimezone, start, Math.max(now, start))) {
+      throw new Error('Reporting history crosses a timezone offset change; install a calendar-day generation');
+    }
+  }
+  return { historyStart: new Date(start).toISOString(), historyStartOrdinal: ordinal };
+}
+
 function planObligation(
   configuration: ReportingLedgerConfigurationV1,
   periodOrdinal: number,
@@ -600,6 +771,10 @@ function planObligation(
     ...(configuration.finalityPolicy ? { finalityPolicy: structuredClone(configuration.finalityPolicy) } : {}),
     ...(configuration.canonicalization ? { canonicalization: structuredClone(configuration.canonicalization) } : {}),
     periodOrdinal,
+    ...(configuration.historyStart !== undefined &&
+    periodOrdinal < Math.max(0, schedule.ceil(Date.parse(configuration.installedAt)))
+      ? { history: true as const }
+      : {}),
     period: {
       start: new Date(start).toISOString(),
       end: new Date(end).toISOString(),
@@ -679,7 +854,10 @@ function sourceRequest(
       revisionKind === 'correction'
         ? { revisionKind, supersedesPublicationId: latest!.sourcePublicationId }
         : { revisionKind },
-    trigger: { kind: obligation.attemptCount ? 'retry' : 'scheduled_poll', id: `trigger-${obligation.attemptCount}` },
+    trigger: {
+      kind: obligation.attemptCount ? 'retry' : obligation.history ? 'backfill' : 'scheduled_poll',
+      id: `trigger-${obligation.attemptCount}`,
+    },
     sourceRequest: { groupIds: [] },
     coverage: {
       expected: 'full',
@@ -1393,8 +1571,8 @@ function assertScheduleIdentityMatchesBoundaries(
   // beyond the later of them. Starting at the anchor collapsed the scan to a
   // zero-width window for any anchor past `now + horizon`, so a future-dated
   // DST generation was accepted without ever being probed.
-  // Obligations begin at `max(anchor, installedAt)`, so history before
-  // installation is never generated and must not refuse a configuration. A
+  // Default ownership begins at `max(anchor, installedAt)`; explicit history
+  // is validated separately. Earlier unowned history must not refuse a configuration. A
   // scan starting at the anchor rejected the protocol's own 1970 origin for
   // any zone that ran DST decades ago — Asia/Shanghai, Asia/Seoul — while the
   // identical schedule at a recent anchor was accepted. Scan the operational

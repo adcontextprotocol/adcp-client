@@ -13,6 +13,8 @@ const {
   ReportingConsumerStatusConflictError,
   ReportingLedgerSnapshotUnavailableError,
   evaluateReportingLedgerCoverageV1,
+  assertReportingLedgerHistoryDoesNotOverlap,
+  reportingPeriodSchedule,
   projectReportingObligationHealthV1,
   reportingLedgerScopeClosed,
 } = require('@adcp/sdk/reporting/ledger');
@@ -36,6 +38,18 @@ class MemoryLedgerStore {
   finalityBaselineReconstructions = 0;
 
   async putConfiguration(value) {
+    if (value.historyStart !== undefined) {
+      const schedule = reportingPeriodSchedule(value);
+      if (
+        !Number.isSafeInteger(value.historyStartOrdinal) ||
+        schedule.boundary(value.historyStartOrdinal) !== Date.parse(value.historyStart)
+      ) {
+        throw new TypeError('Reporting historyStart must match its schedule ordinal');
+      }
+      value = { ...value, historyStart: new Date(value.historyStart).toISOString() };
+    } else if (value.historyStartOrdinal !== undefined) {
+      throw new TypeError('Reporting historyStartOrdinal requires historyStart');
+    }
     const existing = [...this.configurations.values()].find(
       item =>
         item.account.account_id === value.account.account_id &&
@@ -43,8 +57,36 @@ class MemoryLedgerStore {
         item.delivery_config_version === value.delivery_config_version
     );
     if (existing && existing.semanticFingerprint !== value.semanticFingerprint) throw new Error('immutable conflict');
-    if (!existing) this.configurations.set(value.configurationId, structuredClone(value));
+    if (!existing) {
+      assertReportingLedgerHistoryDoesNotOverlap(value, [...this.configurations.values()]);
+      this.configurations.set(value.configurationId, structuredClone(value));
+    }
     return { inserted: !existing, value: structuredClone(existing ?? value) };
+  }
+  async extendConfigurationHistory(input) {
+    input = { ...input, historyStart: new Date(input.historyStart).toISOString() };
+    const stored = this.configurations.get(input.configurationId);
+    if (!stored) throw new Error('Unknown reporting configuration');
+    const schedule = reportingPeriodSchedule(stored);
+    const previous =
+      stored.historyStart ??
+      new Date(
+        schedule.boundary(
+          Math.max(0, schedule.ceil(Math.max(Date.parse(stored.schedule.anchor), Date.parse(stored.installedAt))))
+        )
+      ).toISOString();
+    if (
+      !Number.isSafeInteger(input.historyStartOrdinal) ||
+      schedule.boundary(input.historyStartOrdinal) !== Date.parse(input.historyStart)
+    ) {
+      throw new TypeError('Reporting historyStart must match its schedule ordinal');
+    }
+    if (Date.parse(input.historyStart) > Date.parse(previous))
+      throw new RangeError('Reporting historyStart may only move earlier');
+    const value = { ...stored, historyStart: input.historyStart, historyStartOrdinal: input.historyStartOrdinal };
+    assertReportingLedgerHistoryDoesNotOverlap(value, [...this.configurations.values()]);
+    this.configurations.set(input.configurationId, structuredClone(value));
+    return structuredClone(value);
   }
   async listConfigurations(accountId) {
     return [...this.configurations.values()].filter(value => !accountId || value.account.account_id === accountId);
@@ -88,15 +130,18 @@ class MemoryLedgerStore {
     this.obligations.set(value.reporting_obligation_id, structuredClone(value));
     if (issue) this.issues.set(issue.issueId, structuredClone(issue));
   }
-  async claimObligation({ owner, now, leaseMilliseconds, account_id }) {
-    const value = [...this.obligations.values()].find(
-      item =>
-        (!account_id || item.account.account_id === account_id) &&
-        item.state === 'pending' &&
-        Date.parse(item.nextAttemptAt) <= Date.parse(now) &&
-        (!this.leases.has(item.reporting_obligation_id) ||
-          Date.parse(this.leases.get(item.reporting_obligation_id).expiresAt) <= Date.parse(now))
-    );
+  async claimObligation({ owner, now, leaseMilliseconds, account_id, excludeHistoryOfferingIds = [] }) {
+    const value = [...this.obligations.values()]
+      .sort((a, b) => Number(!!a.history) - Number(!!b.history))
+      .find(
+        item =>
+          (!item.history || !excludeHistoryOfferingIds.includes(item.offeringId)) &&
+          (!account_id || item.account.account_id === account_id) &&
+          item.state === 'pending' &&
+          Date.parse(item.nextAttemptAt) <= Date.parse(now) &&
+          (!this.leases.has(item.reporting_obligation_id) ||
+            Date.parse(this.leases.get(item.reporting_obligation_id).expiresAt) <= Date.parse(now))
+      );
     if (!value) return null;
     const generation = (this.leases.get(value.reporting_obligation_id)?.generation ?? 0) + 1;
     const lease = {
