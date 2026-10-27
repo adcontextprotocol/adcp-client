@@ -46,6 +46,9 @@ export interface VersionAdapter {
    */
   adaptRequest?(params: unknown): { params: unknown; drift?: VersionDrift };
 
+  /** Compatibility fallback when no authoritative wire release was negotiated. */
+  adaptUnnegotiatedRequest?(params: unknown): { params: unknown; drift?: VersionDrift };
+
   /**
    * Adapt a response from this adapter's release up to the next minor
    * release. Returns the original reference when nothing changes.

@@ -32,6 +32,23 @@ Capability discovery can validate against the seller-served release echoed in `a
 
 Established media-buy tools remain available for AdCP 3.0/3.1 sellers. Their compact-lifecycle projections and durable purchase continuations remain scoped to the negotiated AdCP 3 release. Creative-model v1/v2 projections under `src/lib/v2/projection/` are independent of AdCP protocol majors.
 
+### Legacy creative trackers
+
+For AdCP 3.0 delivery, the request adapters convert renderer-fired `pixel_tracker`
+assets to URL trackers before schema projection. Impression and click events map
+to their legacy slots. Viewability variants, custom timing and JavaScript methods
+emit `PIXEL_TRACKER_LOSSY_DOWNGRADE` in the task debug logs. JavaScript URLs are
+requested as image pixels after this downgrade; their code does not execute.
+Competing assets are refused instead of overwriting a legacy slot.
+
+A call negotiated as 3.1 keeps its pixel trackers even if the seller also lists
+3.0 support. Missing or synthetic release metadata keeps the previous request
+adapter behavior; it does not establish permission to downgrade trackers.
+A caller-supplied format definition can explicitly require a legacy
+URL tracker slot; creative projection then converts and matches that slot together.
+Pure projection callers should surface `getCreativeDeliveryDiagnostics(projected)`
+from `@adcp/sdk/v2/projection`. These advisories remain outside the wire JSON.
+
 ## Bundled artifacts
 
 ```text
