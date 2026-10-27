@@ -5,34 +5,33 @@ development and staging; production remains on SDK 16 and AdCP 3.2.
 
 ## Companion packages
 
-`@adcp/reporting-storage` declares `@adcp/sdk` as a peer, so it ships a release
-for each SDK line. Its stable releases accept only SDK 16: `0.1.x` takes
-`^16.0.0` and `0.2.0` takes `^16.5.0`. Installing SDK 17 beta beside either one
-makes npm report an invalid tree (`npm ls` prints
-`invalid: "^16.0.0" from node_modules/@adcp/reporting-storage` for `0.1.x`) or
-refuse with `ERESOLVE`. Install the
-storage release from the same `beta` train:
+The next release pairs **`@adcp/sdk@17.0.0-beta.2`** with
+**`@adcp/reporting-storage@0.3.0-beta.1`**. The storage package requires SDK
+`^17.0.0-beta.2`; install and lock both packages together after publication:
 
 ```bash
-npm install --save-exact @adcp/sdk@17.0.0-beta.0 @adcp/reporting-storage@0.2.1-beta.0
-```
-
-`0.2.1-beta.0` has the same storage code and SQL migrations as `0.2.0`; only its
-`@adcp/sdk` peer range changes (`^17.0.0-beta.0`). A `~0.2.0` range does not match
-the prerelease, so pin the exact version. If you are upgrading from SDK 16.4 or
-earlier, read the [`0.2.0` notes](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/CHANGELOG.md#020)
-for BigQuery sinks that omit `location`. No other storage change is required.
-
-The next SDK 17 beta includes a companion reporting-storage changeset so the
-pair is released together. Until it is published, `0.2.1-beta.0` remains the
-SDK 17-compatible storage release; `0.2.0` is still for SDK 16. A source change
-or changeset does not make a new version available in the registry. After the
-release, resolve both beta tags together and commit the exact versions:
-
-```bash
-npm install --save-exact @adcp/sdk@beta @adcp/reporting-storage@beta
+npm install --save-exact @adcp/sdk@17.0.0-beta.2 @adcp/reporting-storage@0.3.0-beta.1
 npm ls @adcp/sdk @adcp/reporting-storage
 ```
+
+The `beta` tags select that release train once published. Stable storage
+`0.2.0` accepts SDK `^16.5.0`, including SDK 16.6; it does not accept SDK 17.
+The earlier SDK 17 beta.0/beta.1 pair used storage `0.2.1-beta.0`, whose code
+and SQL migrations matched `0.2.0` and whose peer range was `^17.0.0-beta.0`.
+A stable range such as `~0.2.0` does not select either storage prerelease.
+
+Storage `0.3.0-beta.1` also includes reporting configuration history. Reapply
+`REPORTING_LEDGER_MIGRATION` before starting the new workers: it adds the
+nullable `adcp_reporting_configurations.history_start` audit column and
+live-priority indexes idempotently. Upgrade all workers before granting or
+extending historical ownership. Existing configurations retain their original
+history boundary until the trusted host explicitly changes it. See the
+[reporting ledger guide](./guides/REPORTING-LEDGER.md) for history, source
+retention, pacing, and custom-store requirements.
+
+If upgrading from SDK 16.4 or earlier, also read the
+[storage 0.2.0 notes](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/CHANGELOG.md#020)
+for BigQuery sinks that omit `location`.
 
 ## Added union and enum members
 

@@ -16,8 +16,9 @@ the changelog with a migration note. Pin exact versions during the SDK 17 previe
 npm install --save-exact @adcp/sdk@beta @adcp/reporting-storage@beta pg
 ```
 
-`@adcp/sdk` is a **peer dependency**. Stable storage `0.2.0` pairs with SDK `^16.5.0`;
-storage `0.2.1-beta.0` pairs with SDK `^17.0.0-beta.0`. See the
+`@adcp/sdk` is a **peer dependency**. Stable storage `0.2.0` pairs with SDK `^16.5.0` (including SDK 16.6).
+The next beta pair is storage `0.3.0-beta.1` with SDK `^17.0.0-beta.2`; the earlier
+`0.2.1-beta.0` storage release paired with SDK `^17.0.0-beta.0`. See the
 [SDK 17 migration guide](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/migration-16-to-17.md#companion-packages)
 for the release pairing. The store, its errors and the protocol handlers share types and
 symbol-keyed guards, so the host must have exactly one copy of it. Install the pair that was published together: each
