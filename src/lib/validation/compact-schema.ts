@@ -81,6 +81,36 @@ export function compactBundledSchema(root: JsonObject, options: { maxInlineSchem
   };
   countSchema(root);
 
+  // Validation factoring must preserve existing JSON Pointer addresses. If
+  // a pointer descends through a schema node, hoisting that ancestor behind
+  // a new $ref would erase the original path. Default archive serialization
+  // stays byte-for-byte unchanged; this guard is validation-mode-only.
+  const pointerAddressedNodes = new Set<JsonObject>();
+  if (options.maxInlineSchemaBytes !== undefined) {
+    const rootUrl = new URL(typeof root.$id === 'string' ? root.$id : '', 'https://adcp.invalid/');
+    rootUrl.hash = '';
+    for (const schema of visited) {
+      if (typeof schema.$ref !== 'string') continue;
+      let fragment: string;
+      try {
+        const target = new URL(schema.$ref, rootUrl);
+        fragment = decodeURIComponent(target.hash.slice(1));
+        target.hash = '';
+        if (target.href !== rootUrl.href || !fragment.startsWith('/')) continue;
+      } catch {
+        continue; // AJV remains responsible for malformed reference diagnostics.
+      }
+      let value: unknown = root;
+      for (const segment of fragment.slice(1).split('/')) {
+        if (isObject(value)) pointerAddressedNodes.add(value);
+        if (!isObject(value) && !Array.isArray(value)) break;
+        const key = segment.replace(/~1/g, '/').replace(/~0/g, '~');
+        value = (value as Record<string, unknown>)[key];
+      }
+      if (isObject(value)) pointerAddressedNodes.add(value);
+    }
+  }
+
   const signatureCache = new Map<JsonObject, string>();
   const weightCache = new Map<JsonObject, number>();
   const schemaSignature = (schema: JsonObject): string => {
@@ -162,7 +192,7 @@ export function compactBundledSchema(root: JsonObject, options: { maxInlineSchem
 
   const signatureGroups = new Map<string, JsonObject[]>();
   for (const schema of visited) {
-    if (schema === root) continue;
+    if (schema === root || pointerAddressedNodes.has(schema)) continue;
     const signature = schemaSignature(schema);
     const group = signatureGroups.get(signature) ?? [];
     group.push(schema);

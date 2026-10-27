@@ -145,9 +145,10 @@ test('@adcp/sdk/client/core keeps heavy generated-schema surfaces out of its eag
     }
   }
 
-  // Protocol-method signing and principal-partition ownership add two small
-  // policy modules. Keep the heavy schema/registry exclusions below unchanged.
-  assert.ok(visited.size <= 212, `focused client eager graph grew to ${visited.size} internal modules`);
+  // #3461 adds only the public delivery-parser module through the existing
+  // webhooks barrel; all of its transitive dependencies were already present.
+  // Schema compaction stays lazy. Keep heavy schema/registry exclusions intact.
+  assert.ok(visited.size <= 213, `focused client eager graph grew to ${visited.size} internal modules`);
   for (const excluded of [
     'types/schemas.generated.mjs',
     'utils/response-schemas.mjs',

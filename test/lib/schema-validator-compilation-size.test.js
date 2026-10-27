@@ -213,3 +213,132 @@ test('validation factoring preserves composition, local refs and literal annotat
   assert.deepEqual(factored.default, literal);
   assert.deepEqual(schema, before);
 });
+
+for (const composition of ['oneOf', 'anyOf', 'allOf']) {
+  test(`large bundled-only ${composition} response arms retain envelope relaxation before factoring`, t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-large-response-arm-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const file = path.join(root, 'bundled/media-buy/get-products-response.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const arm = {
+      type: 'object',
+      additionalProperties: false,
+      required: ['payload'],
+      properties: {
+        payload: {
+          type: 'object',
+          description: 'large schema annotation '.repeat(100),
+          additionalProperties: false,
+          required: ['tag'],
+          properties: { tag: { type: 'string' } },
+        },
+      },
+    };
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        $id: 'https://adcontextprotocol.org/schemas/3.2.7/media-buy/get-products-response.json',
+        [composition]: [arm],
+      })
+    );
+    withExternalSchemaRoot('3.2', root, () => {
+      const runtime = getValidator('get_products', 'sync', '3.2');
+      const payload = { payload: { tag: 'ok' }, replayed: true, context: { correlation_id: 'replay' } };
+      assert.equal(runtime(payload), true, JSON.stringify(runtime.errors));
+      assert.equal(runtime({ ...payload, payload: { tag: 'ok', unexpected: true } }), false);
+      const canonical = getCanonicalToolValidatorForVersion('get_products', 'sync', '3.2');
+      assert.equal(canonical(payload), false, 'canonical response arms remain strict');
+      assert.equal(canonical({ payload: { tag: 'ok' } }), true);
+    });
+  });
+}
+
+for (const ref of [
+  '#/properties/payload/properties/tag',
+  'https://schema.example/pointer.json#/properties/payload/properties/tag',
+]) {
+  test(`validation factoring preserves pointer-addressed one-off nodes: ${ref}`, () => {
+    const schema = {
+      $id: 'https://schema.example/pointer.json',
+      type: 'object',
+      required: ['payload', 'copy'],
+      properties: {
+        payload: {
+          type: 'object',
+          description: 'large unique payload annotation '.repeat(100),
+          properties: { tag: { type: 'string', minLength: 2 } },
+          required: ['tag'],
+          additionalProperties: false,
+        },
+        copy: { $ref: ref },
+      },
+      additionalProperties: false,
+    };
+    const original = new Ajv({ strict: false, allErrors: true }).compile(schema);
+    const factored = compactSchemaForValidation(schema);
+    const bounded = new Ajv({ strict: false, allErrors: true, inlineRefs: false }).compile(factored);
+    for (const value of [
+      { payload: { tag: 'ok' }, copy: 'ok' },
+      { payload: { tag: 'ok' }, copy: '' },
+      { payload: { tag: '' }, copy: 'ok' },
+    ]) {
+      assert.equal(bounded(value), original(value), JSON.stringify(value));
+      const paths = validate => (validate.errors ?? []).map(error => `${error.instancePath}:${error.keyword}`).sort();
+      assert.deepEqual(paths(bounded), paths(original));
+    }
+    assert.equal(factored.properties.payload.properties.tag.minLength, 2, 'the referenced path remains present');
+  });
+}
+
+test('paired bundled response aliases relax closed non-tool fragments without loosening shared request schemas', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-closed-reply-alias-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const base = 'https://adcontextprotocol.org/schemas/3.2.7/';
+  const write = (file, schema) => {
+    fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    fs.writeFileSync(path.join(root, file), JSON.stringify(schema));
+  };
+  const reply = {
+    $id: base + 'core/reply.json',
+    type: 'object',
+    additionalProperties: false,
+    required: ['payload'],
+    properties: { payload: { type: 'string' } },
+  };
+  write('core/reply.json', reply);
+  write('media-buy/get-products-response.json', {
+    $id: base + 'media-buy/get-products-response.json',
+    allOf: [{ $ref: '../core/reply.json' }],
+  });
+  write('media-buy/get-products-request.json', {
+    $id: base + 'media-buy/get-products-request.json',
+    allOf: [{ $ref: '../core/reply.json' }],
+  });
+  write('bundled/media-buy/get-products-response.json', {
+    $id: base + 'media-buy/get-products-response.json',
+    allOf: [reply],
+  });
+  withExternalSchemaRoot('3.2', root, () => {
+    const request = getValidator('get_products', 'request', '3.2');
+    const payload = { payload: 'ok', replayed: true, future_envelope: 'extension' };
+    assert.equal(request({ payload: 'ok' }), true);
+    assert.equal(request(payload), false);
+    const runtime = getValidator('get_products', 'sync', '3.2');
+    assert.equal(runtime(payload), true, JSON.stringify(runtime.errors));
+    const canonical = getCanonicalToolValidatorForVersion('get_products', 'sync', '3.2');
+    assert.equal(canonical(payload), false);
+    assert.equal(canonical({ payload: 'ok' }), true);
+    assert.equal(request(payload), false, 'shared request fragment must remain closed after response compilation');
+    assert.equal(getSchemaValidatorByRef('core/reply.json', '3.2')(payload), false);
+  });
+});
+
+test('ESM response validators execute the lazy factoring path in a built package', async () => {
+  const loader = await import('../../dist/lib/validation/schema-loader.mjs');
+  const validate = loader.getValidator('get_products', 'sync', '3.2.7');
+  assert.equal(
+    validate({ status: 'completed', cache_scope: 'public', products: [] }),
+    true,
+    JSON.stringify(validate.errors)
+  );
+});

@@ -20,7 +20,6 @@ import { readdirSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
 import { isDeepStrictEqual } from 'node:util';
 import { ADCP_VERSION } from '../version';
-import { compactSchemaForValidation } from './compact-schema';
 import { ConfigurationError } from '../errors';
 import {
   clearBundledSchemaStoreCache,
@@ -918,9 +917,9 @@ export function getValidator(
 
   const indexedFile = s.fileIndex.get(cacheKey);
   if (!indexedFile) return undefined;
-  // Prefer the authored ref graph when available; retaining the bundled
-  // index preserves public document behavior and external bundled-only roots.
-  const file = authoredToolSchemaFile(s, indexedFile);
+  // Prefer a context-safe authored ref graph; retain paired bundled response
+  // compositions when envelope relaxation cannot safely traverse shared refs.
+  const file = runtimeToolSchemaFile(s, indexedFile, direction);
 
   // Flat-tree schemas `$ref` into separately published documents and need
   // those trees registered before compile. Bundled schemas contain only
@@ -942,8 +941,11 @@ export function getValidator(
   // The fix: strip nested `$id` fields before compile on bundled
   // schemas. The root `$id` is kept (it's the validator's lookup key);
   // every other `$id` in the tree was just metadata anyway.
-  const prepared = fromBundled ? compactSchemaForValidation(stripNestedIds(rawSchema)) : rawSchema;
-  const schema = direction === 'request' ? prepared : relaxResponseRoot(prepared);
+  const prepared = fromBundled ? stripNestedIds(rawSchema) : rawSchema;
+  // Relax the authored composition before factoring can move a closed arm
+  // behind a private ref. Canonical validators deliberately skip relaxation.
+  const envelope = direction === 'request' ? prepared : relaxResponseRoot(prepared);
+  const schema = fromBundled ? compactSchemaForValidation(envelope) : envelope;
   const ajv = fromBundled ? s.bundledAjv : s.ajv;
   const existing = typeof schema.$id === 'string' ? ajv.getSchema(schema.$id) : undefined;
   const compiled = existing ?? ajv.compile(schema);
@@ -979,6 +981,31 @@ function authoredToolSchemaFile(state: LoaderState, indexedFile: string): string
 
   const authoredFile = path.join(state.root, relative);
   return existsSync(authoredFile) ? authoredFile : indexedFile;
+}
+
+/** Keep composition-only response relaxation local to the selected tool. */
+function runtimeToolSchemaFile(state: LoaderState, indexedFile: string, direction: Direction): string {
+  const authoredFile = authoredToolSchemaFile(state, indexedFile);
+  if (direction === 'request' || authoredFile === indexedFile) return authoredFile;
+  const hasCompositionReference = (node: unknown): boolean => {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+    const schema = node as LoadedSchema;
+    if (typeof schema.$ref === 'string') return true;
+    return ['allOf', 'oneOf', 'anyOf'].some(
+      keyword => Array.isArray(schema[keyword]) && (schema[keyword] as unknown[]).some(hasCompositionReference)
+    );
+  };
+  // A modular response may alias a closed non-tool fragment. Relaxing that
+  // shared fragment globally would also loosen nested request validation.
+  // Its paired bundled tree provides a context-local composition to relax.
+  return hasCompositionReference(loadJson(authoredFile)) ? indexedFile : authoredFile;
+}
+
+function compactSchemaForValidation(schema: LoadedSchema): LoadedSchema {
+  // Cold client imports need no schema factoring code until a bundled-only
+  // or context-sensitive response graph actually reaches compilation.
+  const compactor = require('./compact-schema') as typeof import('./compact-schema');
+  return compactor.compactSchemaForValidation(schema);
 }
 
 /**
