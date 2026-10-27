@@ -1217,19 +1217,25 @@ function projectLegacyAssetKeys(
   );
   const targetBySource = new Map<string, string>();
   const sourcesByTarget = new Map<string, string[]>();
-  const trackersBySource = new Map<string, LegacyPixelTracker>();
+  const trackersBySource = new Map<string, LegacyPixelTracker[]>();
   for (const [key, value] of Object.entries(assets)) {
-    const tracker = downgradePixelTracker(value);
+    const candidates = (Array.isArray(value) ? value : [value]).map(downgradePixelTracker);
+    const trackers =
+      candidates.length > 0 && candidates.every((tracker): tracker is LegacyPixelTracker => tracker !== undefined)
+        ? candidates
+        : undefined;
+    const trackerSlotMatches = (slot: NonNullable<V1FormatDefinition['assets']>[number]): boolean =>
+      trackers !== undefined && trackers.every(tracker => legacyUrlTrackerSlotMatches(slot, tracker));
     if (declaredIds.has(key)) {
       const slot = slots.find(slot => slot.asset_id === key);
-      if (tracker && slot && legacyUrlTrackerSlotMatches(slot, tracker)) trackersBySource.set(key, tracker);
+      if (trackers && slot && trackerSlotMatches(slot)) trackersBySource.set(key, trackers);
       continue;
     }
     const asset = record(value);
-    if (!asset || typeof asset.asset_type !== 'string') continue;
+    if (!trackers && (!asset || typeof asset.asset_type !== 'string')) continue;
     const matches = availableSlots.filter(slot => {
-      if (tracker && legacyUrlTrackerSlotMatches(slot, tracker)) return true;
-      if (slot.asset_type !== asset.asset_type) return false;
+      if (trackerSlotMatches(slot)) return true;
+      if (!asset || slot.asset_type !== asset.asset_type) return false;
       if (asset.asset_type === 'url') {
         return typeof asset.url_type === 'string' && asset.url_type === slot.requirements?.url_type;
       }
@@ -1247,7 +1253,7 @@ function projectLegacyAssetKeys(
     const slot = matches[0]!;
     const target = slot.asset_id!;
     targetBySource.set(key, target);
-    if (tracker && legacyUrlTrackerSlotMatches(slot, tracker)) trackersBySource.set(key, tracker);
+    if (trackers && trackerSlotMatches(slot)) trackersBySource.set(key, trackers);
     const sources = sourcesByTarget.get(target) ?? [];
     sources.push(key);
     sourcesByTarget.set(target, sources);
@@ -1263,16 +1269,22 @@ function projectLegacyAssetKeys(
   }
   if (targetBySource.size === 0 && trackersBySource.size === 0) return unchanged;
   const drifts: VersionDrift[] = [];
-  for (const [key, tracker] of trackersBySource) {
-    const drift = pixelTrackerDrift(`assets.${key}`, tracker);
-    if (drift) drifts.push(drift);
+  for (const [key, trackers] of trackersBySource) {
+    trackers.forEach((tracker, index) => {
+      const path = `assets.${key}${Array.isArray(assets[key]) ? `[${index}]` : ''}`;
+      const drift = pixelTrackerDrift(path, tracker);
+      if (drift) drifts.push(drift);
+    });
   }
   return {
     assets: Object.fromEntries(
-      Object.entries(assets).map(([key, value]) => [
-        targetBySource.get(key) ?? key,
-        trackersBySource.get(key)?.asset ?? value,
-      ])
+      Object.entries(assets).map(([key, value]) => {
+        const trackers = trackersBySource.get(key);
+        return [
+          targetBySource.get(key) ?? key,
+          trackers ? (Array.isArray(value) ? trackers.map(tracker => tracker.asset) : trackers[0]!.asset) : value,
+        ];
+      })
     ),
     drifts,
   };
