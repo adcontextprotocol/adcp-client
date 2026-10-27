@@ -188,6 +188,8 @@ export interface TaskOptions {
    * @internal
    */
   wireAdcpVersion?: string;
+  /** SDK-selected release for result metadata only; never changes wire overrides or validation. @internal */
+  selectedAdcpVersion?: string;
   /**
    * INTERNAL — AdCP release negotiated with the seller for this operation.
    * Responses are validated against this release before being converted up

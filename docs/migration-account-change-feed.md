@@ -275,3 +275,5 @@ When available, `metadata.wireAdcpVersion` records the trusted SDK-selected wire
 release, independently of the seller echo. Drains prefer negotiated/wire
 metadata, then a custom reader's explicit `adcpVersion`, then the echo and
 configured client pin. An older echo cannot weaken a known wire contract.
+Sellers without authoritative release metadata keep the echo/client fallback;
+use an explicit validation pin for a custom reader when its release is known.

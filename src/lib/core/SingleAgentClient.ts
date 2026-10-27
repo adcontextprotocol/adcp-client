@@ -7389,8 +7389,11 @@ export class SingleAgentClient {
     if (!negotiated) return options;
     return {
       ...(options ?? {}),
-      wireAdcpVersion: negotiated.version,
-      ...(negotiated.downgraded && { negotiatedAdcpVersion: negotiated.version }),
+      selectedAdcpVersion: negotiated.version,
+      ...(negotiated.downgraded && {
+        wireAdcpVersion: negotiated.version,
+        negotiatedAdcpVersion: negotiated.version,
+      }),
     } as O;
   }
 
