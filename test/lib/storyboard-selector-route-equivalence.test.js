@@ -115,3 +115,17 @@ test('route set comparison is independent of selector order and duplicate refere
   );
   assert.equal(result.passed, true, result.error);
 });
+
+test('a shared legacy ref selecting multiple options conflicts with a narrower product-local option set', () => {
+  const shared = { agent_url: 'https://creative.example', id: 'shared-image' };
+  const declared = structuredClone(product);
+  for (const option of declared.format_options) option.v1_format_ref = [shared];
+  const request = { packages: [{ product_id: 'multi', format_option_refs: refs, format_ids: [shared] }] };
+  const negative = grade(request, [declared], false, false);
+  assert.equal(negative.passed, true, negative.error);
+  assert.match(negative.observations[0].detail, /different product format_options/);
+  const broad = structuredClone(request);
+  broad.packages[0].format_option_refs.push({ scope: 'product', format_option_id: 'leaderboard' });
+  const matching = grade(broad, [declared], true, true);
+  assert.equal(matching.passed, true, matching.error);
+});
