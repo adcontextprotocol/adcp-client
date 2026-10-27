@@ -747,3 +747,22 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.notStrictEqual(features.content_standards, true);
   });
 });
+
+for (const version of ['3.0', '3.1', '3.2', require('../dist/lib/version').ADCP_VERSION]) {
+  it(`capability envelopes retain status, context and extension data at ${version}`, async () => {
+    const context = { trace_id: 'capability-envelope-regression' };
+    const ext = { 'example.com': { capability_test: 'preserved' } };
+    const server = createAdcpServerFromPlatform(basePlatform({ ext }), {
+      name: 'capability-envelope',
+      version: '4.0.0',
+      validation: { requests: 'off', responses: 'strict' },
+    });
+    const result = await dispatchCapabilities(server, { adcp_version: version, context });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.status, 'completed');
+    assert.deepStrictEqual(result.structuredContent.context, context);
+    assert.deepStrictEqual(result.structuredContent.ext, ext);
+    if (version === '3.0') assert.strictEqual(result.structuredContent.adcp_version, undefined);
+    else assert.ok(result.structuredContent.adcp_version?.startsWith(version.split('.').slice(0, 2).join('.')));
+  });
+}
