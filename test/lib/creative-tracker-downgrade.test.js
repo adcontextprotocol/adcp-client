@@ -215,6 +215,57 @@ describe('explicit legacy URL tracker slots', () => {
     assert.deepEqual(getCreativeDeliveryDiagnostics(projectExplicit(result)), diagnostics);
   });
 
+  for (const key of ['counters', 'impression_tracker']) {
+    test(`converts repeatable pixels in the explicit ${key} URL slot without losing entries`, () => {
+      const pixels = [tracker(), { ...tracker(), url: 'https://track.example/second' }];
+      const input = creative({ [key]: pixels });
+      const before = structuredClone(input);
+      const definition = explicitDefinition();
+      definition.assets.find(slot => slot.asset_id === 'impression_tracker').max = 2;
+      const result = projectExplicit(input, definition);
+      assert.deepEqual(
+        result.assets.impression_tracker,
+        pixels.map(pixel => ({
+          asset_type: 'url',
+          url_type: 'tracker_pixel',
+          url: pixel.url,
+        }))
+      );
+      if (key !== 'impression_tracker') assert.equal(result.assets[key], undefined);
+      assert.deepEqual(input, before);
+      assert.deepEqual(projectExplicit(result, definition), result);
+    });
+  }
+
+  test('repeatable lossy explicit-slot conversion reports each indexed tracker outside the wire JSON', () => {
+    const input = creative({ measurements: [tracker('viewable_mrc_50'), tracker('viewable_mrc_100', 'js')] });
+    const definition = explicitDefinition();
+    definition.assets.find(slot => slot.asset_id === 'viewability_tracker').max = 2;
+    const result = projectExplicit(input, definition);
+    assert.ok(result.assets.viewability_tracker.every(asset => asset.asset_type === 'url'));
+    const diagnostics = getCreativeDeliveryDiagnostics(result);
+    assert.equal(diagnostics.length, 2);
+    assert.deepEqual(
+      diagnostics.flatMap(drift => drift.strippedFields),
+      ['assets.measurements[0].event', 'assets.measurements[1].event', 'assets.measurements[1].method']
+    );
+    assert.equal(JSON.stringify(result).includes('PIXEL_TRACKER_LOSSY_DOWNGRADE'), false);
+    assert.deepEqual(getCreativeDeliveryDiagnostics(projectExplicit(result, definition)), diagnostics);
+  });
+
+  test('does not force mixed tracker roles or partially convertible arrays into one URL slot', () => {
+    for (const pixels of [
+      [tracker(), tracker('click')],
+      [tracker(), { ...tracker(), event: 'future_event' }],
+    ]) {
+      const input = creative({ counters: pixels });
+      const result = projectExplicit(input);
+      assert.deepEqual(result.assets.counters, pixels);
+      assert.equal(result.assets.impression_tracker, undefined);
+      assert.deepEqual(getCreativeDeliveryDiagnostics(result), []);
+    }
+  });
+
   test('keeps occupied slots and ambiguous roles intact', () => {
     const occupied = { asset_type: 'url', url_type: 'tracker_pixel', url: 'https://track.example/existing' };
     const input = creative({ impression_tracker: occupied, extra: tracker() });
