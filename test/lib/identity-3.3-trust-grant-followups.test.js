@@ -510,21 +510,20 @@ test('S2: self-operated chains work through a verified house and respect nonexcl
     resolveBrandHouse,
   });
   assert.deepEqual(result.chain, ['child.com', 'platform.com']);
-  // A covering grant that does not match (wrong brand) blocks nonexclusive seller fallback.
+  // A grant that does not cover the claim (wrong brand) never narrows a
+  // nonexclusive record: the claim stays at the seller's discretion (L2 Absence).
   let fallback = 0;
-  await assert.rejects(
-    identity.authorizeDemandGrant(claim, {
-      evaluator: evaluator(records).trust,
-      now: () => now,
-      resolveBrandHouse: async () => ({ domain: 'house.com', brand_id: 'other' }),
-      sellerAuthorization: async () => {
-        fallback++;
-        return true;
-      },
-    }),
-    e => e.details?.reason === 'grant_absent'
-  );
-  assert.equal(fallback, 0);
+  const discretion = await identity.authorizeDemandGrant(claim, {
+    evaluator: evaluator(records).trust,
+    now: () => now,
+    resolveBrandHouse: async () => ({ domain: 'house.com', brand_id: 'other' }),
+    sellerAuthorization: async () => {
+      fallback++;
+      return true;
+    },
+  });
+  assert.equal(discretion.source, 'seller');
+  assert.equal(fallback, 1);
   // With no covering grant, nonexclusive records may fall back to the seller.
   records['house.com'] = { grants: [] };
   const seller = await identity.authorizeDemandGrant(claim, {
