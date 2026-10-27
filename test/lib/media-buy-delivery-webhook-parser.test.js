@@ -202,7 +202,8 @@ test('inline notification enum compatibility export remains available', () => {
   ]);
 });
 
-async function registeredReceiver() {
+async function registeredReceiver(deliveryKind = 'reporting') {
+  const taskType = deliveryKind === 'reporting' ? 'media_buy_delivery' : 'artifact_delivery';
   const { SingleAgentClient, InMemoryWebhookRegistrationStore } = require('../../dist/lib');
   const { StaticJwksResolver } = require('../../dist/lib/signing/jwks');
   const { signWebhook } = require('../../dist/lib/signing/client');
@@ -224,11 +225,11 @@ async function registeredReceiver() {
     agentUrl: agent.agent_uri,
     protocol: 'mcp',
     operationId,
-    taskType: 'media_buy_delivery',
+    taskType,
     callbackUrl: url,
     method: 'POST',
     mode: 'rfc9421',
-    deliveryKind: 'reporting',
+    deliveryKind,
     authorizationContextVersion: 1,
     createdAt: now,
     expiresAt: now + 60000,
@@ -249,7 +250,7 @@ async function registeredReceiver() {
         rawBody,
         headers: signed.headers,
         operationId,
-        taskType: 'media_buy_delivery',
+        taskType,
         requestMethod: 'POST',
         requestUrl: url,
         adcpVersion,
@@ -340,4 +341,35 @@ test('invalid reporting configuration does not consume a signed delivery nonce',
 test('shared body schema preserves webhook-specific scheduling fields', () => {
   const body = report({ notification_type: 'window_update', sequence_number: 4 });
   assert.deepEqual(MediaBuyDeliveryReportSchema.parse(body), body);
+});
+
+test('artifact schema configuration failures also preserve the signed delivery nonce', async t => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { withExternalSchemaRoot } = require('../../dist/lib/validation/schema-loader');
+  const receiver = await registeredReceiver('artifact');
+  const body = {
+    idempotency_key: 'artifact-preflight-regression-3461',
+    media_buy_id: 'mb1',
+    batch_id: 'batch1',
+    timestamp: '2026-10-20T00:00:00Z',
+    artifacts: [],
+  };
+  const options = receiver.options(body);
+  const emptyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-artifact-preflight-'));
+  t.after(() => fs.rmSync(emptyRoot, { recursive: true, force: true }));
+  fs.writeFileSync(
+    path.join(emptyRoot, 'preflight.json'),
+    JSON.stringify({ $id: `/schemas/${ADCP_VERSION}/core/preflight.json`, type: 'object' })
+  );
+  const failed = await withExternalSchemaRoot(ADCP_VERSION, emptyRoot, () =>
+    receiver.client.verifyAndParseWebhook(options)
+  );
+  assert.equal(failed.code, 'webhook_verification_unavailable');
+  const accepted = await receiver.client.verifyAndParseWebhook(options);
+  assert.equal(accepted.ok, true, JSON.stringify(accepted));
+  assert.deepEqual(accepted.result, body);
+  const replay = await receiver.client.verifyAndParseWebhook(options);
+  assert.equal(replay.code, 'webhook_signature_replayed');
 });

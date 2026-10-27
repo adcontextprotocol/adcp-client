@@ -4521,19 +4521,33 @@ export class SingleAgentClient {
       }
     }
     let reportingAdcpVersion: string | undefined;
-    if (registration?.deliveryKind === 'reporting') {
+    let artifactPayloadValidator: ((payload: unknown) => boolean) | undefined;
+    if (registration?.deliveryKind) {
       try {
-        const { prepareMediaBuyDeliveryWebhookValidation } =
-          require('../webhooks/media-buy-delivery') as typeof import('../webhooks/media-buy-delivery');
-        reportingAdcpVersion = prepareMediaBuyDeliveryWebhookValidation(
-          options.adcpVersion ?? this.resolvedAdcpVersion
-        ).adcpVersion;
+        if (registration.deliveryKind === 'reporting') {
+          const { prepareMediaBuyDeliveryWebhookValidation } =
+            require('../webhooks/media-buy-delivery') as typeof import('../webhooks/media-buy-delivery');
+          reportingAdcpVersion = prepareMediaBuyDeliveryWebhookValidation(
+            options.adcpVersion ?? this.resolvedAdcpVersion
+          ).adcpVersion;
+        } else {
+          const loader = require('../validation/schema-loader') as typeof import('../validation/schema-loader');
+          artifactPayloadValidator = loader.getSchemaValidatorByRef(
+            'content-standards/artifact-webhook-payload.json',
+            this.resolvedAdcpVersion
+          );
+          if (!artifactPayloadValidator)
+            throw new ConfigurationError('Bundled artifact webhook schema is unavailable.');
+        }
       } catch (cause) {
         // Receiver configuration must not consume a valid delivery's replay nonce.
         return {
           ok: false,
           code: 'webhook_verification_unavailable',
-          message: 'Reporting webhook schema configuration is unavailable.',
+          message:
+            registration.deliveryKind === 'reporting'
+              ? 'Reporting webhook schema configuration is unavailable.'
+              : 'Artifact webhook schema configuration is unavailable.',
           cause,
         };
       }
@@ -4765,13 +4779,8 @@ export class SingleAgentClient {
         body = report.envelope as unknown as Record<string, unknown>;
         payload = report.result;
       } else {
-        const loader = require('../validation/schema-loader') as typeof import('../validation/schema-loader');
         payload = body;
-        const validator = loader.getSchemaValidatorByRef(
-          'content-standards/artifact-webhook-payload.json',
-          this.resolvedAdcpVersion
-        );
-        if (!validator || !validator(payload)) {
+        if (!artifactPayloadValidator || !artifactPayloadValidator(payload)) {
           return {
             ok: false,
             code: 'webhook_envelope_invalid',

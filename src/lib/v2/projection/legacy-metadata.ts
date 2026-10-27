@@ -71,7 +71,7 @@ export function rememberCreativeDeliveryDiagnostics(value: object, entries: read
 
 export function transferCreativeDeliveryDiagnostics(source: object, target: object): void {
   const entries = diagnostics.get(source);
-  if (entries) diagnostics.set(target, entries);
+  if (entries) rememberCreativeDeliveryDiagnostics(target, entries);
 }
 
 /**

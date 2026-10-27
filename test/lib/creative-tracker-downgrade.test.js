@@ -411,3 +411,20 @@ test('later projection preserves prior tracker advisories', () => {
   const second = projectExplicit(first);
   assert.equal(getCreativeDeliveryDiagnostics(second).length, 2);
 });
+
+test('transferring creative diagnostics preserves existing target advisories without duplicates', () => {
+  const {
+    rememberCreativeDeliveryDiagnostics,
+    transferCreativeDeliveryDiagnostics,
+    getCreativeDeliveryDiagnostics,
+  } = require('../../dist/lib/v2/projection/legacy-metadata');
+  const source = {},
+    target = {};
+  const first = { type: 'source-advisory', message: 'Source conversion.' };
+  const second = { type: 'target-advisory', message: 'Target conversion.' };
+  rememberCreativeDeliveryDiagnostics(source, [first]);
+  rememberCreativeDeliveryDiagnostics(target, [second]);
+  transferCreativeDeliveryDiagnostics(source, target);
+  transferCreativeDeliveryDiagnostics(source, target);
+  assert.deepEqual(getCreativeDeliveryDiagnostics(target), [second, first]);
+});
