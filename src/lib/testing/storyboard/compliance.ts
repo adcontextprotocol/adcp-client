@@ -17,6 +17,7 @@ import { ADCPError } from '../../errors';
 import { isAdcpVersionSupported } from '../../utils/adcp-version-config';
 import { hasSchemaBundle, resolveBundleKey } from '../../validation/schema-loader';
 import { synthesizeRequestSigningSteps } from './request-signing/synthesize';
+import { invalidateRequestSigningVectorCache } from './request-signing/vector-loader';
 import { markStoryboardComplianceRoot, trustedStoryboardComplianceRoot } from './provenance';
 import type { RunnerSelectionResult, Storyboard } from './types';
 
@@ -696,11 +697,34 @@ export function listBundles(options: ResolveOptions = {}): BundleRef[] {
 const STORYBOARD_INDEX_CACHE_LIMIT = 8;
 const storyboardIndexes = new Map<string, ReadonlyMap<string, Storyboard>>();
 
+/** Custom authoring roots can change without their published index changing. */
+function customComplianceInventory(dir: string): string {
+  if (!existsSync(dir)) return 'missing'; // Keep the loader's actionable missing-cache diagnostic.
+  const entries: unknown[] = [];
+  const visitedDirectories = new Set<string>();
+  const visit = (file: string, relative: string): void => {
+    const stat = statSync(file, { bigint: true });
+    entries.push([relative, String(stat.mtimeNs), String(stat.ctimeNs), String(stat.size), String(stat.ino)]);
+    if (!stat.isDirectory()) return;
+    const identity = `${stat.dev}:${stat.ino}`;
+    if (visitedDirectories.has(identity)) return;
+    visitedDirectories.add(identity);
+    for (const child of readdirSync(file).sort()) visit(join(file, child), `${relative}/${child}`);
+  };
+  visit(dir, '');
+  return JSON.stringify(entries);
+}
+
 function complianceStoryboardIndex(options: ResolveOptions): ReadonlyMap<string, Storyboard> {
   const dir = resolve(getComplianceCacheDir(options));
   const indexPath = join(dir, 'index.json');
   const stamp = existsSync(indexPath) ? statSync(indexPath) : undefined;
   const schemaRoot = getConfiguredSchemaRoot(options);
+  // Published package roots are immutable during a process lifetime. Authoring
+  // overrides include YAML, nested scenarios and signing synthesis fixtures;
+  // stat-only inventory checks avoid reparsing any unchanged warm bundle.
+  const customRoot = Boolean(getConfiguredComplianceDir(options));
+  const inventory = customRoot ? customComplianceInventory(dir) : null;
   const key = JSON.stringify([
     dir,
     options.version ?? ADCP_VERSION,
@@ -708,6 +732,7 @@ function complianceStoryboardIndex(options: ResolveOptions): ReadonlyMap<string,
     options.hostedStableLineAlias ?? null,
     stamp?.mtimeMs ?? null,
     stamp?.size ?? null,
+    inventory,
   ]);
   const cached = storyboardIndexes.get(key);
   if (cached) {
@@ -715,6 +740,7 @@ function complianceStoryboardIndex(options: ResolveOptions): ReadonlyMap<string,
     storyboardIndexes.set(key, cached);
     return cached;
   }
+  if (customRoot) invalidateRequestSigningVectorCache(dir);
   const indexed = new Map<string, Storyboard>();
   for (const ref of listBundles({ ...options, complianceDir: dir })) {
     for (const storyboard of loadBundleStoryboards(ref)) {

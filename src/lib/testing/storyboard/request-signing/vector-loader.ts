@@ -85,10 +85,10 @@ const CONTRACT_ID_SET: ReadonlySet<string> = new Set(CONTRACT_IDS);
 
 // Memoized per sourceDir — loading 28 JSON fixtures + keys.json on every
 // per-vector call in the runner path added up (~28 disk reads × 2-3 storyboard
-// resolve calls per CLI run). Invariant: the compliance cache is immutable
-// during a process lifetime — `npm run sync-schemas` runs before the process,
-// never concurrently. Cache key is the absolute cacheDir so env-var overrides
-// don't poison the entry.
+// resolve calls per CLI run). The published compliance cache is immutable
+// during a process lifetime — `npm run sync-schemas` runs before the process.
+// The storyboard index invalidates a custom root after its stat inventory
+// changes. Cache keys keep env-var overrides isolated.
 const VECTOR_CACHE = new Map<string, LoadedVectors>();
 
 export function loadRequestSigningVectors(options: LoadVectorsOptions = {}): LoadedVectors {
@@ -126,6 +126,17 @@ export function loadRequestSigningVectors(options: LoadVectorsOptions = {}): Loa
 export function loadRequestSigningKeys(options: LoadVectorsOptions = {}): TestKeyset {
   const cacheDir = getComplianceCacheDir(options);
   return loadKeys(join(cacheDir, 'test-vectors', 'request-signing', 'keys.json'));
+}
+
+/** Refresh only the signing fixtures belonging to a changed custom compliance root. */
+export function invalidateRequestSigningVectorCache(complianceDir: string): void {
+  const sourceDir = resolve(complianceDir, 'test-vectors', 'request-signing');
+  for (const key of VECTOR_CACHE.keys()) {
+    if (resolve(key) === sourceDir) VECTOR_CACHE.delete(key);
+  }
+  for (const key of A2A_VECTOR_CACHE.keys()) {
+    if (resolve(key) === join(sourceDir, 'a2a')) A2A_VECTOR_CACHE.delete(key);
+  }
 }
 
 /** Test-only: clear the memoization cache so a fresh cache path is reread. */
