@@ -46,6 +46,7 @@ import type {
 } from '../../types/tools.generated';
 import type { ServerPayload } from '../../types/server-payload';
 import { projectReportingDeliveryConfigStates } from '../reporting-delivery-config';
+import { projectAccountResponseIdentityFields } from '../account-response-identity';
 import type { CursorPage } from './pagination';
 import type { AccountMode } from '../account-mode';
 import type { AdcpStructuredError } from './async-outcome';
@@ -740,11 +741,10 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * already run, and note the framework performs no such check for
    * `'explicit'` / `'implicit'`, where the entry key is buyer-declared.
    *
-   * **Rows must carry `brand` + `operator`** (`sync-accounts-response.json`
-   * requires them on every row, including `action: 'failed'`). Echo them from
-   * your own account record on settings-update results. If your upstream
-   * accounts have no expressible natural key, don't wire this method — see
-   * adcontextprotocol/adcp#7517.
+   * **Echo the selected release's identity anchor.** AdCP 3.2+ settings-update
+   * rows carry `account` instead of flat `brand` + `operator`; provisioning
+   * rows carry the natural key. Older releases require `brand` + `operator`
+   * on every row. Failed 3.2+ rows may omit an unknown lifecycle `status`.
    *
    * In AdCP 3.1 beta, adopters that need settings-update entries with
    * `notification_configs[]` can read the full wire body from `ctx.input`
@@ -1014,18 +1014,26 @@ export type AccountFilter = ListAccountsRequest;
  * returned rows — same MUST-NOT-LEAK rule the framework enforces on
  * `Account.authInfo`.
  */
-export interface SyncAccountsResultRow {
+interface SyncAccountsResultFields {
   account_id?: string;
-  brand: BrandReference;
-  operator: string;
+  /** Current canonical operator unit, distinct from the seller account ID. */
+  operator_unit?: SyncAccountsRow['operator_unit'];
+  /** Current persisted account revision, including during a dry-run preview. */
+  revision?: SyncAccountsRow['revision'];
+  /** Pending or rejected desired identity; canonical fields remain unchanged. */
+  identity_change?: SyncAccountsRow['identity_change'];
+  /** Non-persisted evaluation of an identity change requested in a dry run. */
+  identity_change_preview?: SyncAccountsRow['identity_change_preview'];
+  currency?: SyncAccountsRow['currency'];
+  timezone?: SyncAccountsRow['timezone'];
   /** Human-readable account name assigned by the seller. */
   name?: string;
-  action: 'created' | 'updated' | 'unchanged' | 'failed';
-  status: AdcpAccountStatus;
   /** Invoiced-to party. Echoes the request's `billing` after seller acceptance. */
   billing?: BillingParty;
   /** Business entity invoiced. `bank` is stripped on emit (write-only). */
   billing_entity?: BusinessEntity;
+  /** Request-only staging data. The entire field MUST NOT appear in responses. */
+  destination_billing_entity?: never;
   account_scope?: AccountScope;
   /** Setup payload for `pending_approval` accounts (URL/message/expiry). */
   setup?: WireAccount['setup'];
@@ -1050,6 +1058,63 @@ export interface SyncAccountsResultRow {
   warnings?: string[];
   sandbox?: boolean;
 }
+
+/**
+ * Provisioning results use the natural key; 3.2+ settings-update results use
+ * account instead. Only failed results can omit an unknown lifecycle status.
+ */
+export type SyncAccountsResultRow = SyncAccountsResultFields &
+  (
+    | { account: NonNullable<SyncAccountsRow['account']>; brand?: never; operator?: never }
+    | { account?: never; brand: BrandReference; operator: string }
+  ) &
+  (
+    | { action: 'failed'; status?: AdcpAccountStatus }
+    | { action: 'created' | 'updated' | 'unchanged'; status: AdcpAccountStatus }
+  );
+
+const SYNC_ACCOUNT_PASSTHROUGH_KEYS = [
+  'account_id',
+  'brand',
+  'operator',
+  'revision',
+  'currency',
+  'timezone',
+  'name',
+  'action',
+  'status',
+  'billing',
+  'account_scope',
+  'setup',
+  'rate_card',
+  'payment_terms',
+  'credit_limit',
+  'errors',
+  'warnings',
+  'sandbox',
+] as const satisfies readonly (keyof SyncAccountsRow)[];
+
+type ProjectedSyncAccountKey =
+  | 'account'
+  | 'operator_unit'
+  | 'identity_change'
+  | 'identity_change_preview'
+  | 'billing_entity'
+  | 'notification_configs'
+  | 'reporting_delivery_configs'
+  | 'authorization';
+type ForbiddenSyncAccountKey = 'destination_billing_entity';
+
+// New wire fields must have both a framework representation and an emission policy.
+type MissingSyncAccountsResultKey = Exclude<keyof SyncAccountsRow, keyof SyncAccountsResultRow>;
+const SYNC_ACCOUNTS_RESULT_KEY_COVERAGE: Record<MissingSyncAccountsResultKey, never> = {};
+void SYNC_ACCOUNTS_RESULT_KEY_COVERAGE;
+type MissingSyncAccountsProjectionKey = Exclude<
+  keyof SyncAccountsRow,
+  (typeof SYNC_ACCOUNT_PASSTHROUGH_KEYS)[number] | ProjectedSyncAccountKey | ForbiddenSyncAccountKey
+>;
+const SYNC_ACCOUNTS_PROJECTION_KEY_COVERAGE: Record<MissingSyncAccountsProjectionKey, never> = {};
+void SYNC_ACCOUNTS_PROJECTION_KEY_COVERAGE;
 
 export type AdcpAccountStatus =
   | 'active'
@@ -1160,22 +1225,21 @@ export type WireSyncAccountRow = SyncAccountsSuccess['accounts'][number];
  * `accounts.upsert` and the framework projects.
  */
 export function toWireSyncAccountRow(row: SyncAccountsResultRow): WireSyncAccountRow {
+  const identity = projectAccountResponseIdentityFields(row);
   const wire: WireSyncAccountRow = {
-    brand: row.brand,
-    operator: row.operator,
     action: row.action,
-    status: row.status,
+    ...identity,
   };
-  if (row.account_id !== undefined) wire.account_id = row.account_id;
-  if (row.name !== undefined) wire.name = row.name;
-  if (row.billing !== undefined) wire.billing = row.billing;
+  // destination_billing_entity is deliberately excluded in its entirety, not
+  // projected as a BusinessEntity: the response schema forbids its presence.
+  const source: WireSyncAccountRow = row;
+  function copyField<Key extends (typeof SYNC_ACCOUNT_PASSTHROUGH_KEYS)[number]>(key: Key): void {
+    const value = source[key];
+    if (value !== undefined) wire[key] = value;
+  }
+  for (const key of SYNC_ACCOUNT_PASSTHROUGH_KEYS) copyField(key);
   const projectedEntity = projectBillingEntity(row.billing_entity);
   if (projectedEntity !== undefined) wire.billing_entity = projectedEntity;
-  if (row.account_scope !== undefined) wire.account_scope = row.account_scope;
-  if (row.setup !== undefined) wire.setup = row.setup;
-  if (row.rate_card !== undefined) wire.rate_card = row.rate_card;
-  if (row.payment_terms !== undefined) wire.payment_terms = row.payment_terms;
-  if (row.credit_limit !== undefined) wire.credit_limit = row.credit_limit;
   if (row.notification_configs !== undefined) {
     (wire as unknown as { notification_configs?: WireNotificationConfig[] }).notification_configs =
       row.notification_configs.map(projectNotificationConfig);
@@ -1190,9 +1254,6 @@ export function toWireSyncAccountRow(row: SyncAccountsResultRow): WireSyncAccoun
       row.authorization
     );
   }
-  if (row.errors !== undefined) wire.errors = row.errors;
-  if (row.warnings !== undefined) wire.warnings = row.warnings;
-  if (row.sandbox !== undefined) wire.sandbox = row.sandbox;
   return wire;
 }
 

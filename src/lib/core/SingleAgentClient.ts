@@ -1,3 +1,4 @@
+import type { MediaBuyDeliveryWebhookEnvelope } from '../webhooks/media-buy-delivery';
 import type * as ToolTypes from '../types/tools.generated';
 import type * as CoreTypes from '../types/core.generated';
 import { shouldReuseMCPConnection, withMCPConnectionPolicy } from '../protocols/mcp-connection-policy';
@@ -25,6 +26,26 @@ import {
 import { createHash, randomUUID, scryptSync } from 'node:crypto';
 const SKIP_PRODUCT_CACHE = Symbol('adcp.skipProductCache');
 const SKIP_ACCOUNT_REGISTRY_OBSERVATION = Symbol('adcp.skipAccountRegistryObservation');
+const NONTERMINAL_TASK_RESULT_STATUSES = new Set<string>([
+  'submitted',
+  'working',
+  'input-required',
+  'auth-required',
+  'deferred',
+] satisfies TaskResult<unknown>['status'][]);
+
+function isNonterminalTaskResult(result: unknown): boolean {
+  return (
+    result !== null &&
+    typeof result === 'object' &&
+    'success' in result &&
+    result.success === true &&
+    'status' in result &&
+    typeof result.status === 'string' &&
+    NONTERMINAL_TASK_RESULT_STATUSES.has(result.status)
+  );
+}
+
 import type { AccountReference, AgentConfig } from '../types';
 import { accountKeySites, naturalAccountKey, reducedFields, valueAt, withReducedKeyAt } from './account-reduction';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
@@ -313,6 +334,7 @@ import {
 } from './account-resolution';
 
 import { normalizeRequestParams } from '../utils/request-normalizer';
+import { getCreativeDeliveryDiagnostics } from '../v2/projection/legacy-metadata';
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
 import { validateUserAgent } from '../utils/validate-user-agent';
 import { resolveWebhookUrl, selectWebhookTemplate } from './webhook-url';
@@ -1408,6 +1430,8 @@ export interface WebhookVerificationConfig {
 }
 
 export interface VerifyAndParseWebhookOptions {
+  /** Trusted seller/buy release for registered reporting delivery validation; defaults to the client pin. */
+  adcpVersion?: string;
   /** Raw HTTP body bytes captured before JSON parsing. Required when `webhookSecret` is configured. */
   rawBody?: string | Buffer | Uint8Array;
   /** Parsed payload or raw body. When HMAC is configured, verified raw bytes are parsed instead of `payload`. */
@@ -1461,7 +1485,7 @@ export type WebhookParseResult = WebhookParseSuccess | WebhookParseFailure;
 export interface WebhookParseSuccess {
   ok: true;
   protocol: 'mcp' | 'a2a';
-  envelope: MCPWebhookPayload | A2ATask | TaskStatusUpdateEvent;
+  envelope: MCPWebhookPayload | MediaBuyDeliveryWebhookEnvelope | A2ATask | TaskStatusUpdateEvent;
   result: unknown;
   metadata: {
     taskId: string;
@@ -1482,6 +1506,8 @@ export interface WebhookParseFailure {
   ok: false;
   code: WebhookParseErrorCode;
   message: string;
+  /** Readable schema paths, when delivery payload validation fails. */
+  errors?: readonly string[];
   cause?: unknown;
 }
 
@@ -4494,6 +4520,38 @@ export class SingleAgentClient {
         };
       }
     }
+    let reportingAdcpVersion: string | undefined;
+    let artifactPayloadValidator: ((payload: unknown) => boolean) | undefined;
+    if (registration?.deliveryKind) {
+      try {
+        if (registration.deliveryKind === 'reporting') {
+          const { prepareMediaBuyDeliveryWebhookValidation } =
+            require('../webhooks/media-buy-delivery') as typeof import('../webhooks/media-buy-delivery');
+          reportingAdcpVersion = prepareMediaBuyDeliveryWebhookValidation(
+            options.adcpVersion ?? this.resolvedAdcpVersion
+          ).adcpVersion;
+        } else {
+          const loader = require('../validation/schema-loader') as typeof import('../validation/schema-loader');
+          artifactPayloadValidator = loader.getSchemaValidatorByRef(
+            'content-standards/artifact-webhook-payload.json',
+            this.resolvedAdcpVersion
+          );
+          if (!artifactPayloadValidator)
+            throw new ConfigurationError('Bundled artifact webhook schema is unavailable.');
+        }
+      } catch (cause) {
+        // Receiver configuration must not consume a valid delivery's replay nonce.
+        return {
+          ok: false,
+          code: 'webhook_verification_unavailable',
+          message:
+            registration.deliveryKind === 'reporting'
+              ? 'Reporting webhook schema configuration is unavailable.'
+              : 'Artifact webhook schema configuration is unavailable.',
+          cause,
+        };
+      }
+    }
     if (registration?.mode === 'rfc9421') {
       const { verifyWebBotAuth, selectSignatureProfile, WebBotAuthError, WebBotAuthUnavailableError } =
         loadWebBotAuth();
@@ -4692,41 +4750,57 @@ export class SingleAgentClient {
     }
 
     if (registration?.deliveryKind) {
-      const loader = require('../validation/schema-loader') as typeof import('../validation/schema-loader');
-      const body = parsedPayload.payload as Record<string, unknown>;
+      let body = parsedPayload.payload as Record<string, unknown>;
       const isReport = registration.deliveryKind === 'reporting';
-      const payload = isReport ? body.result : body;
-      const schemaRef = isReport
-        ? 'media-buy/media-buy-delivery-webhook-result.json'
-        : 'content-standards/artifact-webhook-payload.json';
-      const validator = loader.getSchemaValidatorByRef(schemaRef, this.resolvedAdcpVersion);
-      const envelopeValidator = isReport
-        ? loader.getSchemaValidatorByRef('core/mcp-webhook-payload.json', this.resolvedAdcpVersion)
-        : undefined;
-      if (
-        !validator ||
-        !validator(payload) ||
-        (isReport && (!envelopeValidator || !envelopeValidator(body) || body.task_type !== 'media_buy_delivery'))
-      )
-        return {
-          ok: false,
-          code: 'webhook_envelope_invalid',
-          message: 'Authenticated delivery does not match its registered payload kind',
-        };
+      let payload: unknown;
+      if (isReport) {
+        const { parseMediaBuyDeliveryWebhook } =
+          require('../webhooks/media-buy-delivery') as typeof import('../webhooks/media-buy-delivery');
+        const report = parseMediaBuyDeliveryWebhook(body, {
+          adcpVersion: reportingAdcpVersion,
+        });
+        if (!report.ok) {
+          if (report.code === 'webhook_unsupported_payload') {
+            return {
+              ...report,
+              message: 'Registered reporting delivery requires a media_buy_delivery MCP envelope.',
+              errors: ['Registered reporting delivery requires a media_buy_delivery MCP envelope.'],
+            };
+          }
+          return report;
+        }
+        if (report.wireFormat !== 'mcp_envelope') {
+          return {
+            ok: false,
+            code: 'webhook_unsupported_payload',
+            message: 'Registered reporting delivery requires an MCP envelope.',
+          };
+        }
+        body = report.envelope as unknown as Record<string, unknown>;
+        payload = report.result;
+      } else {
+        payload = body;
+        if (!artifactPayloadValidator || !artifactPayloadValidator(payload)) {
+          return {
+            ok: false,
+            code: 'webhook_envelope_invalid',
+            message: 'Authenticated delivery does not match its registered payload kind',
+          };
+        }
+      }
       const taskId =
         isReport && typeof body.task_id === 'string'
           ? body.task_id
           : typeof body.media_buy_id === 'string'
             ? body.media_buy_id
             : registration.operationId;
-      const operationId =
-        isReport && typeof body.operation_id === 'string' ? body.operation_id : registration.operationId;
+      const operationId = registration.operationId;
       const status = isReport && isAdcpStatus(body.status) ? body.status : 'completed';
       return {
         ok: true,
         protocol: registration.protocol,
         envelope: isReport
-          ? (body as unknown as MCPWebhookPayload)
+          ? (body as unknown as MediaBuyDeliveryWebhookEnvelope)
           : ({
               ...body,
               task_type: registration.taskType,
@@ -5661,12 +5735,20 @@ export class SingleAgentClient {
   }
 
   /** One task owns discovery and dispatch sessions unless the caller already owns reuse. */
-  private withConnectionScope<T>(options: ReadRequestOptions | undefined, run: () => Promise<T>): Promise<T> {
+  private withConnectionScope<T>(
+    options: ReadRequestOptions | undefined,
+    run: () => Promise<T>,
+    preserveSessionOnResult?: (result: unknown) => boolean
+  ): Promise<T> {
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
     return withMCPConnectionPolicy(transport, () =>
       shouldReuseMCPConnection(transport?.trustedFetchFn !== undefined)
         ? run()
-        : withMCPConnectionScope(run, { signal: options?.signal, preserveOnInterruption: true })
+        : withMCPConnectionScope(run, {
+            signal: options?.signal,
+            preserveOnInterruption: true,
+            preserveSessionOnResult,
+          })
     );
   }
 
@@ -5674,7 +5756,9 @@ export class SingleAgentClient {
     options: O | undefined,
     run: Parameters<typeof withTaskDeadline<T, O>>[1]
   ): Promise<T> {
-    return withTaskDeadline(options, effective => this.withConnectionScope(effective, () => run(effective)));
+    return withTaskDeadline(options, effective =>
+      this.withConnectionScope(effective, () => run(effective), isNonterminalTaskResult)
+    );
   }
 
   /** Execute a task, adapt maintained AdCP 3 releases, and call the completion handler. */
@@ -5689,6 +5773,7 @@ export class SingleAgentClient {
     canonicalRequest?: unknown,
     projectionCatalogs?: readonly ProjectionCatalogSnapshot[]
   ): Promise<TaskResult<T>> {
+    const projectionDrifts = getCreativeDeliveryDiagnostics(params);
     const requestParamsSnapshot = structuredClone(params);
     const canonicalRequestSnapshot = canonicalRequest === undefined ? undefined : structuredClone(canonicalRequest);
     const deferredProjectionCatalogs = projectionCatalogs ? structuredClone(projectionCatalogs) : undefined;
@@ -5703,7 +5788,8 @@ export class SingleAgentClient {
         transformCompletedResponse,
         legacyFormatConverter,
         canonicalRequestSnapshot,
-        deferredProjectionCatalogs
+        deferredProjectionCatalogs,
+        projectionDrifts
       )
     );
   }
@@ -5717,7 +5803,8 @@ export class SingleAgentClient {
     transformCompletedResponse?: (data: T) => T,
     legacyFormatConverter?: LegacyFormatConverter,
     canonicalRequest?: unknown,
-    projectionCatalogs?: readonly ProjectionCatalogSnapshot[]
+    projectionCatalogs?: readonly ProjectionCatalogSnapshot[],
+    projectionDrifts: ReturnType<typeof getCreativeDeliveryDiagnostics> = []
   ): Promise<TaskResult<T>> {
     throwIfAborted(options?.signal);
     const canonicalCreativeInvocation =
@@ -5858,7 +5945,15 @@ export class SingleAgentClient {
       this.executor.validateRequest(taskType, adaptedParams, inputSchemaStripLogs, negotiatedRelease.version);
     }
 
-    const adaptationLogs: any[] = [...adaptDriftLogs];
+    const adaptationLogs: any[] = [
+      ...projectionDrifts.map(drift => ({
+        ...drift,
+        taskName: taskType,
+        clientVersion: this.resolvedAdcpVersion,
+        timestamp: new Date().toISOString(),
+      })),
+      ...adaptDriftLogs,
+    ];
     if (webhookDriftLog) adaptationLogs.push(webhookDriftLog);
 
     const canonicalInputHandler = this.canonicalCreativeInputHandler(
@@ -7291,8 +7386,15 @@ export class SingleAgentClient {
     options: O,
     negotiated: NegotiatedAdcpRelease | undefined
   ): O {
-    if (!negotiated?.downgraded) return options;
-    return { ...(options ?? {}), wireAdcpVersion: negotiated.version, negotiatedAdcpVersion: negotiated.version } as O;
+    if (!negotiated) return options;
+    return {
+      ...(options ?? {}),
+      selectedAdcpVersion: negotiated.version,
+      ...(negotiated.downgraded && {
+        wireAdcpVersion: negotiated.version,
+        negotiatedAdcpVersion: negotiated.version,
+      }),
+    } as O;
   }
 
   /**
@@ -7703,8 +7805,11 @@ export class SingleAgentClient {
     const adapterKey = resolveAdapterKey(this.resolvedAdcpVersion, perCallCapabilities ?? this.cachedCapabilities);
     if (adapterKey) {
       const versionAdapter = getVersionAdapter(adapterKey, taskType);
-      if (versionAdapter?.adaptRequest) {
-        const result = versionAdapter.adaptRequest(adapted);
+      const adaptRequest = negotiated
+        ? versionAdapter?.adaptRequest
+        : (versionAdapter?.adaptUnnegotiatedRequest ?? versionAdapter?.adaptRequest);
+      if (adaptRequest) {
+        const result = adaptRequest(adapted);
         adapted = result.params;
         if (result.drift) {
           driftLogs.push({

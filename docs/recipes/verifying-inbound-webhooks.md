@@ -63,14 +63,30 @@ Inner delivery result only:
 ```
 
 That inner object is valid delivery report content, but it is not valid as the
-top-level webhook POST body. Receivers should reject it before dispatch because
-it is missing the async transport fields.
+top-level webhook POST body. Receivers reject it by default because
+it is missing the async transport fields. Receivers migrating older senders may
+explicitly opt into the marked bare-report compatibility path in
+[Parsing media-buy delivery webhooks](../guides/DELIVERY-WEBHOOK-PARSING.md).
 
 Status fields have different scopes: top-level `status` is the async task or
 webhook event status; nested `media_buy_deliveries[].status` is the media buy's
 delivery status. `idempotency_key` is unique per webhook event and stable across
 retries of that event. Signatures cover the exact raw JSON bytes being sent, so
 verify before parsing or re-serializing.
+
+## Parse a delivery after your own signature checks
+
+Multi-seller receivers with their own callback registry can call
+`parseMediaBuyDeliveryWebhook(rawBody, { adcpVersion: savedBuy.adcpVersion })` from
+`@adcp/sdk/webhooks` after verifying the original body bytes. It validates the
+selected release's envelope and report, returns readable error paths, and does
+not authenticate the sender itself. See the
+[delivery parser guide](../guides/DELIVERY-WEBHOOK-PARSING.md) for the 3.0–3.3
+contracts, shared poll/push body schema, and explicit bare-report migration.
+
+Envelope status follows the release's task-status enum. A valid delayed report
+may arrive with `status: 'working'`; `notification_type` does not select the
+envelope status, and `completed` does not mean the media buy is finished.
 
 ## Recommended RFC 9421 Setup
 

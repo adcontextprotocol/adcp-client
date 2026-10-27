@@ -2381,3 +2381,17 @@ export {
   type ProvisionedAccount,
 } from './core/buyer-account-registry';
 export { createProductCache, ProductCache, type ProductCacheOptions } from './core/product-cache';
+
+export type { AssetVariant, DaypartTarget, TargetingOverlaySupport } from './types/core.generated';
+
+export { TargetingOverlayKeys, TargetingOverlaySupportKeys } from './types/targeting-keys.generated';
+
+export { parseMediaBuyDeliveryWebhook } from './webhooks/media-buy-delivery';
+export type {
+  ParseMediaBuyDeliveryWebhookOptions,
+  MediaBuyDeliveryWebhookEnvelope,
+  MediaBuyDeliveryWebhookParseErrorCode,
+  MediaBuyDeliveryWebhookParseResult,
+} from './webhooks/media-buy-delivery';
+export type { MediaBuyDeliveryReport } from './types/media-buy-delivery-report';
+export { MediaBuyDeliveryReportSchema } from './validation/media-buy-delivery-report';

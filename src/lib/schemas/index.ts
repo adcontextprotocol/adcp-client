@@ -47,6 +47,7 @@ import type { KnownToolRequestSchemas } from '../utils/tool-request-schemas';
 import {
   getCanonicalToolValidatorForVersion,
   getSchemaDocumentByRef,
+  getSchemaValidatorByRef,
   getToolSchemaDocument,
   type Direction,
   type ResolvedToolSchemaDocument,
@@ -58,7 +59,11 @@ import { resolveAdcpVersion } from '../utils/adcp-version-config';
 export * from '../types/schemas.generated';
 export { AgentOAuthClientCredentialsSchema } from '../auth/oauth/client-credentials-schema';
 export type { AgentOAuthClientCredentials } from '../types/adcp';
-export type { PlacementPresentationDocument, PlacementPresentationReference } from '../types/core.generated';
+export type {
+  AssetVariant,
+  PlacementPresentationDocument,
+  PlacementPresentationReference,
+} from '../types/core.generated';
 
 export { GetProductsRequestSchema, LegacyGetProductsRequestSchema } from '../validation/get-products-request';
 export type { LooseObjectSchemaFor } from '../validation/get-products-request';
@@ -94,7 +99,7 @@ export type VersionedToolSchema = ResolvedToolSchemaDocument;
  * callers should normally prefer {@link getCanonicalToolValidator} so
  * reference registration stays internal.
  */
-export { getSchemaDocumentByRef };
+export { getSchemaDocumentByRef, getSchemaValidatorByRef };
 
 /** Retrieve the protocol-authored request JSON Schema for a specific AdCP release. */
 export function getToolInputSchema(
@@ -268,3 +273,6 @@ export function customToolForSchema<TSchema extends InputSchema>(
   void name;
   return { description, inputSchema, handler };
 }
+
+export { MediaBuyDeliveryReportSchema } from '../validation/media-buy-delivery-report';
+export type { MediaBuyDeliveryReport } from '../types/media-buy-delivery-report';

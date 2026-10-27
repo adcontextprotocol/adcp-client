@@ -144,6 +144,11 @@ export const AgenticAdvertisingOrgVerificationTokenClaims_IssValues = ["https://
 /** single | AgenticAdvertisingOrgVerificationTokenClaims.role */
 export const AgenticAdvertisingOrgVerificationTokenClaims_RoleValues = ["media-buy", "creative", "signals", "governance", "brand", "sponsored-intelligence"] as const;
 
+// ====== AgentNotificationConfig ======
+
+/** array of | AgentNotificationConfig.event_types */
+export const AgentNotificationConfig_EventTypesValues = ["creative.status_changed", "creative.assignment_changed", "indicators.changed", "creative.purged", "account.status_changed", "account.change_recorded", "product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change", "collection_card.updated", "collection_card.removed", "collection_catalog.bulk_change", "capabilities.changed", "reporting.delivery_ready", "reporting.status_changed", "reporting.ledger_changed", "principal.changed", "proposal.created"] as const;
+
 // ====== AgentPermissionDeniedDetails ======
 
 /** single | AgentPermissionDeniedDetails.reason */
@@ -408,6 +413,17 @@ export const CanonicalFormatNativeInFeed_MenuPlacementValues = ["tile", "headlin
 
 /** single | CanonicalFormatOption.seller_preference */
 export const CanonicalFormatOption_SellerPreferenceValues = ["preferred", "accepted", "discouraged"] as const;
+
+// ====== CanonicalFormatSellerRenderedStatefulDisplay ======
+
+/** array of | CanonicalFormatSellerRenderedStatefulDisplay.containers */
+export const CanonicalFormatSellerRenderedStatefulDisplay_ContainersValues = ["mp4", "webm", "mov"] as const;
+/** single | CanonicalFormatSellerRenderedStatefulDisplay.reveal */
+export const CanonicalFormatSellerRenderedStatefulDisplay_RevealValues = ["none", "clip_window", "scroll_parallax"] as const;
+/** single | CanonicalFormatSellerRenderedStatefulDisplay.supply_mode */
+export const CanonicalFormatSellerRenderedStatefulDisplay_SupplyModeValues = ["components", "rendered_canvases", "layered_source"] as const;
+/** single | CanonicalFormatSellerRenderedStatefulDisplay.video_playback */
+export const CanonicalFormatSellerRenderedStatefulDisplay_VideoPlaybackValues = ["none", "auto_muted", "user_initiated"] as const;
 
 // ====== CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven ======
 
@@ -703,13 +719,10 @@ export const DAASTAudioFormatDeclaration_FormatKindValues = ["audio_daast"] as c
 
 /** single | DAASTTrackerAsset.asset_type */
 export const DAASTTrackerAsset_AssetTypeValues = ["daast_tracker"] as const;
+/** single | DAASTTrackerAsset.daast_event */
+export const DAASTTrackerAsset_DaastEventValues = ["creativeView", "start", "firstQuartile", "midpoint", "thirdQuartile", "complete", "mute", "unmute", "pause", "resume", "rewind", "skip", "progress", "close"] as const;
 /** single | DAASTTrackerAsset.target */
 export const DAASTTrackerAsset_TargetValues = ["linear", "companion"] as const;
-
-// ====== DAASTTrackerConstraints ======
-
-/** single | DAASTTrackerConstraints.daast_event */
-export const DAASTTrackerConstraints_DaastEventValues = ["creativeView", "start", "firstQuartile", "midpoint", "thirdQuartile", "complete", "mute", "unmute", "pause", "resume", "rewind", "skip", "progress", "close"] as const;
 
 // ====== Dataset ======
 
@@ -1123,6 +1136,8 @@ export const MacroEncoding_KindValues = ["none", "rfc3986", "iab_vast_uri"] as c
 export const MacroProcessingCapability_MappingStatusValues = ["verified_universal", "dialect_defined"] as const;
 /** single | MacroProcessingCapability.operation */
 export const MacroProcessingCapability_OperationValues = ["translate_to_native", "resolve_value"] as const;
+/** array of | MacroProcessingCapability.supported_contexts */
+export const MacroProcessingCapability_SupportedContextsValues = ["url_query_value", "url_path_segment"] as const;
 
 // ====== MacroResolutionResult ======
 
@@ -1913,11 +1928,8 @@ export const VASTAudioFormatDeclaration_FormatKindValues = ["audio_vast"] as con
 export const VASTTrackerAsset_AssetTypeValues = ["vast_tracker"] as const;
 /** single | VASTTrackerAsset.target */
 export const VASTTrackerAsset_TargetValues = ["linear", "non_linear", "companion"] as const;
-
-// ====== VASTTrackerConstraints ======
-
-/** single | VASTTrackerConstraints.vast_event */
-export const VASTTrackerConstraints_VastEventValues = ["creativeView", "loaded", "start", "firstQuartile", "midpoint", "thirdQuartile", "complete", "mute", "unmute", "pause", "resume", "rewind", "skip", "playerExpand", "playerCollapse", "fullscreen", "exitFullscreen", "progress", "acceptInvitation", "adExpand", "adCollapse", "minimize", "overlayViewDuration", "otherAdInteraction", "interactiveStart", "close", "closeLinear"] as const;
+/** single | VASTTrackerAsset.vast_event */
+export const VASTTrackerAsset_VastEventValues = ["creativeView", "loaded", "start", "firstQuartile", "midpoint", "thirdQuartile", "complete", "mute", "unmute", "pause", "resume", "rewind", "skip", "playerExpand", "playerCollapse", "fullscreen", "exitFullscreen", "progress", "acceptInvitation", "adExpand", "adCollapse", "minimize", "overlayViewDuration", "otherAdInteraction", "interactiveStart", "close", "closeLinear"] as const;
 
 // ====== VASTVideoFormatDeclaration ======
 
@@ -2024,6 +2036,9 @@ export const AcquireRightsPendingApproval_RightsStatusValues = AccountIdentityCh
 // --- AcquireRightsRejected ---
 /** @deprecated use `AccountIdentityChangeRejected_StatusValues` — same literal set, AcquireRightsRejected.rights_status duplicates the canonical export. */
 export const AcquireRightsRejected_RightsStatusValues = AccountIdentityChangeRejected_StatusValues;
+// --- AgentNotificationConfigState ---
+/** @deprecated use `AgentNotificationConfig_EventTypesValues` — same literal set, AgentNotificationConfigState.event_types duplicates the canonical export. */
+export const AgentNotificationConfigState_EventTypesValues = AgentNotificationConfig_EventTypesValues;
 // --- AgentWebhookChallenge ---
 /** @deprecated use `AgentPermissionDeniedDetails_ScopeValues` — same literal set, AgentWebhookChallenge.scope duplicates the canonical export. */
 export const AgentWebhookChallenge_ScopeValues = AgentPermissionDeniedDetails_ScopeValues;
@@ -2060,6 +2075,11 @@ export const CanonicalAudienceEvidenceSelection_DecisionUseValues = AudienceEvid
 export const CanonicalFormatBase_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
 /** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_ReferenceMutabilityValues` — same literal set, CanonicalFormatBase.reference_mutability duplicates the canonical export. */
 export const CanonicalFormatBase_ReferenceMutabilityValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_ReferenceMutabilityValues;
+// --- CanonicalFormatCoordinatedPlacements ---
+/** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues` — same literal set, CanonicalFormatCoordinatedPlacements.composition_model duplicates the canonical export. */
+export const CanonicalFormatCoordinatedPlacements_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
+/** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_ReferenceMutabilityValues` — same literal set, CanonicalFormatCoordinatedPlacements.reference_mutability duplicates the canonical export. */
+export const CanonicalFormatCoordinatedPlacements_ReferenceMutabilityValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_ReferenceMutabilityValues;
 // --- CanonicalFormatDAASTAudio ---
 /** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues` — same literal set, CanonicalFormatDAASTAudio.composition_model duplicates the canonical export. */
 export const CanonicalFormatDAASTAudio_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
@@ -2119,6 +2139,11 @@ export const CanonicalFormatNativeInFeed_ReferenceMutabilityValues = CanonicalFo
 export const CanonicalFormatResponsiveCreative_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
 /** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_ReferenceMutabilityValues` — same literal set, CanonicalFormatResponsiveCreative.reference_mutability duplicates the canonical export. */
 export const CanonicalFormatResponsiveCreative_ReferenceMutabilityValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_ReferenceMutabilityValues;
+// --- CanonicalFormatSellerRenderedStatefulDisplay ---
+/** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues` — same literal set, CanonicalFormatSellerRenderedStatefulDisplay.composition_model duplicates the canonical export. */
+export const CanonicalFormatSellerRenderedStatefulDisplay_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
+/** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_ReferenceMutabilityValues` — same literal set, CanonicalFormatSellerRenderedStatefulDisplay.reference_mutability duplicates the canonical export. */
+export const CanonicalFormatSellerRenderedStatefulDisplay_ReferenceMutabilityValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_ReferenceMutabilityValues;
 // --- CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven ---
 /** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues` — same literal set, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven.composition_model duplicates the canonical export. */
 export const CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
@@ -2207,6 +2232,8 @@ export const CreativeStatusChangedWebhook_InitiatorValues = CreativePurgedWebhoo
 /** @deprecated use `CustomFormatDeclaration_FormatKindValues` — same literal set, CustomPricing.model duplicates the canonical export. */
 export const CustomPricing_ModelValues = CustomFormatDeclaration_FormatKindValues;
 // --- DAASTTrackerConstraints ---
+/** @deprecated use `DAASTTrackerAsset_DaastEventValues` — same literal set, DAASTTrackerConstraints.daast_event duplicates the canonical export. */
+export const DAASTTrackerConstraints_DaastEventValues = DAASTTrackerAsset_DaastEventValues;
 /** @deprecated use `DAASTTrackerAsset_TargetValues` — same literal set, DAASTTrackerConstraints.target duplicates the canonical export. */
 export const DAASTTrackerConstraints_TargetValues = DAASTTrackerAsset_TargetValues;
 // --- DatasetShareRecipient ---
@@ -2612,6 +2639,8 @@ export const URLAsset1_AssetTypeValues = GroupUrlAsset_AssetTypeValues;
 // --- VASTTrackerConstraints ---
 /** @deprecated use `VASTTrackerAsset_TargetValues` — same literal set, VASTTrackerConstraints.target duplicates the canonical export. */
 export const VASTTrackerConstraints_TargetValues = VASTTrackerAsset_TargetValues;
+/** @deprecated use `VASTTrackerAsset_VastEventValues` — same literal set, VASTTrackerConstraints.vast_event duplicates the canonical export. */
+export const VASTTrackerConstraints_VastEventValues = VASTTrackerAsset_VastEventValues;
 // --- VerifyBrandClaimsResultSuccess ---
 /** @deprecated use `SignedSuccessPayload_ClaimTypeValues` — same literal set, VerifyBrandClaimsResultSuccess.claim_type duplicates the canonical export. */
 export const VerifyBrandClaimsResultSuccess_ClaimTypeValues = SignedSuccessPayload_ClaimTypeValues;

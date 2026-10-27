@@ -15,6 +15,9 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 export const LOCAL_TEST_BATCH_SIZE = 25;
 
 export const SLOW_NODE_TESTS = new Set([
+  // Compiles every maintained request/sync schema; run with the serialized
+  // 180s lane instead of competing with other cold schema compilations.
+  'test/lib/schema-diagnostic-origin-bundles.test.js',
   // Bundles the signing modules with esbuild and runs them in a workerd subprocess.
   'test/lib/signing-webcrypto.test.js',
   'test/lib/account-change-feed-packed.test.js',

@@ -269,9 +269,10 @@ export async function checkSyncAccountRows(
           field: `accounts[${index}]${termsViolation ? '.payment_terms' : billingViolation ? '.billing' : ''}`,
         }
       ).toStructuredError();
+      const anchor =
+        row.account !== undefined ? { account: row.account } : { brand: row.brand, operator: row.operator };
       row = {
-        brand: row.brand,
-        operator: row.operator,
+        ...anchor,
         ...(priorId === row.account_id && priorId && { account_id: priorId }),
         action: 'failed',
         status: existing[offset]?.status ?? row.status,

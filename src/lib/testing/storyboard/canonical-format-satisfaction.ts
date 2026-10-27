@@ -13,6 +13,7 @@ interface SatisfactionVerdict {
   json_pointer: string | null;
   actual?: unknown;
   observations?: unknown[];
+  selectedDeclarations?: number[];
 }
 
 interface CanonicalSelector {
@@ -257,19 +258,43 @@ function evaluatePackage(
     };
   }
 
+  const routes: Array<{ name: string; verdict: SatisfactionVerdict }> = [];
   const formatOptionRefs = Array.isArray(pkg.format_option_refs) ? pkg.format_option_refs : [];
   if (formatOptionRefs.length > 0) {
-    return evaluateFormatOptionRefs(formatOptionRefs, product, pointer);
+    routes.push({ name: 'format_option_refs', verdict: evaluateFormatOptionRefs(formatOptionRefs, product, pointer) });
   }
-
   const formatIds = Array.isArray(pkg.format_ids) ? pkg.format_ids : [];
   if (formatIds.length > 0) {
-    return evaluateLegacyFormatIds(formatIds, product, pointer, productId!);
+    routes.push({ name: 'format_ids', verdict: evaluateLegacyFormatIds(formatIds, product, pointer, productId!) });
   }
-
   const canonicalSelectors = extractCanonicalSelectors(pkg, pointer);
   if (canonicalSelectors.length > 0) {
-    return evaluateCanonicalSelectors(canonicalSelectors, product);
+    routes.push({ name: 'canonical selectors', verdict: evaluateCanonicalSelectors(canonicalSelectors, product) });
+  }
+  // Resolve every supplied route before precedence. An invalid compatibility
+  // route must not disappear behind a valid product-local reference (#3454).
+  const failed = routes.find(route => !route.verdict.satisfied);
+  if (failed) return failed.verdict;
+  const primary = routes[0];
+  if (primary) {
+    const selected = new Set(primary.verdict.selectedDeclarations);
+    const conflicting = routes.slice(1).find(route => {
+      const other = new Set(route.verdict.selectedDeclarations);
+      return selected.size !== other.size || [...selected].some(index => !other.has(index));
+    });
+    if (conflicting) {
+      return {
+        satisfied: false,
+        bug_class: 'directionality',
+        detail: `Conflicting selector routes ${primary.name} and ${conflicting.name} select different product format_options[] sets`,
+        json_pointer: pointer,
+        observations: routes.map(route => ({
+          route: route.name,
+          selected_declarations: route.verdict.selectedDeclarations,
+        })),
+      };
+    }
+    return primary.verdict;
   }
 
   return {
@@ -296,6 +321,7 @@ function evaluateFormatOptionRefs(
     };
   }
 
+  const selected = new Set<number>();
   for (let i = 0; i < refs.length; i++) {
     const ref = refs[i];
     if (!isRecord(ref)) {
@@ -325,7 +351,7 @@ function evaluateFormatOptionRefs(
         actual: ref,
       };
     }
-    const match = declarations.find(decl => {
+    const match = declarations.findIndex(decl => {
       if (ref.scope === 'publisher') {
         return (
           decl.publisher_domain === ref.publisher_domain &&
@@ -335,7 +361,7 @@ function evaluateFormatOptionRefs(
       }
       return decl.format_option_id === ref.format_option_id && !decl.publisher_domain;
     });
-    if (!match) {
+    if (match < 0) {
       return {
         satisfied: false,
         bug_class: 'closed_set',
@@ -345,6 +371,7 @@ function evaluateFormatOptionRefs(
         observations: [{ available_format_option_ids: declarations.map(declarationLabel).filter(Boolean) }],
       };
     }
+    selected.add(match);
   }
 
   return {
@@ -352,6 +379,7 @@ function evaluateFormatOptionRefs(
     bug_class: 'directionality',
     detail: 'Every format_option_refs[] entry resolved to the target product format_options[] closed set',
     json_pointer: `${packagePointer}/format_option_refs`,
+    selectedDeclarations: [...selected],
   };
 }
 
@@ -362,6 +390,7 @@ function evaluateLegacyFormatIds(
   productId: string
 ): SatisfactionVerdict {
   const declarations = productFormatOptions(product);
+  const selected = new Set<number>();
   for (let i = 0; i < refs.length; i++) {
     const ref = refs[i];
     if (!isFormatId(ref)) {
@@ -374,13 +403,23 @@ function evaluateLegacyFormatIds(
       };
     }
 
-    const direct = declarations.find(decl => (decl.v1_format_ref ?? []).some(v1 => sameFormatId(v1, ref)));
-    if (direct) continue;
+    const direct = declarations.flatMap((decl, index) =>
+      (decl.v1_format_ref ?? []).some(v1 => sameFormatId(v1, ref)) ? [index] : []
+    );
+    if (direct.length > 0) {
+      for (const index of direct) selected.add(index);
+      continue;
+    }
 
     const projected = projectLegacyRef(ref, productId, `${packagePointer}/format_ids/${i}`);
     if (projected) {
-      const match = declarations.find(decl => canonicalSelectorSatisfiesDeclaration(projected, decl).ok);
-      if (match) continue;
+      const matches = declarations.flatMap((decl, index) =>
+        canonicalSelectorSatisfiesDeclaration(projected, decl).ok ? [index] : []
+      );
+      if (matches.length > 0) {
+        for (const index of matches) selected.add(index);
+        continue;
+      }
     }
 
     if (
@@ -408,6 +447,7 @@ function evaluateLegacyFormatIds(
     bug_class: 'normalization',
     detail: 'Every legacy format_id normalized to a product canonical declaration or product legacy format_id',
     json_pointer: `${packagePointer}/format_ids`,
+    selectedDeclarations: [...selected],
   };
 }
 
@@ -426,6 +466,7 @@ function evaluateCanonicalSelectors(
     };
   }
 
+  const selected = new Set<number>();
   for (const selector of selectors) {
     const candidates = declarations.filter(decl => decl.format_kind === selector.format_kind);
     if (candidates.length === 0) {
@@ -439,7 +480,12 @@ function evaluateCanonicalSelectors(
     }
 
     const checks = candidates.map(decl => canonicalSelectorSatisfiesDeclaration(selector, decl));
-    if (checks.some(c => c.ok)) continue;
+    if (checks.some(c => c.ok)) {
+      for (const [index, decl] of declarations.entries()) {
+        if (canonicalSelectorSatisfiesDeclaration(selector, decl).ok) selected.add(index);
+      }
+      continue;
+    }
     const primary = checks.find(c => c.bug_class === 'range_containment') ?? checks[0]!;
     return {
       satisfied: false,
@@ -456,6 +502,7 @@ function evaluateCanonicalSelectors(
     bug_class: 'directionality',
     detail: 'Every canonical selector satisfies at least one product format_options[] declaration',
     json_pointer: selectors[0]?.pointer ?? null,
+    selectedDeclarations: [...selected],
   };
 }
 
@@ -903,7 +950,7 @@ function collectRejectionInfo(
 
 function rejectionSupportsFormatFailure(rejection: RejectionInfo | undefined): boolean {
   if (!rejection) return false;
-  if (rejection.codes.some(code => code.startsWith('FORMAT_'))) return true;
+  if (rejection.codes.some(code => code.startsWith('FORMAT_') || code === 'CONFLICTING_SELECTORS')) return true;
   return [...rejection.fields, ...rejection.messages].some(text =>
     /format|format_option|format_id|selector/i.test(text)
   );

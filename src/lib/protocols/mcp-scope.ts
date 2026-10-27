@@ -11,6 +11,8 @@ interface MCPConnectionScope {
   signal?: AbortSignal;
   interrupted?: boolean;
   preserveOnInterruption?: boolean;
+  preserveSessionOnResult?: (result: unknown) => boolean;
+  preserveSession?: boolean;
 }
 
 const scopeStorage = new AsyncLocalStorage<MCPConnectionScope>();
@@ -68,7 +70,9 @@ export async function closeCurrentMCPConnectionScope(): Promise<boolean> {
   // the same workflow can register a fresh connection for the outer finally.
   const cleanups = [...scope.cleanups.values()];
   scope.cleanups.clear();
-  await Promise.allSettled(cleanups.map(cleanup => cleanup(!scope.signal?.aborted && !scope.interrupted)));
+  await Promise.allSettled(
+    cleanups.map(cleanup => cleanup(!scope.signal?.aborted && !scope.interrupted && !scope.preserveSession))
+  );
   return true;
 }
 
@@ -83,6 +87,9 @@ export async function closeCurrentMCPConnectionScope(): Promise<boolean> {
  * Per-call correlation headers, `AbortSignal`s and timeouts do not choose the
  * session. The scope terminates its sessions once, when `fn` settles; pass
  * `{ isolate: true }` to force a fresh scope even when called from inside one.
+ * Explicit workflows terminate sessions at exit even if an inner call returned
+ * submitted/working; the caller owns that lifetime. Implicit task scopes may
+ * close only their local clients when their final result remains nonterminal.
  *
  * @example
  * ```ts
@@ -100,6 +107,8 @@ export async function withMCPConnectionScope<T>(
     signal?: AbortSignal;
     /** @internal Request timeouts need not abort the enclosing task signal. */
     preserveOnInterruption?: boolean;
+    /** @internal Decide cleanup from the owning implicit task's final result. */
+    preserveSessionOnResult?: (result: unknown) => boolean;
   } = {}
 ): Promise<T> {
   if (scopeStorage.getStore() && options.isolate !== true) return fn();
@@ -112,11 +121,14 @@ export async function withMCPConnectionScope<T>(
     cleanups: new Map(),
     signal: options.signal,
     preserveOnInterruption: options.preserveOnInterruption,
+    preserveSessionOnResult: options.preserveSessionOnResult,
   };
   activeScopeKeys.add(scope.cacheKey);
   return scopeStorage.run(scope, async () => {
     try {
-      return await fn();
+      const result = await fn();
+      scope.preserveSession = scope.preserveSessionOnResult?.(result) === true;
+      return result;
     } catch (error) {
       if (isAbortOrTimeoutError(error)) markMCPConnectionScopeInterrupted();
       throw error;

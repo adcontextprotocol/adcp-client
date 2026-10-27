@@ -45,6 +45,13 @@ import { canonicalize as canonicalizeJson } from '../../utils/jcs';
 import { lookupUniqueV1FormatById, lookupV1Format, type V1FormatDefinition } from './catalog';
 import { canonicalizeAgentUrl } from '../../discovery/resolve-agent-properties';
 import { isLikelyPrivateUrl } from '../../net/address-guards';
+import {
+  downgradePixelTracker,
+  pixelTrackerDrift,
+  rememberCreativeDeliveryDiagnostics,
+  type LegacyPixelTracker,
+} from './legacy-metadata';
+import type { VersionDrift } from '../../adapters/version/types';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, Extract<keyof T, K>> : never;
 
@@ -1006,22 +1013,70 @@ function creativeFormatParameterConstraints(
   return { width, height, durationMs };
 }
 
-function legacyRefParameterConstraints(ref: V1FormatId): CreativeFormatParameterConstraints {
-  // Catalog dimensions fill missing constraints without changing the seller's wire reference.
+/** Read one media asset matching the creative kind, outside opaque metadata. */
+function primaryMediaConstraints(creative: Record<string, unknown>): CreativeFormatParameterConstraints | undefined {
+  const assetType =
+    creative.format_kind === 'image'
+      ? 'image'
+      : creative.format_kind === 'video_hosted'
+        ? 'video'
+        : creative.format_kind === 'audio_hosted'
+          ? 'audio'
+          : undefined;
+  if (!assetType) return undefined;
+  const assets = Object.values(record(creative.assets) ?? {}).flatMap(value =>
+    (Array.isArray(value) ? value : [value]).flatMap(item => {
+      const asset = record(item);
+      return asset?.asset_type === assetType ? [asset] : [];
+    })
+  );
+  if (assets.length !== 1) return undefined;
+  const asset = assets[0]!;
+  const width = assetType === 'audio' ? undefined : positiveConstraint(asset.width);
+  const height = assetType === 'audio' ? undefined : positiveConstraint(asset.height);
+  const durationMs = assetType === 'image' ? undefined : positiveConstraint(asset.duration_ms);
+  return width === undefined && height === undefined && durationMs === undefined
+    ? undefined
+    : { width, height, durationMs };
+}
+
+function positiveConstraint(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function legacyRefParameterConstraints(ref: V1FormatId, selectorParams?: unknown): CreativeFormatParameterConstraints {
+  // Catalog and option facts fill missing constraints without changing the seller's wire reference.
   const params =
     typeof ref.width !== 'number' || typeof ref.height !== 'number'
       ? record(canonicalDeclarationFromBareId(ref.id, { agentUrl: ref.agent_url })?.params)
       : undefined;
+  const selector = record(selectorParams);
+  const sizes = Array.isArray(selector?.sizes) ? selector.sizes : [];
+  const size = sizes.length === 1 ? record(sizes[0]) : undefined;
   return {
-    width: typeof ref.width === 'number' ? ref.width : typeof params?.width === 'number' ? params.width : undefined,
+    width:
+      typeof ref.width === 'number'
+        ? ref.width
+        : typeof params?.width === 'number'
+          ? params.width
+          : (positiveConstraint(selector?.width) ?? positiveConstraint(size?.width)),
     height:
-      typeof ref.height === 'number' ? ref.height : typeof params?.height === 'number' ? params.height : undefined,
-    durationMs: ref.duration_ms,
+      typeof ref.height === 'number'
+        ? ref.height
+        : typeof params?.height === 'number'
+          ? params.height
+          : (positiveConstraint(selector?.height) ?? positiveConstraint(size?.height)),
+    durationMs:
+      ref.duration_ms ?? positiveConstraint(selector?.duration_ms_exact) ?? positiveConstraint(selector?.duration_ms),
   };
 }
 
-function refContradictsConstraints(ref: V1FormatId, constraints: CreativeFormatParameterConstraints): boolean {
-  const refConstraints = legacyRefParameterConstraints(ref);
+function refContradictsConstraints(
+  ref: V1FormatId,
+  constraints: CreativeFormatParameterConstraints,
+  selectorParams?: unknown
+): boolean {
+  const refConstraints = legacyRefParameterConstraints(ref, selectorParams);
   if (
     constraints.width !== undefined &&
     refConstraints.width !== undefined &&
@@ -1046,8 +1101,12 @@ function refContradictsConstraints(ref: V1FormatId, constraints: CreativeFormatP
   return false;
 }
 
-function refPinsConstraints(ref: V1FormatId, constraints: CreativeFormatParameterConstraints): boolean {
-  const refConstraints = legacyRefParameterConstraints(ref);
+function refPinsConstraints(
+  ref: V1FormatId,
+  constraints: CreativeFormatParameterConstraints,
+  selectorParams?: unknown
+): boolean {
+  const refConstraints = legacyRefParameterConstraints(ref, selectorParams);
   if (constraints.width !== undefined && refConstraints.width === undefined) return false;
   if (constraints.height !== undefined && refConstraints.height === undefined) return false;
   if (constraints.durationMs !== undefined && typeof refConstraints.durationMs !== 'number') return false;
@@ -1066,8 +1125,8 @@ function legacyIdPinsDimensions(ref: V1FormatId): boolean | undefined {
   );
 }
 
-function refConstraintKey(ref: V1FormatId): string {
-  const constraints = legacyRefParameterConstraints(ref);
+function refConstraintKey(ref: V1FormatId, selectorParams?: unknown): string {
+  const constraints = legacyRefParameterConstraints(ref, selectorParams);
   return [
     agentIdentity(ref.agent_url),
     constraints.width ?? '',
@@ -1108,7 +1167,9 @@ function candidateDeliveryTypes(candidate: LegacyCandidate): unknown[] {
  * Most-constrained-wins for a canonical creative facing several legacy refs of
  * its kind. A `display_tag` creative first drops refs that do not accept its
  * delivery type (an inline-markup tag never matches a URL-only `display_js`). Compare explicit dimensions or the catalog-backed ID's dimensions
- * with the creative's own `format_parameters`. Drop contradictory refs,
+ * with the creative's explicit parameters, or unambiguous primary media facts when
+ * several refs remain. Seller option params fill facts absent from a ref and its
+ * catalog entry. Drop contradictory refs,
  * prefer refs that pin them, and among refs imposing identical constraints (a
  * seller listing `display_html` at 300x250 next to `display_300x250_html`)
  * prefer the legacy id whose own declaration pins that size over a generic
@@ -1120,6 +1181,7 @@ function preferMostConstrainedLegacyCandidates(
   creative: Record<string, unknown>
 ): LegacyCandidate[] {
   let remaining = candidates;
+  const mediaKind = ['image', 'video_hosted', 'audio_hosted'].includes(String(creative.format_kind));
   const deliveryTypes = creativeDisplayTagDeliveryTypes(creative);
   if (deliveryTypes) {
     remaining = remaining.filter(candidate => {
@@ -1131,17 +1193,29 @@ function preferMostConstrainedLegacyCandidates(
     const supportedSizes = assetRenderedSizes(creative);
     if (supportedSizes.length > 1)
       remaining = remaining.filter(candidate =>
-        supportedSizes.some(size => !refContradictsConstraints(candidate.ref, size))
+        supportedSizes.some(
+          size => !refContradictsConstraints(candidate.ref, size, mediaKind ? candidate.selectorParams : undefined)
+        )
       );
   }
-  const constraints = creativeFormatParameterConstraints(creative);
+  // Intrinsic media facts choose among alternatives; a lone ref may rely on seller scaling.
+  const constraints =
+    creativeFormatParameterConstraints(creative) ??
+    (remaining.length > 1 ? primaryMediaConstraints(creative) : undefined);
   if (constraints) {
-    remaining = remaining.filter(candidate => !refContradictsConstraints(candidate.ref, constraints));
-    const pinned = remaining.filter(candidate => refPinsConstraints(candidate.ref, constraints));
+    remaining = remaining.filter(
+      candidate =>
+        !refContradictsConstraints(candidate.ref, constraints, mediaKind ? candidate.selectorParams : undefined)
+    );
+    const pinned = remaining.filter(candidate =>
+      refPinsConstraints(candidate.ref, constraints, mediaKind ? candidate.selectorParams : undefined)
+    );
     if (pinned.length > 0) remaining = pinned;
   }
   if (remaining.length <= 1) return remaining;
-  const constraintKeys = new Set(remaining.map(candidate => refConstraintKey(candidate.ref)));
+  const constraintKeys = new Set(
+    remaining.map(candidate => refConstraintKey(candidate.ref, mediaKind ? candidate.selectorParams : undefined))
+  );
   if (constraintKeys.size !== 1) return remaining;
   const specific = remaining.filter(candidate => legacyIdPinsDimensions(candidate.ref) === true);
   return specific.length > 0 && specific.length < remaining.length ? specific : remaining;
@@ -1201,29 +1275,52 @@ function selectLegacyRef(
   return matching.length === 1 ? matching[0]!.ref : undefined;
 }
 
-function projectLegacyAssetKeys(assetsValue: unknown, definition: V1FormatDefinition | undefined): unknown {
+function legacyUrlTrackerSlotMatches(
+  slot: NonNullable<V1FormatDefinition['assets']>[number],
+  tracker: LegacyPixelTracker
+): boolean {
+  return (
+    slot.asset_type === 'url' &&
+    slot.requirements?.url_type === 'tracker_pixel' &&
+    (slot.asset_id === tracker.assetId || slot.requirements.role === tracker.assetId)
+  );
+}
+
+function projectLegacyAssetKeys(
+  assetsValue: unknown,
+  definition: V1FormatDefinition | undefined
+): { assets: unknown; drifts: VersionDrift[] } {
+  const unchanged = { assets: assetsValue, drifts: [] };
   const assets = record(assetsValue);
-  if (!assets || !Array.isArray(definition?.assets)) return assetsValue;
+  if (!assets || !Array.isArray(definition?.assets)) return unchanged;
   const slots = definition.assets.filter(slot => record(slot) !== undefined);
-  // Group membership needs a separate mapping contract; never flatten it into
-  // a standalone slot just because the asset types happen to agree.
-  if (slots.some(slot => slot.item_type !== undefined && slot.item_type !== 'individual')) return assetsValue;
+  // Group membership needs its own mapping contract.
+  if (slots.some(slot => slot.item_type !== undefined && slot.item_type !== 'individual')) return unchanged;
   const declaredIds = new Set(slots.map(slot => slot.asset_id));
   const availableSlots = slots.filter(
-    slot =>
-      (slot.item_type === undefined || slot.item_type === 'individual') &&
-      typeof slot.asset_id === 'string' &&
-      slot.asset_id.length > 0 &&
-      !Object.hasOwn(assets, slot.asset_id)
+    slot => typeof slot.asset_id === 'string' && slot.asset_id.length > 0 && !Object.hasOwn(assets, slot.asset_id)
   );
   const targetBySource = new Map<string, string>();
   const sourcesByTarget = new Map<string, string[]>();
+  const trackersBySource = new Map<string, LegacyPixelTracker[]>();
   for (const [key, value] of Object.entries(assets)) {
-    if (declaredIds.has(key)) continue;
+    const candidates = (Array.isArray(value) ? value : [value]).map(downgradePixelTracker);
+    const trackers =
+      candidates.length > 0 && candidates.every((tracker): tracker is LegacyPixelTracker => tracker !== undefined)
+        ? candidates
+        : undefined;
+    const trackerSlotMatches = (slot: NonNullable<V1FormatDefinition['assets']>[number]): boolean =>
+      trackers !== undefined && trackers.every(tracker => legacyUrlTrackerSlotMatches(slot, tracker));
+    if (declaredIds.has(key)) {
+      const slot = slots.find(slot => slot.asset_id === key);
+      if (trackers && slot && trackerSlotMatches(slot)) trackersBySource.set(key, trackers);
+      continue;
+    }
     const asset = record(value);
-    if (!asset || typeof asset.asset_type !== 'string') continue;
+    if (!trackers && (!asset || typeof asset.asset_type !== 'string')) continue;
     const matches = availableSlots.filter(slot => {
-      if (slot.asset_type !== asset.asset_type) return false;
+      if (trackerSlotMatches(slot)) return true;
+      if (!asset || slot.asset_type !== asset.asset_type) return false;
       if (asset.asset_type === 'url') {
         return typeof asset.url_type === 'string' && asset.url_type === slot.requirements?.url_type;
       }
@@ -1238,19 +1335,44 @@ function projectLegacyAssetKeys(assetsValue: unknown, definition: V1FormatDefini
       return true;
     });
     if (matches.length !== 1) continue;
-    const target = matches[0]!.asset_id!;
+    const slot = matches[0]!;
+    const target = slot.asset_id!;
     targetBySource.set(key, target);
+    if (trackers && trackerSlotMatches(slot)) trackersBySource.set(key, trackers);
     const sources = sourcesByTarget.get(target) ?? [];
     sources.push(key);
     sourcesByTarget.set(target, sources);
   }
-  // Resolve against the original keys. Two assets competing for one slot must
-  // both survive, and object insertion order must never choose a winner.
+  // Never choose a winner when several assets compete for one slot.
   for (const sources of sourcesByTarget.values()) {
-    if (sources.length > 1) for (const source of sources) targetBySource.delete(source);
+    if (sources.length > 1) {
+      for (const source of sources) {
+        targetBySource.delete(source);
+        trackersBySource.delete(source);
+      }
+    }
   }
-  if (targetBySource.size === 0) return assetsValue;
-  return Object.fromEntries(Object.entries(assets).map(([key, value]) => [targetBySource.get(key) ?? key, value]));
+  if (targetBySource.size === 0 && trackersBySource.size === 0) return unchanged;
+  const drifts: VersionDrift[] = [];
+  for (const [key, trackers] of trackersBySource) {
+    trackers.forEach((tracker, index) => {
+      const path = `assets.${key}${Array.isArray(assets[key]) ? `[${index}]` : ''}`;
+      const drift = pixelTrackerDrift(path, tracker);
+      if (drift) drifts.push(drift);
+    });
+  }
+  return {
+    assets: Object.fromEntries(
+      Object.entries(assets).map(([key, value]) => {
+        const trackers = trackersBySource.get(key);
+        return [
+          targetBySource.get(key) ?? key,
+          trackers ? (Array.isArray(value) ? trackers.map(tracker => tracker.asset) : trackers[0]!.asset) : value,
+        ];
+      })
+    ),
+    drifts,
+  };
 }
 
 /**
@@ -1441,7 +1563,10 @@ function projectCreative<T extends Record<string, unknown>>(
     }
     // A bare-id alias can establish markup representation, but only an exact
     // or caller-supplied definition establishes the seller's asset slot IDs.
-    next.assets = projectLegacyAssetKeys(legacyAssets, definition);
+    const projected = projectLegacyAssetKeys(legacyAssets, definition);
+    next.assets = projected.assets;
+    transferLegacyCreativeMetadata(creative, next);
+    rememberCreativeDeliveryDiagnostics(next, projected.drifts);
   }
   return next as T;
 }
@@ -1783,6 +1908,7 @@ export function projectCreativeForDelivery<T extends CreativeAsset>(
     legacyFormatConverter,
     wireMode === 'canonical'
   );
+  transferLegacyCreativeMetadata(inputRecord, creativeRecord);
   if (wireMode === 'canonical') return creativeRecord as unknown as CanonicalProjectedCreative<T>;
   if (originalLegacyRef) {
     const selectedOriginal = selectLegacyRef(inputRecord, selectorContainer, canonicalFormatLegacyResolver, operation);

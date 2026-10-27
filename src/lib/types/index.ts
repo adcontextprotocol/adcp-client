@@ -61,6 +61,8 @@ export type {
   AcceptanceContext,
   MediaBuyFrequencyCap,
   OutcomeTarget,
+  DaypartTarget,
+  TargetingOverlaySupport,
   ProductMediaBuySupportRequirements,
   TargetingOverlay,
   TargetingOverlayInput,
@@ -418,7 +420,7 @@ export * from './format-asset-slots';
 // individual ImageAsset / VideoAsset / etc. interfaces and their canonical
 // `AssetVariant` union are generated. `AssetInstance` aliases that union so
 // every registry-backed asset branch remains available without curated drift.
-// `AssetVariant` itself is intentionally not re-exported.
+// `AssetVariant` and `AssetInstance` expose the same generated union.
 export * from './asset-instances';
 
 // Strict per-row types for sync_* response success arms. The codegen
@@ -489,3 +491,8 @@ export type {
   ValidateInputRequest,
   ValidateInputResponse,
 } from './tools.generated';
+
+export { TargetingOverlayKeys, TargetingOverlaySupportKeys } from './targeting-keys.generated';
+
+export type { MediaBuyDeliveryReport } from './media-buy-delivery-report';
+export type { MediaBuyDeliveryWebhookResult } from './core.generated';

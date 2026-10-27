@@ -14,6 +14,7 @@
  */
 
 import Ajv, { type KeywordDefinition, type ValidateFunction } from 'ajv';
+import type { SchemaDiagnosticOrigin, SchemaDiagnosticOrigins } from './schema-diagnostic-origins';
 import addFormats from 'ajv-formats';
 import { AsyncLocalStorage } from 'async_hooks';
 import { readdirSync, readFileSync, existsSync } from 'fs';
@@ -378,6 +379,8 @@ function compareBundleNamesDesc(a: string, b: string): number {
 interface LoaderState {
   ajv: Ajv;
   bundledAjv: Ajv;
+  diagnosticOrigins: SchemaDiagnosticOrigins;
+  bundledDiagnosticOrigins: SchemaDiagnosticOrigins;
   canonicalAjv?: Ajv;
   canonicalValidators: Map<string, ValidateFunction>;
   fileIndex: Map<string, string>;
@@ -391,6 +394,19 @@ interface LoaderState {
 }
 
 const states: Map<string, LoaderState> = new Map();
+const validatorDiagnosticOrigins = new WeakMap<ValidateFunction, SchemaDiagnosticOrigins>();
+
+/** @internal Resolve the exact function origin retained during compilation. */
+export function resolveValidatorDiagnosticPath(validator: ValidateFunction, schemaPath: string): unknown {
+  return validatorDiagnosticOrigins.get(validator)?.resolve(schemaPath);
+}
+/** @internal Resource identity and the original public AJV path for a failure. */
+export function getValidatorDiagnosticOrigin(
+  validator: ValidateFunction,
+  schemaPath: string
+): SchemaDiagnosticOrigin | undefined {
+  return validatorDiagnosticOrigins.get(validator)?.origin(schemaPath);
+}
 const schemaRefValidators = new Map<string, ValidateFunction>();
 const keywordSchemaRefValidators = new WeakMap<
   ReadonlyArray<KeywordDefinition>,
@@ -686,7 +702,8 @@ function loadJson(file: string): LoadedSchema {
  * `Package`, `MediaBuy`, etc. Applied only to response variants; request
  * schemas stay strict so outgoing drift fails at the edge.
  */
-function relaxResponseRoot(schema: LoadedSchema): LoadedSchema {
+/** @internal Shared by opt-in overlays that retain response-envelope compatibility. */
+export function relaxResponseRoot(schema: LoadedSchema): LoadedSchema {
   const relaxCompositionNode = (node: Record<string, unknown>): Record<string, unknown> => {
     const clone = { ...node };
     if (clone.additionalProperties === false) {
@@ -791,10 +808,18 @@ function ensureInit(version: string): LoaderState {
   const cacheKey = stateCacheKey(key, root);
   const cached = states.get(cacheKey);
   if (cached) return cached;
+  // Keep referenced validators separate: giant inlined functions can trigger
+  // pathological V8 Maglev compilation and native-memory growth on Node 24.
+  const { createSchemaDiagnosticOrigins } =
+    require('./schema-diagnostic-origins') as typeof import('./schema-diagnostic-origins');
+  const diagnosticOrigins = createSchemaDiagnosticOrigins();
+  const bundledDiagnosticOrigins = createSchemaDiagnosticOrigins();
   const ajv = new Ajv({
+    inlineRefs: false,
     strict: false,
     allErrors: true,
     allowUnionTypes: true,
+    code: { process: diagnosticOrigins.process },
   });
   addFormats(ajv);
   // Bundled tool roots can intentionally share their canonical `$id` with
@@ -802,15 +827,19 @@ function ensureInit(version: string): LoaderState {
   // so getValidator compiles the file selected by fileIndex rather than
   // accidentally reusing a modular validator with the same public id.
   const bundledAjv = new Ajv({
+    inlineRefs: false,
     strict: false,
     allErrors: true,
     allowUnionTypes: true,
+    code: { process: bundledDiagnosticOrigins.process },
   });
   addFormats(bundledAjv);
 
   const state: LoaderState = {
     ajv,
     bundledAjv,
+    diagnosticOrigins,
+    bundledDiagnosticOrigins,
     canonicalValidators: new Map(),
     fileIndex: buildFileIndex(root),
     validators: new Map(),
@@ -865,7 +894,8 @@ function ensureCoreLoaded(s: LoaderState): void {
   //
   const selectedToolsById = new Map<string, { file: string; response: boolean }>();
   const responseToolFiles = new Set<string>();
-  for (const [key, file] of s.fileIndex) {
+  for (const [key, indexedFile] of s.fileIndex) {
+    const file = authoredToolSchemaFile(s, indexedFile);
     const response = !key.endsWith('::request');
     if (response) responseToolFiles.add(file);
     const schema = loadJson(file);
@@ -919,8 +949,11 @@ export function getValidator(
   const cached = s.validators.get(cacheKey);
   if (cached) return cached;
 
-  const file = s.fileIndex.get(cacheKey);
-  if (!file) return undefined;
+  const indexedFile = s.fileIndex.get(cacheKey);
+  if (!indexedFile) return undefined;
+  // Prefer a context-safe authored ref graph; retain paired bundled response
+  // compositions when envelope relaxation cannot safely traverse shared refs.
+  const file = runtimeToolSchemaFile(s, indexedFile, direction);
 
   // Flat-tree schemas `$ref` into separately published documents and need
   // those trees registered before compile. Bundled schemas contain only
@@ -943,11 +976,15 @@ export function getValidator(
   // schemas. The root `$id` is kept (it's the validator's lookup key);
   // every other `$id` in the tree was just metadata anyway.
   const prepared = fromBundled ? stripNestedIds(rawSchema) : rawSchema;
-  const schema = direction === 'request' ? prepared : relaxResponseRoot(prepared);
+  // Relax the authored composition before factoring can move a closed arm
+  // behind a private ref. Canonical validators deliberately skip relaxation.
+  const envelope = direction === 'request' ? prepared : relaxResponseRoot(prepared);
+  const schema = fromBundled ? compactSchemaForValidation(envelope) : envelope;
   const ajv = fromBundled ? s.bundledAjv : s.ajv;
   const existing = typeof schema.$id === 'string' ? ajv.getSchema(schema.$id) : undefined;
   const compiled = existing ?? ajv.compile(schema);
   s.validators.set(cacheKey, compiled);
+  validatorDiagnosticOrigins.set(compiled, fromBundled ? s.bundledDiagnosticOrigins : s.diagnosticOrigins);
   return compiled;
 }
 
@@ -979,6 +1016,31 @@ function authoredToolSchemaFile(state: LoaderState, indexedFile: string): string
 
   const authoredFile = path.join(state.root, relative);
   return existsSync(authoredFile) ? authoredFile : indexedFile;
+}
+
+/** Keep composition-only response relaxation local to the selected tool. */
+function runtimeToolSchemaFile(state: LoaderState, indexedFile: string, direction: Direction): string {
+  const authoredFile = authoredToolSchemaFile(state, indexedFile);
+  if (direction === 'request' || authoredFile === indexedFile) return authoredFile;
+  const hasCompositionReference = (node: unknown): boolean => {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+    const schema = node as LoadedSchema;
+    if (typeof schema.$ref === 'string') return true;
+    return ['allOf', 'oneOf', 'anyOf'].some(
+      keyword => Array.isArray(schema[keyword]) && (schema[keyword] as unknown[]).some(hasCompositionReference)
+    );
+  };
+  // A modular response may alias a closed non-tool fragment. Relaxing that
+  // shared fragment globally would also loosen nested request validation.
+  // Its paired bundled tree provides a context-local composition to relax.
+  return hasCompositionReference(loadJson(authoredFile)) ? indexedFile : authoredFile;
+}
+
+function compactSchemaForValidation(schema: LoadedSchema): LoadedSchema {
+  // Cold client imports need no schema factoring code until a bundled-only
+  // or context-sensitive response graph actually reaches compilation.
+  const compactor = require('./compact-schema') as typeof import('./compact-schema');
+  return compactor.compactSchemaForValidation(schema);
 }
 
 /**
@@ -1081,6 +1143,42 @@ export function getSchemaValidatorByRef(
   keywords?: ReadonlyArray<KeywordDefinition>,
   options: { allErrors?: boolean } = {}
 ): ValidateFunction | undefined {
+  return compileSchemaReference(schemaRef, version, keywords, options);
+}
+
+/** @internal Validate delivery envelope metadata separately from its versioned report. */
+export function getMediaBuyDeliveryEnvelopeValidator(version: string): ValidateFunction | undefined {
+  return compileSchemaReference(
+    'core/mcp-webhook-payload.json',
+    version,
+    undefined,
+    {},
+    {
+      key: 'media-buy-delivery-envelope',
+      project: schema => ({
+        ...schema,
+        properties: {
+          ...(schema.properties as Record<string, unknown>),
+          // The 3.0 task-type enum predates this documented reporting task. All
+          // releases use the same concrete discriminator on delivery envelopes.
+          task_type: { const: 'media_buy_delivery' },
+          // The caller validates this independently against the served report
+          // schema, so result errors cannot masquerade as envelope errors.
+          result: {},
+        },
+        required: [...new Set([...((schema.required as string[] | undefined) ?? []), 'task_type', 'result'])],
+      }),
+    }
+  );
+}
+
+function compileSchemaReference(
+  schemaRef: string,
+  version: string,
+  keywords: ReadonlyArray<KeywordDefinition> | undefined,
+  options: { allErrors?: boolean },
+  projection?: { key: string; project: (schema: LoadedSchema) => LoadedSchema }
+): ValidateFunction | undefined {
   // Keep remote schema-ref validation out of the shared tool-validator AJV,
   // which intentionally collects all errors for developer diagnostics.
   const bundleKey = resolveBundleKey(version);
@@ -1100,7 +1198,7 @@ export function getSchemaValidatorByRef(
     cache = entry.validators;
   }
   const allErrors = options.allErrors ?? false;
-  const cacheKey = `${stateCacheKey(bundleKey, root)}\0schema-ref::${normalized}\0all-errors::${allErrors}`;
+  const cacheKey = `${stateCacheKey(bundleKey, root)}\0schema-ref::${normalized}\0all-errors::${allErrors}\0projection::${projection?.key ?? 'raw'}`;
   const cached = cache.get(cacheKey);
   if (cached) return cached;
 
@@ -1112,6 +1210,7 @@ export function getSchemaValidatorByRef(
   // payload schemas need strict raw JSON Schema behavior without polluting the
   // shared tool-validator registry with unrelaxed response schemas.
   const ajv = new Ajv({
+    inlineRefs: false,
     strict: false,
     // Schema-ref validators process remote webhook payloads. By default they
     // fail on the first violation so deeply nested hostile input cannot
@@ -1122,7 +1221,8 @@ export function getSchemaValidatorByRef(
   });
   addFormats(ajv);
   for (const keyword of keywords ?? []) ajv.addKeyword(keyword);
-  const rawSchema = identity33ReferenceSchema(loadJson(file), version);
+  const authoredSchema = identity33ReferenceSchema(loadJson(file), version);
+  const rawSchema = projection ? projection.project(authoredSchema) : authoredSchema;
   const dependencySchemas: LoadedSchema[] = [];
   const registeredIds = new Map<string, LoadedSchema>();
   for (const schemaFile of walkJsonFiles(root)) {
@@ -1134,8 +1234,10 @@ export function getSchemaValidatorByRef(
     }
     if (schemaFile === file) continue;
     const schema = identity33ReferenceSchema(loadJson(schemaFile), version);
-    if ((keywords || allErrors) && typeof schema.$id === 'string') {
-      const previous = schema.$id === rawSchema.$id ? rawSchema : registeredIds.get(schema.$id);
+    if (typeof schema.$id === 'string') {
+      // Compare mirrors against the authored root, before any caller-specific
+      // envelope projection. Never register the same root id as a dependency.
+      const previous = schema.$id === authoredSchema.$id ? authoredSchema : registeredIds.get(schema.$id);
       // Bundles intentionally mirror async-response refs. Identical copies
       // are harmless; conflicting definitions must not shadow audited files.
       if (previous && !isDeepStrictEqual(previous, schema)) {
@@ -1181,7 +1283,8 @@ export function getCanonicalToolValidatorForVersion(
   // contracts. They have no authored graph to pre-register, so compile the
   // strict bundled fallback lazily after removing nested metadata `$id`s.
   const fromBundled = file.includes(`${path.sep}bundled${path.sep}`);
-  const compiled = existing ?? ajv.compile(fromBundled ? stripNestedIds(rawSchema) : rawSchema);
+  const compiled =
+    existing ?? ajv.compile(fromBundled ? compactSchemaForValidation(stripNestedIds(rawSchema)) : rawSchema);
   state.canonicalValidators.set(cacheKey, compiled);
   return compiled;
 }
@@ -1189,11 +1292,7 @@ export function getCanonicalToolValidatorForVersion(
 function ensureCanonicalAjv(state: LoaderState): Ajv {
   if (state.canonicalAjv) return state.canonicalAjv;
 
-  const ajv = new Ajv({
-    strict: false,
-    allErrors: true,
-    allowUnionTypes: true,
-  });
+  const ajv = new Ajv({ inlineRefs: false, strict: false, allErrors: true, allowUnionTypes: true });
   addFormats(ajv);
 
   const schemasById = new Map<string, LoadedSchema>();

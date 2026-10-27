@@ -491,7 +491,7 @@ describe('PostgresReplayStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' 
         { now: () => now, nonce }
       );
 
-    for (const nonce of ['rate-test-1', 'rate-test-2']) {
+    for (const nonce of ['cmF0ZS10ZXN0LW5vbmNlLTE', 'cmF0ZS10ZXN0LW5vbmNlLTI']) {
       const signed = signWithNonce(nonce);
       const result = await verifyRequestSignature(
         { ...baseRequest, headers: signed.headers },
@@ -500,7 +500,7 @@ describe('PostgresReplayStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' 
       assert.strictEqual(result.status, 'verified');
     }
 
-    const signed = signWithNonce('rate-test-3');
+    const signed = signWithNonce('cmF0ZS10ZXN0LW5vbmNlLTM');
     await assert.rejects(
       () =>
         verifyRequestSignature(

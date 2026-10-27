@@ -40,6 +40,30 @@ function creative(format_option_id = 'mrec') {
   };
 }
 
+function assertOnlyLeaderboardMapped(selected) {
+  const original = structuredClone(selected);
+  for (const mode of ['legacy', 'unknown']) {
+    assert.deepEqual(
+      projectCreativeForDelivery(creative('leaderboard'), selected, mode).format_id,
+      selected.format_ids[1],
+      'an unusable sibling must not discard the compatible leaderboard route'
+    );
+  }
+  const canonical = toCanonicalOnlyProduct(selected);
+  assert.deepEqual(
+    canonical.diagnostics.map(diagnostic => diagnostic.code),
+    ['LEGACY_FORMAT_ID_DROPPED_UNMAPPED'],
+    'only the unusable reference remains unmapped'
+  );
+  const additive = toAdditiveCanonicalProduct(selected);
+  assert.deepEqual(
+    additive.routes.map(route => ({ ref: route.format_option_ref, ids: route.format_ids })),
+    [{ ref: { scope: 'product', format_option_id: 'leaderboard' }, ids: [selected.format_ids[1]] }],
+    'durable routes must preserve only the compatible sibling'
+  );
+  assert.deepEqual(selected, original);
+}
+
 describe('dual-emitted product format pairing (#3312)', () => {
   for (const mode of ['legacy', 'unknown']) {
     for (const [index, id] of ['mrec', 'leaderboard'].entries()) {
@@ -89,28 +113,39 @@ describe('dual-emitted product format pairing (#3312)', () => {
     }
   });
 
-  test('an invalid reference prevents inference for the whole product', () => {
+  test('an invalid reference blocks its own pairing while preserving its compatible sibling', () => {
     const selected = product();
     selected.format_ids[0] = {};
     assert.throws(() => projectCreativeForDelivery(creative(), selected, 'legacy'), CreativeFormatProjectionError);
-    assert.throws(
-      () => projectCreativeForDelivery(creative('leaderboard'), selected, 'legacy'),
-      CreativeFormatProjectionError
-    );
+    assertOnlyLeaderboardMapped(selected);
   });
 
-  test('refuses an unknown option and a canonical-only option', () => {
+  test('refuses an unknown option', () => {
     const selected = product();
     assert.throws(
       () => projectCreativeForDelivery(creative('missing'), selected, 'legacy'),
       CreativeFormatProjectionError
     );
+  });
+
+  test('a canonical-only option cannot use legacy delivery but does not block its compatible sibling', () => {
+    const selected = product();
     selected.format_options[0].canonical_formats_only = true;
     assert.throws(() => projectCreativeForDelivery(creative(), selected, 'legacy'), CreativeFormatProjectionError);
-    assert.throws(
-      () => projectCreativeForDelivery(creative('leaderboard'), selected, 'legacy'),
-      CreativeFormatProjectionError
-    );
+    assertOnlyLeaderboardMapped(selected);
+  });
+
+  test('an html5 declaration paired with an _html markup ref cannot hide a compatible image route', () => {
+    const selected = product();
+    selected.format_ids[0].id = 'display_300x250_html';
+    selected.format_options[0].format_kind = 'html5';
+    const input = {
+      ...creative(),
+      format_kind: 'html5',
+      assets: { html5_bundle: { asset_type: 'zip', url: 'https://cdn.example/c1.zip', width: 300, height: 250 } },
+    };
+    assert.throws(() => projectCreativeForDelivery(input, selected, 'legacy'), CreativeFormatProjectionError);
+    assertOnlyLeaderboardMapped(selected);
   });
 
   for (const divergence of ['kind', 'catalog size', 'explicit size', 'declared sizes', 'duration']) {
@@ -131,8 +166,16 @@ describe('dual-emitted product format pairing (#3312)', () => {
       const input = creative();
       input.format_kind = selected.format_options[0].format_kind;
       assert.throws(() => projectCreativeForDelivery(input, selected, 'legacy'), CreativeFormatProjectionError);
-      const canonical = toCanonicalOnlyProduct(selected);
-      assert.equal(canonical.diagnostics.length, 2, 'untrusted alignment cannot hide unmapped references');
+      if (divergence === 'catalog size') {
+        assert.throws(
+          () => projectCreativeForDelivery(creative('leaderboard'), selected, 'legacy'),
+          CreativeFormatProjectionError
+        );
+        assert.equal(toCanonicalOnlyProduct(selected).diagnostics.length, 2, 'both index pairings are incompatible');
+        assert.deepEqual(toAdditiveCanonicalProduct(selected).routes, []);
+      } else {
+        assertOnlyLeaderboardMapped(selected);
+      }
     });
   }
 
@@ -142,6 +185,11 @@ describe('dual-emitted product format pairing (#3312)', () => {
     assert.throws(
       () => projectCreativeForDelivery(creative('leaderboard'), selected, 'legacy'),
       CreativeFormatProjectionError
+    );
+    assert.deepEqual(
+      toAdditiveCanonicalProduct(selected).routes.map(route => route.format_option_ref),
+      [{ scope: 'product', format_option_id: 'mrec' }],
+      'the contradictory explicit route must not authorize an inferred sibling route'
     );
   });
 
@@ -156,7 +204,7 @@ describe('dual-emitted product format pairing (#3312)', () => {
       const selected = product();
       selected.format_options[0].params = params;
       assert.throws(() => projectCreativeForDelivery(creative(), selected, 'legacy'), CreativeFormatProjectionError);
-      assert.equal(toCanonicalOnlyProduct(selected).diagnostics.length, 2);
+      assertOnlyLeaderboardMapped(selected);
     });
   }
 

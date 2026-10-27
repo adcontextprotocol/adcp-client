@@ -85,6 +85,7 @@ export type AssetInstanceType = AssetInstance['asset_type'];
 // generated module is the source of truth; this re-export is the public
 // surface.
 export type {
+  AssetVariant,
   ImageAsset,
   VideoAsset,
   AudioAsset,

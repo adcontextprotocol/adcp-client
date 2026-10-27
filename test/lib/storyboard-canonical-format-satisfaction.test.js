@@ -210,10 +210,10 @@ describe('canonical_format_satisfaction storyboard validation', () => {
     assert.strictEqual(rejected.passed, true, rejected.error);
   });
 
-  test('passes product-local format_option_refs and ignores compatibility format_ids on dual-write packages', () => {
-    const result = run(check(true), {
+  test('rejects conflicting compatibility format_ids instead of hiding them behind product-local refs', () => {
+    const result = run(check(false), {
       products: [mrecProduct],
-      success: true,
+      success: false,
       request: {
         packages: [
           {
@@ -228,8 +228,8 @@ describe('canonical_format_satisfaction storyboard validation', () => {
     });
 
     assert.strictEqual(result.passed, true, result.error);
-    assert.strictEqual(result.observations[0].bug_class, 'directionality');
-    assert.match(result.observations[0].detail, /format_option_refs/);
+    assert.strictEqual(result.actual.local_satisfied, false);
+    assert.strictEqual(result.observations[0].bug_class, 'normalization');
   });
 
   test('invalid format_option_refs scope is an authoring failure, not a product-local ref', () => {
