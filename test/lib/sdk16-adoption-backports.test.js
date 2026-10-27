@@ -169,7 +169,7 @@ test('executor retains trusted same-release negotiation independently of the sel
   await stream.return();
 });
 
-test('the public client records same-release negotiation before reading a seller version echo', async t => {
+test('public same-release negotiation preserves the patch pin without introducing a wire override', async t => {
   const agent = { id: 'negotiated-feed', name: 'Seller', protocol: 'mcp', agent_uri: 'https://seller.example/mcp' };
   const client = new sdk.SingleAgentClient(agent, {
     adcpVersion: sdk.ADCP_VERSION,
@@ -188,10 +188,11 @@ test('the public client records same-release negotiation before reading a seller
     discoveredTools: ['list_account_changes'],
     _synthetic: false,
   }));
-  t.mock.method(sdk.ProtocolClient, 'callTool', async () => ({
-    content: [],
-    structuredContent: { ...feedResult().data, adcp_version: '3.1' },
-  }));
+  t.mock.method(sdk.ProtocolClient, 'callTool', async (_agent, _tool, _params, options) => {
+    assert.equal(options.wireAdcpVersion, undefined, 'metadata must not introduce a wire override');
+    assert.equal(options.adcpVersion, sdk.ADCP_VERSION, 'keep the exact configured patch release');
+    return { content: [], structuredContent: { ...feedResult().data, adcp_version: '3.1' } };
+  });
   const result = await client.listAccountChanges({ account, starting_position: 'earliest' });
   assert.equal(result.success, true, JSON.stringify(result));
   assert.equal(result.metadata.wireAdcpVersion, sdk.ADCP_VERSION);
