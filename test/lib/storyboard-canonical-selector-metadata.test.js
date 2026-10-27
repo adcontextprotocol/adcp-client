@@ -106,21 +106,40 @@ test('matching explicit metadata remains accepted and a seller rejection remains
   assert.equal(rejected.actual.local_satisfied, true);
 });
 
-test('dimensions, encoding limits and unknown product constraints remain mandatory', () => {
-  for (const key of ['width', 'height', 'max_file_size_kb', 'image_formats']) {
+test('fixed dimensions remain mandatory', () => {
+  for (const key of ['width', 'height']) {
     const params = { ...selector.params };
     delete params[key];
     assert.equal(productCanonicalFormatSatisfies(product, { ...selector, params }), false, key);
   }
+});
+
+test('an omitted encoding limit, enum or other constraint inherits the product value; a stated one must be contained', () => {
+  for (const key of ['max_file_size_kb', 'image_formats']) {
+    const params = { ...selector.params };
+    delete params[key];
+    assert.equal(productCanonicalFormatSatisfies(product, { ...selector, params }), true, key);
+  }
+  assert.equal(
+    productCanonicalFormatSatisfies(product, {
+      ...selector,
+      params: { ...selector.params, max_file_size_kb: product.format_options[0].params.max_file_size_kb + 1 },
+    }),
+    false
+  );
+  assert.equal(
+    productCanonicalFormatSatisfies(product, { ...selector, params: { ...selector.params, image_formats: ['tiff'] } }),
+    false
+  );
   const constrained = structuredClone(product);
   constrained.format_options[0].params.publisher_specific_constraint = 'required-value';
-  assert.equal(productCanonicalFormatSatisfies(constrained, selector), false);
+  assert.equal(productCanonicalFormatSatisfies(constrained, selector), true);
   assert.equal(
     productCanonicalFormatSatisfies(constrained, {
       ...selector,
-      params: { ...selector.params, publisher_specific_constraint: 'required-value' },
+      params: { ...selector.params, publisher_specific_constraint: 'other-value' },
     }),
-    true
+    false
   );
 });
 

@@ -129,3 +129,26 @@ test('a shared legacy ref selecting multiple options conflicts with a narrower p
   const matching = grade(broad, [declared], true, true);
   assert.equal(matching.passed, true, matching.error);
 });
+
+test('published dual emission: a direct route that omits encoding limits inherits them and selects the same MREC as the legacy route', () => {
+  const step = published.phases
+    .flatMap(phase => phase.steps)
+    .find(s => s.id === 'create_media_buy_with_equivalent_direct_legacy_emission');
+  assert.ok(step, 'the published acceptance step exists');
+  const seed = published.phases
+    .flatMap(phase => phase.steps)
+    .find(s => s.id === 'create_media_buy_with_direct_canonical_selector');
+  const declared = seed.sample_request.packages[0].params;
+  const products = [
+    {
+      product_id: step.sample_request.packages[0].product_id,
+      format_ids: step.sample_request.packages[0].format_ids,
+      format_options: [{ format_kind: 'image', format_option_id: 'mrec', params: { ...declared } }],
+    },
+  ];
+  const request = structuredClone(step.sample_request);
+  const expected = step.validations.find(v => v.check === 'canonical_format_satisfaction').value;
+  assert.equal(expected, true);
+  const result = grade(request, products, true, true);
+  assert.equal(result.passed, true, result.error ?? JSON.stringify(result.actual));
+});
