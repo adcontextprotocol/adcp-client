@@ -7386,8 +7386,12 @@ export class SingleAgentClient {
     options: O,
     negotiated: NegotiatedAdcpRelease | undefined
   ): O {
-    if (!negotiated?.downgraded) return options;
-    return { ...(options ?? {}), wireAdcpVersion: negotiated.version, negotiatedAdcpVersion: negotiated.version } as O;
+    if (!negotiated) return options;
+    return {
+      ...(options ?? {}),
+      wireAdcpVersion: negotiated.version,
+      ...(negotiated.downgraded && { negotiatedAdcpVersion: negotiated.version }),
+    } as O;
   }
 
   /**
