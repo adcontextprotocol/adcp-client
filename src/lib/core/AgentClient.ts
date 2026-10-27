@@ -1,3 +1,5 @@
+import type * as ToolTypes from '../types/tools.generated';
+import type * as CoreTypes from '../types/core.generated';
 // Per-agent client wrapper with conversation context preservation
 
 import type { Client as MCPClient } from '@modelcontextprotocol/sdk/client/index.js';
@@ -275,6 +277,40 @@ export type TaskResponseTypeMap = {
   sync_agent_notification_configs: SyncAgentNotificationConfigsResponse;
   get_principal: GetPrincipalResponse;
   sync_principal: SyncPrincipalResponse;
+  acquire_rights: CoreTypes.AcquireRightsResponse;
+  build_creative: ToolTypes.BuildCreativeResponse;
+  calibrate_content: ToolTypes.CalibrateContentResponse;
+  comply_test_controller: ToolTypes.ComplyTestControllerResponse;
+  create_collection_list: ToolTypes.CreateCollectionListResponse;
+  create_content_standards: ToolTypes.CreateContentStandardsResponse;
+  delete_collection_list: ToolTypes.DeleteCollectionListResponse;
+  get_account_financials: ToolTypes.GetAccountFinancialsResponse;
+  get_collection_list: ToolTypes.GetCollectionListResponse;
+  get_content_standards: ToolTypes.GetContentStandardsResponse;
+  get_creative_features: ToolTypes.GetCreativeFeaturesResponse;
+  get_media_buy_artifacts: ToolTypes.GetMediaBuyArtifactsResponse;
+  get_rights: CoreTypes.GetRightsResponse;
+  get_task_status: ToolTypes.GetTaskStatusResponse;
+  list_collection_lists: ToolTypes.ListCollectionListsResponse;
+  list_content_standards: ToolTypes.ListContentStandardsResponse;
+  list_creative_formats: ToolTypes.ListCreativeFormatsResponse;
+  list_tasks: ToolTypes.ListTasksResponse;
+  list_transformers: ToolTypes.ListTransformersResponse;
+  log_event: ToolTypes.LogEventResponse;
+  preview_creative: CanonicalPreviewCreativeResponse;
+  report_usage: ToolTypes.ReportUsageResponse;
+  search_brands: CoreTypes.SearchBrandsResponse;
+  sync_catalogs: ToolTypes.SyncCatalogsResponse;
+  sync_event_sources: ToolTypes.SyncEventSourcesResponse;
+  sync_governance: ToolTypes.SyncGovernanceResponse;
+  update_collection_list: ToolTypes.UpdateCollectionListResponse;
+  update_content_standards: ToolTypes.UpdateContentStandardsResponse;
+  update_rights: CoreTypes.UpdateRightsResponse;
+  validate_content_delivery: ToolTypes.ValidateContentDeliveryResponse;
+  validate_input: ToolTypes.ValidateInputResponse;
+  validate_property_delivery: CoreTypes.ValidatePropertyDeliveryResponse;
+  verify_brand_claim: CoreTypes.VerifyBrandClaimResponse;
+  verify_brand_claims: CoreTypes.VerifyBrandClaimsResponseBulk;
 };
 
 /**
@@ -332,6 +368,40 @@ export type TaskRequestTypeMap = {
   sync_agent_notification_configs: MutatingRequestInput<SyncAgentNotificationConfigsRequest>;
   get_principal: GetPrincipalRequest;
   sync_principal: MutatingRequestInput<SyncPrincipalRequest>;
+  acquire_rights: MutatingRequestInput<CoreTypes.AcquireRightsRequest>;
+  build_creative: MutatingRequestInput<ToolTypes.BuildCreativeRequest>;
+  calibrate_content: MutatingRequestInput<ToolTypes.CalibrateContentRequest>;
+  comply_test_controller: ToolTypes.ComplyTestControllerRequest;
+  create_collection_list: MutatingRequestInput<ToolTypes.CreateCollectionListRequest>;
+  create_content_standards: MutatingRequestInput<ToolTypes.CreateContentStandardsRequest>;
+  delete_collection_list: MutatingRequestInput<ToolTypes.DeleteCollectionListRequest>;
+  get_account_financials: ToolTypes.GetAccountFinancialsRequest;
+  get_collection_list: ToolTypes.GetCollectionListRequest;
+  get_content_standards: ToolTypes.GetContentStandardsRequest;
+  get_creative_features: ToolTypes.GetCreativeFeaturesRequest;
+  get_media_buy_artifacts: ToolTypes.GetMediaBuyArtifactsRequest;
+  get_rights: CoreTypes.GetRightsRequest;
+  get_task_status: ToolTypes.GetTaskStatusRequest;
+  list_collection_lists: ToolTypes.ListCollectionListsRequest;
+  list_content_standards: ToolTypes.ListContentStandardsRequest;
+  list_creative_formats: ToolTypes.ListCreativeFormatsRequest;
+  list_tasks: ToolTypes.ListTasksRequest;
+  list_transformers: ToolTypes.ListTransformersRequest;
+  log_event: MutatingRequestInput<ToolTypes.LogEventRequest>;
+  preview_creative: CanonicalPreviewCreativeRequest;
+  report_usage: MutatingRequestInput<ToolTypes.ReportUsageRequest>;
+  search_brands: CoreTypes.SearchBrandsRequest;
+  sync_catalogs: MutatingRequestInput<ToolTypes.SyncCatalogsRequest>;
+  sync_event_sources: MutatingRequestInput<ToolTypes.SyncEventSourcesRequest>;
+  sync_governance: MutatingRequestInput<ToolTypes.SyncGovernanceRequest>;
+  update_collection_list: MutatingRequestInput<ToolTypes.UpdateCollectionListRequest>;
+  update_content_standards: MutatingRequestInput<ToolTypes.UpdateContentStandardsRequest>;
+  update_rights: MutatingRequestInput<CoreTypes.UpdateRightsRequest>;
+  validate_content_delivery: ToolTypes.ValidateContentDeliveryRequest;
+  validate_input: ToolTypes.ValidateInputRequest;
+  validate_property_delivery: CoreTypes.ValidatePropertyDeliveryRequest;
+  verify_brand_claim: CoreTypes.VerifyBrandClaimRequest;
+  verify_brand_claims: CoreTypes.VerifyBrandClaimsRequestBulk;
 };
 
 export type TaskRequestFor<K extends AdcpTaskName> = TaskRequestTypeMap[K];
@@ -532,7 +602,13 @@ export class AgentClient {
     return (this.client as any).executor;
   }
 
-  /** Poll one authoritative server task status for compatibility coordinators. @internal */
+  /** Execute the typed AdCP get_task_status tool. */
+  getTaskStatus(
+    params: ToolTypes.GetTaskStatusRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetTaskStatusResponse>>;
+  /** Poll one task and map its status to TaskInfo. Preserved for existing callers. */
   getTaskStatus(
     taskId: string,
     transport?: import('../protocols').TransportOptions,
@@ -541,8 +617,30 @@ export class AgentClient {
       wireAdcpVersion?: string;
       versionEnvelope?: import('../protocols').VersionEnvelopeMode;
     }
-  ): Promise<TaskInfo> {
-    return this.client.getTaskStatus(taskId, transport, signal, wireOptions);
+  ): Promise<TaskInfo>;
+  getTaskStatus(
+    taskIdOrParams: string | ToolTypes.GetTaskStatusRequest,
+    transportOrHandler?: import('../protocols').TransportOptions | InputHandler,
+    signalOrOptions?: AbortSignal | TaskOptions,
+    wireOptions?: {
+      wireAdcpVersion?: string;
+      versionEnvelope?: import('../protocols').VersionEnvelopeMode;
+    }
+  ): Promise<TaskInfo | TaskResult<ToolTypes.GetTaskStatusResponse>> {
+    if (typeof taskIdOrParams !== 'string') {
+      return this.executeTask(
+        'get_task_status',
+        taskIdOrParams,
+        transportOrHandler as InputHandler | undefined,
+        signalOrOptions as TaskOptions | undefined
+      );
+    }
+    return this.client.getTaskStatus(
+      taskIdOrParams,
+      transportOrHandler as import('../protocols').TransportOptions | undefined,
+      signalOrOptions as AbortSignal | undefined,
+      wireOptions
+    );
   }
 
   /** Register restart/replica callback recovery for a compatibility coordinator. @internal */
@@ -1726,6 +1824,624 @@ export class AgentClient {
     return result;
   }
 
+  /** Execute the AdCP acquire_rights tool. */
+  async acquireRights(
+    params: MutatingRequestInput<CoreTypes.AcquireRightsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.AcquireRightsResponse>> {
+    const result = await this.client.executeTask(
+      'acquire_rights',
+      params,
+      inputHandler,
+      this.withSession('acquire_rights', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Generate, transform, refine, retrieve, or adapt creative manifests for advertised creative capabilities. */
+  async buildCreative(
+    params: MutatingRequestInput<ToolTypes.BuildCreativeRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.BuildCreativeResponse>> {
+    const result = await this.client.executeTask(
+      'build_creative',
+      params,
+      inputHandler,
+      this.withSession('build_creative', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP calibrate_content tool. */
+  async calibrateContent(
+    params: MutatingRequestInput<ToolTypes.CalibrateContentRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.CalibrateContentResponse>> {
+    const result = await this.client.executeTask(
+      'calibrate_content',
+      params,
+      inputHandler,
+      this.withSession('calibrate_content', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP check_governance tool. */
+  async checkGovernance(
+    params: ToolTypes.CheckGovernanceRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.CheckGovernanceResponse>> {
+    const result = await this.client.executeTask(
+      'check_governance',
+      params,
+      inputHandler,
+      this.withSession('check_governance', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Control a seller compliance scenario. Intended for conformance testing. */
+  async complyTestController(
+    params: ToolTypes.ComplyTestControllerRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ComplyTestControllerResponse>> {
+    const result = await this.client.executeTask(
+      'comply_test_controller',
+      params,
+      inputHandler,
+      this.withSession('comply_test_controller', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP create_collection_list tool. */
+  async createCollectionList(
+    params: MutatingRequestInput<ToolTypes.CreateCollectionListRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.CreateCollectionListResponse>> {
+    const result = await this.client.executeTask(
+      'create_collection_list',
+      params,
+      inputHandler,
+      this.withSession('create_collection_list', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP create_content_standards tool. */
+  async createContentStandards(
+    params: MutatingRequestInput<ToolTypes.CreateContentStandardsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.CreateContentStandardsResponse>> {
+    const result = await this.client.executeTask(
+      'create_content_standards',
+      params,
+      inputHandler,
+      this.withSession('create_content_standards', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP delete_collection_list tool. */
+  async deleteCollectionList(
+    params: MutatingRequestInput<ToolTypes.DeleteCollectionListRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.DeleteCollectionListResponse>> {
+    const result = await this.client.executeTask(
+      'delete_collection_list',
+      params,
+      inputHandler,
+      this.withSession('delete_collection_list', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Retrieve spend, credit or balance status, and invoice history for an operator-billed account. */
+  async getAccountFinancials(
+    params: ToolTypes.GetAccountFinancialsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetAccountFinancialsResponse>> {
+    const result = await this.client.executeTask(
+      'get_account_financials',
+      params,
+      inputHandler,
+      this.withSession('get_account_financials', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP get_brand_identity tool. */
+  async getBrandIdentity(
+    params: CoreTypes.GetBrandIdentityRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.GetBrandIdentityResponse>> {
+    const result = await this.client.executeTask(
+      'get_brand_identity',
+      params,
+      inputHandler,
+      this.withSession('get_brand_identity', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP get_collection_list tool. */
+  async getCollectionList(
+    params: ToolTypes.GetCollectionListRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetCollectionListResponse>> {
+    const result = await this.client.executeTask(
+      'get_collection_list',
+      params,
+      inputHandler,
+      this.withSession('get_collection_list', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP get_content_standards tool. */
+  async getContentStandards(
+    params: ToolTypes.GetContentStandardsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetContentStandardsResponse>> {
+    const result = await this.client.executeTask(
+      'get_content_standards',
+      params,
+      inputHandler,
+      this.withSession('get_content_standards', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Evaluate a creative manifest and return scored safety, content, quality, and governance features. */
+  async getCreativeFeatures(
+    params: ToolTypes.GetCreativeFeaturesRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetCreativeFeaturesResponse>> {
+    const result = await this.client.executeTask(
+      'get_creative_features',
+      params,
+      inputHandler,
+      this.withSession('get_creative_features', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP get_media_buy_artifacts tool. */
+  async getMediaBuyArtifacts(
+    params: ToolTypes.GetMediaBuyArtifactsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetMediaBuyArtifactsResponse>> {
+    const result = await this.client.executeTask(
+      'get_media_buy_artifacts',
+      params,
+      inputHandler,
+      this.withSession('get_media_buy_artifacts', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP get_plan_audit_logs tool. */
+  async getPlanAuditLogs(
+    params: ToolTypes.GetPlanAuditLogsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions & { agent?: AgentConfig }
+  ): Promise<TaskResult<ToolTypes.GetPlanAuditLogsResponse>> {
+    const result = await this.client.getPlanAuditLogs(
+      params,
+      inputHandler,
+      this.withSession('get_plan_audit_logs', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Check reporting health, enumerate expected periods and all retained revisions, or resolve one exact reporting revision. */
+  async getReportingStatus(
+    params: ToolTypes.GetReportingStatusRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetReportingStatusResponse>> {
+    const result = await this.client.executeTask(
+      'get_reporting_status',
+      params,
+      inputHandler,
+      this.withSession('get_reporting_status', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP get_rights tool. */
+  async getRights(
+    params: CoreTypes.GetRightsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.GetRightsResponse>> {
+    const result = await this.client.executeTask(
+      'get_rights',
+      params,
+      inputHandler,
+      this.withSession('get_rights', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP list_collection_lists tool. */
+  async listCollectionLists(
+    params: ToolTypes.ListCollectionListsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ListCollectionListsResponse>> {
+    const result = await this.client.executeTask(
+      'list_collection_lists',
+      params,
+      inputHandler,
+      this.withSession('list_collection_lists', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP list_content_standards tool. */
+  async listContentStandards(
+    params: ToolTypes.ListContentStandardsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ListContentStandardsResponse>> {
+    const result = await this.client.executeTask(
+      'list_content_standards',
+      params,
+      inputHandler,
+      this.withSession('list_content_standards', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP list_creative_formats tool. */
+  async listCreativeFormats(
+    params: ToolTypes.ListCreativeFormatsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ListCreativeFormatsResponse>> {
+    const result = await this.client.executeTask(
+      'list_creative_formats',
+      params,
+      inputHandler,
+      this.withSession('list_creative_formats', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Discover account-scoped creative transformers and their selectable configuration options. */
+  async listTransformers(
+    params: ToolTypes.ListTransformersRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ListTransformersResponse>> {
+    const result = await this.client.executeTask(
+      'list_transformers',
+      params,
+      inputHandler,
+      this.withSession('list_transformers', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Log batches of marketing events against a configured event source for measurement and attribution. */
+  async logEvent(
+    params: MutatingRequestInput<ToolTypes.LogEventRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.LogEventResponse>> {
+    const result = await this.client.executeTask(
+      'log_event',
+      params,
+      inputHandler,
+      this.withSession('log_event', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP report_plan_outcome tool. */
+  async reportPlanOutcome(
+    params: MutatingRequestInput<ToolTypes.ReportPlanOutcomeRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ReportPlanOutcomeResponse>> {
+    const result = await this.client.executeTask(
+      'report_plan_outcome',
+      params,
+      inputHandler,
+      this.withSession('report_plan_outcome', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Report vendor-service consumption and final measurements for revenue tracking and billing reconciliation. */
+  async reportUsage(
+    params: MutatingRequestInput<ToolTypes.ReportUsageRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ReportUsageResponse>> {
+    const result = await this.client.executeTask(
+      'report_usage',
+      params,
+      inputHandler,
+      this.withSession('report_usage', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP search_brands tool. */
+  async searchBrands(
+    params: CoreTypes.SearchBrandsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.SearchBrandsResponse>> {
+    const result = await this.client.executeTask(
+      'search_brands',
+      params,
+      inputHandler,
+      this.withSession('search_brands', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** List or synchronize buyer-managed account catalog feeds, suppress or restore specific items, and read current availability state. */
+  async syncCatalogs(
+    params: MutatingRequestInput<ToolTypes.SyncCatalogsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.SyncCatalogsResponse>> {
+    const result = await this.client.executeTask(
+      'sync_catalogs',
+      params,
+      inputHandler,
+      this.withSession('sync_catalogs', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** List or synchronize account event sources with upsert and optional replacement semantics. */
+  async syncEventSources(
+    params: MutatingRequestInput<ToolTypes.SyncEventSourcesRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.SyncEventSourcesResponse>> {
+    const result = await this.client.executeTask(
+      'sync_event_sources',
+      params,
+      inputHandler,
+      this.withSession('sync_event_sources', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Bind or replace the governance agent used for approval across specific advertiser accounts. */
+  async syncGovernance(
+    params: MutatingRequestInput<ToolTypes.SyncGovernanceRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.SyncGovernanceResponse>> {
+    const result = await this.client.executeTask(
+      'sync_governance',
+      params,
+      inputHandler,
+      this.withSession('sync_governance', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP sync_plans tool. */
+  async syncPlans(
+    params: MutatingRequestInput<ToolTypes.SyncPlansRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions & { agent?: AgentConfig }
+  ): Promise<TaskResult<ToolTypes.SyncPlansResponse>> {
+    const result = await this.client.syncPlans(params, inputHandler, this.withSession('sync_plans', options));
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Record a consumer's independently verified reporting totals and destination evidence in the seller ledger. */
+  async syncReportingReceipts(
+    params: MutatingRequestInput<ToolTypes.SyncReportingReceiptsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.SyncReportingReceiptsResponse>> {
+    const result = await this.client.executeTask(
+      'sync_reporting_receipts',
+      params,
+      inputHandler,
+      this.withSession('sync_reporting_receipts', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Tell a seller whether expected reporting was received, omitted, missing, unreadable, or contradictory. */
+  async syncReportingStatus(
+    params: MutatingRequestInput<ToolTypes.SyncReportingStatusRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.SyncReportingStatusResponse>> {
+    const result = await this.client.executeTask(
+      'sync_reporting_status',
+      params,
+      inputHandler,
+      this.withSession('sync_reporting_status', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP update_collection_list tool. */
+  async updateCollectionList(
+    params: MutatingRequestInput<ToolTypes.UpdateCollectionListRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.UpdateCollectionListResponse>> {
+    const result = await this.client.executeTask(
+      'update_collection_list',
+      params,
+      inputHandler,
+      this.withSession('update_collection_list', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP update_content_standards tool. */
+  async updateContentStandards(
+    params: MutatingRequestInput<ToolTypes.UpdateContentStandardsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.UpdateContentStandardsResponse>> {
+    const result = await this.client.executeTask(
+      'update_content_standards',
+      params,
+      inputHandler,
+      this.withSession('update_content_standards', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP update_rights tool. */
+  async updateRights(
+    params: MutatingRequestInput<CoreTypes.UpdateRightsRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.UpdateRightsResponse>> {
+    const result = await this.client.executeTask(
+      'update_rights',
+      params,
+      inputHandler,
+      this.withSession('update_rights', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP validate_content_delivery tool. */
+  async validateContentDelivery(
+    params: ToolTypes.ValidateContentDeliveryRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ValidateContentDeliveryResponse>> {
+    const result = await this.client.executeTask(
+      'validate_content_delivery',
+      params,
+      inputHandler,
+      this.withSession('validate_content_delivery', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Preflight a creative manifest against canonical formats, products, third-party formats, or agent capabilities. */
+  async validateInput(
+    params: ToolTypes.ValidateInputRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ValidateInputResponse>> {
+    const result = await this.client.executeTask(
+      'validate_input',
+      params,
+      inputHandler,
+      this.withSession('validate_input', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP validate_property_delivery tool. */
+  async validatePropertyDelivery(
+    params: CoreTypes.ValidatePropertyDeliveryRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.ValidatePropertyDeliveryResponse>> {
+    const result = await this.client.executeTask(
+      'validate_property_delivery',
+      params,
+      inputHandler,
+      this.withSession('validate_property_delivery', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP verify_brand_claim tool. */
+  async verifyBrandClaim(
+    params: CoreTypes.VerifyBrandClaimRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.VerifyBrandClaimResponse>> {
+    const result = await this.client.executeTask(
+      'verify_brand_claim',
+      params,
+      inputHandler,
+      this.withSession('verify_brand_claim', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Execute the AdCP verify_brand_claims tool. */
+  async verifyBrandClaims(
+    params: CoreTypes.VerifyBrandClaimsRequestBulk,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<CoreTypes.VerifyBrandClaimsResponseBulk>> {
+    const result = await this.client.executeTask(
+      'verify_brand_claims',
+      params,
+      inputHandler,
+      this.withSession('verify_brand_claims', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
   // ====== GOVERNANCE TASKS ======
 
   /**
@@ -2199,7 +2915,7 @@ export class AgentClient {
     taskName: K,
     params: TaskRequestFor<K>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: TaskOptions & { agent?: K extends 'sync_plans' | 'get_plan_audit_logs' ? AgentConfig : never }
   ): Promise<TaskResult<TaskResponseTypeMap[K]>>;
 
   async executeTask(
@@ -2249,6 +2965,12 @@ export class AgentClient {
         return this.getMediaBuyDelivery(params as GetMediaBuyDeliveryRequest, inputHandler, options);
       case 'get_creative_delivery':
         return this.getCreativeDelivery(params as GetCreativeDeliveryRequest, inputHandler, options);
+      case 'preview_creative':
+        return this.previewCreative(params as CanonicalPreviewCreativeRequest, inputHandler, options);
+      case 'sync_plans':
+        return this.syncPlans(params as MutatingRequestInput<SyncPlansRequest>, inputHandler, options);
+      case 'get_plan_audit_logs':
+        return this.getPlanAuditLogs(params as GetPlanAuditLogsRequest, inputHandler, options);
       case 'get_principal':
         return this.getPrincipal(params as GetPrincipalRequest, inputHandler, options);
       case 'sync_principal':
@@ -2300,7 +3022,20 @@ export class AgentClient {
   /**
    * List all tasks for this agent
    */
-  async listTasks(): Promise<TaskInfo[]> {
+  /** Query the seller's typed AdCP list_tasks tool. Pass {} for an unfiltered query. */
+  listTasks(
+    params: ToolTypes.ListTasksRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ListTasksResponse>>;
+  /** List local tasks only. Pass {} to query the seller's list_tasks tool. */
+  listTasks(): Promise<TaskInfo[]>;
+  async listTasks(
+    params?: ToolTypes.ListTasksRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskInfo[] | TaskResult<ToolTypes.ListTasksResponse>> {
+    if (params !== undefined) return this.executeTask('list_tasks', params, inputHandler, options);
     return (await this.client.listTasks()).map(assertNativeRequestProposalsTask);
   }
 

@@ -8053,7 +8053,12 @@ export class MediaBuyLifecycleCoordinator {
         void new Promise<void>(resolve => setTimeout(resolve, 0))
           .then(async () => {
             while (!watchSignal.aborted) {
-              const task = await this.agent.getTaskStatus(sellerTaskId, settlementTransport, watchSignal, wireOptions);
+              const task: TaskInfo = await this.agent.getTaskStatus(
+                sellerTaskId,
+                settlementTransport,
+                watchSignal,
+                wireOptions
+              );
               if (task.taskId !== sellerTaskId || task.taskType !== 'create_media_buy') {
                 throw this.legacyPurchaseAmbiguousError(
                   'The polled working seller task does not match the durably recorded create_media_buy task.'
