@@ -112,16 +112,15 @@ test('an operator outside the brand and its house still needs a grant', async ()
   assert.equal(result.source, 'trust');
 });
 
-test('the house agent under a self-operated child brand account is not implicit', async () => {
-  // account.operator is the brand, not the signer's operator: a grant is needed.
-  await assert.rejects(
-    identity.authorizeDemandGrant(claim(HOUSE_AGENT, 'novamotors.com', 'novamotors.com'), {
-      evaluator: evaluator(records()).trust,
-      now: () => now,
-      resolveBrandHouse: mutualAssertionHouse,
-    }),
-    isGrantAbsent
-  );
+test('the house agent under a self-operated child brand account is implicit', async () => {
+  // account.operator and the signer's operator are each the brand or its house
+  // (L2 Implicit authority; vector implicit-authority-brand-account-parent-signer).
+  const result = await identity.authorizeDemandGrant(claim(HOUSE_AGENT, 'novamotors.com', 'novamotors.com'), {
+    evaluator: evaluator(records()).trust,
+    now: () => now,
+    resolveBrandHouse: mutualAssertionHouse,
+  });
+  assert.equal(result.source, 'implicit');
 });
 
 test('a house resolution failure is an outage, never grant_absent', async () => {
