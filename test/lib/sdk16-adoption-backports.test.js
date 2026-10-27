@@ -129,3 +129,42 @@ for (const lifecycle of ['canceled', 'completed', 'rejected']) {
     assert.equal(response.structuredContent.media_buy_status, lifecycle);
   });
 }
+
+for (const evidence of ['wire', 'explicit']) {
+  test(`${evidence} feed version takes precedence over an unverified seller echo`, async () => {
+    const metadata = { adcpVersion: '3.1', ...(evidence === 'wire' && { wireAdcpVersion: sdk.ADCP_VERSION }) };
+    const stream = sdk.streamAccountChanges(
+      { listAccountChanges: async () => feedResult(metadata) },
+      { account, ...(evidence === 'explicit' && { adcpVersion: sdk.ADCP_VERSION }) }
+    );
+    const first = await stream.next();
+    assert.equal(first.done, false);
+    assert.equal(first.value.changes[0].change_id, 'change-1');
+    await stream.return();
+  });
+}
+
+test('executor retains trusted same-release negotiation independently of the seller echo', async t => {
+  const page = { ...feedResult().data, adcp_version: '3.1' };
+  t.mock.method(sdk.ProtocolClient, 'callTool', async () => ({
+    content: [{ type: 'text', text: JSON.stringify(page) }],
+    structuredContent: page,
+  }));
+  const executor = new sdk.TaskExecutor({
+    adcpVersion: sdk.ADCP_VERSION,
+    validation: { requests: 'off', responses: 'off' },
+  });
+  const result = await executor.executeTask(
+    { id: 'wire-metadata-seller', name: 'Seller', protocol: 'mcp', agent_uri: 'https://seller.example/mcp' },
+    'list_account_changes',
+    { account, starting_position: 'earliest' },
+    undefined,
+    { negotiatedAdcpVersion: sdk.ADCP_VERSION, wireAdcpVersion: sdk.ADCP_VERSION }
+  );
+  assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(result.metadata.wireAdcpVersion, sdk.ADCP_VERSION);
+  assert.equal(result.metadata.adcpVersion, '3.1');
+  const stream = sdk.streamAccountChanges({ listAccountChanges: async () => result }, { account });
+  assert.equal((await stream.next()).done, false);
+  await stream.return();
+});

@@ -1278,6 +1278,8 @@ export class TaskExecutor {
       status: args.status,
     };
     const taskState = this.activeTasks.get(args.taskId);
+    const wireAdcpVersion = taskState?.wireAdcpVersion ?? this.config.wireAdcpVersion;
+    if (wireAdcpVersion !== undefined) meta.wireAdcpVersion = wireAdcpVersion;
     if (taskState?.serverVersion !== undefined) meta.serverVersion = taskState.serverVersion;
     if (taskState?.serverVersionSynthetic !== undefined) {
       meta.serverVersionSynthetic = taskState.serverVersionSynthetic;
@@ -1428,6 +1430,7 @@ export class TaskExecutor {
     // Register task in active tasks
     const taskState: TaskState = {
       taskId,
+      wireAdcpVersion: options.negotiatedAdcpVersion ?? wireAdcpVersion,
       taskName,
       params,
       status: 'pending',

@@ -155,8 +155,9 @@ export async function* streamAccountChanges(
     try {
       const pageVersion = resolveAdcpVersion(
         result.metadata?.negotiatedAdcpVersion ??
-          result.metadata?.adcpVersion ??
+          result.metadata?.wireAdcpVersion ??
           options.adcpVersion ??
+          result.metadata?.adcpVersion ??
           configuredVersion
       );
       validator = getSchemaValidatorByRef('account/list-account-changes-response.json', pageVersion);

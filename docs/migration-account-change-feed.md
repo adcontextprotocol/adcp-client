@@ -274,3 +274,8 @@ send the same release in your reader's requests. AdCP 3.3 requires nonempty
 SDK 16.6 also provides the signature-agnostic delivery receiver parser described
 in [Parsing media-buy delivery webhooks](./guides/DELIVERY-WEBHOOK-PARSING.md).
 The stable parser accepts the bundled AdCP 3.0, 3.1, and 3.2 reporting contracts.
+
+When available, `metadata.wireAdcpVersion` records the trusted SDK-selected wire
+release, independently of the seller echo. Drains prefer negotiated/wire
+metadata, then a custom reader's explicit `adcpVersion`, then the echo and
+configured client pin. An older echo cannot weaken a known wire contract.
