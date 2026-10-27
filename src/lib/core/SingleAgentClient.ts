@@ -26,6 +26,26 @@ import {
 import { createHash, randomUUID, scryptSync } from 'node:crypto';
 const SKIP_PRODUCT_CACHE = Symbol('adcp.skipProductCache');
 const SKIP_ACCOUNT_REGISTRY_OBSERVATION = Symbol('adcp.skipAccountRegistryObservation');
+const NONTERMINAL_TASK_RESULT_STATUSES = new Set<string>([
+  'submitted',
+  'working',
+  'input-required',
+  'auth-required',
+  'deferred',
+] satisfies TaskResult<unknown>['status'][]);
+
+function isNonterminalTaskResult(result: unknown): boolean {
+  return (
+    result !== null &&
+    typeof result === 'object' &&
+    'success' in result &&
+    result.success === true &&
+    'status' in result &&
+    typeof result.status === 'string' &&
+    NONTERMINAL_TASK_RESULT_STATUSES.has(result.status)
+  );
+}
+
 import type { AccountReference, AgentConfig } from '../types';
 import { accountKeySites, naturalAccountKey, reducedFields, valueAt, withReducedKeyAt } from './account-reduction';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
@@ -5706,12 +5726,20 @@ export class SingleAgentClient {
   }
 
   /** One task owns discovery and dispatch sessions unless the caller already owns reuse. */
-  private withConnectionScope<T>(options: ReadRequestOptions | undefined, run: () => Promise<T>): Promise<T> {
+  private withConnectionScope<T>(
+    options: ReadRequestOptions | undefined,
+    run: () => Promise<T>,
+    preserveSessionOnResult?: (result: unknown) => boolean
+  ): Promise<T> {
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
     return withMCPConnectionPolicy(transport, () =>
       shouldReuseMCPConnection(transport?.trustedFetchFn !== undefined)
         ? run()
-        : withMCPConnectionScope(run, { signal: options?.signal, preserveOnInterruption: true })
+        : withMCPConnectionScope(run, {
+            signal: options?.signal,
+            preserveOnInterruption: true,
+            preserveSessionOnResult,
+          })
     );
   }
 
@@ -5719,7 +5747,9 @@ export class SingleAgentClient {
     options: O | undefined,
     run: Parameters<typeof withTaskDeadline<T, O>>[1]
   ): Promise<T> {
-    return withTaskDeadline(options, effective => this.withConnectionScope(effective, () => run(effective)));
+    return withTaskDeadline(options, effective =>
+      this.withConnectionScope(effective, () => run(effective), isNonterminalTaskResult)
+    );
   }
 
   /** Execute a task, adapt maintained AdCP 3 releases, and call the completion handler. */

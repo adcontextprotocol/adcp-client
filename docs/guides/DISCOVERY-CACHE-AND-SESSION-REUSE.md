@@ -173,6 +173,21 @@ Await every operation before the scope callback returns; the callback owns the s
 
 Inside a scope the endpoint probe, capability discovery, `tools/list` and tool calls share one negotiated session per identity. `closeScopedConnections()` closes the current MCP scope's sessions early and does nothing when no MCP scope is active (A2A connections are not scoped). Nested `withMCPConnectionScope` calls join the outer scope unless you pass `{ isolate: true }`.
 
+An implicit high-level task scope closes local transports without sending session
+`DELETE` when its final result is accepted `submitted`, `working`, `input-required`,
+`auth-required`, or `deferred` work. (`deferred` is a task/HITL result, not an MCP
+wire status.) The owning task's final result decides; an earlier nested result
+cannot change a completed owner's cleanup. Completed tasks keep normal session
+termination.
+
+An explicit `withMCPConnectionScope` workflow remains caller-owned: its final
+cleanup terminates its sessions even if a call inside returned `submitted` or
+`working`. End that callback only when you intend to relinquish those sessions.
+Implicit preservation means avoiding termination, not retaining a connection for
+resumption: local clients are closed and evicted, later calls open fresh sessions,
+and the seller owns expiration of its retained sessions. A preserved implicit
+scope can include discovery sessions as well as the dispatch session.
+
 ### One exception: the first legacy handoff
 
 For a seller on the pre-2026 MCP protocol era, the SDK negotiates with the v2 client first and then hands the call to the v1 client so 2025 Tasks keep working. That handoff is a cold cost the SDK cannot avoid: the first scope against such a seller opens one classification handshake plus one shared v1 session. Within the scope everything after that (probe aside) shares the v1 session, including `tools/list`, and the classification is remembered across scopes for five minutes, so a later scope opens only its own session. Modern-era sellers need a single negotiation per scope.
