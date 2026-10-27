@@ -1,7 +1,8 @@
 /**
  * Opinionated media-buy store that satisfies the seller's spec contract:
- * persist `packages[].targeting_overlay` from `create_media_buy`, echo it on
- * `get_media_buys`, and deep-merge updates without dropping prior
+ * persist creation context and `packages[].targeting_overlay` from
+ * `create_media_buy`, echo them on `get_media_buys`, and merge targeting
+ * updates without dropping creation context or prior
  * `property_list` / `collection_list` references.
  *
  * Per `schemas/cache/<v>/media-buy/get-media-buys-response.json` the seller
@@ -12,7 +13,7 @@
  * by hand.
  *
  * Adopters opt in by passing `mediaBuyStore` to
- * `createAdcpServerFromPlatform`. Backed by any `AdcpStateStore` —
+ * `createAdcpServerFromPlatform`. Backed by any `AdcpStateStore`:
  * `InMemoryStateStore` for development, `PostgresStateStore` for
  * production.
  *
@@ -42,11 +43,13 @@ export const DEFAULT_MEDIA_BUY_STORE_COLLECTION = 'media_buys_targeting';
 
 interface PersistedPackage {
   package_id: string;
-  targeting_overlay: TargetingOverlay;
+  targeting_overlay?: TargetingOverlay;
+  context?: Record<string, unknown>;
 }
 
 interface PersistedRecord extends Record<string, unknown> {
   media_buy_id: string;
+  context?: Record<string, unknown>;
   packages: PersistedPackage[];
 }
 
@@ -56,9 +59,13 @@ interface PersistedRecord extends Record<string, unknown> {
  * request to the full generated type just to thread it through.
  */
 export interface CreateMediaBuyInputForStore {
+  /** Opaque creation context, persisted verbatim for resource readback. */
+  context?: Record<string, unknown>;
   packages?: Array<{
     package_id?: string;
     buyer_ref?: string;
+    product_id?: string;
+    context?: Record<string, unknown>;
     /**
      * Request-shaped Targeting Input: individual dimensions may be `null` to
      * suppress a configured-product or product default (AdCP 3.2, DR-0020).
@@ -74,9 +81,12 @@ export interface CreateMediaBuyInputForStore {
  */
 export interface CreateMediaBuyResultForStore {
   media_buy_id: string;
+  context?: Record<string, unknown>;
   packages?: Array<{
     package_id?: string;
     buyer_ref?: string;
+    product_id?: string;
+    context?: Record<string, unknown>;
     targeting_overlay?: TargetingOverlay;
   }>;
 }
@@ -107,8 +117,10 @@ export interface UpdateMediaBuyInputForStore {
 export interface GetMediaBuysResultForStore {
   media_buys?: Array<{
     media_buy_id?: string;
+    context?: Record<string, unknown>;
     packages?: Array<{
       package_id?: string;
+      context?: Record<string, unknown>;
       targeting_overlay?: TargetingOverlay;
     }>;
   }>;
@@ -116,10 +128,13 @@ export interface GetMediaBuysResultForStore {
 
 export interface MediaBuyStore {
   /**
-   * Persist `packages[].targeting_overlay` from a successful
-   * `create_media_buy`. Joins the request's per-package targeting
+   * Persist buy/package creation context and `packages[].targeting_overlay`
+   * from a successful `create_media_buy`. Joins the request's per-package targeting
    * overlay with the response's seller-assigned `package_id` (or
-   * `buyer_ref` when the request used buyer-supplied refs).
+   * `buyer_ref` when the request used buyer-supplied refs). Context uses
+   * unambiguous package identities, then positional alignment only when
+   * package counts agree and echoed identities do not contradict it.
+   * Existing creation context is retained on repeated persistence calls.
    */
   persistFromCreate(
     accountId: string,
@@ -136,22 +151,23 @@ export interface MediaBuyStore {
    * - field present and `null` → clear (drop the field)
    *
    * A patch that clears the last surviving dimension drops the package's
-   * tracked overlay entirely, so `backfill` stops echoing one — a cleared
+   * tracked overlay entirely, so `backfill` stops echoing one. A cleared
    * dimension is absent from effective readback rather than present as `null`.
    *
    * `new_packages` from the patch are persisted as fresh entries when
    * they declare `targeting_overlay`. Entries that omit it are
-   * intentionally NOT tracked — this store is overlay-only, and a
-   * later patch can still seed an overlay onto the package_id when
-   * one becomes relevant.
+   * not tracked. Updates preserve creation context and do not capture
+   * context for packages added after creation.
    */
   mergeFromUpdate(accountId: string, mediaBuyId: string, patch: UpdateMediaBuyInputForStore): Promise<void>;
 
   /**
-   * Fill in missing `packages[].targeting_overlay` on the seller's
+   * Fill in missing buy/package creation context and
+   * `packages[].targeting_overlay` on the seller's
    * `get_media_buys` response from the persisted store. **Mutates the
    * response in place** (and returns it for fluent chaining). Packages
-   * the seller already echoed are left untouched.
+   * the seller already echoed are left untouched. The top-level response
+   * context belongs to the read request and is never changed.
    */
   backfill<T extends GetMediaBuysResultForStore>(accountId: string, result: T): Promise<T>;
 }
@@ -161,6 +177,38 @@ export interface CreateMediaBuyStoreOptions {
   store: AdcpStateStore;
   /** Override the logical collection name. Defaults to {@link DEFAULT_MEDIA_BUY_STORE_COLLECTION}. */
   collection?: string;
+}
+
+type PackageIdentity = { package_id?: string; product_id?: string; buyer_ref?: string };
+const PACKAGE_IDENTITY_FIELDS = ['package_id', 'product_id', 'buyer_ref'] as const;
+
+function compatibleIdentity(left: PackageIdentity | undefined, right: PackageIdentity | undefined): boolean {
+  if (!left || !right) return false;
+  return PACKAGE_IDENTITY_FIELDS.every(key => !left[key] || !right[key] || left[key] === right[key]);
+}
+
+function sharesIdentity(left: PackageIdentity | undefined, right: PackageIdentity | undefined): boolean {
+  if (!left || !right) return false;
+  return compatibleIdentity(left, right) && PACKAGE_IDENTITY_FIELDS.some(key => left[key] && left[key] === right[key]);
+}
+
+function matchContextPackage(
+  requests: NonNullable<CreateMediaBuyInputForStore['packages']>,
+  responses: NonNullable<CreateMediaBuyResultForStore['packages']>,
+  index: number
+): NonNullable<CreateMediaBuyInputForStore['packages']>[number] | undefined {
+  const matches = requests.filter(request => sharesIdentity(request, responses[index]));
+  if (matches.length === 1 && responses.filter(response => sharesIdentity(matches[0], response)).length === 1) {
+    return matches[0];
+  }
+  // A partial or contradictory result cannot safely inherit context by index.
+  if (
+    requests.length === responses.length &&
+    requests.every((request, i) => compatibleIdentity(request, responses[i]))
+  ) {
+    return requests[index];
+  }
+  return undefined;
 }
 
 export function createMediaBuyStore(options: CreateMediaBuyStoreOptions): MediaBuyStore {
@@ -184,9 +232,10 @@ export function createMediaBuyStore(options: CreateMediaBuyStoreOptions): MediaB
     async persistFromCreate(accountId, request, result) {
       const requestPackages = request.packages ?? [];
       const responsePackages = result.packages ?? [];
-      if (requestPackages.length === 0 || !result.media_buy_id) return;
+      if (!result.media_buy_id) return;
 
-      const persistedPackages: PersistedPackage[] = [];
+      const prior = await loadRecord(accountId, result.media_buy_id);
+      const byId = new Map((prior?.packages ?? []).map(pkg => [pkg.package_id, { ...pkg }]));
       for (let i = 0; i < requestPackages.length; i++) {
         const reqPkg = requestPackages[i];
         if (!reqPkg?.targeting_overlay) continue;
@@ -209,13 +258,27 @@ export function createMediaBuyStore(options: CreateMediaBuyStoreOptions): MediaB
         // get_media_buys response whose schema forbids null.
         const persistedOverlay = respPkg?.targeting_overlay ?? resolveTargetingInput(reqPkg.targeting_overlay);
         if (!persistedOverlay) continue;
-        persistedPackages.push({ package_id: packageId, targeting_overlay: persistedOverlay });
+        byId.set(packageId, { ...byId.get(packageId), package_id: packageId, targeting_overlay: persistedOverlay });
       }
 
-      if (persistedPackages.length === 0) return;
+      for (const [index, response] of responsePackages.entries()) {
+        if (!response.package_id) continue;
+        const context = matchContextPackage(requestPackages, responsePackages, index)?.context ?? response.context;
+        const stored = byId.get(response.package_id);
+        if (context !== undefined && stored?.context === undefined) {
+          byId.set(response.package_id, {
+            ...stored,
+            package_id: response.package_id,
+            context: structuredClone(context),
+          });
+        }
+      }
+      const context = prior?.context ?? request.context ?? result.context;
+      if (byId.size === 0 && context === undefined) return;
       await writeRecord(accountId, {
         media_buy_id: result.media_buy_id,
-        packages: persistedPackages,
+        ...(context !== undefined ? { context: structuredClone(context) } : {}),
+        packages: Array.from(byId.values()),
       });
     },
 
@@ -225,7 +288,7 @@ export function createMediaBuyStore(options: CreateMediaBuyStoreOptions): MediaB
         packages: [],
       };
 
-      const byId = new Map(prior.packages.map(p => [p.package_id, p.targeting_overlay]));
+      const byId = new Map(prior.packages.map(p => [p.package_id, { ...p }]));
 
       for (const pkg of patch.packages ?? []) {
         const packageId = pkg?.package_id;
@@ -237,9 +300,12 @@ export function createMediaBuyStore(options: CreateMediaBuyStoreOptions): MediaB
         if (!('targeting_overlay' in pkg)) continue;
         const incoming = pkg.targeting_overlay;
         if (incoming === undefined) continue;
-        const merged = applyTargetingInput(byId.get(packageId), incoming);
-        if (merged) byId.set(packageId, merged);
-        else byId.delete(packageId);
+        const stored = byId.get(packageId);
+        const merged = applyTargetingInput(stored?.targeting_overlay, incoming);
+        if (merged) byId.set(packageId, { ...stored, package_id: packageId, targeting_overlay: merged });
+        else if (stored?.context !== undefined) {
+          byId.set(packageId, { package_id: packageId, context: stored.context });
+        } else byId.delete(packageId);
       }
 
       for (const pkg of patch.new_packages ?? []) {
@@ -248,15 +314,17 @@ export function createMediaBuyStore(options: CreateMediaBuyStoreOptions): MediaB
         // dimension suppresses a product default rather than clearing stored
         // targeting. Either way it must not reach durable state.
         const resolved = resolveTargetingInput(pkg.targeting_overlay);
-        if (resolved) byId.set(pkg.package_id, resolved);
+        if (resolved)
+          byId.set(pkg.package_id, {
+            ...byId.get(pkg.package_id),
+            package_id: pkg.package_id,
+            targeting_overlay: resolved,
+          });
       }
 
       await writeRecord(accountId, {
-        media_buy_id: mediaBuyId,
-        packages: Array.from(byId.entries()).map(([package_id, targeting_overlay]) => ({
-          package_id,
-          targeting_overlay,
-        })),
+        ...prior,
+        packages: Array.from(byId.values()),
       });
     },
 
@@ -264,14 +332,23 @@ export function createMediaBuyStore(options: CreateMediaBuyStoreOptions): MediaB
       const buys = result.media_buys;
       if (!buys || buys.length === 0) return result;
       for (const buy of buys) {
-        if (!buy?.media_buy_id || !buy.packages) continue;
+        if (!buy?.media_buy_id) continue;
         const record = await loadRecord(accountId, buy.media_buy_id);
         if (!record) continue;
-        const overlayById = new Map(record.packages.map(p => [p.package_id, p.targeting_overlay]));
-        for (const pkg of buy.packages) {
-          if (!pkg?.package_id || pkg.targeting_overlay !== undefined) continue;
-          const persisted = overlayById.get(pkg.package_id);
-          if (persisted) pkg.targeting_overlay = persisted;
+        if (buy.context === undefined && record.context !== undefined) {
+          buy.context = structuredClone(record.context);
+        }
+        const byId = new Map(record.packages.map(p => [p.package_id, p]));
+        for (const pkg of buy.packages ?? []) {
+          if (!pkg?.package_id) continue;
+          const persisted = byId.get(pkg.package_id);
+          if (!persisted) continue;
+          if (pkg.targeting_overlay === undefined && persisted.targeting_overlay !== undefined) {
+            pkg.targeting_overlay = persisted.targeting_overlay;
+          }
+          if (pkg.context === undefined && persisted.context !== undefined) {
+            pkg.context = structuredClone(persisted.context);
+          }
         }
       }
       return result;
