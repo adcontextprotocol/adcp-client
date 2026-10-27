@@ -32,6 +32,19 @@ Capability discovery can validate against the seller-served release echoed in `a
 
 Established media-buy tools remain available for AdCP 3.0/3.1 sellers. Their compact-lifecycle projections and durable purchase continuations remain scoped to the negotiated AdCP 3 release. Creative-model v1/v2 projections under `src/lib/v2/projection/` are independent of AdCP protocol majors.
 
+### Primary media facts narrow legacy format choices
+
+When a seller offers several legacy references for an image, hosted video or hosted
+audio creative, projection can use the one primary asset's positive, finite width,
+height or duration to select a reference. Explicit creative `format_parameters`
+remain authoritative; media facts do not fill partially specified parameters.
+Multiple assets of the same media type remain ambiguous. A single legacy reference
+keeps its existing seller-scaling behavior.
+
+Reference and catalog constraints take precedence. Seller option `params` fill
+missing reference facts, including one fixed size in `sizes` or an exact duration.
+The selected wire reference is unchanged. Duration comparison remains exact.
+
 ## Bundled artifacts
 
 ```text
