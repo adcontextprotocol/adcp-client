@@ -5,10 +5,10 @@
  * middleware uses the same core to reject drift at the dispatcher.
  */
 
-import type { ErrorObject } from 'ajv';
+import type { ErrorObject, ValidateFunction } from 'ajv';
 import {
   getValidator,
-  getToolSchemaDocument,
+  getValidatorDiagnosticOrigin,
   getRegisteredSchemaIds,
   type Direction,
   type ResponseVariant,
@@ -16,6 +16,7 @@ import {
 import { findHint } from './hints';
 import { injectLegacyEnvelopeStatus } from '../utils/envelope-status-compat';
 import { boundValidationIssues } from './diagnostic-limits';
+import type { SchemaDiagnosticOrigin } from './schema-diagnostic-origins';
 
 /**
  * One variant of a `oneOf` / `anyOf` that the caller's payload could have
@@ -49,27 +50,18 @@ export interface ValidationIssue {
   message: string;
   /** AJV keyword that rejected the payload (e.g., `required`, `type`). */
   keyword: string;
-  /** Path inside the schema that rejected the payload. */
+  /**
+   * AJV's original function-relative path in the compiled runtime schema.
+   * Factoring can change paths; they are diagnostic details rather than stable
+   * selectors into the public bundled document. Synthetic origin IDs stay internal.
+   */
   schemaPath: string;
   /**
-   * `$id` of the rejecting schema. Resolved by finding the longest
-   * registered AJV `$id` that prefixes {@link schemaPath}.
-   *
-   * Bundling caveat: AdCP ships most tools through `schemas/cache/<v>/bundled/`
-   * with `$ref`s pre-resolved and inner `$id`s stripped at bundle time. For
-   * those tools, `schemaId` resolves to the response root (e.g.
-   * `/schemas/3.0.4/bundled/signals/activate-signal-response.json`), not
-   * the deeper sub-schema. Tools served from the flat tree (`governance/`,
-   * `brand/`, etc.) preserve sub-schema `$id`s, so `schemaId` can land on
-   * something deeper like `/schemas/3.0.4/core/activation-key.json`. Either
-   * way, the field names exactly the schema the validator looked at.
-   *
-   * Always projected — the `$id` is the published spec URI, not internal
-   * handler shape. (Same precedent as {@link ValidationIssue.variants} and
-   * {@link ValidationIssue.allowedValues}, both of which already ship
-   * always-on with the same rationale.)
-   *
-   * Absent only when the rejecting schema didn't declare an `$id`.
+   * Effective `$id` of the rejecting resource, including embedded resources.
+   * Bundled documents may strip nested IDs, in which case the tool root is
+   * the available identity. Unsupported origin metadata conservatively falls
+   * back to the compiled root ID; anonymous resources can omit this field.
+   * Always projected because published schema IDs are protocol metadata.
    */
   schemaId?: string;
   /**
@@ -175,6 +167,7 @@ const OK: ValidationOutcome = Object.freeze({ valid: true, issues: [], variant: 
  */
 type AdcpDiscriminatedError = ErrorObject & {
   __adcp_discriminator?: ReadonlyArray<{ field: string; value: unknown }>;
+  __adcp_originSchemaPath?: string;
 };
 
 /**
@@ -216,6 +209,8 @@ function extractSchemaId(
 
 interface FormatContext {
   rootSchema: unknown;
+  rootSchemaId?: string;
+  diagnosticOrigin?: (schemaPath: string) => SchemaDiagnosticOrigin | undefined;
   registeredIds: readonly string[];
   /**
    * Tool name being validated. Threaded into {@link findHint} so curated
@@ -232,7 +227,7 @@ function formatIssue(err: ErrorObject, ctx: FormatContext): ValidationIssue {
     err.keyword === 'required' &&
     err.params &&
     typeof (err.params as { missingProperty?: string }).missingProperty === 'string'
-      ? `/${(err.params as { missingProperty: string }).missingProperty}`
+      ? `/${(err.params as { missingProperty: string }).missingProperty.replace(/~/g, '~0').replace(/\//g, '~1')}`
       : '';
 
   // Enrich enum errors with the allowed values from AJV's params + replace
@@ -250,13 +245,16 @@ function formatIssue(err: ErrorObject, ctx: FormatContext): ValidationIssue {
     ? `must be one of: ${allowedValues!.map(v => JSON.stringify(v)).join(', ')}`
     : (err.message ?? 'validation failed');
 
-  const schemaId = extractSchemaId(err.schemaPath, ctx.rootSchema, ctx.registeredIds);
+  const origin = ctx.diagnosticOrigin?.((err as AdcpDiscriminatedError).__adcp_originSchemaPath ?? err.schemaPath);
+  const schemaId = origin
+    ? origin.schemaId
+    : (extractSchemaId(err.schemaPath, ctx.rootSchema, ctx.registeredIds) ?? ctx.rootSchemaId);
   const discriminator = (err as AdcpDiscriminatedError).__adcp_discriminator;
   const issue: ValidationIssue = {
     pointer: `${instancePath}${missingProperty}` || '/',
     message,
     keyword: err.keyword,
-    schemaPath: err.schemaPath,
+    schemaPath: err.schemaPath === '' ? '' : (origin?.schemaPath ?? err.schemaPath),
     ...(schemaId !== undefined && { schemaId }),
     ...(discriminator !== undefined && discriminator.length > 0 && { discriminator }),
     ...(allowedValues !== undefined && { allowedValues }),
@@ -270,101 +268,30 @@ function formatIssue(err: ErrorObject, ctx: FormatContext): ValidationIssue {
   return issue;
 }
 
-// Path segments we refuse to walk into during schema-path resolution. AJV
-// emits trusted `schemaPath` strings today, but the function is exported in
-// shape (anything in this file is reachable via the compiled JS), so any
-// future caller passing user-influenced paths can't traverse into prototype
-// chains. Bundled schemas have no use for these names either.
-const FORBIDDEN_SCHEMA_PATH_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
+type DiagnosticPathResolver = (instancePath: string, schemaPath: string) => unknown;
 
-/**
- * Resolve an AJV `schemaPath` like `"#/properties/account/oneOf"` against
- * the compiled validator's root schema. Returns `undefined` if the path
- * doesn't land on an object. Handles URI-encoded path segments (AJV
- * escapes `~` as `~0` and `/` as `~1` per RFC 6901).
- *
- * Refuses prototype-chain segments and uses own-property indexing so a
- * future caller (or a pathological future schema) can't induce a walk
- * into `Object.prototype`.
- */
-function resolveSchemaPath(rootSchema: unknown, schemaPath: string): unknown {
-  if (rootSchema == null) return undefined;
-  const clean = schemaPath.replace(/^#\/?/, '');
-  if (clean.length === 0) return rootSchema;
-  let cursor: unknown = rootSchema;
-  for (const raw of clean.split('/')) {
-    if (cursor == null || (typeof cursor !== 'object' && !Array.isArray(cursor))) return undefined;
-    const decoded = raw.replace(/~1/g, '/').replace(/~0/g, '~');
-    if (FORBIDDEN_SCHEMA_PATH_SEGMENTS.has(decoded)) return undefined;
-    if (!Object.prototype.hasOwnProperty.call(cursor, decoded)) return undefined;
-    cursor = (cursor as Record<string, unknown>)[decoded];
-  }
-  return cursor;
-}
-
-/**
- * A referenced AJV function reports schema paths relative to its own root.
- * Locate that root in the public document using the failing data location;
- * this keeps diagnostics independent of private validation factoring.
- */
-function resolveInstanceSchemaPath(rootSchema: unknown, instancePath: string, schemaPath: string): unknown {
-  const segments = instancePath
-    ? instancePath
-        .slice(1)
-        .split('/')
-        .map(s => s.replace(/~1/g, '/').replace(/~0/g, '~'))
-    : [];
-  const visited = new Map<object, Set<number>>();
-  const visit = (schema: unknown, offset: number): unknown => {
-    if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return undefined;
-    const seen = visited.get(schema) ?? new Set<number>();
-    if (seen.has(offset)) return undefined;
-    seen.add(offset);
-    visited.set(schema, seen);
-    const node = schema as Record<string, unknown>;
-    if (typeof node.$ref === 'string' && node.$ref.startsWith('#/')) {
-      const resolved = visit(resolveSchemaPath(rootSchema, node.$ref), offset);
-      if (resolved !== undefined) return resolved;
-    }
-    if (offset === segments.length) {
-      const resolved = resolveSchemaPath(schema, schemaPath);
-      if (resolved !== undefined) return resolved;
-    } else {
-      const key = segments[offset]!;
-      if (FORBIDDEN_SCHEMA_PATH_SEGMENTS.has(key)) return undefined;
-      const properties = node.properties;
-      if (properties && typeof properties === 'object' && Object.hasOwn(properties, key)) {
-        const resolved = visit((properties as Record<string, unknown>)[key], offset + 1);
-        if (resolved !== undefined) return resolved;
-      }
-      if (/^(0|[1-9]\d*)$/.test(key) && node.items !== undefined) {
-        const item = Array.isArray(node.items) ? node.items[Number(key)] : node.items;
-        const resolved = visit(item, offset + 1);
-        if (resolved !== undefined) return resolved;
-      }
-    }
-    for (const keyword of ['allOf', 'oneOf', 'anyOf']) {
-      const branches = node[keyword];
-      if (!Array.isArray(branches)) continue;
-      for (const branch of branches) {
-        const resolved = visit(branch, offset);
-        if (resolved !== undefined) return resolved;
-      }
-    }
-    return undefined;
+/** Cache exact pointer lookups once per call, with a fixed memory/work bound. */
+function createDiagnosticOriginResolver(
+  validator: ValidateFunction
+): (schemaPath: string) => SchemaDiagnosticOrigin | undefined {
+  const memo = new Map<string, SchemaDiagnosticOrigin | undefined>();
+  return schemaPath => {
+    if (memo.has(schemaPath)) return memo.get(schemaPath);
+    if (memo.size >= 1024) return undefined;
+    const resolved = getValidatorDiagnosticOrigin(validator, schemaPath);
+    memo.set(schemaPath, resolved);
+    return resolved;
   };
-  return visit(rootSchema, 0) ?? resolveSchemaPath(rootSchema, schemaPath);
 }
 
 /** Expand only unconditional single-property presence guards; keep other not rules intact. */
 function* expandNotErrors(
   errors: readonly ErrorObject[],
-  rootSchema: unknown,
+  resolveDiagnosticPath: DiagnosticPathResolver,
   payload: unknown
 ): Generator<ErrorObject> {
   for (const error of errors) {
-    const rule =
-      error.keyword === 'not' ? resolveInstanceSchemaPath(rootSchema, error.instancePath, error.schemaPath) : undefined;
+    const rule = error.keyword === 'not' ? resolveDiagnosticPath(error.instancePath, error.schemaPath) : undefined;
     const branches = rule && typeof rule === 'object' ? (rule as { anyOf?: unknown }).anyOf : undefined;
     if (!Array.isArray(branches) || branches.length === 0 || Object.keys(rule as object).length !== 1) {
       yield error;
@@ -422,9 +349,16 @@ function formatValidationIssues(
   ctx: FormatContext,
   payload: unknown
 ): ValidationIssue[] {
+  const resolveDiagnosticPath: DiagnosticPathResolver = (_instancePath, path) => ctx.diagnosticOrigin?.(path)?.schema;
   function* formatted(): Generator<ValidationIssue> {
-    for (const error of expandNotErrors(compactUnionErrors(errors, ctx.rootSchema), ctx.rootSchema, payload)) {
-      yield enrichWithVariants(formatIssue(error, ctx), ctx.rootSchema);
+    for (const error of expandNotErrors(
+      compactUnionErrors(errors, resolveDiagnosticPath),
+      resolveDiagnosticPath,
+      payload
+    )) {
+      yield enrichWithVariants(formatIssue(error, ctx), (_instance, _publicPath) =>
+        resolveDiagnosticPath(error.instancePath, error.schemaPath)
+      );
     }
   }
   // sync_accounts uses the complete issue set to isolate failed entries before
@@ -464,24 +398,64 @@ function formatValidationIssues(
  *     user's discriminator value satisfied wins over a sibling whose
  *     discriminator they violated. Drop the rest.
  */
-function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown): ErrorObject[] {
-  if (errors.length === 0) return [...errors];
-
-  // Pre-bucket once so each error is scanned a constant number of times even
-  // when a malicious or pathological payload pushes Ajv to emit thousands of
-  // errors across many union failures. The naive `for root in unionRoots: for
-  // e in errors` form is O(U·N) — at K=100 product items each producing a
-  // 14-error pricing-options cascade that's ~140k iterations on the
-  // request-validation hot path.
-  const errorsByOneOfPath = new Map<string, ErrorObject[]>();
-  for (const e of errors) {
-    const m = e.schemaPath.match(/^(.*\/(?:oneOf|anyOf))\/\d+(?:\/|$)/);
-    if (!m) continue;
-    const root = m[1]!;
-    const bucket = errorsByOneOfPath.get(root);
-    if (bucket) bucket.push(e);
-    else errorsByOneOfPath.set(root, [e]);
+/** Derive the call's data location from inline data-bearing schema keywords. */
+function inlineUnionOwner(error: ErrorObject, unionPath: string, variants: unknown): string | undefined {
+  const instance = error.instancePath ? error.instancePath.slice(1).split('/') : [];
+  let pointer: string[];
+  try {
+    pointer = error.schemaPath
+      .slice(unionPath.length + 1)
+      .split('/')
+      .map(segment => decodeURIComponent(segment).replace(/~1/g, '/').replace(/~0/g, '~'));
+  } catch {
+    return undefined;
   }
+  let cursor = variants;
+  const consumed: Array<string | undefined> = [];
+  for (let index = 0; index < pointer.length - 1; index++) {
+    if (!cursor || typeof cursor !== 'object') return undefined;
+    const keyword = pointer[index]!;
+    if (!Array.isArray(cursor) && ['properties', 'patternProperties'].includes(keyword)) {
+      const property = pointer[++index];
+      if (property === undefined) return undefined;
+      consumed.push(keyword === 'properties' ? property : undefined);
+      cursor = (cursor as Record<string, Record<string, unknown>>)[keyword]?.[property];
+    } else if (
+      !Array.isArray(cursor) &&
+      [
+        'items',
+        'prefixItems',
+        'additionalItems',
+        'contains',
+        'additionalProperties',
+        'unevaluatedProperties',
+        'unevaluatedItems',
+      ].includes(keyword)
+    ) {
+      consumed.push(undefined);
+      cursor = (cursor as Record<string, unknown>)[keyword];
+      if (Array.isArray(cursor)) cursor = cursor[Number(pointer[++index])];
+    } else cursor = (cursor as Record<string, unknown>)[keyword];
+  }
+  if (consumed.length > instance.length) return undefined;
+  for (let index = 0; index < consumed.length; index++) {
+    const expected = consumed[index];
+    const actual = instance[instance.length - consumed.length + index]!.replace(/~1/g, '/').replace(/~0/g, '~');
+    if (expected !== undefined && actual !== expected) return undefined;
+  }
+  return consumed.length
+    ? instance.length === consumed.length
+      ? ''
+      : '/' + instance.slice(0, -consumed.length).join('/')
+    : error.instancePath;
+}
+
+/** @internal Exported only from this module for diagnostic work-budget regressions. */
+export function compactUnionErrors(
+  errors: readonly ErrorObject[],
+  resolveDiagnosticPath: DiagnosticPathResolver
+): ErrorObject[] {
+  if (errors.length === 0) return [...errors];
 
   const dropped = new Set<ErrorObject>();
   const added: ErrorObject[] = [];
@@ -495,24 +469,58 @@ function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown)
     .slice()
     .sort((a, b) => b.instancePath.length - a.instancePath.length || b.schemaPath.length - a.schemaPath.length);
 
+  const unionOwners = new Map<string, Set<string>>();
+  for (const root of unionRoots) {
+    const owners = unionOwners.get(root.schemaPath) ?? new Set<string>();
+    owners.add(root.instancePath);
+    unionOwners.set(root.schemaPath, owners);
+  }
+  // Attribute every error to its nearest owning union once. Indexing both
+  // origin and data location avoids rescanning every array instance for each
+  // root, and keeps recursive uses of one referenced union independent.
+  const errorsByOwner = new Map<string, Map<string, ErrorObject[]>>();
+  for (const error of errors) {
+    const match = error.schemaPath.match(/^(.*\/(?:oneOf|anyOf))\/\d+(?:\/|$)/);
+    if (!match) continue;
+    const schemaPath = match[1]!;
+    const owners = unionOwners.get(schemaPath);
+    if (!owners) continue;
+    const variants = resolveDiagnosticPath(error.instancePath, schemaPath);
+    const nearest = inlineUnionOwner(error, schemaPath, variants);
+    if (nearest === undefined || !owners.has(nearest)) continue;
+    const locations = errorsByOwner.get(schemaPath) ?? new Map<string, ErrorObject[]>();
+    const bucket = locations.get(nearest) ?? [];
+    bucket.push(error);
+    locations.set(nearest, bucket);
+    errorsByOwner.set(schemaPath, locations);
+  }
+  const processedRoots = new Map<string, Set<string>>();
   for (const root of unionRoots) {
     if (dropped.has(root)) continue;
     const oneOfPath = root.schemaPath;
     const rootInstance = root.instancePath;
-
-    // Variant errors: pulled from the prebuilt index (constant per-error work
-    // above), then grouped by variant index. instancePath scoping keeps two
-    // separate union failures sharing the same `schemaPath` but different
-    // instancePaths — e.g., `products[0].pricing_options[0]` and
-    // `products[1]...` — independent.
-    const candidateErrors = errorsByOneOfPath.get(oneOfPath) ?? [];
+    if (root.keyword === 'oneOf' && Array.isArray(root.params.passingSchemas) && root.params.passingSchemas.length > 1)
+      continue;
+    const variantSchemas = resolveDiagnosticPath(rootInstance, oneOfPath);
+    // Unknown code generation/origins retain every raw diagnostic, including
+    // distinct unions whose unsupported functions share relative paths.
+    if (!Array.isArray(variantSchemas)) continue;
+    const processed = processedRoots.get(oneOfPath) ?? new Set<string>();
+    if (processed.has(rootInstance)) {
+      dropped.add(root);
+      continue;
+    }
+    processed.add(rootInstance);
+    processedRoots.set(oneOfPath, processed);
+    const candidateErrors = errorsByOwner.get(oneOfPath)?.get(rootInstance) ?? [];
+    // A branch may fail only through another referenced function; those
+    // errors retain their own exact origin and remain independently visible.
     const byVariant = new Map<number, ErrorObject[]>();
     for (const e of candidateErrors) {
       if (e === root || dropped.has(e)) continue;
       const tail = e.schemaPath.slice(oneOfPath.length + 1);
       const m = tail.match(/^(\d+)(?:\/|$)/);
       if (!m) continue;
-      if (e.instancePath !== rootInstance && !e.instancePath.startsWith(rootInstance + '/')) continue;
       const idx = parseInt(m[1]!, 10);
       const bucket = byVariant.get(idx);
       if (bucket) bucket.push(e);
@@ -520,11 +528,8 @@ function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown)
     }
     if (byVariant.size === 0) continue;
 
-    // Resolve the variant schema array. Without it we fall back to a pure
-    // error-shape collapse (still correct, just less precise on which
-    // variants asserted const where the user happened to match).
-    const variantSchemas = resolveInstanceSchemaPath(rootSchema, rootInstance, oneOfPath);
-    const variantArr: readonly unknown[] = Array.isArray(variantSchemas) ? variantSchemas : [];
+    // The exact compiled origin identifies the variant schema array.
+    const variantArr: readonly unknown[] = variantSchemas;
 
     // For each top-level property in each variant, record which variants
     // declare a `const` value there. Top-level only — composite
@@ -587,6 +592,7 @@ function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown)
         ...sample,
         keyword: 'enum',
         schemaPath: '',
+        __adcp_originSchemaPath: sample.schemaPath,
         message: `must be one of: ${allowedValues.map(v => JSON.stringify(v)).join(', ')}`,
         params: { allowedValues },
       } as ErrorObject);
@@ -642,7 +648,22 @@ function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown)
         }
       }
     }
-    const allVariantsHaveNot = variantsWithNotFailure.size === byVariant.size && byVariant.size > 0;
+    const allVariantsHaveNot = variantsWithNotFailure.size === variantSchemas.length && variantSchemas.length > 0;
+
+    // A branch whose discriminator failed cannot outrank another declared
+    // discriminator that matched merely because the latter failed through
+    // a referenced function and has no inline bucket here.
+    const contradictedVariants = new Set<number>();
+    for (const [relativePath, asserters] of constAsserters) {
+      const emitted = new Set<number>();
+      for (const [index, residual] of residualByVariant) {
+        if (residual.some(error => error.keyword === 'const' && error.instancePath === rootInstance + relativePath))
+          emitted.add(index);
+      }
+      if ([...asserters.keys()].some(index => !emitted.has(index))) {
+        for (const index of emitted) if (asserters.has(index)) contradictedVariants.add(index);
+      }
+    }
 
     // Pick the best surviving variant; prefer fewest residuals, tie-break
     // by fewest residual `const` errors (so variants whose discriminator
@@ -653,7 +674,7 @@ function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown)
     let bestCount = Infinity;
     let bestConsts = Infinity;
     for (const [idx, residual] of residualByVariant) {
-      if (!allVariantsHaveNot && variantsWithNotFailure.has(idx)) continue;
+      if ((!allVariantsHaveNot && variantsWithNotFailure.has(idx)) || contradictedVariants.has(idx)) continue;
       const constCount = residual.reduce((n, e) => (e.keyword === 'const' ? n + 1 : n), 0);
       if (residual.length < bestCount || (residual.length === bestCount && constCount < bestConsts)) {
         bestIdx = idx;
@@ -689,7 +710,7 @@ function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown)
           // (deeper) discriminator, which is what the adopter needs to
           // fix. Don't clobber it with the outer union's tag — the outer
           // discriminator is context, not the actionable lever.
-          // Bucketing-by-deepest-prefix in `errorsByOneOfPath` already
+          // Bucketing-by-deepest-prefix in `errorsByOwner` already
           // protects most leaf errors from entering this loop, but the
           // explicit guard makes the invariant resilient to future
           // changes in that bucket scheme.
@@ -711,9 +732,9 @@ function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown)
  * resolution fails (e.g. the variant list is inlined in an unexpected
  * way).
  */
-function enrichWithVariants(issue: ValidationIssue, rootSchema: unknown): ValidationIssue {
+function enrichWithVariants(issue: ValidationIssue, resolveDiagnosticPath: DiagnosticPathResolver): ValidationIssue {
   if (issue.keyword !== 'oneOf' && issue.keyword !== 'anyOf') return issue;
-  const resolved = resolveInstanceSchemaPath(rootSchema, issue.pointer, issue.schemaPath);
+  const resolved = resolveDiagnosticPath(issue.pointer === '/' ? '' : issue.pointer, issue.schemaPath);
   if (!Array.isArray(resolved)) return issue;
   const variants: ValidationIssueVariant[] = resolved.map((variant: unknown, index: number) => {
     if (variant == null || typeof variant !== 'object') {
@@ -747,8 +768,13 @@ export function validateRequest(toolName: string, payload: unknown, version?: st
       : undefined;
   if (valid) return { valid: true, issues: [], variant: 'request', ...(rootSchemaId && { schemaId: rootSchemaId }) };
   const registeredIds = getRegisteredSchemaIds(version);
-  const diagnosticSchema = getToolSchemaDocument(toolName, 'request', version)?.schema ?? rootSchema;
-  const ctx: FormatContext = { rootSchema: diagnosticSchema, registeredIds, toolName };
+  const ctx: FormatContext = {
+    rootSchema,
+    rootSchemaId,
+    registeredIds,
+    toolName,
+    diagnosticOrigin: createDiagnosticOriginResolver(validator),
+  };
   return {
     valid: false,
     issues: formatValidationIssues(validator.errors ?? [], ctx, payload),
@@ -820,8 +846,13 @@ export function validateResponse(toolName: string, payload: unknown, version?: s
     };
   }
   const registeredIds = getRegisteredSchemaIds(version);
-  const diagnosticSchema = getToolSchemaDocument(toolName, usedVariant, version)?.schema ?? rootSchema;
-  const ctx: FormatContext = { rootSchema: diagnosticSchema, registeredIds, toolName };
+  const ctx: FormatContext = {
+    rootSchema,
+    rootSchemaId,
+    registeredIds,
+    toolName,
+    diagnosticOrigin: createDiagnosticOriginResolver(effective),
+  };
   return {
     valid: false,
     issues: formatValidationIssues(effective.errors ?? [], ctx, normalizedPayload),

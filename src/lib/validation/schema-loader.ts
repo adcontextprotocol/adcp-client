@@ -14,6 +14,7 @@
  */
 
 import Ajv, { type KeywordDefinition, type ValidateFunction } from 'ajv';
+import type { SchemaDiagnosticOrigin, SchemaDiagnosticOrigins } from './schema-diagnostic-origins';
 import addFormats from 'ajv-formats';
 import { AsyncLocalStorage } from 'async_hooks';
 import { readdirSync, readFileSync, existsSync } from 'fs';
@@ -378,6 +379,8 @@ function compareBundleNamesDesc(a: string, b: string): number {
 interface LoaderState {
   ajv: Ajv;
   bundledAjv: Ajv;
+  diagnosticOrigins: SchemaDiagnosticOrigins;
+  bundledDiagnosticOrigins: SchemaDiagnosticOrigins;
   canonicalAjv?: Ajv;
   canonicalValidators: Map<string, ValidateFunction>;
   fileIndex: Map<string, string>;
@@ -391,6 +394,19 @@ interface LoaderState {
 }
 
 const states: Map<string, LoaderState> = new Map();
+const validatorDiagnosticOrigins = new WeakMap<ValidateFunction, SchemaDiagnosticOrigins>();
+
+/** @internal Resolve the exact function origin retained during compilation. */
+export function resolveValidatorDiagnosticPath(validator: ValidateFunction, schemaPath: string): unknown {
+  return validatorDiagnosticOrigins.get(validator)?.resolve(schemaPath);
+}
+/** @internal Resource identity and the original public AJV path for a failure. */
+export function getValidatorDiagnosticOrigin(
+  validator: ValidateFunction,
+  schemaPath: string
+): SchemaDiagnosticOrigin | undefined {
+  return validatorDiagnosticOrigins.get(validator)?.origin(schemaPath);
+}
 const schemaRefValidators = new Map<string, ValidateFunction>();
 const keywordSchemaRefValidators = new WeakMap<
   ReadonlyArray<KeywordDefinition>,
@@ -794,18 +810,36 @@ function ensureInit(version: string): LoaderState {
   if (cached) return cached;
   // Keep referenced validators separate: giant inlined functions can trigger
   // pathological V8 Maglev compilation and native-memory growth on Node 24.
-  const ajv = new Ajv({ inlineRefs: false, strict: false, allErrors: true, allowUnionTypes: true });
+  const { createSchemaDiagnosticOrigins } =
+    require('./schema-diagnostic-origins') as typeof import('./schema-diagnostic-origins');
+  const diagnosticOrigins = createSchemaDiagnosticOrigins();
+  const bundledDiagnosticOrigins = createSchemaDiagnosticOrigins();
+  const ajv = new Ajv({
+    inlineRefs: false,
+    strict: false,
+    allErrors: true,
+    allowUnionTypes: true,
+    code: { process: diagnosticOrigins.process },
+  });
   addFormats(ajv);
   // Bundled tool roots can intentionally share their canonical `$id` with
   // modular documents registered in `ajv`. Keep them in a separate registry
   // so getValidator compiles the file selected by fileIndex rather than
   // accidentally reusing a modular validator with the same public id.
-  const bundledAjv = new Ajv({ inlineRefs: false, strict: false, allErrors: true, allowUnionTypes: true });
+  const bundledAjv = new Ajv({
+    inlineRefs: false,
+    strict: false,
+    allErrors: true,
+    allowUnionTypes: true,
+    code: { process: bundledDiagnosticOrigins.process },
+  });
   addFormats(bundledAjv);
 
   const state: LoaderState = {
     ajv,
     bundledAjv,
+    diagnosticOrigins,
+    bundledDiagnosticOrigins,
     canonicalValidators: new Map(),
     fileIndex: buildFileIndex(root),
     validators: new Map(),
@@ -950,6 +984,7 @@ export function getValidator(
   const existing = typeof schema.$id === 'string' ? ajv.getSchema(schema.$id) : undefined;
   const compiled = existing ?? ajv.compile(schema);
   s.validators.set(cacheKey, compiled);
+  validatorDiagnosticOrigins.set(compiled, fromBundled ? s.bundledDiagnosticOrigins : s.diagnosticOrigins);
   return compiled;
 }
 
