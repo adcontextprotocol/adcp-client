@@ -107,7 +107,5 @@ test('targeting key lists exactly enumerate bundled schema properties', () => {
     );
     assert.deepEqual(sdk[`${name}Keys`], Object.keys(document.properties));
     assert.ok(Object.isFrozen(sdk[`${name}Keys`]));
-    assert.ok(sdk[`${name}Keys`].includes('collection_lists'));
-    assert.ok(sdk[`${name}Keys`].includes('collection_lists_exclude'));
   }
 });

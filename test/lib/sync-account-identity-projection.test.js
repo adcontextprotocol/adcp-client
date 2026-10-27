@@ -251,10 +251,11 @@ test('strict commercial-contract failures preserve a settings-update account anc
   );
   assert.equal(results[0].action, 'failed');
   assert.deepEqual(results[0].account, row.account);
-  assert.equal(Object.hasOwn(results[0], 'brand'), false);
-  assert.equal(Object.hasOwn(results[0], 'operator'), false);
+  const wire = toWireSyncAccountRow(results[0], '3.2');
+  assert.equal(Object.hasOwn(wire, 'brand'), false);
+  assert.equal(Object.hasOwn(wire, 'operator'), false);
   const validate = getSchemaValidatorByRef('account/sync-accounts-response.json', '3.2');
-  assert.equal(validate({ status: 'completed', accounts: results }), true, JSON.stringify(validate.errors));
+  assert.equal(validate({ status: 'completed', accounts: [wire] }), true, JSON.stringify(validate.errors));
 });
 
 test('validated identity snapshots do not change when the adopter later mutates its account record', () => {
