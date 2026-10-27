@@ -77,7 +77,11 @@ describe('Test Helpers', () => {
       'function',
       'should have listCreativeFormatsLegacy method'
     );
-    assert.strictEqual(testAgent.listCreativeFormats, undefined, 'should not expose an unqualified legacy format API');
+    assert.strictEqual(
+      typeof testAgent.listCreativeFormats,
+      'function',
+      'should have typed listCreativeFormats method'
+    );
     assert.strictEqual(typeof testAgent.createMediaBuy, 'function', 'should have createMediaBuy method');
   });
 
@@ -92,9 +96,9 @@ describe('Test Helpers', () => {
       'should have listCreativeFormatsLegacy method'
     );
     assert.strictEqual(
-      testAgentA2A.listCreativeFormats,
-      undefined,
-      'should not expose an unqualified legacy format API'
+      typeof testAgentA2A.listCreativeFormats,
+      'function',
+      'should have typed listCreativeFormats method'
     );
     assert.strictEqual(typeof testAgentA2A.createMediaBuy, 'function', 'should have createMediaBuy method');
   });

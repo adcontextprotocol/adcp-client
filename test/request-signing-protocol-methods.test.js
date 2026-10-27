@@ -179,6 +179,38 @@ for (const provider of [false, true]) {
       assert.equal(unsupported.requests[0].headers.signature, undefined);
     });
 
+    for (const method of ['tools/call', 'message/send', 'message/stream', 'SendMessage', 'SendStreamingMessage']) {
+      it(`preserves supported-seller poll signing for get_task_status over ${method}`, async () => {
+        const body =
+          method === 'tools/call'
+            ? tool('get_task_status')
+            : {
+                jsonrpc: '2.0',
+                id: 1,
+                method,
+                params: {
+                  message: {
+                    role: 'user',
+                    messageId: 'poll-status',
+                    parts: [
+                      { kind: 'data', data: { skill: 'get_task_status', parameters: { task_id: 'task-protocol-1' } } },
+                    ],
+                  },
+                },
+              };
+        const c = capture({ advertised: capability({}), provider });
+        await c.send(body);
+        assert.ok(c.requests[0].headers.signature);
+        assert.equal(c.requests[0].headers.authorization, 'Bearer preserved-bearer');
+        const unsupported = capture({ advertised: capability({ supported: false }), provider });
+        await unsupported.send(body);
+        assert.equal(unsupported.requests[0].headers.signature, undefined);
+        const incompatible = capture({ advertised: capability({ profiles: ['web-bot-auth'] }), provider });
+        await incompatible.send(body);
+        assert.equal(incompatible.requests[0].headers.signature, undefined);
+      });
+    }
+
     it('does not substring-match malformed seller method lists', async () => {
       const c = capture({
         advertised: capability({ protocol_methods_required_for: 'tasks/get,CancelTask' }),

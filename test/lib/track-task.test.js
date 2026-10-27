@@ -35,6 +35,7 @@ function clientFor(agent, activities) {
   const discovered = { ...agent, agent_uri: 'https://seller.example/discovered-endpoint' };
   client.ensureEndpointDiscovered = async () => discovered;
   client.ensureCanonicalUrlResolved = async () => discovered;
+  client.getCapabilities = async () => ({ discoveredTools: [] });
   return client;
 }
 
