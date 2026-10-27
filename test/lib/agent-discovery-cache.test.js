@@ -28,7 +28,7 @@ const tallies = new Map();
 function tally(path) {
   let value = tallies.get(path);
   if (!value) {
-    value = { initialize: 0, lists: 0, capabilityCalls: 0, requests: 0 };
+    value = { initialize: 0, lists: 0, capabilityCalls: 0, requests: 0, deletes: 0, exchanges: [] };
     tallies.set(path, value);
   }
   return value;
@@ -45,12 +45,14 @@ before(async () => {
     const path = new URL(req.url, 'http://x').pathname;
     const state = tally(path);
     if (req.method === 'DELETE') {
+      state.deletes++;
       res.writeHead(200).end();
       return;
     }
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const message = raw ? JSON.parse(raw) : {};
+    state.exchanges.push({ method: message.method, authorization: req.headers.authorization });
     state.requests++;
     if (message.method === 'notifications/initialized') {
       res.writeHead(202).end();
@@ -91,17 +93,35 @@ before(async () => {
       };
     } else if (message.method === 'tools/call' && message.params?.name === 'get_adcp_capabilities') {
       state.capabilityCalls++;
+      if (state.holdCapabilityResponse) {
+        state.heldCapabilityCalls = (state.heldCapabilityCalls ?? 0) + 1;
+        // Keep the request pending until the client cancels it, so this
+        // measures cancellation rather than a delayed successful response.
+        await new Promise(resolve => res.once('close', resolve));
+        return;
+      }
+      const delay =
+        (path.startsWith('/cancel-call') || path.startsWith('/timeout-call')) && state.capabilityCalls === 2 ? 200 : 0;
+      if (delay > 0) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
       result = {
         content: [{ type: 'text', text: JSON.stringify(CAPABILITIES_PAYLOAD) }],
         structuredContent: CAPABILITIES_PAYLOAD,
         isError: false,
       };
+    } else if (message.method === 'tools/call' && message.params?.name === 'get_products') {
+      const data = { status: 'completed', products: [], cache_scope: 'account' };
+      result = { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data, isError: false };
     } else {
       result = { content: [{ type: 'text', text: '{}' }], isError: false };
     }
     res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': `session-${path.slice(1)}` });
     res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id ?? null, result }));
   });
+  // Lazy schema loading can exceed the default five-second idle timeout on
+  // loaded runners. Keep the fixture session alive until explicit cleanup.
+  server.keepAliveTimeout = 0;
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   origin = `http://127.0.0.1:${server.address().port}`;
 });
@@ -136,6 +156,159 @@ function makeClient(agentUri, discoveryCache, agentOverrides = {}, configOverrid
 function sharing(cache, authIdentity = 'tenant-a', extra = {}) {
   return { cache, authIdentity, ...extra };
 }
+
+test('short-lived clients share discovery and dispatch setup within a call (#3444)', async () => {
+  const uri = freshAgentUri('/short-lived');
+  const state = tally(pathOf(uri));
+  const config = { adcpVersion: '3.2.1', wireAdcpVersion: '3.2' };
+  const first = makeClient(uri, undefined, { id: 'same-id', auth_token: 'buyer-a' }, config);
+  const result = await first.executeTask('get_adcp_capabilities', {});
+  assert.equal(result.success, true);
+  assert.equal(state.initialize, 2, 'one era-classification handshake plus one shared discovery/call session');
+  assert.equal(state.lists, 1);
+  assert.equal(state.capabilityCalls, 2);
+
+  const requestsBeforeSecondClient = state.exchanges.length;
+  const second = makeClient(uri, undefined, { id: 'same-id', auth_token: 'buyer-b' }, config);
+  assert.equal((await second.executeTask('get_adcp_capabilities', {})).success, true);
+  assert.equal(state.initialize, 4, 'a different bearer gets its own classification and session');
+  assert.ok(
+    state.exchanges.slice(requestsBeforeSecondClient).every(exchange => exchange.authorization === 'Bearer buyer-b')
+  );
+
+  const third = makeClient(uri, undefined, { id: 'same-id', auth_token: 'buyer-a' }, config);
+  assert.equal((await third.executeTask('get_adcp_capabilities', {})).success, true);
+  assert.equal(state.initialize, 5, 'a known legacy credential needs only the shared discovery/call session');
+  assert.equal(state.lists, 3);
+  assert.equal(state.capabilityCalls, 6);
+});
+
+test('getCapabilities shares discovery setup without an explicit connection scope', async () => {
+  const uri = freshAgentUri('/capabilities-session');
+  const capabilities = await makeClient(uri).getCapabilities();
+  assert.equal(capabilities.version, 'v3');
+  assert.equal(tally(pathOf(uri)).initialize, 2);
+  assert.equal(tally(pathOf(uri)).lists, 1);
+  assert.equal(tally(pathOf(uri)).capabilityCalls, 1);
+});
+
+test('an aborted implicit client scope closes locally without terminating seller work', async () => {
+  const uri = freshAgentUri('/cancel-call');
+  const state = tally(pathOf(uri));
+  const client = makeClient(uri, undefined, {}, { adcpVersion: '3.2.1', wireAdcpVersion: '3.2' });
+  const controller = new AbortController();
+  const pending = client.executeTask('get_adcp_capabilities', {}, undefined, { signal: controller.signal });
+  // Capture rejection immediately while waiting for the dispatched request.
+  const settled = pending.then(
+    result => ({ result }),
+    error => ({ error })
+  );
+  while (state.capabilityCalls < 2) await new Promise(resolve => setTimeout(resolve, 5));
+  const deletesBeforeAbort = state.deletes;
+  controller.abort();
+  const outcome = await settled;
+  if (outcome.error) assert.match(outcome.error.message, /abort|cancel|timeout/i);
+  else assert.equal(outcome.result.success, false);
+  assert.equal(state.deletes, deletesBeforeAbort, 'cancellation must not send a session DELETE');
+});
+
+for (const callerOwnedScope of [false, true]) {
+  test(`request timeout preserves seller work in an implicit scope (caller-owned scope: ${callerOwnedScope})`, async () => {
+    const { withMCPConnectionScope } = require('../../dist/lib/protocols/mcp-scope');
+    const uri = freshAgentUri('/timeout-call');
+    const state = tally(pathOf(uri));
+    const client = makeClient(uri, undefined, {}, { adcpVersion: '3.2.1', wireAdcpVersion: '3.2' });
+    await client.getCapabilities();
+    const deletesBeforeTimeout = state.deletes;
+    const call = async () => {
+      await assert.rejects(
+        client.getAdcpCapabilities({}, undefined, {
+          transport: { allowPrivateIp: true, requestTimeoutMs: 50 },
+        }),
+        error => error.code === -32001 || error.code === 'REQUEST_TIMEOUT'
+      );
+      assert.equal(state.deletes, deletesBeforeTimeout, 'a timed-out request must not immediately DELETE its session');
+    };
+    if (callerOwnedScope) await withMCPConnectionScope(call);
+    else await call();
+    assert.equal(
+      state.deletes,
+      deletesBeforeTimeout + (callerOwnedScope ? 1 : 0),
+      'a caller-owned scope keeps its normal final session termination'
+    );
+  });
+}
+
+test('an injected fetch shares setup within one operation with and without a principal partition', async () => {
+  for (const connectionPartition of [undefined, 'buyer-a']) {
+    const uri = freshAgentUri('/injected-fetch');
+    const client = makeClient(
+      uri,
+      undefined,
+      {},
+      {
+        transport: {
+          allowPrivateIp: true,
+          trustedFetchFn: (input, init) => fetch(input, init),
+          ...(connectionPartition && { connectionPartition }),
+        },
+      }
+    );
+    assert.equal((await client.getCapabilities()).version, 'v3');
+    const state = tally(pathOf(uri));
+    assert.equal(state.initialize, 2, 'partitioned injected fetches still share discovery and dispatch setup');
+    assert.equal(state.lists, 1);
+    assert.equal(state.capabilityCalls, 1);
+  }
+});
+
+test('a timeout swallowed by an isolated status handler still preserves seller work', async () => {
+  const uri = freshAgentUri('/isolated-handler-timeout');
+  const state = tally(pathOf(uri));
+  let handlerError;
+  let handlerCalls = 0;
+  let handlerResult;
+  const client = makeClient(
+    uri,
+    undefined,
+    {},
+    {
+      adcpVersion: '3.2.1',
+      wireAdcpVersion: '3.2',
+      isolateStatusHandlerErrors: true,
+      onStatusHandlerError: error => {
+        handlerError = error;
+      },
+      handlers: {
+        onGetProductsStatusChange: async () => {
+          handlerCalls++;
+          state.holdCapabilityResponse = true;
+          handlerResult = await client.getAdcpCapabilities({}, undefined, {
+            transport: { allowPrivateIp: true, requestTimeoutMs: 100 },
+          });
+        },
+      },
+    }
+  );
+  await client.getCapabilities();
+  await client.getAdcpCapabilities({});
+  const deletesBeforeCall = state.deletes;
+  const result = await client.getProducts({ buying_mode: 'brief', brief: 'Find available inventory' });
+  assert.equal(result.success, true, result.error);
+  const diagnostic = JSON.stringify({
+    status: result.status,
+    handlerCalls,
+    handlerResult,
+    capabilityCalls: state.capabilityCalls,
+    heldCapabilityCalls: state.heldCapabilityCalls,
+    exchanges: state.exchanges,
+  });
+  assert.equal(handlerCalls, 1, `the completed operation invokes its handler: ${diagnostic}`);
+  assert.equal(state.heldCapabilityCalls, 1, `the handler reaches its pending tool call: ${diagnostic}`);
+  assert.ok(handlerError, `the post-completion handler timed out: ${diagnostic}`);
+  assert.equal(handlerError.code, -32001);
+  assert.equal(state.deletes, deletesBeforeCall, 'handling the timeout must not allow DELETE on scope exit');
+});
 
 describe('shared discovery cache', () => {
   test('two clients for the same agent URL and auth identity make one capabilities round trip within the TTL', async () => {

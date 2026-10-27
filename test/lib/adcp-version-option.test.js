@@ -166,7 +166,7 @@ describe('adcpVersion constructor option', () => {
         err =>
           err.code === 'CONFIGURATION_ERROR' &&
           /no schema bundle for that key ships/.test(err.message) &&
-          /sync-schemas/.test(err.message)
+          /Pin one of these releases explicitly/.test(err.message)
       );
     });
 

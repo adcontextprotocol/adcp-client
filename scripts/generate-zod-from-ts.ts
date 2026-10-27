@@ -146,6 +146,12 @@ const TS7056_SCHEMAS: Array<{
 }> = [
   { name: 'AdCPAsyncResponseDataSchema' },
   { name: 'MCPWebhookPayloadSchema' },
+  {
+    name: 'MediaBuyDeliveryWebhookResultSchema',
+    tsType: 'MediaBuyDeliveryWebhookResult',
+    objectShape: true,
+    typeSource: 'core',
+  },
   // 3.1.0-beta.2 pin flip — `.and(z.union([...]))` compound patterns push
   // inferred types past TS7056's .d.ts serialization limit. Carry the TS
   // type so callers' `params` keep narrowing.
@@ -6001,6 +6007,21 @@ async function generateZodSchemas() {
       })()`;
       zodSchemas = postProcessExactSchema(zodSchemas, schemaName, exact);
     }
+
+    // Webhook rows follow the strict published schema independently of tolerant polling.
+    const deliverySource = JSON.parse(
+      readFileSync(path.join(verifiedCacheRoot, 'media-buy/media-buy-delivery-webhook-result.json'), 'utf8')
+    );
+    const deliveryResult = (await dereferenceFromVerifiedSchemaCache(deliverySource, verifiedCacheRoot)) as any;
+    removeDiscriminatorHints(deliveryResult);
+    zodSchemas = postProcessExactSchema(
+      zodSchemas,
+      'MediaBuyDeliveryWebhookResultSchema',
+      jsonSchemaToZod(deliveryResult, converterOptions).replaceAll(
+        '.url()',
+        '.refine(adcpJsonSchemaUri, "Invalid URI")'
+      )
+    );
 
     // TypeScript cannot retain JSON Schema `format: uri` or root oneOf
     // exclusivity. Restore both for legacy/canonical creative identity. This

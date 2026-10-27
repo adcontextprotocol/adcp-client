@@ -45,6 +45,7 @@ import type { RequireCacheScopeWhenProducts, ServerPayload } from '../types/serv
 import { validActionsForStatus } from './media-buy-helpers';
 import type { CancelMediaBuyInput } from './media-buy-helpers';
 import { projectReportingDeliveryConfigStates } from './reporting-delivery-config';
+import { projectAccountResponseIdentityFields } from './account-response-identity';
 import type {
   ListCreativeFormatsResponse,
   GetProductsResponse,
@@ -195,7 +196,20 @@ function stripBusinessEntityBank<T extends object>(row: T, key: 'billing_entity'
 }
 
 function stripAccountWriteOnlyFields<T extends object>(account: T): T {
-  const stripped = stripBusinessEntityBank(stripNotificationConfigSecrets(account), 'billing_entity');
+  // An operator-handoff destination is request-only, including its non-bank
+  // fields. Keep it out of response payloads and the idempotency replay cache.
+  const {
+    destination_billing_entity: _destination,
+    authInfo: _authInfo,
+    ctx_metadata: _metadata,
+    ...responseFields
+  } = account as T & {
+    destination_billing_entity?: unknown;
+    authInfo?: unknown;
+    ctx_metadata?: unknown;
+  };
+  const response = stripBusinessEntityBank(stripNotificationConfigSecrets(responseFields), 'billing_entity');
+  const stripped = { ...response, ...projectAccountResponseIdentityFields(response) } as T;
   const reportingDeliveryConfigs = (stripped as { reporting_delivery_configs?: unknown }).reporting_delivery_configs;
   if (reportingDeliveryConfigs === undefined) return stripped;
   return {

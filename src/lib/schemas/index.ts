@@ -47,6 +47,7 @@ import type { KnownToolRequestSchemas } from '../utils/tool-request-schemas';
 import {
   getCanonicalToolValidatorForVersion,
   getSchemaDocumentByRef,
+  getSchemaValidatorByRef,
   getToolSchemaDocument,
   type Direction,
   type ResolvedToolSchemaDocument,
@@ -94,7 +95,7 @@ export type VersionedToolSchema = ResolvedToolSchemaDocument;
  * callers should normally prefer {@link getCanonicalToolValidator} so
  * reference registration stays internal.
  */
-export { getSchemaDocumentByRef };
+export { getSchemaDocumentByRef, getSchemaValidatorByRef };
 
 /** Retrieve the protocol-authored request JSON Schema for a specific AdCP release. */
 export function getToolInputSchema(
@@ -268,3 +269,7 @@ export function customToolForSchema<TSchema extends InputSchema>(
   void name;
   return { description, inputSchema, handler };
 }
+
+export { MediaBuyDeliveryReportSchema } from '../validation/media-buy-delivery-report';
+export type { MediaBuyDeliveryReport } from '../types/media-buy-delivery-report';
+export type { AssetVariant } from '../types/core.generated';

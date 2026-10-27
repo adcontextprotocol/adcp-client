@@ -2418,10 +2418,10 @@ export interface CreateAdcpServerFromPlatformOptions<TAccount = unknown> extends
 
   /**
    * Opinionated media-buy store that satisfies the seller spec contract for
-   * `targeting_overlay` echo: persist `packages[].targeting_overlay` from
-   * `create_media_buy`, echo it on `get_media_buys`, deep-merge across
-   * `update_media_buy` without dropping prior `property_list` /
-   * `collection_list` references.
+   * creation context and targeting echo: persist buy/package `context` and
+   * `packages[].targeting_overlay` from `create_media_buy`, then fill missing
+   * fields on `get_media_buys`. Targeting updates preserve creation context
+   * and prior `property_list` / `collection_list` references.
    *
    * Wire to honor the
    * `schemas/cache/<v>/media-buy/get-media-buys-response.json` contract
@@ -2429,7 +2429,7 @@ export interface CreateAdcpServerFromPlatformOptions<TAccount = unknown> extends
    * `property-lists` / `collection-lists` MUST echo the persisted refs;
    * `mediaBuyStore` is the framework-side way to do it.
    *
-   * Backed by any `AdcpStateStore` — `InMemoryStateStore` for dev,
+   * Backed by any `AdcpStateStore`: `InMemoryStateStore` for dev,
    * `PostgresStateStore` for production. Failures are logged and swallowed
    * (auto-echo MUST NOT break a successful seller response).
    *
@@ -5869,7 +5869,7 @@ async function autoStoreResources(
 }
 
 /**
- * Persist `packages[].targeting_overlay` from a successful
+ * Persist creation context and `packages[].targeting_overlay` from a successful
  * `create_media_buy`. Called from the createMediaBuy projection so the
  * persistence applies to both the sync arm and the HITL completion arm
  * (the projection runs after the handoff fn resolves).
@@ -5877,7 +5877,7 @@ async function autoStoreResources(
  * Failures are logged + swallowed: a successful seller response must
  * never be turned into an error by the auto-echo plumbing.
  */
-async function persistTargetingOverlayFromCreate(
+async function persistMediaBuyFromCreate(
   store: MediaBuyStore | undefined,
   accountId: string | undefined,
   request: unknown,
@@ -5923,7 +5923,7 @@ async function persistTargetingOverlayFromUpdate(
 }
 
 /**
- * Backfill missing `packages[].targeting_overlay` on a `get_media_buys`
+ * Backfill missing creation context and targeting on a `get_media_buys`
  * response from the persisted store. Mutates the response. Packages the
  * seller already echoed are left alone.
  *
@@ -5931,7 +5931,7 @@ async function persistTargetingOverlayFromUpdate(
  * better than a hard error wiping out the seller's correctly-returned
  * media-buy data.
  */
-async function backfillTargetingOverlay(
+async function backfillMediaBuyState(
   store: MediaBuyStore | undefined,
   accountId: string | undefined,
   result: unknown,
@@ -7148,7 +7148,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               },
               result,
               async r => {
-                await persistTargetingOverlayFromCreate(mediaBuyStore, reqCtx.account?.id, params, r, logger);
+                await persistMediaBuyFromCreate(mediaBuyStore, reqCtx.account?.id, params, r, logger);
                 return asSemanticServerResponseForWire(
                   r,
                   'create_media_buy',
@@ -7506,7 +7506,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                     canonicalFormatLegacyResolver,
                     responseWireMode
                   );
-            await backfillTargetingOverlay(mediaBuyStore, reqCtx.account?.id, wireResult, logger);
+            await backfillMediaBuyState(mediaBuyStore, reqCtx.account?.id, wireResult, logger);
             return wireResult;
           },
           r => r
@@ -9125,7 +9125,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
           if (policy.failedRows.size === 0) {
             return {
               ...(dryRun && { dry_run: true }),
-              accounts: rows.map(toWireSyncAccountRow),
+              accounts: rows.map(row => toWireSyncAccountRow(row, resolveCtx.servedAdcpVersion)),
             };
           }
           const combined: SyncAccountsResultRow[] = [];
@@ -9141,7 +9141,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
           }
           return {
             ...(dryRun && { dry_run: true }),
-            accounts: combined.map(toWireSyncAccountRow),
+            accounts: combined.map(row => toWireSyncAccountRow(row, resolveCtx.servedAdcpVersion)),
           };
         }
       );

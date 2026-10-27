@@ -1579,15 +1579,45 @@ export function projectCreativeForDelivery<T extends CreativeAsset>(
       throw new CreativeFormatProjectionError(
         operation,
         creativeId,
-        `the seller advertised ${candidates.length} legacy refs for canonical kind ${creativeRecord.format_kind}`
+        `the seller advertised ${candidates.length} legacy refs for canonical kind ${creativeRecord.format_kind}` +
+          (candidates.some(candidate => legacyIdPinsDimensions(candidate.ref) === true)
+            ? '; set format_parameters.width/height or give the asset one rendered width/height to select one'
+            : '')
       );
     }
     const reason = pinned
       ? 'the creative is pinned to a format option that names none of the selected seller product legacy format references'
-      : 'the selected seller product did not provide one unambiguous legacy format reference';
+      : describeUnmatchedLegacyCandidates(creativeRecord, allCandidates);
     throw new CreativeFormatProjectionError(operation, creativeId, reason);
   }
   return creative as unknown as LegacyProjectedCreative<T>;
+}
+
+/**
+ * Why no legacy ref of the creative's canonical kind survived selection. Error
+ * text only: selection itself is unchanged. The checks mirror
+ * preferMostConstrainedLegacyCandidates, in order: kind, delivery type, size.
+ */
+function describeUnmatchedLegacyCandidates(
+  creative: Record<string, unknown>,
+  allCandidates: readonly LegacyCandidate[]
+): string {
+  const generic = 'the selected seller product did not provide one unambiguous legacy format reference';
+  const kind = String(creative.format_kind);
+  if (allCandidates.length === 0) return generic;
+  const sameKind = allCandidates.filter(candidate => candidate.formatKind === kind);
+  if (sameKind.length === 0) {
+    const offered = [
+      ...new Set(allCandidates.flatMap(candidate => (candidate.formatKind ? [candidate.formatKind] : []))),
+    ];
+    if (offered.length === 0) return generic;
+    return `the selected seller product offers legacy refs for canonical kind ${offered.join(', ')}, not ${kind}`;
+  }
+  const size = creativeFormatParameterConstraints(creative);
+  if (size?.width !== undefined && size.height !== undefined) {
+    return `none of the seller's ${sameKind.length} ${kind} legacy refs matches the creative's ${size.width}x${size.height} size`;
+  }
+  return generic;
 }
 
 export function projectMediaBuyCreativesForDelivery<T>(

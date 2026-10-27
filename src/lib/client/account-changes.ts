@@ -2,6 +2,7 @@ import { ADCPError, ConfigurationError } from '../errors';
 import type { AgentClient } from '../core/AgentClient';
 import type { ListAccountChangesRequest, ListAccountChangesResponse } from '../types';
 import type { TaskResult, TaskOptions } from '../core/ConversationTypes';
+import { resolveAdcpVersion } from '../utils/adcp-version-config';
 import { getSchemaValidatorByRef } from '../validation/schema-loader';
 import {
   restoreAccountChangeCursor,
@@ -55,6 +56,8 @@ export interface StreamAccountChangesOptions {
   resourceTypes?: readonly string[];
   maxResults?: number;
   taskOptions?: TaskOptions;
+  /** Fallback served schema release for custom readers without SDK version metadata. */
+  adcpVersion?: string;
   /**
    * Rebuild every authoritative snapshot in scope, including all statuses and
    * pages. A fresh latest cursor is acquired BEFORE this hook. No checkpoint
@@ -80,7 +83,7 @@ export interface AccountChangeDrainPage extends Omit<AccountChangePage, 'cursor'
  * The adopter owns storage, transaction atomicity and concurrency fencing.
  */
 export async function* streamAccountChanges(
-  client: Pick<AgentClient, 'listAccountChanges'>,
+  client: Pick<AgentClient, 'listAccountChanges'> & Partial<Pick<AgentClient, 'getAdcpVersion'>>,
   options: StreamAccountChangesOptions
 ): AsyncGenerator<AccountChangeDrainPage, void, void> {
   if (options.resourceTypes?.length === 0) {
@@ -95,6 +98,7 @@ export async function* streamAccountChanges(
   ) {
     throw new ConfigurationError('maxResults must be an integer between 1 and 100.', 'maxResults');
   }
+  const configuredVersion = resolveAdcpVersion(options.adcpVersion ?? client.getAdcpVersion?.());
   const account = structuredClone(options.account);
   const resourceTypes = options.resourceTypes ? [...new Set(options.resourceTypes)].sort() : undefined;
   const request: ListAccountChangesRequest = {
@@ -147,8 +151,29 @@ export async function* streamAccountChanges(
         result
       );
     }
-    const validator = getSchemaValidatorByRef('account/list-account-changes-response.json');
-    if (!validator) throw new ConfigurationError('Bundled account change response schema is unavailable.', 'schemas');
+    let validator: ReturnType<typeof getSchemaValidatorByRef>;
+    try {
+      const pageVersion = resolveAdcpVersion(
+        result.metadata?.negotiatedAdcpVersion ??
+          result.metadata?.adcpVersion ??
+          options.adcpVersion ??
+          configuredVersion
+      );
+      validator = getSchemaValidatorByRef('account/list-account-changes-response.json', pageVersion);
+    } catch {
+      throw new AccountChangeDrainError(
+        'account_change_page_invalid',
+        'Account change response names an unavailable schema release.',
+        result
+      );
+    }
+    if (!validator) {
+      throw new AccountChangeDrainError(
+        'account_change_page_invalid',
+        'Account change response schema is unavailable for the served release.',
+        result
+      );
+    }
     if (!validator(page)) {
       throw new AccountChangeDrainError('account_change_page_invalid', 'Invalid account change feed response.', result);
     }

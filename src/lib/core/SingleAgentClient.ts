@@ -1,6 +1,7 @@
 import type * as ToolTypes from '../types/tools.generated';
 import type * as CoreTypes from '../types/core.generated';
-import { withMCPConnectionPolicy } from '../protocols/mcp-connection-policy';
+import { shouldReuseMCPConnection, withMCPConnectionPolicy } from '../protocols/mcp-connection-policy';
+import { withMCPConnectionScope } from '../protocols/mcp-scope';
 import { hasUnsignedCapabilityBootstrap } from '../signing/protocol-methods';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import { normalizeMediaBuyResponse } from '../utils/creative-adapter';
@@ -3998,7 +3999,7 @@ export class SingleAgentClient {
     options?: ReadRequestOptions
   ): Promise<string> {
     throwIfAborted(options?.signal);
-    const { connectMCPWithFallback } = await import('../protocols/mcp');
+    const { connectMCPWithFallback, withScopedLegacyConnection } = await import('../protocols/mcp');
     const { probeModernMCPConnection, retryAfterOf } = await import('../protocols/mcp-modern');
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
     const usesScopedFetch = this.usesScopedDiscoveryTransport(options);
@@ -4049,19 +4050,35 @@ export class SingleAgentClient {
 
         // The v2 Streamable HTTP probe could not connect. Preserve the
         // established v1 Streamable→SSE fallback for old SSE-only agents.
-        const client = await connectMCPWithFallback(
-          new URL(url),
-          authHeaders,
-          [],
-          'endpoint discovery',
-          transport?.trustedFetchFn,
+        const shared = await withScopedLegacyConnection(
           {
+            agentUrl: url,
+            authToken,
+            customHeaders: agentHeaders,
+            authProvider,
             signal: options?.signal,
             requestTimeoutMs: transport?.requestTimeoutMs,
+            fetchFn: transport?.trustedFetchFn,
             allowPrivateIp: transport?.allowPrivateIp,
-          }
+          },
+          'endpoint discovery',
+          async () => undefined
         );
-        await client.close();
+        if (!shared) {
+          const client = await connectMCPWithFallback(
+            new URL(url),
+            authHeaders,
+            [],
+            'endpoint discovery',
+            transport?.trustedFetchFn,
+            {
+              signal: options?.signal,
+              requestTimeoutMs: transport?.requestTimeoutMs,
+              allowPrivateIp: transport?.allowPrivateIp,
+            }
+          );
+          await client.close();
+        }
         if (mayRetain()) {
           this.discoveredMcpEra = 'legacy';
           this.discoveredMcpEraAt = Date.now();
@@ -5634,11 +5651,24 @@ export class SingleAgentClient {
     }).ok;
   }
 
-  /**
-   * Execute task and call appropriate handler on completion
-   *
-   * Adapts requests for maintained AdCP 3 releases and normalizes product responses.
-   */
+  /** One task owns discovery and dispatch sessions unless the caller already owns reuse. */
+  private withConnectionScope<T>(options: ReadRequestOptions | undefined, run: () => Promise<T>): Promise<T> {
+    const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
+    return withMCPConnectionPolicy(transport, () =>
+      shouldReuseMCPConnection(transport?.trustedFetchFn !== undefined)
+        ? run()
+        : withMCPConnectionScope(run, { signal: options?.signal, preserveOnInterruption: true })
+    );
+  }
+
+  private withTaskConnectionScope<T, O extends TaskOptions = TaskOptions>(
+    options: O | undefined,
+    run: Parameters<typeof withTaskDeadline<T, O>>[1]
+  ): Promise<T> {
+    return withTaskDeadline(options, effective => this.withConnectionScope(effective, () => run(effective)));
+  }
+
+  /** Execute a task, adapt maintained AdCP 3 releases, and call the completion handler. */
   private async executeAndHandle<T>(
     taskType: string,
     handlerName: keyof AsyncHandlerConfig,
@@ -5654,7 +5684,7 @@ export class SingleAgentClient {
     const canonicalRequestSnapshot = canonicalRequest === undefined ? undefined : structuredClone(canonicalRequest);
     const deferredProjectionCatalogs = projectionCatalogs ? structuredClone(projectionCatalogs) : undefined;
     const taskOptionsSnapshot = snapshotTaskOptions(options);
-    return withTaskDeadline(taskOptionsSnapshot, effectiveOptions =>
+    return this.withTaskConnectionScope(taskOptionsSnapshot, effectiveOptions =>
       this.executeAndHandleWithinDeadline(
         taskType,
         handlerName,
@@ -7722,7 +7752,7 @@ export class SingleAgentClient {
       legacyFormatConverter,
       projectionCatalogs ?? this.config.projectionCatalogs
     );
-    return withTaskDeadline(snapshotTaskOptions(taskOptions), async effectiveOptions => {
+    return this.withTaskConnectionScope(snapshotTaskOptions(taskOptions), async effectiveOptions => {
       this.assertRequestSupportedByConfiguredVersion('get_products', params, effectiveOptions);
       let request = await this.applyAccountPolicy('get_products', params, effectiveOptions);
       const legacyAccountId = (request as { account_id?: unknown }).account_id;
@@ -7995,7 +8025,7 @@ export class SingleAgentClient {
       ...snapshotTaskOptions(options),
       ...(projectionCatalogs !== undefined && { projectionCatalogs }),
     };
-    return withTaskDeadline(snapshottedOptions, effectiveOptions =>
+    return this.withTaskConnectionScope(snapshottedOptions, effectiveOptions =>
       this.createMediaBuyWithinDeadline(requestSnapshot, inputHandler, effectiveOptions)
     );
   }
@@ -8234,7 +8264,7 @@ export class SingleAgentClient {
       ...snapshotTaskOptions(options),
       ...(projectionCatalogs !== undefined && { projectionCatalogs }),
     };
-    return withTaskDeadline(snapshottedOptions, effectiveOptions =>
+    return this.withTaskConnectionScope(snapshottedOptions, effectiveOptions =>
       this.updateMediaBuyWithinDeadline(requestSnapshot, inputHandler, effectiveOptions)
     );
   }
@@ -8340,7 +8370,7 @@ export class SingleAgentClient {
       ...(projectionCatalogs !== undefined && { projectionCatalogs }),
       ...(creativeFormatProjection !== undefined && { creativeFormatProjection }),
     };
-    return withTaskDeadline(snapshottedOptions, effectiveOptions =>
+    return this.withTaskConnectionScope(snapshottedOptions, effectiveOptions =>
       this.syncCreativesWithinDeadline(requestSnapshot, inputHandler, effectiveOptions)
     );
   }
@@ -9646,7 +9676,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
-    return withTaskDeadline(snapshotTaskOptions(options), effectiveOptions =>
+    return this.withTaskConnectionScope(snapshotTaskOptions(options), effectiveOptions =>
       this.getAdcpCapabilitiesWithinDeadline(params, inputHandler, effectiveOptions)
     );
   }
@@ -9795,7 +9825,7 @@ export class SingleAgentClient {
     /** @internal Allows the AgentClient wrapper to retain nested task session ids. */
     onTaskResult?: (result: TaskResult<unknown>) => void
   ): Promise<AccountReference | ResolveAccountResult> {
-    return withTaskDeadline(snapshotTaskOptions(options), async effectiveOptions => {
+    return this.withTaskConnectionScope(snapshotTaskOptions(options), async effectiveOptions => {
       const capabilities = await this.getCapabilities(effectiveOptions);
       if (capabilities._synthetic || !capabilities.account) {
         throw new AccountRequiredError(
@@ -10444,7 +10474,7 @@ export class SingleAgentClient {
   ): Promise<TaskResult<T>> {
     const requestParamsSnapshot = structuredClone(params);
     const taskOptionsSnapshot = snapshotTaskOptions(options);
-    return withTaskDeadline(taskOptionsSnapshot, async effectiveOptions => {
+    return this.withTaskConnectionScope(taskOptionsSnapshot, async effectiveOptions => {
       const result = await this.executeTaskUnprojectedWithinDeadline<T>(
         taskName,
         requestParamsSnapshot,
@@ -11177,9 +11207,7 @@ export class SingleAgentClient {
       parameters?: string[];
     }>;
   }> {
-    return withMCPConnectionPolicy(normalizeTransportOptions(options?.transport ?? this.config.transport), () =>
-      this.getAgentInfoWithConnectionPolicy(options)
-    );
+    return this.withConnectionScope(options, () => this.getAgentInfoWithConnectionPolicy(options));
   }
 
   private async getAgentInfoWithConnectionPolicy(options?: ReadRequestOptions): Promise<{
@@ -11505,9 +11533,7 @@ export class SingleAgentClient {
    * ```
    */
   async getCapabilities(options?: ReadRequestOptions): Promise<AdcpCapabilities> {
-    return withMCPConnectionPolicy(normalizeTransportOptions(options?.transport ?? this.config.transport), () =>
-      this.getCapabilitiesWithConnectionPolicy(options)
-    );
+    return this.withConnectionScope(options, () => this.getCapabilitiesWithConnectionPolicy(options));
   }
 
   private async getCapabilitiesWithConnectionPolicy(options?: ReadRequestOptions): Promise<AdcpCapabilities> {

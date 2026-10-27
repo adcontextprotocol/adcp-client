@@ -264,3 +264,12 @@ function normalizeHeaderValue(value: WebhookHeaderValue): {
 function isHeaders(headers: WebhookHeadersLike): headers is Headers {
   return typeof (headers as Headers).get === 'function';
 }
+
+export { parseMediaBuyDeliveryWebhook } from './media-buy-delivery';
+export type {
+  ParseMediaBuyDeliveryWebhookOptions,
+  MediaBuyDeliveryWebhookEnvelope,
+  MediaBuyDeliveryWebhookParseErrorCode,
+  MediaBuyDeliveryWebhookParseResult,
+} from './media-buy-delivery';
+export type { MediaBuyDeliveryReport } from '../types/media-buy-delivery-report';

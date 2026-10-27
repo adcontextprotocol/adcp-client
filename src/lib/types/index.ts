@@ -485,3 +485,7 @@ export type {
   ValidateInputRequest,
   ValidateInputResponse,
 } from './tools.generated';
+
+export type { MediaBuyDeliveryReport } from './media-buy-delivery-report';
+export type { MediaBuyDeliveryWebhookResult } from './core.generated';
+export { TargetingOverlayKeys, TargetingOverlaySupportKeys } from './targeting-keys.generated';

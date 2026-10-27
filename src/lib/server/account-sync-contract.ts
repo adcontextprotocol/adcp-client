@@ -270,6 +270,7 @@ export async function checkSyncAccountRows(
         }
       ).toStructuredError();
       row = {
+        ...(row.account !== undefined && { account: row.account }),
         brand: row.brand,
         operator: row.operator,
         ...(priorId === row.account_id && priorId && { account_id: priorId }),
