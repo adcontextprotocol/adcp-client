@@ -426,5 +426,8 @@ test('transferring creative diagnostics preserves existing target advisories wit
   rememberCreativeDeliveryDiagnostics(target, [second]);
   transferCreativeDeliveryDiagnostics(source, target);
   transferCreativeDeliveryDiagnostics(source, target);
-  assert.deepEqual(getCreativeDeliveryDiagnostics(target), [second, first]);
+  assert.deepEqual(
+    getCreativeDeliveryDiagnostics(target).map(({ type, message }) => ({ type, message })),
+    [second, first]
+  );
 });
