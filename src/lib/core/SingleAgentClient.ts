@@ -313,6 +313,7 @@ import {
 } from './account-resolution';
 
 import { normalizeRequestParams } from '../utils/request-normalizer';
+import { getCreativeDeliveryDiagnostics } from '../v2/projection/legacy-metadata';
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
 import { validateUserAgent } from '../utils/validate-user-agent';
 import { resolveWebhookUrl, selectWebhookTemplate } from './webhook-url';
@@ -5689,6 +5690,7 @@ export class SingleAgentClient {
     canonicalRequest?: unknown,
     projectionCatalogs?: readonly ProjectionCatalogSnapshot[]
   ): Promise<TaskResult<T>> {
+    const projectionDrifts = getCreativeDeliveryDiagnostics(params);
     const requestParamsSnapshot = structuredClone(params);
     const canonicalRequestSnapshot = canonicalRequest === undefined ? undefined : structuredClone(canonicalRequest);
     const deferredProjectionCatalogs = projectionCatalogs ? structuredClone(projectionCatalogs) : undefined;
@@ -5703,7 +5705,8 @@ export class SingleAgentClient {
         transformCompletedResponse,
         legacyFormatConverter,
         canonicalRequestSnapshot,
-        deferredProjectionCatalogs
+        deferredProjectionCatalogs,
+        projectionDrifts
       )
     );
   }
@@ -5717,7 +5720,8 @@ export class SingleAgentClient {
     transformCompletedResponse?: (data: T) => T,
     legacyFormatConverter?: LegacyFormatConverter,
     canonicalRequest?: unknown,
-    projectionCatalogs?: readonly ProjectionCatalogSnapshot[]
+    projectionCatalogs?: readonly ProjectionCatalogSnapshot[],
+    projectionDrifts: ReturnType<typeof getCreativeDeliveryDiagnostics> = []
   ): Promise<TaskResult<T>> {
     throwIfAborted(options?.signal);
     const canonicalCreativeInvocation =
@@ -5858,7 +5862,15 @@ export class SingleAgentClient {
       this.executor.validateRequest(taskType, adaptedParams, inputSchemaStripLogs, negotiatedRelease.version);
     }
 
-    const adaptationLogs: any[] = [...adaptDriftLogs];
+    const adaptationLogs: any[] = [
+      ...projectionDrifts.map(drift => ({
+        ...drift,
+        taskName: taskType,
+        clientVersion: this.resolvedAdcpVersion,
+        timestamp: new Date().toISOString(),
+      })),
+      ...adaptDriftLogs,
+    ];
     if (webhookDriftLog) adaptationLogs.push(webhookDriftLog);
 
     const canonicalInputHandler = this.canonicalCreativeInputHandler(
@@ -7703,8 +7715,11 @@ export class SingleAgentClient {
     const adapterKey = resolveAdapterKey(this.resolvedAdcpVersion, perCallCapabilities ?? this.cachedCapabilities);
     if (adapterKey) {
       const versionAdapter = getVersionAdapter(adapterKey, taskType);
-      if (versionAdapter?.adaptRequest) {
-        const result = versionAdapter.adaptRequest(adapted);
+      const adaptRequest = negotiated
+        ? versionAdapter?.adaptRequest
+        : (versionAdapter?.adaptUnnegotiatedRequest ?? versionAdapter?.adaptRequest);
+      if (adaptRequest) {
+        const result = adaptRequest(adapted);
         adapted = result.params;
         if (result.drift) {
           driftLogs.push({
