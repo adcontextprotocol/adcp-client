@@ -84,4 +84,3 @@ export const TargetingOverlaySupportKeys = Object.freeze([
   "negative_keywords",
   "ext"
 ] as const satisfies readonly (keyof TargetingOverlaySupport)[]);
-
