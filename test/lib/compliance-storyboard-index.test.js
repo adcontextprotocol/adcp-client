@@ -83,3 +83,82 @@ test('replacing a bundle index invalidates a cached root', t => {
   fs.writeFileSync(index, fs.readFileSync(index, 'utf8') + '\n');
   assert.equal(getComplianceStoryboardById('example', options).title, 'Replaced');
 });
+
+for (const source of ['explicit', 'environment']) {
+  test(`refreshes a changed YAML in a ${source} custom root with the index untouched`, t => {
+    const dir = fixture(t);
+    if (source === 'environment') {
+      const previous = process.env.ADCP_COMPLIANCE_DIR;
+      process.env.ADCP_COMPLIANCE_DIR = dir;
+      t.after(() => {
+        if (previous === undefined) delete process.env.ADCP_COMPLIANCE_DIR;
+        else process.env.ADCP_COMPLIANCE_DIR = previous;
+      });
+    }
+    const options = { version: '3.2.7', ...(source === 'explicit' && { complianceDir: dir }) };
+    const index = path.join(dir, 'index.json');
+    const indexStat = fs.statSync(index);
+    const first = getComplianceStoryboardById('example', options);
+    assert.equal(first.title, 'Example');
+    const yaml = path.join(dir, 'universal/example.yaml');
+    const before = fs.statSync(yaml);
+    fs.writeFileSync(yaml, fs.readFileSync(yaml, 'utf8').replace('title: Example', 'title: Updated'));
+    fs.utimesSync(yaml, before.atime, before.mtime);
+    const refreshed = getComplianceStoryboardById('example', options);
+    assert.equal(refreshed.title, 'Updated');
+    assert.equal(trustedStoryboardComplianceRoot(refreshed), dir);
+    assert.equal(first.title, 'Example', 'prior detached results stay unchanged');
+    assert.equal(fs.statSync(index).mtimeMs, indexStat.mtimeMs);
+    assert.equal(fs.statSync(index).size, indexStat.size);
+    const originalRead = fs.readFileSync;
+    let yamlReads = 0;
+    t.mock.method(fs, 'readFileSync', (...args) => {
+      if (String(args[0]).startsWith(dir) && String(args[0]).endsWith('.yaml')) yamlReads++;
+      return originalRead(...args);
+    });
+    assert.equal(getComplianceStoryboardById('example', options).title, 'Updated');
+    assert.equal(yamlReads, 0, 'unchanged warm custom roots are not reparsed');
+  });
+}
+
+test('refreshes synthesized steps after a custom signing vector changes without YAML or index edits', t => {
+  const dir = fixture(t);
+  const yaml = path.join(dir, 'universal/example.yaml');
+  fs.writeFileSync(
+    yaml,
+    fs
+      .readFileSync(yaml, 'utf8')
+      .replace('id: example', 'id: signed_requests')
+      .replace('phases: []', 'phases:\n  - id: positive_vectors\n    title: Positive vectors\n    steps: []')
+  );
+  const vectors = path.join(dir, 'test-vectors/request-signing');
+  fs.cpSync(path.join(__dirname, '../../compliance/cache/3.2.7/test-vectors/request-signing'), vectors, {
+    recursive: true,
+  });
+  const options = { complianceDir: dir, version: '3.2.7' };
+  const first = getComplianceStoryboardById('signed_requests', options);
+  assert.ok(first.phases[0].steps.length > 0);
+  const profile = path.join(vectors, 'profile-3.2/positive');
+  const vector = path.join(
+    profile,
+    fs
+      .readdirSync(profile)
+      .filter(file => file.endsWith('.json'))
+      .sort()[0]
+  );
+  const data = JSON.parse(fs.readFileSync(vector, 'utf8'));
+  data.name = 'Updated authoring vector';
+  fs.writeFileSync(vector, JSON.stringify(data));
+  const refreshed = getComplianceStoryboardById('signed_requests', options);
+  assert.equal(refreshed.phases[0].steps[0].title, 'Positive: Updated authoring vector');
+  assert.notEqual(first.phases[0].steps[0].title, refreshed.phases[0].steps[0].title);
+});
+
+test('missing custom roots retain the actionable cache diagnostic', t => {
+  const dir = fixture(t);
+  fs.rmSync(dir, { recursive: true });
+  assert.throws(
+    () => listAllComplianceStoryboards({ complianceDir: dir }),
+    /Compliance cache.*not found.*npm i @adcp\/sdk@latest/s
+  );
+});
