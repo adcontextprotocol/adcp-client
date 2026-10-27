@@ -24,6 +24,7 @@ import { is401Error } from '../errors';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import {
   currentMCPConnectionScopeKey,
+  markMCPConnectionScopeInterrupted,
   isMCPConnectionScopeCacheKeyActive,
   registerMCPConnectionScopeCleanup,
   registerMCPConnectionScopePending,
@@ -395,9 +396,20 @@ async function createNegotiatedClient(
         adcpVersion: options.signingContext.adcpVersion,
       }) as typeof fetch)
     : diagnosticFetch;
+  const transportFetch = wrapFetchWithCapture(withPerRequestTraceHeaders(signedFetch));
+  // The SDK's HTTP errors carry the status but not the response headers. Keep
+  // the last throttling response's Retry-After so a failed connect reports it.
+  let throttleRetryAfter: string | undefined;
   const transport = new StreamableHTTPClientTransport(new URL(options.agentUrl), {
     requestInit: { headers: splitConnectionHeaders(authHeaders).identity, redirect: 'manual' },
-    fetch: wrapFetchWithCapture(withPerRequestTraceHeaders(signedFetch)),
+    fetch: async (input, init) => {
+      const response = await transportFetch(input, init);
+      throttleRetryAfter =
+        response.status === 429 || response.status === 503
+          ? (response.headers.get('retry-after') ?? undefined)
+          : undefined;
+      return response;
+    },
     ...(options.authProvider && {
       authProvider: options.authProvider as ModernOAuthClientProvider,
     }),
@@ -475,8 +487,30 @@ async function createNegotiatedClient(
     if (isNegotiationAuthFailure(error) && !skipProbe && presentedStaticCredential(authHeaders, options.authProvider)) {
       return createNegotiatedClient(cacheKey, options, authHeaders, useCachedDiscovery, true);
     }
-    throw error;
+    throw withRetryAfter(error, throttleRetryAfter);
   }
+}
+
+/**
+ * Attach a throttling response's `Retry-After` to the 429/503 error it caused,
+ * as a non-enumerable `retryAfter` string. Read it with {@link retryAfterOf}.
+ */
+function withRetryAfter(error: unknown, retryAfter: string | undefined): unknown {
+  if (retryAfter === undefined || !error || typeof error !== 'object') return error;
+  const status = httpStatusOf(error);
+  if (status !== 429 && status !== 503) return error;
+  try {
+    Object.defineProperty(error, 'retryAfter', { value: retryAfter, enumerable: false, configurable: true });
+  } catch {
+    // A frozen error keeps its original shape; Retry-After is best effort.
+  }
+  return error;
+}
+
+/** `Retry-After` recorded on an MCP connect error by {@link withRetryAfter}, if any. */
+export function retryAfterOf(error: unknown): string | undefined {
+  const value = error && typeof error === 'object' ? (error as { retryAfter?: unknown }).retryAfter : undefined;
+  return typeof value === 'string' ? value : undefined;
 }
 
 async function getOrCreateModernConnection(
@@ -512,12 +546,12 @@ function createSharedModernConnection(
         generation === connectionGeneration
       ) {
         modernConnections.set(cacheKey, client);
-        registerMCPConnectionScopeCleanup('modern', cacheKey, async () => {
+        registerMCPConnectionScopeCleanup('modern', cacheKey, async terminateSession => {
           if (modernConnections.get(cacheKey) !== client) return;
           modernConnections.delete(cacheKey);
           legacyConnectionExpiresAt.delete(cacheKey);
           modernDiscoveries.delete(cacheKey);
-          await closeModernClient(client);
+          await closeModernClient(client, terminateSession);
         });
         if (client.getProtocolEra() === 'legacy') {
           legacyConnectionExpiresAt.set(cacheKey, Date.now() + LEGACY_CLASSIFICATION_TTL_MS);
@@ -548,7 +582,10 @@ function createSharedModernConnection(
 async function retireFailedConnection(cacheKey: string, client: Client, error: unknown): Promise<void> {
   // An abort or timeout is scoped to the request that carried it, and that
   // request is cancelled, so the session stays available to other callers.
-  if (isAbortOrTimeoutError(error)) return;
+  if (isAbortOrTimeoutError(error)) {
+    markMCPConnectionScopeInterrupted();
+    return;
+  }
   if (modernConnections.get(cacheKey) === client) {
     modernConnections.delete(cacheKey);
     legacyConnectionExpiresAt.delete(cacheKey);
@@ -768,6 +805,10 @@ export async function probeModernMCPConnection(
     options.allowPrivateIp
   );
   const scoped = shouldReuseMCPConnection(options.fetchFn !== undefined);
+  // A fresh v1 connection below still verifies reachability. Repeating the v2
+  // classification handshake would initialize a second legacy session solely
+  // to discard it, even though this credential/policy already has a verdict.
+  if (isKnownLegacy(cacheKey)) return { connected: false };
   let client: Client | undefined;
   return runWithMCPCallContext(
     callContextFor({ customHeaders, requestTimeoutMs: options.requestTimeoutMs }),

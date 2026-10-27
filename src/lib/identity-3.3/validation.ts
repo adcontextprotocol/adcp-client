@@ -1,7 +1,8 @@
 /** Per-call draft overlays. Never mutates the released schema or changes ADCP_VERSION. */
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
-import { getValidator } from '../validation/schema-loader';
+import { getValidator, getToolSchemaDocument, relaxResponseRoot } from '../validation/schema-loader';
+import { compactSchemaForValidation } from '../validation/compact-schema';
 import type { ValidationOutcome } from '../validation/schema-validator';
 import schemas from './schemas.draft';
 const validators = new WeakMap<object, Map<string, ReturnType<Ajv['compile']>>>();
@@ -21,7 +22,14 @@ export function validateIdentity33Payload(
   }
   let validator = cache.get(key);
   if (!validator) {
-    const schema = structuredClone(stable.schema) as Record<string, unknown>;
+    // Draft overlays walk the complete bundled shape; the ordinary runtime
+    // validator now keeps modular refs instead of inlining every schema.
+    const document = (getToolSchemaDocument(tool, direction === 'request' ? 'request' : 'sync', version)?.schema ??
+      stable.schema) as Record<string, unknown>;
+    const schema = structuredClone(direction === 'response' ? relaxResponseRoot(document) : document) as Record<
+      string,
+      unknown
+    >;
     const relationship = schemas.find(s => s.$id === '/schemas/core/principal-relationship.json')!;
     const onboarding = schemas.find(s => s.$id === '/schemas/core/agent-onboarding.json')!;
     function walk(node: unknown, name = ''): void {
@@ -77,10 +85,10 @@ export function validateIdentity33Payload(
       for (const [k, value] of Object.entries(object)) if (k !== '$id') walk(value, k);
     }
     walk(schema);
-    const ajv = new Ajv({ strict: false, allErrors: true });
+    const ajv = new Ajv({ inlineRefs: false, strict: false, allErrors: true });
     addFormats(ajv);
     for (const draft of schemas) ajv.addSchema({ ...draft, $id: 'https://adcontextprotocol.org' + draft.$id });
-    validator = ajv.compile(schema);
+    validator = ajv.compile(compactSchemaForValidation(schema));
     cache.set(key, validator);
   }
   let valid = validator(payload) === true;

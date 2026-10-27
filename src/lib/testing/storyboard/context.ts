@@ -20,7 +20,12 @@ import { getAuthoritativeMediaBuyStatus } from '../../utils/media-buy-status';
 // Context extraction: pull known IDs from task responses
 // ────────────────────────────────────────────────────────────
 
-type ContextExtractor = (data: unknown) => Record<string, unknown>;
+/**
+ * `adcpVersion` is the release the step was requested at. Media-buy mutation
+ * extractors use it to tell a 3.1+ task-envelope `status` from a 3.0
+ * lifecycle `status` when the response does not echo its version.
+ */
+type ContextExtractor = (data: unknown, adcpVersion?: string) => Record<string, unknown>;
 
 const PRODUCT_CONTEXT_KEYS = [
   'product',
@@ -49,13 +54,27 @@ function readMediaBuyStatus(record: Record<string, unknown> | undefined): unknow
   return getAuthoritativeMediaBuyStatus(record);
 }
 
-function readMediaBuyFields(data: unknown): { mediaBuyId?: unknown; status?: unknown } {
+function readMediaBuyFields(data: unknown, adcpVersion?: string): { mediaBuyId?: unknown; status?: unknown } {
   const outer = asRecord(data);
   const nested = asRecord(outer?.media_buy);
   return {
     mediaBuyId: nested?.media_buy_id ?? outer?.media_buy_id,
-    status: readMediaBuyStatus(nested) ?? readMediaBuyStatus(outer),
+    status: readMediaBuyStatus(nested) ?? readMediaBuyStatus(withRequestedVersion(outer, adcpVersion)),
   };
+}
+
+/**
+ * A create/update response's top-level `status` is the task envelope from
+ * AdCP 3.1. When the seller omits the optional version echo, read the payload
+ * at the requested release so a bare `completed` is not taken as a lifecycle.
+ */
+function withRequestedVersion(
+  record: Record<string, unknown> | undefined,
+  adcpVersion: string | undefined
+): Record<string, unknown> | undefined {
+  if (!record || !adcpVersion) return record;
+  if (typeof record.adcp_version === 'string' || typeof record.adcp_major_version === 'number') return record;
+  return { ...record, adcp_version: adcpVersion };
 }
 
 function readProposalFields(proposal: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -199,16 +218,16 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     return readCompactMediaBuyFields(data);
   },
 
-  create_media_buy(data) {
-    const { mediaBuyId, status } = readMediaBuyFields(data);
+  create_media_buy(data, adcpVersion) {
+    const { mediaBuyId, status } = readMediaBuyFields(data, adcpVersion);
     const extracted: Record<string, unknown> = {};
     if (mediaBuyId) extracted.media_buy_id = mediaBuyId;
     if (status) extracted.media_buy_status = status;
     return extracted;
   },
 
-  update_media_buy(data) {
-    const { mediaBuyId, status } = readMediaBuyFields(data);
+  update_media_buy(data, adcpVersion) {
+    const { mediaBuyId, status } = readMediaBuyFields(data, adcpVersion);
     const extracted: Record<string, unknown> = {};
     if (mediaBuyId) extracted.media_buy_id = mediaBuyId;
     if (status) extracted.media_buy_status = status;
@@ -438,12 +457,17 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
 
 /**
  * Extract context values from a task response.
+ *
+ * @param adcpVersion - Optional AdCP release the request was sent at. Used
+ *   only when the response does not echo `adcp_version`, to read a
+ *   create/update top-level `status` as the 3.1+ task status rather than a
+ *   3.0 media-buy lifecycle.
  */
-export function extractContext(taskName: string, data: unknown): Record<string, unknown> {
+export function extractContext(taskName: string, data: unknown, adcpVersion?: string): Record<string, unknown> {
   const extractor = CONTEXT_EXTRACTORS[taskName];
   if (!extractor) return {};
   try {
-    return extractor(data);
+    return extractor(data, adcpVersion);
   } catch {
     return {};
   }
@@ -717,8 +741,13 @@ export interface ContextWriteResult {
  * tagging it as a convention-based extraction. `response_path` is absent
  * for convention extractors — they're hardcoded functions, not YAML paths.
  */
-export function extractContextWithProvenance(taskName: string, data: unknown, stepId: string): ContextWriteResult {
-  const values = extractContext(taskName, data);
+export function extractContextWithProvenance(
+  taskName: string,
+  data: unknown,
+  stepId: string,
+  adcpVersion?: string
+): ContextWriteResult {
+  const values = extractContext(taskName, data, adcpVersion);
   const clearGroups = (() => {
     const response = asRecord(data);
     switch (taskName) {

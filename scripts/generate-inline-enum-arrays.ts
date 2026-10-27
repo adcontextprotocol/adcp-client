@@ -147,6 +147,11 @@ function extractStringLiteralUnion(schema: unknown): { values: string[]; isArray
     const candidateDef = getDef(candidateCore);
     if (!candidateDef) return null;
 
+    if (candidateDef.type === 'enum' && candidateDef.entries && typeof candidateDef.entries === 'object') {
+      const values = Object.values(candidateDef.entries);
+      return values.length > 0 && values.every(value => typeof value === 'string') ? (values as string[]) : null;
+    }
+
     if (candidateDef.type === 'literal') {
       // Zod 4 `z.literal('x')` stores values as an array (multi-literal
       // support); we accept any number of string members per option.
@@ -216,7 +221,7 @@ function buildNamedEnumGate(allSchemas: Record<string, unknown>): NamedEnumGate 
     const core = unwrap(schema);
     const def = getDef(core);
     if (!def) continue;
-    if (def.type === 'union' || def.type === 'literal') {
+    if (def.type === 'union' || def.type === 'literal' || def.type === 'enum') {
       byIdentity.add(core);
       const extracted = extractStringLiteralUnion(schema);
       if (extracted) byFingerprint.add(fingerprintLiterals(extracted.values));
@@ -414,7 +419,16 @@ function writeFileIfChanged(filePath: string, newContent: string): boolean {
 function main(): void {
   console.log('🔄 Generating inline-union value arrays...');
 
-  const items = [...extractFromAllSchemas(), ...COMPOUND_SCHEMA_INLINE_ENUMS];
+  const extracted = extractFromAllSchemas();
+  const byName = new Map(extracted.map(item => [item.name, item]));
+  for (const fallback of COMPOUND_SCHEMA_INLINE_ENUMS) {
+    const existing = byName.get(fallback.name);
+    if (existing && fingerprintLiterals(existing.values) !== fingerprintLiterals(fallback.values)) {
+      throw new Error(`Inline enum fallback disagrees with the generated schema: ${fallback.name}`);
+    }
+    if (!existing) byName.set(fallback.name, fallback);
+  }
+  const items = [...byName.values()];
 
   // Guardrail: AdCP 3.0.1 hoisted 20 inline string-literal unions into
   // named `enums/*.json` files (adcp#3148 + #3174), dropping the count

@@ -1,12 +1,18 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { isAbortOrTimeoutError } from './abort';
 
-type ScopeCleanup = () => Promise<void>;
+type ScopeCleanup = (terminateSession: boolean) => Promise<void>;
 
 interface MCPConnectionScope {
   id: number;
   cacheKey: string;
   pending: Set<Promise<unknown>>;
   cleanups: Map<string, ScopeCleanup>;
+  signal?: AbortSignal;
+  interrupted?: boolean;
+  preserveOnInterruption?: boolean;
+  preserveSessionOnResult?: (result: unknown) => boolean;
+  preserveSession?: boolean;
 }
 
 const scopeStorage = new AsyncLocalStorage<MCPConnectionScope>();
@@ -16,6 +22,12 @@ let nextScopeId = 0;
 /** Cache-key suffix for the current caller-owned MCP workflow. */
 export function currentMCPConnectionScopeKey(): string | undefined {
   return scopeStorage.getStore()?.cacheKey;
+}
+
+/** Preserve seller work even when a higher layer handles a request timeout. */
+export function markMCPConnectionScopeInterrupted(): void {
+  const scope = scopeStorage.getStore();
+  if (scope?.preserveOnInterruption) scope.interrupted = true;
 }
 
 /** Whether an LRU entry belongs to a workflow that has not finished yet. */
@@ -58,7 +70,9 @@ export async function closeCurrentMCPConnectionScope(): Promise<boolean> {
   // the same workflow can register a fresh connection for the outer finally.
   const cleanups = [...scope.cleanups.values()];
   scope.cleanups.clear();
-  await Promise.allSettled(cleanups.map(cleanup => cleanup()));
+  await Promise.allSettled(
+    cleanups.map(cleanup => cleanup(!scope.signal?.aborted && !scope.interrupted && !scope.preserveSession))
+  );
   return true;
 }
 
@@ -73,6 +87,9 @@ export async function closeCurrentMCPConnectionScope(): Promise<boolean> {
  * Per-call correlation headers, `AbortSignal`s and timeouts do not choose the
  * session. The scope terminates its sessions once, when `fn` settles; pass
  * `{ isolate: true }` to force a fresh scope even when called from inside one.
+ * Explicit workflows terminate sessions at exit even if an inner call returned
+ * submitted/working; the caller owns that lifetime. Implicit task scopes may
+ * close only their local clients when their final result remains nonterminal.
  *
  * @example
  * ```ts
@@ -82,15 +99,39 @@ export async function closeCurrentMCPConnectionScope(): Promise<boolean> {
  * });
  * ```
  */
-export async function withMCPConnectionScope<T>(fn: () => Promise<T>, options: { isolate?: boolean } = {}): Promise<T> {
+export async function withMCPConnectionScope<T>(
+  fn: () => Promise<T>,
+  options: {
+    isolate?: boolean;
+    /** @internal Preserve seller work when an implicit task scope aborts. */
+    signal?: AbortSignal;
+    /** @internal Request timeouts need not abort the enclosing task signal. */
+    preserveOnInterruption?: boolean;
+    /** @internal Decide cleanup from the owning implicit task's final result. */
+    preserveSessionOnResult?: (result: unknown) => boolean;
+  } = {}
+): Promise<T> {
   if (scopeStorage.getStore() && options.isolate !== true) return fn();
 
   const id = ++nextScopeId;
-  const scope: MCPConnectionScope = { id, cacheKey: `scope:${id}`, pending: new Set(), cleanups: new Map() };
+  const scope: MCPConnectionScope = {
+    id,
+    cacheKey: `scope:${id}`,
+    pending: new Set(),
+    cleanups: new Map(),
+    signal: options.signal,
+    preserveOnInterruption: options.preserveOnInterruption,
+    preserveSessionOnResult: options.preserveSessionOnResult,
+  };
   activeScopeKeys.add(scope.cacheKey);
   return scopeStorage.run(scope, async () => {
     try {
-      return await fn();
+      const result = await fn();
+      scope.preserveSession = scope.preserveSessionOnResult?.(result) === true;
+      return result;
+    } catch (error) {
+      if (isAbortOrTimeoutError(error)) markMCPConnectionScopeInterrupted();
+      throw error;
     } finally {
       try {
         await closeCurrentMCPConnectionScope();

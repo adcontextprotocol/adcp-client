@@ -701,6 +701,7 @@ function compileRowSchema(schema: Record<string, unknown>, maxCompileMs: number,
   assertInspectionDeadline(deadline);
   const startedAt = Date.now();
   const ajv = new Ajv2020({
+    inlineRefs: false,
     strictSchema: true,
     strictTypes: false,
     allErrors: true,

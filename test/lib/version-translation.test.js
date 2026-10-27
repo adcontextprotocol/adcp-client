@@ -304,6 +304,21 @@ describe('convertResponse', () => {
     assert.equal(drifts[0].fromVersion, '3.1');
   });
 
+  test('moves an un-echoed 3.1 lifecycle alias but not a 3.1 task status (adcp-client#3432)', () => {
+    const lifecycle = { status: 'pending_creatives', media_buy_id: 'mb_1', packages: [] };
+    const moved = convertResponse('create_media_buy', lifecycle, { fromVersion: '3.1', toVersion: CLIENT_VERSION });
+    assert.equal(moved.data.media_buy_status, 'pending_creatives');
+    assert.equal(moved.drifts[0].type, 'media_buy_status_alias_moved');
+
+    for (const status of ['completed', 'rejected', 'canceled']) {
+      const taskStatus = { status, media_buy_id: 'mb_1', packages: [] };
+      const kept = convertResponse('create_media_buy', taskStatus, { fromVersion: '3.1', toVersion: CLIENT_VERSION });
+      assert.equal(kept.data, taskStatus, status);
+      assert.ok(!('media_buy_status' in kept.data), status);
+      assert.ok(!kept.drifts.some(d => d.type === 'media_buy_status_alias_moved'), status);
+    }
+  });
+
   test('copies the 3.1 root delivery currency onto each media buy', () => {
     const response = {
       currency: 'USD',

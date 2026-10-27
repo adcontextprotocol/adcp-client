@@ -17,7 +17,8 @@ import { ADCPError } from '../../errors';
 import { isAdcpVersionSupported } from '../../utils/adcp-version-config';
 import { hasSchemaBundle, resolveBundleKey } from '../../validation/schema-loader';
 import { synthesizeRequestSigningSteps } from './request-signing/synthesize';
-import { markStoryboardComplianceRoot } from './provenance';
+import { invalidateRequestSigningVectorCache } from './request-signing/vector-loader';
+import { markStoryboardComplianceRoot, trustedStoryboardComplianceRoot } from './provenance';
 import type { RunnerSelectionResult, Storyboard } from './types';
 
 /**
@@ -691,29 +692,84 @@ export function listBundles(options: ResolveOptions = {}): BundleRef[] {
   return bundles;
 }
 
-/** List every storyboard the cache can produce, across all bundles. */
-export function listAllComplianceStoryboards(options: ResolveOptions = {}): Storyboard[] {
-  const seen = new Set<string>();
-  const storyboards: Storyboard[] = [];
-  for (const ref of listBundles(options)) {
-    for (const sb of loadBundleStoryboards(ref)) {
-      if (seen.has(sb.id)) continue;
-      seen.add(sb.id);
-      storyboards.push(sb);
-    }
-  }
-  return storyboards;
+// Published versioned bundles are immutable. Keep a bounded per-authority
+// index, and return detached records so caller edits cannot poison later runs.
+const STORYBOARD_INDEX_CACHE_LIMIT = 8;
+const storyboardIndexes = new Map<string, ReadonlyMap<string, Storyboard>>();
+
+/** Custom authoring roots can change without their published index changing. */
+function customComplianceInventory(dir: string): string {
+  if (!existsSync(dir)) return 'missing'; // Keep the loader's actionable missing-cache diagnostic.
+  const entries: unknown[] = [];
+  const visitedDirectories = new Set<string>();
+  const visit = (file: string, relative: string): void => {
+    const stat = statSync(file, { bigint: true });
+    entries.push([relative, String(stat.mtimeNs), String(stat.ctimeNs), String(stat.size), String(stat.ino)]);
+    if (!stat.isDirectory()) return;
+    const identity = `${stat.dev}:${stat.ino}`;
+    if (visitedDirectories.has(identity)) return;
+    visitedDirectories.add(identity);
+    for (const child of readdirSync(file).sort()) visit(join(file, child), `${relative}/${child}`);
+  };
+  visit(dir, '');
+  return JSON.stringify(entries);
 }
 
-/**
- * Find a storyboard by its internal `id` (the YAML's `id:` field).
- * Scans every bundle in the cache. Returns undefined if no match.
- */
-export function getComplianceStoryboardById(id: string, options: ResolveOptions = {}): Storyboard | undefined {
-  for (const sb of listAllComplianceStoryboards(options)) {
-    if (sb.id === id) return sb;
+function complianceStoryboardIndex(options: ResolveOptions): ReadonlyMap<string, Storyboard> {
+  const dir = resolve(getComplianceCacheDir(options));
+  const indexPath = join(dir, 'index.json');
+  const stamp = existsSync(indexPath) ? statSync(indexPath) : undefined;
+  const schemaRoot = getConfiguredSchemaRoot(options);
+  // Published package roots are immutable during a process lifetime. Authoring
+  // overrides include YAML, nested scenarios and signing synthesis fixtures;
+  // stat-only inventory checks avoid reparsing any unchanged warm bundle.
+  const customRoot = Boolean(getConfiguredComplianceDir(options));
+  const inventory = customRoot ? customComplianceInventory(dir) : null;
+  const key = JSON.stringify([
+    dir,
+    options.version ?? ADCP_VERSION,
+    schemaRoot ? resolve(schemaRoot) : null,
+    options.hostedStableLineAlias ?? null,
+    stamp?.mtimeMs ?? null,
+    stamp?.size ?? null,
+    inventory,
+  ]);
+  const cached = storyboardIndexes.get(key);
+  if (cached) {
+    storyboardIndexes.delete(key);
+    storyboardIndexes.set(key, cached);
+    return cached;
   }
-  return undefined;
+  if (customRoot) invalidateRequestSigningVectorCache(dir);
+  const indexed = new Map<string, Storyboard>();
+  for (const ref of listBundles({ ...options, complianceDir: dir })) {
+    for (const storyboard of loadBundleStoryboards(ref)) {
+      if (!indexed.has(storyboard.id)) indexed.set(storyboard.id, storyboard);
+    }
+  }
+  storyboardIndexes.set(key, indexed);
+  while (storyboardIndexes.size > STORYBOARD_INDEX_CACHE_LIMIT) {
+    const oldest = storyboardIndexes.keys().next().value;
+    if (oldest !== undefined) storyboardIndexes.delete(oldest);
+  }
+  return indexed;
+}
+
+function cloneComplianceStoryboard(storyboard: Storyboard): Storyboard {
+  const copy = structuredClone(storyboard);
+  const trustedRoot = trustedStoryboardComplianceRoot(storyboard);
+  return trustedRoot ? markStoryboardComplianceRoot(copy, trustedRoot) : copy;
+}
+
+/** List every storyboard the selected immutable bundle can produce, as detached records. */
+export function listAllComplianceStoryboards(options: ResolveOptions = {}): Storyboard[] {
+  return [...complianceStoryboardIndex(options).values()].map(cloneComplianceStoryboard);
+}
+
+/** Find a storyboard by its internal YAML id without reparsing a warm bundle. */
+export function getComplianceStoryboardById(id: string, options: ResolveOptions = {}): Storyboard | undefined {
+  const storyboard = complianceStoryboardIndex(options).get(id);
+  return storyboard ? cloneComplianceStoryboard(storyboard) : undefined;
 }
 
 /** Find a bundle by its directory/file id (`media-buy`, `sales-guaranteed`, `capability-discovery`). */

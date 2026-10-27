@@ -73,7 +73,7 @@ export function resolveAdcpVersion(adcpVersion: string | undefined, optionName =
     throw new ConfigurationError(
       `${optionName} ${JSON.stringify(adcpVersion)} is not a valid AdCP version. ` +
         `Expected a semver string (e.g. '3.0.1', '3.1.0-beta.1') or a legacy alias. ` +
-        `Currently bundled: ${listBundledAdcpVersions().join(', ')}.`,
+        `Currently bundled: ${bundledVersionHint()}.`,
       optionName
     );
   }
@@ -91,15 +91,19 @@ export function resolveAdcpVersion(adcpVersion: string | undefined, optionName =
     throw new ConfigurationError(
       `${optionName} ${JSON.stringify(adcpVersion)} resolves to bundle key "${resolvedKey}", ` +
         `but no schema bundle for that key ships with this SDK build. ` +
-        `Currently bundled: ${listBundledAdcpVersions().join(', ')}. ` +
-        `If you're testing against a beta that the spec repo has tagged but the SDK hasn't synced yet, ` +
-        `run \`npm run sync-schemas\` and \`npm run build:lib\` to populate the cache, ` +
-        `then re-construct.`,
+        `Currently bundled: ${bundledVersionHint()}. ` +
+        `Pin one of these releases explicitly; a stable version does not select a prerelease.`,
       optionName
     );
   }
 
   return adcpVersion;
+}
+
+// Stable patches share a wire bundle. Report each line once rather than
+// printing every historical patch accepted by that bundle.
+function bundledVersionHint(): string {
+  return [...new Set(listBundledAdcpVersions().map(resolveBundleKey))].join(', ');
 }
 
 /** Whether a value is the ambiguous moving family alias for the pinned 3.2 preview. */

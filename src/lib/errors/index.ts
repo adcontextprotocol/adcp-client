@@ -753,6 +753,70 @@ export class ResponseTooLargeError extends ADCPError {
 }
 
 /**
+ * Error thrown when an agent rate-limits the SDK's endpoint discovery: a
+ * probe answered HTTP 429, or HTTP 503 with a `Retry-After` header.
+ *
+ * Discovery stops at the first such probe instead of trying the remaining
+ * candidate URLs, which would only spend more of the seller's request budget.
+ * The rate limit says nothing about whether `agent_uri` is correct.
+ *
+ * Recovery: `transient`. Wait `retryAfterMs` (when the agent sent
+ * `Retry-After`) and retry.
+ */
+export class AgentRateLimitedError extends ADCPError {
+  readonly code = 'RATE_LIMITED';
+  /** The probed URL, without credentials, query or fragment. */
+  readonly agentUrl: string;
+  /** `Retry-After` as the agent sent it. Set only when it is valid delta-seconds or an HTTP-date. */
+  readonly retryAfter?: string;
+  /** Delay from `Retry-After`, in milliseconds. */
+  readonly retryAfterMs?: number;
+
+  constructor(
+    agentUrl: string,
+    public readonly status: number,
+    retryAfter?: string,
+    cause?: unknown
+  ) {
+    const safeAgentUrl = sanitizeAgentUrlForError(agentUrl);
+    const retryAfterMs = parseRetryAfterMs(retryAfter);
+    const validRetryAfter = retryAfterMs === undefined ? undefined : retryAfter?.trim();
+    const retryHint =
+      retryAfterMs === undefined
+        ? 'No usable Retry-After header; back off before retrying.'
+        : `Retry-After: ${validRetryAfter} (${Math.ceil(retryAfterMs / 1000)}s).`;
+    super(
+      `Agent rate limited MCP endpoint discovery: HTTP ${status} from ${safeAgentUrl}. ${retryHint} ` +
+        `Discovery stopped at this probe to avoid spending more of the agent's request budget; ` +
+        `this does not indicate a wrong agent_uri.`
+    );
+    this.agentUrl = safeAgentUrl;
+    if (retryAfterMs !== undefined) {
+      this.retryAfter = validRetryAfter;
+      this.retryAfterMs = retryAfterMs;
+    }
+    this.details = {
+      agentUrl: safeAgentUrl,
+      status,
+      ...(retryAfterMs !== undefined && { retryAfter: validRetryAfter, retryAfterMs }),
+    };
+    if (cause !== undefined) {
+      Object.defineProperty(this, 'cause', { value: cause, enumerable: false, configurable: true });
+    }
+  }
+}
+
+function parseRetryAfterMs(value: string | undefined): number | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (/^\d{1,10}$/.test(trimmed)) return Number(trimmed) * 1000;
+  // IMF-fixdate (RFC 9110 §5.6.7). Anything looser is not echoed into messages.
+  if (!/^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(trimmed)) return undefined;
+  const date = Date.parse(trimmed);
+  return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now());
+}
+
+/**
  * Error thrown when an `update_media_buy` request is rejected because the
  * action it maps to isn't currently allowed on the buy (AdCP 3.1, RFC #4480).
  *

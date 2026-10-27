@@ -126,7 +126,13 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // native-task routing/signing context declarations. CI measures 20,581,610
 // packed bytes; retain about 43 KB of compressor variance for this additive
 // surface. All unpacked, file-count, schema and declaration limits stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 20_625_000;
+// SDK 16.6 adds the standalone delivery receiver, strict canonical delivery Zod
+// schema, targeting-key/enum exports, validated account snapshots and bounded
+// AJV compilation. Published 16.5 is 20,601,337 packed bytes; this reviewed
+// candidate measures 20,781,701 (+180,364). The generated canonical delivery
+// validator accounts for most growth; protocol/compliance corpora are unchanged.
+// Retain about 68 KB of compressor variance. All other limits stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 20_850_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
