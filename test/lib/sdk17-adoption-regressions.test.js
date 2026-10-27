@@ -363,3 +363,43 @@ test('asset schemas reject empty macro declarations while preserving optional om
   assert.equal(schemas.AssetVariantSchema.safeParse(asset).success, true);
   assert.equal(schemas.AssetVariantSchema.safeParse({ ...asset, macro_declarations: [] }).success, false);
 });
+
+test('trusted wire metadata prevents a seller echo from relaxing account-feed validation', async () => {
+  const stream = sdk.streamAccountChanges(
+    { listAccountChanges: async () => feedResult({ wireAdcpVersion: sdk.ADCP_VERSION, adcpVersion: '3.2' }) },
+    { account }
+  );
+  await assert.rejects(stream.next(), error => error.code === 'account_change_page_invalid');
+});
+
+test('custom-reader validation pin takes precedence over an unverified seller echo', async () => {
+  const stream = sdk.streamAccountChanges(
+    { listAccountChanges: async () => feedResult({ adcpVersion: '3.2' }) },
+    { account, adcpVersion: sdk.ADCP_VERSION }
+  );
+  await assert.rejects(stream.next(), error => error.code === 'account_change_page_invalid');
+});
+
+test('executor metadata retains trusted same-release negotiation independently of the seller echo', async t => {
+  const page = { ...feedResult().data, adcp_version: '3.2' };
+  t.mock.method(sdk.ProtocolClient, 'callTool', async () => ({
+    content: [{ type: 'text', text: JSON.stringify(page) }],
+    structuredContent: page,
+  }));
+  const executor = new sdk.TaskExecutor({
+    adcpVersion: sdk.ADCP_VERSION,
+    validation: { requests: 'off', responses: 'off' },
+  });
+  const result = await executor.executeTask(
+    { id: 'wire-metadata-seller', name: 'Seller', protocol: 'mcp', agent_uri: 'https://seller.example/mcp' },
+    'list_account_changes',
+    { account, starting_position: 'earliest' },
+    undefined,
+    { negotiatedAdcpVersion: sdk.ADCP_VERSION, wireAdcpVersion: sdk.ADCP_VERSION }
+  );
+  assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(result.metadata.wireAdcpVersion, sdk.ADCP_VERSION);
+  assert.equal(result.metadata.adcpVersion, '3.2');
+  const stream = sdk.streamAccountChanges({ listAccountChanges: async () => result }, { account });
+  await assert.rejects(stream.next(), error => error.code === 'account_change_page_invalid');
+});

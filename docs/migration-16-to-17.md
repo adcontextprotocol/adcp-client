@@ -96,8 +96,8 @@ arrays exported from `@adcp/sdk` and `@adcp/sdk/types`. They include
 `collection_lists`, `collection_lists_exclude`, and extension fields. Use them
 for exhaustive dimension handling instead of maintaining local copies.
 
-`streamAccountChanges` validates each page using the SDK's negotiated/echoed
-response version, falling back to the client's configured version. Custom
+`streamAccountChanges` validates each page using trusted negotiated/wire
+metadata before any seller echo, falling back to the client's configured version. Custom
 readers can pass `adcpVersion: '3.2.7'` in the drain options. This selects
 validation only; the reader remains responsible for sending the matching
 request release. Existing cursor, account identity, and acknowledgement checks

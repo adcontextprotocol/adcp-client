@@ -270,3 +270,8 @@ or the client's configured AdCP version to select the page schema. For a custom
 reader without SDK metadata, pass `adcpVersion: '3.2.7'` in the stream options and
 send the same release in your reader's requests. AdCP 3.3 requires nonempty
 `changed_paths` on seller-originated changes; AdCP 3.2 does not.
+
+When available, `metadata.wireAdcpVersion` records the trusted SDK-selected wire
+release, independently of the seller echo. Drains prefer negotiated/wire
+metadata, then a custom reader's explicit `adcpVersion`, then the echo and
+configured client pin. An older echo cannot weaken a known wire contract.

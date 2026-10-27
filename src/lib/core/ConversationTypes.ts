@@ -314,6 +314,8 @@ export interface TaskOptions {
  * Internal task state for tracking execution
  */
 export interface TaskState {
+  /** Trusted selected release retained when request options are released. */
+  wireAdcpVersion?: string;
   /** Unique task identifier */
   taskId: string;
   /** Seller work handle, distinct from the local operation id. */
@@ -618,6 +620,12 @@ export interface TaskResultMetadata {
    * field the conversion removed or moved).
    */
   negotiatedAdcpVersion?: string;
+  /**
+   * Trusted SDK-selected wire release, when negotiation or an explicit wire
+   * override established it. Unlike adcpVersion, this is not a seller echo.
+   * Present even when negotiation selects the client's current release.
+   */
+  wireAdcpVersion?: string;
   /** Seller wire generation used for this request after capability discovery. */
   serverVersion?: 'v2' | 'v3';
   /** True when {@link serverVersion} came from the SDK's synthetic fallback. */
