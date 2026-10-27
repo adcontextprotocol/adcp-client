@@ -86,10 +86,20 @@ export function compactBundledSchema(root: JsonObject, options: { maxInlineSchem
   // a new $ref would erase the original path. Default archive serialization
   // stays byte-for-byte unchanged; this guard is validation-mode-only.
   const pointerAddressedNodes = new Set<JsonObject>();
+  const unionAlternatives = new Set<JsonObject>();
   if (options.maxInlineSchemaBytes !== undefined) {
     const rootUrl = new URL(typeof root.$id === 'string' ? root.$id : '', 'https://adcp.invalid/');
     rootUrl.hash = '';
     for (const schema of visited) {
+      // Keep the branch boundary in its union function so AJV retains
+      // /oneOf/N and /anyOf/N in diagnostics. Descendants can still be
+      // factored, keeping the generated functions bounded.
+      for (const keyword of ['oneOf', 'anyOf']) {
+        const alternatives = schema[keyword];
+        if (Array.isArray(alternatives)) {
+          for (const alternative of alternatives) if (isObject(alternative)) unionAlternatives.add(alternative);
+        }
+      }
       if (typeof schema.$ref !== 'string') continue;
       let fragment: string;
       try {
@@ -192,7 +202,7 @@ export function compactBundledSchema(root: JsonObject, options: { maxInlineSchem
 
   const signatureGroups = new Map<string, JsonObject[]>();
   for (const schema of visited) {
-    if (schema === root || pointerAddressedNodes.has(schema)) continue;
+    if (schema === root || pointerAddressedNodes.has(schema) || unionAlternatives.has(schema)) continue;
     const signature = schemaSignature(schema);
     const group = signatureGroups.get(signature) ?? [];
     group.push(schema);

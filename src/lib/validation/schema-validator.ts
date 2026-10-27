@@ -6,7 +6,13 @@
  */
 
 import type { ErrorObject } from 'ajv';
-import { getValidator, getRegisteredSchemaIds, type Direction, type ResponseVariant } from './schema-loader';
+import {
+  getValidator,
+  getToolSchemaDocument,
+  getRegisteredSchemaIds,
+  type Direction,
+  type ResponseVariant,
+} from './schema-loader';
 import { findHint } from './hints';
 import { injectLegacyEnvelopeStatus } from '../utils/envelope-status-compat';
 import { boundValidationIssues } from './diagnostic-limits';
@@ -296,6 +302,60 @@ function resolveSchemaPath(rootSchema: unknown, schemaPath: string): unknown {
   return cursor;
 }
 
+/**
+ * A referenced AJV function reports schema paths relative to its own root.
+ * Locate that root in the public document using the failing data location;
+ * this keeps diagnostics independent of private validation factoring.
+ */
+function resolveInstanceSchemaPath(rootSchema: unknown, instancePath: string, schemaPath: string): unknown {
+  const segments = instancePath
+    ? instancePath
+        .slice(1)
+        .split('/')
+        .map(s => s.replace(/~1/g, '/').replace(/~0/g, '~'))
+    : [];
+  const visited = new Map<object, Set<number>>();
+  const visit = (schema: unknown, offset: number): unknown => {
+    if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return undefined;
+    const seen = visited.get(schema) ?? new Set<number>();
+    if (seen.has(offset)) return undefined;
+    seen.add(offset);
+    visited.set(schema, seen);
+    const node = schema as Record<string, unknown>;
+    if (typeof node.$ref === 'string' && node.$ref.startsWith('#/')) {
+      const resolved = visit(resolveSchemaPath(rootSchema, node.$ref), offset);
+      if (resolved !== undefined) return resolved;
+    }
+    if (offset === segments.length) {
+      const resolved = resolveSchemaPath(schema, schemaPath);
+      if (resolved !== undefined) return resolved;
+    } else {
+      const key = segments[offset]!;
+      if (FORBIDDEN_SCHEMA_PATH_SEGMENTS.has(key)) return undefined;
+      const properties = node.properties;
+      if (properties && typeof properties === 'object' && Object.hasOwn(properties, key)) {
+        const resolved = visit((properties as Record<string, unknown>)[key], offset + 1);
+        if (resolved !== undefined) return resolved;
+      }
+      if (/^(0|[1-9]\d*)$/.test(key) && node.items !== undefined) {
+        const item = Array.isArray(node.items) ? node.items[Number(key)] : node.items;
+        const resolved = visit(item, offset + 1);
+        if (resolved !== undefined) return resolved;
+      }
+    }
+    for (const keyword of ['allOf', 'oneOf', 'anyOf']) {
+      const branches = node[keyword];
+      if (!Array.isArray(branches)) continue;
+      for (const branch of branches) {
+        const resolved = visit(branch, offset);
+        if (resolved !== undefined) return resolved;
+      }
+    }
+    return undefined;
+  };
+  return visit(rootSchema, 0) ?? resolveSchemaPath(rootSchema, schemaPath);
+}
+
 /** Expand only unconditional single-property presence guards; keep other not rules intact. */
 function* expandNotErrors(
   errors: readonly ErrorObject[],
@@ -303,7 +363,8 @@ function* expandNotErrors(
   payload: unknown
 ): Generator<ErrorObject> {
   for (const error of errors) {
-    const rule = error.keyword === 'not' ? resolveSchemaPath(rootSchema, error.schemaPath) : undefined;
+    const rule =
+      error.keyword === 'not' ? resolveInstanceSchemaPath(rootSchema, error.instancePath, error.schemaPath) : undefined;
     const branches = rule && typeof rule === 'object' ? (rule as { anyOf?: unknown }).anyOf : undefined;
     if (!Array.isArray(branches) || branches.length === 0 || Object.keys(rule as object).length !== 1) {
       yield error;
@@ -432,7 +493,7 @@ function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown)
   const unionRoots = errors
     .filter(e => e.keyword === 'oneOf' || e.keyword === 'anyOf')
     .slice()
-    .sort((a, b) => b.schemaPath.length - a.schemaPath.length);
+    .sort((a, b) => b.instancePath.length - a.instancePath.length || b.schemaPath.length - a.schemaPath.length);
 
   for (const root of unionRoots) {
     if (dropped.has(root)) continue;
@@ -462,7 +523,7 @@ function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown)
     // Resolve the variant schema array. Without it we fall back to a pure
     // error-shape collapse (still correct, just less precise on which
     // variants asserted const where the user happened to match).
-    const variantSchemas = resolveSchemaPath(rootSchema, oneOfPath);
+    const variantSchemas = resolveInstanceSchemaPath(rootSchema, rootInstance, oneOfPath);
     const variantArr: readonly unknown[] = Array.isArray(variantSchemas) ? variantSchemas : [];
 
     // For each top-level property in each variant, record which variants
@@ -652,7 +713,7 @@ function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown)
  */
 function enrichWithVariants(issue: ValidationIssue, rootSchema: unknown): ValidationIssue {
   if (issue.keyword !== 'oneOf' && issue.keyword !== 'anyOf') return issue;
-  const resolved = resolveSchemaPath(rootSchema, issue.schemaPath);
+  const resolved = resolveInstanceSchemaPath(rootSchema, issue.pointer, issue.schemaPath);
   if (!Array.isArray(resolved)) return issue;
   const variants: ValidationIssueVariant[] = resolved.map((variant: unknown, index: number) => {
     if (variant == null || typeof variant !== 'object') {
@@ -686,7 +747,8 @@ export function validateRequest(toolName: string, payload: unknown, version?: st
       : undefined;
   if (valid) return { valid: true, issues: [], variant: 'request', ...(rootSchemaId && { schemaId: rootSchemaId }) };
   const registeredIds = getRegisteredSchemaIds(version);
-  const ctx: FormatContext = { rootSchema, registeredIds, toolName };
+  const diagnosticSchema = getToolSchemaDocument(toolName, 'request', version)?.schema ?? rootSchema;
+  const ctx: FormatContext = { rootSchema: diagnosticSchema, registeredIds, toolName };
   return {
     valid: false,
     issues: formatValidationIssues(validator.errors ?? [], ctx, payload),
@@ -758,7 +820,8 @@ export function validateResponse(toolName: string, payload: unknown, version?: s
     };
   }
   const registeredIds = getRegisteredSchemaIds(version);
-  const ctx: FormatContext = { rootSchema, registeredIds, toolName };
+  const diagnosticSchema = getToolSchemaDocument(toolName, usedVariant, version)?.schema ?? rootSchema;
+  const ctx: FormatContext = { rootSchema: diagnosticSchema, registeredIds, toolName };
   return {
     valid: false,
     issues: formatValidationIssues(effective.errors ?? [], ctx, normalizedPayload),

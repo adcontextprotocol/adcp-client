@@ -94,7 +94,13 @@ import {
   resolveAdcpVersion,
 } from '../utils/adcp-version-config';
 import { ConfigurationError } from '../errors';
-import { getValidator, hasSchemaBundle, resolveBundleKey, getMcpProfileInputSchema } from '../validation/schema-loader';
+import {
+  getValidator,
+  getToolSchemaDocument,
+  hasSchemaBundle,
+  resolveBundleKey,
+  getMcpProfileInputSchema,
+} from '../validation/schema-loader';
 import { TOOL_INPUT_SHAPES } from '../schemas';
 import { TaskTypeValues } from '../types/enums.generated';
 import { bundleSupportsAdcpVersionField } from '../protocols';
@@ -3672,8 +3678,9 @@ function projectValueToCapabilitySchema(
 }
 
 function projectCapabilitiesToVersion(data: GetAdCPCapabilitiesResponse, version: string): GetAdCPCapabilitiesResponse {
-  const validator = getValidator('get_adcp_capabilities', 'sync', version);
-  const schema = asProjectionSchema((validator as { schema?: unknown } | undefined)?.schema);
+  // Projection follows JSON Pointers in the public bundled document. The
+  // compiled validator may use modular references and private factoring.
+  const schema = asProjectionSchema(getToolSchemaDocument('get_adcp_capabilities', 'sync', version)?.schema);
   if (!schema) return data;
   const projected = projectValueToCapabilitySchema(schema, schema, data);
   if (!isPlainObject(projected)) return data;

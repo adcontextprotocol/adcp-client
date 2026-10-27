@@ -342,3 +342,41 @@ test('ESM response validators execute the lazy factoring path in a built package
     JSON.stringify(validate.errors)
   );
 });
+
+for (const keyword of ['oneOf', 'anyOf']) {
+  test(`validation factoring retains ${keyword} branch diagnostics while factoring their descendants`, () => {
+    const branch = kind => ({
+      type: 'object',
+      required: ['kind', 'payload'],
+      properties: {
+        kind: { const: kind },
+        payload: {
+          type: 'object',
+          description: 'large branch descendant '.repeat(100),
+          properties: { value: { type: 'string' } },
+        },
+      },
+    });
+    const original = { type: 'array', items: { [keyword]: [branch('a'), branch('b')] } };
+    const prepared = compactSchemaForValidation(original);
+    const validate = new Ajv({ strict: false, allErrors: true, inlineRefs: false }).compile(prepared);
+    assert.equal(validate([{ kind: 'invalid' }, { kind: 'a' }]), false);
+    for (const index of [0, 1]) {
+      assert.ok(
+        validate.errors.some(
+          error => error.instancePath === `/${index}` && /\/(?:oneOf|anyOf)\/0\/required$/.test(error.schemaPath)
+        )
+      );
+    }
+    assert.ok(
+      validate.errors.every(error => !Object.hasOwn(error, 'data')),
+      'diagnostics do not expose payload data'
+    );
+    assert.ok(maxFunctionBytes(validate) < MAX_FUNCTION_BYTES);
+    const definitions = Object.values(prepared.$defs ?? {});
+    assert.ok(
+      definitions.some(node => Array.isArray(node[keyword]) && node[keyword].every(arm => arm.properties.kind.const))
+    );
+    assert.ok(definitions.some(node => node.description?.startsWith('large branch descendant')));
+  });
+}
