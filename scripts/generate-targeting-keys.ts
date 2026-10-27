@@ -19,4 +19,4 @@ for (const [name, file] of entries) {
   output += `/** All ${name} keys in AdCP ${version}, including extension fields. */\n`;
   output += `export const ${name}Keys = Object.freeze(${JSON.stringify(keys, null, 2)} as const satisfies readonly (keyof ${name})[]);\n\n`;
 }
-writeFileSync(path.join(root, 'src/lib/types/targeting-keys.generated.ts'), output);
+writeFileSync(path.join(root, 'src/lib/types/targeting-keys.generated.ts'), output.trimEnd() + '\n');
