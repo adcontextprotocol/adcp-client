@@ -168,3 +168,35 @@ test('executor retains trusted same-release negotiation independently of the sel
   assert.equal((await stream.next()).done, false);
   await stream.return();
 });
+
+test('the public client records same-release negotiation before reading a seller version echo', async t => {
+  const agent = { id: 'negotiated-feed', name: 'Seller', protocol: 'mcp', agent_uri: 'https://seller.example/mcp' };
+  const client = new sdk.SingleAgentClient(agent, {
+    adcpVersion: sdk.ADCP_VERSION,
+    validateFeatures: false,
+    validation: { requests: 'off', responses: 'off' },
+  });
+  t.mock.method(client, 'ensureEndpointDiscovered', async () => agent);
+  t.mock.method(client, 'ensureCanonicalUrlResolved', async () => agent);
+  t.mock.method(client, 'getCapabilities', async () => ({
+    version: 'v3',
+    majorVersions: [3],
+    supportedVersions: [sdk.ADCP_VERSION],
+    protocols: ['media_buy'],
+    features: {},
+    extensions: [],
+    discoveredTools: ['list_account_changes'],
+    _synthetic: false,
+  }));
+  t.mock.method(sdk.ProtocolClient, 'callTool', async () => ({
+    content: [],
+    structuredContent: { ...feedResult().data, adcp_version: '3.1' },
+  }));
+  const result = await client.listAccountChanges({ account, starting_position: 'earliest' });
+  assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(result.metadata.wireAdcpVersion, sdk.ADCP_VERSION);
+  assert.equal(result.metadata.negotiatedAdcpVersion, undefined, 'same-release calls need no compatibility conversion');
+  const stream = sdk.streamAccountChanges({ listAccountChanges: async () => result }, { account });
+  assert.equal((await stream.next()).done, false);
+  await stream.return();
+});
