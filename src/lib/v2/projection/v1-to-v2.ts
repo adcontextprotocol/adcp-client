@@ -857,14 +857,30 @@ function compatible(option: Record<string, unknown>, ref: V1FormatId): boolean {
 }
 
 /**
- * Preserve index pairing only when the whole seller-authored alignment is credible.
+ * Preserve each compatible index pairing in a seller-authored dual emission.
  * AdCP 3.1.24 core/product.json defines this correspondence: "the format_options[i]
  * narrows the canonical that the named format in format_ids[i] resolves to via the
  * registry / explicit canonical field". Explicit routes remain authoritative.
  */
 export function withDualEmissionLegacyRefs<T>(formatOptions: T[], formatIds: unknown): T[] {
   if (!Array.isArray(formatIds) || formatIds.length !== formatOptions.length) return formatOptions;
-  const aligned = formatOptions.every((value, index) => {
+  // An explicit route contradicting its index is evidence that the arrays are
+  // misordered. Do not infer sibling routes from that alignment.
+  if (
+    formatOptions.some((value, index) => {
+      const explicit = legacyFormatRefsForDeclaration(value);
+      if (explicit.length === 0) return false;
+      const ref = record(formatIds[index]);
+      return (
+        !ref ||
+        typeof ref.agent_url !== 'string' ||
+        typeof ref.id !== 'string' ||
+        !explicit.some(existing => sameIdentity(existing, ref as unknown as V1FormatId))
+      );
+    })
+  )
+    return formatOptions;
+  return formatOptions.map((value, index) => {
     const option = record(value);
     const ref = record(formatIds[index]);
     if (
@@ -877,17 +893,14 @@ export function withDualEmissionLegacyRefs<T>(formatOptions: T[], formatIds: unk
       typeof ref.id !== 'string' ||
       ref.id.length === 0
     ) {
-      return false;
+      return value;
     }
-    const typedRef = ref as unknown as V1FormatId;
-    const explicit = legacyFormatRefsForDeclaration(option);
-    return explicit.length > 0
-      ? explicit.some(existing => sameIdentity(existing, typedRef))
-      : compatible(option, typedRef);
-  });
-  if (!aligned) return formatOptions;
-  return formatOptions.map((value, index) => {
-    if (legacyFormatRefsForDeclaration(value).length > 0) return value;
+    // Explicit routes stay authoritative. An incompatible sibling (for example
+    // an old html5 declaration paired with an inline-markup _html ID) must
+    // not discard the valid image/video routes on the same product.
+    if (legacyFormatRefsForDeclaration(option).length > 0 || !compatible(option, ref as unknown as V1FormatId)) {
+      return value;
+    }
     const paired = concealLegacyFormatRefs({
       ...value,
       v1_format_ref: [{ ...formatIds[index] }],

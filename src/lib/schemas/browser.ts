@@ -17,3 +17,6 @@ export {
   SyncCreativesActionSchema,
 } from '../validation/sync-creatives';
 export type { SyncCreativesItem, SyncCreativesSuccessStrict } from '../validation/sync-creatives';
+
+export { MediaBuyDeliveryReportSchema } from '../validation/media-buy-delivery-report';
+export type { MediaBuyDeliveryReport } from '../types/media-buy-delivery-report';

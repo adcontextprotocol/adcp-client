@@ -141,6 +141,7 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   // union as two open empty objects and make every object validate. Compile
   // the authoritative discriminator before aggregate roots.
   'core/signal-targeting-expression.json',
+  'core/daypart-target.json',
   'core/pagination-request.json',
   'core/forecast-point.json',
   'core/delivery-forecast.json',
@@ -200,6 +201,8 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   // the index and manifest converge upstream.
   'property/validate-property-delivery-request.json',
   'property/validate-property-delivery-response.json',
+  // Own the strict reporting rows before the async webhook aggregate reaches them.
+  'media-buy/media-buy-delivery-webhook-result.json',
 ] as const;
 
 // Extract only these declarations from their authoritative schemas before
@@ -256,6 +259,8 @@ const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
   'MeasurementTerms',
   'PublisherPropertySelector',
   'ForecastPoint',
+  'DaypartTarget',
+  'MediaBuyDeliveryWebhookResult',
   'TargetingOverlaySupport',
   'TargetingOverlayRequirements',
   'CanonicalFormatOption',
@@ -713,6 +718,17 @@ function tightenMutualExclusionOneOf(schema: any): any {
     return out;
   });
 
+  if (schema.title === 'Daypart Target') {
+    // Each arm already contains the shared fields. Keep the forbidden fields
+    // as optional never so structural assignment cannot mix the two clocks.
+    for (const [index, branch] of rewritten.entries()) {
+      for (const name of forbiddenByBranch[index]!) {
+        (branch.properties as Record<string, unknown>)[name] = { tsType: 'never' };
+      }
+    }
+    const { properties: _properties, required: _required, type: _type, ...metadata } = schema;
+    return { ...metadata, oneOf: rewritten };
+  }
   return { ...schema, oneOf: rewritten };
 }
 

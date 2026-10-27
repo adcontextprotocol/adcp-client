@@ -146,6 +146,12 @@ const TS7056_SCHEMAS: Array<{
 }> = [
   { name: 'AdCPAsyncResponseDataSchema' },
   { name: 'MCPWebhookPayloadSchema' },
+  {
+    name: 'MediaBuyDeliveryWebhookResultSchema',
+    tsType: 'MediaBuyDeliveryWebhookResult',
+    objectShape: true,
+    typeSource: 'core',
+  },
   // 3.1.0-beta.2 pin flip — `.and(z.union([...]))` compound patterns push
   // inferred types past TS7056's .d.ts serialization limit. Carry the TS
   // type so callers' `params` keep narrowing.
@@ -153,7 +159,11 @@ const TS7056_SCHEMAS: Array<{
   { name: 'UpdateMediaBuyRequestSchema', tsType: 'UpdateMediaBuyRequest', objectShape: true },
   { name: 'UpdateMediaBuyResponseSchema', tsType: 'UpdateMediaBuyResponse' },
   { name: 'BuildCreativeResponseSchema', tsType: 'BuildCreativeResponse' },
+  { name: 'RequestProposalsResponseSchema', tsType: 'RequestProposalsResponse' },
+  { name: 'RefineProposalsResponseSchema', tsType: 'RefineProposalsResponse' },
   { name: 'SyncEventSourcesResponseSchema', tsType: 'SyncEventSourcesResponse' },
+  { name: 'AssetVariantSchema', tsType: 'AssetVariant', typeSource: 'core', typedInput: true },
+  { name: 'VideoBriefAssetSchema', tsType: 'VideoBriefAsset', objectShape: true, typeSource: 'core', typedInput: true },
   { name: 'AudienceEvidenceSchema' },
   { name: 'AudienceEvidenceSelectionSchema' },
   { name: 'ProductSchema', tsType: 'Product', objectShape: true },
@@ -305,7 +315,7 @@ function postProcessTS7056Annotations(content: string): string {
       }
     } else if (tsType) {
       const widened = `${tsType} & Record<string, unknown>`;
-      annotation = `z.ZodType<${widened}, ${widened}>`;
+      annotation = typedInput ? `z.ZodType<${tsType}, ${tsType}>` : `z.ZodType<${widened}, ${widened}>`;
       const importBucket = typeSource === 'v2-projection' ? typesToImport.v2Projection : typesToImport[typeSource];
       importBucket.add(tsType);
     } else {
@@ -435,6 +445,51 @@ function canonicalSchemaExpression(expression: string): string {
   return initializer ? typePrinter.printNode(ts.EmitHint.Expression, initializer, sourceFile) : expression;
 }
 
+/** Reflect checked nonempty array bounds without changing their JSON Schema. */
+function postProcessNonemptyArrays(content: string): string {
+  const source = ts.createSourceFile('schemas.ts', content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  type Edit = { start: number; end: number; text: string };
+  const render = (node: ts.Node, edits: Edit[]): string => {
+    const start = node.getStart(source);
+    return edits
+      .filter(edit => edit.start >= start && edit.end <= node.end)
+      .reverse()
+      .reduce(
+        (text, edit) => text.slice(0, edit.start - start) + edit.text + text.slice(edit.end - start),
+        node.getText(source)
+      );
+  };
+  const visit = (node: ts.Node): Edit[] => {
+    const edits: Edit[] = [];
+    ts.forEachChild(node, child => {
+      edits.push(...visit(child));
+    });
+    if (
+      !ts.isCallExpression(node) ||
+      !ts.isPropertyAccessExpression(node.expression) ||
+      node.expression.name.text !== 'min' ||
+      node.arguments.length !== 1 ||
+      !ts.isNumericLiteral(node.arguments[0]!) ||
+      node.arguments[0]!.text !== '1'
+    )
+      return edits;
+    const array = node.expression.expression;
+    if (
+      !ts.isCallExpression(array) ||
+      !ts.isPropertyAccessExpression(array.expression) ||
+      !ts.isIdentifier(array.expression.expression) ||
+      array.expression.expression.text !== 'z' ||
+      array.expression.name.text !== 'array' ||
+      !array.arguments[0]
+    )
+      return edits;
+    return [
+      { start: node.getStart(source), end: node.end, text: `nonemptyArray(${render(array.arguments[0], edits)})` },
+    ];
+  };
+  return render(source, visit(source));
+}
+
 /**
  * Normalize homogeneous tuple/rest projections whose array provenance was lost
  * during JSON Schema -> TypeScript generation (for example array branches inside
@@ -518,7 +573,10 @@ function isTupleType(type: ts.TypeNode): boolean {
  * unrelated same-named field elsewhere in a generated schema. An exact tuple
  * already enforces its cardinality, and must remain a tuple for compatibility.
  */
-function collectArrayMaxItemsConstraints(source: string): ArrayMaxItemsConstraint[] {
+function collectArrayMaxItemsConstraints(
+  source: string,
+  tagName: 'maxItems' | 'minItems' = 'maxItems'
+): ArrayMaxItemsConstraint[] {
   const sourceFile = ts.createSourceFile(
     'adcp-generated-types.ts',
     source,
@@ -572,9 +630,9 @@ function collectArrayMaxItemsConstraints(source: string): ArrayMaxItemsConstrain
   };
 
   const collectMember = (member: ts.PropertySignature, schemaName: string, path: string[]): void => {
-    const maxItems = jsDocNumberTag(member, 'maxItems');
+    const maxItems = jsDocNumberTag(member, tagName);
     const minItems = jsDocNumberTag(member, 'minItems');
-    if (maxItems !== undefined && minItems !== maxItems && !isTupleType(member.type!)) {
+    if (maxItems !== undefined && (tagName === 'minItems' || (minItems !== maxItems && !isTupleType(member.type!)))) {
       constraints.push({ schemaName, path, maxItems });
     }
     visitType(member.type!, schemaName, path);
@@ -594,9 +652,9 @@ function collectArrayMaxItemsConstraints(source: string): ArrayMaxItemsConstrain
     }
     if (!ts.isTypeAliasDeclaration(statement)) continue;
 
-    const maxItems = jsDocNumberTag(statement, 'maxItems');
+    const maxItems = jsDocNumberTag(statement, tagName);
     const minItems = jsDocNumberTag(statement, 'minItems');
-    if (maxItems !== undefined && minItems !== maxItems && !isTupleType(statement.type)) {
+    if (maxItems !== undefined && (tagName === 'minItems' || (minItems !== maxItems && !isTupleType(statement.type)))) {
       constraints.push({ schemaName: statement.name.text, path: [], maxItems });
     }
     visitType(statement.type, statement.name.text, []);
@@ -607,7 +665,7 @@ function collectArrayMaxItemsConstraints(source: string): ArrayMaxItemsConstrain
     const key = `${constraint.schemaName}:${constraint.path.join('.')}`;
     const existing = unique.get(key);
     if (existing && existing.maxItems !== constraint.maxItems) {
-      throw new Error(`Conflicting @maxItems values for ${key}: ${existing.maxItems} and ${constraint.maxItems}.`);
+      throw new Error(`Conflicting @${tagName} values for ${key}: ${existing.maxItems} and ${constraint.maxItems}.`);
     }
     unique.set(key, constraint);
   }
@@ -658,11 +716,11 @@ function fixedZodTupleLength(node: ts.Expression): number | undefined {
   return undefined;
 }
 
-function zodArrayMaxItems(node: ts.Expression): number | undefined {
+function zodArrayMaxItems(node: ts.Expression, method: 'max' | 'min' = 'max'): number | undefined {
   let current = node;
   while (ts.isCallExpression(current) && ts.isPropertyAccessExpression(current.expression)) {
     if (
-      current.expression.name.text === 'max' &&
+      current.expression.name.text === method &&
       current.arguments.length === 1 &&
       ts.isNumericLiteral(current.arguments[0])
     ) {
@@ -728,8 +786,9 @@ function collectObjectPropertyValues(expression: ts.Expression, path: readonly s
  * generation. This is intentionally source-driven rather than a list of
  * known fields so newly added schema bounds receive runtime validation.
  */
-function postProcessArrayMaxItems(content: string, typeSource: string): string {
-  const constraints = collectArrayMaxItemsConstraints(typeSource);
+function postProcessArrayMaxItems(content: string, typeSource: string, method: 'max' | 'min' = 'max'): string {
+  const tagName = method === 'max' ? 'maxItems' : 'minItems';
+  const constraints = collectArrayMaxItemsConstraints(typeSource, tagName);
   if (constraints.length === 0) return content;
 
   const sourceFile = ts.createSourceFile(
@@ -750,15 +809,19 @@ function postProcessArrayMaxItems(content: string, typeSource: string): string {
       const array = findZodArrayBase(value);
       if (!array) {
         const tupleLength = fixedZodTupleLength(value);
-        if (tupleLength !== undefined && tupleLength <= constraint.maxItems) fixedTupleSatisfiesBound = true;
+        if (
+          tupleLength !== undefined &&
+          (method === 'max' ? tupleLength <= constraint.maxItems : tupleLength >= constraint.maxItems)
+        )
+          fixedTupleSatisfiesBound = true;
         continue;
       }
       foundArray = true;
-      const existingMax = zodArrayMaxItems(value);
+      const existingMax = zodArrayMaxItems(value, method);
       if (existingMax !== undefined) {
         if (existingMax !== constraint.maxItems) {
           throw new Error(
-            `Conflicting generated Zod maxItems values at ${constraint.schemaName}.${constraint.path.join('.')}: ` +
+            `Conflicting generated Zod ${tagName} values at ${constraint.schemaName}.${constraint.path.join('.')}: ` +
               `${existingMax} and ${constraint.maxItems}.`
           );
         }
@@ -767,14 +830,14 @@ function postProcessArrayMaxItems(content: string, typeSource: string): string {
       const existing = insertions.get(array.end);
       if (existing !== undefined && existing !== constraint.maxItems) {
         throw new Error(
-          `Conflicting generated Zod maxItems values at ${constraint.schemaName}.${constraint.path.join('.')}.`
+          `Conflicting generated Zod ${tagName} values at ${constraint.schemaName}.${constraint.path.join('.')}.`
         );
       }
       insertions.set(array.end, constraint.maxItems);
     }
     if (!foundArray && !fixedTupleSatisfiesBound) {
       throw new Error(
-        `Unable to restore @maxItems for ${constraint.schemaName}.${constraint.path.join('.')}: ` +
+        `Unable to restore @${tagName} for ${constraint.schemaName}.${constraint.path.join('.')}: ` +
           'the generated schema did not contain a ZodArray.'
       );
     }
@@ -783,7 +846,7 @@ function postProcessArrayMaxItems(content: string, typeSource: string): string {
   return [...insertions.entries()]
     .sort(([left], [right]) => right - left)
     .reduce(
-      (result, [position, maxItems]) => result.slice(0, position) + `.max(${maxItems})` + result.slice(position),
+      (result, [position, maxItems]) => result.slice(0, position) + `.${method}(${maxItems})` + result.slice(position),
       content
     );
 }
@@ -5783,6 +5846,7 @@ async function generateZodSchemas() {
     // retained JSON Schema provenance from the generated TS source and apply
     // the bound to the corresponding ZodArray validators.
     zodSchemas = postProcessArrayMaxItems(zodSchemas, combinedSource);
+    zodSchemas = postProcessArrayMaxItems(zodSchemas, combinedSource, 'min');
 
     // Post-process: Replace z.union([z.unknown(), z.undefined()]) with z.unknown().
     // ts-to-zod generates the union for Record<string, unknown> types, but z.undefined()
@@ -6022,6 +6086,22 @@ async function generateZodSchemas() {
       })()`;
       zodSchemas = postProcessExactSchema(zodSchemas, schemaName, exact);
     }
+
+    // Webhook results must retain strict canonical row requirements such as
+    // by_package, independently of tolerant polling response projections.
+    const deliverySource = JSON.parse(
+      readFileSync(path.join(verifiedCacheRoot, 'media-buy/media-buy-delivery-webhook-result.json'), 'utf8')
+    );
+    const deliveryResult = (await dereferenceFromVerifiedSchemaCache(deliverySource, verifiedCacheRoot)) as any;
+    removeDiscriminatorHints(deliveryResult);
+    zodSchemas = postProcessExactSchema(
+      zodSchemas,
+      'MediaBuyDeliveryWebhookResultSchema',
+      jsonSchemaToZod(deliveryResult, converterOptions).replaceAll(
+        '.url()',
+        '.refine(adcpJsonSchemaUri, "Invalid URI")'
+      )
+    );
 
     // TypeScript cannot retain JSON Schema `format: uri` or root oneOf
     // exclusivity. Restore both for legacy/canonical creative identity. This
@@ -6270,6 +6350,9 @@ async function generateZodSchemas() {
     // Annotate inline union operands so the rendering stays a single allOf.
     zodSchemas = postProcessUnionIntersectionOperands(zodSchemas);
 
+    zodSchemas = postProcessNonemptyArrays(zodSchemas);
+    zodSchemas = `import { nonemptyArray } from '../validation/nonempty-array';\n` + zodSchemas;
+
     // Post-process: Add explicit z.ZodType annotations to schemas that trip TS7056.
     zodSchemas = postProcessTS7056Annotations(zodSchemas);
 
@@ -6334,6 +6417,7 @@ export const __test__ = {
   postProcessCompatibilityPurchaseCoordinatorInput,
   postProcessForPassthrough,
   postProcessTupleRestArrays,
+  postProcessNonemptyArrays,
   postProcessArrayMaxItems,
   relaxArrayCardinalityTypes,
   postProcessForNullish,

@@ -262,3 +262,11 @@ status-change record and webhook, so the subsequent authoritative
 creative library needed by the scenario's applicability check. Those training
 seller changes belong upstream; they do not introduce buyer durable storage or
 a persistent subscription runtime into the SDK.
+
+### Validating older feed releases
+
+`streamAccountChanges` uses negotiated response metadata, the served-version echo,
+or the client's configured AdCP version to select the page schema. For a custom
+reader without SDK metadata, pass `adcpVersion: '3.2.7'` in the stream options and
+send the same release in your reader's requests. AdCP 3.3 requires nonempty
+`changed_paths` on seller-originated changes; AdCP 3.2 does not.

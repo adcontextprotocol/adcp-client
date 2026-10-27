@@ -46,7 +46,9 @@ function recordFor<T>(records: KeyedAccountRecord<T>[], ref: AccountReference): 
     : records.find(row => row.key === accountReferenceKey(ref));
 }
 function resultRow<T>(account: Account<T>, action: SyncAccountsResultRow['action']): SyncAccountsResultRow {
-  const wire = toWireAccount(account);
+  // The generated Account type still permits this request-only staging field;
+  // sync result types explicitly prohibit it even when spreading a wire account.
+  const { destination_billing_entity: _destination, ...wire } = toWireAccount(account);
   return { ...wire, brand: account.brand!, operator: account.operator!, action };
 }
 

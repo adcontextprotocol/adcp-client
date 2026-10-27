@@ -1,3 +1,4 @@
+import type { MediaBuyDeliveryWebhookEnvelope } from '../webhooks/media-buy-delivery';
 import type * as ToolTypes from '../types/tools.generated';
 import type * as CoreTypes from '../types/core.generated';
 import { shouldReuseMCPConnection, withMCPConnectionPolicy } from '../protocols/mcp-connection-policy';
@@ -1408,6 +1409,8 @@ export interface WebhookVerificationConfig {
 }
 
 export interface VerifyAndParseWebhookOptions {
+  /** Trusted seller/buy release for registered reporting delivery validation; defaults to the client pin. */
+  adcpVersion?: string;
   /** Raw HTTP body bytes captured before JSON parsing. Required when `webhookSecret` is configured. */
   rawBody?: string | Buffer | Uint8Array;
   /** Parsed payload or raw body. When HMAC is configured, verified raw bytes are parsed instead of `payload`. */
@@ -1461,7 +1464,7 @@ export type WebhookParseResult = WebhookParseSuccess | WebhookParseFailure;
 export interface WebhookParseSuccess {
   ok: true;
   protocol: 'mcp' | 'a2a';
-  envelope: MCPWebhookPayload | A2ATask | TaskStatusUpdateEvent;
+  envelope: MCPWebhookPayload | MediaBuyDeliveryWebhookEnvelope | A2ATask | TaskStatusUpdateEvent;
   result: unknown;
   metadata: {
     taskId: string;
@@ -1482,6 +1485,8 @@ export interface WebhookParseFailure {
   ok: false;
   code: WebhookParseErrorCode;
   message: string;
+  /** Readable schema paths, when delivery payload validation fails. */
+  errors?: readonly string[];
   cause?: unknown;
 }
 
@@ -4494,6 +4499,24 @@ export class SingleAgentClient {
         };
       }
     }
+    let reportingAdcpVersion: string | undefined;
+    if (registration?.deliveryKind === 'reporting') {
+      try {
+        const { prepareMediaBuyDeliveryWebhookValidation } =
+          require('../webhooks/media-buy-delivery') as typeof import('../webhooks/media-buy-delivery');
+        reportingAdcpVersion = prepareMediaBuyDeliveryWebhookValidation(
+          options.adcpVersion ?? this.resolvedAdcpVersion
+        ).adcpVersion;
+      } catch (cause) {
+        // Receiver configuration must not consume a valid delivery's replay nonce.
+        return {
+          ok: false,
+          code: 'webhook_verification_unavailable',
+          message: 'Reporting webhook schema configuration is unavailable.',
+          cause,
+        };
+      }
+    }
     if (registration?.mode === 'rfc9421') {
       const { verifyWebBotAuth, selectSignatureProfile, WebBotAuthError, WebBotAuthUnavailableError } =
         loadWebBotAuth();
@@ -4692,41 +4715,62 @@ export class SingleAgentClient {
     }
 
     if (registration?.deliveryKind) {
-      const loader = require('../validation/schema-loader') as typeof import('../validation/schema-loader');
-      const body = parsedPayload.payload as Record<string, unknown>;
+      let body = parsedPayload.payload as Record<string, unknown>;
       const isReport = registration.deliveryKind === 'reporting';
-      const payload = isReport ? body.result : body;
-      const schemaRef = isReport
-        ? 'media-buy/media-buy-delivery-webhook-result.json'
-        : 'content-standards/artifact-webhook-payload.json';
-      const validator = loader.getSchemaValidatorByRef(schemaRef, this.resolvedAdcpVersion);
-      const envelopeValidator = isReport
-        ? loader.getSchemaValidatorByRef('core/mcp-webhook-payload.json', this.resolvedAdcpVersion)
-        : undefined;
-      if (
-        !validator ||
-        !validator(payload) ||
-        (isReport && (!envelopeValidator || !envelopeValidator(body) || body.task_type !== 'media_buy_delivery'))
-      )
-        return {
-          ok: false,
-          code: 'webhook_envelope_invalid',
-          message: 'Authenticated delivery does not match its registered payload kind',
-        };
+      let payload: unknown;
+      if (isReport) {
+        const { parseMediaBuyDeliveryWebhook } =
+          require('../webhooks/media-buy-delivery') as typeof import('../webhooks/media-buy-delivery');
+        const report = parseMediaBuyDeliveryWebhook(body, {
+          adcpVersion: reportingAdcpVersion,
+        });
+        if (!report.ok) {
+          if (report.code === 'webhook_unsupported_payload') {
+            return {
+              ...report,
+              message: 'Registered reporting delivery requires a media_buy_delivery MCP envelope.',
+              errors: ['Registered reporting delivery requires a media_buy_delivery MCP envelope.'],
+            };
+          }
+          return report;
+        }
+        if (report.wireFormat !== 'mcp_envelope') {
+          return {
+            ok: false,
+            code: 'webhook_unsupported_payload',
+            message: 'Registered reporting delivery requires an MCP envelope.',
+          };
+        }
+        body = report.envelope as unknown as Record<string, unknown>;
+        payload = report.result;
+      } else {
+        const loader = require('../validation/schema-loader') as typeof import('../validation/schema-loader');
+        payload = body;
+        const validator = loader.getSchemaValidatorByRef(
+          'content-standards/artifact-webhook-payload.json',
+          this.resolvedAdcpVersion
+        );
+        if (!validator || !validator(payload)) {
+          return {
+            ok: false,
+            code: 'webhook_envelope_invalid',
+            message: 'Authenticated delivery does not match its registered payload kind',
+          };
+        }
+      }
       const taskId =
         isReport && typeof body.task_id === 'string'
           ? body.task_id
           : typeof body.media_buy_id === 'string'
             ? body.media_buy_id
             : registration.operationId;
-      const operationId =
-        isReport && typeof body.operation_id === 'string' ? body.operation_id : registration.operationId;
+      const operationId = registration.operationId;
       const status = isReport && isAdcpStatus(body.status) ? body.status : 'completed';
       return {
         ok: true,
         protocol: registration.protocol,
         envelope: isReport
-          ? (body as unknown as MCPWebhookPayload)
+          ? (body as unknown as MediaBuyDeliveryWebhookEnvelope)
           : ({
               ...body,
               task_type: registration.taskType,

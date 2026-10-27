@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.3.0-beta.0
-// Generated at: 2026-10-25T16:14:33.657Z
+// Generated at: 2026-10-27T03:07:48.612Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -3587,6 +3587,72 @@ export type SignalTargetingExpression =
   | {signal_ref: SignalRef; value_type: 'numeric'; min_value: number; max_value?: number}
   | {signal_ref: SignalRef; value_type: 'numeric'; min_value?: number; max_value: number};
 /**
+ * A time window for daypart targeting. Specifies days of week, a time-of-day range, and the civil-time clock used to evaluate it. The range is either whole hours (start_hour inclusive, end_hour exclusive; e.g., 6-10 = 6:00am to 10:00am) or, experimentally, minute-resolution clock times (start_time inclusive, end_time exclusive; e.g., 19:30-23:00); an entry carries exactly one form. Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
+ */
+export type DaypartTarget =
+  | {
+      /**
+       * Days of week this window applies to. Use multiple days for compact targeting (e.g., monday-friday in one object). For an overnight start_time/end_time window, each day names the day the window starts on.
+       */
+      days: DayOfWeek[];
+      /**
+       * Start hour (inclusive), 0-23 in 24-hour format. 0 = midnight, 6 = 6:00am, 18 = 6:00pm. Whole-hour form: pair with end_hour; mutually exclusive with start_time and end_time.
+       * @minimum 0
+       * @maximum 23
+       * @format int
+       */
+      start_hour: number;
+      /**
+       * End hour (exclusive), 1-24 in 24-hour format. 10 = 10:00am, 24 = midnight. Must be greater than start_hour; whole-hour windows never cross midnight. Whole-hour form: pair with start_hour; mutually exclusive with start_time and end_time.
+       * @minimum 1
+       * @maximum 24
+       * @format int
+       */
+      end_hour: number;
+      /**
+       * Civil-time clock used to evaluate this window. 'inventory_local' evaluates the hours in the seller-assigned local timezone of each inventory unit that can deliver the impression, such as a screen, venue, station, or publisher property; it never means the buyer, account, or server timezone. A concrete IANA timezone identifier (for example, 'America/New_York', 'CET', or 'UTC') evaluates one shared civil-time clock across the targeted inventory. Omission defaults to 'inventory_local'. Buyers that begin with a user or account preference MUST resolve it to a concrete IANA identifier before sending the daypart; 'user_timezone' and 'account_timezone' are not wire values. For each candidate delivery instant, convert the instant into this clock and compare its resulting local day and time of day with the half-open window: a skipped DST hour or interval has no matching instants, while both occurrences of a repeated hour or interval match. For an overnight start_time/end_time window, an instant matches when its local day is a listed day and its local time is at or after start_time, or when the local day before it is a listed day and its local time is before end_time. This delivery clock is independent of reporting_capabilities.timezone.
+       */
+      timezone?: 'inventory_local' | IANATimezoneIdentifier;
+      /**
+       * Optional human-readable name for this time window (e.g., 'Morning Drive', 'Prime Time')
+       */
+      label?: string;
+      start_time?: never;
+      end_time?: never;
+    }
+  | {
+      /**
+       * Days of week this window applies to. Use multiple days for compact targeting (e.g., monday-friday in one object). For an overnight start_time/end_time window, each day names the day the window starts on.
+       */
+      days: DayOfWeek[];
+      /**
+       * Experimental in AdCP 3.3. Start of the window (inclusive) as a 24-hour HH:MM civil clock time on the entry's timezone clock, such as '19:30'. Use for windows that do not fall on whole hours (linear TV programme junctions, quarter-hour schedules). Pair with end_time; mutually exclusive with start_hour and end_hour. A window whose end_time is earlier than its start_time crosses midnight and belongs to the day it starts on. A product accepts only the finest time granularity it declares in overlay_support.daypart_targets.time_granularity; sellers MUST reject, never round, a clock time the product does not honor.
+       * @pattern ^([01][0-9]|2[0-3]):[0-5][0-9]$
+       */
+      start_time: string;
+      /**
+       * Experimental in AdCP 3.3. End of the window (exclusive) as a 24-hour HH:MM civil clock time, such as '23:00'. Pair with start_time; mutually exclusive with start_hour and end_hour. end_time earlier than start_time means the window crosses midnight and ends at end_time on the following civil day (for example, 22:00 to 02:00 runs from 22:00 on a listed day until 02:00 the next morning); '00:00' therefore ends the window at the midnight closing the start day. end_time MUST NOT equal start_time: a zero-length or full-day window is invalid, and a full day uses start_hour 0 with end_hour 24. Sellers MUST reject an equal pair with INVALID_REQUEST.
+       * @pattern ^([01][0-9]|2[0-3]):[0-5][0-9]$
+       */
+      end_time: string;
+      /**
+       * Civil-time clock used to evaluate this window. 'inventory_local' evaluates the hours in the seller-assigned local timezone of each inventory unit that can deliver the impression, such as a screen, venue, station, or publisher property; it never means the buyer, account, or server timezone. A concrete IANA timezone identifier (for example, 'America/New_York', 'CET', or 'UTC') evaluates one shared civil-time clock across the targeted inventory. Omission defaults to 'inventory_local'. Buyers that begin with a user or account preference MUST resolve it to a concrete IANA identifier before sending the daypart; 'user_timezone' and 'account_timezone' are not wire values. For each candidate delivery instant, convert the instant into this clock and compare its resulting local day and time of day with the half-open window: a skipped DST hour or interval has no matching instants, while both occurrences of a repeated hour or interval match. For an overnight start_time/end_time window, an instant matches when its local day is a listed day and its local time is at or after start_time, or when the local day before it is a listed day and its local time is before end_time. This delivery clock is independent of reporting_capabilities.timezone.
+       */
+      timezone?: 'inventory_local' | IANATimezoneIdentifier;
+      /**
+       * Optional human-readable name for this time window (e.g., 'Morning Drive', 'Prime Time')
+       */
+      label?: string;
+      start_hour?: never;
+      end_hour?: never;
+    };
+/**
+ * Concrete timezone identifier in the implementation's supported IANA Time Zone Database, such as America/New_York, CET, or UTC.
+ */
+export type IANATimezoneIdentifier = string;
+
+// PAGINATIONREQUEST PRIORITY CANONICAL SCHEMA
+/**
  * Standard cursor-based pagination parameters for list operations
  */
 export interface PaginationRequest {
@@ -4749,10 +4815,6 @@ export type DaypartSupport =
       time_granularity?: DaypartTimeGranularity;
       ext?: ExtensionObject;
     };
-/**
- * Concrete timezone identifier in the implementation's supported IANA Time Zone Database, such as America/New_York, CET, or UTC.
- */
-export type IANATimezoneIdentifier = string;
 /**
  * Structured frequency-cap constraints. Count and duration declarations are exact: each uses either an exhaustive preset list or an inclusive range, never a unit-only promise. At product scope, omitted fields inherit the applicable seller-wide capability and never broaden it. Product mutability describes implementation capability; MediaBuy.available_actions remains authoritative for a live buy.
  */
@@ -6499,82 +6561,6 @@ export type GeoPlacesExclude = [GeographicPlaceArea, ...GeographicPlaceArea[]];
  * @minItems 1
  */
 export type DaypartTargets = [DaypartTarget, ...DaypartTarget[]];
-/**
- * A time window for daypart targeting. Specifies days of week, a time-of-day range, and the civil-time clock used to evaluate it. The range is either whole hours (start_hour inclusive, end_hour exclusive; e.g., 6-10 = 6:00am to 10:00am) or, experimentally, minute-resolution clock times (start_time inclusive, end_time exclusive; e.g., 19:30-23:00); an entry carries exactly one form. Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
- */
-export type DaypartTarget = {
-  /**
-   * Days of week this window applies to. Use multiple days for compact targeting (e.g., monday-friday in one object). For an overnight start_time/end_time window, each day names the day the window starts on.
-   *
-   * @minItems 1
-   */
-  days: [DayOfWeek, ...DayOfWeek[]];
-  /**
-   * Start hour (inclusive), 0-23 in 24-hour format. 0 = midnight, 6 = 6:00am, 18 = 6:00pm. Whole-hour form: pair with end_hour; mutually exclusive with start_time and end_time.
-   */
-  start_hour?: number;
-  /**
-   * End hour (exclusive), 1-24 in 24-hour format. 10 = 10:00am, 24 = midnight. Must be greater than start_hour; whole-hour windows never cross midnight. Whole-hour form: pair with start_hour; mutually exclusive with start_time and end_time.
-   */
-  end_hour?: number;
-  /**
-   * Experimental in AdCP 3.3. Start of the window (inclusive) as a 24-hour HH:MM civil clock time on the entry's timezone clock, such as '19:30'. Use for windows that do not fall on whole hours (linear TV programme junctions, quarter-hour schedules). Pair with end_time; mutually exclusive with start_hour and end_hour. A window whose end_time is earlier than its start_time crosses midnight and belongs to the day it starts on. A product accepts only the finest time granularity it declares in overlay_support.daypart_targets.time_granularity; sellers MUST reject, never round, a clock time the product does not honor.
-   */
-  start_time?: string;
-  /**
-   * Experimental in AdCP 3.3. End of the window (exclusive) as a 24-hour HH:MM civil clock time, such as '23:00'. Pair with start_time; mutually exclusive with start_hour and end_hour. end_time earlier than start_time means the window crosses midnight and ends at end_time on the following civil day (for example, 22:00 to 02:00 runs from 22:00 on a listed day until 02:00 the next morning); '00:00' therefore ends the window at the midnight closing the start day. end_time MUST NOT equal start_time: a zero-length or full-day window is invalid, and a full day uses start_hour 0 with end_hour 24. Sellers MUST reject an equal pair with INVALID_REQUEST.
-   */
-  end_time?: string;
-  /**
-   * Civil-time clock used to evaluate this window. 'inventory_local' evaluates the hours in the seller-assigned local timezone of each inventory unit that can deliver the impression, such as a screen, venue, station, or publisher property; it never means the buyer, account, or server timezone. A concrete IANA timezone identifier (for example, 'America/New_York', 'CET', or 'UTC') evaluates one shared civil-time clock across the targeted inventory. Omission defaults to 'inventory_local'. Buyers that begin with a user or account preference MUST resolve it to a concrete IANA identifier before sending the daypart; 'user_timezone' and 'account_timezone' are not wire values. For each candidate delivery instant, convert the instant into this clock and compare its resulting local day and time of day with the half-open window: a skipped DST hour or interval has no matching instants, while both occurrences of a repeated hour or interval match. For an overnight start_time/end_time window, an instant matches when its local day is a listed day and its local time is at or after start_time, or when the local day before it is a listed day and its local time is before end_time. This delivery clock is independent of reporting_capabilities.timezone.
-   */
-  timezone?: 'inventory_local' | IANATimezoneIdentifier;
-  /**
-   * Optional human-readable name for this time window (e.g., 'Morning Drive', 'Prime Time')
-   */
-  label?: string;
-} & (
-  | {
-    }
-  | {
-    }
-) & {
-    /**
-     * Days of week this window applies to. Use multiple days for compact targeting (e.g., monday-friday in one object). For an overnight start_time/end_time window, each day names the day the window starts on.
-     *
-     * @minItems 1
-     */
-    days: [DayOfWeek, ...DayOfWeek[]];
-    /**
-     * Start hour (inclusive), 0-23 in 24-hour format. 0 = midnight, 6 = 6:00am, 18 = 6:00pm. Whole-hour form: pair with end_hour; mutually exclusive with start_time and end_time.
-     */
-    start_hour?: number;
-    /**
-     * End hour (exclusive), 1-24 in 24-hour format. 10 = 10:00am, 24 = midnight. Must be greater than start_hour; whole-hour windows never cross midnight. Whole-hour form: pair with start_hour; mutually exclusive with start_time and end_time.
-     */
-    end_hour?: number;
-    /**
-     * Experimental in AdCP 3.3. Start of the window (inclusive) as a 24-hour HH:MM civil clock time on the entry's timezone clock, such as '19:30'. Use for windows that do not fall on whole hours (linear TV programme junctions, quarter-hour schedules). Pair with end_time; mutually exclusive with start_hour and end_hour. A window whose end_time is earlier than its start_time crosses midnight and belongs to the day it starts on. A product accepts only the finest time granularity it declares in overlay_support.daypart_targets.time_granularity; sellers MUST reject, never round, a clock time the product does not honor.
-     */
-    start_time?: string;
-    /**
-     * Experimental in AdCP 3.3. End of the window (exclusive) as a 24-hour HH:MM civil clock time, such as '23:00'. Pair with start_time; mutually exclusive with start_hour and end_hour. end_time earlier than start_time means the window crosses midnight and ends at end_time on the following civil day (for example, 22:00 to 02:00 runs from 22:00 on a listed day until 02:00 the next morning); '00:00' therefore ends the window at the midnight closing the start day. end_time MUST NOT equal start_time: a zero-length or full-day window is invalid, and a full day uses start_hour 0 with end_hour 24. Sellers MUST reject an equal pair with INVALID_REQUEST.
-     */
-    end_time?: string;
-    /**
-     * Civil-time clock used to evaluate this window. 'inventory_local' evaluates the hours in the seller-assigned local timezone of each inventory unit that can deliver the impression, such as a screen, venue, station, or publisher property; it never means the buyer, account, or server timezone. A concrete IANA timezone identifier (for example, 'America/New_York', 'CET', or 'UTC') evaluates one shared civil-time clock across the targeted inventory. Omission defaults to 'inventory_local'. Buyers that begin with a user or account preference MUST resolve it to a concrete IANA identifier before sending the daypart; 'user_timezone' and 'account_timezone' are not wire values. For each candidate delivery instant, convert the instant into this clock and compare its resulting local day and time of day with the half-open window: a skipped DST hour or interval has no matching instants, while both occurrences of a repeated hour or interval match. For an overnight start_time/end_time window, an instant matches when its local day is a listed day and its local time is at or after start_time, or when the local day before it is a listed day and its local time is before end_time. This delivery clock is independent of reporting_capabilities.timezone.
-     */
-    timezone?: 'inventory_local' | IANATimezoneIdentifier;
-    /**
-     * Optional human-readable name for this time window (e.g., 'Morning Drive', 'Prime Time')
-     */
-    label?: string;
-  } & (
-    | {
-      }
-    | {
-      }
-  );
 /**
  * Restrict delivery to members of these first-party CRM audiences. Only users present in the uploaded lists are eligible. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Not for lookalike expansion — express that intent in the campaign brief. Seller must declare support in get_adcp_capabilities.
  *
@@ -14555,6 +14541,231 @@ export interface AuthorizationResult {
      */
     message: string;
   };
+}
+// MEDIABUYDELIVERYWEBHOOKRESULT PRIORITY CANONICAL SCHEMA
+/**
+ * A qualified standard delivery value reported at package grain. The qualifier is required and must be non-empty; unqualified spend remains on the package's flat spend field.
+ */
+export type PackageDeliveryMetricValue = ({
+} & {
+  /**
+   * Standard metric from the closed `available-metric.json` enum.
+   */
+  scope: 'standard';
+  /**
+   * Identifier for a scalar standard metric. Container tokens and structured distribution identities are committed and selected through their canonical carriers, not represented as numeric aggregate rows.
+   */
+  metric_id: AvailableMetric & {
+  };
+  /**
+   * Qualifier keys disambiguating this row from sibling rows under the same `metric_id`. Symmetric with `committed_metrics.qualifier` today; expected to diverge in future minors as transparency disclosures buyers don't commit to ship delivery-only. Closed (`additionalProperties: false`) — new qualifier keys ship explicitly.
+   */
+  qualifier?: {
+    viewability_standard?: ViewabilityStandard;
+    completion_source?: CompletionSource;
+    attribution_methodology?: AttributionMethodology;
+    attribution_window?: Duration;
+    lift_dimension?: LiftDimension;
+  };
+  /**
+   * Aggregated metric value for this `(metric_id, qualifier)` partition. Heterogeneous by `metric_id` — rate metrics (`viewable_rate`, `completion_rate`) are 0.0–1.0; cost-per metrics (`cost_per_acquisition`, `cost_per_completed_view`) are currency amounts; count metrics (`impressions`, `clicks`) are non-negative integers as numbers; ratio metrics (`roas`) are non-negative numbers. Buyer agents MUST inspect `metric_id` before doing arithmetic — same dispatch convention as `committed_metrics`.
+   */
+  value: number;
+  /**
+   * Coverage denominator for verification metrics (e.g., `viewable_rate`). Buyers compute coverage as `measurable_impressions / impressions` from the partition.
+   */
+  measurable_impressions?: number;
+  /**
+   * Component for `viewable_rate` (numerator).
+   */
+  viewable_impressions?: number;
+  /**
+   * Component for rate metrics whose denominator is total impressions (e.g., `completion_rate`, `engagement_rate`).
+   */
+  impressions?: number;
+  /**
+   * Component for `completion_rate` (numerator).
+   */
+  completed_views?: number;
+  /**
+   * Component for cost-per metrics (denominator-ish; the cost half of the ratio).
+   */
+  spend?: number;
+  /**
+   * Component for `cost_per_acquisition` and ROAS-family metrics.
+   */
+  conversions?: number;
+  /**
+   * Component for `roas` (numerator).
+   */
+  conversion_value?: number;
+  /**
+   * Component for `cost_per_click` and click-rate metrics.
+   */
+  clicks?: number;
+}) & {
+  qualifier: {
+  };
+};
+/**
+ * Payload-only delivery report result carried under core/mcp-webhook-payload.json result for task_type media_buy_delivery. This is not a top-level webhook POST body and does not include protocol envelope fields such as task_id or status. `aggregated_totals` is API-only (`get_media_buy_delivery`) and MUST NOT appear in this payload; see webhooks.mdx.
+ */
+export interface MediaBuyDeliveryWebhookResult {
+  /**
+   * Type of delivery-report notification: scheduled = regular periodic update, final = campaign completed, delayed = data not yet available, adjusted = corrected data for the same window, window_update = a wider measurement window supersedes a prior window.
+   */
+  notification_type: 'scheduled' | 'final' | 'delayed' | 'adjusted' | 'window_update';
+  /**
+   * Indicates if any media buys in this webhook have missing or delayed data.
+   */
+  partial_data?: boolean;
+  /**
+   * Number of media buys with reporting_delayed or failed status when partial_data is true.
+   * @minimum 0
+   * @format int
+   */
+  unavailable_count?: number;
+  /**
+   * Sequential notification number for this reporting webhook stream.
+   * @minimum 1
+   * @format int
+   */
+  sequence_number?: number;
+  /**
+   * ISO 8601 timestamp for the next expected notification. Omitted on final notifications.
+   * @format date-time
+   */
+  next_expected_at?: string;
+  /**
+   * Period covered by the delivery report. start and end are instants on the reporting timezone's period boundaries (the products' reporting_capabilities.timezone, echoed in timezone). They fall on UTC midnight only when that timezone is UTC.
+   */
+  reporting_period: {
+    /**
+     * @format date-time
+     */
+    start: string;
+    /**
+     * @format date-time
+     */
+    end: string;
+    /**
+     * Reporting timezone applied to this report, as 'UTC' or an IANA timezone identifier. Same meaning as get_media_buy_delivery reporting_period.timezone. Sellers SHOULD return it whenever every reported media buy shares one reporting timezone.
+     * @minLength 1
+     */
+    timezone?: string;
+  };
+  /**
+   * @deprecated
+   * Deprecated in AdCP 3.2 and removed in AdCP 4.0. Optional legacy report-wide ISO 4217 currency code. It may be used only when every monetary value in the report has that denomination. A report can contain media buys with different currencies, so buyers MUST NOT interpret this field as an aggregation currency or evidence of currency conversion. Prefer media_buy_deliveries[].currency when present and package-level currency otherwise.
+   * @pattern ^[A-Z]{3}$
+   */
+  currency?: string;
+  attribution_window?: AttributionWindow;
+  /**
+   * Delivery rows for one or more media buys included in this notification.
+   */
+  media_buy_deliveries: {
+    /**
+     * Seller's media buy identifier.
+     */
+    media_buy_id: string;
+    /**
+     * ISO 4217 denomination for monetary values in this media-buy delivery row, including totals, package spend, and currency-denominated package rates. Sellers SHOULD populate this field whenever all monetary values in the row share one currency. For AdCP-authored buys it MUST equal the media-buy currency, and every by_package[].currency MUST equal it. For a legacy or externally created mixed-currency buy, omit this field and all monetary or money-derived values from row totals; report those values only at package level with each package's own currency. AdCP does not perform currency conversion.
+     * @pattern ^[A-Z]{3}$
+     */
+    currency?: string;
+    /**
+     * Current media buy lifecycle or reporting status. This is distinct from the webhook envelope's top-level task status.
+     */
+    status:
+      | 'pending_creatives'
+      | 'pending_start'
+      | 'pending'
+      | 'active'
+      | 'paused'
+      | 'completed'
+      | 'rejected'
+      | 'canceled'
+      | 'failed'
+      | 'reporting_delayed';
+    /**
+     * When delayed data is expected to be available. Present when status is reporting_delayed.
+     * @format date-time
+     */
+    expected_availability?: string;
+    /**
+     * Indicates this row contains updated data for a previously reported period.
+     */
+    is_adjusted?: boolean;
+    /**
+     * Whether this row's delivery data is final for the reporting period.
+     */
+    is_final?: boolean;
+    /**
+     * Timestamp when this row became final. Present only when is_final is true.
+     * @format date-time
+     */
+    finalized_at?: string;
+    pricing_model?: PricingModel;
+    /**
+     * Aggregate media-buy delivery pace relative to the media-buy pacing plan. Authoritative for seller-optimized buys.
+     * @minimum 0
+     */
+    pacing_index?: number;
+    totals: DeliveryMetrics & {
+      /**
+       * @minimum 0
+       */
+      effective_rate?: number;
+    };
+    /**
+     * Metrics broken down by package.
+     */
+    by_package: (DeliveryMetrics & {
+      package_id?: string;
+      /**
+       * Subordinate package pacing diagnostic. May be absent for seller-optimized packages without package-level pacing.
+       * @minimum 0
+       */
+      pacing_index?: number;
+      pricing_model?: PricingModel;
+      /**
+       * @minimum 0
+       */
+      rate?: number;
+      /**
+       * ISO 4217 currency code for this package's spend and currency-denominated pricing rate. The rate for revenue_share is a dimensionless commission fraction, but attributed monetary values still use this currency. When the enclosing media_buy_deliveries[].currency is present, this value MUST equal it. For AdCP-authored buys both values MUST equal the media-buy currency. A different package currency is permitted only for a legacy or externally created mixed-currency buy whose row currency and row-level monetary totals are omitted. When both row and deprecated response-wide currency are absent, a package with monetary values MUST include this field. AdCP does not perform currency conversion.
+       * @pattern ^[A-Z]{3}$
+       */
+      currency?: string;
+      delivery_status?: DeliveryStatus;
+      paused?: boolean;
+      is_final?: boolean;
+      /**
+       * @format date-time
+       */
+      finalized_at?: string;
+      /**
+       * @maxLength 50
+       */
+      measurement_window?: string;
+      /**
+       * @maxLength 50
+       */
+      supersedes_window?: string;
+      /**
+       * Qualified standard delivery values for this package. Each entry is the delivered counterpart to a standard-scope package.committed_metrics or by_package[].missing_metrics row, using the same atomic key (scope, metric_id, qualifier). Sellers report one row per full qualifier set at package grain; when a metric appears here, its flat scalar counterpart on the package MUST be omitted to avoid two sources of truth. Vendor-scope values continue to use vendor_metric_values. Buyers reconcile rows directly and perform any compatible cross-package aggregation themselves.
+       */
+      metric_values?: PackageDeliveryMetricValue[];
+    })[];
+  }[];
+  /**
+   * Task-specific delivery errors or warnings.
+   */
+  errors?: Error[];
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
 }
 // CANONICALPROPOSAL PRIORITY EXTRACTED TYPE
 /**
@@ -24791,60 +25002,6 @@ export interface UpdateMediaBuyAsyncSubmitted {
   ext?: ExtensionObject;
 }
 /**
- * Delivery-report payload for media_buy_delivery webhook notifications. This is the inner result object carried by mcp-webhook-payload.json, not the full top-level get_media_buy_delivery task response envelope.
- */
-export interface MediaBuyDeliveryWebhookResult {
-  /**
-   * Type of delivery-report notification: scheduled = regular periodic update, final = campaign completed, delayed = data not yet available, adjusted = corrected data for the same window, window_update = a wider measurement window supersedes a prior window.
-   */
-  notification_type: 'scheduled' | 'final' | 'delayed' | 'adjusted' | 'window_update';
-  /**
-   * Indicates if any media buys in this webhook have missing or delayed data.
-   */
-  partial_data?: boolean;
-  /**
-   * Number of media buys with reporting_delayed or failed status when partial_data is true.
-   */
-  unavailable_count?: number;
-  /**
-   * Sequential notification number for this reporting webhook stream.
-   */
-  sequence_number?: number;
-  /**
-   * ISO 8601 timestamp for the next expected notification. Omitted on final notifications.
-   */
-  next_expected_at?: string;
-  /**
-   * Period covered by the delivery report. start and end are instants on the reporting timezone's period boundaries (the products' reporting_capabilities.timezone, echoed in timezone). They fall on UTC midnight only when that timezone is UTC.
-   */
-  reporting_period: {
-    start: string;
-    end: string;
-    /**
-     * Reporting timezone applied to this report, as 'UTC' or an IANA timezone identifier. Same meaning as get_media_buy_delivery reporting_period.timezone. Sellers SHOULD return it whenever every reported media buy shares one reporting timezone.
-     */
-    timezone?: string;
-  };
-  /**
-   * @deprecated
-   * Deprecated in AdCP 3.2 and removed in AdCP 4.0. Optional legacy report-wide ISO 4217 currency code. It may be used only when every monetary value in the report has that denomination. A report can contain media buys with different currencies, so buyers MUST NOT interpret this field as an aggregation currency or evidence of currency conversion. Prefer media_buy_deliveries[].currency when present and package-level currency otherwise.
-   */
-  currency?: string;
-  attribution_window?: AttributionWindow;
-  /**
-   * Delivery rows for one or more media buys included in this notification.
-   */
-  media_buy_deliveries: {
-  }[];
-  /**
-   * Task-specific delivery errors or warnings.
-   */
-  errors?: Error[];
-  sandbox?: boolean;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
  * Single-capability success response. Returned when the request used target_capability_id (or deprecated target_format_id) without fan-out. The returned creative_manifest uses canonical format_kind on the 3.2 path.
  */
 export interface BuildCreativeSuccess {
@@ -34336,72 +34493,6 @@ export interface OutcomeTargetCostPer {
   strength: OutcomeTargetCostStrength;
 }
 
-
-// core/package-delivery-metric-value.json
-/**
- * A qualified standard delivery value reported at package grain. The qualifier is required and must be non-empty; unqualified spend remains on the package's flat spend field.
- */
-export type PackageDeliveryMetricValue = ({
-} & {
-  /**
-   * Standard metric from the closed `available-metric.json` enum.
-   */
-  scope: 'standard';
-  /**
-   * Identifier for a scalar standard metric. Container tokens and structured distribution identities are committed and selected through their canonical carriers, not represented as numeric aggregate rows.
-   */
-  metric_id: AvailableMetric & {
-  };
-  /**
-   * Qualifier keys disambiguating this row from sibling rows under the same `metric_id`. Symmetric with `committed_metrics.qualifier` today; expected to diverge in future minors as transparency disclosures buyers don't commit to ship delivery-only. Closed (`additionalProperties: false`) — new qualifier keys ship explicitly.
-   */
-  qualifier?: {
-    viewability_standard?: ViewabilityStandard;
-    completion_source?: CompletionSource;
-    attribution_methodology?: AttributionMethodology;
-    attribution_window?: Duration;
-    lift_dimension?: LiftDimension;
-  };
-  /**
-   * Aggregated metric value for this `(metric_id, qualifier)` partition. Heterogeneous by `metric_id` — rate metrics (`viewable_rate`, `completion_rate`) are 0.0–1.0; cost-per metrics (`cost_per_acquisition`, `cost_per_completed_view`) are currency amounts; count metrics (`impressions`, `clicks`) are non-negative integers as numbers; ratio metrics (`roas`) are non-negative numbers. Buyer agents MUST inspect `metric_id` before doing arithmetic — same dispatch convention as `committed_metrics`.
-   */
-  value: number;
-  /**
-   * Coverage denominator for verification metrics (e.g., `viewable_rate`). Buyers compute coverage as `measurable_impressions / impressions` from the partition.
-   */
-  measurable_impressions?: number;
-  /**
-   * Component for `viewable_rate` (numerator).
-   */
-  viewable_impressions?: number;
-  /**
-   * Component for rate metrics whose denominator is total impressions (e.g., `completion_rate`, `engagement_rate`).
-   */
-  impressions?: number;
-  /**
-   * Component for `completion_rate` (numerator).
-   */
-  completed_views?: number;
-  /**
-   * Component for cost-per metrics (denominator-ish; the cost half of the ratio).
-   */
-  spend?: number;
-  /**
-   * Component for `cost_per_acquisition` and ROAS-family metrics.
-   */
-  conversions?: number;
-  /**
-   * Component for `roas` (numerator).
-   */
-  conversion_value?: number;
-  /**
-   * Component for `cost_per_click` and click-rate metrics.
-   */
-  clicks?: number;
-}) & {
-  qualifier: {
-  };
-};
 
 // core/package-signal-targeting-groups.json
 /**

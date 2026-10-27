@@ -162,7 +162,7 @@ describe('Zod Schema Validation', () => {
                   {
                     country: 'US',
                     regulation: 'example_rule',
-                    render_guidance: { positions: [] },
+                    render_guidance: { positions: ['prominent'] },
                   },
                 ],
               },
@@ -181,8 +181,11 @@ describe('Zod Schema Validation', () => {
     assert.match(canonicalFieldsJson, /format_options/);
     assert.deepEqual(
       parsed.brand.brand_kit_override.logo.provenance.disclosure.jurisdictions[0].render_guidance.positions,
-      []
+      ['prominent']
     );
+    const invalid = structuredClone(request);
+    invalid.brand.brand_kit_override.logo.provenance.disclosure.jurisdictions[0].render_guidance.positions = [];
+    assert.equal(publicSchemas.LegacyGetProductsRequestSchema.safeParse(invalid).success, false);
   });
 
   test('beta.4 enforces flexible-window and outcome-target constraints', async () => {

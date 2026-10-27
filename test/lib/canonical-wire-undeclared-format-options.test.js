@@ -254,6 +254,35 @@ describe('canonical wire: format options the seller did not declare', () => {
     }
   }
 
+  test('a legacy html5/_html mismatch does not block a pinned image creative', async () => {
+    const sellerProduct = pairedProduct();
+    sellerProduct.format_ids.push({ agent_url: AAO, id: 'display_300x250_html' });
+    sellerProduct.format_options.push({
+      format_option_id: 'old-html',
+      format_kind: 'html5',
+      params: { width: 300, height: 250 },
+    });
+    const seller = await canonicalSeller(
+      [sellerProduct],
+      { wireAdcpVersion: '3.1.29', productCache: createProductCache() },
+      { version: '3.1.29', cacheScope: 'account', declareCanonicalCreatives: false, syncCreativeWire: 'legacy' }
+    );
+    try {
+      const discovered = await seller.agent.getProducts({ buying_mode: 'brief', brief: 'Display', account: ACCOUNT });
+      assert.equal(discovered.success, true);
+      const product = discovered.data.products[0];
+      const selected = packageRefsForFormatOptions(product, ['mrec']);
+      const creative = pairedCreative();
+      const synced = await seller.agent.syncCreatives({ account: ACCOUNT, creatives: [creative] }, undefined, {
+        creativeFormatProjection: { selectorContainers: [{ product_id: product.product_id, ...selected }] },
+      });
+      assert.equal(synced.success, true, JSON.stringify(synced.error));
+      assert.deepEqual(seller.captured.sync.creatives[0].format_id, { agent_url: AAO, id: 'display_300x250_image' });
+    } finally {
+      await seller.close();
+    }
+  });
+
   test('3.1 discovery and serialized synthesized options retain legacy delivery', async () => {
     const formatId = { agent_url: AAO, id: 'display_300x250_image' };
     const seller = await canonicalSeller(

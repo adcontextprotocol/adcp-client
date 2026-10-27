@@ -1,5 +1,12 @@
+import { isPre31AdcpVersion } from '../utils/adcp-version-config';
 import { assertWebBotAuthSigningKey, getWebBotAuthLegacyOriginGate } from '../signing/web-bot-auth';
-import { downgradeResponse, translationSteps, upgradeRequest, type VersionDrift } from '../adapters/version';
+import {
+  downgradeResponse,
+  getVersionAdapter,
+  translationSteps,
+  upgradeRequest,
+  type VersionDrift,
+} from '../adapters/version';
 import {
   isIdentity33SchemaScope,
   withIdentity33SchemaScope,
@@ -4405,7 +4412,14 @@ function injectContextIntoResponse(response: McpToolResponse, context: unknown):
  *   a spec ambiguity tracked at adcp-client#1897; this seam refuses to
  *   destroy payload semantics until the spec disambiguates.
  */
-function injectEnvelopeStatusIntoResponse(response: McpToolResponse, toolName: string): void {
+function injectEnvelopeStatusIntoResponse(response: McpToolResponse, toolName: string, servedVersion?: string): void {
+  if (
+    servedVersion &&
+    isPre31AdcpVersion(servedVersion) &&
+    MEDIA_BUY_RESPONSE_TOOLS_REQUIRING_STATUS_SPLIT.has(toolName) &&
+    response.isError !== true
+  )
+    return;
   const sc = response.structuredContent as Record<string, unknown> | undefined;
   if (!sc || typeof sc !== 'object') return;
   if ('status' in sc) return;
@@ -4439,12 +4453,30 @@ const MEDIA_BUY_STATUS_VALUES = new Set([
   'canceled',
 ]);
 
-function normalizeMediaBuyStatusCollision(response: McpToolResponse, toolName: string): void {
+function normalizeMediaBuyStatusCollision(response: McpToolResponse, toolName: string, servedVersion?: string): void {
   if (!MEDIA_BUY_RESPONSE_TOOLS_REQUIRING_STATUS_SPLIT.has(toolName)) return;
   const sc = response.structuredContent as Record<string, unknown> | undefined;
   if (!sc || typeof sc !== 'object') return;
+  if (servedVersion && isPre31AdcpVersion(servedVersion)) {
+    // Response builders use the canonical lifecycle field even on a server
+    // pinned to 3.0, where there is no cross-release translation step.
+    const adapted =
+      typeof sc.media_buy_status === 'string' ? getVersionAdapter('3.0', toolName)?.downgradeResponse?.(sc) : undefined;
+    if (adapted && adapted.data !== sc && adapted.data && typeof adapted.data === 'object') {
+      const mirrors = contentTextMirrorsStructuredContent(response, sc);
+      response.structuredContent = adapted.data as Record<string, unknown>;
+      syncContentJsonText(response, response.structuredContent, mirrors);
+    }
+    return;
+  }
   const status = sc.status;
   if (typeof status !== 'string' || !MEDIA_BUY_STATUS_VALUES.has(status)) return;
+  if (
+    servedVersion &&
+    sc.media_buy_status === undefined &&
+    (status === 'completed' || status === 'rejected' || status === 'canceled')
+  )
+    return;
   const looksLikeMediaBuyPayload =
     typeof sc.media_buy_id === 'string' || 'media_buy_status' in sc || Array.isArray(sc.packages);
   if (!looksLikeMediaBuyPayload) return;
@@ -6100,8 +6132,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     enrichErrorTwoLayer(response, toolName, getToolsWithErrorArm(release.validationVersion));
     if (!isErrorResponse(response)) {
       response = downgradeTaskStatusResult(toolName, response, release.validationVersion);
-      normalizeMediaBuyStatusCollision(response, toolName);
-      injectEnvelopeStatusIntoResponse(response, toolName);
+      normalizeMediaBuyStatusCollision(response, toolName, release.validationVersion);
+      injectEnvelopeStatusIntoResponse(response, toolName, release.validationVersion);
       const validationError = protocolTaskResponseValidationError(toolName, response, params);
       if (validationError) return finalizeProtocolTaskToolResponse(toolName, params, validationError, opts);
     }
@@ -6598,8 +6630,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // the allowlist-filtered envelope; BEFORE context/version
           // injection so those run on the final two-layer payload.
           enrichErrorTwoLayer(response, toolName, requestErrorArms);
-          normalizeMediaBuyStatusCollision(response, toolName);
-          injectEnvelopeStatusIntoResponse(response, toolName);
+          normalizeMediaBuyStatusCollision(response, toolName, requestRelease.validationVersion);
+          injectEnvelopeStatusIntoResponse(response, toolName, requestRelease.validationVersion);
           injectContextIntoResponse(response, params.context);
           injectVersionIntoResponse(response, requestRelease.wireVersion);
           return response;
@@ -8534,8 +8566,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 formatted;
             }
             if (!isErrorResponse(formatted)) {
-              normalizeMediaBuyStatusCollision(formatted, toolName);
-              injectEnvelopeStatusIntoResponse(formatted, toolName);
+              // Builders still carry the server's schema here; translate to
+              // the request release below, then finalize with that release.
+              normalizeMediaBuyStatusCollision(formatted, toolName, adcpVersion);
+              injectEnvelopeStatusIntoResponse(formatted, toolName, adcpVersion);
             }
           }
 

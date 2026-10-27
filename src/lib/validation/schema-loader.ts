@@ -1081,6 +1081,42 @@ export function getSchemaValidatorByRef(
   keywords?: ReadonlyArray<KeywordDefinition>,
   options: { allErrors?: boolean } = {}
 ): ValidateFunction | undefined {
+  return compileSchemaReference(schemaRef, version, keywords, options);
+}
+
+/** @internal Validate delivery envelope metadata separately from its versioned report. */
+export function getMediaBuyDeliveryEnvelopeValidator(version: string): ValidateFunction | undefined {
+  return compileSchemaReference(
+    'core/mcp-webhook-payload.json',
+    version,
+    undefined,
+    {},
+    {
+      key: 'media-buy-delivery-envelope',
+      project: schema => ({
+        ...schema,
+        properties: {
+          ...(schema.properties as Record<string, unknown>),
+          // The 3.0 task-type enum predates this documented reporting task. All
+          // releases use the same concrete discriminator on delivery envelopes.
+          task_type: { const: 'media_buy_delivery' },
+          // The caller validates this independently against the served report
+          // schema, so result errors cannot masquerade as envelope errors.
+          result: {},
+        },
+        required: [...new Set([...((schema.required as string[] | undefined) ?? []), 'task_type', 'result'])],
+      }),
+    }
+  );
+}
+
+function compileSchemaReference(
+  schemaRef: string,
+  version: string,
+  keywords: ReadonlyArray<KeywordDefinition> | undefined,
+  options: { allErrors?: boolean },
+  projection?: { key: string; project: (schema: LoadedSchema) => LoadedSchema }
+): ValidateFunction | undefined {
   // Keep remote schema-ref validation out of the shared tool-validator AJV,
   // which intentionally collects all errors for developer diagnostics.
   const bundleKey = resolveBundleKey(version);
@@ -1100,7 +1136,7 @@ export function getSchemaValidatorByRef(
     cache = entry.validators;
   }
   const allErrors = options.allErrors ?? false;
-  const cacheKey = `${stateCacheKey(bundleKey, root)}\0schema-ref::${normalized}\0all-errors::${allErrors}`;
+  const cacheKey = `${stateCacheKey(bundleKey, root)}\0schema-ref::${normalized}\0all-errors::${allErrors}\0projection::${projection?.key ?? 'raw'}`;
   const cached = cache.get(cacheKey);
   if (cached) return cached;
 
@@ -1122,7 +1158,8 @@ export function getSchemaValidatorByRef(
   });
   addFormats(ajv);
   for (const keyword of keywords ?? []) ajv.addKeyword(keyword);
-  const rawSchema = identity33ReferenceSchema(loadJson(file), version);
+  const authoredSchema = identity33ReferenceSchema(loadJson(file), version);
+  const rawSchema = projection ? projection.project(authoredSchema) : authoredSchema;
   const dependencySchemas: LoadedSchema[] = [];
   const registeredIds = new Map<string, LoadedSchema>();
   for (const schemaFile of walkJsonFiles(root)) {
