@@ -1430,7 +1430,7 @@ export class TaskExecutor {
     // Register task in active tasks
     const taskState: TaskState = {
       taskId,
-      wireAdcpVersion: options.negotiatedAdcpVersion ?? options.selectedAdcpVersion ?? wireAdcpVersion,
+      wireAdcpVersion: wireAdcpVersion ?? options.negotiatedAdcpVersion ?? options.selectedAdcpVersion,
       taskName,
       params,
       status: 'pending',
