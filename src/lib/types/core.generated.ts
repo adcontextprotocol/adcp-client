@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.24
-// Generated at: 2026-09-28T12:30:44.443Z
+// Generated AdCP core types from official schemas v3.1.30
+// Generated at: 2026-10-28T16:15:43.914Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -2428,10 +2428,7 @@ export type VASTAsset = {
        * Discriminator indicating VAST is delivered via URL endpoint
        */
       delivery_type: 'url';
-      /**
-       * URL endpoint that returns VAST XML. May carry unsubstituted ad-server macros — VAST-style `[MACRO]` and `${MACRO}` placeholders are accepted as-is (RFC 6570 syntax); buyers MUST NOT pre-encode macro delimiters, since players match the literal token at substitution time.
-       */
-      url: string;
+      url: MacroBearingURL;
     }
   | {
       /**
@@ -2488,6 +2485,10 @@ export type VASTTrackingEvent =
   | 'viewUndetermined'
   | 'measurableImpression'
   | 'viewableImpression';
+/**
+ * URL endpoint that returns VAST XML. May carry unsubstituted ad-server macros — VAST-style `[MACRO]`, `${MACRO}`, and `%%MACRO%%` placeholders are accepted as-is; buyers MUST NOT pre-encode macro delimiters, since players match the literal token at substitution time.
+ */
+export type MacroBearingURL = string;
 /**
  * Mechanism a receiver uses to invoke this URL (distinct from purpose, which lives in `url-asset-requirements.role`): `clickthrough` for user click destination (landing page), `tracker_pixel` for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), `tracker_script` for measurement SDKs that must load as a <script> tag (OMID verification, native event trackers using method:2). SHOULD be present on every URL asset; senders that omit it force the receiver into the role-based fallback described in this schema's top-level description.
  */
@@ -2620,10 +2621,7 @@ export type DAASTAsset = {
        * Discriminator indicating DAAST is delivered via URL endpoint
        */
       delivery_type: 'url';
-      /**
-       * URL endpoint that returns DAAST XML. May carry unsubstituted ad-server macros — DAAST/VAST-style `[MACRO]` and `${MACRO}` placeholders are accepted as-is (RFC 6570 syntax); buyers MUST NOT pre-encode macro delimiters, since players match the literal token at substitution time.
-       */
-      url: string;
+      url: MacroBearingURL;
     }
   | {
       /**
@@ -2880,10 +2878,7 @@ export interface URLAsset {
    * Discriminator identifying this as a URL asset. See /schemas/creative/asset-types for the registry.
    */
   asset_type: 'url';
-  /**
-   * URL reference. May be a plain URI or an RFC 6570 URI template carrying AdCP universal macros (e.g., `{SKU}`, `{MEDIA_BUY_ID}`). Buyers MUST NOT pre-encode macro braces at sync time; the ad server URL-encodes substituted values at impression time. See docs/creative/universal-macros.mdx.
-   */
-  url: string;
+  url: MacroBearingURL;
   url_type?: URLAssetType;
   /**
    * Description of what this URL points to
@@ -3469,10 +3464,7 @@ export interface PixelTrackerAsset {
    * Matches IAB OpenRTB Native 1.2 method enum (1=img, 2=js). `js` MUST only be used by sellers whose renderer supports JavaScript trackers; sellers without JS-tracker support MUST reject `method: js` declarations at sync_creatives time with `CREATIVE_REJECTED` carrying the reason.
    */
   method?: 'img' | 'js';
-  /**
-   * Tracker URL fired when `event` occurs. May carry AdCP universal macros (e.g., `{MEDIA_BUY_ID}`, `{CREATIVE_ID}`, `{CACHEBUSTER}`); the seller's renderer URL-encodes substituted values at serve time. See docs/creative/universal-macros.mdx.
-   */
-  url: string;
+  url: MacroBearingURL;
   /**
    * REQUIRED when `event` is `custom`; otherwise MUST be absent. Adopter-defined event name. Sellers without registered handling for a given custom_event_name MUST silently no-op (do not fire) rather than reject — custom events are forward-compatible probes.
    */
@@ -3491,10 +3483,7 @@ export interface VASTTrackerAsset {
    * The VAST tracking event this URL fires on. Maps 1:1 to the VAST `Tracking event="..."` attribute inside `TrackingEvents`. MUST NOT be `impression` (belongs in the VAST `Impression` element — model as a `url` asset with `url_type: "tracker_pixel"`), `clickTracking` / `customClick` (belong in `VideoClicks`), `error` (VAST `Error` element), or any of `viewable` / `notViewable` / `viewUndetermined` / `measurableImpression` / `viewableImpression` (children of the VAST `ViewableImpression` element, not `TrackingEvents`).
    */
   vast_event: VASTTrackingEvent;
-  /**
-   * Tracker URL that fires when `vast_event` occurs. May carry AdCP universal macros (e.g., `{SKU}`, `{MEDIA_BUY_ID}`); the sales agent or ad server URL-encodes substituted values at serve time. See docs/creative/universal-macros.mdx.
-   */
-  url: string;
+  url: MacroBearingURL;
   /**
    * VAST `offset` attribute. Required when `vast_event` is `progress`; ignored otherwise. Format matches the VAST 4.2 XSD `Tracking@offset` pattern: `HH:MM:SS` or `HH:MM:SS.mmm` for absolute time (two-digit hours, minutes 00–59, seconds 00–59), or an integer percentage 0–100 suffixed with `%`. Negative offsets are NOT permitted — the VAST 4.2 XSD pattern does not allow a leading minus.
    * @pattern ^(\d{2}:[0-5]\d:[0-5]\d(\.\d{3})?|(100|\d{1,2})%)$
@@ -3518,10 +3507,7 @@ export interface DAASTTrackerAsset {
    * The DAAST tracking event this URL fires on. MUST NOT be `impression` (model as `url` asset with `url_type: "tracker_pixel"`), `clickTracking` / `customClick` (click-tracking trackers go on their own URL asset), `error`, or any of the `ViewableImpression`-element children (`viewable`, `notViewable`, `viewUndetermined`, `measurableImpression`, `viewableImpression`).
    */
   daast_event: DAASTTrackingEvent;
-  /**
-   * Tracker URL that fires when `daast_event` occurs. May carry AdCP universal macros; the sales agent or ad server URL-encodes substituted values at serve time. See docs/creative/universal-macros.mdx.
-   */
-  url: string;
+  url: MacroBearingURL;
   /**
    * DAAST `offset` attribute. Required when `daast_event` is `progress` (DAAST 1.1 §3.2.4.3); ignored otherwise. Same format as VAST 4.2 `Tracking@offset`: `HH:MM:SS` or `HH:MM:SS.mmm` for absolute time (two-digit hours, minutes 00–59, seconds 00–59), or an integer percentage 0–100 suffixed with `%`. Negative offsets are NOT permitted.
    * @pattern ^(\d{2}:[0-5]\d:[0-5]\d(\.\d{3})?|(100|\d{1,2})%)$

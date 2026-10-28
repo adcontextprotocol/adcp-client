@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-28T12:31:36.952Z
+// Generated at: 2026-10-28T16:10:01.867Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -475,15 +475,6 @@ export const PublishedPostAssetSchema = z.object({
     provenance: ProvenanceSchema.optional()
 }).passthrough();
 
-export const PixelTrackerAssetSchema = z.object({
-    asset_type: z.literal("pixel_tracker"),
-    event: z.union([z.literal("impression"), z.literal("viewable_mrc_50"), z.literal("viewable_mrc_100"), z.literal("viewable_video_50"), z.literal("audible_video_complete"), z.literal("click"), z.literal("custom")]),
-    method: z.union([z.literal("img"), z.literal("js")]).optional(),
-    url: z.string(),
-    custom_event_name: z.string().optional(),
-    provenance: ProvenanceSchema.optional()
-}).passthrough();
-
 export const FrameRateTypeSchema = z.union([z.literal("constant"), z.literal("variable")]);
 
 export const ScanTypeSchema = z.union([z.literal("progressive"), z.literal("interlaced")]);
@@ -497,6 +488,8 @@ export const AudioChannelLayoutSchema = z.union([z.literal("mono"), z.literal("s
 export const VASTVersionSchema = z.union([z.literal("2.0"), z.literal("3.0"), z.literal("4.0"), z.literal("4.1"), z.literal("4.2")]);
 
 export const VASTTrackingEventSchema = z.union([z.literal("impression"), z.literal("creativeView"), z.literal("loaded"), z.literal("start"), z.literal("firstQuartile"), z.literal("midpoint"), z.literal("thirdQuartile"), z.literal("complete"), z.literal("mute"), z.literal("unmute"), z.literal("pause"), z.literal("resume"), z.literal("rewind"), z.literal("skip"), z.literal("playerExpand"), z.literal("playerCollapse"), z.literal("fullscreen"), z.literal("exitFullscreen"), z.literal("progress"), z.literal("acceptInvitation"), z.literal("adExpand"), z.literal("adCollapse"), z.literal("minimize"), z.literal("overlayViewDuration"), z.literal("otherAdInteraction"), z.literal("interactiveStart"), z.literal("clickTracking"), z.literal("customClick"), z.literal("close"), z.literal("closeLinear"), z.literal("error"), z.literal("viewable"), z.literal("notViewable"), z.literal("viewUndetermined"), z.literal("measurableImpression"), z.literal("viewableImpression")]);
+
+export const MacroBearingURLSchema = z.string();
 
 export const URLAssetTypeSchema = z.union([z.literal("clickthrough"), z.literal("tracker_pixel"), z.literal("tracker_script")]);
 
@@ -571,7 +564,7 @@ export const AudioAssetSchema = z.object({
 
 export const URLAssetSchema = z.object({
     asset_type: z.literal("url"),
-    url: z.string(),
+    url: MacroBearingURLSchema,
     url_type: URLAssetTypeSchema.optional(),
     description: z.string().optional(),
     provenance: ProvenanceSchema.optional()
@@ -625,10 +618,19 @@ export const PlatformExtensionReferenceSchema = z.object({
     digest: z.string().regex(/^sha256:[a-f0-9]{64}$/)
 }).passthrough();
 
+export const PixelTrackerAssetSchema = z.object({
+    asset_type: z.literal("pixel_tracker"),
+    event: z.union([z.literal("impression"), z.literal("viewable_mrc_50"), z.literal("viewable_mrc_100"), z.literal("viewable_video_50"), z.literal("audible_video_complete"), z.literal("click"), z.literal("custom")]),
+    method: z.union([z.literal("img"), z.literal("js")]).optional(),
+    url: MacroBearingURLSchema,
+    custom_event_name: z.string().optional(),
+    provenance: ProvenanceSchema.optional()
+}).passthrough();
+
 export const VASTTrackerAssetSchema = z.object({
     asset_type: z.literal("vast_tracker"),
     vast_event: VASTTrackingEventSchema,
-    url: z.string(),
+    url: MacroBearingURLSchema,
     offset: z.string().regex(/^(\d{2}:[0-5]\d:[0-5]\d(\.\d{3})?|(100|\d{1,2})%)$/).optional(),
     target: z.union([z.literal("linear"), z.literal("non_linear"), z.literal("companion")]).optional(),
     provenance: ProvenanceSchema.optional()
@@ -637,7 +639,7 @@ export const VASTTrackerAssetSchema = z.object({
 export const DAASTTrackerAssetSchema = z.object({
     asset_type: z.literal("daast_tracker"),
     daast_event: DAASTTrackingEventSchema,
-    url: z.string(),
+    url: MacroBearingURLSchema,
     offset: z.string().regex(/^(\d{2}:[0-5]\d:[0-5]\d(\.\d{3})?|(100|\d{1,2})%)$/).optional(),
     target: z.union([z.literal("linear"), z.literal("companion")]).optional(),
     provenance: ProvenanceSchema.optional()
@@ -3193,7 +3195,7 @@ export const VASTAssetSchema = z.object({
     provenance: ProvenanceSchema.optional()
 }).passthrough().and(z.union([z.object({
         delivery_type: z.literal("url"),
-        url: z.string()
+        url: MacroBearingURLSchema
     }).passthrough(), z.object({
         delivery_type: z.literal("inline"),
         content: z.string()
@@ -3209,7 +3211,7 @@ export const DAASTAssetSchema = z.object({
     provenance: ProvenanceSchema.optional()
 }).passthrough().and(z.union([z.object({
         delivery_type: z.literal("url"),
-        url: z.string()
+        url: MacroBearingURLSchema
     }).passthrough(), z.object({
         delivery_type: z.literal("inline"),
         content: z.string()

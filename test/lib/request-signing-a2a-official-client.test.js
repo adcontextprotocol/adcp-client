@@ -712,7 +712,7 @@ test('vector 027 matches legacy application payload bytes and native transport r
     if (protocolVersion === '1.0') {
       assert.deepStrictEqual(body.params.configuration.taskPushNotificationConfig, {
         url: pushNotificationConfig.url,
-        authentication: { scheme: 'HMAC-SHA256', credentials: 'shared-secret-placeholder' },
+        authentication: { scheme: 'HMAC-SHA256', credentials: pushNotificationConfig.authentication.credentials },
       });
     }
   }
