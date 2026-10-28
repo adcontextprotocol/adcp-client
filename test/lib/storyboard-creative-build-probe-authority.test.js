@@ -254,7 +254,7 @@ for (const standalone of [false, true]) {
       else {
         assert.equal(result.failed_count, 0);
         assert.equal(result.passed_count, 0);
-        assert.match(result.coverage_gaps[0].detail, /3\.1\.29.*audio_vast/);
+        assert.match(result.coverage_gaps[0].detail, /3\.1\.30.*audio_vast/);
       }
     });
   }
