@@ -9,7 +9,7 @@ const modulePromise = import(
 );
 
 const currentProtocolVersion = '3.2.1';
-const compatibleVersions = ['v2.5', 'v3', '3.0.25', '3.1.29', currentProtocolVersion, '3.2'];
+const compatibleVersions = ['v2.5', 'v3', '3.0.25', '3.1.30', currentProtocolVersion, '3.2'];
 
 function fixture(overrides = {}) {
   return {
@@ -20,7 +20,7 @@ function fixture(overrides = {}) {
         { path: 'dist/lib/schemas-data/3.1/bundled.schemas.br' },
         { path: 'dist/lib/schemas-data/3.2/bundled.schemas.br' },
         { path: 'compliance/cache/3.0.25/index.json' },
-        { path: 'compliance/cache/3.1.29/index.json' },
+        { path: 'compliance/cache/3.1.30/index.json' },
         { path: `compliance/cache/${currentProtocolVersion}/index.json` },
         { path: 'docs/releases/14.0.0-beta.0.md' },
       ],
@@ -55,18 +55,18 @@ test('requires the exact maintained stable compliance inventory', async () => {
   const { assertPublishProtocolArtifacts } = await modulePromise;
   const missingStable = fixture();
   missingStable.packageInfo.files = missingStable.packageInfo.files.filter(
-    file => !file.path.startsWith('compliance/cache/3.1.29/')
+    file => !file.path.startsWith('compliance/cache/3.1.30/')
   );
   assert.throws(
     () => assertPublishProtocolArtifacts(missingStable),
-    /3\.1\.29 \(required compliance bundle is missing\)/
+    /3\.1\.30 \(required compliance bundle is missing\)/
   );
 
   const staleStable = fixture();
   staleStable.packageInfo.files.push({ path: 'compliance/cache/3.0.1/index.json' });
   assert.throws(() => assertPublishProtocolArtifacts(staleStable), /unsupported compliance bundle 3\.0\.1/);
 
-  // The maintained 3.1 root that 3.1.29 replaced must also be rejected if it
+  // The maintained 3.1 root that 3.1.30 replaced must also be rejected if it
   // reappears in the package. Without this, a stale maintained corpus could be
   // packed alongside the current one and only the ancient 3.0.1 case would fail.
   const staleMaintained = fixture();
@@ -126,7 +126,7 @@ test('allows a beta only when it is the exact current primary pin', async () => 
             { path: 'dist/lib/schemas-data/3.1/bundled.schemas.br' },
             { path: `dist/lib/schemas-data/${beta}/bundled.schemas.br` },
             { path: 'compliance/cache/3.0.25/index.json' },
-            { path: 'compliance/cache/3.1.29/index.json' },
+            { path: 'compliance/cache/3.1.30/index.json' },
             { path: `compliance/cache/${beta}/index.json` },
           ],
         },
