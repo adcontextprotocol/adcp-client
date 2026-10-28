@@ -27,6 +27,7 @@ import {
   getSdkServerInfo,
   getSdkServerInstructions,
   getMcpToolProfile,
+  getToolSchemaProjector,
   isRegisteredToolVisible,
   isToolAvailableForVersion,
   resolveDiscoveryVersion,
@@ -168,6 +169,8 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
   const profileForVersion = (version: string): 'media-buy' | 'all' =>
     configuredMcpToolProfile === 'media-buy' && isAdcpVersionAtLeast(version, '3.2.0-0') ? 'media-buy' : 'all';
   const pinnedMcpToolProfile = profileForVersion(adcpVersion);
+  // Experimental `projectToolSchemas`; undefined (no-op) unless opted in.
+  const projectToolSchema = getToolSchemaProjector(agentServer);
   const modernToolDefinitions: Array<
     Omit<RegisteredToolDefinition, 'inputSchema' | 'outputSchema'> & {
       inputSchema?: StandardSchemaWithJSON;
@@ -317,16 +320,24 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
                 const discoveryInputSchema = frameworkAdcpTool
                   ? officialAdcpInputSchema(tool.name, discoveryVersion, discoveryProfile)
                   : tool.advertisedInputSchema;
+                const inputSchema = discoveryInputSchema ??
+                  modern.toolInputSchemaJson(tool.name) ?? {
+                    type: 'object',
+                    properties: {},
+                  };
+                const outputSchema = registered.outputSchemaJson;
                 return {
                   name: tool.name,
                   ...(tool.title !== undefined && { title: tool.title }),
                   ...(tool.description !== undefined && { description: tool.description }),
-                  inputSchema: (discoveryInputSchema ??
-                    modern.toolInputSchemaJson(tool.name) ?? {
-                      type: 'object',
-                      properties: {},
-                    }) as unknown as ModernTool['inputSchema'],
-                  ...(registered.outputSchemaJson !== undefined && { outputSchema: registered.outputSchemaJson }),
+                  inputSchema: (projectToolSchema
+                    ? projectToolSchema(inputSchema as Readonly<Record<string, unknown>>)
+                    : inputSchema) as unknown as ModernTool['inputSchema'],
+                  ...(outputSchema !== undefined && {
+                    outputSchema: (projectToolSchema
+                      ? projectToolSchema(outputSchema as Readonly<Record<string, unknown>>)
+                      : outputSchema) as typeof outputSchema,
+                  }),
                   ...(tool.annotations !== undefined && { annotations: tool.annotations as ToolAnnotations }),
                   ...(tool._meta !== undefined && { _meta: tool._meta }),
                 };

@@ -78,6 +78,13 @@ export {
   SyncCreativesActionSchema,
 } from '../validation/sync-creatives';
 export type { SyncCreativesItem, SyncCreativesSuccessStrict } from '../validation/sync-creatives';
+/** @experimental Prototype for adcontextprotocol/adcp#8452 (`x-adcp-applies-when`). */
+export {
+  APPLIES_WHEN_KEYWORD,
+  appliesWhenSatisfied,
+  projectSchemaForCapabilities,
+} from '../utils/applies-when-projection';
+export type { AppliesWhen } from '../utils/applies-when-projection';
 
 export interface ToolSchemaLookupOptions {
   /** AdCP release/minor/legacy alias resolved through the bundled schema loader. */

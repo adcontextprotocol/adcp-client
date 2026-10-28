@@ -381,6 +381,12 @@ export const ADCP_DISCOVERY_VERSION_RESOLVER: unique symbol = Symbol.for('@adcp/
 /** Resolved MCP tool catalog attached by createAdcpServer. @internal */
 export const ADCP_MCP_TOOL_PROFILE: unique symbol = Symbol.for('@adcp/client.mcpToolProfile');
 
+/**
+ * Capability-keyed tool-schema projector attached when `projectToolSchemas`
+ * is on. Absent by default, so discovery is untouched. @internal @experimental
+ */
+export const ADCP_TOOL_SCHEMA_PROJECTOR: unique symbol = Symbol.for('@adcp/client.toolSchemaProjector');
+
 /** Configured MCP App resources mirrored into modern per-request servers. @internal */
 export const ADCP_MCP_APP_RESOURCES: unique symbol = Symbol.for('@adcp/client.mcpAppResources');
 
@@ -400,6 +406,9 @@ export type AdcpToolVersionAvailabilityResolver = (toolName: string, adcpVersion
 /** @internal */
 export type AdcpDiscoveryVersionResolver = (requestedVersion?: string) => string;
 
+/** Narrows a tool's advertised JSON Schema. Must not mutate its input. @internal */
+export type AdcpToolSchemaProjector = (schema: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>;
+
 /** @internal */
 export interface AdcpServerInternal extends AdcpServer {
   readonly [ADCP_SDK_SERVER]: McpServer;
@@ -407,6 +416,7 @@ export interface AdcpServerInternal extends AdcpServer {
   [ADCP_TOOL_VERSION_AVAILABILITY]?: AdcpToolVersionAvailabilityResolver;
   [ADCP_DISCOVERY_VERSION_RESOLVER]?: AdcpDiscoveryVersionResolver;
   [ADCP_MCP_TOOL_PROFILE]?: ResolvedAdcpMcpToolProfile;
+  [ADCP_TOOL_SCHEMA_PROJECTOR]?: AdcpToolSchemaProjector;
   [ADCP_MCP_APP_RESOURCES]?: readonly AdcpMcpResourceDefinition[];
 }
 
@@ -478,6 +488,21 @@ export function setMcpToolProfile(server: AdcpServer, profile: ResolvedAdcpMcpTo
 /** Read the resolved MCP catalog; hand-wrapped servers retain the full surface. @internal */
 export function getMcpToolProfile(server: AdcpServer): ResolvedAdcpMcpToolProfile {
   return (server as AdcpServerInternal)[ADCP_MCP_TOOL_PROFILE] ?? 'all';
+}
+
+/** Attach the `projectToolSchemas` projector for transport adapters. @internal @experimental */
+export function setToolSchemaProjector(server: AdcpServer, projector: AdcpToolSchemaProjector): void {
+  Object.defineProperty(server, ADCP_TOOL_SCHEMA_PROJECTOR, {
+    value: projector,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+}
+
+/** Read the `projectToolSchemas` projector; `undefined` when the option is off. @internal @experimental */
+export function getToolSchemaProjector(server: AdcpServer): AdcpToolSchemaProjector | undefined {
+  return (server as AdcpServerInternal)[ADCP_TOOL_SCHEMA_PROJECTOR];
 }
 
 /** Attach validated resource definitions for transport adapters. @internal */
