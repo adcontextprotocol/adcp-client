@@ -1,5 +1,22 @@
 # Changelog
 
+## 17.0.0-beta.3
+
+### Minor Changes
+
+- cc8a952: Export per-release response conversion from `@adcp/sdk/adapters/version`, including `projectResponseForRelease` for seller-owned webhook results. Code invalid identity grant domains as permission refusals, allow Web Bot Auth-only verifiers without legacy JWKS, refuse direct MCP connections that skip signature middleware, and support named storyboard signing identities with public HTTPS signing and loopback delivery. Document server-wide identity schema selection and custom-host integration.
+
+### Patch Changes
+
+- 69a3527: Construct bids for every discovered auction CPM package in a storyboard buy, preserving authored bids, fixed-price offers, and bidding policies. Add explicit `enrich_request: true` opt-in for schema-valid semantic rejection probes so measurement-term rejection is tested with a valid auction request while malformed-input probes retain their authored payloads.
+
+  Preserve the requested deterministic stale-cache age when forwarding `force_upstream_unavailable` to a test-controller store, including zero, and reject invalid ages before invoking the store.
+
+- cc8a952: Upgrade the MCP Node adapter to 2.1.1 to include upstream request-body and JSON-RPC batch bounds (GHSA-f897-62hf-6gxq), while retaining compatibility with the SDK's existing MCP server dependency.
+- ecdbd48: Fix canonical-format storyboard grading so a selector that omits a product constraint other than fixed size or duration inherits it instead of being graded under-specified (#3470). The AdCP product-satisfaction rule requires a selector to declare only a product's fixed `width`, `height`, `duration_ms_exact` or `duration_ms_range`. Under the normative "narrows" definition, an omitted parameter inherits the declared value and adds no constraint of its own.
+
+  Since #3454 graded every selector route independently, the published `media_buy_seller/canonical_formats/create_media_buy_with_equivalent_direct_legacy_emission` positive (AdCP 3.2.7 and current) failed for every seller. Its direct route omits `max_file_size_kb` and `image_formats`. That step and the three stateful negatives after it now grade normally. Fixed dimensions and duration stay mandatory. Any parameter a selector states must still be contained, so a conflicting `max_file_size_kb`, `image_formats` or `video_codecs` still fails. This replaces the five-field omission allowlist from #3414. The fixture-discovery predicate uses the same rule.
+
 ## 17.0.0-beta.2
 
 ### Major Changes
