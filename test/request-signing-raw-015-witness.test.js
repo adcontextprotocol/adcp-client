@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
+const { ADCP_VERSION } = require('../dist/lib/version.js');
 
 const {
   gradeOneVector,
@@ -116,7 +117,7 @@ describe('raw grading of 015 without an IPv6-with-port target', () => {
         const result = await probeRequestSigningVector(stepId, `http://127.0.0.1:${agent.port}`, {
           request_signing: { transport: 'raw' },
           allow_http: true,
-          ...(vector.profile ? { adcpVersion: '3.2.5' } : {}),
+          ...(vector.profile ? { adcpVersion: ADCP_VERSION } : {}),
         });
         assert.equal(result.skip_reason, 'transport_ungradable');
         assert.equal(DETAILED_SKIP_TO_CANONICAL[result.skip_reason], 'not_applicable');
