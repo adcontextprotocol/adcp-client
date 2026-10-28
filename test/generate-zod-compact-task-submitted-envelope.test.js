@@ -168,3 +168,49 @@ test('compact submitted envelope: the pass runs after the canonical constraint p
   assert.ok(call < at('postProcessPureInitializers(addBackwardCompatSchemaAliases(zodSchemas))'));
   assert.equal(source.split('zodSchemas = postProcessCompactTaskSubmittedEnvelope(').length - 1, 1);
 });
+
+test('compact submitted envelope: composed protocol envelope preserves the required task handle', () => {
+  runHarness(
+    'adcp-zod-composed-compact-',
+    `
+const { z } = require(${JSON.stringify(path.join(REPO_ROOT, 'node_modules/zod'))});
+const { transpile } = require(${JSON.stringify(path.join(REPO_ROOT, 'node_modules/typescript'))});
+const input = [
+  'export const TaskIDSchema = z.string().min(1);',
+  '',
+  'export const AdCPVersionEnvelopeSchema = z.object({adcp_version: z.string().optional()}).passthrough();',
+  '',
+  'export const ProtocolEnvelopeSchema = AdCPVersionEnvelopeSchema.merge(z.object({}).passthrough()).merge(z.object({',
+  '    status: TaskStatusSchema,',
+  '    context: ContextObjectSchema.optional(),',
+  '    task_id: TaskIDSchema.optional()',
+  '}).passthrough());',
+  '',
+  'export const CompactTaskSubmittedSchema = ProtocolEnvelopeSchema.and(z.object({',
+  '    status: z.literal("submitted"),',
+  '    context: ContextObjectSchema.optional(),',
+  '    errors: z.array(z.string()).optional(),',
+  '    ext: z.object({}).passthrough().optional()',
+  '}).passthrough());',
+  '',
+  'export const RefineProposalsAsyncSubmittedSchema = CompactTaskSubmittedSchema.and(z.object({ expected_confirmation_at: z.string().optional() }).passthrough());',
+  '',
+  'export const TailSchema = z.string();',
+].join('\\n');
+const source = {allOf: [{if: {properties: {status: {const: 'submitted'}}, required: ['status']}, then: {required: ['task_id']}}]};
+const output = run(input, source);
+assert.match(output, /CompactTaskSubmittedSchema = ProtocolEnvelopeSchema\\.merge/);
+assert.match(output, /RefineProposalsAsyncSubmittedSchema = CompactTaskSubmittedSchema\\.merge/);
+assert.match(output, /\\.extend\\(\\{ task_id: TaskIDSchema \\}\\)/);
+const code = transpile(output.replaceAll('export const ', 'const '));
+const schema = new Function('z', 'const TaskStatusSchema=z.enum(["completed","submitted"]); const ContextObjectSchema=z.object({}).passthrough();' + code + ';return CompactTaskSubmittedSchema;')(z);
+assert.equal(schema.safeParse({status: 'submitted', task_id: 'task', extra: 1}).success, true);
+for (const value of [{status: 'submitted'}, {status: 'submitted', task_id: ''}, {status: 'completed', task_id: 'task'}]) {
+  assert.equal(schema.safeParse(value).success, false);
+}
+assert.throws(() => run(input, {allOf: []}), /submitted task_id condition changed/);
+assert.throws(() => run(input.replace('context: ContextObjectSchema.optional(),', 'context: ContextObjectSchema,'), source), /overlapping field context changed/);
+assert.throws(() => run(input.replace('task_id: TaskIDSchema.optional()', 'task_id: TaskIDSchema'), source), /task_id changed/);
+`
+  );
+});

@@ -2475,7 +2475,14 @@ function materializeProposalResponseBranches(schema: any, schemaName: string): a
     }
   }
 
-  const result = { ...schema, oneOf: branches };
+  // jsts gives a root allOf precedence over oneOf and drops every outcome
+  // branch. Distribute the shared envelope into each materialized branch so
+  // both envelope and task payload survive the TypeScript/Zod projection.
+  const result = {
+    ...schema,
+    oneOf: Array.isArray(schema.allOf) ? branches.map(branch => ({ allOf: [...schema.allOf, branch] })) : branches,
+  };
+  delete result.allOf;
   delete result.type;
   delete result.properties;
   delete result.required;

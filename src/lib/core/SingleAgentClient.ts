@@ -1155,6 +1155,8 @@ export type CreativeDeliveryTaskOptions = TaskOptions & {
   projectionCatalogs?: readonly ProjectionCatalogSnapshot[];
   /** Resolver for persisted canonical selections that need a seller-specific legacy wire identity. */
   canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver;
+  /** Seller-provided legacy slot contracts used when projecting inline creatives. */
+  creativeFormatProjection?: Pick<SyncCreativeFormatProjection, 'legacyFormatDefinitions'>;
 };
 
 export type CanonicalReadTaskOptions = TaskOptions & {
@@ -1180,6 +1182,18 @@ function snapshotTaskOptions<T extends TaskOptions | undefined>(options: T): T {
       durableContinuationRecovery: { ...options.durableContinuationRecovery },
     }),
   } as T;
+}
+
+function snapshotCreativeFormatProjection<T extends CreativeDeliveryTaskOptions['creativeFormatProjection']>(
+  projection: T
+): T {
+  if (!projection) return projection;
+  return {
+    ...projection,
+    ...(projection.legacyFormatDefinitions !== undefined && {
+      legacyFormatDefinitions: structuredClone(projection.legacyFormatDefinitions),
+    }),
+  };
 }
 
 function assertRawMethodForGovernedPayload(taskType: string, options?: TaskOptions): void {
@@ -5491,7 +5505,7 @@ export class SingleAgentClient {
 
       const result = Object.hasOwn(adcpData, 'result')
         ? (adcpData.result as AdCPAsyncResponseData | undefined)
-        : (adcpData as AdCPAsyncResponseData);
+        : (adcpData as unknown as AdCPAsyncResponseData);
       const textParts = latestA2AWebhookTextParts(a2aPayload.status?.message?.parts);
 
       return {
@@ -8181,6 +8195,9 @@ export class SingleAgentClient {
     const snapshottedOptions = {
       ...snapshotTaskOptions(options),
       ...(projectionCatalogs !== undefined && { projectionCatalogs }),
+      ...(options?.creativeFormatProjection !== undefined && {
+        creativeFormatProjection: snapshotCreativeFormatProjection(options.creativeFormatProjection),
+      }),
     };
     return this.withTaskConnectionScope(snapshottedOptions, effectiveOptions =>
       this.createMediaBuyWithinDeadline(requestSnapshot, inputHandler, effectiveOptions)
@@ -8192,7 +8209,13 @@ export class SingleAgentClient {
     inputHandler: InputHandler | undefined,
     options: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<CreateMediaBuyResponse>>> {
-    const { legacyFormatConverter, projectionCatalogs, canonicalFormatLegacyResolver, ...taskOptions } = options ?? {};
+    const {
+      creativeFormatProjection,
+      legacyFormatConverter,
+      projectionCatalogs,
+      canonicalFormatLegacyResolver,
+      ...taskOptions
+    } = options ?? {};
     const effectiveLegacyFormatConverter = this.resolveLegacyFormatConverter(
       legacyFormatConverter,
       projectionCatalogs ?? this.config.projectionCatalogs
@@ -8344,7 +8367,8 @@ export class SingleAgentClient {
           wireMode,
           'create_media_buy',
           effectiveLegacyFormatConverter,
-          effectiveCanonicalFormatLegacyResolver
+          effectiveCanonicalFormatLegacyResolver,
+          creativeFormatProjection?.legacyFormatDefinitions
         ),
         'create_media_buy',
         wireMode,
@@ -8420,6 +8444,9 @@ export class SingleAgentClient {
     const snapshottedOptions = {
       ...snapshotTaskOptions(options),
       ...(projectionCatalogs !== undefined && { projectionCatalogs }),
+      ...(options?.creativeFormatProjection !== undefined && {
+        creativeFormatProjection: snapshotCreativeFormatProjection(options.creativeFormatProjection),
+      }),
     };
     return this.withTaskConnectionScope(snapshottedOptions, effectiveOptions =>
       this.updateMediaBuyWithinDeadline(requestSnapshot, inputHandler, effectiveOptions)
@@ -8431,7 +8458,13 @@ export class SingleAgentClient {
     inputHandler: InputHandler | undefined,
     options: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<UpdateMediaBuyResponse>>> {
-    const { legacyFormatConverter, projectionCatalogs, canonicalFormatLegacyResolver, ...taskOptions } = options ?? {};
+    const {
+      creativeFormatProjection,
+      legacyFormatConverter,
+      projectionCatalogs,
+      canonicalFormatLegacyResolver,
+      ...taskOptions
+    } = options ?? {};
     const effectiveLegacyFormatConverter = this.resolveLegacyFormatConverter(
       legacyFormatConverter,
       projectionCatalogs ?? this.config.projectionCatalogs
@@ -8458,7 +8491,8 @@ export class SingleAgentClient {
           wireMode,
           'update_media_buy',
           effectiveLegacyFormatConverter,
-          effectiveCanonicalFormatLegacyResolver
+          effectiveCanonicalFormatLegacyResolver,
+          creativeFormatProjection?.legacyFormatDefinitions
         ),
         'update_media_buy',
         wireMode,
@@ -8514,7 +8548,7 @@ export class SingleAgentClient {
     const projectionCatalogs = options?.projectionCatalogs ? structuredClone(options.projectionCatalogs) : undefined;
     const creativeFormatProjection = options?.creativeFormatProjection
       ? {
-          ...options.creativeFormatProjection,
+          ...snapshotCreativeFormatProjection(options.creativeFormatProjection),
           ...(options.creativeFormatProjection.selectorContainers !== undefined && {
             selectorContainers: structuredCloneWithLegacyCreativeMetadata(
               options.creativeFormatProjection.selectorContainers
@@ -8578,7 +8612,8 @@ export class SingleAgentClient {
         selectorContainers,
         wireMode,
         effectiveLegacyFormatConverter,
-        effectiveCanonicalFormatLegacyResolver
+        effectiveCanonicalFormatLegacyResolver,
+        creativeFormatProjection?.legacyFormatDefinitions
       ),
       'sync_creatives',
       wireMode,

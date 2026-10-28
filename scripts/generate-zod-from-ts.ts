@@ -1571,7 +1571,7 @@ const COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP: Readonly<Record<string, { envelope: 
   context: { envelope: 'ContextObjectSchema.optional()', compact: 'ContextObjectSchema.optional()' },
 };
 
-function postProcessCompactTaskSubmittedEnvelope(content: string): string {
+function postProcessCompactTaskSubmittedEnvelope(content: string, protocolSource?: any): string {
   const fail = (reason: string): never => {
     throw new Error(
       `postProcessCompactTaskSubmittedEnvelope: ${reason}; merging would no longer match the canonical ` +
@@ -1623,9 +1623,80 @@ function postProcessCompactTaskSubmittedEnvelope(content: string): string {
     return { keys, passthrough };
   };
 
+  const mergeRefinementExtension = (parents: readonly { keys: Map<string, string> }[]): string => {
+    // 3.3 adds an optional finalize estimate to the refinement submitted arm.
+    // It is disjoint from the shared envelope, so merging preserves both
+    // constraints while retaining the public ZodObject helpers.
+    const refinement = blockOf('RefineProposalsAsyncSubmittedSchema');
+    const refinementFrom = 'CompactTaskSubmittedSchema.and(z.object({';
+    if (refinement.text.includes(refinementFrom)) {
+      const extra = topLevelObject('RefineProposalsAsyncSubmittedSchema', refinement.text);
+      if (
+        !extra.passthrough ||
+        [...extra.keys.keys()].join(',') !== 'expected_confirmation_at' ||
+        parents.some(parent => parent.keys.has('expected_confirmation_at'))
+      )
+        fail('refinement submitted extension changed');
+      content =
+        content.slice(0, refinement.start) +
+        refinement.text.replace(refinementFrom, 'CompactTaskSubmittedSchema.merge(z.object({') +
+        content.slice(refinement.end);
+    }
+    return content;
+  };
   const version = topLevelObject('AdCPVersionEnvelopeSchema', blockOf('AdCPVersionEnvelopeSchema').text);
-  const protocol = topLevelObject('ProtocolEnvelopeSchema', blockOf('ProtocolEnvelopeSchema').text);
   const compact = blockOf('CompactTaskSubmittedSchema');
+  const composedFrom = 'export const CompactTaskSubmittedSchema = ProtocolEnvelopeSchema.and(z.object({';
+  if (compact.text.startsWith(composedFrom)) {
+    // New envelope composition moves the submitted task-id requirement into
+    // the protocol envelope's conditional. Keep that source-owned condition
+    // explicit on the submitted object; the TS round-trip loses if/then.
+    const protocolBlock = blockOf('ProtocolEnvelopeSchema').text;
+    const protocolPrefix =
+      'export const ProtocolEnvelopeSchema = AdCPVersionEnvelopeSchema.merge(z.object({}).passthrough()).merge(z.object({';
+    if (!protocolBlock.startsWith(protocolPrefix)) fail('unsupported composed protocol envelope');
+    const protocol = topLevelObject(
+      'ProtocolEnvelopeSchema',
+      protocolBlock.replace('.merge(z.object({}).passthrough())', '')
+    );
+    const own = topLevelObject('CompactTaskSubmittedSchema', compact.text);
+    if (!protocol.passthrough || !version.passthrough || !own.passthrough) fail('composed unknown-key policy changed');
+    const overlap = [...own.keys.keys()].filter(key => protocol.keys.has(key) || version.keys.has(key)).sort();
+    if (overlap.join(',') !== 'context,status') fail('composed top-level overlap changed');
+    for (const key of overlap) {
+      const reviewed = COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP[key];
+      if (
+        version.keys.has(key) ||
+        protocol.keys.get(key) !== reviewed.envelope ||
+        own.keys.get(key) !== reviewed.compact
+      ) {
+        fail(`composed overlapping field ${key} changed`);
+      }
+    }
+    if (protocol.keys.get('task_id') !== 'TaskIDSchema.optional()' || own.keys.has('task_id'))
+      fail('composed task_id changed');
+    const source =
+      protocolSource ??
+      JSON.parse(readFileSync(path.join(__dirname, '../schemas/cache/latest/core/protocol-envelope.json'), 'utf8'));
+    const conditions = source.allOf?.filter((member: any) => member.if || member.then || member.else);
+    const condition = { ...conditions?.[0] };
+    delete condition.description;
+    if (
+      conditions?.length !== 1 ||
+      !isDeepStrictEqual(condition, {
+        if: { properties: { status: { const: 'submitted' } }, required: ['status'] },
+        then: { required: ['task_id'] },
+      })
+    ) {
+      fail('composed submitted task_id condition changed');
+    }
+    const replacement = compact.text
+      .replace(composedFrom, composedFrom.replace('.and(', '.merge('))
+      .replace(/;$/, '.extend({ task_id: TaskIDSchema });');
+    content = content.slice(0, compact.start) + replacement + content.slice(compact.end);
+    return mergeRefinementExtension([version, protocol, own]);
+  }
+  const protocol = topLevelObject('ProtocolEnvelopeSchema', blockOf('ProtocolEnvelopeSchema').text);
   const own = topLevelObject('CompactTaskSubmittedSchema', compact.text);
   const from = 'AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).and(z.object({';
   if (!compact.text.includes(from)) {
@@ -1665,27 +1736,7 @@ function postProcessCompactTaskSubmittedEnvelope(content: string): string {
 
   const to = 'AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).merge(z.object({';
   content = content.slice(0, compact.start) + compact.text.replace(from, to) + content.slice(compact.end);
-  // 3.3 adds an optional finalize estimate to the refinement submitted arm.
-  // It is disjoint from the shared envelope, so merging preserves both
-  // constraints while retaining the public ZodObject helpers.
-  const refinement = blockOf('RefineProposalsAsyncSubmittedSchema');
-  const refinementFrom = 'CompactTaskSubmittedSchema.and(z.object({';
-  if (refinement.text.includes(refinementFrom)) {
-    const extra = topLevelObject('RefineProposalsAsyncSubmittedSchema', refinement.text);
-    if (
-      !extra.passthrough ||
-      [...extra.keys.keys()].join(',') !== 'expected_confirmation_at' ||
-      version.keys.has('expected_confirmation_at') ||
-      protocol.keys.has('expected_confirmation_at') ||
-      own.keys.has('expected_confirmation_at')
-    )
-      fail('refinement submitted extension changed');
-    content =
-      content.slice(0, refinement.start) +
-      refinement.text.replace(refinementFrom, 'CompactTaskSubmittedSchema.merge(z.object({') +
-      content.slice(refinement.end);
-  }
-  return content;
+  return mergeRefinementExtension([version, protocol, own]);
 }
 
 /**
@@ -1867,18 +1918,123 @@ function postProcessCompatibilityPurchaseCoordinatorInput(content: string): stri
 
 /** Restore beta.4 runtime-only membership constraints on projected legacy continuations. */
 function postProcessLegacyPurchaseContinuationResponse(content: string): string {
-  const schemaStart = content.indexOf('export const RequestProposalsResponseSchema = ');
-  const schemaEnd = content.indexOf('\n\nexport const ', schemaStart + 1);
-  if (schemaStart < 0 || schemaEnd < 0) {
-    throw new Error('Could not locate RequestProposalsResponseSchema.');
+  const source = ts.createSourceFile('adcp-generated-zod.ts', content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const fail = (reason: string): never => {
+    throw new Error(`Could not locate the legacy_create purchase continuation response arm: ${reason}`);
+  };
+  const declaration = (name: string): ts.Expression => {
+    const matches = source.statements.flatMap(statement =>
+      ts.isVariableStatement(statement)
+        ? statement.declarationList.declarations.filter(node => ts.isIdentifier(node.name) && node.name.text === name)
+        : []
+    );
+    if (matches.length !== 1 || !matches[0].initializer) return fail(`missing or ambiguous ${name}`);
+    return matches[0].initializer;
+  };
+  const root = declaration('RequestProposalsResponseSchema');
+  // Follow only schema composition at the current object level. In particular,
+  // never search unrelated object fields, callback bodies or metadata for a
+  // matching literal. Aliases are resolved to their owning declarations.
+  const objects = (node: ts.Expression, visited = new Set<string>()): ts.CallExpression[] => {
+    if (ts.isParenthesizedExpression(node)) return objects(node.expression, visited);
+    if (ts.isIdentifier(node)) {
+      if (visited.has(node.text)) return fail(`cyclic alias ${node.text}`);
+      return objects(declaration(node.text), new Set(visited).add(node.text));
+    }
+    if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) {
+      return fail('unsupported schema composition');
+    }
+    const receiver = node.expression.expression;
+    const method = node.expression.name.text;
+    if (ts.isIdentifier(receiver) && receiver.text === 'z') {
+      if (method === 'object') return [node];
+      if (method === 'union' || method === 'discriminatedUnion') {
+        const arms = node.arguments[method === 'union' ? 0 : 1];
+        if (!arms || !ts.isArrayLiteralExpression(arms)) return fail('unsupported union arms');
+        return arms.elements.flatMap(arm => objects(arm as ts.Expression, visited));
+      }
+      if (method === 'intersection' && node.arguments.length === 2) {
+        return node.arguments.flatMap(arm => objects(arm, visited));
+      }
+      if (method === 'never') return [];
+      return fail(`unsupported z.${method}`);
+    }
+    if (['and', 'merge', 'or'].includes(method) && node.arguments.length === 1) {
+      return [...objects(receiver, visited), ...objects(node.arguments[0], visited)];
+    }
+    if (['passthrough', 'strict', 'strip', 'optional', 'nullable', 'nullish', 'describe', 'meta'].includes(method)) {
+      return objects(receiver, visited);
+    }
+    return fail(`unsupported schema method ${method}`);
+  };
+  const fields = (object: ts.CallExpression): Map<string, ts.Expression> => {
+    const shape = object.arguments[0];
+    if (!shape || !ts.isObjectLiteralExpression(shape)) return fail('unsupported object shape');
+    const result = new Map<string, ts.Expression>();
+    for (const property of shape.properties) {
+      if (!ts.isPropertyAssignment(property)) return fail('unsupported object property');
+      const name = propertyNameText(property.name);
+      if (name === undefined || result.has(name)) return fail('ambiguous object property');
+      result.set(name, property.initializer);
+    }
+    return result;
+  };
+  const base = (node: ts.Expression, visited = new Set<string>()): ts.CallExpression => {
+    if (ts.isParenthesizedExpression(node)) return base(node.expression, visited);
+    if (ts.isIdentifier(node)) {
+      if (visited.has(node.text)) return fail(`cyclic field alias ${node.text}`);
+      return base(declaration(node.text), new Set(visited).add(node.text));
+    }
+    if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression))
+      return fail('malformed arm field');
+    const receiver = node.expression.expression;
+    if (ts.isIdentifier(receiver) && receiver.text === 'z') return node;
+    if (['min', 'max', 'length', 'nonempty', 'datetime', 'describe', 'meta'].includes(node.expression.name.text)) {
+      return base(receiver, visited);
+    }
+    return fail('optional or unsupported arm field');
+  };
+  const literal = (node: ts.Expression | undefined, value: string | boolean): boolean => {
+    if (!node) return false;
+    const call = base(node);
+    if ((call.expression as ts.PropertyAccessExpression).name.text !== 'literal') return false;
+    const argument = call.arguments[0];
+    return typeof value === 'string'
+      ? argument !== undefined && ts.isStringLiteral(argument) && argument.text === value
+      : argument?.kind === (value ? ts.SyntaxKind.TrueKeyword : ts.SyntaxKind.FalseKeyword);
+  };
+  const targets = new Set<ts.CallExpression>();
+  for (const object of objects(root)) {
+    const continuation = fields(object).get('purchase_continuation');
+    if (!continuation) continue;
+    const arms = objects(continuation).filter(arm => literal(fields(arm).get('kind'), 'legacy_create'));
+    if (arms.length > 1) return fail('ambiguous legacy_create arms');
+    for (const arm of arms) {
+      const properties = fields(arm);
+      for (const name of [
+        'continuation_token',
+        'continuation_expires_at',
+        'source_adcp_version',
+        'product_ids',
+        'losses',
+      ]) {
+        if (!properties.has(name)) return fail(`missing ${name}`);
+      }
+      if (!literal(properties.get('requires_explicit_acceptance'), true)) return fail('missing explicit acceptance');
+      for (const name of ['product_ids', 'losses']) {
+        const array = base(properties.get(name)!);
+        if (!isZodArrayCall(array) || !array.arguments[0]) return fail(`malformed ${name}`);
+        if (
+          name === 'product_ids' &&
+          (base(array.arguments[0]).expression as ts.PropertyAccessExpression).name.text !== 'string'
+        ) {
+          return fail('malformed product ID');
+        }
+      }
+      targets.add(arm);
+    }
   }
-  const block = content.slice(schemaStart, schemaEnd);
-  const armPattern =
-    /z\.object\(\{\n\s+kind: z\.literal\("legacy_create"\),[\s\S]*?requires_explicit_acceptance: z\.literal\(true\)\n\s+\}\)\.passthrough\(\)/g;
-  const matches = [...block.matchAll(armPattern)];
-  if (matches.length === 0) {
-    throw new Error('Could not locate the legacy_create purchase continuation response arm.');
-  }
+  if (targets.size === 0) return fail('missing source-owned continuation');
   const refineArm = (arm: string) => `${arm}.superRefine((value, ctx) => {
             if (value.product_ids.length === 0) {
                 ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must contain at least one entry" });
@@ -1904,10 +2060,6 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
                 ctx.addIssue({ code: "custom", path: ["losses"], message: "AdCP 2.5 losses must contain mutation_idempotency_not_guaranteed" });
             }
         })`;
-  const corrected = block.replace(armPattern, refineArm);
-  if (!corrected.endsWith(';')) {
-    throw new Error('RequestProposalsResponseSchema has an unexpected generated terminator.');
-  }
   // Attach the source-schema invariants to whichever top-level expression
   // ts-to-zod emits. The old lossy type produced union(...).and(object(...));
   // while the materialized discriminated type correctly produces union(...);
@@ -1924,6 +2076,9 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
             if (present(field)) ctx.addIssue({ code: "custom", path: [field], message: \`\${field} is forbidden for this outcome\` });
         }
     };
+    if (value.status === "submitted" && (typeof value.task_id !== "string" || value.task_id.length === 0)) {
+        ctx.addIssue({ code: "custom", path: ["task_id"], message: "submitted responses require a non-empty task_id" });
+    }
     forbid(["refinement_applied", "pagination", "unchanged", "wholesale_feed_version"]);
     if (value.suggestions !== undefined && (value.suggestions.length === 0 || value.suggestions.some((suggestion: string) => suggestion.length === 0))) {
         ctx.addIssue({ code: "custom", path: ["suggestions"], message: "suggestions must contain non-empty strings" });
@@ -1937,7 +2092,7 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
         forbid(["reason", "suggestions", "purchase_continuation", "task_id"]);
     } else if (value.outcome === "products_available") {
         requireNonEmptyArray("products");
-        if (!present("purchase_continuation")) {
+        if (!present("purchase_continuation") || value.purchase_continuation === undefined) {
             ctx.addIssue({ code: "custom", path: ["purchase_continuation"], message: "purchase_continuation is required" });
         }
         forbid(["proposals", "reason", "suggestions", "task_id"]);
@@ -1974,8 +2129,15 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
         forbid(["proposals", "products", "incomplete", "purchase_continuation", "task_id"]);
     }
 });`;
-  const constrained = corrected.slice(0, -1) + rootRefinement;
-  return content.slice(0, schemaStart) + constrained + content.slice(schemaEnd);
+  const edits = [...targets].map(arm => ({
+    start: arm.getStart(source),
+    end: arm.end,
+    text: refineArm(arm.getText(source)),
+  }));
+  edits.push({ start: root.end, end: root.end, text: rootRefinement.slice(0, -1) });
+  return edits
+    .sort((a, b) => b.start - a.start)
+    .reduce((result, edit) => result.slice(0, edit.start) + edit.text + result.slice(edit.end), content);
 }
 
 /** Replace the lossy TS round-trip with Zod generated from the dereferenced canonical wire schema. */
@@ -6471,6 +6633,7 @@ export const __test__ = {
   postProcessPrimitiveIntersections,
   postProcessPrimitiveEnumExclusions,
   postProcessCompatibilityPurchaseCoordinatorInput,
+  postProcessLegacyPurchaseContinuationResponse,
   postProcessForPassthrough,
   postProcessTupleRestArrays,
   postProcessNonemptyArrays,

@@ -116,6 +116,7 @@ await agent.syncCreatives(
   {
     creativeFormatProjection: {
       selectorContainers: selectedPackages,
+      legacyFormatDefinitions: sellerLegacyFormats,
     },
   },
 );
@@ -131,6 +132,14 @@ definition's `asset_id` keys. Definitions come from the bundled reference
 catalog, or from an optional final `legacyFormatDefinitions` array supplied to
 any of the three helpers. Caller definitions take precedence and must match
 both the format agent URL and ID. No network lookup occurs during projection.
+
+The client methods `syncCreatives`, `createMediaBuy`, and `updateMediaBuy`
+also accept these definitions in `options.creativeFormatProjection.legacyFormatDefinitions`.
+Pass the seller's legacy `list_creative_formats` definitions when its asset slots
+differ from the bundled catalog. For example, an explicit `url` slot with
+`requirements.url_type: 'tracker_pixel'` enables pixel-tracker conversion even
+when the seller negotiates AdCP 3.1. Advertising 3.0 alongside 3.1 alone does
+not enable conversion. The definitions stay local and are copied before discovery.
 
 Existing declared asset keys keep their values. Other assets move only to one
 unoccupied slot with the same `asset_type`; URL assets must also match

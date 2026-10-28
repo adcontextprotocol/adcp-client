@@ -681,6 +681,8 @@ export interface CanonicalCreativeFormatSelectorContainer {
 export interface SyncCreativeFormatProjection {
   selectorContainers: ReadonlyArray<CanonicalCreativeFormatSelectorContainer>;
   legacyFormatConverter?: LegacyFormatConverter;
+  /** Seller-provided legacy slot contracts, matched by exact format owner and id. */
+  legacyFormatDefinitions?: readonly V1FormatDefinition[];
 }
 
 export class CreativeFormatProjectionError extends Error {
