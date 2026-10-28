@@ -1,5 +1,12 @@
 # Changelog
 
+## 17.0.0-beta.4
+
+### Patch Changes
+
+- 46a8f2a: Prepare framework account-sync results for the protocol's experimental account-request identifiers and resolutions. Derive their types and emission support from the installed protocol bundle, preserve the explicit result-field coverage guards, and apply the same source-schema gate to platform and raw response paths.
+- 0b69b70: Restore source array bounds on named Zod array references during schema generation, fixing the AdCP 3.3 beta.1 `TargetingOverlay.geo_countries` generation failure. Apply bounds at each use site so shared array aliases retain their existing behavior elsewhere, and keep unresolved or cyclic references fail-closed.
+
 ## 17.0.0-beta.3
 
 ### Minor Changes

@@ -45,7 +45,11 @@ import type { RequireCacheScopeWhenProducts, ServerPayload } from '../types/serv
 import { validActionsForStatus } from './media-buy-helpers';
 import type { CancelMediaBuyInput } from './media-buy-helpers';
 import { projectReportingDeliveryConfigStates } from './reporting-delivery-config';
-import { projectAccountResponseIdentityFields } from './account-response-identity';
+import {
+  ACCOUNT_REQUEST_RESULT_KEYS,
+  projectAccountRequestResultFields,
+  projectAccountResponseIdentityFields,
+} from './account-response-identity';
 import type {
   ListCreativeFormatsResponse,
   GetProductsResponse,
@@ -195,7 +199,7 @@ function stripBusinessEntityBank<T extends object>(row: T, key: 'billing_entity'
   return stripped as T;
 }
 
-function stripAccountWriteOnlyFields<T extends object>(account: T): T {
+function stripAccountWriteOnlyFields<T extends object>(account: T, syncResult = false): T {
   // An operator-handoff destination is request-only, including its non-bank
   // fields. Keep it out of response payloads and the idempotency replay cache.
   const {
@@ -210,6 +214,10 @@ function stripAccountWriteOnlyFields<T extends object>(account: T): T {
   };
   const response = stripBusinessEntityBank(stripNotificationConfigSecrets(responseFields), 'billing_entity');
   const stripped = { ...response, ...projectAccountResponseIdentityFields(response) } as T;
+  if (syncResult) {
+    for (const key of ACCOUNT_REQUEST_RESULT_KEYS) delete (stripped as Record<string, unknown>)[key];
+    Object.assign(stripped, projectAccountRequestResultFields(response));
+  }
   const reportingDeliveryConfigs = (stripped as { reporting_delivery_configs?: unknown }).reporting_delivery_configs;
   if (reportingDeliveryConfigs === undefined) return stripped;
   return {
@@ -220,12 +228,12 @@ function stripAccountWriteOnlyFields<T extends object>(account: T): T {
   } as T;
 }
 
-function stripAccountsWriteOnlyFields<T extends { accounts?: unknown }>(data: T): T {
+function stripAccountsWriteOnlyFields<T extends { accounts?: unknown }>(data: T, syncResult = false): T {
   if (!Array.isArray(data.accounts)) return data;
   return {
     ...data,
     accounts: data.accounts.map(account =>
-      account != null && typeof account === 'object' ? stripAccountWriteOnlyFields(account) : account
+      account != null && typeof account === 'object' ? stripAccountWriteOnlyFields(account, syncResult) : account
     ),
   };
 }
@@ -900,7 +908,7 @@ export function creativeApprovalError(data: CreativeApprovalError): CreativeAppr
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function syncAccountsResponse(data: ServerPayload<SyncAccountsResponse>, summary?: string): McpToolResponse {
-  const stripped = 'accounts' in data ? stripAccountsWriteOnlyFields(data) : data;
+  const stripped = 'accounts' in data ? stripAccountsWriteOnlyFields(data, true) : data;
   const defaultSummary =
     'errors' in stripped
       ? 'Account sync error'

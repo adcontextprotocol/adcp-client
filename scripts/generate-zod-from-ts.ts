@@ -696,21 +696,36 @@ function isZodTupleCall(node: ts.Expression): node is ts.CallExpression {
   );
 }
 
-/** Find the outer array base beneath chains such as `.optional()` or `.nullable()`. */
+/** Find a local array expression to which a cardinality check can be attached. */
 function findZodArrayBase(
   node: ts.Expression,
-  sourceFile?: ts.SourceFile,
-  seen: ReadonlySet<string> = new Set()
-): ts.CallExpression | undefined {
+  sourceFile: ts.SourceFile,
+  allowWrappers = true,
+  visited = new Set<string>()
+): ts.Expression | undefined {
   if (isZodArrayCall(node)) return node;
-  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-    return findZodArrayBase(node.expression.expression, sourceFile, seen);
+  if (ts.isIdentifier(node)) {
+    if (visited.has(node.text)) return undefined;
+    const initializer = findSchemaVariable(sourceFile, node.text);
+    const nextVisited = new Set(visited).add(node.text);
+    // Keep bounds local to this reference. Editing the shared declaration
+    // would also constrain unrelated, unbounded uses of the same array.
+    if (initializer && findZodArrayBase(initializer, sourceFile, false, nextVisited)) return node;
+    return undefined;
   }
-  // A property that names a hoisted schema (`geo_countries: GeoCountriesSchema.optional()`)
-  // carries its array bound on that declaration, so follow the reference.
-  if (sourceFile && ts.isIdentifier(node) && !seen.has(node.text)) {
-    const target = findSchemaVariable(sourceFile, node.text);
-    if (target) return findZodArrayBase(target, sourceFile, new Set(seen).add(node.text));
+  if (ts.isParenthesizedExpression(node)) {
+    return findZodArrayBase(node.expression, sourceFile, allowWrappers, visited);
+  }
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+    // At the use site we can insert before optional()/nullable(). A referenced
+    // schema must itself remain a ZodArray, or `.min()`/`.max()` is unavailable.
+    if (
+      !allowWrappers &&
+      !['min', 'max', 'length', 'nonempty', 'describe', 'meta'].includes(node.expression.name.text)
+    ) {
+      return undefined;
+    }
+    return findZodArrayBase(node.expression.expression, sourceFile, allowWrappers, visited);
   }
   return undefined;
 }
@@ -724,20 +739,6 @@ function fixedZodTupleLength(node: ts.Expression): number | undefined {
     return fixedZodTupleLength(node.expression.expression);
   }
   return undefined;
-}
-
-/** The declaration a `FooSchema.optional()` chain bottoms out in, following named references. */
-function referencedSchemaInitializer(
-  node: ts.Expression,
-  sourceFile: ts.SourceFile,
-  seen: ReadonlySet<string> = new Set()
-): ts.Expression | undefined {
-  let base: ts.Expression = node;
-  while (ts.isCallExpression(base) && ts.isPropertyAccessExpression(base.expression)) base = base.expression.expression;
-  if (!ts.isIdentifier(base) || seen.has(base.text)) return undefined;
-  const target = findSchemaVariable(sourceFile, base.text);
-  if (!target) return undefined;
-  return referencedSchemaInitializer(target, sourceFile, new Set(seen).add(base.text)) ?? target;
 }
 
 function zodArrayMaxItems(node: ts.Expression, method: 'max' | 'min' = 'max'): number | undefined {
@@ -780,19 +781,35 @@ function isZodObjectCall(node: ts.Node): node is ts.CallExpression {
 function collectObjectPropertyValues(
   expression: ts.Expression,
   path: readonly string[],
-  sourceFile?: ts.SourceFile,
-  seen: ReadonlySet<string> = new Set()
+  bounds?: {
+    sourceFile: ts.SourceFile;
+    constraint: ArrayMaxItemsConstraint;
+    constraints: readonly ArrayMaxItemsConstraint[];
+  },
+  visited = new Set<string>()
 ): ts.Expression[] {
   if (path.length === 0) return [expression];
   const values: ts.Expression[] = [];
   const visit = (node: ts.Node): void => {
-    // Follow a hoisted named schema (`items: GeoMetroSchema`) to its declaration.
-    if (sourceFile && ts.isIdentifier(node) && node.text.endsWith('Schema') && !seen.has(node.text)) {
-      const target = findSchemaVariable(sourceFile, node.text);
-      if (target) {
-        values.push(...collectObjectPropertyValues(target, path, sourceFile, new Set(seen).add(node.text)));
-        return;
+    if (ts.isIdentifier(node)) {
+      if (!bounds) return;
+      const { sourceFile, constraint, constraints } = bounds;
+      const key = `${node.text}:${path.join('.')}`;
+      if (visited.has(key)) return;
+      // A nested bound may be reached through a named object/array schema.
+      // Only descend when that declaration independently owns the same bound;
+      // otherwise editing its body would tighten unrelated uses of the alias.
+      const ownsBound = constraints.some(
+        candidate =>
+          `${candidate.schemaName}Schema` === node.text &&
+          candidate.path.join('.') === path.join('.') &&
+          candidate.maxItems === constraint.maxItems
+      );
+      const initializer = ownsBound && findSchemaVariable(sourceFile, node.text);
+      if (initializer) {
+        values.push(...collectObjectPropertyValues(initializer, path, bounds, new Set(visited).add(key)));
       }
+      return;
     }
     if (isZodObjectCall(node)) {
       const shape = node.arguments[0];
@@ -800,7 +817,9 @@ function collectObjectPropertyValues(
         for (const property of shape.properties) {
           if (!ts.isPropertyAssignment(property) || propertyNameText(property.name) !== path[0]) continue;
           if (path.length === 1) values.push(property.initializer);
-          else values.push(...collectObjectPropertyValues(property.initializer, path.slice(1), sourceFile, seen));
+          else {
+            values.push(...collectObjectPropertyValues(property.initializer, path.slice(1), bounds, visited));
+          }
         }
       }
       // Properties inside this object are a deeper schema level. Only enter a
@@ -839,7 +858,7 @@ function postProcessArrayMaxItems(content: string, typeSource: string, method: '
   for (const constraint of constraints) {
     const schema = findSchemaVariable(sourceFile, `${constraint.schemaName}Schema`);
     if (!schema) continue; // ts-to-zod may intentionally omit unsupported declarations.
-    const values = collectObjectPropertyValues(schema, constraint.path, sourceFile);
+    const values = collectObjectPropertyValues(schema, constraint.path, { sourceFile, constraint, constraints });
     let foundArray = false;
     let fixedTupleSatisfiesBound = false;
     for (const value of values) {
@@ -854,9 +873,7 @@ function postProcessArrayMaxItems(content: string, typeSource: string, method: '
         continue;
       }
       foundArray = true;
-      const referenced = referencedSchemaInitializer(value, sourceFile);
-      const existingMax =
-        zodArrayMaxItems(value, method) ?? (referenced ? zodArrayMaxItems(referenced, method) : undefined);
+      const existingMax = zodArrayMaxItems(value, method);
       if (existingMax !== undefined) {
         if (existingMax !== constraint.maxItems) {
           throw new Error(
