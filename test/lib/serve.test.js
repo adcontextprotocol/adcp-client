@@ -170,3 +170,36 @@ describe('serve()', { concurrency: false }, () => {
     await closeServer(server);
   });
 });
+
+test('serve keeps an HTTP connection reusable across a schema-validation pause', async t => {
+  const { serve } = require('../../dist/lib/index.js');
+  const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+  const server = serve(() => new McpServer({ name: 'Keepalive test', version: '1.0.0' }), {
+    port: 0,
+    onListening() {},
+  });
+  const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+  t.after(async () => {
+    agent.destroy();
+    await closeServer(server);
+  });
+  await waitForListening(server);
+  const request = () =>
+    new Promise((resolve, reject) => {
+      let socket;
+      const req = http.get(
+        { hostname: '127.0.0.1', port: server.address().port, path: '/keepalive-probe', agent },
+        res => {
+          res.resume();
+          res.on('end', () => resolve(socket));
+        }
+      );
+      req.on('socket', value => {
+        socket = value;
+      });
+      req.on('error', reject);
+    });
+  const first = await request();
+  await new Promise(resolve => setTimeout(resolve, 6_000));
+  assert.strictEqual(await request(), first, 'schema work must not leave a pooled MCP connection closed');
+});

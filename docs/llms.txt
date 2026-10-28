@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-09-28
-> Library: @adcp/sdk v13.1.1
+> Generated at: 2026-10-28
+> Library: @adcp/sdk v13.1.3
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -1102,7 +1102,7 @@ Flow: `sync_plans → sync_accounts → sync_governance → get_products → cre
 Flow: `sync_plans → sync_accounts → sync_governance → get_products → create_media_buy`
 
 **Inline media-buy creatives without sync_creatives** — Verifies that a seller advertising inline_creative_management accepts package creatives on create_media_buy and update_media_buy without requiring the Creative Protocol or sync_creatives.
-Flow: `get_adcp_capabilities → get_products → create_media_buy → update_media_buy → get_products → create_media_buy → update_media_buy → get_media_buys`
+Flow: `get_adcp_capabilities → get_products → create_media_buy → update_media_buy → get_media_buys → create_media_buy → update_media_buy → get_media_buys → create_media_buy → update_media_buy → get_media_buys → get_products → create_media_buy → update_media_buy → get_media_buys`
 
 **Seller rejects illegal state transitions and unknown references** — Validates that the seller returns structured AdCP errors (MEDIA_BUY_NOT_FOUND, PACKAGE_NOT_FOUND, NOT_CANCELLABLE) rather than 500s or undefined behavior when the buyer references missing entities or attempts forbidden state transitions.
 Flow: `update_media_buy → get_products → create_media_buy → update_media_buy`
@@ -1320,7 +1320,7 @@ Flow: `get_adcp_capabilities`
 Flow: `get_adcp_capabilities`
 
 **Webhook emission — outbound webhook conformance (operation ID + signing + idempotency + sync silence)** — Any agent that emits webhooks MUST echo the caller-supplied operation_id in every payload, carry a stable idempotency_key across retries, avoid duplicate webhook side effects on request replay, and — when the buyer has not opted into the deprecated HMAC fallback — MUST sign deliveries under the RFC 9421 webhook profile. Sellers MUST NOT emit task webhooks for inline terminal responses; any future sync-completion notification mode would be explicit and capability-advertised. Graded by a runner hosting a webhook receiver during storyboard execution.
-Flow: `get_adcp_capabilities → expect_webhook → get_products → expect_webhook_retry_keys_stable → fetch_brand_jwks → assert_jwks_purpose → expect_webhook_signature_valid`
+Flow: `get_adcp_capabilities → get_products → expect_webhook → get_products → expect_webhook_retry_keys_stable → fetch_brand_jwks → assert_jwks_purpose → expect_webhook_signature_valid`
 
 **Webhook receiver envelope: inbound POST conformance** — Buyer webhook receivers MUST accept full MCP webhook envelopes, reject bare delivery-result payloads, preserve raw-body signature verification, and dedupe retries by a stable idempotency_key.
 Flow: `replay_webhook_vector`
@@ -1361,7 +1361,7 @@ Flow: `get_adcp_capabilities → activate_signal → get_signals → activate_si
 Flow: `get_adcp_capabilities → create_media_buy → get_products → create_media_buy → get_products → create_media_buy`
 
 **STALE_RESPONSE advisory-success wire placement** — Validates that STALE_RESPONSE rides in errors[] on a populated success response with transport success preserved, and that STALE_RESPONSE is absent on healthy upstream responses.
-Flow: `get_adcp_capabilities → comply_test_controller → get_products`
+Flow: `get_adcp_capabilities → get_products → comply_test_controller → get_products`
 
 ### Security
 
@@ -1616,5 +1616,5 @@ JSON schemas (source of truth): `schemas/cache/latest/index.json` (local only)
 - npm: https://www.npmjs.com/package/@adcp/sdk
 - Spec: https://adcontextprotocol.org
 - CLI: `npx @adcp/sdk@adcp-3.1` for the maintained 13.x / AdCP 3.1 line
-- Bundled compliance caches: 3.0.12, 3.1.24, 3.1.0-beta.7, and the 3.2.0 preview bundle. For example `--compliance-version 3.1.24` works without external cache paths
+- Bundled compliance caches: 3.0.12, 3.1.30, 3.1.0-beta.7, and the 3.2.0 preview bundle. For example `--compliance-version 3.1.30` works without external cache paths
 - Historical patches: the npm package does not ship the 3.1.1 compliance cache; use matching external inputs such as `--compliance-version 3.1.1 --compliance-dir /path/to/adcp-3.1.1/compliance --schema-root /path/to/adcp-3.1.1/schemas` with the maintained runner; prerelease inputs remain exact

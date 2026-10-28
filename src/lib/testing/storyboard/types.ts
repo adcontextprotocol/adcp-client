@@ -727,6 +727,16 @@ export interface StoryboardStep {
   /** When true, the step passes if the task returns an error */
   expect_error?: boolean;
   /**
+   * Identifies a semantic rejection probe that may explicitly opt into
+   * normal request enrichment. Omission preserves the authored request.
+   */
+  negative_path?: 'schema_invalid' | 'payload_well_formed';
+  /** Opt a schema-valid semantic rejection probe into normal request enrichment.
+   * Explicit fixture values remain authoritative. Invalid-input probes must
+   * retain the default, which sends the authored request without enrichment.
+   */
+  enrich_request?: true;
+  /**
    * Per-step invariant opt-out. See `StepInvariantsObject`. Use when a
    * specific step deliberately trips a default invariant (e.g. a
    * `check_governance` 200 `status: denied` that is the setup for a

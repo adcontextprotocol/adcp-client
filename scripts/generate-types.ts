@@ -540,6 +540,7 @@ export function enforceStrictSchema(schema: any): any {
     '$anchor',
     '$schema',
   ]);
+  const isMetadataOnlyKey = (key: string): boolean => metadataOnlyKeys.has(key) || key.startsWith('x-');
   const allKeys = Object.keys(strictSchema);
   if (allKeys.length > 0 && allKeys.every(k => metadataOnlyKeys.has(k))) {
     strictSchema.tsType = 'unknown';
@@ -732,6 +733,34 @@ export function enforceStrictSchema(schema: any): any {
   // emit a loose `{ [k: string]: unknown }` union arm. Ajv still enforces the
   // original schema at runtime, so the TS emit path strips the guard.
   if (isRequiredOnlyAnyOf(strictSchema.anyOf)) {
+    delete strictSchema.anyOf;
+  }
+
+  // A typed string with `anyOf` branches that contain only lexical
+  // validators is still a string in TypeScript. Keeping those branches makes
+  // json-schema-to-typescript emit `{ } & string`, which ts-to-zod turns into
+  // an impossible object/string intersection. Ajv validates the original
+  // format and pattern constraints at runtime.
+  const stringValidationOnlyKeys = new Set([
+    'format',
+    'pattern',
+    'minLength',
+    'maxLength',
+    'contentEncoding',
+    'contentMediaType',
+  ]);
+  if (
+    strictSchema.type === 'string' &&
+    Array.isArray(strictSchema.anyOf) &&
+    strictSchema.anyOf.length > 0 &&
+    strictSchema.anyOf.every(
+      (member: any) =>
+        member &&
+        typeof member === 'object' &&
+        !Array.isArray(member) &&
+        Object.keys(member).every(key => stringValidationOnlyKeys.has(key) || isMetadataOnlyKey(key))
+    )
+  ) {
     delete strictSchema.anyOf;
   }
 

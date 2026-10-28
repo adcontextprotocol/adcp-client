@@ -77,6 +77,14 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
     validateBranchSet(storyboard.id, phase);
     if (!phase.steps) continue;
     for (const step of phase.steps) {
+      if (
+        step.enrich_request !== undefined &&
+        (step.enrich_request !== true || !step.expect_error || step.negative_path !== 'payload_well_formed')
+      ) {
+        throw new Error(
+          `[${storyboard.id}] ${step.id}: enrich_request requires expect_error: true and negative_path: payload_well_formed`
+        );
+      }
       resolveContributesShorthand(storyboard.id, phase, step);
       validateFixtureForMutatingStep(storyboard.id, phase, step);
       validateOmitFlagCoherence(storyboard.id, phase, step);

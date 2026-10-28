@@ -24,6 +24,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { isFixedPricing, type PricingOptionV3 } from '../../utils/pricing-adapter';
 import { resolveBrand, resolveAccount } from '../client';
 import type { TestOptions } from '../types';
 import type { StoryboardContext, StoryboardStep } from './types';
@@ -171,6 +172,15 @@ function omitEnvelopeFields(obj: Record<string, unknown>): Record<string, unknow
     if (!(ENVELOPE_FIELDS as readonly string[]).includes(k)) out[k] = v;
   }
   return out;
+}
+
+function hasAuthoredAccountIdentity(account: unknown): account is Record<string, unknown> {
+  if (account === null || typeof account !== 'object' || Array.isArray(account)) return false;
+  const ref = account as Record<string, unknown>;
+  return (
+    (typeof ref.account_id === 'string' && ref.account_id.length > 0) ||
+    (typeof ref.operator === 'string' && ref.operator.length > 0)
+  );
 }
 
 const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
@@ -333,18 +343,32 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     // didn't author one. Storyboards that test auction flows (e.g.
     // sales-non-guaranteed) author explicit bid_prices the seller validates
     // against floor_price; discovery-synthesized values would silently
-    // override intentional bid-floor-boundary tests.
-    if (
-      baseSample.bid_price === undefined &&
-      (pricingOption?.pricing_model === 'auction' || pricingOption?.pricing_model === 'cpm')
-    ) {
-      const floor = Number(pricingOption?.floor_price) || 5;
-      firstPkg.bid_price = Math.round(floor * 1.5 * 100) / 100;
-    }
-
+    // override intentional bid-floor-boundary tests. The check runs against
+    // the option the package actually sends. An option carrying fixed_price is
+    // fixed pricing whatever its pricing_model, and bid_price applies only to
+    // auction options. Media-buy or package `bidding` must not be combined with
+    // a legacy bid_price (AMBIGUOUS_BIDDING_POLICY), so its presence also
+    // suppresses the bid.
     const additionalPkgs = samplePackages
       .slice(1)
       .map(p => injectContext({ ...p }, context) as Record<string, unknown>);
+    const packages = [firstPkg, ...additionalPkgs];
+    for (const pkg of packages) {
+      const sentPricingOption =
+        pkg === firstPkg && fixtureProductId === undefined && fixturePricingOptionId === undefined
+          ? pricingOption
+          : findPricingOption(context, pkg.product_id, pkg.pricing_option_id);
+      if (
+        pkg.bid_price === undefined &&
+        pkg.bidding === undefined &&
+        step.sample_request?.bidding === undefined &&
+        sentPricingOption?.pricing_model === 'cpm' &&
+        !isFixedPricing(sentPricingOption as PricingOptionV3)
+      ) {
+        const floor = Number(sentPricingOption.floor_price) || 5;
+        pkg.bid_price = Math.round(floor * 1.5 * 100) / 100;
+      }
+    }
 
     // Proposal-mode: when context carries a proposal_id (captured from
     // `proposals[0]` in a prior brief/refine/finalize step), forward it
@@ -412,7 +436,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       brand: resolveBrand(options),
       start_time: startTime,
       end_time: endTime,
-      packages: [firstPkg, ...additionalPkgs],
+      packages,
     };
   },
 
@@ -929,9 +953,19 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   // ── Test Controller ────────────────────────────────────
 
   comply_test_controller(step, context, options) {
+    // The stale-cache directive must address the account whose cache was warmed.
+    // Backport the authored-account selection from the current SDK line.
+    const controllerFields = step.sample_request
+      ? omitEnvelopeFields(injectContext({ ...step.sample_request }, context) as Record<string, unknown>)
+      : undefined;
+    const authoredAccount = controllerFields?.account;
+    const accountScope =
+      controllerFields?.scenario === 'force_upstream_unavailable' && hasAuthoredAccountIdentity(authoredAccount)
+        ? authoredAccount
+        : (context.account ?? resolveAccount(options));
     // The test controller requires account.sandbox: true to be set.
     const account: Record<string, unknown> = {
-      ...(context.account ?? resolveAccount(options)),
+      ...accountScope,
       sandbox: true,
     };
     // Natural-key arm of AccountReference requires `operator` per the spec
@@ -944,13 +978,10 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
         account.operator = brand.domain;
       }
     }
-    if (step.sample_request) {
+    if (controllerFields) {
       // Drop envelope fields; outer enrichRequest re-applies them with
       // `runnerVars` so mustache substitutions expand correctly.
-      return {
-        ...omitEnvelopeFields(injectContext({ ...step.sample_request }, context) as Record<string, unknown>),
-        account,
-      };
+      return { ...controllerFields, account };
     }
     return {
       account,
@@ -1054,6 +1085,17 @@ function selectPricingOption(product: Record<string, unknown> | undefined): Reco
   // Prefer fixed pricing (cpm, flat) over auction
   const fixed = options.filter(o => o.pricing_model === 'cpm' || o.pricing_model === 'flat');
   return fixed[0] ?? options[0];
+}
+
+function findPricingOption(
+  context: StoryboardContext,
+  productId: unknown,
+  pricingOptionId: unknown
+): Record<string, unknown> | undefined {
+  const products = context.products as Array<Record<string, unknown>> | undefined;
+  const product = products?.find(p => p.product_id === productId);
+  const options = product?.pricing_options as Array<Record<string, unknown>> | undefined;
+  return options?.find(o => o.pricing_option_id === pricingOptionId);
 }
 
 function selectFormat(context: StoryboardContext): Record<string, unknown> | undefined {
