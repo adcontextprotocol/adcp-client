@@ -236,3 +236,36 @@ test('a grantee must equal its registrable domain exactly, even in a record that
     );
   }
 });
+
+for (const domain of ['brand.example', 'localhost', '127.0.0.1', 'github.io']) {
+  for (const field of ['brand', 'accountOperator', 'house']) {
+    test(`invalid ${field} domain ${domain} is a coded refusal without fallback`, async () => {
+      let fallbackCalls = 0;
+      const options = {
+        evaluator: evaluator({ 'agency.com': agent(claim.signerOrigin) }),
+        now: () => now,
+        resolveBrandHouse: async () => (field === 'house' ? { domain, brand_id: 'house' } : undefined),
+        legacyAuthorization: async () => {
+          fallbackCalls++;
+          return true;
+        },
+        sellerAuthorization: async () => {
+          fallbackCalls++;
+          return true;
+        },
+      };
+      await assert.rejects(
+        identity.authorizeDemandGrant(
+          {
+            ...claim,
+            ...(field === 'brand' && { brand: { ...claim.brand, domain } }),
+            ...(field === 'accountOperator' && { accountOperator: domain }),
+          },
+          options
+        ),
+        error => error instanceof identity.IdentityAuthorizationError && error.code === 'PERMISSION_DENIED'
+      );
+      assert.equal(fallbackCalls, 0);
+    });
+  }
+}

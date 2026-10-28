@@ -771,3 +771,32 @@ describe('createA2AAdapter refuses to advertise unenforced signing', () => {
     }
   });
 });
+
+for (const format of ['cjs', 'esm']) {
+  it(`${format}: constructing the A2A verifier does not acknowledge an unguarded MCP connection`, async () => {
+    const seller = makeSeller();
+    const createAdapter =
+      format === 'cjs' ? createA2AAdapter : (await import('../dist/lib/server/a2a-adapter.mjs')).createA2AAdapter;
+    const adapter = createAdapter({
+      server: seller.server,
+      taskStore: new InMemoryTaskStore(),
+      agentCard: { name: 'Seller', description: 'Seller', url: AGENT_URL, version: '1.0.0' },
+    });
+    const app = express();
+    adapter.mount(app, { basePath: '/a2a' });
+    const listener = await listen(app);
+    try {
+      const response = await post(
+        `http://127.0.0.1:${listener.address().port}/a2a`,
+        sendMessage('create_media_buy', CREATE_INPUT)
+      );
+      assertSignatureRejection(response, 'request_signature_required');
+      assert.strictEqual(seller.calls.createMediaBuy.length, 0);
+      const transport = { start: async () => {}, send: async () => {}, close: async () => {} };
+      await assert.rejects(seller.server.connect(transport), /signedRequests verifier is not mounted/);
+    } finally {
+      await stop(listener);
+      await seller.server.close();
+    }
+  });
+}

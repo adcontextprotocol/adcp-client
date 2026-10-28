@@ -496,3 +496,4 @@ export type {
   CreativeBuildProbeInputFixture,
   CreativeBuildProbeResolution,
 } from './storyboard';
+export { createStoryboardWebBotAuthFetch } from './storyboard/web-bot-auth';

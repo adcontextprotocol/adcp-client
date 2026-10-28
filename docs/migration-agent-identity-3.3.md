@@ -3,10 +3,11 @@
 The experimental identity rollout is tracked in
 [adcp-client#3233](https://github.com/adcontextprotocol/adcp-client/issues/3233).
 This release implements the rollout behind explicit experimental configuration.
-The SDK's default `ADCP_VERSION` remains **3.2.5**. Experimental client/server
-instances select the 3.3 carrier and apply the pinned draft overlays to the
-released bundle; they do not regenerate or replace the public 3.2 types.
-Upstream PRs remain open, so the experiment can change before graduation.
+SDK 17 beta pins `ADCP_VERSION` to **3.3.0-beta.0**; SDK 16 remains on 3.2.
+The identity experiment can change before graduation. Setting `identity33`
+selects the 3.3 schema scope for the entire server instance, including its
+non-identity tools. To keep an existing 3.2 endpoint while evaluating identity,
+create a separate server instance and mount it on another route.
 
 The dedicated API is `@adcp/sdk/identity-3.3`. Existing RFC configuration remains
 supported through 3.x and emits a one-time deprecation warning when used.
@@ -287,6 +288,99 @@ reassignment. Authorization runs before idempotency lookup and handler effects.
 Keep the normal buyer registry's suspension, blocking, sandbox and billing
 gates enabled; grants do not replace them.
 
+### Custom MCP hosts
+
+`signedRequests` installs HTTP middleware through `ADCP_PRE_TRANSPORT`. `serve()`
+and `createA2AAdapter()` consume it automatically. A host that calls
+`server.connect(transport)` directly must mount that middleware before handing
+requests to the MCP transport; the server refuses the connection when the hook has not been
+consumed. Connecting the transport alone cannot verify HTTP signatures.
+Reading the symbol acknowledges that the custom host mounts the middleware;
+the framework cannot verify external middleware installation. Socket Mode and
+in-memory transports cannot run this HTTP verifier; use a separate server
+instance without `signedRequests` for those transports.
+Framework-managed MCP connections are permitted per transport after middleware
+accepts the request. Creating an A2A adapter does not acknowledge MCP middleware.
+
+For a host with its own authentication layer, compose
+`verifySignatureAsAuthenticator({ webBotAuth, ... })` instead. A Web Bot Auth-only
+authenticator can omit `jwks`; legacy signatures are then refused. For example:
+
+```ts
+import { createIdentity33PrincipalResolver } from '@adcp/sdk/identity-3.3';
+import {
+  adcpOperationResolver,
+  requireSignatureWhenPresent,
+  verifySignatureAsAuthenticator,
+} from '@adcp/sdk/server';
+
+const signature = verifySignatureAsAuthenticator({
+  capability: {
+    supported: true,
+    profiles: ['web-bot-auth'],
+    covers_content_digest: 'required',
+    required_for: [],
+  },
+  replayStore, // Shared across requests and replicas.
+  resolveOperation: adcpOperationResolver,
+  // Trusted deployment config; never use caller-supplied forwarding headers.
+  getUrl: () => 'https://seller.example.com/mcp',
+  webBotAuth: {
+    directory,
+    resolvePrincipal: createIdentity33PrincipalResolver({ lifecycle, revocation: revocations }),
+  },
+});
+const authenticate = requireSignatureWhenPresent(signature, existingAuthenticator);
+```
+
+Bind this authenticator to the configured `/mcp` route. The host must capture
+the exact UTF-8 body in `req.rawBody` before JSON parsing,
+run `authenticate` before `transport.handleRequest`, and propagate the returned
+principal and authentication failures through its existing auth integration.
+Hoist the authenticator and replay store outside request factories. If using
+`serve()` with this authenticator, it captures the body automatically.
+
+### Signed storyboard steps against a local agent
+
+Storyboard steps can select a named runtime identity:
+
+```yaml
+auth: { type: web_bot_auth, identity: authorized_buyer }
+```
+
+Pass keys separately from the YAML:
+
+```ts
+import { runStoryboard } from '@adcp/sdk/testing';
+
+await runStoryboard('http://127.0.0.1:3001/mcp', storyboard, {
+  protocol: 'mcp',
+  allow_http: true,
+  web_bot_auth: {
+    publicUrl: 'https://seller.example.com/mcp',
+    identities: {
+      authorized_buyer: { origin: 'https://buyer.agency.com', key: { privateKey: buyerJwk } },
+      impersonator: { origin: 'https://other.agency.com', key: { privateKey: otherJwk } },
+    },
+  },
+});
+```
+
+Loopback delivery supports MCP; A2A steps can sign directly to HTTPS. The
+official MCP client signs the public HTTPS target and delivers to the exact
+loopback endpoint. Configure the local verifier's trusted public URL to match,
+and publish or inject the identities' directory, revocation and trust records.
+Each overridden step uses a separate client and strips ambient bearer/API-key
+credentials. An unknown identity fails the step before dispatch. These steps
+support tool-response validations; HTTP probe assertions and session probes
+require their existing authentication directives. The URL override accepts only
+loopback delivery, keeps redirects disabled, and does not relax the production
+signer's HTTPS requirement. Omit `publicUrl` for signing directly to HTTPS.
+For custom official transport wiring, `createStoryboardWebBotAuthFetch` from
+`@adcp/sdk/testing` exposes the same delivery helper.
+For direct HTTPS use of the helper, pass `agentUrl` to pin the destination
+origin. Redirects are refused before the transport can follow them.
+
 `bindPrincipal` requires seller audit evidence. Existing RFC mappings require
 explicit migration approval and an unambiguous origin. `sync_principal` may
 create only a new principal under declared open tiers; legacy-ledger lookup is
@@ -309,6 +403,14 @@ provided notification ID as the emitter's delivery ID. Call
 `notifyRelationshipExpiring` with your seller-declared lead time.
 
 ## Trust, grants, and revocation
+
+Identity authorization requires registrable domains from the pinned PSL.
+Special-use names such as `brand.example`, `localhost`, and IP addresses cannot
+establish trust or grants; invalid brand, account-operator, and resolved-house
+domains receive coded `PERMISSION_DENIED` refusals. For tests, use registrable
+fixture domains and inject `TrustEvaluator({ fetchOptions: { trustedFetchFn } })`
+to serve their test trust records without relying on live DNS. This hook changes
+record delivery, not domain validation or grant authorization.
 
 The operator is derived using the pinned ICANN+PRIVATE PSL, never a document
 field or authoritative hop host. Trust reads allow one document hop, zero HTTP

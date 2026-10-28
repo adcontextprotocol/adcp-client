@@ -70,6 +70,15 @@ function failure(cause?: unknown): never {
   if (cause !== undefined) Object.defineProperty(error, 'cause', { value: cause });
   throw error;
 }
+
+/** Invalid claim domains are authorization refusals, never infrastructure outages. */
+function claimRegistrableDomain(domain: string): string {
+  try {
+    return eTldPlusOne(domain);
+  } catch (cause) {
+    return failure(cause);
+  }
+}
 /** Schema plus semantic checks; publication never includes identity keys. */
 export function validateTrustRecord(value: unknown): asserts value is TrustRecord {
   if (!validateIdentity33Schema('trust/v1/trust', value)) failure();
@@ -470,8 +479,8 @@ export async function authorizeDemandGrant(
   const now = (options.now ?? (() => Date.now() / 1000))();
   const signer = await options.evaluator.match(claim.signerOrigin, 'adcp:buying', claim.brand.countries);
   if (signer.agent.countries && !claim.brand.countries?.length) failure();
-  const brand = eTldPlusOne(claim.brand.domain),
-    account = eTldPlusOne(claim.accountOperator),
+  const brand = claimRegistrableDomain(claim.brand.domain),
+    account = claimRegistrableDomain(claim.accountOperator),
     operator = signer.operator;
   const result = (
     source: DemandGrantAuthorization['source'],
@@ -502,7 +511,7 @@ export async function authorizeDemandGrant(
       throw cause;
     unavailable(cause);
   }
-  const authoritativeBrand = house ? eTldPlusOne(house.domain) : brand;
+  const authoritativeBrand = house ? claimRegistrableDomain(house.domain) : brand;
   // Implicit: account.operator and the signer's operator are each the brand or
   // its house. The signer's record, already matched above, lists the agent.
   const self = new Set([brand, authoritativeBrand]);

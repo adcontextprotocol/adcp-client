@@ -110,6 +110,12 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
     validateBranchSet(storyboard.id, phase);
     if (!phase.steps) continue;
     for (const step of phase.steps) {
+      if (
+        typeof step.auth === 'object' &&
+        step.auth.type === 'web_bot_auth' &&
+        (typeof step.auth.identity !== 'string' || step.auth.identity.trim().length === 0)
+      )
+        throw new Error(`[${storyboard.id}] ${step.id}: web_bot_auth requires an identity name`);
       const rawStep = step as unknown as { task?: unknown; validations?: unknown };
       if (rawStep.task === undefined) {
         if (!Array.isArray(rawStep.validations) || rawStep.validations.length === 0) {

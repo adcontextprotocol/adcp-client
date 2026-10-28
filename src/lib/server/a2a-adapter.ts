@@ -103,6 +103,7 @@ import {
   type AdcpSignedRequestsState,
 } from './create-adcp-server';
 import { ADCP_SERVE_REQUEST_CONTEXT } from './auth';
+import { getSignedRequestPreTransport } from './signed-request-transport';
 import type { A2ALegacyCompatOptions } from '../protocols/a2a';
 
 // ---------------------------------------------------------------------------
@@ -1210,7 +1211,7 @@ function captureRawBody(req: IncomingMessage, _res: unknown, buf: Buffer): void 
  */
 function resolveSignatureGate(options: A2AAdapterOptions): AdcpPreTransport | undefined {
   const symbols = options.server as unknown as Record<symbol, unknown>;
-  const attached = symbols[ADCP_PRE_TRANSPORT];
+  const attached = getSignedRequestPreTransport(options.server) ?? symbols[ADCP_PRE_TRANSPORT];
   const gate = options.preTransport ?? (typeof attached === 'function' ? (attached as AdcpPreTransport) : undefined);
   if (gate) return gate;
   const state = symbols[ADCP_SIGNED_REQUESTS_STATE] as AdcpSignedRequestsState | undefined;

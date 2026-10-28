@@ -695,6 +695,11 @@ export type StepAuthDirective =
   /** Strip transport credentials entirely. The step MUST hit the agent unauthenticated. */
   | 'none'
   | {
+      type: 'web_bot_auth';
+      /** Name in the runner's runtime-only `web_bot_auth.identities` map. */
+      identity: string;
+    }
+  | {
       type: 'api_key';
       /** Literal Bearer value sent as `Authorization: Bearer <value>`. */
       value?: string;
@@ -1847,6 +1852,18 @@ export interface PrepareStoryboardFixturesOptions extends StoryboardRunOptions {
 }
 
 export interface StoryboardRunOptions extends TestOptions {
+  /** Runtime signing keys; storyboard YAML contains only identity names. */
+  web_bot_auth?: {
+    identities: Record<
+      string,
+      {
+        origin: string;
+        key: import('../../signing/web-bot-auth').WebBotSigningKey;
+      }
+    >;
+    /** Sign this public HTTPS endpoint, delivering to the loopback agent URL. */
+    publicUrl?: string;
+  };
   /** Compliance cache root for bundle-scoped fixtures and test vectors. */
   complianceDir?: string;
   /**

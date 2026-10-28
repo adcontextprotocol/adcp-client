@@ -19,6 +19,9 @@
  */
 
 import { shouldOmit31Fields } from '../../utils/adcp-version-config';
+import { ADCP_VERSION } from '../../version';
+import { parseAdcpRelease } from './negotiate';
+import { hasSchemaBundle } from '../../validation/schema-loader';
 import { isMutatingTask } from '../../utils/idempotency';
 import type { VersionAdapter } from './types';
 import { v30Adapters } from './3.0/index';
@@ -144,4 +147,36 @@ export function downgradeResponse<T>(
   options: { fromVersion: string; toVersion: string }
 ): { data: T; drifts: import('./types').VersionDrift[] } {
   return convertResponseToRelease(toolName, data, { ...options, adapters: getVersionAdapter });
+}
+
+/**
+ * Project a seller-owned webhook result with the same per-release conversion
+ * as framework responses. Pass the originating request's `ctx.servedAdcpVersion`;
+ * when the server uses another source release, pass it as `fromVersion`.
+ * Envelope construction, credential stripping and webhook signing remain the
+ * emitter's responsibility. The input is never mutated.
+ * Use `downgradeResponse` when translation diagnostics are also needed.
+ */
+export function projectResponseForRelease<T>(
+  toolName: string,
+  payload: T,
+  servedAdcpVersion: string,
+  fromVersion: string = ADCP_VERSION
+): T {
+  const source = typeof fromVersion === 'string' ? parseAdcpRelease(fromVersion) : undefined;
+  const target = typeof servedAdcpVersion === 'string' ? parseAdcpRelease(servedAdcpVersion) : undefined;
+  if (
+    !source ||
+    !target ||
+    source.major !== 3 ||
+    target.major !== 3 ||
+    target.minor > source.minor ||
+    (source.minor === target.minor && source.prerelease !== target.prerelease) ||
+    !hasSchemaBundle(fromVersion) ||
+    !hasSchemaBundle(servedAdcpVersion)
+  )
+    throw new TypeError(
+      'projectResponseForRelease requires valid AdCP 3 schema bundles, with the served minor line on or below the source and matching same-line previews'
+    );
+  return downgradeResponse(toolName, payload, { fromVersion, toVersion: servedAdcpVersion }).data;
 }

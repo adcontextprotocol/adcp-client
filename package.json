@@ -51,6 +51,16 @@
         "default": "./dist/lib/compliance/index.js"
       }
     },
+    "./adapters/version": {
+      "import": {
+        "types": "./dist/lib/adapters/version/index.d.mts",
+        "default": "./dist/lib/adapters/version/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/adapters/version/index.d.ts",
+        "default": "./dist/lib/adapters/version/index.js"
+      }
+    },
     "./advanced": {
       "import": {
         "types": "./dist/lib/advanced.d.mts",
@@ -432,6 +442,9 @@
       "compliance": [
         "dist/lib/compliance/index.d.ts"
       ],
+      "adapters/version": [
+        "dist/lib/adapters/version/index.d.ts"
+      ],
       "advanced": [
         "dist/lib/advanced.d.ts"
       ],
@@ -732,7 +745,7 @@
   "dependencies": {
     "@modelcontextprotocol/client": "2.3.1",
     "@modelcontextprotocol/ext-apps": "2.0.0",
-    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/node": "2.1.1",
     "@modelcontextprotocol/server": "2.3.1",
     "@types/ws": "^8.18.1",
     "ajv": "^8.20.0",

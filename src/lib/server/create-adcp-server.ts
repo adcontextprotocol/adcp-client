@@ -291,6 +291,7 @@ import {
   type TestControllerBridgeContext,
 } from './test-controller-bridge';
 import type { JwksResolver } from '../signing/jwks';
+import { registerSignedRequestTransportGuard } from './signed-request-transport';
 import type { ReplayStore } from '../signing/replay';
 import type { RevocationStore } from '../signing/revocation';
 import type { ContentDigestPolicy } from '../signing/types';
@@ -1461,8 +1462,8 @@ export interface AdcpCapabilitiesOverrides {
 export interface SignedRequestsConfig {
   webBotAuth?: import('./auth-signature').VerifySignatureAsAuthenticatorOptions['webBotAuth'];
   assertLegacyOriginAllowed?: (agentUrl: string) => Promise<void>;
-  /** Resolves verification keys by `keyid`. */
-  jwks: JwksResolver;
+  /** Resolves legacy RFC 9421 keys. May be omitted for a Web Bot Auth-only endpoint. */
+  jwks?: JwksResolver;
   /** Stores `(keyid, signature-bytes, expires)` tuples for replay detection. */
   replayStore: ReplayStore;
   /** Consulted for revoked `kid` / `jti` before accepting a signature. */
@@ -4562,6 +4563,8 @@ function buildSignedRequestsPreTransport(
   effectiveRequestSigning: EffectiveSignedRequestPolicy,
   adcpVersion?: string
 ): AdcpPreTransport {
+  if (!signedRequests.jwks && !signedRequests.webBotAuth)
+    throw new TypeError('signedRequests requires jwks or webBotAuth');
   const legacyOriginGate =
     signedRequests.assertLegacyOriginAllowed ??
     getWebBotAuthLegacyOriginGate(signedRequests.webBotAuth?.resolvePrincipal);
@@ -4589,7 +4592,7 @@ function buildSignedRequestsPreTransport(
         ? { protocol_methods_required_for: effectiveRequestSigning.protocol_methods_required_for }
         : {}),
     },
-    jwks: signedRequests.jwks,
+    jwks: signedRequests.jwks ?? { resolve: async () => null },
     replayStore: signedRequests.replayStore,
     revocationStore: signedRequests.revocationStore,
     adcpVersion,
@@ -4665,6 +4668,16 @@ function buildSignedRequestsPreTransport(
         res.end(JSON.stringify(rejected.body));
         return true;
       }
+    }
+
+    if (
+      !signedRequests.jwks &&
+      (req.headers['signature'] !== undefined || req.headers['signature-input'] !== undefined)
+    ) {
+      const refused = new WebBotAuthError(403, 'profile_disabled');
+      res.writeHead(refused.status, { ...refused.headers, 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(refused.body));
+      return true;
     }
 
     const reqShim: ExpressLike = {
@@ -10089,12 +10102,27 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // `serve()` for wiring, not part of the AdcpServer public API.
   if (signedRequests) {
     const preTransport = buildSignedRequestsPreTransport(signedRequests, enforcedRequestSigningPolicy!, adcpVersion);
+    const transportPermitted = registerSignedRequestTransportGuard(wrapped, preTransport);
+    let preTransportConsumed = false;
     Object.defineProperty(wrapped, ADCP_PRE_TRANSPORT, {
-      value: preTransport,
+      get() {
+        preTransportConsumed = true;
+        return preTransport;
+      },
       enumerable: false,
-      writable: false,
       configurable: true,
     });
+    const connect = wrapped.connect.bind(wrapped);
+    wrapped.connect = async transport => {
+      if (!preTransportConsumed && !transportPermitted(transport)) {
+        throw new Error(
+          'signedRequests verifier is not mounted: direct server.connect(transport) does not run HTTP middleware. ' +
+            'Use serve(), createA2AAdapter(), or mount server[ADCP_PRE_TRANSPORT] before handling requests. ' +
+            'For custom authentication, compose verifySignatureAsAuthenticator({ webBotAuth }) and capture rawBody.'
+        );
+      }
+      return connect(transport);
+    };
   }
 
   const signedRequestsState: AdcpSignedRequestsState = {
