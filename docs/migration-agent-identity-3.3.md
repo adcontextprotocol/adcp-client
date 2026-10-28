@@ -299,6 +299,8 @@ Reading the symbol acknowledges that the custom host mounts the middleware;
 the framework cannot verify external middleware installation. Socket Mode and
 in-memory transports cannot run this HTTP verifier; use a separate server
 instance without `signedRequests` for those transports.
+Framework-managed MCP connections are permitted per transport after middleware
+accepts the request. Creating an A2A adapter does not acknowledge MCP middleware.
 
 For a host with its own authentication layer, compose
 `verifySignatureAsAuthenticator({ webBotAuth, ... })` instead. A Web Bot Auth-only

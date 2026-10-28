@@ -291,6 +291,7 @@ import {
   type TestControllerBridgeContext,
 } from './test-controller-bridge';
 import type { JwksResolver } from '../signing/jwks';
+import { registerSignedRequestTransportGuard } from './signed-request-transport';
 import type { ReplayStore } from '../signing/replay';
 import type { RevocationStore } from '../signing/revocation';
 import type { ContentDigestPolicy } from '../signing/types';
@@ -10101,6 +10102,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // `serve()` for wiring, not part of the AdcpServer public API.
   if (signedRequests) {
     const preTransport = buildSignedRequestsPreTransport(signedRequests, enforcedRequestSigningPolicy!, adcpVersion);
+    const transportPermitted = registerSignedRequestTransportGuard(wrapped, preTransport);
     let preTransportConsumed = false;
     Object.defineProperty(wrapped, ADCP_PRE_TRANSPORT, {
       get() {
@@ -10112,7 +10114,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     });
     const connect = wrapped.connect.bind(wrapped);
     wrapped.connect = async transport => {
-      if (!preTransportConsumed) {
+      if (!preTransportConsumed && !transportPermitted(transport)) {
         throw new Error(
           'signedRequests verifier is not mounted: direct server.connect(transport) does not run HTTP middleware. ' +
             'Use serve(), createA2AAdapter(), or mount server[ADCP_PRE_TRANSPORT] before handling requests. ' +

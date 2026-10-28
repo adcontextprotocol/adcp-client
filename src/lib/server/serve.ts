@@ -44,6 +44,7 @@ import {
 import { ADCP_TASK_MESSAGE_QUEUE } from './tasks';
 import { getSdkServer, isAdcpServer, type AdcpServer } from './adcp-server';
 import { createModernMcpServerAdapter } from './mcp-modern-server';
+import { getSignedRequestPreTransport, permitSignedRequestTransport } from './signed-request-transport';
 
 /**
  * Context passed to the agent factory on each request.
@@ -903,7 +904,9 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
           return;
         }
       }
-      const attached = (agentServer as unknown as Record<symbol, unknown>)[ADCP_PRE_TRANSPORT];
+      const attached =
+        getSignedRequestPreTransport(agentServer) ??
+        (agentServer as unknown as Record<symbol, unknown>)[ADCP_PRE_TRANSPORT];
       const autoWiredPreTransport = typeof attached === 'function' ? (attached as AdcpPreTransport) : undefined;
       const activePreTransport = explicitPreTransport ?? autoWiredPreTransport;
 
@@ -1011,6 +1014,7 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
             const transport = new StreamableHTTPServerTransport({
               sessionIdGenerator: undefined,
             });
+            permitSignedRequestTransport(agentServer, transport);
             await agentServer.connect(transport);
             // The stream was consumed for era classification, so always pass
             // the parsed body when one was available.

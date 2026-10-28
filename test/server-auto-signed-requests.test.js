@@ -1125,3 +1125,53 @@ describe('direct transport verifier diagnostics', () => {
     });
   }
 });
+
+it('serve verifies signed modern MCP calls without acknowledging unrelated direct connections', async () => {
+  const { Client, StreamableHTTPClientTransport } = require('@modelcontextprotocol/client');
+  const { createSigningFetch } = require('../dist/lib/signing/fetch');
+  const instances = [];
+  const started = await startServer(() => {
+    const config = sellerConfig({ signedRequestsRequiredFor: ['get_products'] });
+    config.mediaBuy.getProducts = async () => ({ products: [], cache_scope: 'public' });
+    const server = createAdcpServer({
+      ...config,
+      adcpVersion: '3.2.7',
+    });
+    instances.push(server);
+    return server;
+  });
+  const client = new Client(
+    { name: 'signed-modern-guard', version: '1.0.0' },
+    {
+      versionNegotiation: { mode: { pin: '2026-07-28' } },
+    }
+  );
+  const signingFetch = createSigningFetch(
+    fetch,
+    {
+      keyid: 'test-ed25519-2026',
+      alg: 'ed25519',
+      privateKey: edPrivate,
+    },
+    {
+      coverContentDigest: true,
+      binaryEncoding: 'rfc8941-base64',
+      shouldSign: (_url, init) => typeof init?.body === 'string' && JSON.parse(init.body).method === 'tools/call',
+    }
+  );
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(started.url), { fetch: signingFetch }));
+    assert.strictEqual(client.getProtocolEra(), 'modern');
+    const response = await client.callTool({
+      name: 'get_products',
+      arguments: { buying_mode: 'brief', brief: 'inventory' },
+    });
+    assert.notStrictEqual(response.isError, true, JSON.stringify(response));
+    assert.deepStrictEqual(response.structuredContent.products, []);
+    const transport = { start: async () => {}, send: async () => {}, close: async () => {} };
+    await assert.rejects(instances.at(-1).connect(transport), /signedRequests verifier is not mounted/);
+  } finally {
+    await client.close();
+    await new Promise(resolve => started.server.close(resolve));
+  }
+});
