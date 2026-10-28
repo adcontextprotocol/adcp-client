@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-10-27T03:08:42.791Z
+// Generated at: 2026-10-28T21:05:38.792Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -20762,7 +20762,8 @@ export const RequestProposalsResponseSchema: z.ZodType<RequestProposalsResponse 
                 product_ids: nonemptyArray(z.string()),
                 losses: z.array(z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])).min(2),
                 requires_explicit_acceptance: z.literal(true)
-            }).passthrough().superRefine((value, ctx) => {
+            }).passthrough()]).superRefine((value, ctx) => {
+            if (value?.kind !== "legacy_create") return;
             if (value.product_ids.length === 0) {
                 ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must contain at least one entry" });
             }
@@ -20786,7 +20787,7 @@ export const RequestProposalsResponseSchema: z.ZodType<RequestProposalsResponse 
             if (value.source_adcp_version === "2.5" && !value.losses.includes("mutation_idempotency_not_guaranteed")) {
                 ctx.addIssue({ code: "custom", path: ["losses"], message: "AdCP 2.5 losses must contain mutation_idempotency_not_guaranteed" });
             }
-        })]),
+        }),
         targeting_resolution: ProductDiscoveryTargetingResolutionSchema.optional(),
         later_proposals: LaterProposalsStateSchema.optional(),
         status: z.literal("completed").optional(),
@@ -20845,7 +20846,8 @@ export const RequestProposalsResponseSchema: z.ZodType<RequestProposalsResponse 
                 product_ids: nonemptyArray(z.string()),
                 losses: z.array(z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])).min(2),
                 requires_explicit_acceptance: z.literal(true)
-            }).passthrough().superRefine((value, ctx) => {
+            }).passthrough()]).optional().superRefine((value, ctx) => {
+            if (value?.kind !== "legacy_create") return;
             if (value.product_ids.length === 0) {
                 ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must contain at least one entry" });
             }
@@ -20869,7 +20871,7 @@ export const RequestProposalsResponseSchema: z.ZodType<RequestProposalsResponse 
             if (value.source_adcp_version === "2.5" && !value.losses.includes("mutation_idempotency_not_guaranteed")) {
                 ctx.addIssue({ code: "custom", path: ["losses"], message: "AdCP 2.5 losses must contain mutation_idempotency_not_guaranteed" });
             }
-        })]).optional(),
+        }),
         targeting_resolution: ProductDiscoveryTargetingResolutionSchema.optional(),
         later_proposals: LaterProposalsStateSchema.optional(),
         status: z.literal("submitted"),
@@ -20891,6 +20893,9 @@ export const RequestProposalsResponseSchema: z.ZodType<RequestProposalsResponse 
             if (present(field)) ctx.addIssue({ code: "custom", path: [field], message: `${field} is forbidden for this outcome` });
         }
     };
+    if (value.status === "submitted" && (typeof value.task_id !== "string" || value.task_id.length === 0)) {
+        ctx.addIssue({ code: "custom", path: ["task_id"], message: "submitted responses require a non-empty task_id" });
+    }
     forbid(["refinement_applied", "pagination", "unchanged", "wholesale_feed_version"]);
     if (value.suggestions !== undefined && (value.suggestions.length === 0 || value.suggestions.some((suggestion: string) => suggestion.length === 0))) {
         ctx.addIssue({ code: "custom", path: ["suggestions"], message: "suggestions must contain non-empty strings" });
@@ -20904,7 +20909,7 @@ export const RequestProposalsResponseSchema: z.ZodType<RequestProposalsResponse 
         forbid(["reason", "suggestions", "purchase_continuation", "task_id"]);
     } else if (value.outcome === "products_available") {
         requireNonEmptyArray("products");
-        if (!present("purchase_continuation")) {
+        if (!present("purchase_continuation") || value.purchase_continuation === undefined) {
             ctx.addIssue({ code: "custom", path: ["purchase_continuation"], message: "purchase_continuation is required" });
         }
         forbid(["proposals", "reason", "suggestions", "task_id"]);
