@@ -1,5 +1,36 @@
 import type { SyncAccountsSuccess } from '../types/tools.generated';
-import { getSchemaValidatorByRef } from '../validation/schema-loader';
+import { getSchemaDocumentByRef, getSchemaValidatorByRef } from '../validation/schema-loader';
+
+export const ACCOUNT_REQUEST_RESULT_KEYS = ['request_id', 'resolution'] as const;
+export type AccountRequestResultFields = Pick<
+  SyncAccountsSuccess['accounts'][number],
+  Extract<keyof SyncAccountsSuccess['accounts'][number], (typeof ACCOUNT_REQUEST_RESULT_KEYS)[number]>
+>;
+
+/** Preserve request results only after the source protocol bundle declares them. */
+export function projectAccountRequestResultFields(account: object): AccountRequestResultFields {
+  const source = account as Record<string, unknown>;
+  const projected: AccountRequestResultFields = {};
+  if (ACCOUNT_REQUEST_RESULT_KEYS.every(key => source[key] === undefined)) return projected;
+
+  const schema = getSchemaDocumentByRef('account/sync-accounts-response.json')?.schema;
+  const branches = schema?.oneOf;
+  const success = Array.isArray(branches)
+    ? branches.find(branch => branch && typeof branch === 'object' && branch.title === 'SyncAccountsSuccess')
+    : undefined;
+  const fields = success?.properties?.accounts?.items?.properties;
+  for (const key of ACCOUNT_REQUEST_RESULT_KEYS) {
+    const value = source[key];
+    // On beta.0 these reserved fields are unknown to both source and legacy
+    // schemas, so ordinary schema-diff downgrade would preserve them as extensions.
+    if (value === undefined || !fields || !Object.hasOwn(fields, key)) continue;
+    if (typeof value !== 'string') {
+      throw new Error(`Account request result ${key} must be a string.`);
+    }
+    Object.assign(projected, { [key]: value });
+  }
+  return projected;
+}
 
 const IDENTITY_RESPONSE_SCHEMAS = {
   account: 'core/account-ref.json',

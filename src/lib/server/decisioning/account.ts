@@ -46,7 +46,12 @@ import type {
 } from '../../types/tools.generated';
 import type { ServerPayload } from '../../types/server-payload';
 import { projectReportingDeliveryConfigStates } from '../reporting-delivery-config';
-import { projectAccountResponseIdentityFields } from '../account-response-identity';
+import {
+  ACCOUNT_REQUEST_RESULT_KEYS,
+  projectAccountRequestResultFields,
+  projectAccountResponseIdentityFields,
+  type AccountRequestResultFields,
+} from '../account-response-identity';
 import type { CursorPage } from './pagination';
 import type { AccountMode } from '../account-mode';
 import type { AdcpStructuredError } from './async-outcome';
@@ -1014,7 +1019,7 @@ export type AccountFilter = ListAccountsRequest;
  * returned rows — same MUST-NOT-LEAK rule the framework enforces on
  * `Account.authInfo`.
  */
-interface SyncAccountsResultFields {
+interface SyncAccountsResultFields extends AccountRequestResultFields {
   account_id?: string;
   /** Current canonical operator unit, distinct from the seller account ID. */
   operator_unit?: SyncAccountsRow['operator_unit'];
@@ -1095,6 +1100,7 @@ const SYNC_ACCOUNT_PASSTHROUGH_KEYS = [
 ] as const satisfies readonly (keyof SyncAccountsRow)[];
 
 type ProjectedSyncAccountKey =
+  | (typeof ACCOUNT_REQUEST_RESULT_KEYS)[number]
   | 'account'
   | 'operator_unit'
   | 'identity_change'
@@ -1254,6 +1260,7 @@ export function toWireSyncAccountRow(row: SyncAccountsResultRow): WireSyncAccoun
       row.authorization
     );
   }
+  Object.assign(wire, projectAccountRequestResultFields(row));
   return wire;
 }
 
