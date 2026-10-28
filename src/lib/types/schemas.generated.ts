@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-10-28T19:44:32.513Z
+// Generated at: 2026-10-28T21:05:38.792Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -20762,7 +20762,8 @@ export const RequestProposalsResponseSchema: z.ZodType<RequestProposalsResponse 
                 product_ids: nonemptyArray(z.string()),
                 losses: z.array(z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])).min(2),
                 requires_explicit_acceptance: z.literal(true)
-            }).superRefine((value, ctx) => {
+            }).passthrough()]).superRefine((value, ctx) => {
+            if (value?.kind !== "legacy_create") return;
             if (value.product_ids.length === 0) {
                 ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must contain at least one entry" });
             }
@@ -20786,7 +20787,7 @@ export const RequestProposalsResponseSchema: z.ZodType<RequestProposalsResponse 
             if (value.source_adcp_version === "2.5" && !value.losses.includes("mutation_idempotency_not_guaranteed")) {
                 ctx.addIssue({ code: "custom", path: ["losses"], message: "AdCP 2.5 losses must contain mutation_idempotency_not_guaranteed" });
             }
-        }).passthrough()]),
+        }),
         targeting_resolution: ProductDiscoveryTargetingResolutionSchema.optional(),
         later_proposals: LaterProposalsStateSchema.optional(),
         status: z.literal("completed").optional(),
@@ -20845,7 +20846,8 @@ export const RequestProposalsResponseSchema: z.ZodType<RequestProposalsResponse 
                 product_ids: nonemptyArray(z.string()),
                 losses: z.array(z.union([z.literal("feed_version_not_atomic"), z.literal("pricing_version_not_atomic"), z.literal("mutation_idempotency_not_guaranteed")])).min(2),
                 requires_explicit_acceptance: z.literal(true)
-            }).superRefine((value, ctx) => {
+            }).passthrough()]).optional().superRefine((value, ctx) => {
+            if (value?.kind !== "legacy_create") return;
             if (value.product_ids.length === 0) {
                 ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must contain at least one entry" });
             }
@@ -20869,7 +20871,7 @@ export const RequestProposalsResponseSchema: z.ZodType<RequestProposalsResponse 
             if (value.source_adcp_version === "2.5" && !value.losses.includes("mutation_idempotency_not_guaranteed")) {
                 ctx.addIssue({ code: "custom", path: ["losses"], message: "AdCP 2.5 losses must contain mutation_idempotency_not_guaranteed" });
             }
-        }).passthrough()]).optional(),
+        }),
         targeting_resolution: ProductDiscoveryTargetingResolutionSchema.optional(),
         later_proposals: LaterProposalsStateSchema.optional(),
         status: z.literal("submitted"),

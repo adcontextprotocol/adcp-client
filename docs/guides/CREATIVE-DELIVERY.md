@@ -138,7 +138,8 @@ also accept these definitions in `options.creativeFormatProjection.legacyFormatD
 Pass the seller's legacy `list_creative_formats` definitions when its asset slots
 differ from the bundled catalog. For example, an explicit `url` slot with
 `requirements.url_type: 'tracker_pixel'` enables pixel-tracker conversion even
-when the seller negotiates AdCP 3.1. Advertising 3.0 alongside 3.1 alone does
+when the seller negotiates AdCP 3.1 and the request projects to a legacy `format_id`.
+Advertising 3.0 alongside 3.1 alone does
 not enable conversion. The definitions stay local and are copied before discovery.
 
 Existing declared asset keys keep their values. Other assets move only to one

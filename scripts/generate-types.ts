@@ -2419,6 +2419,20 @@ export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): 
 function materializeProposalResponseBranches(schema: any, schemaName: string): any {
   if (!schema?.properties || !Array.isArray(schema.anyOf) || schema.anyOf.length < 2) return schema;
 
+  // A submitted branch can inherit its required task handle from an envelope
+  // conditional. jsts drops if/then, so materialize that requirement alongside
+  // the discriminator, including the envelope's original task-id validator.
+  const submittedTaskIds = (schema.allOf ?? []).flatMap((member: any) => {
+    const envelope = typeof member?.$ref === 'string' ? loadCachedSchema(member.$ref) : member;
+    const requiresTaskId = envelope?.allOf?.some(
+      (condition: any) =>
+        condition?.if?.properties?.status?.const === 'submitted' &&
+        condition.if.required?.includes('status') &&
+        condition.then?.required?.includes('task_id')
+    );
+    return requiresTaskId && envelope.properties?.task_id ? [envelope.properties.task_id] : [];
+  });
+  if (submittedTaskIds.length > 1) throw new Error(`${schemaName} has ambiguous submitted task-id contracts.`);
   const branches: any[] = [];
   for (const member of schema.anyOf) {
     let overlay = member;
@@ -2432,6 +2446,12 @@ function materializeProposalResponseBranches(schema: any, schemaName: string): a
       required: [...new Set([...(schema.required ?? []), ...(overlay.required ?? [])])],
       additionalProperties: schema.additionalProperties ?? false,
     };
+    if (overlay.properties?.status?.const === 'submitted' && submittedTaskIds.length === 1) {
+      // Keep any branch-specific narrowing; the outer envelope composition
+      // continues enforcing its original validator as well.
+      if (branch.properties.task_id === undefined) branch.properties.task_id = submittedTaskIds[0];
+      branch.required = [...new Set([...branch.required, 'task_id'])];
+    }
     for (const forbiddenArm of overlay.not?.anyOf ?? []) {
       for (const forbiddenField of forbiddenArm?.required ?? []) {
         if (schemaName === 'RequestProposalsResponse') {

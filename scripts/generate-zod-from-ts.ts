@@ -1960,7 +1960,15 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
       return fail(`unsupported z.${method}`);
     }
     if (['and', 'merge', 'or'].includes(method) && node.arguments.length === 1) {
-      return [...objects(receiver, visited), ...objects(node.arguments[0], visited)];
+      const left = objects(receiver, visited);
+      const right = objects(node.arguments[0], visited);
+      if (method === 'merge') {
+        const leftKeys = new Set(left.flatMap(object => [...fields(object).keys()]));
+        if (right.some(object => [...fields(object).keys()].some(key => leftKeys.has(key)))) {
+          return fail('ambiguous overlapping merge fields');
+        }
+      }
+      return [...left, ...right];
     }
     if (['passthrough', 'strict', 'strip', 'optional', 'nullable', 'nullish', 'describe', 'meta'].includes(method)) {
       return objects(receiver, visited);
@@ -1989,6 +1997,7 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
       return fail('malformed arm field');
     const receiver = node.expression.expression;
     if (ts.isIdentifier(receiver) && receiver.text === 'z') return node;
+    if (receiver.getText(source) === 'z.iso' && node.expression.name.text === 'datetime') return node;
     if (['min', 'max', 'length', 'nonempty', 'datetime', 'describe', 'meta'].includes(node.expression.name.text)) {
       return base(receiver, visited);
     }
@@ -2003,7 +2012,29 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
       ? argument !== undefined && ts.isStringLiteral(argument) && argument.text === value
       : argument?.kind === (value ? ts.SyntaxKind.TrueKeyword : ts.SyntaxKind.FalseKeyword);
   };
-  const targets = new Set<ts.CallExpression>();
+  const finiteStrings = (node: ts.Expression): string[] => {
+    const call = base(node);
+    const method = (call.expression as ts.PropertyAccessExpression).name.text;
+    const argument = call.arguments[0];
+    if (method === 'literal' && argument && ts.isStringLiteral(argument)) return [argument.text];
+    if ((method === 'enum' || method === 'union') && argument && ts.isArrayLiteralExpression(argument)) {
+      return argument.elements.flatMap(element => {
+        if (method === 'union') return finiteStrings(element as ts.Expression);
+        return ts.isStringLiteral(element) ? [element.text] : fail('malformed enum member');
+      });
+    }
+    return fail('unbounded continuation enum');
+  };
+  const expectDomain = (node: ts.Expression, expected: readonly string[]): void => {
+    const values = finiteStrings(node);
+    if (
+      values.length !== expected.length ||
+      new Set(values).size !== expected.length ||
+      values.some(value => !expected.includes(value))
+    )
+      fail('continuation enum domain changed');
+  };
+  const targets = new Set<ts.Expression>();
   for (const object of objects(root)) {
     const continuation = fields(object).get('purchase_continuation');
     if (!continuation) continue;
@@ -2021,6 +2052,14 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
         if (!properties.has(name)) return fail(`missing ${name}`);
       }
       if (!literal(properties.get('requires_explicit_acceptance'), true)) return fail('missing explicit acceptance');
+      for (const name of ['continuation_token', 'continuation_expires_at']) {
+        const scalar = base(properties.get(name)!);
+        const method = (scalar.expression as ts.PropertyAccessExpression).name.text;
+        if (method !== 'string' && !(name === 'continuation_expires_at' && method === 'datetime')) {
+          return fail(`malformed ${name}`);
+        }
+      }
+      expectDomain(properties.get('source_adcp_version')!, ['2.5', '3.0', '3.1']);
       for (const name of ['product_ids', 'losses']) {
         const array = base(properties.get(name)!);
         if (!isZodArrayCall(array) || !array.arguments[0]) return fail(`malformed ${name}`);
@@ -2030,12 +2069,21 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
         ) {
           return fail('malformed product ID');
         }
+        if (name === 'losses')
+          expectDomain(array.arguments[0], [
+            'feed_version_not_atomic',
+            'pricing_version_not_atomic',
+            'mutation_idempotency_not_guaranteed',
+          ]);
       }
-      targets.add(arm);
+      // Refine after the complete use-site composition. Refining a shared
+      // object first would make a subsequent Zod .merge() throw at import.
+      targets.add(continuation);
     }
   }
   if (targets.size === 0) return fail('missing source-owned continuation');
   const refineArm = (arm: string) => `${arm}.superRefine((value, ctx) => {
+            if (value?.kind !== "legacy_create") return;
             if (value.product_ids.length === 0) {
                 ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must contain at least one entry" });
             }

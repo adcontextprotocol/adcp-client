@@ -153,6 +153,30 @@ test('missing, malformed, ambiguous and cyclic targets fail closed', () => {
     `z.object({metadata: ${legacy}})`,
     payload(`z.union([${legacy}, ${legacy}])`),
     payload(legacy.replace('product_ids: z.array(z.string()),', '')),
+    ...['continuation_token', 'continuation_expires_at', 'source_adcp_version'].flatMap(field =>
+      ['optional', 'nullable'].map(wrapper =>
+        payload(
+          legacy
+            .split('\n')
+            .map(line => (line.trimStart().startsWith(`${field}:`) ? line.replace(/,$/, `.${wrapper}(),`) : line))
+            .join('\n')
+        )
+      )
+    ),
+    payload(legacy.replace("z.enum(['2.5', '3.0', '3.1'])", 'z.string()')),
+    payload(
+      legacy.replace(
+        "z.enum(['feed_version_not_atomic', 'pricing_version_not_atomic', 'mutation_idempotency_not_guaranteed'])",
+        'z.string()'
+      )
+    ),
+    payload(
+      legacy.replace(
+        "z.enum(['feed_version_not_atomic', 'pricing_version_not_atomic', 'mutation_idempotency_not_guaranteed'])",
+        'z.any()'
+      )
+    ),
+    payload(`${legacy}.merge(z.object({source_adcp_version: z.string().optional()}))`),
     payload(legacy.replace('product_ids: z.array(z.string())', 'product_ids: z.string()')),
     payload(legacy.replace('product_ids: z.array(z.string())', 'product_ids: z.array(z.number())')),
     payload(legacy.replace('losses: z.array', 'losses: z.string().optional(), other: z.array')),
@@ -242,5 +266,83 @@ test('root submitted arm retains the task-id condition from the composed envelop
   assert.equal(schema.safeParse({ status: 'submitted', task_id: 'task' }).success, true);
   for (const task_id of [undefined, '', null, 123]) {
     assert.equal(schema.safeParse({ status: 'submitted', task_id }).success, false);
+  }
+});
+
+test('continuation refinements run after complete merge composition, including aliases', () => {
+  const extra = 'z.object({extra: z.string().optional()}).passthrough()';
+  for (const composition of [
+    `${legacy}.merge(${extra})`,
+    `LegacyAliasSchema.merge(${extra})`,
+    `${extra}.merge(LegacyAliasSchema)`,
+  ]) {
+    const output = restore(`const LegacyAliasSchema = ${legacy};
+      export const RequestProposalsResponseSchema = ${payload(composition)};`);
+    const schema = compile(output);
+    assert.equal(schema.safeParse(valid()).success, true);
+    const value = valid();
+    value.purchase_continuation.product_ids = [];
+    assert.equal(schema.safeParse(value).success, false);
+    value.purchase_continuation.product_ids = ['product'];
+    value.purchase_continuation.extra = 1;
+    assert.equal(schema.safeParse(value).success, false);
+    assert.ok(output.includes(`const LegacyAliasSchema = ${legacy};`), 'shared declarations remain unchanged');
+  }
+});
+
+test('required continuation field domains can be resolved through aliases', () => {
+  const prelude = `const SourceSchema = z.union([z.literal('2.5'), z.literal('3.0'), z.literal('3.1')]);
+    const LossSchema = z.enum(['feed_version_not_atomic', 'pricing_version_not_atomic', 'mutation_idempotency_not_guaranteed']);
+    const TokenSchema = z.string().min(16);`;
+  const aliased = legacy
+    .replace("z.enum(['2.5', '3.0', '3.1'])", 'SourceSchema')
+    .replace(
+      "z.enum(['feed_version_not_atomic', 'pricing_version_not_atomic', 'mutation_idempotency_not_guaranteed'])",
+      'LossSchema'
+    )
+    .replace('continuation_token: z.string().min(16)', 'continuation_token: TokenSchema');
+  const schema = compile(restore(`${prelude} export const RequestProposalsResponseSchema = ${payload(aliased)};`));
+  assert.equal(schema.safeParse(valid()).success, true);
+});
+
+test('all materialized proposal submitted branches preserve the envelope task handle', () => {
+  const output = execFileSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '-e',
+      `
+    const { compile } = require('json-schema-to-typescript');
+    const { generate } = require('ts-to-zod');
+    const { injectJsdocConstraints } = require('./scripts/schema-utils.ts');
+    const { applyCodegenSchemaWorkarounds, enforceStrictSchema } = require('./scripts/generate-types.ts');
+    const { __test__ } = require('./scripts/generate-zod-from-ts.ts');
+    (async () => {
+      const result = {};
+      for (const name of ['RequestProposalsResponse', 'RefineProposalsResponse', 'DeclineProposalsResponse']) {
+        const source = {type: 'object', title: name, properties: {errors: {type: 'array', items: {type: 'string'}}},
+          allOf: [{type: 'object', properties: {status: {enum: ['completed', 'submitted']}, task_id: {type: 'string', minLength: 1}}, required: ['status'],
+            allOf: [{if: {properties: {status: {const: 'submitted'}}, required: ['status']}, then: {required: ['task_id']}}]}],
+          anyOf: [{properties: {status: {const: 'completed'}}, required: ['status']}, {properties: {status: {const: 'submitted'}, task_id: {type: 'string', minLength: 3}}, required: ['status']}],
+        };
+        const types = await compile(enforceStrictSchema(injectJsdocConstraints(applyCodegenSchemaWorkarounds(source, name))), name, {bannerComment: ''});
+        result[name] = __test__.postProcessForPassthrough(__test__.postProcessRecordIntersections(
+          generate({sourceText: types, getSchemaName: name => name + 'Schema'}).getZodSchemasFile('./types').replace(/import[^;]+;/g, '')
+        ));
+      }
+      process.stdout.write(JSON.stringify(result));
+    })();
+  `,
+    ],
+    { cwd: path.resolve(__dirname, '..'), encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+  );
+  for (const [name, generated] of Object.entries(JSON.parse(output))) {
+    const js = ts.transpile(generated.replaceAll('export const ', 'const '), { target: ts.ScriptTarget.ES2022 });
+    const schema = new Function('z', `${js}; return ${name}Schema;`)(z);
+    assert.equal(schema.safeParse({ status: 'submitted', task_id: 'task' }).success, true, name);
+    for (const task_id of [undefined, '', 'x', null, 123]) {
+      assert.equal(schema.safeParse({ status: 'submitted', task_id }).success, false, `${name}: ${task_id}`);
+    }
   }
 });
