@@ -683,6 +683,8 @@ export interface SyncCreativeFormatProjection {
   legacyFormatConverter?: LegacyFormatConverter;
   /** Seller-provided legacy slot contracts, matched by exact format owner and id. */
   legacyFormatDefinitions?: readonly V1FormatDefinition[];
+  /** Opt in only for sellers that accept player-sized refs without width/height. */
+  playerSizedRefs?: 'omit_unstated_size';
 }
 
 export class CreativeFormatProjectionError extends Error {
@@ -691,7 +693,15 @@ export class CreativeFormatProjectionError extends Error {
   constructor(
     readonly operation: string,
     readonly creativeId: string,
-    reason: string
+    reason: string,
+    readonly details?: {
+      package_refs: ReadonlyArray<{
+        package_id: string;
+        ref?: V1FormatId;
+        refs?: readonly V1FormatId[];
+        reason?: string;
+      }>;
+    }
   ) {
     super(`${operation}: cannot select a valid creative wire shape for ${creativeId}: ${reason}`);
     this.name = 'CreativeFormatProjectionError';
@@ -731,6 +741,7 @@ type LegacyCandidate = {
   formatKind?: string;
   formatOptionRef?: FormatOptionReference;
   selectorParams?: unknown;
+  canonicalOnly?: boolean;
 };
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -864,7 +875,13 @@ function candidatesFromContainer(
     const formatKind = typeof option.format_kind === 'string' ? option.format_kind : undefined;
     const formatOptionRef = optionReference(option);
     for (const ref of legacyFormatRefsForDeclaration(option)) {
-      candidates.push({ ref, formatKind, formatOptionRef, selectorParams: option.params ?? container.params });
+      candidates.push({
+        ref,
+        formatKind,
+        formatOptionRef,
+        selectorParams: option.params ?? container.params,
+        canonicalOnly: option.canonical_formats_only === true,
+      });
     }
   }
   const linkedRefs = new Set(candidates.map(candidate => candidateKey({ ref: candidate.ref })));
@@ -1250,10 +1267,12 @@ function selectLegacyRef(
         : migratedFormatOptionId(candidate.ref) === creativeOptionRef.format_option_id
     );
   } else if (selectedOptionRefs.length > 0) {
-    candidates = candidates.filter(
-      candidate =>
-        candidate.formatOptionRef &&
-        selectedOptionRefs.some(ref => sameOptionReference(ref, candidate.formatOptionRef!))
+    candidates = candidates.filter(candidate =>
+      selectedOptionRefs.some(ref =>
+        candidate.formatOptionRef
+          ? sameOptionReference(ref, candidate.formatOptionRef)
+          : migratedFormatOptionId(candidate.ref) === ref.format_option_id
+      )
     );
   }
   const existing = legacyRef(creative.format_id);
@@ -2124,13 +2143,375 @@ export function projectMediaBuyCreativesForDelivery<T>(
     | ProjectedMediaBuyCreativeRequest<T, 'legacy'>;
 }
 
+/** Keep repeated selection/diagnostic reads on the same caller resolver answers. */
+function memoizePackageResolver(
+  resolver: CanonicalFormatLegacyResolver | undefined
+): CanonicalFormatLegacyResolver | undefined {
+  if (!resolver) return undefined;
+  type Answer = { ok: true; value: ReturnType<CanonicalFormatLegacyResolver> } | { ok: false; error: unknown };
+  const cache = new WeakMap<object, Map<string, Answer>>();
+  return context => {
+    const owner =
+      context.source === 'product'
+        ? context.declaration
+        : context.source === 'creative'
+          ? context.creative
+          : context.selector;
+    const key = JSON.stringify([
+      context.source,
+      context.field,
+      context.source === 'product' ? context.productId : context.operation,
+    ]);
+    let answers = cache.get(owner);
+    if (!answers) {
+      answers = new Map();
+      cache.set(owner, answers);
+    }
+    let answer = answers.get(key);
+    if (!answer) {
+      try {
+        // The caller may reuse one mutable mapping object between answers.
+        answer = {
+          ok: true,
+          value: resolveCanonicalFormatLegacyRefs(resolver, context, context.source === 'creative'),
+        };
+      } catch (error) {
+        answer = { ok: false, error };
+      }
+      answers.set(key, answer);
+    }
+    if (!answer.ok) throw answer.error;
+    return answer.value;
+  };
+}
+
+function assignedLegacyCandidates(
+  creative: Record<string, unknown>,
+  selector: CreativeFormatSelectorContainer,
+  candidates: readonly LegacyCandidate[]
+): LegacyCandidate[] {
+  const pin = optionReference(creative.format_option_ref);
+  const selected = selectedOptionReferences(selector);
+  if (pin && selected.length > 0 && !selected.some(ref => sameOptionReference(ref, pin))) return [];
+  return candidates.filter(candidate => {
+    if (typeof creative.format_kind === 'string' && candidate.formatKind !== creative.format_kind) return false;
+    if (pin)
+      return candidate.formatOptionRef
+        ? sameOptionReference(candidate.formatOptionRef, pin)
+        : migratedFormatOptionId(candidate.ref) === pin.format_option_id;
+    return (
+      selected.length === 0 ||
+      selected.some(ref =>
+        candidate.formatOptionRef
+          ? sameOptionReference(candidate.formatOptionRef, ref)
+          : migratedFormatOptionId(candidate.ref) === ref.format_option_id
+      )
+    );
+  });
+}
+
+function assignedDeclarationParameters(
+  creative: Record<string, unknown>,
+  selector: CreativeFormatSelectorContainer
+): unknown[] {
+  const pin = optionReference(creative.format_option_ref);
+  const selected = selectedOptionReferences(selector);
+  const collect = (container: CreativeFormatSelectorContainer): unknown[] => [
+    ...[...(container.format_options ?? []), ...selectedFormatOptions(container)].flatMap(value => {
+      const declaration = record(value);
+      if (!declaration || declaration.format_kind !== creative.format_kind) return [];
+      const ref = optionReference(declaration);
+      if (pin && (!ref || !sameOptionReference(ref, pin))) return [];
+      if (!pin && selected.length > 0 && (!ref || !selected.some(value => sameOptionReference(value, ref)))) return [];
+      return [declaration.params ?? container.params];
+    }),
+    ...(container.selector_containers ?? []).flatMap(collect),
+  ];
+  const parameters = collect(selector);
+  return parameters.length > 0 ? parameters : [selector.params];
+}
+
+function matchesDurationRange(
+  params: Record<string, unknown> | undefined,
+  duration: number | undefined,
+  requireKnownDuration = false
+): boolean {
+  const range = params?.duration_ms_range;
+  if (range === undefined || Object.hasOwn(params!, 'duration_ms_exact')) return true;
+  return (
+    Array.isArray(range) &&
+    range.length === 2 &&
+    range.every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0) &&
+    range[0] <= range[1] &&
+    (duration === undefined ? !requireKnownDuration : duration >= range[0] && duration <= range[1])
+  );
+}
+
+/** Resolve assignments independently before selecting the one creative wire identity. */
+function projectAssignedCreative(
+  creative: Record<string, unknown>,
+  packageIds: ReadonlySet<string>,
+  selectors: readonly CreativeFormatSelectorContainer[],
+  converter: LegacyFormatConverter | undefined,
+  resolver: CanonicalFormatLegacyResolver | undefined,
+  definitions: readonly V1FormatDefinition[] | undefined,
+  options: Pick<SyncCreativeFormatProjection, 'playerSizedRefs'> | undefined
+): Record<string, unknown> {
+  const packageRefs: NonNullable<CreativeFormatProjectionError['details']>['package_refs'][number][] = [];
+  const projected: Record<string, unknown>[] = [];
+  const parameterKeys = new Set<string>();
+  let compatibleParameters = true;
+  const playerSized = creative.format_kind === 'video_vast' || creative.format_kind === 'audio_vast';
+  const params = record(creative.format_parameters);
+  const durationFacts = playerSized
+    ? [
+        ...['duration_ms', 'duration_ms_exact'].flatMap(key =>
+          params && Object.hasOwn(params, key) ? [params[key]] : []
+        ),
+        ...creativeAssetRecords(creative)
+          .filter(asset => asset.asset_type === 'vast' && Object.hasOwn(asset, 'duration_ms'))
+          .map(asset => asset.duration_ms),
+      ]
+    : [];
+  const durations = new Set(
+    durationFacts.flatMap(value => (positiveConstraint(value) === undefined ? [] : [value as number]))
+  );
+  const invalidDuration = durationFacts.some(value => positiveConstraint(value) === undefined) || durations.size > 1;
+  const duration = playerSized ? [...durations][0] : creativeFormatParameterConstraints(creative)?.durationMs;
+  const selectionCreative =
+    playerSized &&
+    options?.playerSizedRefs === 'omit_unstated_size' &&
+    !invalidDuration &&
+    duration !== undefined &&
+    creativeFormatParameterConstraints(creative)?.durationMs !== duration
+      ? { ...creative, format_parameters: { ...params, duration_ms: duration } }
+      : creative;
+  if (selectionCreative !== creative) transferLegacyCreativeMetadata(creative, selectionCreative);
+  const byPackage = new Map<string, CreativeFormatSelectorContainer[]>();
+  for (const selector of selectors) {
+    if (typeof selector.package_id !== 'string') continue;
+    const group = byPackage.get(selector.package_id) ?? [];
+    group.push(selector);
+    byPackage.set(selector.package_id, group);
+  }
+  for (const packageId of packageIds) {
+    const containers = byPackage.get(packageId) ?? [];
+    const selector =
+      containers.length === 1 ? containers[0]! : { package_id: packageId, selector_containers: containers };
+    const memoizedResolver = memoizePackageResolver(resolver);
+    let creativeResolverRef: V1FormatId | undefined;
+    const packageResolver: CanonicalFormatLegacyResolver | undefined = memoizedResolver
+      ? context => {
+          const answer = memoizedResolver(context);
+          if (context.source === 'creative') creativeResolverRef = refsFromValue(answer)[0];
+          return answer;
+        }
+      : undefined;
+    let knownCandidates: LegacyCandidate[] = [];
+    try {
+      const allCandidates = candidatesFromContainer(selector, packageResolver, 'sync_creatives');
+      knownCandidates = assignedLegacyCandidates(creative, selector, allCandidates);
+      const missingSelectedMapping =
+        allCandidates.length > 0 &&
+        knownCandidates.length === 0 &&
+        (optionReference(creative.format_option_ref) !== undefined || selectedOptionReferences(selector).length > 0);
+      if (invalidDuration && options?.playerSizedRefs === 'omit_unstated_size')
+        throw new CreativeFormatProjectionError(
+          'sync_creatives',
+          String(creative.creative_id),
+          'the creative states invalid or conflicting durations'
+        );
+      if (
+        containerOptsOutOfLegacy(selector, String(creative.format_kind), optionReference(creative.format_option_ref)) &&
+        !knownCandidates.some(candidate => !candidate.canonicalOnly)
+      ) {
+        throw new CreativeFormatProjectionError(
+          'sync_creatives',
+          String(creative.creative_id),
+          'the package forbids legacy creative formats'
+        );
+      }
+      let value = projectCreativeForDelivery(
+        selectionCreative as unknown as CreativeAsset,
+        selector,
+        'legacy',
+        'sync_creatives',
+        converter,
+        packageResolver,
+        definitions
+      ) as unknown as Record<string, unknown>;
+      if (selectionCreative !== creative) {
+        const restored = { ...value };
+        if (Object.hasOwn(creative, 'format_parameters')) restored.format_parameters = creative.format_parameters;
+        else delete restored.format_parameters;
+        transferLegacyCreativeMetadata(value, restored);
+        value = restored;
+      }
+      const ref = legacyRef(value.format_id);
+      if (!ref)
+        throw new CreativeFormatProjectionError(
+          'sync_creatives',
+          String(creative.creative_id),
+          'no legacy format reference'
+        );
+      if (
+        missingSelectedMapping &&
+        (!creativeResolverRef || candidateKey({ ref }) !== candidateKey({ ref: creativeResolverRef }))
+      ) {
+        throw new CreativeFormatProjectionError(
+          'sync_creatives',
+          String(creative.creative_id),
+          'the selected package format options have no matching legacy reference'
+        );
+      }
+      const matching = knownCandidates.filter(
+        candidate => candidateKey({ ref: candidate.ref }) === candidateKey({ ref })
+      );
+      const allowed = matching.filter(candidate => !candidate.canonicalOnly);
+      if (matching.length > 0 && allowed.length === 0)
+        throw new CreativeFormatProjectionError(
+          'sync_creatives',
+          String(creative.creative_id),
+          'the selected package format forbids legacy delivery'
+        );
+      // Only player-size differences may be discarded. Keep every remaining
+      // declaration parameter, including duration constraints absent on refs.
+      if (knownCandidates.length > 0 && allowed.length === 0)
+        throw new CreativeFormatProjectionError(
+          'sync_creatives',
+          String(creative.creative_id),
+          'the projected legacy reference does not match the selected package format options'
+        );
+      for (const paramsValue of allowed.length > 0
+        ? allowed.map(candidate => candidate.selectorParams)
+        : assignedDeclarationParameters(creative, selector)) {
+        const nonSize = { ...record(paramsValue) };
+        delete nonSize.width;
+        delete nonSize.height;
+        delete nonSize.sizes;
+        const declaredDurations: number[] = [];
+        for (const key of ['duration_ms', 'duration_ms_exact']) {
+          if (!Object.hasOwn(nonSize, key)) continue;
+          const declared = positiveConstraint(nonSize[key]);
+          if (
+            declared === undefined ||
+            (ref.duration_ms !== undefined && declared !== ref.duration_ms) ||
+            (duration !== undefined && declared !== duration)
+          )
+            compatibleParameters = false;
+          if (declared !== undefined) declaredDurations.push(declared);
+          delete nonSize[key];
+        }
+        if (new Set(declaredDurations).size > 1) compatibleParameters = false;
+        const effectiveDuration = ref.duration_ms ?? declaredDurations[0];
+        if (!matchesDurationRange(record(paramsValue), effectiveDuration ?? duration)) compatibleParameters = false;
+        if (Object.hasOwn(record(paramsValue) ?? {}, 'duration_ms_exact')) delete nonSize.duration_ms_range;
+        if (effectiveDuration !== undefined) nonSize.duration_ms = effectiveDuration;
+        try {
+          parameterKeys.add(canonicalizeJson(nonSize));
+        } catch {
+          compatibleParameters = false;
+        }
+      }
+      projected.push(value);
+      packageRefs.push({ package_id: packageId, ref });
+    } catch (error) {
+      if (!(error instanceof CreativeFormatProjectionError)) throw error;
+      // Retain actual seller refs even when a stated size prevents selection.
+      const diagnosticDuration = invalidDuration
+        ? undefined
+        : (duration ?? primaryMediaConstraints(creative)?.durationMs);
+      const durationCandidates = knownCandidates.filter(
+        candidate =>
+          diagnosticDuration === undefined ||
+          legacyRefParameterConstraints(candidate.ref, candidate.selectorParams).durationMs === undefined ||
+          legacyRefParameterConstraints(candidate.ref, candidate.selectorParams).durationMs === diagnosticDuration
+      );
+      const refs = dedupeLegacyRefs(
+        (durationCandidates.length > 0 ? durationCandidates : knownCandidates).map(candidate => candidate.ref)
+      );
+      packageRefs.push({
+        package_id: packageId,
+        ...(refs.length === 1 ? { ref: refs[0]! } : { refs }),
+        reason: error.message,
+      });
+    }
+  }
+  const refs = packageRefs.flatMap(entry => (entry.ref && !entry.reason ? [entry.ref] : []));
+  if (refs.length === packageIds.size) {
+    const first = refs[0]!;
+    if (refs.every(ref => candidateKey({ ref }) === candidateKey({ ref: first }))) return projected[0]!;
+    const statesSize = (value: Record<string, unknown> | undefined): boolean =>
+      value !== undefined &&
+      [
+        'width',
+        'height',
+        'sizes',
+        'aspect_ratio',
+        'orientation',
+        'min_width',
+        'max_width',
+        'min_height',
+        'max_height',
+      ].some(key => Object.hasOwn(value, key));
+    const originalRef = record(creative.format_id);
+    const rangeMatches = matchesDurationRange(params, first.duration_ms, true);
+    if (
+      options?.playerSizedRefs === 'omit_unstated_size' &&
+      playerSized &&
+      compatibleParameters &&
+      parameterKeys.size === 1 &&
+      rangeMatches &&
+      !statesSize(params) &&
+      !statesSize(originalRef) &&
+      !creativeAssetRecords(creative).some(statesSize) &&
+      (first.duration_ms === undefined || positiveConstraint(first.duration_ms) !== undefined) &&
+      refs.every(
+        ref =>
+          sameLegacyIdentity(first, ref) &&
+          ref.duration_ms === first.duration_ms &&
+          (duration === undefined || ref.duration_ms === duration) &&
+          !statesSize(record(canonicalDeclarationFromBareId(ref.id, { agentUrl: ref.agent_url })?.params)) &&
+          ((ref.width === undefined && ref.height === undefined) ||
+            (positiveConstraint(ref.width) !== undefined && positiveConstraint(ref.height) !== undefined))
+      )
+    ) {
+      const shared = {
+        agent_url: first.agent_url,
+        id: first.id,
+        ...(first.duration_ms !== undefined && { duration_ms: first.duration_ms }),
+      };
+      const value = { ...projected[0]!, format_id: shared };
+      transferLegacyCreativeMetadata(projected[0]!, value);
+      return value;
+    }
+  }
+  const packages = packageRefs
+    .map(
+      entry =>
+        `${JSON.stringify(entry.package_id)}: ${JSON.stringify(entry.ref ?? entry.refs ?? [])}${entry.reason ? ` (${entry.reason})` : ''}`
+    )
+    .join('; ');
+  const constraintReason =
+    !compatibleParameters || parameterKeys.size > 1
+      ? '; package declarations disagree on non-size format parameters'
+      : '';
+  throw new CreativeFormatProjectionError(
+    'sync_creatives',
+    typeof creative.creative_id === 'string' ? creative.creative_id : '(unknown)',
+    `assigned packages do not share a compatible legacy format reference (${packages})${constraintReason}; split the assignments or inspect details.package_refs`,
+    { package_refs: packageRefs }
+  );
+}
+
 export function projectSyncCreativesForDelivery<T>(
   request: T,
   selectorContainers: ReadonlyArray<CreativeFormatSelectorContainer>,
   wireMode: 'canonical',
   legacyFormatConverter?: LegacyFormatConverter,
   canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
-  legacyFormatDefinitions?: readonly V1FormatDefinition[]
+  legacyFormatDefinitions?: readonly V1FormatDefinition[],
+  options?: Pick<SyncCreativeFormatProjection, 'playerSizedRefs'>
 ): ProjectedSyncCreativeRequest<T, 'canonical'>;
 export function projectSyncCreativesForDelivery<T>(
   request: T,
@@ -2138,7 +2519,8 @@ export function projectSyncCreativesForDelivery<T>(
   wireMode: 'legacy' | 'unknown',
   legacyFormatConverter?: LegacyFormatConverter,
   canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
-  legacyFormatDefinitions?: readonly V1FormatDefinition[]
+  legacyFormatDefinitions?: readonly V1FormatDefinition[],
+  options?: Pick<SyncCreativeFormatProjection, 'playerSizedRefs'>
 ): ProjectedSyncCreativeRequest<T, 'legacy'>;
 export function projectSyncCreativesForDelivery<T>(
   request: T,
@@ -2146,7 +2528,8 @@ export function projectSyncCreativesForDelivery<T>(
   wireMode: CreativeFormatWireMode,
   legacyFormatConverter?: LegacyFormatConverter,
   canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
-  legacyFormatDefinitions?: readonly V1FormatDefinition[]
+  legacyFormatDefinitions?: readonly V1FormatDefinition[],
+  options?: Pick<SyncCreativeFormatProjection, 'playerSizedRefs'>
 ): ProjectedSyncCreativeRequest<T, 'canonical'> | ProjectedSyncCreativeRequest<T, 'legacy'>;
 export function projectSyncCreativesForDelivery<T>(
   request: T,
@@ -2154,7 +2537,8 @@ export function projectSyncCreativesForDelivery<T>(
   wireMode: CreativeFormatWireMode = 'canonical',
   legacyFormatConverter?: LegacyFormatConverter,
   canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
-  legacyFormatDefinitions?: readonly V1FormatDefinition[]
+  legacyFormatDefinitions?: readonly V1FormatDefinition[],
+  options?: Pick<SyncCreativeFormatProjection, 'playerSizedRefs'>
 ): ProjectedSyncCreativeRequest<T, 'canonical'> | ProjectedSyncCreativeRequest<T, 'legacy'> {
   const requestRecord = record(request);
   if (!requestRecord || !Array.isArray(requestRecord.creatives)) {
@@ -2178,6 +2562,19 @@ export function projectSyncCreativesForDelivery<T>(
         : selectorContainers.filter(
             container => typeof container.package_id === 'string' && assignedPackageIds.has(container.package_id)
           );
+    if (wireMode !== 'canonical' && assignedPackageIds.size > 1) {
+      const projected = projectAssignedCreative(
+        creative,
+        assignedPackageIds,
+        relevant,
+        legacyFormatConverter,
+        canonicalFormatLegacyResolver,
+        legacyFormatDefinitions,
+        options
+      );
+      if (projected !== creativeValue) changed = true;
+      return projected;
+    }
     const combined: CreativeFormatSelectorContainer = {
       selector_containers: relevant,
     };

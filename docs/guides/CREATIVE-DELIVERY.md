@@ -129,7 +129,7 @@ The same pure functions are available from the explicit
 
 When these helpers emit a legacy `format_id`, they also map assets to the
 definition's `asset_id` keys. Definitions come from the bundled reference
-catalog, or from an optional final `legacyFormatDefinitions` array supplied to
+catalog, or from an optional `legacyFormatDefinitions` array supplied to
 any of the three helpers. Caller definitions take precedence and must match
 both the format agent URL and ID. No network lookup occurs during projection.
 
@@ -150,6 +150,43 @@ repeatable groups retain all asset keys; projection does not infer group members
 Unmatched assets, ambiguous matches, and assets competing for the same slot
 keep their original keys. Unknown definitions leave assets unchanged. Canonical
 delivery retains its asset keys, and projection never mutates the caller's data.
+
+One legacy creative can carry only one `format_id` across all its package
+assignments. By default, different package refs cause a
+`CreativeFormatProjectionError`; its `details.package_refs` lists each
+`package_id` and resolved `ref`, or the remaining `refs` and a `reason` when
+that package cannot resolve uniquely. Use those details to split incompatible
+assignments.
+Canonical creatives assigned to multiple packages need selector evidence or a
+resolver answer for every package; a missing package cannot borrow another
+package's ref. Creative resolver calls in this path receive that package's
+container, including its `package_id`, rather than the pooled selector wrapper.
+Already-legacy creatives with a stated size also refuse conflicting package
+evidence. Supply a selector per assigned package, and update creative resolvers
+that read `selector_containers` to read the package container directly.
+
+For a seller that accepts player-sized VAST refs without an exact player size,
+opt in per call:
+
+```ts
+await agent.syncCreatives(request, undefined, {
+  creativeFormatProjection: {
+    selectorContainers: selectedPackages,
+    playerSizedRefs: 'omit_unstated_size',
+  },
+});
+```
+
+This applies only to `video_vast` and `audio_vast` creatives assigned to multiple
+packages. Every package must independently resolve to one ref with the same
+owner, ID, duration, and other non-size format constraints. If those refs differ only in player size and the
+creative states no size, the shared wire ref omits `width` and `height` while
+keeping the agreed duration. A single package and identical package refs retain
+their exact refs. Sized creatives, ambiguous packages, different owners or IDs,
+and duration conflicts still refuse. Confirm the seller accepts omitted player
+dimensions before enabling this option; some legacy sellers require exact refs.
+The pure `projectSyncCreativesForDelivery()` helper accepts the same policy in
+its optional seventh argument.
 
 Capability resolution uses the client's
 emitted wire release pin: AdCP 3.2+ is canonical by contract, 3.0 is legacy, and 3.1
