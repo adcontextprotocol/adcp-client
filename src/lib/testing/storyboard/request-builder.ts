@@ -449,24 +449,26 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     // auction options. Media-buy or package `bidding` must not be combined with
     // a legacy bid_price (AMBIGUOUS_BIDDING_POLICY), so its presence also
     // suppresses the bid.
-    const sentPricingOption =
-      fixtureProductId === undefined && fixturePricingOptionId === undefined
-        ? pricingOption
-        : findPricingOption(context, firstPkg.product_id, firstPkg.pricing_option_id);
-    if (
-      baseSample.bid_price === undefined &&
-      baseSample.bidding === undefined &&
-      step.sample_request?.bidding === undefined &&
-      sentPricingOption?.pricing_model === 'cpm' &&
-      !isFixedPricing(sentPricingOption as PricingOptionV3)
-    ) {
-      const floor = Number(sentPricingOption.floor_price) || 5;
-      firstPkg.bid_price = Math.round(floor * 1.5 * 100) / 100;
-    }
-
     const additionalPkgs = samplePackages
       .slice(1)
       .map(p => injectContext({ ...p }, context) as Record<string, unknown>);
+    const packages = [firstPkg, ...additionalPkgs];
+    for (const pkg of packages) {
+      const sentPricingOption =
+        pkg === firstPkg && fixtureProductId === undefined && fixturePricingOptionId === undefined
+          ? pricingOption
+          : findPricingOption(context, pkg.product_id, pkg.pricing_option_id);
+      if (
+        pkg.bid_price === undefined &&
+        pkg.bidding === undefined &&
+        step.sample_request?.bidding === undefined &&
+        sentPricingOption?.pricing_model === 'cpm' &&
+        !isFixedPricing(sentPricingOption as PricingOptionV3)
+      ) {
+        const floor = Number(sentPricingOption.floor_price) || 5;
+        pkg.bid_price = Math.round(floor * 1.5 * 100) / 100;
+      }
+    }
 
     // Proposal-mode: when context carries a proposal_id (captured from
     // `proposals[0]` in a prior brief/refine/finalize step), forward it
@@ -534,7 +536,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       brand: resolveBrand(options),
       start_time: startTime,
       end_time: endTime,
-      packages: [firstPkg, ...additionalPkgs],
+      packages,
     };
   },
 
