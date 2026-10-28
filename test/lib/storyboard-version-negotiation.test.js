@@ -675,7 +675,8 @@ describe('storyboard runner AdCP version negotiation', () => {
     assert.throws(
       () => loadComplianceIndex({ complianceDir: missing, version: '3.1.1' }),
       err =>
-        /bundles compliance caches for .*3\.1\.24/.test(err.message) &&
+        err.message.includes('bundles compliance caches for') &&
+        err.message.includes(ADCP_VERSION) &&
         /not every historical patch/.test(err.message) &&
         /--compliance-dir/.test(err.message) &&
         /--schema-root/.test(err.message) &&
@@ -685,8 +686,8 @@ describe('storyboard runner AdCP version negotiation', () => {
 
   test('loads a standalone bundled compliance version without external paths', () => {
     const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/compliance.js');
-    const index = loadComplianceIndex({ version: '3.1.24' });
-    assert.strictEqual(index.adcp_version, '3.1.24');
+    const index = loadComplianceIndex({ version: ADCP_VERSION });
+    assert.strictEqual(index.adcp_version, ADCP_VERSION);
   });
 
   test('major-only capability discovery accepts 3.1 extension scenarios before version negotiation', async () => {
@@ -705,13 +706,13 @@ describe('storyboard runner AdCP version negotiation', () => {
       const probe = async (strictResponseSchemaValidation, payload = response) => {
         ProtocolClient.callTool = async () => payload;
         const client = createTestClient('https://stub.example/mcp', 'mcp', {
-          adcpVersion: '3.1.24',
+          adcpVersion: ADCP_VERSION,
           versionEnvelope: 'major-only',
           strictResponseSchemaValidation,
         });
         client.client.discoveredEndpoint = 'https://stub.example/mcp';
         client.getAgentInfo = async () => ({ name: '3.1 seller', tools: [{ name: 'get_adcp_capabilities' }] });
-        return (await discoverAgentProfile(client, undefined, '3.1.24')).profile;
+        return (await discoverAgentProfile(client, undefined, ADCP_VERSION)).profile;
       };
 
       const strict = await probe(true);
@@ -738,7 +739,7 @@ describe('storyboard runner AdCP version negotiation', () => {
     const { comply } = require('../../dist/lib/testing/compliance/comply.js');
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-comply-major-probe-'));
     const complianceDir = path.join(tempRoot, 'compliance');
-    writeComplianceIndex(complianceDir, '3.1.24');
+    writeComplianceIndex(complianceDir, ADCP_VERSION);
     const originalCallTool = ProtocolClient.callTool;
     const originalGetAgentInfo = SingleAgentClient.prototype.getAgentInfo;
     ProtocolClient.callTool = async () => ({
@@ -753,9 +754,9 @@ describe('storyboard runner AdCP version negotiation', () => {
     };
     try {
       const result = await comply('https://stub.example/mcp', {
-        version: '3.1.24',
+        version: ADCP_VERSION,
         complianceDir,
-        schemaRoot: path.resolve(__dirname, '../../schemas/cache/3.1.24'),
+        schemaRoot: path.resolve(__dirname, '../../schemas/cache', ADCP_VERSION),
       });
       assert.strictEqual(result.agent_profile.capabilities_probe_error, undefined);
       assert.ok(result.agent_profile.supported_protocols.includes('media_buy'));
