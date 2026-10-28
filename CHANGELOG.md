@@ -1,5 +1,12 @@
 # Changelog
 
+## 15.9.8
+
+### Patch Changes
+
+- 27ce355: Package the signed auction-only seller compliance fixes from AdCP 3.2.8, including the corrected 3.1.30 maintenance bundle. Shared lifecycle and measurement-rejection scenarios accept auction CPM offers, and stale-cache checks use the advertised controller scenario and a consistently scoped warm cache.
+- 27ce355: Backport conformance validation for status-free synchronous responses and canonical optional version metadata when using AdCP 3.2.8. Preserve explicit AdCP 3.0 compatibility, authored root extensions, and nested response constraints.
+
 ## 15.9.7
 
 ### Patch Changes
