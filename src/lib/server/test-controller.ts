@@ -468,7 +468,11 @@ export interface TestControllerStore {
    * Mark an upstream dependency as unreachable for subsequent calls within
    * the compliance session. Backs the stale-response advisory storyboard.
    */
-  forceUpstreamUnavailable?(params: { tool: string; upstream_name?: string }): Promise<StateTransitionSuccess>;
+  forceUpstreamUnavailable?(params: {
+    tool: string;
+    upstream_name?: string;
+    cache_age_seconds?: number;
+  }): Promise<StateTransitionSuccess>;
 }
 
 /**
@@ -1477,14 +1481,23 @@ async function handleTestControllerRequestImpl(
         if (!store.forceUpstreamUnavailable) {
           return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
         }
-        const forceParams = (params ?? {}) as { tool?: unknown; upstream_name?: unknown };
+        const forceParams = (params ?? {}) as { tool?: unknown; upstream_name?: unknown; cache_age_seconds?: unknown };
         if (typeof forceParams.tool !== 'string' || forceParams.tool.length === 0) {
           return controllerError('INVALID_PARAMS', 'force_upstream_unavailable requires params.tool');
+        }
+        if (
+          forceParams.cache_age_seconds !== undefined &&
+          (!Number.isInteger(forceParams.cache_age_seconds) || (forceParams.cache_age_seconds as number) < 0)
+        ) {
+          return controllerError('INVALID_PARAMS', 'cache_age_seconds must be a non-negative integer');
         }
         return wrapStoreSuccess(
           await store.forceUpstreamUnavailable({
             tool: forceParams.tool,
             upstream_name: typeof forceParams.upstream_name === 'string' ? forceParams.upstream_name : undefined,
+            ...(typeof forceParams.cache_age_seconds === 'number'
+              ? { cache_age_seconds: forceParams.cache_age_seconds }
+              : {}),
           })
         );
       }

@@ -4700,7 +4700,7 @@ async function executeStep(
   let request: Record<string, unknown>;
   if (options.request) {
     request = injectContext({ ...options.request }, context, runState.runnerVars);
-  } else if (step.expect_error && step.sample_request) {
+  } else if (step.expect_error && step.sample_request && step.enrich_request !== true) {
     request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
   } else if (hasRequestEnricher(effectiveStep.task)) {
     request = enrichRequest(effectiveStep, context, options, runState.runnerVars);
@@ -6426,7 +6426,7 @@ function buildEffectiveStepRequest(
   let request: Record<string, unknown>;
   if (options.request) {
     request = injectContext({ ...options.request }, context, runState.runnerVars);
-  } else if (step.expect_error && step.sample_request) {
+  } else if (step.expect_error && step.sample_request && step.enrich_request !== true) {
     request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
   } else if (hasRequestEnricher(step.task)) {
     request = enrichRequest(step, context, options, runState.runnerVars);
