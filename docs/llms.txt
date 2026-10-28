@@ -1529,7 +1529,7 @@ Flow: `get_products`
 **Product coverage is preserved across discovery surfaces** — Checks legacy and compact coverage predicates against independent negative controls without configuring delivery targeting.
 Flow: `get_products → list_products`
 
-**Seller applies deterministic product filters in every buying mode** — Verifies schema-valid get_products filters affect brief curation, wholesale feeds, and refinement instead of silently no-oping.
+**Seller applies deterministic product filters in supported buying modes** — Verifies schema-valid get_products filters affect brief curation, wholesale feeds, and refinement instead of silently no-oping.
 Flow: `get_products`
 
 **Seller exposes wholesale signal options and honors package-level signal_targeting_groups** — Verifies that a seller with wholesale products and wholesale get_signals can expose signal targeting eligibility, accept package-level signal_targeting_groups with pricing, reject unknown signals, and echo the applied grouped expression on readback.
@@ -1572,7 +1572,7 @@ Flow: `sync_accounts → get_products → create_media_buy → get_media_buys`
 Flow: `get_products → create_media_buy → update_media_buy → get_media_buys → update_media_buy → create_media_buy → get_products → create_media_buy → update_media_buy → get_media_buys → update_media_buy → get_media_buys`
 
 **Atomic media-buy total budget redistribution** — Verifies that a fixed media-buy total_budget update proportionally rescales active packages, returns auditable package state, and rejects competing package patches atomically.
-Flow: `sync_accounts → create_media_buy → update_media_buy → get_media_buys → update_media_buy`
+Flow: `sync_accounts → create_media_buy → get_media_buys → update_media_buy → get_media_buys → update_media_buy`
 
 **Seller handles typed proposal negotiation with constraints, product changes, and alternatives** — Verifies the AdCP 3.2 typed negotiation lifecycle: capability-gated constraint satisfaction, product changes, digest-verified alternatives, partial invariant, immutable lineage, finalize atomicity, and idempotent replay through refine_proposals.
 Flow: `get_adcp_capabilities → sync_accounts → request_proposals → refine_proposals → accept_proposal → refine_proposals`
@@ -1602,7 +1602,7 @@ Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media
 Flow: `get_adcp_capabilities → sync_accounts → sync_catalogs → build_creative → expect_substitution_safe → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
 
 **Digital out-of-home — non-guaranteed** — DOOH seller for non-guaranteed venue and screen inventory with canonical screen formats and substantive play reporting.
-Flow: `get_adcp_capabilities → list_products → create_media_buy → validate_input → sync_creatives → create_media_buy → comply_test_controller → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → list_products → get_products → create_media_buy → validate_input → sync_creatives → create_media_buy → comply_test_controller → get_media_buy_delivery`
 
 **Programmatic exchange seller** — Programmatic exchange or SSP — multi-publisher auction inventory with floor prices, bid guidance, audience targeting, and auction-level delivery transparency.
 Flow: `get_adcp_capabilities → sync_accounts → sync_governance → get_products → create_media_buy → update_media_buy → get_media_buy_delivery`
@@ -1655,7 +1655,7 @@ Flow: `sync_accounts → get_products → create_media_buy → comply_test_contr
 Flow: `get_media_buys → comply_test_controller → get_media_buy_delivery`
 
 **End-to-end vendor-metric accountability: declaration → commitment → delivery audit** — Buyer commits vendor metrics on two packages, then verifies one clean package, one overdue gap, and one not-yet-measurable omission.
-Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
+Flow: `sync_accounts → get_products → create_media_buy → get_media_buys → comply_test_controller → get_media_buy_delivery`
 
 **Reliable Reporting: Managed Delivery** — Validates the Managed Delivery tier's explicit capability, atomic managed offering, resource retention, and authorization-revocation contract.
 Flow: `get_adcp_capabilities → comply_test_controller → get_reporting_status → comply_test_controller`
@@ -1838,6 +1838,8 @@ Flow: `get_adcp_capabilities → list_transformers → build_creative`
 
 **Runner output contract** — Required failure-detail shape that AdCP storyboard runners MUST emit so implementors can self-diagnose validation failures.
 
+**AdCP 4.0 compatibility checks** — 
+
 ### Error Handling
 
 **Billing contract and gate dispatch — sync_accounts capability vs per-buyer-agent gate** — Validates that account.supported_billing is declared and honored by sync_accounts, including out-of-set BILLING_NOT_SUPPORTED rejection, recovery-value consistency, and the distinct per-buyer-agent BILLING_NOT_PERMITTED_FOR_AGENT gate.
@@ -1850,7 +1852,7 @@ Flow: `get_adcp_capabilities → activate_signal → get_signals → activate_si
 Flow: `get_adcp_capabilities → create_media_buy → get_products → create_media_buy → get_products → create_media_buy`
 
 **STALE_RESPONSE advisory-success wire placement** — Validates that STALE_RESPONSE rides in errors[] on a populated success response with transport success preserved, and that STALE_RESPONSE is absent on healthy upstream responses.
-Flow: `get_adcp_capabilities → comply_test_controller → get_products`
+Flow: `get_adcp_capabilities → get_products → comply_test_controller → get_products`
 
 ### Security
 

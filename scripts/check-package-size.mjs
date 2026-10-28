@@ -82,7 +82,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // next 10 KB, i.e. 20,489,403 + 25,000 = 20,514,403 -> 20,520,000. The resulting
 // 30,597-byte headroom is therefore the convention applied, not a discretionary
 // increase; a strictly minimal ceiling would leave no compressor variance.
-const MAX_PACKED_TARBALL_BYTES = 20_520_000;
+// The signed 3.2.8 + 3.1.30 replacement and conformance-envelope backport
+// measure 20,527,232 bytes packed. Apply the same 25 KB compressor margin
+// and round up to the next 10 KB: 20,552,232 -> 20,560,000. The protocol
+// artifact allowlist and all other byte/file budgets remain enforced.
+const MAX_PACKED_TARBALL_BYTES = 20_560_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -239,6 +243,10 @@ const MAX_PACKED_FILE_COUNT =
   // signed 3.2.4 -> 3.2.5 comparison adds no schema files — so the macro schema
   // is new only on the 3.1 side. No new runtime module sets. Measured on the
   // final both-corpus replacement: 6,567 files.
+  2 +
+  // Signed 3.2.8 adds exactly these two compliance files over 3.2.5:
+  // test-kits/creative-build-probe-runner.yaml and universal/v4-compatibility.yaml.
+  // Verified against the published 15.9.6 archive with version directories normalized.
   2;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;

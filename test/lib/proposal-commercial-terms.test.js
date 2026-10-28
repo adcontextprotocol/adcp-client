@@ -407,7 +407,7 @@ test('rc.3 deliberately supports the revised accepted-snapshot contract without 
   const { getSchemaDocumentByRef } = require('../../dist/lib/validation/schema-loader.js');
   const { commercialTermsSchemaSupportError } = require('../../dist/lib/negotiation/commercial-terms-schema.js');
   const contract = require('../fixtures/proposal-commercial-terms/rc3-product-purchase-validation.json');
-  for (const version of ['3.2.0-rc.2', '3.2.1', '3.2.3', '3.2.4', '3.2.5', '3.2.6']) {
+  for (const version of ['3.2.0-rc.2', '3.2.1', '3.2.3', '3.2.4', '3.2.5', '3.2.6', '3.2.7', '3.2.8', '3.2.9']) {
     const load = ref => {
       const source = getSchemaDocumentByRef(ref)?.schema;
       if (!source) return undefined;
@@ -418,11 +418,8 @@ test('rc.3 deliberately supports the revised accepted-snapshot contract without 
       return document;
     };
     const error = commercialTermsSchemaSupportError(load('media-buy/commercial-terms.json'), version, load);
-    // '3.2.0-rc.2' stays a known-prerelease negative and '3.2.6' is the
-    // unknown-future negative that replaces '3.2.5' on its promotion. Keeping a
-    // future-version negative is load-bearing: without one the loop still passes
-    // but stops proving that an unreviewed release fails closed.
-    if (['3.2.1', '3.2.3', '3.2.4', '3.2.5'].includes(version)) assert.equal(error, undefined);
+    if (['3.2.1', '3.2.3', '3.2.4', '3.2.5', '3.2.6', '3.2.7', '3.2.8'].includes(version))
+      assert.equal(error, undefined);
     else assert.match(error, /unreviewed commercial-term validation semantics/);
   }
 });

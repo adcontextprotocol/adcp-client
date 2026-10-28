@@ -45,6 +45,66 @@ describe('conformance: oracle', () => {
     assert.deepEqual(out.invariantFailures, []);
   });
 
+  test('synchronous decline_proposals validates without injecting task status', () => {
+    const payload = { results: [{ proposal_id: 'proposal-1', outcome: 'declined' }] };
+    const before = structuredClone(payload);
+    const out = accepted('decline_proposals', payload);
+    assert.equal(out.verdict, 'accepted', out.invariantFailures.join('; '));
+    assert.deepEqual(payload, before);
+  });
+
+  test('response schemas admit canonical version metadata from SDK sellers', () => {
+    const payload = {
+      adcp_version: '3.2',
+      results: [{ proposal_id: 'proposal-1', outcome: 'declined' }],
+    };
+    const out = accepted('decline_proposals', payload);
+    assert.equal(out.verdict, 'accepted', out.invariantFailures.join('; '));
+  });
+
+  test('decline_proposals accepts root extensions while rejecting invalid versions and forbidden sync status', () => {
+    const payload = { results: [{ proposal_id: 'proposal-1', outcome: 'declined' }] };
+    assert.equal(accepted('decline_proposals', { ...payload, unexpected: true }).verdict, 'accepted');
+    for (const invalid of [
+      { ...payload, adcp_version: 'not-a-version' },
+      { ...payload, adcp_version: '3.2.6' },
+      { ...payload, adcp_version: 3.2 },
+      { ...payload, adcp_major_version: '3' },
+      { results: [{ proposal_id: 'proposal-1', outcome: 'declined', unexpected: true }] },
+      { ...payload, status: 'completed' },
+      { ...payload, task_id: 'unexpected-task' },
+      { results: [{ proposal_id: 'proposal-1' }] },
+    ]) {
+      const out = accepted('decline_proposals', invalid);
+      assert.equal(out.verdict, 'invalid', JSON.stringify(invalid));
+    }
+  });
+
+  test('oracle does not fill missing required status from the TaskResult envelope', () => {
+    const out = evaluate({
+      tool: 'get_signals',
+      request: {},
+      result: { success: true, status: 'completed', data: { cache_scope: 'public', signals: [] } },
+    });
+    assert.equal(out.verdict, 'invalid');
+  });
+
+  test('explicit AdCP 3.0 retains status-optional validation without mutating the payload', () => {
+    const payload = { adcp_version: '3.0', cache_scope: 'public', signals: [] };
+    const out = evaluate({
+      tool: 'get_signals',
+      request: {},
+      result: { success: true, status: 'completed', data: payload },
+    });
+    assert.equal(out.verdict, 'accepted', out.invariantFailures.join('; '));
+    assert.equal(payload.status, undefined);
+    const compact = accepted('decline_proposals', {
+      adcp_version: '3.0',
+      results: [{ proposal_id: 'proposal-1', outcome: 'declined' }],
+    });
+    assert.equal(compact.verdict, 'accepted', compact.invariantFailures.join('; '));
+  });
+
   test('valid error envelope → rejected', () => {
     const out = rejected('get_signals', 'REFERENCE_NOT_FOUND', 'unknown signal_id');
     assert.equal(out.verdict, 'rejected');
