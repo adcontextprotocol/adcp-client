@@ -1,5 +1,17 @@
 # Changelog
 
+## 16.6.1
+
+### Patch Changes
+
+- d7b1c13: Package the signed auction-only seller compliance fixes from AdCP 3.2.8, including the corrected 3.1.30 maintenance bundle. Shared lifecycle and measurement-rejection scenarios accept auction CPM offers, and stale-cache checks use the advertised controller scenario and a consistently scoped warm cache.
+- b2b5130: Construct bids for every discovered auction CPM package in a storyboard buy, preserving authored bids, fixed-price offers, and bidding policies. Add explicit `enrich_request: true` opt-in for schema-valid semantic rejection probes so measurement-term rejection is tested with a valid auction request while malformed-input probes retain their authored payloads.
+
+  Preserve the requested deterministic stale-cache age when forwarding `force_upstream_unavailable` to a test-controller store, including zero, and reject invalid ages before invoking the store.
+
+- d7b1c13: Validate canonical response version metadata in open conformance response schemas while preserving root extensions, authored version restrictions, and nested object constraints.
+- 1209a4a: Upgrade the MCP Node adapter to 2.1.1 to include upstream request-body and JSON-RPC batch bounds (GHSA-f897-62hf-6gxq), while retaining compatibility with the SDK's existing MCP server dependency.
+
 ## 16.6.0
 
 ### Minor Changes
