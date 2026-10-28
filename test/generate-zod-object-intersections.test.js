@@ -885,12 +885,13 @@ export const PlacementSchema = PlacementBaseSchema
 
   assert.match(
     output,
-    /ProductFormatDeclarationSchema = z\.object\(\{ id: z\.string\(\) \}\)\.merge\(CommonBFormatSchema\)\.and\(FormatKindsSchema\);/
+    /ProductFormatDeclarationSchema = z\.object\(\{ id: z\.string\(\) \}\)\.merge\(CommonBFormatSchema\)\.describe\("Common constraints for every product format\."\)\.and\(FormatKindsSchema\);/
   );
   assert.match(
     output,
     /PlacementSchema = PlacementBaseSchema\.and\(PlacementChoiceSchema\)\.and\(CommonBFormatSchema\);/
   );
+  assert.equal(postProcessRepeatedProductIntersections(output), output);
 });
 
 test('postProcessRepeatedProductIntersections fails closed when the common Product validator is not contained', () => {
@@ -918,6 +919,48 @@ export const PlacementSchema = z.literal("a b").and(z.literal("a  b")).and(z.lit
 `);
 
   assert.match(output, /PlacementSchema = z\.literal\("a b"\)\.and\(z\.literal\("a  b"\)\);/);
+});
+
+test('postProcessUnionIntersectionOperands annotates inline union intersection operands only', () => {
+  const output = runPostProcess(
+    'postProcessUnionIntersectionOperands',
+    `
+export const RightSchema = z.object({ id: z.string() }).passthrough().and(z.union([z.object({ a: z.string() }), z.object({ b: z.string() })]));
+export const LeftSchema = z.union([z.literal("x"), z.literal("y")]).and(z.string());
+export const NestedSchema = z.array(z.object({}).passthrough().and( z.union([z.object({ c: z.string() })]) ));
+export const DescribedSchema = z.object({}).and(z.union([z.object({})]).describe("kept"));
+export const PlainUnionSchema = z.union([z.literal("z.union(["), z.literal("b")]);
+export const ChainedOperandSchema = z.object({}).and(z.union([z.object({})]).optional());
+`,
+    '.zod-union-operands-'
+  );
+  const marker = '.describe("Must also satisfy at least one of these alternatives.")';
+
+  assert.ok(
+    output.includes(`.and(z.union([z.object({ a: z.string() }), z.object({ b: z.string() })])${marker});`),
+    output
+  );
+  assert.ok(
+    output.includes(`LeftSchema = z.union([z.literal("x"), z.literal("y")])${marker}.and(z.string());`),
+    output
+  );
+  assert.ok(output.includes(`.and( z.union([z.object({ c: z.string() })])${marker} ))`), output);
+  assert.ok(output.includes('.and(z.union([z.object({})]).describe("kept"));'), output);
+  assert.ok(output.includes('PlainUnionSchema = z.union([z.literal("z.union(["), z.literal("b")]);'), output);
+  assert.ok(output.includes('.and(z.union([z.object({})]).optional());'), output);
+  assert.equal(output.split(marker).length - 1, 3);
+});
+
+test('union intersection operand annotation keeps Zod JSON Schema as one allOf', async () => {
+  const { z } = await import('zod');
+  const base = z.object({ shared: z.string() }).passthrough();
+  const variants = [z.object({ kind: z.literal('a') }).passthrough(), z.object({ kind: z.literal('b') }).passthrough()];
+  const annotated = base.and(z.union(variants).describe('Must also satisfy at least one of these alternatives.'));
+  const json = z.toJSONSchema(annotated, { io: 'input' });
+
+  assert.equal(json.allOf?.length, 2);
+  assert.equal(json.allOf[1].anyOf.length, 2);
+  assert.equal(JSON.stringify(json).split('"shared":{').length - 1, 1);
 });
 
 test('postProcessObjectUnionIntersections distributes object envelope over union arms', () => {
