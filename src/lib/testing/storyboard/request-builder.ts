@@ -174,6 +174,15 @@ function omitEnvelopeFields(obj: Record<string, unknown>): Record<string, unknow
   return out;
 }
 
+function hasAuthoredAccountIdentity(account: unknown): account is Record<string, unknown> {
+  if (account === null || typeof account !== 'object' || Array.isArray(account)) return false;
+  const ref = account as Record<string, unknown>;
+  return (
+    (typeof ref.account_id === 'string' && ref.account_id.length > 0) ||
+    (typeof ref.operator === 'string' && ref.operator.length > 0)
+  );
+}
+
 const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   // ── Account & Audience ─────────────────────────────────
 
@@ -944,9 +953,19 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   // ── Test Controller ────────────────────────────────────
 
   comply_test_controller(step, context, options) {
+    // The stale-cache directive must address the account whose cache was warmed.
+    // Backport the authored-account selection from the current SDK line.
+    const controllerFields = step.sample_request
+      ? omitEnvelopeFields(injectContext({ ...step.sample_request }, context) as Record<string, unknown>)
+      : undefined;
+    const authoredAccount = controllerFields?.account;
+    const accountScope =
+      controllerFields?.scenario === 'force_upstream_unavailable' && hasAuthoredAccountIdentity(authoredAccount)
+        ? authoredAccount
+        : (context.account ?? resolveAccount(options));
     // The test controller requires account.sandbox: true to be set.
     const account: Record<string, unknown> = {
-      ...(context.account ?? resolveAccount(options)),
+      ...accountScope,
       sandbox: true,
     };
     // Natural-key arm of AccountReference requires `operator` per the spec
@@ -959,13 +978,10 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
         account.operator = brand.domain;
       }
     }
-    if (step.sample_request) {
+    if (controllerFields) {
       // Drop envelope fields; outer enrichRequest re-applies them with
       // `runnerVars` so mustache substitutions expand correctly.
-      return {
-        ...omitEnvelopeFields(injectContext({ ...step.sample_request }, context) as Record<string, unknown>),
-        account,
-      };
+      return { ...controllerFields, account };
     }
     return {
       account,

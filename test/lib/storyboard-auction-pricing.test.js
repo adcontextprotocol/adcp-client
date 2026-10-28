@@ -121,3 +121,40 @@ test('enrichment is rejected for malformed-input probes and non-negative steps',
   const authored = step({ expect_error: true, negative_path: 'payload_well_formed', enrich_request: true });
   assert.doesNotThrow(() => validateStoryboardShape({ id: 'pricing', phases: [{ id: 'main', steps: [authored] }] }));
 });
+
+for (const account of [
+  { brand: { domain: 'acmeoutdoor.example' }, operator: 'pinnacle-agency.example', sandbox: false },
+  { account_id: 'seller-cache-account', sandbox: false },
+]) {
+  test(`stale-cache forcing preserves authored account scope: ${JSON.stringify(account)}`, () => {
+    const authored = {
+      id: 'force',
+      title: 'Force outage',
+      task: 'comply_test_controller',
+      sample_request: { scenario: 'force_upstream_unavailable', account, params: { tool: 'get_products' } },
+    };
+    const before = structuredClone(authored);
+    const result = buildRequest(authored, { account: { account_id: 'harness-account' } }, options);
+    assert.deepEqual(result.account, { ...account, sandbox: true });
+    assert.deepEqual(authored, before);
+  });
+}
+
+test('sandbox-only stale hints and seed-account directives use the harness account', () => {
+  for (const [scenario, account] of [
+    ['force_upstream_unavailable', { sandbox: true }],
+    ['seed_account', { account_id: 'account-being-seeded', sandbox: false }],
+  ]) {
+    const result = buildRequest(
+      {
+        id: 'controller',
+        title: 'Controller',
+        task: 'comply_test_controller',
+        sample_request: { scenario, account },
+      },
+      { account: { account_id: 'harness-account' } },
+      options
+    );
+    assert.deepEqual(result.account, { account_id: 'harness-account', sandbox: true });
+  }
+});
