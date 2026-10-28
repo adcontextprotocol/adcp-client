@@ -8613,7 +8613,8 @@ export class SingleAgentClient {
         wireMode,
         effectiveLegacyFormatConverter,
         effectiveCanonicalFormatLegacyResolver,
-        creativeFormatProjection?.legacyFormatDefinitions
+        creativeFormatProjection?.legacyFormatDefinitions,
+        creativeFormatProjection
       ),
       'sync_creatives',
       wireMode,
