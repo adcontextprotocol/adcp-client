@@ -8220,7 +8220,7 @@ export function buildStepRequest(
       contextGovernance);
   if (options.request) {
     request = injectContext({ ...options.request }, context, runnerVars);
-  } else if (step.expect_error && step.sample_request) {
+  } else if (step.expect_error && step.sample_request && step.enrich_request !== true) {
     request = injectContext({ ...step.sample_request }, context, runnerVars);
   } else if (governedFixture) {
     // The governance agent authorized the authored downstream payload. Extra
