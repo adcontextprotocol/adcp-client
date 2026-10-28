@@ -442,6 +442,9 @@
       "compliance": [
         "dist/lib/compliance/index.d.ts"
       ],
+      "adapters/version": [
+        "dist/lib/adapters/version/index.d.ts"
+      ],
       "advanced": [
         "dist/lib/advanced.d.ts"
       ],
