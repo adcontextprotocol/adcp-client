@@ -2074,7 +2074,7 @@ RUN OPTIONS (full assessment):
   --storyboards IDS   Comma-separated storyboard/bundle IDs to run
   --compliance-version VERSION
                       Select a packaged compliance cache version, e.g.
-                      3.2.5 or 3.1.29. Pass an unrecognised value (e.g.
+                      3.2.5 or 3.1.30. Pass an unrecognised value (e.g.
                       --compliance-version ?) and the error lists the
                       versions this install packages. The runner uses
                       this cache for

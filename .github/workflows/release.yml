@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ADCP_REQUIRE_SIGNATURE: '1'
+      ADCP_NPM_TAG: sdk-15.9
     permissions:
       contents: write
       pull-requests: write
@@ -66,22 +67,25 @@ jobs:
       - name: Build
         run: npm run build:lib
 
-      - name: Verify npm publication scope and latest
+      - name: Verify npm publication scope and maintenance tag
         run: |
           node <<'NODE'
           const { execFileSync } = require('node:child_process');
           const { readdirSync } = require('node:fs');
           const semver = require('semver');
           const view = (spec) => JSON.parse(execFileSync('npm', ['view', spec, 'version', '--json'], { encoding: 'utf8' }));
-          // This branch is the SDK 15.9 line and publishes to the default `latest` tag
-          // (SDK 16 is beta-only). Never replace a newer or prerelease `latest`.
+          // SDK 16 owns latest. This maintenance line must publish only to its
+          // dedicated tag so an older patch cannot move latest backward.
+          if (process.env.ADCP_NPM_TAG !== 'sdk-15.9') {
+            throw new Error('The 15.9.x branch must publish with ADCP_NPM_TAG=sdk-15.9');
+          }
           const sdk = require('./package.json');
           if (semver.major(sdk.version) !== 15 || semver.minor(sdk.version) !== 9 || semver.prerelease(sdk.version)) {
             throw new Error(`The 15.9.x branch may only publish stable SDK 15.9.x patch releases, found ${sdk.version}`);
           }
           const latest = view('@adcp/sdk@latest');
-          if (!semver.valid(latest) || semver.prerelease(latest) || semver.gt(latest, sdk.version)) {
-            throw new Error(`Refusing to replace SDK latest ${latest} with ${sdk.version}`);
+          if (!semver.valid(latest) || semver.prerelease(latest)) {
+            throw new Error(`Expected latest to remain a valid stable SDK version, found ${latest}`);
           }
           for (const dir of readdirSync('./packages', { withFileTypes: true })) {
             if (!dir.isDirectory()) continue;

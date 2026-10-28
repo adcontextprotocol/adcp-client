@@ -4917,6 +4917,8 @@ function postProcessRepeatedProductIntersections(content: string): string {
         );
       }
       unique.pop();
+      // Keep shared constraints separate when Zod 4.6 renders a union intersection.
+      unique[0] = `${commonA}.describe("Common constraints for every product format.")`;
     }
 
     if (unique.length === operands.length) continue;
@@ -4924,6 +4926,60 @@ function postProcessRepeatedProductIntersections(content: string): string {
     result = result.slice(0, target.expressionStart) + rewritten + result.slice(target.expressionEnd);
   }
 
+  return result;
+}
+
+const UNION_INTERSECTION_OPERAND_DESCRIPTION = 'Must also satisfy at least one of these alternatives.';
+
+/**
+ * Keep `A.and(z.union([X, Y]))` rendering as one JSON Schema `allOf`.
+ *
+ * Zod 4.6's `toJSONSchema` folds an intersection whose members are plain
+ * objects, and distributes it over a union operand: `A & (X | Y)` is emitted
+ * as `(A & X) | (A & Y)`. The two forms validate the same values, but the
+ * distributed form copies `A` into every union branch, so the Product format
+ * declaration (base object x 16 format kinds) more than doubles every
+ * OpenAPI/JSON Schema document that reaches it. Zod skips the fold when the
+ * union carries an annotation, so every inline union used as an intersection
+ * operand gets a description. Validation is unchanged; earlier Zod versions
+ * already render the `allOf` and only gain the description.
+ */
+function postProcessUnionIntersectionOperands(content: string): string {
+  const describe = `.describe(${JSON.stringify(UNION_INTERSECTION_OPERAND_DESCRIPTION)})`;
+  let result = '';
+  let lastIndex = 0;
+
+  for (const { expression, expressionStart, expressionEnd } of findSchemaExportExpressions(content)) {
+    const insertions: number[] = [];
+    for (let i = 0; i < expression.length; i++) {
+      const literalEnd = skipQuotedOrRegexLiteral(expression, i);
+      if (literalEnd !== undefined) {
+        i = literalEnd - 1;
+        continue;
+      }
+      if (!expression.startsWith('z.union(', i) || /[\w$.]/.test(expression[i - 1] ?? '')) continue;
+
+      const call = scanBalanced(expression, i + 'z.union'.length);
+      if (!call) continue;
+      const after = skipWhitespace(expression, call.end);
+      if (expression.startsWith('.describe(', after) || expression.startsWith('.meta(', after)) continue;
+
+      const isLeftOperand = expression.startsWith('.and(', after);
+      let before = i - 1;
+      while (before >= 0 && /\s/.test(expression[before]!)) before--;
+      const isRightOperand = expression.slice(0, before + 1).endsWith('.and(') && expression[after] === ')';
+      if (isLeftOperand || isRightOperand) insertions.push(call.end);
+    }
+
+    let rewritten = expression;
+    for (const position of insertions.sort((a, b) => b - a)) {
+      rewritten = rewritten.slice(0, position) + describe + rewritten.slice(position);
+    }
+    result += content.slice(lastIndex, expressionStart) + rewritten;
+    lastIndex = expressionEnd;
+  }
+
+  result += content.slice(lastIndex);
   return result;
 }
 
@@ -5956,8 +6012,18 @@ async function generateZodSchemas() {
     // generators see each validation block once.
     zodSchemas = postProcessRepeatedProductIntersections(zodSchemas);
 
+    // Zod >= 4.6 distributes an intersection over a union operand when
+    // rendering JSON Schema, copying the other operand into every branch.
+    // Annotate inline union operands so the rendering stays a single allOf.
+    zodSchemas = postProcessUnionIntersectionOperands(zodSchemas);
+
     // Post-process: Add explicit z.ZodType annotations to schemas that trip TS7056.
     zodSchemas = postProcessTS7056Annotations(zodSchemas);
+
+    // Import the module namespace directly so bundlers can remove unused Zod
+    // exports. The nested `z` export retains the full namespace in Zod 4.6.
+    // Run after passes that insert imports next to ts-to-zod's original import.
+    zodSchemas = zodSchemas.replace('import { z } from "zod";', 'import * as z from "zod";');
 
     // Defensive: ts-to-zod emits `const FooSchema = z.any();` stubs when it
     // can't resolve a referenced type — usually because a cross-file `import
@@ -6018,6 +6084,7 @@ export const __test__ = {
   postProcessRecordIntersections,
   postProcessMarkerUnionObjectIntersections,
   postProcessRepeatedProductIntersections,
+  postProcessUnionIntersectionOperands,
   postProcessCanonicalFormatSlots,
   postProcessCompactTaskSubmittedEnvelope,
   postProcessCreativeBriefRequiredDisclosures,

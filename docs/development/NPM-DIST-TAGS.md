@@ -9,8 +9,9 @@ dist-tag:
 
 | Tag | SDK line | AdCP line | Published from |
 |---|---|---|---|
-| `latest` | 15.9.x | 3.2 | `15.9.x` branch while SDK 16 is beta-only (see below) |
-| `adcp-3.2` | 14.x | 3.2 (current line) | `main`; moved manually after each release (see below) |
+| `latest` | 16.x | 3.2 | `16.x` stable branch |
+| `sdk-15.9` | 15.9.x | 3.2 with explicitly selected maintenance bundles | `15.9.x`, with `ADCP_NPM_TAG=sdk-15.9` |
+| `adcp-3.2` | 16.x | 3.2 (current line) | Stable 16.x releases; moved manually (see below) |
 | `adcp-3.1` | 13.x | 3.1 (maintenance line) | `13.x` branch, with `ADCP_NPM_TAG=adcp-3.1` |
 | `adcp-3.0` | 7.11.x | 3.0 | 7.x maintenance releases, with `ADCP_NPM_TAG=adcp-3.0` |
 
@@ -27,13 +28,11 @@ names because it parses them as semver ranges.
 
 ## Release Automation
 
-SDK 16 ships only as `beta` prereleases from `main` (Changesets pre-mode), so
-`latest` is maintained from the `15.9.x` branch. Its release workflow publishes
-without `ADCP_NPM_TAG`, which resolves to `latest`, and a pre-publish guard
-refuses to run if the registry `latest` is a prerelease or newer than the
-version being published. Limit `15.9.x` changesets to `@adcp/sdk` and keep them
-`patch`. Once SDK 16 is stable, move `latest` back to `main` and set
-`ADCP_NPM_TAG=sdk-15.9` on the `15.9.x` workflow.
+SDK 16 is stable and owns `latest`. The `15.9.x` maintenance workflow publishes
+with `ADCP_NPM_TAG=sdk-15.9`; its guard refuses any other tag and restricts new
+publications to stable SDK 15.9 patch releases. A newer `latest` is preserved,
+not treated as a reason to block a maintenance publication. Limit 15.9 changesets
+to `@adcp/sdk` and keep them `patch`.
 
 The release workflow publishes with `npm publish --tag latest` via
 `npm run release`. `latest` intentionally tracks the default stable SDK release,
@@ -50,8 +49,8 @@ is a separate registry operation and is not covered by OIDC. Emergency retags ca
 still be repaired manually with `npm dist-tag add`, but normal releases should
 not need a registry token.
 
-The current-line tag is the one exception. A release from `main` publishes with
-`latest`, so OIDC cannot also move `adcp-3.2`. After each 14.x release, a
+The current-line tag is the one exception. A stable release from `16.x` publishes with
+`latest`, so OIDC cannot also move `adcp-3.2`. After each stable 16.x release, a
 maintainer with registry access moves it by hand:
 
 ```bash

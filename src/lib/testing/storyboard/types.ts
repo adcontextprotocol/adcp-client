@@ -749,6 +749,11 @@ export interface StoryboardStep {
    * seller; schema validation remains enabled for `payload_well_formed`.
    */
   negative_path?: 'schema_invalid' | 'payload_well_formed';
+  /** Opt a schema-valid semantic rejection probe into normal request enrichment.
+   * Explicit fixture values remain authoritative. Invalid-input probes must
+   * retain the default, which sends the authored request without enrichment.
+   */
+  enrich_request?: true;
   /**
    * Per-step invariant opt-out. See `StepInvariantsObject`. Use when a
    * specific step deliberately trips a default invariant (e.g. a
