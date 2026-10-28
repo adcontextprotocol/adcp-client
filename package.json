@@ -576,7 +576,7 @@
   "dependencies": {
     "@a2a-js/sdk-v1": "npm:@a2a-js/sdk@1.0.1",
     "@modelcontextprotocol/client": "2.3.1",
-    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/node": "2.1.1",
     "@modelcontextprotocol/server": "2.3.1",
     "@types/ws": "^8.18.1",
     "ajv": "^8.18.0",
