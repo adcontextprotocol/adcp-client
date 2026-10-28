@@ -1,5 +1,18 @@
 # Changelog
 
+## 15.9.7
+
+### Patch Changes
+
+- 721ab57: Refresh the cached registry OpenAPI document and generated registry types to match the served registry, restoring the maintenance line's generated-artifact check.
+- e09972c: Package the signed AdCP 3.1.30 auction-only seller compliance fixes. Use `--compliance-version 3.1.30` to select its matching storyboards, schemas, and wire-version defaults. Shared lifecycle and measurement-rejection scenarios accept auction CPM offers, and stale-cache checks warm the same account scope before an advertised forced outage.
+- 0e8a1da: Construct bids for every discovered auction CPM package in a storyboard buy, preserving authored bids, fixed-price offers, and bidding policies. Add explicit `enrich_request: true` opt-in for schema-valid semantic rejection probes so measurement-term rejection is tested with a valid auction request while malformed-input probes retain their authored payloads.
+
+  Preserve the requested deterministic stale-cache age when forwarding `force_upstream_unavailable` to a test-controller store, including zero, and reject invalid ages before invoking the store.
+
+- 7f6f432: Backport the patched MCP client and server 2.3.1 and Node adapter 2.1.1 used on the current SDK line. This clears the maintenance release's high-severity transport security audit findings without changing the SDK public API or legacy MCP peer range. Refresh in-range lockfile dependencies required by the security audit.
+- bf8c916: Backport the current SDK line's compact OpenAPI rendering for Zod 4.6. Annotate common product constraints and inline union operands so schema rendering preserves one intersection instead of copying shared constraints into every union branch. Validation is unchanged. This keeps adopter schema extensions portable with the patched Zod dependency. Import the Zod module namespace directly in generated schemas so browser bundles can still remove unused exports and meet the existing size limits.
+
 ## 15.9.6
 
 ### Patch Changes
