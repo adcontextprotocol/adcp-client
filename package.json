@@ -557,8 +557,8 @@
     "!skills/*.previous/**/*",
     ".claude-plugin/**/*",
     "compliance/cache/3.0.25/**/*",
-    "compliance/cache/3.1.29/**/*",
-    "compliance/cache/3.2.7/**/*",
+    "compliance/cache/3.1.30/**/*",
+    "compliance/cache/3.2.8/**/*",
     "ADCP_VERSION",
     "docs/README.md",
     "docs/TYPE-SUMMARY.md",
@@ -639,7 +639,7 @@
     "test:protocol-comparison": "node test/utils/comprehensive-protocol-comparison.js",
     "test:status-report": "node test/utils/final-status-report.js",
     "sync-schemas": "tsx scripts/sync-schemas.ts",
-    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.1.29 && npm run sync-schemas -- 3.0.25",
+    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.1.30 && npm run sync-schemas -- 3.0.25",
     "sync:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --update",
     "check:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --check",
     "sync-registry-schemas": "tsx scripts/generate-registry-types.ts --sync",
@@ -731,7 +731,7 @@
   "dependencies": {
     "@modelcontextprotocol/client": "2.3.1",
     "@modelcontextprotocol/ext-apps": "2.0.0",
-    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/node": "2.1.1",
     "@modelcontextprotocol/server": "2.3.1",
     "@types/ws": "^8.18.1",
     "ajv": "^8.20.0",
@@ -818,7 +818,7 @@
     "launch-editor": "^2.14.2",
     "markdown-it": "^14.3.3"
   },
-  "adcp_version": "3.2.7",
+  "adcp_version": "3.2.8",
   "sideEffects": [
     "**/default-invariants.*"
   ]

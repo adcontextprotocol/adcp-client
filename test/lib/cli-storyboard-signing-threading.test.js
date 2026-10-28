@@ -21,7 +21,7 @@ const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/ser
 const CLI = path.resolve(__dirname, '../../bin/adcp.js');
 // These CLI flag and exit-code cases assert legacy root vector IDs. Pin the
 // compliance line so the 3.2 default profile does not replace those steps.
-const LEGACY_SIGNING_VERSION = '3.1.29';
+const LEGACY_SIGNING_VERSION = '3.1.30';
 const SKIPPED_VECTOR = '001-no-signature-header';
 // Second id in the CSV: proves the list is parsed, not passed through whole.
 const RATE_ABUSE_SENTINEL_VECTOR = '002-wrong-tag';

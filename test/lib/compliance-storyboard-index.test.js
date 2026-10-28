@@ -14,7 +14,7 @@ function fixture(t, title = 'Example') {
   fs.mkdirSync(path.join(dir, 'universal'));
   fs.writeFileSync(
     path.join(dir, 'index.json'),
-    JSON.stringify({ adcp_version: '3.2.7', universal: ['example'], protocols: [], specialisms: [] })
+    JSON.stringify({ adcp_version: '3.2.8', universal: ['example'], protocols: [], specialisms: [] })
   );
   fs.writeFileSync(
     path.join(dir, 'universal/example.yaml'),
@@ -24,7 +24,7 @@ function fixture(t, title = 'Example') {
 }
 test('warm id lookups do not reparse the selected bundle and preserve trusted provenance', t => {
   const dir = fixture(t);
-  const options = { complianceDir: dir, version: '3.2.7' };
+  const options = { complianceDir: dir, version: '3.2.8' };
   const originalRead = fs.readFileSync;
   let yamlReads = 0;
   t.mock.method(fs, 'readFileSync', (...args) => {
@@ -63,7 +63,7 @@ test('indexes are isolated by compliance root, schema root, release and hosted a
   for (const options of [
     { complianceDir: a, schemaRoot: a },
     { complianceDir: a, schemaRoot: b },
-    { complianceDir: a, version: '3.2.7', hostedStableLineAlias: '3.2' },
+    { complianceDir: a, version: '3.2.8', hostedStableLineAlias: '3.2' },
     { complianceDir: a, version: '3.2.6', hostedStableLineAlias: '3.2' },
   ]) {
     const before = reads;
@@ -73,7 +73,7 @@ test('indexes are isolated by compliance root, schema root, release and hosted a
 });
 test('replacing a bundle index invalidates a cached root', t => {
   const dir = fixture(t);
-  const options = { complianceDir: dir, version: '3.2.7' };
+  const options = { complianceDir: dir, version: '3.2.8' };
   assert.equal(getComplianceStoryboardById('example', options).title, 'Example');
   fs.writeFileSync(
     path.join(dir, 'universal/example.yaml'),
@@ -95,7 +95,7 @@ for (const source of ['explicit', 'environment']) {
         else process.env.ADCP_COMPLIANCE_DIR = previous;
       });
     }
-    const options = { version: '3.2.7', ...(source === 'explicit' && { complianceDir: dir }) };
+    const options = { version: '3.2.8', ...(source === 'explicit' && { complianceDir: dir }) };
     const index = path.join(dir, 'index.json');
     const indexStat = fs.statSync(index);
     const first = getComplianceStoryboardById('example', options);
@@ -132,10 +132,10 @@ test('refreshes synthesized steps after a custom signing vector changes without 
       .replace('phases: []', 'phases:\n  - id: positive_vectors\n    title: Positive vectors\n    steps: []')
   );
   const vectors = path.join(dir, 'test-vectors/request-signing');
-  fs.cpSync(path.join(__dirname, '../../compliance/cache/3.2.7/test-vectors/request-signing'), vectors, {
+  fs.cpSync(path.join(__dirname, '../../compliance/cache/3.2.8/test-vectors/request-signing'), vectors, {
     recursive: true,
   });
-  const options = { complianceDir: dir, version: '3.2.7' };
+  const options = { complianceDir: dir, version: '3.2.8' };
   const first = getComplianceStoryboardById('signed_requests', options);
   assert.ok(first.phases[0].steps.length > 0);
   const profile = path.join(vectors, 'profile-3.2/positive');

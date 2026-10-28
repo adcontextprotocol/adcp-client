@@ -1906,3 +1906,42 @@ describe('handleTestControllerRequest — context echo', () => {
     assert.deepStrictEqual(result.context, { correlation_id: 'from-store' });
   });
 });
+
+describe('deterministic stale-cache forcing', () => {
+  for (const cache_age_seconds of [0, 60]) {
+    it(`forwards cache age ${cache_age_seconds} to the store`, async () => {
+      let received;
+      const result = await handleTestControllerRequest(
+        {
+          async forceUpstreamUnavailable(params) {
+            received = params;
+            return { success: true };
+          },
+        },
+        {
+          scenario: 'force_upstream_unavailable',
+          params: { tool: 'get_products', upstream_name: 'inventory', cache_age_seconds },
+        }
+      );
+      assert.strictEqual(result.success, true);
+      assert.deepStrictEqual(received, { tool: 'get_products', upstream_name: 'inventory', cache_age_seconds });
+    });
+  }
+  for (const cache_age_seconds of [-1, 1.5, '60', null]) {
+    it(`rejects invalid cache age ${JSON.stringify(cache_age_seconds)} before invoking the store`, async () => {
+      let calls = 0;
+      const result = await handleTestControllerRequest(
+        {
+          async forceUpstreamUnavailable() {
+            calls++;
+            return { success: true };
+          },
+        },
+        { scenario: 'force_upstream_unavailable', params: { tool: 'get_products', cache_age_seconds } }
+      );
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.strictEqual(calls, 0);
+    });
+  }
+});

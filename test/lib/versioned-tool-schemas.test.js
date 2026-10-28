@@ -19,14 +19,14 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
     assert.strictEqual(v30.schema.properties.paused, undefined);
 
     assert.strictEqual(v31.bundleKey, '3.1');
-    assert.strictEqual(v31.resolvedVersion, '3.1.29');
+    assert.strictEqual(v31.resolvedVersion, '3.1.30');
     assert.strictEqual(v31.schema.properties.adcp_major_version, undefined);
     assert.ok(v31.schema.properties.paused);
 
-    for (const adcpVersion of ['3.2.1', '3.2.2', '3.2.3', '3.2.4', '3.2.5', '3.2.6', '3.2.7']) {
+    for (const adcpVersion of ['3.2.1', '3.2.2', '3.2.3', '3.2.4', '3.2.5', '3.2.6', '3.2.7', '3.2.8']) {
       const v32 = getToolInputSchema('create_media_buy', { adcpVersion });
       assert.strictEqual(v32.bundleKey, '3.2');
-      assert.strictEqual(v32.resolvedVersion, '3.2.7');
+      assert.strictEqual(v32.resolvedVersion, '3.2.8');
       assert.strictEqual(v32.schema.deprecated, true);
       assert.deepStrictEqual(v32.schema['x-superseded-by'], ['buy_products', 'accept_proposal']);
     }
@@ -42,7 +42,7 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
 
     const submitted = getToolResponseSchema('get_products', { adcpVersion: '3.1', variant: 'submitted' });
     assert.strictEqual(submitted.direction, 'submitted');
-    assert.strictEqual(submitted.resolvedVersion, '3.1.29');
+    assert.strictEqual(submitted.resolvedVersion, '3.1.30');
   });
 
   it('fails clearly for unavailable bundles, tools, and response variants', () => {
@@ -85,7 +85,7 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
     assert.ok(missingProperties.has('account_id'));
   });
 
-  it('does not apply live-wire response-root relaxation to canonical validators', () => {
+  it('canonical validators preserve authored open roots and forbidden response fields', () => {
     const canonical = getCanonicalToolValidator('control_media_buy', 'sync', {
       adcpVersion: '3.2.1',
     });
@@ -99,9 +99,23 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
       future_envelope_field: true,
     };
 
+    // DR-0036 reopens these authored 3.2 response roots. Canonical validation
+    // must accept those extensions while retaining the explicit branch rules.
     assert.strictEqual(runtime(envelopeExtended), true, JSON.stringify(runtime.errors));
-    assert.strictEqual(canonical(envelopeExtended), false);
-    assert.ok(canonical.errors.some(error => error.keyword === 'additionalProperties'));
+    assert.strictEqual(canonical(envelopeExtended), true, JSON.stringify(canonical.errors));
+    const failed = { status: 'failed', errors: [{ code: 'NOT_FOUND', message: 'Missing media buy' }] };
+    const submitted = { status: 'submitted', task_id: 'task-1' };
+    assert.strictEqual(canonical(failed), true, JSON.stringify(canonical.errors));
+    assert.strictEqual(canonical(submitted), true, JSON.stringify(canonical.errors));
+    for (const invalid of [
+      { ...envelopeExtended, errors: failed.errors },
+      { ...envelopeExtended, revision: 0 },
+      { ...failed, warnings: [] },
+      { ...submitted, warnings: [] },
+    ]) {
+      assert.strictEqual(canonical(invalid), false);
+      assert.strictEqual(runtime(invalid), false);
+    }
   });
 
   it('validates mirrored async response roots across archived releases', () => {
