@@ -697,10 +697,20 @@ function isZodTupleCall(node: ts.Expression): node is ts.CallExpression {
 }
 
 /** Find the outer array base beneath chains such as `.optional()` or `.nullable()`. */
-function findZodArrayBase(node: ts.Expression): ts.CallExpression | undefined {
+function findZodArrayBase(
+  node: ts.Expression,
+  sourceFile?: ts.SourceFile,
+  seen: ReadonlySet<string> = new Set()
+): ts.CallExpression | undefined {
   if (isZodArrayCall(node)) return node;
   if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-    return findZodArrayBase(node.expression.expression);
+    return findZodArrayBase(node.expression.expression, sourceFile, seen);
+  }
+  // A property that names a hoisted schema (`geo_countries: GeoCountriesSchema.optional()`)
+  // carries its array bound on that declaration, so follow the reference.
+  if (sourceFile && ts.isIdentifier(node) && !seen.has(node.text)) {
+    const target = findSchemaVariable(sourceFile, node.text);
+    if (target) return findZodArrayBase(target, sourceFile, new Set(seen).add(node.text));
   }
   return undefined;
 }
@@ -714,6 +724,20 @@ function fixedZodTupleLength(node: ts.Expression): number | undefined {
     return fixedZodTupleLength(node.expression.expression);
   }
   return undefined;
+}
+
+/** The declaration a `FooSchema.optional()` chain bottoms out in, following named references. */
+function referencedSchemaInitializer(
+  node: ts.Expression,
+  sourceFile: ts.SourceFile,
+  seen: ReadonlySet<string> = new Set()
+): ts.Expression | undefined {
+  let base: ts.Expression = node;
+  while (ts.isCallExpression(base) && ts.isPropertyAccessExpression(base.expression)) base = base.expression.expression;
+  if (!ts.isIdentifier(base) || seen.has(base.text)) return undefined;
+  const target = findSchemaVariable(sourceFile, base.text);
+  if (!target) return undefined;
+  return referencedSchemaInitializer(target, sourceFile, new Set(seen).add(base.text)) ?? target;
 }
 
 function zodArrayMaxItems(node: ts.Expression, method: 'max' | 'min' = 'max'): number | undefined {
@@ -753,17 +777,30 @@ function isZodObjectCall(node: ts.Node): node is ts.CallExpression {
   );
 }
 
-function collectObjectPropertyValues(expression: ts.Expression, path: readonly string[]): ts.Expression[] {
+function collectObjectPropertyValues(
+  expression: ts.Expression,
+  path: readonly string[],
+  sourceFile?: ts.SourceFile,
+  seen: ReadonlySet<string> = new Set()
+): ts.Expression[] {
   if (path.length === 0) return [expression];
   const values: ts.Expression[] = [];
   const visit = (node: ts.Node): void => {
+    // Follow a hoisted named schema (`items: GeoMetroSchema`) to its declaration.
+    if (sourceFile && ts.isIdentifier(node) && node.text.endsWith('Schema') && !seen.has(node.text)) {
+      const target = findSchemaVariable(sourceFile, node.text);
+      if (target) {
+        values.push(...collectObjectPropertyValues(target, path, sourceFile, new Set(seen).add(node.text)));
+        return;
+      }
+    }
     if (isZodObjectCall(node)) {
       const shape = node.arguments[0];
       if (shape && ts.isObjectLiteralExpression(shape)) {
         for (const property of shape.properties) {
           if (!ts.isPropertyAssignment(property) || propertyNameText(property.name) !== path[0]) continue;
           if (path.length === 1) values.push(property.initializer);
-          else values.push(...collectObjectPropertyValues(property.initializer, path.slice(1)));
+          else values.push(...collectObjectPropertyValues(property.initializer, path.slice(1), sourceFile, seen));
         }
       }
       // Properties inside this object are a deeper schema level. Only enter a
@@ -802,11 +839,11 @@ function postProcessArrayMaxItems(content: string, typeSource: string, method: '
   for (const constraint of constraints) {
     const schema = findSchemaVariable(sourceFile, `${constraint.schemaName}Schema`);
     if (!schema) continue; // ts-to-zod may intentionally omit unsupported declarations.
-    const values = collectObjectPropertyValues(schema, constraint.path);
+    const values = collectObjectPropertyValues(schema, constraint.path, sourceFile);
     let foundArray = false;
     let fixedTupleSatisfiesBound = false;
     for (const value of values) {
-      const array = findZodArrayBase(value);
+      const array = findZodArrayBase(value, sourceFile);
       if (!array) {
         const tupleLength = fixedZodTupleLength(value);
         if (
@@ -817,7 +854,9 @@ function postProcessArrayMaxItems(content: string, typeSource: string, method: '
         continue;
       }
       foundArray = true;
-      const existingMax = zodArrayMaxItems(value, method);
+      const referenced = referencedSchemaInitializer(value, sourceFile);
+      const existingMax =
+        zodArrayMaxItems(value, method) ?? (referenced ? zodArrayMaxItems(referenced, method) : undefined);
       if (existingMax !== undefined) {
         if (existingMax !== constraint.maxItems) {
           throw new Error(
@@ -1496,10 +1535,13 @@ function postProcessCanonicalFormatMarkerIntersections(content: string): string 
  * Keep `CompactTaskSubmittedSchema` (and the `RequestProposalsAsyncSubmitted` /
  * `RefineProposalsAsyncSubmitted` aliases of it) a ZodObject.
  *
- * The canonical schema is `allOf: [version-envelope, protocol-envelope]` plus
- * its own `properties`, so ts-to-zod emits `Envelope.merge(Envelope).and(z.object(...))`
- * — a ZodIntersection with no `.shape`/`.extend()`/`.pick()`/`.omit()`, unlike the
- * plain object this public export was in 3.2.3. `.merge()` lets the right side win
+ * The canonical schema is `allOf: [protocol-envelope]` (which itself composes
+ * `version-envelope`) plus its own `properties`, so ts-to-zod emits
+ * `ProtocolEnvelope.and(z.object(...))` with `ProtocolEnvelope` itself an
+ * `AdCPVersionEnvelope.and(z.object(...))` — ZodIntersections with no
+ * `.shape`/`.extend()`/`.pick()`/`.omit()`, unlike the plain object this public
+ * export was in 3.2.3. The two envelope halves have disjoint keys, so the
+ * envelope is flattened to a ZodObject first; `.merge()` lets the right side win
  * on overlap, so it matches the intersection only while every top-level key the
  * compact object shares with either envelope is a strict narrowing of the envelope's
  * declaration (`status: TaskStatus` → `'submitted'`, optional `task_id` → required
@@ -1508,10 +1550,28 @@ function postProcessCanonicalFormatMarkerIntersections(content: string): string 
  * overlapping declaration, and fails generation on any drift — including a new
  * overlapping field — rather than silently dropping an envelope constraint.
  */
-const COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP: Readonly<Record<string, { envelope: string; compact: string }>> = {
+type CompactOverlap = Readonly<Record<string, { envelope: string; compact: string }>>;
+
+/**
+ * Releases before the envelope composition (3.3.0-beta.0 and earlier) emit
+ * `AdCPVersionEnvelope.merge(ProtocolEnvelope).and(z.object(...))` and the
+ * compact object also narrows `message` (`maxLength: 2000`).
+ */
+const COMPACT_TASK_SUBMITTED_LEGACY_OVERLAP: CompactOverlap = {
   status: { envelope: 'TaskStatusSchema', compact: 'z.literal("submitted")' },
   task_id: { envelope: 'z.string().optional()', compact: 'z.string().min(1)' },
   message: { envelope: 'z.string().optional()', compact: 'z.string().max(2000).optional()' },
+  context: { envelope: 'ContextObjectSchema.optional()', compact: 'ContextObjectSchema.optional()' },
+};
+
+/**
+ * Composed releases (`allOf: [protocol-envelope]`, which composes the version
+ * envelope itself) emit `ProtocolEnvelope.and(z.object(...))`, and no longer
+ * narrow `message`.
+ */
+const COMPACT_TASK_SUBMITTED_COMPOSED_OVERLAP: CompactOverlap = {
+  status: { envelope: 'TaskStatusSchema', compact: 'z.literal("submitted")' },
+  task_id: { envelope: 'z.string().optional()', compact: 'z.string().min(1)' },
   context: { envelope: 'ContextObjectSchema.optional()', compact: 'ContextObjectSchema.optional()' },
 };
 
@@ -1569,11 +1629,31 @@ function postProcessCompactTaskSubmittedEnvelope(content: string): string {
 
   const version = topLevelObject('AdCPVersionEnvelopeSchema', blockOf('AdCPVersionEnvelopeSchema').text);
   const protocol = topLevelObject('ProtocolEnvelopeSchema', blockOf('ProtocolEnvelopeSchema').text);
+  for (const key of protocol.keys.keys()) {
+    if (version.keys.has(key)) fail(`${key} is declared by both envelopes`);
+  }
   const compact = blockOf('CompactTaskSubmittedSchema');
   const own = topLevelObject('CompactTaskSubmittedSchema', compact.text);
-  const from = 'AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).and(z.object({';
-  if (!compact.text.includes(from)) {
+  const composedFrom = 'ProtocolEnvelopeSchema.and(z.object({';
+  const legacyFrom = 'AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).and(z.object({';
+  const composedLayout = compact.text.includes(composedFrom);
+  if (!composedLayout && !compact.text.includes(legacyFrom)) {
     throw new Error('postProcessCompactTaskSubmittedEnvelope: expected the generated envelope intersection.');
+  }
+  const from = composedLayout ? composedFrom : legacyFrom;
+  const to = composedLayout
+    ? 'ProtocolEnvelopeSchema.merge(z.object({'
+    : 'AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).merge(z.object({';
+  const knownOverlap = composedLayout ? COMPACT_TASK_SUBMITTED_COMPOSED_OVERLAP : COMPACT_TASK_SUBMITTED_LEGACY_OVERLAP;
+  if (composedLayout) {
+    // An earlier pass already flattens the envelope halves into one ZodObject. `.merge()` below
+    // needs that: refuse to merge into a ZodIntersection, which has no `.merge`.
+    const protocolHead = 'export const ProtocolEnvelopeSchema = AdCPVersionEnvelopeSchema.merge(z.object({';
+    if (!blockOf('ProtocolEnvelopeSchema').text.startsWith(protocolHead)) {
+      throw new Error(
+        'postProcessCompactTaskSubmittedEnvelope: expected ProtocolEnvelopeSchema to be a flattened ZodObject.'
+      );
+    }
   }
 
   for (const [name, shape] of [
@@ -1593,12 +1673,12 @@ function postProcessCompactTaskSubmittedEnvelope(content: string): string {
     if (envelopeInits.length === 1) overlap.set(key, { envelope: envelopeInits[0], compact: compactInit });
   }
   const actual = [...overlap.keys()].sort().join(',');
-  const expected = Object.keys(COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP).sort().join(',');
+  const expected = Object.keys(knownOverlap).sort().join(',');
   if (actual !== expected) {
     fail(`top-level overlap with the envelopes changed (expected {${expected}}, found {${actual}})`);
   }
   for (const [key, declared] of overlap) {
-    const reviewed = COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP[key];
+    const reviewed = knownOverlap[key];
     if (declared.envelope !== reviewed.envelope || declared.compact !== reviewed.compact) {
       fail(
         `overlapping field ${key} changed (envelope \`${declared.envelope}\` / compact \`${declared.compact}\`, ` +
@@ -1607,7 +1687,6 @@ function postProcessCompactTaskSubmittedEnvelope(content: string): string {
     }
   }
 
-  const to = 'AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).merge(z.object({';
   content = content.slice(0, compact.start) + compact.text.replace(from, to) + content.slice(compact.end);
   // 3.3 adds an optional finalize estimate to the refinement submitted arm.
   // It is disjoint from the shared envelope, so merging preserves both
@@ -4613,8 +4692,12 @@ function stripNeverUnionIntersections(content: string): string {
         i++;
       }
 
-      // Only strip if the union contains z.never() (discriminated constraints)
-      if (andContent.includes('z.never()')) {
+      // Only strip if the union contains z.never() (discriminated constraints).
+      // A named base (`ProtocolEnvelopeSchema.and(z.union([...]))`, the shape
+      // the composed task-response envelope produces) is not a redundant
+      // constraint: the union carries the whole response body, so keep it.
+      const namedBase = /[A-Za-z0-9_]Schema$/.test(result);
+      if (andContent.includes('z.never()') && !namedBase) {
         // Strip entire .and(z.union([...]))
       } else {
         // Keep it — not a discriminated union constraint

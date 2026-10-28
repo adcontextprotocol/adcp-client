@@ -76,11 +76,11 @@ test('the official MCP client reaches both 3.3 discovery tools without provision
   const catalog = await buyer.listCollections();
   assert.equal(catalog.success, true, JSON.stringify(catalog.error));
   assert.deepEqual(catalog.data.collections, []);
-  assert.equal(catalog.data.status, undefined);
+  assert.equal(catalog.data.status, 'completed');
   const listed = await buyer.listProposals({ account: { account_id: 'account-allowed' } });
   assert.equal(listed.success, true, JSON.stringify(listed.error));
   assert.deepEqual(listed.data.proposals, []);
-  assert.equal(listed.data.status, undefined);
+  assert.equal(listed.data.status, 'completed');
   assert.ok(resolutions.length > 0);
   assert.ok(resolutions.every(entry => entry.provisioning === false));
   assert.deepEqual(completions, ['listed', 'listed']);

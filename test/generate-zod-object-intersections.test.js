@@ -1090,3 +1090,63 @@ export const UsesUnionBaseSchema = UnionBaseSchema.and(z.object({
   assert.doesNotMatch(output, /UsesRefinedSchema = RefinedBaseSchema\.merge/);
   assert.doesNotMatch(output, /UsesUnionBaseSchema = UnionBaseSchema\.merge/);
 });
+
+test('postProcessArrayMaxItems follows named-schema references for property and nested bounds', () => {
+  // A hoisted named schema (`metros: z.array(MetroSchema)`) carries the nested bound on its own
+  // declaration; a path that crosses the reference must be resolved there.
+  const typeSource = `
+export interface Overlay {
+  metros: {
+    /**
+     * @maxItems 4
+     */
+    values: string[];
+  }[];
+  /**
+   * @maxItems 3
+   */
+  countries?: string[];
+}
+`;
+  const zodSource = `
+export const CountriesSchema = z.array(z.string());
+export const MetroSchema = z.object({ values: z.array(z.string()) });
+export const OverlaySchema = z.object({
+  countries: CountriesSchema.optional(),
+  metros: z.array(MetroSchema)
+});
+`;
+  const output = postProcessArrayMaxItems(typeSource, zodSource);
+
+  assert.match(output, /MetroSchema = z\.object\(\{ values: z\.array\(z\.string\(\)\)\.max\(4\) \}\)/);
+  assert.match(output, /CountriesSchema = z\.array\(z\.string\(\)\)\.max\(3\)/);
+  // The reference resolves to the same declaration, so a second pass changes nothing.
+  assert.equal(postProcessArrayMaxItems(typeSource, output), output);
+});
+
+test('postProcessRecordIntersections keeps a union body that hangs off a named envelope schema', () => {
+  // `ProtocolEnvelopeSchema.and(z.union([...]))` is how a composed task response is emitted:
+  // the union IS the response body, so it must not be treated as a redundant never-constraint.
+  const input = `
+export const ProtocolEnvelopeSchema = z.object({ status: TaskStatusSchema }).passthrough();
+
+export const RequestProposalsResponseSchema = ProtocolEnvelopeSchema.and(z.union([z.object({
+    outcome: z.literal("proposed"),
+    reason: z.never().optional(),
+    proposals: z.array(z.string())
+}), z.object({
+    outcome: z.literal("declined"),
+    proposals: z.never().optional(),
+    reason: z.string()
+})]));
+
+export const InlineBaseSchema = z.object({ buying_mode: z.string() }).and(z.union([z.object({
+    refine: z.never().optional()
+})]));
+`;
+  const output = postProcessRecordIntersections(input);
+  assert.match(output, /RequestProposalsResponseSchema = ProtocolEnvelopeSchema\.and\(z\.union\(\[/);
+  assert.match(output, /outcome: z\.literal\("declined"\)/);
+  // The redundant discriminator constraint on an inline object base is still stripped.
+  assert.match(output, /InlineBaseSchema = z\.object\(\{ buying_mode: z\.string\(\) \}\);/);
+});

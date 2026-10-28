@@ -87,6 +87,51 @@ assert.match(output, /export const RequestProposalsAsyncSubmittedSchema = Compac
   );
 });
 
+test('compact submitted envelope: a composed release (protocol envelope extends the version envelope) merges too', () => {
+  runHarness(
+    'adcp-zod-compact-composed-',
+    `
+const composed = [
+  'export const AdCPVersionEnvelopeSchema = z.object({',
+  '    adcp_version: z.string().optional()',
+  '}).passthrough();',
+  '',
+  'export const ProtocolEnvelopeSchema = AdCPVersionEnvelopeSchema.merge(z.object({',
+  '    context_id: z.string().optional(),',
+  '    context: ContextObjectSchema.optional(),',
+  '    task_id: z.string().optional(),',
+  '    status: TaskStatusSchema,',
+  '    message: z.string().optional()',
+  '}).passthrough());',
+  '',
+  'export const CompactTaskSubmittedSchema = ProtocolEnvelopeSchema.and(z.object({',
+  '    status: z.literal("submitted"),',
+  '    task_id: z.string().min(1),',
+  '    context: ContextObjectSchema.optional(),',
+  '    ext: ExtensionObjectSchema.optional()',
+  '}).passthrough());',
+  '',
+  'export const RefineProposalsAsyncSubmittedSchema = CompactTaskSubmittedSchema;',
+  '',
+  'export const TailSchema = z.string();',
+].join('\\n');
+const output = run(composed);
+assert.match(output, /CompactTaskSubmittedSchema = ProtocolEnvelopeSchema\\.merge\\(z\\.object\\(\\{/);
+assert.doesNotMatch(output, /ProtocolEnvelopeSchema\\.and\\(z\\.object/);
+// The envelope itself must already be a ZodObject: merging into an intersection has no .merge().
+assert.throws(
+  () => run(composed.replace('AdCPVersionEnvelopeSchema.merge(z.object({', 'AdCPVersionEnvelopeSchema.and(z.object({')),
+  /flattened ZodObject/
+);
+// Composed releases no longer narrow message, so a compact message is a new overlap to review.
+assert.throws(
+  () => run(composed.replace('    ext: ExtensionObjectSchema.optional()', '    message: z.string().max(2000).optional(),\\n    ext: ExtensionObjectSchema.optional()')),
+  /top-level overlap with the envelopes changed.*message/
+);
+`
+  );
+});
+
 test('compact submitted envelope: a new top-level overlap with either envelope fails generation', () => {
   runHarness(
     'adcp-zod-compact-overlap-',

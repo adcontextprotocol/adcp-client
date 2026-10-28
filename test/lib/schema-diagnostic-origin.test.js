@@ -176,7 +176,7 @@ test('invalid validation reuses compiled origins without loading a public docume
 });
 
 for (const first of ['canonical', 'reference', 'runtime']) {
-  test(`strict and relaxed validator registries stay isolated when ${first} compiles first`, t => {
+  test(`strict and envelope-aware validator registries stay isolated when ${first} compiles first`, t => {
     const closed = {
       type: 'object',
       additionalProperties: false,
@@ -202,7 +202,7 @@ for (const first of ['canonical', 'reference', 'runtime']) {
       };
       getters[first]();
       for (const key of Object.keys(getters))
-        assert.equal(getters[key]()({ payload: 'ok', replayed: true, context: 'c' }), key === 'runtime', key);
+        assert.equal(getters[key]()({ payload: 'ok', replayed: true, context: {} }), key === 'runtime', key);
     });
   });
 }

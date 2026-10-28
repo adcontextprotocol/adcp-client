@@ -9,8 +9,9 @@ import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 import { SyncCreativesResponseStrictSchema } from '../validation/sync-creatives';
 import { isPre31AdcpVersion } from './adcp-version-config';
+import { omitsEnvelopeStatusForRelease } from './envelope-status-compat';
 import { GetReportingStatusResponseCurrentSchema } from './reporting-status-response';
-import { toReleasePrecisionVersion } from '../version';
+import { ADCP_VERSION, toReleasePrecisionVersion } from '../version';
 import { cacheResponseSchemas } from './response-schema-cache';
 
 function declaresLegacy30xPayload(response: Record<string, unknown>): boolean {
@@ -37,6 +38,20 @@ export function prepareResponseForSchemaValidation(
   // the seller-authored value before returning it to the caller.
   if (typeof response.adcp_version === 'string' && /^3\.0\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(response.adcp_version)) {
     return { ...response, adcp_version: toReleasePrecisionVersion(response.adcp_version) };
+  }
+  // The generated Zod schemas follow the SDK's own pin. When that pin composes
+  // the envelope, `status` is required there, but a seller serving a release
+  // whose schema has no `status` on these arms (3.2.x `list_products` /
+  // `decline_proposals`) is conforming without it. Show the Zod schema the
+  // completed status that release implies. This is a validation-only view: the
+  // unwrapper returns the seller's payload as sent, and a response from a
+  // release that does compose the envelope still fails when it omits `status`.
+  if (
+    response.status === undefined &&
+    omitsEnvelopeStatusForRelease(toolName, responseAdcpVersion) &&
+    !omitsEnvelopeStatusForRelease(toolName, ADCP_VERSION)
+  ) {
+    return { ...response, status: 'completed' };
   }
   if (toolName !== 'get_products') return data;
   if (!isPre31AdcpVersion(responseAdcpVersion)) return data;
