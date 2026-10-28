@@ -1,5 +1,20 @@
 # Changelog
 
+## 13.1.4
+
+### Patch Changes
+
+- ad12b23: Update dependencies to clear the security audit on the 13.x line. The exact runtime pins `@modelcontextprotocol/client` and `@modelcontextprotocol/server` move from 2.0.0 to 2.3.1, a non-major bump to the same pins `main` uses. It patches GHSA-6qxp-vccf-f47h, GHSA-jm63-cq47-j5jp, GHSA-46jr-4wx8-v453, GHSA-rvq5-wwqv-78pq and GHSA-6prh-2h8m-c8cw. The lockfile picks up patched in-range releases of `undici`, `zod`, `body-parser`, `proxy-addr`, `markdown-it`, `hono`, `fast-uri` and `ip-address`. The development copy of the legacy `@modelcontextprotocol/sdk` moves to ^1.32.2; its peer range is unchanged. `npm audit` now reports 0 vulnerabilities. No public API changes.
+- a5dceaa: Package the signed auction-only seller compliance fixes from AdCP 3.1.30. Shared lifecycle and measurement-rejection scenarios accept auction CPM offers, and stale-cache checks use the advertised controller scenario and a consistently scoped warm cache.
+- bb37189: Construct bids for every discovered auction CPM package in a storyboard buy, preserving authored bids, fixed-price offers, and bidding policies. Add explicit `enrich_request: true` opt-in for schema-valid semantic rejection probes so measurement-term rejection is tested with a valid auction request while malformed-input probes retain their authored payloads.
+
+  Preserve the requested deterministic stale-cache age when forwarding `force_upstream_unavailable` to a test-controller store, including zero, and reject invalid ages before invoking the store.
+
+- 0c1c743: Keep `serve()` connections open while a client validates schemas between MCP calls, avoiding half-closed sockets in multi-step flows.
+- a5dceaa: Preserve macro-bearing URL schemas as strings when generating the current AdCP 3.1 types. Backport the lexical-validator normalization from upstream commit 5d51dabd9f; the original JSON Schema format and pattern checks remain enforced by runtime validation.
+- 97db12d: Upgrade the MCP Node adapter to 2.1.1 to include upstream request-body and JSON-RPC batch bounds (GHSA-f897-62hf-6gxq), while retaining compatibility with the SDK's existing MCP server dependency.
+- 0dfdcce: Force an upstream outage on the authored sandbox account whose cache was warmed. Preserve explicit account IDs and natural keys so stale-cache compliance probes address the same cache as their product requests.
+
 ## 13.1.3
 
 ### Patch Changes
