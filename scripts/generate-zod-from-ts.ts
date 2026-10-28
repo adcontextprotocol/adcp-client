@@ -696,11 +696,36 @@ function isZodTupleCall(node: ts.Expression): node is ts.CallExpression {
   );
 }
 
-/** Find the outer array base beneath chains such as `.optional()` or `.nullable()`. */
-function findZodArrayBase(node: ts.Expression): ts.CallExpression | undefined {
+/** Find a local array expression to which a cardinality check can be attached. */
+function findZodArrayBase(
+  node: ts.Expression,
+  sourceFile: ts.SourceFile,
+  allowWrappers = true,
+  visited = new Set<string>()
+): ts.Expression | undefined {
   if (isZodArrayCall(node)) return node;
+  if (ts.isIdentifier(node)) {
+    if (visited.has(node.text)) return undefined;
+    const initializer = findSchemaVariable(sourceFile, node.text);
+    const nextVisited = new Set(visited).add(node.text);
+    // Keep bounds local to this reference. Editing the shared declaration
+    // would also constrain unrelated, unbounded uses of the same array.
+    if (initializer && findZodArrayBase(initializer, sourceFile, false, nextVisited)) return node;
+    return undefined;
+  }
+  if (ts.isParenthesizedExpression(node)) {
+    return findZodArrayBase(node.expression, sourceFile, allowWrappers, visited);
+  }
   if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-    return findZodArrayBase(node.expression.expression);
+    // At the use site we can insert before optional()/nullable(). A referenced
+    // schema must itself remain a ZodArray, or `.min()`/`.max()` is unavailable.
+    if (
+      !allowWrappers &&
+      !['min', 'max', 'length', 'nonempty', 'describe', 'meta'].includes(node.expression.name.text)
+    ) {
+      return undefined;
+    }
+    return findZodArrayBase(node.expression.expression, sourceFile, allowWrappers, visited);
   }
   return undefined;
 }
@@ -753,17 +778,48 @@ function isZodObjectCall(node: ts.Node): node is ts.CallExpression {
   );
 }
 
-function collectObjectPropertyValues(expression: ts.Expression, path: readonly string[]): ts.Expression[] {
+function collectObjectPropertyValues(
+  expression: ts.Expression,
+  path: readonly string[],
+  bounds?: {
+    sourceFile: ts.SourceFile;
+    constraint: ArrayMaxItemsConstraint;
+    constraints: readonly ArrayMaxItemsConstraint[];
+  },
+  visited = new Set<string>()
+): ts.Expression[] {
   if (path.length === 0) return [expression];
   const values: ts.Expression[] = [];
   const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) {
+      if (!bounds) return;
+      const { sourceFile, constraint, constraints } = bounds;
+      const key = `${node.text}:${path.join('.')}`;
+      if (visited.has(key)) return;
+      // A nested bound may be reached through a named object/array schema.
+      // Only descend when that declaration independently owns the same bound;
+      // otherwise editing its body would tighten unrelated uses of the alias.
+      const ownsBound = constraints.some(
+        candidate =>
+          `${candidate.schemaName}Schema` === node.text &&
+          candidate.path.join('.') === path.join('.') &&
+          candidate.maxItems === constraint.maxItems
+      );
+      const initializer = ownsBound && findSchemaVariable(sourceFile, node.text);
+      if (initializer) {
+        values.push(...collectObjectPropertyValues(initializer, path, bounds, new Set(visited).add(key)));
+      }
+      return;
+    }
     if (isZodObjectCall(node)) {
       const shape = node.arguments[0];
       if (shape && ts.isObjectLiteralExpression(shape)) {
         for (const property of shape.properties) {
           if (!ts.isPropertyAssignment(property) || propertyNameText(property.name) !== path[0]) continue;
           if (path.length === 1) values.push(property.initializer);
-          else values.push(...collectObjectPropertyValues(property.initializer, path.slice(1)));
+          else {
+            values.push(...collectObjectPropertyValues(property.initializer, path.slice(1), bounds, visited));
+          }
         }
       }
       // Properties inside this object are a deeper schema level. Only enter a
@@ -802,11 +858,11 @@ function postProcessArrayMaxItems(content: string, typeSource: string, method: '
   for (const constraint of constraints) {
     const schema = findSchemaVariable(sourceFile, `${constraint.schemaName}Schema`);
     if (!schema) continue; // ts-to-zod may intentionally omit unsupported declarations.
-    const values = collectObjectPropertyValues(schema, constraint.path);
+    const values = collectObjectPropertyValues(schema, constraint.path, { sourceFile, constraint, constraints });
     let foundArray = false;
     let fixedTupleSatisfiesBound = false;
     for (const value of values) {
-      const array = findZodArrayBase(value);
+      const array = findZodArrayBase(value, sourceFile);
       if (!array) {
         const tupleLength = fixedZodTupleLength(value);
         if (
