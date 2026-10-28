@@ -6020,6 +6020,11 @@ async function generateZodSchemas() {
     // Post-process: Add explicit z.ZodType annotations to schemas that trip TS7056.
     zodSchemas = postProcessTS7056Annotations(zodSchemas);
 
+    // Import the module namespace directly so bundlers can remove unused Zod
+    // exports. The nested `z` export retains the full namespace in Zod 4.6.
+    // Run after passes that insert imports next to ts-to-zod's original import.
+    zodSchemas = zodSchemas.replace('import { z } from "zod";', 'import * as z from "zod";');
+
     // Defensive: ts-to-zod emits `const FooSchema = z.any();` stubs when it
     // can't resolve a referenced type — usually because a cross-file `import
     // type` declaration leaks past the upstream strip (see #1659). A `z.any()`
