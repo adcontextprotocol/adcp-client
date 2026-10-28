@@ -51,6 +51,16 @@
         "default": "./dist/lib/compliance/index.js"
       }
     },
+    "./adapters/version": {
+      "import": {
+        "types": "./dist/lib/adapters/version/index.d.mts",
+        "default": "./dist/lib/adapters/version/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/adapters/version/index.d.ts",
+        "default": "./dist/lib/adapters/version/index.js"
+      }
+    },
     "./advanced": {
       "import": {
         "types": "./dist/lib/advanced.d.mts",

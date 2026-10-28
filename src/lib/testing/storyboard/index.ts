@@ -17,6 +17,8 @@ import { registerDefaultInvariants } from './default-invariants';
 
 registerDefaultInvariants();
 
+export { createStoryboardWebBotAuthFetch } from './web-bot-auth';
+
 // Types
 export type {
   A2ATaskEnvelope,

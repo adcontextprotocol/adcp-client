@@ -818,3 +818,98 @@ test('library-first: covered fields the library refuses are malformed messages',
     e => e instanceof wba.WebBotAuthError && e.status === 400 && e.reason === 'component_value'
   );
 });
+
+test('a Web Bot Auth-only authenticator needs no legacy JWKS resolver and refuses legacy signatures', async () => {
+  const { verifySignatureAsAuthenticator } = require('../../dist/lib/server/auth-signature');
+  const key = newKey();
+  const proof = await wba.createSignedSignatureDirectory(origin, [{ privateKey: key }], { now: () => T });
+  const authenticate = verifySignatureAsAuthenticator({
+    capability: { supported: true, covers_content_digest: 'required', required_for: [], profiles: ['web-bot-auth'] },
+    getUrl: () => request.url,
+    now: () => T,
+    resolveOperation: () => 'get_products',
+    assertLegacyOriginAllowed: async () => {},
+    webBotAuth: {
+      directory: directoryFor(proof, () => T),
+      isRevoked: async () => false,
+      resolvePrincipal: async () => ({ principal: 'wba-buyer' }),
+    },
+  });
+  const headers = await wba.signWebBotAuth(request, { privateKey: key }, { origin, now: () => T });
+  const principal = await authenticate({ method: 'POST', url: '/mcp', headers, rawBody: request.body });
+  assert.equal(principal.principal, 'wba-buyer');
+  await assert.rejects(
+    authenticate({
+      method: 'POST',
+      url: '/mcp',
+      headers: {
+        'signature-input': 'sig1=("@method");created=1;keyid="legacy";tag="adcp/request-signing/v1"',
+        signature: 'sig1=:AA==:',
+      },
+      rawBody: request.body,
+    }),
+    error => error.status === 403
+  );
+  assert.throws(
+    () =>
+      verifySignatureAsAuthenticator({
+        capability: { supported: true, covers_content_digest: 'required', required_for: [] },
+        resolveOperation: () => 'get_products',
+      }),
+    /requires jwks or webBotAuth/
+  );
+});
+
+test('Web Bot Auth-only auto-wiring needs no JWKS and rejects legacy signatures with the same profile refusal', async () => {
+  const { createAdcpServer, ADCP_PRE_TRANSPORT } = require('../../dist/lib/server/create-adcp-server');
+  const server = createAdcpServer({
+    name: 'WBA only',
+    version: '1.0.0',
+    identity33: { authorize: async () => {} },
+    capabilities: {
+      request_signing: {
+        supported: true,
+        profiles: ['web-bot-auth'],
+        covers_content_digest: 'required',
+        required_for: [],
+      },
+    },
+    signedRequests: {
+      replayStore: new InMemoryReplayStore(),
+      revocationStore: new InMemoryRevocationStore(),
+      assertLegacyOriginAllowed: async () => {},
+      webBotAuth: {
+        directory: new wba.SignatureDirectoryResolver(),
+        isRevoked: async () => false,
+        resolvePrincipal: async () => ({ principal: 'buyer' }),
+      },
+    },
+  });
+  const response = {
+    status: 0,
+    body: undefined,
+    writeHead(status) {
+      this.status = status;
+    },
+    end(body) {
+      this.body = JSON.parse(body);
+    },
+  };
+  assert.equal(
+    await server[ADCP_PRE_TRANSPORT](
+      {
+        method: 'POST',
+        url: '/mcp',
+        rawBody: request.body,
+        headers: {
+          'signature-input': 'sig1=("@method");created=1;keyid="legacy";tag="adcp/request-signing/v1"',
+          signature: 'sig1=:AA==:',
+        },
+      },
+      response
+    ),
+    true
+  );
+  assert.equal(response.status, 403);
+  await server.close();
+});

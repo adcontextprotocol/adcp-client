@@ -1109,3 +1109,19 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
     });
   });
 });
+
+describe('direct transport verifier diagnostics', () => {
+  for (const consumeHook of [false, true]) {
+    it(`${consumeHook ? 'connects after the host consumes' : 'refuses a direct connection that skips'} the verifier hook`, async () => {
+      const server = createAdcpServer({
+        ...sellerConfig(),
+        logger: { debug() {}, info() {}, error() {}, warn() {} },
+      });
+      if (consumeHook) assert.equal(typeof server[ADCP_PRE_TRANSPORT], 'function');
+      const transport = { start: async () => {}, send: async () => {}, close: async () => {} };
+      if (consumeHook) await server.connect(transport);
+      else await assert.rejects(server.connect(transport), /signedRequests verifier is not mounted/);
+      await server.close();
+    });
+  }
+});

@@ -30,6 +30,17 @@ On the server, `createAdcpServer` does the reverse. Handlers are written against
 
 Capability discovery can validate against the seller-served release echoed in `adcp_version`.
 
+Sellers that build their own webhook `result` can import
+`projectResponseForRelease(toolName, payload, ctx.servedAdcpVersion)` from
+`@adcp/sdk/adapters/version`. It runs the same response adapters and schema
+projection as the framework. The source defaults to `ADCP_VERSION`; pass the
+server's configured release as the fourth argument when it differs. Use
+`downgradeResponse(toolName, payload, { fromVersion, toVersion })` from the same
+entry point for conversion diagnostics. These helpers convert tool payloads;
+the emitter still owns the webhook envelope, credential stripping, and signing.
+Persist the served release with the webhook registration for deliveries sent
+after the originating request has completed.
+
 Established media-buy tools remain available for AdCP 3.0/3.1 sellers. Their compact-lifecycle projections and durable purchase continuations remain scoped to the negotiated AdCP 3 release. Creative-model v1/v2 projections under `src/lib/v2/projection/` are independent of AdCP protocol majors.
 
 ### Primary media facts narrow legacy format choices

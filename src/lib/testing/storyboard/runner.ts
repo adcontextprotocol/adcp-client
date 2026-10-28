@@ -6,6 +6,9 @@
  * - runStoryboardStep(): run a single step (stateless, LLM-friendly)
  */
 
+import { createStoryboardWebBotAuthFetch } from './web-bot-auth';
+import { jwkThumbprint } from '../../signing/web-bot-auth';
+import { createAgentTransportFetch } from '../../net/agent-transport-fetch';
 import { createHash, createHmac } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
@@ -4053,6 +4056,21 @@ function resolveBindingAccountScope(storyboard: Storyboard, options: StoryboardR
  */
 function resolveBindingCredential(options: StoryboardRunOptions, step?: StoryboardStep): string {
   const parts: string[] = [];
+  if (options.web_bot_auth) {
+    parts.push(`wba_target:${JSON.stringify(options.web_bot_auth.publicUrl ?? null)}`);
+    for (const [name, identity] of Object.entries(options.web_bot_auth.identities).sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0
+    )) {
+      try {
+        const jwk = 'privateKey' in identity.key ? identity.key.privateKey : identity.key.publicKey;
+        parts.push(`wba_identity:${JSON.stringify([name, identity.origin, jwkThumbprint(jwk)])}`);
+      } catch {
+        // Invalid identities fail when selected by a step, never while deriving
+        // an unrelated step's binding. No invalid key can dispatch a request.
+        parts.push(`wba_identity:${JSON.stringify([name, 'invalid'])}`);
+      }
+    }
+  }
   // The EFFECTIVE credential for the step about to execute, not just the
   // run's. `step.auth` is applied later inside step execution, so a binding
   // built from run options alone would tell the authorizer the credential is
@@ -8976,17 +8994,48 @@ async function executeStep(
   // malformed tool call reaches the seller handler.
   // Credentialed functional steps use the configured official protocol client.
   // Raw probes remain necessary for negative auth and HTTP-envelope assertions.
+  const useWebBotAuth = typeof step.auth === 'object' && step.auth.type === 'web_bot_auth';
   const useSdkAuthOverride =
-    typeof step.auth === 'object' &&
-    step.auth.type === 'api_key' &&
-    step.auth.from_test_kit === true &&
-    step.auth.value_strategy === undefined &&
-    step.expect_error !== true &&
-    !(step.validations ?? []).some(validation => HTTP_PROBE_ONLY_CHECKS.has(validation.check));
+    useWebBotAuth ||
+    (typeof step.auth === 'object' &&
+      step.auth.type === 'api_key' &&
+      step.auth.from_test_kit === true &&
+      step.auth.value_strategy === undefined &&
+      step.expect_error !== true &&
+      !(step.validations ?? []).some(validation => HTTP_PROBE_ONLY_CHECKS.has(validation.check)));
   let rawProbeHeaders: Record<string, string> | undefined;
   let authOverrideClient: TestClient | undefined;
   try {
     rawProbeHeaders = step.auth !== undefined ? authHeadersForStep(step.auth, options) : undefined;
+    let signedFetch: typeof fetch | undefined;
+    if (typeof step.auth === 'object' && step.auth.type === 'web_bot_auth') {
+      if ((step.validations ?? []).some(validation => HTTP_PROBE_ONLY_CHECKS.has(validation.check)))
+        throw new Error(
+          'web_bot_auth steps require tool-response validations; HTTP probe assertions are not supported'
+        );
+      if (options.web_bot_auth?.publicUrl && options.protocol === 'a2a')
+        throw new Error('web_bot_auth.publicUrl loopback delivery supports MCP only; use HTTPS directly for A2A');
+      if (!options.web_bot_auth?.publicUrl && new URL(runState.agentUrl).protocol !== 'https:')
+        throw new Error('web_bot_auth.publicUrl is required to sign for a non-HTTPS agent');
+      const name = step.auth.identity;
+      const identities = options.web_bot_auth?.identities;
+      const identity = identities && Object.hasOwn(identities, name) ? identities[name] : undefined;
+      if (!identity) throw new Error('web_bot_auth identity is not configured in options.web_bot_auth.identities');
+      signedFetch = createStoryboardWebBotAuthFetch(
+        createAgentTransportFetch(runState.agentUrl, {
+          trustedFetchFn: options.transport?.trustedFetchFn,
+          allowPrivateIp: options.transport?.allowPrivateIp,
+        }),
+        identity.key,
+        {
+          agentUrl: runState.agentUrl,
+          origin: identity.origin,
+          ...(options.web_bot_auth?.publicUrl && {
+            target: { publicUrl: options.web_bot_auth.publicUrl, loopbackUrl: runState.agentUrl },
+          }),
+        }
+      );
+    }
     if (useSdkAuthOverride) {
       if (rawProbeHeaders === undefined) throw new Error('Step auth override credentials were not resolved');
       // Resolve configuration inside the same guard for both ordinary and
@@ -8995,7 +9044,8 @@ async function executeStep(
         runState.agentUrl,
         options.protocol ?? 'mcp',
         options,
-        rawProbeHeaders
+        rawProbeHeaders,
+        signedFetch
       );
     }
   } catch (err) {
@@ -9373,6 +9423,7 @@ async function executeStep(
     Array.isArray(requiredForSigning) &&
     requiredForSigning.includes(effectiveStep.task) &&
     options.functional_request_signing === undefined &&
+    !useWebBotAuth &&
     runState.storyboardRequiresRequestSigner !== true
   ) {
     const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
@@ -12564,6 +12615,8 @@ function selectProtectedToolTarget(tools: readonly string[] | undefined): string
 function sessionControlMechanismFor(auth: StepAuthDirective): SessionControlMechanism {
   if (auth === 'none') return 'any';
   switch (auth.type) {
+    case 'web_bot_auth':
+      throw new Error('web_bot_auth is not supported by session probes');
     case 'oauth_bearer':
       return 'oauth_bearer';
     case 'basic':
@@ -12637,6 +12690,9 @@ function planMcpSessionSentinel(
     };
   }
 
+  if (typeof step.auth === 'object' && step.auth.type === 'web_bot_auth') {
+    return { kind: 'error', error: 'web_bot_auth is not supported by MCP session probes; select an AdCP tool step' };
+  }
   const signatureBound = signatureBoundTools(options);
   const candidates = protectedToolCandidates(options.agentTools);
   if (signatureBound === 'unparseable') {
@@ -12747,7 +12803,7 @@ function planMcpSessionSentinel(
  *   `value_strategy: random_invalid` and produces `Authorization: Basic <base64>`.
  */
 function authHeadersForStep(directive: StepAuthDirective, options: StoryboardRunOptions): Record<string, string> {
-  if (directive === 'none') return {};
+  if (directive === 'none' || directive.type === 'web_bot_auth') return {};
   if (directive.type === 'basic') return basicAuthHeadersForStep(directive, options);
 
   let value: string | undefined;
@@ -12875,7 +12931,8 @@ function createAuthOverrideClient(
   agentUrl: string,
   protocol: 'mcp' | 'a2a',
   options: StoryboardRunOptions,
-  authHeaders: Record<string, string>
+  authHeaders: Record<string, string>,
+  signedFetch?: typeof fetch
 ): TestClient {
   const runSecrets = runCredentialValues(options);
   const headers: Record<string, string> = {};
@@ -12923,6 +12980,7 @@ function createAuthOverrideClient(
     test_kit: undefined,
     _client: undefined,
     functional_request_signing: undefined,
+    ...(signedFetch && { transport: { ...options.transport, trustedFetchFn: signedFetch } }),
     headers: Object.keys(headers).length > 0 ? headers : undefined,
   });
 }

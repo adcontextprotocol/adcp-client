@@ -108,8 +108,8 @@ export interface VerifySignatureAsAuthenticatorOptions {
    *  requests fall through to the next authenticator — so set it to whatever
    *  your `request_signing` capability claim advertises. */
   capability: VerifierCapability;
-  /** Resolves verification keys by `keyid`. */
-  jwks: JwksResolver;
+  /** Resolves legacy RFC 9421 keys. May be omitted for a Web Bot Auth-only endpoint. */
+  jwks?: JwksResolver;
   /**
    * Stores `(keyid, signature-bytes, expires)` tuples for replay detection.
    * Defaults to a fresh {@link InMemoryReplayStore} — fine for single-process
@@ -183,6 +183,8 @@ export interface VerifySignatureAsAuthenticatorOptions {
  * same side-channel state as the Express-shaped middleware.
  */
 export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthenticatorOptions): Authenticator {
+  if (!options.jwks && !options.webBotAuth)
+    throw new TypeError('verifySignatureAsAuthenticator requires jwks or webBotAuth');
   // Instantiate defaults once at wire-up time so every request on this
   // authenticator shares the same replay/revocation state — lazy
   // per-request construction would defeat replay detection entirely.
@@ -268,6 +270,7 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
           },
         };
       }
+      if (!options.jwks) throw new WebBotAuthError(403, 'profile_disabled');
       result = await verifyRequestSignature(requestLike, {
         capability: options.capability,
         jwks: options.jwks,
