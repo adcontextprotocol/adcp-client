@@ -229,7 +229,7 @@ describe('creative schema local references', () => {
   test('fully dereferenced bundled AdCP 3.1 create schema stays within inspection limits', async () => {
     const { default: parser } = await import('@apidevtools/json-schema-ref-parser');
     const path = require('node:path');
-    const file = path.join(__dirname, '../../schemas/cache/3.1.29/bundled/media-buy/create-media-buy-request.json');
+    const file = path.join(__dirname, '../../schemas/cache/3.1.30/bundled/media-buy/create-media-buy-request.json');
     const schema = await parser.dereference(file, { resolve: { external: false } });
     assert.equal(creativeSchemaSupport(schema), 'canonical');
   });

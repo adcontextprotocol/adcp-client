@@ -170,15 +170,15 @@ test('the prepared-state binding observes a swapped schema artifact', () => {
   // A caller-supplied bundle for a DIFFERENT version resolves to a different
   // artifact, so a prepared state pinned to one cannot be reused under the
   // other. A mutable version label alone would not catch this.
-  const other = resolveSchemaArtifact('3.1.29');
+  const other = resolveSchemaArtifact('3.1.30');
   assert.notEqual(other.bundle_key, builtin.bundle_key);
   assert.notEqual(other.digest, builtin.digest);
 
   // A caller-supplied bundle flips `external` and reports that root's own
   // digest, so a prepared state pinned to the packaged snapshot cannot be
   // reused under a scope that swapped the bundle out.
-  const externalRoot = path.resolve(__dirname, '../../schemas/cache/3.1.29');
-  const scoped = withExternalSchemaRoot('3.1.29', externalRoot, () => resolveSchemaArtifact('3.1.29'));
+  const externalRoot = path.resolve(__dirname, '../../schemas/cache/3.1.30');
+  const scoped = withExternalSchemaRoot('3.1.30', externalRoot, () => resolveSchemaArtifact('3.1.30'));
   // The discriminating comparison is scoped-vs-unscoped at the SAME version:
   // comparing against the 3.2.5 builtin would pass on the version alone.
   assert.equal(scoped.external, true);

@@ -53,7 +53,7 @@ describe('conformance: oracle', () => {
     assert.deepEqual(payload, before);
   });
 
-  test('closed response schemas admit canonical version metadata from SDK sellers', () => {
+  test('response schemas admit canonical version metadata from SDK sellers', () => {
     const payload = {
       adcp_version: '3.2',
       results: [{ proposal_id: 'proposal-1', outcome: 'declined' }],
@@ -62,14 +62,15 @@ describe('conformance: oracle', () => {
     assert.equal(out.verdict, 'accepted', out.invariantFailures.join('; '));
   });
 
-  test('decline_proposals still rejects invalid versions, unknown fields, and forbidden sync status', () => {
+  test('decline_proposals accepts root extensions while rejecting invalid versions and forbidden sync status', () => {
     const payload = { results: [{ proposal_id: 'proposal-1', outcome: 'declined' }] };
+    assert.equal(accepted('decline_proposals', { ...payload, unexpected: true }).verdict, 'accepted');
     for (const invalid of [
       { ...payload, adcp_version: 'not-a-version' },
       { ...payload, adcp_version: '3.2.6' },
       { ...payload, adcp_version: 3.2 },
       { ...payload, adcp_major_version: '3' },
-      { ...payload, unexpected: true },
+      { results: [{ proposal_id: 'proposal-1', outcome: 'declined', unexpected: true }] },
       { ...payload, status: 'completed' },
       { ...payload, task_id: 'unexpected-task' },
       { results: [{ proposal_id: 'proposal-1' }] },

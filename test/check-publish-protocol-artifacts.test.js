@@ -9,7 +9,7 @@ const modulePromise = import(
 );
 
 const currentProtocolVersion = '3.2.5';
-const compatibleVersions = ['v3', '3.0.1', '3.0.25', '3.1.24', '3.1.29', '3.2.4', currentProtocolVersion, '3.2'];
+const compatibleVersions = ['v3', '3.0.1', '3.0.25', '3.1.24', '3.1.30', '3.2.4', currentProtocolVersion, '3.2'];
 
 function fixture(overrides = {}) {
   return {
@@ -19,7 +19,7 @@ function fixture(overrides = {}) {
         { path: 'dist/lib/schemas-data/3.1/bundled.schemas.br' },
         { path: 'dist/lib/schemas-data/3.2/bundled.schemas.br' },
         { path: 'compliance/cache/3.0.25/index.json' },
-        { path: 'compliance/cache/3.1.29/index.json' },
+        { path: 'compliance/cache/3.1.30/index.json' },
         { path: `compliance/cache/${currentProtocolVersion}/index.json` },
         { path: 'docs/releases/14.0.0-beta.0.md' },
       ],
@@ -74,11 +74,11 @@ test('requires the exact current and maintained stable compliance inventory', as
   const { assertPublishProtocolArtifacts } = await modulePromise;
   const missingStable = fixture();
   missingStable.packageInfo.files = missingStable.packageInfo.files.filter(
-    file => !file.path.startsWith('compliance/cache/3.1.29/')
+    file => !file.path.startsWith('compliance/cache/3.1.30/')
   );
   assert.throws(
     () => assertPublishProtocolArtifacts(missingStable),
-    /3\.1\.29 \(required compliance bundle is missing\)/
+    /3\.1\.30 \(required compliance bundle is missing\)/
   );
 
   for (const staleVersion of ['3.0.1', '3.1.24', '3.2.4']) {
@@ -134,7 +134,7 @@ test('allows a beta only when it is the exact current primary pin', async () => 
             { path: 'dist/lib/schemas-data/3.1/bundled.schemas.br' },
             { path: `dist/lib/schemas-data/${beta}/bundled.schemas.br` },
             { path: 'compliance/cache/3.0.25/index.json' },
-            { path: 'compliance/cache/3.1.29/index.json' },
+            { path: 'compliance/cache/3.1.30/index.json' },
             { path: `compliance/cache/${beta}/index.json` },
           ],
         },

@@ -137,13 +137,14 @@ export function loadResponseSchema(tool: ConformanceToolName, options: Conforman
   if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return schema;
 
   // Version metadata belongs to every response envelope (SDK issue #3262).
-  // Some closed task schemas omit its declarations; add only the canonical version fields,
+  // Task schemas may omit its declarations, even when their roots are open.
+  // Add only the canonical version fields,
   // retaining all other root restrictions and every nested-body constraint.
   const admitVersionFields = (node: JsonSchema): JsonSchema => {
-    const copy = { ...node };
-    if (node.additionalProperties === false) {
-      copy.properties = { ...properties, ...(node.properties as JsonSchema | undefined) };
-    }
+    const copy: JsonSchema = {
+      ...node,
+      properties: { ...properties, ...(node.properties as JsonSchema | undefined) },
+    };
     for (const keyword of ['allOf', 'anyOf', 'oneOf'] as const) {
       const branches = node[keyword];
       if (Array.isArray(branches)) {

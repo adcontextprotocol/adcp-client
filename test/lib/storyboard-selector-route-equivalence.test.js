@@ -6,7 +6,7 @@ const YAML = require('yaml');
 const { runValidations } = require('../../dist/lib/testing/storyboard/validations');
 const published = YAML.parse(
   fs.readFileSync(
-    path.resolve(__dirname, '../../compliance/cache/3.2.7/domains/media-buy/scenarios/canonical_formats.yaml'),
+    path.resolve(__dirname, '../../compliance/cache/3.2.8/domains/media-buy/scenarios/canonical_formats.yaml'),
     'utf8'
   )
 );

@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-10-27
+> Generated at: 2026-10-28
 > Library: @adcp/sdk v16.6.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -1852,7 +1852,7 @@ Flow: `get_adcp_capabilities → activate_signal → get_signals → activate_si
 Flow: `get_adcp_capabilities → create_media_buy → get_products → create_media_buy → get_products → create_media_buy`
 
 **STALE_RESPONSE advisory-success wire placement** — Validates that STALE_RESPONSE rides in errors[] on a populated success response with transport success preserved, and that STALE_RESPONSE is absent on healthy upstream responses.
-Flow: `get_adcp_capabilities → comply_test_controller → get_products`
+Flow: `get_adcp_capabilities → get_products → comply_test_controller → get_products`
 
 ### Security
 
