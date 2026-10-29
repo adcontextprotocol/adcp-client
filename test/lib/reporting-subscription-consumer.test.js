@@ -97,25 +97,34 @@ function engineFor(lifecycle, clock, store) {
         accounts: [{ account_id: ACCOUNT_ID, authorized_at: '2026-10-01T00:00:00.000Z' }],
       }),
       listAccountBuys: () => [structuredClone(BUY)],
+      resolveRevocationInstant: (_principal, _account, input) => input.observedAt,
+      isPeriodDelivered: () => false,
     },
   });
 }
 
 describe('reporting subscription engine state store', () => {
-  test('persists one CAS document per principal over an AdcpStateStore', async () => {
+  test('persists one CAS document per key, listed per principal and per tenant', async () => {
     const backing = new InMemoryStateStore();
     const store = createReportingSubscriptionEngineStateStoreV1({ store: backing });
     assert.equal(store.durability, 'process-local');
-    assert.equal(await store.get(SCOPE), null);
-    const state = { accounts: { a: { grants: [{ authorized_at: '2026-10-01T00:00:00.000Z' }] } }, subscriptions: {} };
-    const first = await store.put(SCOPE, state, null);
+    assert.equal(await store.get(SCOPE, 'principal'), null);
+    const value = { account: { grants: [{ authorized_at: '2026-10-01T00:00:00.000Z' }] }, subscriptions: {} };
+    const first = await store.put(SCOPE, 'account:a', value, null);
     assert.equal(first.outcome, 'applied');
-    assert.deepEqual(await store.put(SCOPE, state, null), { outcome: 'conflict' });
-    const read = await store.get(SCOPE);
-    assert.deepEqual(read.state, state);
-    assert.equal((await store.put(SCOPE, state, read.revision)).outcome, 'applied');
-    await store.put({ tenantId: 't', principalId: 'q' }, state, null);
-    assert.deepEqual((await store.listPrincipals()).map(scope => scope.principalId).sort(), ['p', 'q']);
+    assert.deepEqual(await store.put(SCOPE, 'account:a', value, null), { outcome: 'conflict' });
+    const read = await store.get(SCOPE, 'account:a');
+    assert.deepEqual(read.value, value);
+    assert.equal((await store.put(SCOPE, 'account:a', value, read.revision)).outcome, 'applied');
+    // Each account is its own document, so accounts never contend on one CAS row.
+    assert.equal((await store.put(SCOPE, 'account:b', value, null)).outcome, 'applied');
+    assert.equal((await store.put(SCOPE, 'principal', { served: {} }, null)).outcome, 'applied');
+    assert.deepEqual((await store.listKeys(SCOPE)).sort(), ['account:a', 'account:b', 'principal']);
+    await store.put({ tenantId: 't', principalId: 'q' }, 'principal', { served: {} }, null);
+    await store.put({ tenantId: 'other', principalId: 'p' }, 'principal', { served: {} }, null);
+    assert.deepEqual((await store.listPrincipals('t')).map(scope => scope.principalId).sort(), ['p', 'q']);
+    assert.deepEqual(await store.listPrincipals('other'), [{ tenantId: 'other', principalId: 'p' }]);
+    assert.deepEqual(await store.listKeys({ tenantId: 'other', principalId: 'p' }), ['principal']);
     assert.throws(
       () => createReportingSubscriptionEngineStateStoreV1({ store: backing, durability: 'durable' }),
       /cannot be declared durable/
@@ -131,7 +140,7 @@ describe('reporting subscription engine state store', () => {
       putIfMatch: backing.putIfMatch.bind(backing),
     });
     await assert.rejects(
-      createReportingSubscriptionEngineStateStoreV1({ store: endless }).listPrincipals(),
+      createReportingSubscriptionEngineStateStoreV1({ store: endless }).listPrincipals('t'),
       /refusing a partial list/
     );
     const repeating = Object.assign(Object.create(backing), {
@@ -140,7 +149,7 @@ describe('reporting subscription engine state store', () => {
       putIfMatch: backing.putIfMatch.bind(backing),
     });
     await assert.rejects(
-      createReportingSubscriptionEngineStateStoreV1({ store: repeating }).listPrincipals(),
+      createReportingSubscriptionEngineStateStoreV1({ store: repeating }).listPrincipals('t'),
       /repeating cursor/
     );
   });
@@ -285,7 +294,7 @@ describe('buyer helpers', () => {
         now: '2026-11-10T00:00:00Z',
       })
     );
-    const expected = subscriptionExpectedReportingPeriodsV1(obligations, () => template());
+    const expected = subscriptionExpectedReportingPeriodsV1(obligations, template);
     assert.equal(expected.length, 3);
     assert.deepEqual(
       {
@@ -309,11 +318,125 @@ describe('buyer helpers', () => {
         covered: ['mb_1'],
       }
     );
+    assert.deepEqual(expected[0].coverage.package_ids, ['pkg_1']);
+    // No default coverage: one could never match an obligation reporting packages or partial coverage.
+    assert.throws(() => {
+      const { coverage: _coverage, ...noCoverage } = template(obligations[0]);
+      subscriptionExpectedReportingPeriodsV1(obligations, () => noCoverage);
+    }, /must supply coverage/);
+  });
+
+  test('reportingSubscriptionVersionRecordsV1 falls back to configurations the readback carries', () => {
+    const configurations = {
+      1: subscription(),
+      2: subscription({ subscription_version: 2, exclude_account_ids: ['x'] }),
+    };
+    const state = {
+      subscription_id: 'analytics-daily',
+      subscription_version: 2,
+      state: 'active',
+      accepted_at: '2026-11-04T00:00:00.000Z',
+      // adcp#8588: sellers on 3.3.0-beta.2 return each prior version's configuration.
+      prior_versions: [
+        {
+          subscription_version: 1,
+          accepted_at: '2026-11-01T00:00:00.000Z',
+          superseded_at: '2026-11-04T00:00:00.000Z',
+          configuration: configurations[1],
+        },
+      ],
+      configuration: configurations[2],
+    };
+    const versions = reportingSubscriptionVersionRecordsV1({ state });
+    assert.deepEqual(
+      versions.map(version => [version.subscription_version, version.configuration.exclude_account_ids]),
+      [
+        [1, undefined],
+        [2, ['x']],
+      ]
+    );
+    const { configuration: _dropped, ...bare } = state.prior_versions[0];
+    assert.throws(
+      () => reportingSubscriptionVersionRecordsV1({ state: { ...state, prior_versions: [bare] } }),
+      /keep every version/
+    );
+  });
+
+  test('syncReportingSubscriptionsV1 refuses an unintended deactivation and a changed stored configuration', async () => {
+    const clock = { now: new Date('2026-11-01T12:00:00.000Z') };
+    const { lifecycle } = createTestPrincipalLifecycle({ clock, reportingSubscriptions: {} });
+    const client = principalClient(lifecycle);
+    let key = 0;
+    const keys = { createIdempotencyKey: () => `idempotency-key-${String(++key).padStart(4, '0')}` };
+    const other = subscription({ subscription_id: 'analytics-other', scope: { account_ids: ['acct_2'] } });
+    await syncReportingSubscriptionsV1(client, [subscription(), other], keys);
+    let writes = 0;
+    const counting = {
+      getPrincipal: client.getPrincipal,
+      syncPrincipal: async params => {
+        writes += 1;
+        return client.syncPrincipal(params);
+      },
+    };
+    await assert.rejects(
+      syncReportingSubscriptionsV1(counting, [subscription()], keys),
+      /would deactivate active subscriptions it omits \("analytics-other"\)/
+    );
+    assert.equal(writes, 0, 'nothing is written');
+    const explicit = await syncReportingSubscriptionsV1(
+      counting,
+      [subscription(), { ...other, subscription_version: 2, active: false }],
+      keys
+    );
+    assert.equal(explicit.subscriptions.find(item => item.subscription_id === 'analytics-other').state, 'inactive');
+    await syncReportingSubscriptionsV1(
+      counting,
+      [subscription({ subscription_version: 2, exclude_account_ids: ['z'] })],
+      {
+        ...keys,
+        allowDeactivation: true,
+      }
+    );
+
+    const rewriting = {
+      getPrincipal: client.getPrincipal,
+      syncPrincipal: async params => {
+        const response = await client.syncPrincipal(params);
+        for (const state of response.data.result.configuration.reporting_subscriptions ?? []) {
+          state.configuration = { ...state.configuration, exclude_account_ids: ['seller-chosen'] };
+        }
+        return response;
+      },
+    };
+    await assert.rejects(
+      syncReportingSubscriptionsV1(
+        rewriting,
+        [subscription({ subscription_version: 3, exclude_account_ids: ['z'] })],
+        keys
+      ),
+      /stores a different configuration at \/exclude_account_ids\/0/
+    );
   });
 });
 
-function template() {
+function fullCoverage(obligation) {
   return {
+    status: 'full',
+    media_buy_ids: [...obligation.media_buy_ids],
+    fully_covered_media_buy_ids: [...obligation.media_buy_ids],
+    partially_covered_media_buy_ids: [],
+    unsupported_media_buy_ids: [],
+    unknown_media_buy_ids: [],
+    package_ids: ['pkg_1'],
+    covered_package_ids: ['pkg_1'],
+    unsupported_package_ids: [],
+    unknown_package_ids: [],
+  };
+}
+
+function template(obligation) {
+  return {
+    coverage: fullCoverage(obligation),
     feedPurpose: 'analytics',
     reportingProfile: 'adcp.delivery.v1',
     destinationRef: 'api',
@@ -415,6 +538,7 @@ describe('consumer runtime with subscription expectations', () => {
       },
     };
     const seen = [];
+    const nows = [];
     const consumer = createReliableReportingConsumerV1({
       persistence: memoryPersistence(),
       ownerToken: 'buyer-worker-1',
@@ -429,8 +553,10 @@ describe('consumer runtime with subscription expectations', () => {
             expectedPeriods: [],
             inspect: async () => ({ rowCount: 0, controlTotals: [] }),
           },
-          subscriptionExpectations: ({ subscriptionCoverage }) => {
+          subscriptionExpectationGraceMs: 3_600_000,
+          subscriptionExpectations: ({ subscriptionCoverage, now, ledgerAsOf }) => {
             seen.push(subscriptionCoverage);
+            nows.push([now.toISOString(), ledgerAsOf]);
             const obligations = groupExpectedSubscriptionPeriodsV1(
               expectedSubscriptionPeriods({
                 subscription_id: 'analytics-daily',
@@ -441,10 +567,10 @@ describe('consumer runtime with subscription expectations', () => {
                 buys: [BUY],
                 offerings: [OFFERING],
                 coverage: subscriptionCoverage[0],
-                now: '2026-11-10T00:00:00Z',
+                now: now.toISOString(),
               })
             );
-            return subscriptionExpectedReportingPeriodsV1(obligations, () => template());
+            return subscriptionExpectedReportingPeriodsV1(obligations, template);
           },
         },
       ],
@@ -453,6 +579,11 @@ describe('consumer runtime with subscription expectations', () => {
     assert.equal(result.state, 'reconciled');
     assert.equal(calls[0], 'summary', 'coverage is read before reconciling');
     assert.deepEqual(seen, [coverage]);
+    assert.deepEqual(
+      nows,
+      [['2026-11-09T23:00:00.000Z', '2026-11-10T00:00:00.000Z']],
+      'expectations use the snapshot ledger_as_of minus the grace, not the wall clock'
+    );
     assert.equal(
       result.reconciliation.missingExpectedPeriods.length,
       3,
@@ -496,6 +627,25 @@ describe('consumer runtime with subscription expectations', () => {
       results.map(item => [item.accountId, item.reason, item.state]),
       [[ACCOUNT_ID, 'principal.changed', 'reconciled']]
     );
+    const change = n => ({
+      notification_type: 'principal.changed',
+      idempotency_key: `principal-change-${String(n).padStart(4, '0')}`,
+      reason: 'reporting_subscription_changed',
+      agent_url: 'https://seller.example/mcp',
+      fired_at: '2026-11-05T00:00:00Z',
+      changed_at: '2026-11-05T00:00:00Z',
+    });
+    const authentication = { consumerScope: 'seller.example|buyer' };
+    // A redelivery with the same idempotency_key is dropped.
+    assert.deepEqual(await scoped.handleAuthenticatedPrincipalChanged(change(1), authentication), []);
+    assert.equal(refreshed.length, 1);
+    // A burst arriving while the scope is reconciled shares one trailing run.
+    const burst = await Promise.all(
+      [2, 3, 4, 5].map(n => scoped.handleAuthenticatedPrincipalChanged(change(n), authentication))
+    );
+    assert.equal(refreshed.length, 3, 'one run for the first notification and one trailing run for the rest');
+    assert.equal(burst[1], burst[2]);
+    assert.equal(burst[2], burst[3]);
     assert.equal(
       await scoped.handleAuthenticatedPrincipalChanged(
         { notification_type: 'reporting.ledger_changed' },

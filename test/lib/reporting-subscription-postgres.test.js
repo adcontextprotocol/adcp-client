@@ -71,15 +71,16 @@ describe('reporting subscriptions on PostgreSQL', { skip: !DATABASE_URL && 'DATA
       agentUrl: 'https://seller.example/mcp',
       resolvePrincipal: ctx => ctx.callerMutationScope,
       now: () => clock.now,
-      reportingSubscriptions: {},
+      reportingSubscriptions: { listDeliveryConfigIds: () => [] },
+    });
+    const engineStore = service.createReportingSubscriptionEngineStateStoreV1({
+      store: backing,
+      collection: ENGINE,
+      durability: 'durable',
     });
     const engine = service.createReportingSubscriptionEngineV1({
       principal: lifecycle,
-      store: service.createReportingSubscriptionEngineStateStoreV1({
-        store: backing,
-        collection: ENGINE,
-        durability: 'durable',
-      }),
+      store: engineStore,
       offerings: [
         {
           offering_id: 'off_a_pkg',
@@ -118,9 +119,11 @@ describe('reporting subscriptions on PostgreSQL', { skip: !DATABASE_URL && 'DATA
             packages: [{ package_id: 'pkg_1', reporting_delivery_offering_ids: ['off_a_pkg'] }],
           },
         ],
+        resolveRevocationInstant: (_principal, _account, input) => input.observedAt,
+        isPeriodDelivered: () => false,
       },
     });
-    return { lifecycle, engine };
+    return { lifecycle, engine, engineStore };
   }
 
   test('versions, lost authority and owed periods survive a restart', async () => {
@@ -165,5 +168,9 @@ describe('reporting subscriptions on PostgreSQL', { skip: !DATABASE_URL && 'DATA
       ['2026-11-03T00:00:00.000Z', '2026-11-04T00:00:00.000Z']
     );
     assert.equal(await second.engine.acceptsReceipt(scope, 'acct_1', { readAt: '2026-11-05T01:00:00.000Z' }), true);
+    // One document per principal and per account, listed per tenant.
+    assert.deepEqual((await second.engineStore.listKeys(scope)).sort(), ['account:acct_1', 'principal']);
+    assert.ok((await second.engineStore.listPrincipals('t')).some(item => item.principalId === scope.principalId));
+    assert.deepEqual(await second.engineStore.listPrincipals(`other-${process.pid}`), []);
   });
 });

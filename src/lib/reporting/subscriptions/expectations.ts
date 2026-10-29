@@ -8,37 +8,45 @@ import type { ExpectedSubscriptionObligationV1, ReportingSubscriptionVersionReco
 import type { ReportingSubscriptionDestinationMethodV1 } from './selection';
 
 /**
- * The coverage function's version records from the seller readback plus the buyer's own
- * records of each version's configuration (the readback carries only the current one).
- * Pass the readback's `inactive_intervals` to `expectedSubscriptionPeriods` unchanged.
+ * The coverage function's version records from the seller readback. Each version's
+ * configuration comes from the buyer's own records when given, else from the readback: the
+ * current `configuration`, and `prior_versions[].configuration` from sellers on
+ * 3.3.0-beta.2 or later (adcp#8588). Pass the readback's `inactive_intervals` to
+ * `expectedSubscriptionPeriods` unchanged.
  */
 export function reportingSubscriptionVersionRecordsV1(input: {
   state: ReportingSubscriptionState;
-  /** Every version the buyer sent, keyed by `subscription_version`. */
-  configurations: Readonly<Record<number, ReportingSubscription>>;
+  /** Versions the buyer sent, keyed by `subscription_version`. Required for a version the readback does not carry. */
+  configurations?: Readonly<Record<number, ReportingSubscription>>;
   /** Pattern and transport of the destination each version named. */
   destinationMethods?: Readonly<Record<number, ReportingSubscriptionDestinationMethodV1>>;
 }): ReportingSubscriptionVersionRecordV1[] {
   const { state } = input;
+  // TODO(3.3.0-beta.2): read prior_versions[].configuration from the generated type.
+  const priors = (state.prior_versions ?? []) as ReadonlyArray<
+    NonNullable<ReportingSubscriptionState['prior_versions']>[number] & { configuration?: ReportingSubscription }
+  >;
   const entries = [
-    ...[...(state.prior_versions ?? [])].reverse().map(prior => ({
+    ...[...priors].reverse().map(prior => ({
       version: prior.subscription_version,
       accepted_at: prior.accepted_at,
       superseded_at: prior.superseded_at as string | undefined,
       deactivated_at: undefined as string | undefined,
+      published: prior.configuration,
     })),
     {
       version: state.subscription_version,
       accepted_at: state.accepted_at,
       superseded_at: undefined as string | undefined,
       deactivated_at: state.deactivated_at,
+      published: state.configuration as ReportingSubscription | undefined,
     },
   ];
   return entries.map(entry => {
-    const configuration = input.configurations[entry.version];
+    const configuration = input.configurations?.[entry.version] ?? entry.published;
     if (!configuration) {
       throw new TypeError(
-        `No recorded configuration for ${state.subscription_id} version ${entry.version}; keep every version you send`
+        `No configuration for ${state.subscription_id} version ${entry.version}: the readback does not carry it, so keep every version you send`
       );
     }
     const method = input.destinationMethods?.[entry.version];
@@ -67,15 +75,20 @@ export type SubscriptionExpectationTemplateV1 = Omit<
   | 'periodEnd'
   | 'coverage'
 > & {
-  /** Defaults to full coverage of exactly the owed buys, with no package-level detail. */
-  coverage?: ExpectedReportingCoverage;
+  /**
+   * The coverage the obligation must report. Required: the seller reports package-level
+   * detail and `partial` coverage for package-level `offering_unsupported` exceptions, so no
+   * default could match a real obligation.
+   */
+  coverage: ExpectedReportingCoverage;
 };
 
 /**
  * Turn owed obligations (from `groupExpectedSubscriptionPeriodsV1`) into the consumer
  * runtime's expected periods. `template` supplies the pins coverage cannot know: the
  * reporting profile and schema pins of the offering, the destination, verification profile,
- * finality and reconciliation mode.
+ * finality and reconciliation mode, and the coverage the obligation must report (its package
+ * sets, and `partial` where packages carry an `offering_unsupported` exception).
  */
 export function subscriptionExpectedReportingPeriodsV1(
   obligations: readonly ExpectedSubscriptionObligationV1[],
@@ -84,6 +97,11 @@ export function subscriptionExpectedReportingPeriodsV1(
   return obligations.map(obligation => {
     const pins = template(obligation);
     const { coverage, ...rest } = pins;
+    if (!coverage || typeof coverage !== 'object') {
+      throw new TypeError(
+        `The expectation template must supply coverage for ${obligation.subscription_id} ${obligation.period_start}`
+      );
+    }
     return {
       ...structuredClone(rest),
       deliveryConfigId: obligation.subscription_id,
@@ -92,20 +110,7 @@ export function subscriptionExpectedReportingPeriodsV1(
       mediaBuyIds: [...obligation.media_buy_ids],
       periodStart: obligation.period_start,
       periodEnd: obligation.period_end,
-      coverage: coverage
-        ? structuredClone(coverage)
-        : {
-            status: 'full',
-            media_buy_ids: [...obligation.media_buy_ids],
-            fully_covered_media_buy_ids: [...obligation.media_buy_ids],
-            partially_covered_media_buy_ids: [],
-            unsupported_media_buy_ids: [],
-            unknown_media_buy_ids: [],
-            package_ids: [],
-            covered_package_ids: [],
-            unsupported_package_ids: [],
-            unknown_package_ids: [],
-          },
+      coverage: structuredClone(coverage),
     } as ExpectedReportingPeriod;
   });
 }

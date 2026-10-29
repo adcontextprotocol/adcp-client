@@ -27,6 +27,7 @@ import {
 } from './reconciliation';
 
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
+const PRINCIPAL_CHANGED_DEDUPE_WINDOW = 1_024;
 const DEFAULT_LEASE_MS = 30_000;
 const DEFAULT_MAX_CONCURRENCY = 4;
 
@@ -53,13 +54,26 @@ export interface ReliableReportingConsumerAccountV1<TCredential = unknown> {
    * Before each reconciliation the runtime reads the summary view's
    * `subscription_coverage[]` and passes it here; the returned periods are reconciled
    * alongside `reconciliation.expectedPeriods`. Compute them with
-   * `expectedSubscriptionPeriods` and `subscriptionExpectedReportingPeriodsV1`.
+   * `expectedSubscriptionPeriods` and `subscriptionExpectedReportingPeriodsV1`, passing
+   * `now` so the expectations match the snapshot being reconciled.
+   *
+   * Use this only against a seller that materializes subscription obligations in its
+   * reporting ledger. Against one that does not, every owed subscription period is reported
+   * as a missing expected period.
    */
   subscriptionExpectations?: (input: {
     subscriptionCoverage: readonly ReportingSubscriptionCoverage[];
+    /** The summary's `ledger_as_of` minus `subscriptionExpectationGraceMs`, never the wall clock. */
     now: Date;
+    /** The summary's `ledger_as_of`. */
+    ledgerAsOf: string;
     signal: AbortSignal;
   }) => readonly ExpectedReportingPeriod[] | Promise<readonly ExpectedReportingPeriod[]>;
+  /**
+   * How long after a period ends the seller may take to create its obligation. Periods ending
+   * within this of `ledger_as_of` are not expected yet. Defaults to 0.
+   */
+  subscriptionExpectationGraceMs?: number;
 }
 
 export interface ReliableReportingConsumerPersistenceV1 {
@@ -139,7 +153,9 @@ export interface ReliableReportingConsumerV1<TCredential = unknown> {
    * Handle an authenticated, signature-verified `principal.changed` webhook: call
    * `onPrincipalChanged` (for example to re-read `get_principal`, record
    * `accounts_unauthorized` and replace the roster), then reconcile every account of that
-   * consumer scope. Returns null for any other payload.
+   * consumer scope. A retry with an already seen `idempotency_key` returns an empty list, and
+   * notifications arriving while the scope is being reconciled share one trailing run. Returns
+   * null for any other payload.
    */
   handleAuthenticatedPrincipalChanged(
     payload: unknown,
@@ -662,6 +678,62 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
     return work;
   };
 
+  // principal.changed: a delivery retry carries the same idempotency_key and is dropped, and
+  // a notification that arrives while a scope is being reconciled joins one trailing run.
+  const principalChangedSeen = new Map<string, string[]>();
+  const principalChangedQueue = new Map<
+    string,
+    {
+      running: Promise<ReliableReportingConsumerRunResultV1[]>;
+      queued?: Promise<ReliableReportingConsumerRunResultV1[]>;
+      latest?: PrincipalChangedWebhook;
+    }
+  >();
+
+  const reconcilePrincipalChanged = async (
+    consumerScope: string,
+    notification: PrincipalChangedWebhook
+  ): Promise<ReliableReportingConsumerRunResultV1[]> => {
+    await options.onPrincipalChanged?.({ consumerScope, notification });
+    const scoped = [...accounts.values()].filter(account => account.consumerScope === consumerScope);
+    const results: ReliableReportingConsumerRunResultV1[] = [];
+    for (const account of scoped) {
+      try {
+        results.push(await runSelectedAccount(account, 'principal.changed'));
+      } catch (error) {
+        await reportError(error, {
+          consumerScope: account.consumerScope,
+          accountId: account.accountId,
+          reason: 'principal.changed',
+        });
+      }
+    }
+    return results;
+  };
+
+  const schedulePrincipalChanged = (
+    consumerScope: string,
+    notification: PrincipalChangedWebhook
+  ): Promise<ReliableReportingConsumerRunResultV1[]> => {
+    const entry = principalChangedQueue.get(consumerScope);
+    if (entry) {
+      entry.latest = notification;
+      entry.queued ??= entry.running
+        .catch(() => undefined)
+        .then(() => {
+          principalChangedQueue.delete(consumerScope);
+          return schedulePrincipalChanged(consumerScope, entry.latest!);
+        });
+      return entry.queued;
+    }
+    const running = reconcilePrincipalChanged(consumerScope, notification).finally(() => {
+      const current = principalChangedQueue.get(consumerScope);
+      if (current?.running === running && !current.queued) principalChangedQueue.delete(consumerScope);
+    });
+    principalChangedQueue.set(consumerScope, { running });
+    return running;
+  };
+
   /** Read the summary view's subscription_coverage and ask the account for its expectations. */
   const subscriptionExpectedPeriods = async (
     account: ReliableReportingConsumerAccountV1<TCredential>,
@@ -674,16 +746,27 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
     ).getReportingStatus(
       { ...withoutChangesAfter(account.reconciliation.request), view: 'summary' } as GetReportingStatusRequest,
       { signal }
-    )) as unknown as { status?: unknown; account_id?: unknown; subscription_coverage?: unknown };
-    if (response.status !== 'completed' || response.account_id !== account.accountId) {
+    )) as unknown as {
+      status?: unknown;
+      account_id?: unknown;
+      ledger_as_of?: unknown;
+      subscription_coverage?: unknown;
+    };
+    const ledgerAsOf = typeof response.ledger_as_of === 'string' ? Date.parse(response.ledger_as_of) : NaN;
+    if (response.status !== 'completed' || response.account_id !== account.accountId || !Number.isFinite(ledgerAsOf)) {
       throw consumerError('INCOMPLETE_SUMMARY', 'get_reporting_status returned an incomplete subscription summary');
+    }
+    const graceMs = account.subscriptionExpectationGraceMs ?? 0;
+    if (!Number.isSafeInteger(graceMs) || graceMs < 0) {
+      throw new TypeError('subscriptionExpectationGraceMs must be a non-negative integer');
     }
     const coverage = Array.isArray(response.subscription_coverage)
       ? (response.subscription_coverage as ReportingSubscriptionCoverage[])
       : [];
     const expected = await account.subscriptionExpectations!({
       subscriptionCoverage: coverage,
-      now: new Date(),
+      now: new Date(ledgerAsOf - graceMs),
+      ledgerAsOf: response.ledger_as_of as string,
       signal,
     });
     if (!Array.isArray(expected)) throw new TypeError('subscriptionExpectations must return an array');
@@ -746,21 +829,20 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
       if (!notification) return null;
       if (!authentication) throw new TypeError('consumerScope is required for a principal.changed notification');
       boundedString(authentication.consumerScope, 'consumerScope', 4_096);
-      await options.onPrincipalChanged?.({ consumerScope: authentication.consumerScope, notification });
-      const scoped = [...accounts.values()].filter(account => account.consumerScope === authentication.consumerScope);
-      const results: ReliableReportingConsumerRunResultV1[] = [];
-      for (const account of scoped) {
-        try {
-          results.push(await runSelectedAccount(account, 'principal.changed'));
-        } catch (error) {
-          await reportError(error, {
-            consumerScope: account.consumerScope,
-            accountId: account.accountId,
-            reason: 'principal.changed',
-          });
-        }
+      const scope = authentication.consumerScope;
+      const seen = principalChangedSeen.get(scope) ?? [];
+      if (seen.includes(notification.idempotency_key)) return [];
+      seen.push(notification.idempotency_key);
+      if (seen.length > PRINCIPAL_CHANGED_DEDUPE_WINDOW) seen.shift();
+      principalChangedSeen.set(scope, seen);
+      try {
+        return await schedulePrincipalChanged(scope, notification);
+      } catch (error) {
+        // A failed delivery must be retryable under the same key.
+        const index = seen.indexOf(notification.idempotency_key);
+        if (index >= 0) seen.splice(index, 1);
+        throw error;
       }
-      return results;
     },
     async handleAuthenticatedNotification(payload, authentication) {
       const notification = reportingNotification(payload);
