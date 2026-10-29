@@ -9102,7 +9102,7 @@ async function executeStep(
     (useRawProbe ||
       request.buying_mode !== 'wholesale' ||
       (request.pagination !== null && typeof request.pagination === 'object' && 'cursor' in request.pagination) ||
-      request.if_none_match !== undefined)
+      ['if_none_match', 'if_wholesale_feed_version', 'if_pricing_version'].some(field => request[field] !== undefined))
   ) {
     const detail =
       'collect_product_pages requires an unconditional wholesale first page through the official SDK client';

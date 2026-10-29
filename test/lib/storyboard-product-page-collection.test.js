@@ -44,7 +44,7 @@ function storyboard({ collect = true, request = {}, validations, contextOutputs,
               account: { brand: { domain: 'buyer.example' }, operator: 'operator.example', sandbox: true },
               filters: { pricing_currencies: ['USD'] },
               pagination: { max_results: 2 },
-              idempotency_key: 'caller-read-key',
+              idempotency_key: 'caller-product-read-key',
               context: { correlation_id: 'same-authored-context' },
               ...request,
             },
@@ -95,7 +95,7 @@ test('collection follows every page with the actual authored query and separates
     assert.deepEqual(request.filters, { pricing_currencies: ['USD'] });
     assert.deepEqual(request.fields, fields);
     assert.deepEqual(request.context, { correlation_id: 'same-authored-context' });
-    assert.equal(request.idempotency_key, 'caller-read-key');
+    assert.equal(request.idempotency_key, 'caller-product-read-key');
     assert.deepEqual(request.ext, { seller: { fixture: 'preserved' } });
     assert.equal(request.pagination.max_results, 2);
   }
@@ -268,7 +268,7 @@ test('authoring and intrinsic runtime gates prevent accidental partial-read comp
       source.phases[0].steps[0].sample_request.pagination.cursor = 'already-started';
     },
     source => {
-      source.phases[0].steps[0].sample_request.if_none_match = 'cached';
+      source.phases[0].steps[0].sample_request.if_wholesale_feed_version = 'cached';
     },
     source => {
       source.phases[0].steps[0].expect_error = true;
@@ -390,3 +390,96 @@ test('complete product captures can drive the following authored step', async ()
   assert.equal(result.overall_passed, true, JSON.stringify(result));
   assert.equal(calls[2].context.selected_product, 'target');
 });
+
+test('official MCP client collects and records the actual second-page exchange', async t => {
+  const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+  const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+  const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
+  const { z } = require('zod');
+  const { AgentClient } = require('../../dist/lib/index.js');
+  const server = new McpServer({ name: 'paginated-seller', version: '1' });
+  const seen = [];
+  server.registerTool('get_adcp_capabilities', { inputSchema: z.object({}).passthrough() }, async () => {
+    const data = {
+      status: 'completed',
+      adcp: { major_versions: [3], supported_versions: ['3.2'] },
+      supported_protocols: ['media_buy'],
+    };
+    return { structuredContent: data, content: [{ type: 'text', text: JSON.stringify(data) }] };
+  });
+  server.registerTool('get_products', { inputSchema: z.object({}).passthrough() }, async request => {
+    seen.push(structuredClone(request));
+    const data = request.pagination?.cursor ? page(['target']) : page(['first'], 'official-next');
+    for (const item of data.products) {
+      delete item.format_ids;
+      item.format_options = [
+        { format_option_id: 'image-300x250', format_kind: 'image', params: { width: 300, height: 250 } },
+      ];
+    }
+    return { structuredContent: data, content: [{ type: 'text', text: JSON.stringify(data) }] };
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const mcp = new Client({ name: 'paginated-buyer', version: '1' });
+  await mcp.connect(clientTransport);
+  t.after(async () => {
+    await mcp.close();
+    await server.close();
+  });
+  const buyer = AgentClient.fromMCPClient(mcp, {
+    validateFeatures: false,
+    validation: { requests: 'off', responses: 'off' },
+  });
+  const source = storyboard();
+  const result = await runStoryboard('https://seller.example/mcp', source, {
+    protocol: 'mcp',
+    agentTools: ['get_products'],
+    _profile: { tools: ['get_products'] },
+    _client: {
+      resetContext: () => buyer.resetContext(),
+      getProducts: (...args) => buyer.getProducts(...args),
+      executeTask: (...args) => buyer.executeTask(...args),
+    },
+  });
+  assert.equal(result.overall_passed, true, JSON.stringify(result));
+  const step = result.phases[0].steps[0];
+  assert.deepEqual(
+    seen.map(request => request.pagination.cursor),
+    [undefined, 'official-next']
+  );
+  assert.deepEqual(seen[1].account, source.phases[0].steps[0].sample_request.account);
+  assert.deepEqual(
+    step.context.all_products.map(product => product.product_id),
+    ['first', 'target']
+  );
+  assert.equal(step.product_page_collection.pages[1].request.payload.pagination.cursor, 'official-next');
+  assert.equal(step.product_page_collection.pages[1].schema_validated, true);
+  assert.match(JSON.stringify(step.product_page_collection.pages[1].response.payload), /target/);
+  assert.doesNotMatch(JSON.stringify(step.response_record.payload), /target/);
+});
+
+for (const field of ['if_wholesale_feed_version', 'if_pricing_version']) {
+  test(`${field} is an unsupported conditional collection in source and runtime overrides`, async () => {
+    const source = storyboard({ request: { [field]: 'cached-version' } });
+    assert.throws(() => validateStoryboardShape(source), /unconditional/);
+    let calls = 0;
+    const result = await runStoryboardStep('https://seller.example/mcp', storyboard(), 'discover', {
+      protocol: 'mcp',
+      agentTools: ['get_products'],
+      request: { buying_mode: 'wholesale', [field]: 'cached-version' },
+      _profile: { tools: ['get_products'] },
+      _client: {
+        resetContext() {},
+        async getProducts() {
+          calls++;
+          return { success: true, data: { unchanged: true, products: [] } };
+        },
+      },
+    });
+    assert.equal(calls, 0);
+    assert.equal(result.passed, false);
+    assert.ok(
+      result.validations.some(validation => validation.check === 'product_page_collection' && !validation.passed)
+    );
+  });
+}
