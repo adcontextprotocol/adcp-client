@@ -620,7 +620,18 @@ describe('ReliableReportingService', () => {
         isPeriodDelivered: () => false,
       },
     });
-    const subscriptionOptions = { engine, resolvePrincipal: () => ({ tenantId: 't', principalId: 'p' }) };
+    const request = redactedReportingSourceRequestV1();
+    const { currency: _currency, ...sourceSettings } = request.sourceSettings;
+    const subscriptionOptions = {
+      engine,
+      resolvePrincipal: () => ({ tenantId: 't', principalId: 'p' }),
+      listSubscriptionPrincipals: () => [{ tenantId: 't', principalId: 'p' }],
+      resolveSubscriptionConfiguration: () => ({
+        requestedMetrics: request.requestedMetrics,
+        requestedDimensions: request.requestedDimensions,
+        sourceSettings,
+      }),
+    };
     assert.throws(
       () => serviceFixture({ reportingSubscriptions: subscriptionOptions }),
       /standard_dimensions/,

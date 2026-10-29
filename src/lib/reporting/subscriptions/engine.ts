@@ -399,6 +399,19 @@ export interface ReportingSubscriptionEngineV1 {
     accountId: string,
     options?: { now?: string; signal?: AbortSignal }
   ): Promise<ExpectedSubscriptionObligationV1[]>;
+  /**
+   * The frozen owed set of each of this principal's subscriptions on each account the engine holds
+   * (or on one account), for writing into the reporting ledger: obligations whose periods ended at
+   * or before the subscription's frozen horizon `through`, never the provisional periods computed
+   * past it. Every owed period ending at or before `through` is in `obligations` unless retention
+   * already pruned it.
+   */
+  frozenOwedSets(
+    principal: Readonly<PrincipalStoreScope>,
+    options?: { accountId?: string }
+  ): Promise<ReportingSubscriptionFrozenOwedSetV1[]>;
+  /** Principals with engine state in one tenant, from the engine store. */
+  listPrincipals(tenantId: string): Promise<PrincipalStoreScope[]>;
   /** Principals in the tenant whose active subscriptions cover the account: the consumers that owe receipts. */
   receiptRoster(tenantId: string, accountId: string): Promise<PrincipalStoreScope[]>;
   /**
@@ -419,6 +432,18 @@ export interface ReportingSubscriptionEngineV1 {
   replaceAccountConfigTargets(principal: Readonly<PrincipalStoreScope>, subscriptionId: string): Promise<string[]>;
   /** The engine state, for inspection and conformance. */
   inspect(principal: Readonly<PrincipalStoreScope>): Promise<ReportingSubscriptionEngineStateV1>;
+}
+
+/** One subscription's frozen owed set on one account. */
+export interface ReportingSubscriptionFrozenOwedSetV1 {
+  account_id: string;
+  subscription_id: string;
+  /** The frozen horizon: every owed period ending at or before it is resolved and never recomputed. */
+  through: string;
+  /** Frozen obligations, grouped as the ledger carries them, with byte-sorted `media_buy_ids`. */
+  obligations: ExpectedSubscriptionObligationV1[];
+  /** Every retained version's configuration, oldest first, for the generation each obligation names. */
+  versions: Array<{ subscription_version: number; configuration: StoredReportingSubscriptionVersion['configuration'] }>;
 }
 
 function iso(value: number): string {
@@ -1519,6 +1544,37 @@ export function createReportingSubscriptionEngineV1(
     owedPeriods,
     async owedObligations(principal, accountId, owedOptions) {
       return groupExpectedSubscriptionPeriodsV1(await owedPeriods(principal, accountId, owedOptions));
+    },
+    async frozenOwedSets(principal, frozenOptions = {}) {
+      const { history } = await options.principal.listReportingSubscriptions(principal);
+      const ids = frozenOptions.accountId !== undefined ? [frozenOptions.accountId] : await accountIds(principal);
+      const sets: ReportingSubscriptionFrozenOwedSetV1[] = [];
+      for (const accountId of ids) {
+        const document = await readAccount(principal, accountId);
+        if (!document) continue;
+        for (const entry of history) {
+          const target = document.subscriptions[entry.subscriptionId];
+          if (!target || target.frozen.through === undefined) continue;
+          const through = Date.parse(target.frozen.through);
+          const periods = target.frozen.periods
+            .filter(period => Date.parse(period.period_end) <= through)
+            .map(period => ({ ...period, subscription_id: entry.subscriptionId, account_id: accountId }));
+          sets.push({
+            account_id: accountId,
+            subscription_id: entry.subscriptionId,
+            through: target.frozen.through,
+            obligations: groupExpectedSubscriptionPeriodsV1(periods),
+            versions: entry.versions.map(version => ({
+              subscription_version: version.subscriptionVersion,
+              configuration: structuredClone(version.configuration),
+            })),
+          });
+        }
+      }
+      return sets;
+    },
+    async listPrincipals(tenantId) {
+      return (await store.listPrincipals(tenantId)).filter(principal => principal.tenantId === tenantId);
     },
     async receiptRoster(tenantId, accountId) {
       const roster: PrincipalStoreScope[] = [];

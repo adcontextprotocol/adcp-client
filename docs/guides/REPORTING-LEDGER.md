@@ -230,6 +230,70 @@ before deployment. It covers source replay, two-account isolation,
 configuration replay/frozen currency, lifecycle start/stop, and Core
 capability truthfulness.
 
+### Principal-level reporting subscriptions (experimental, AdCP 3.3)
+
+With `reportingSubscriptions`, every `runCycle` first writes the subscription
+engine's frozen owed sets into the ledger, then plans account configurations as
+before, and the worker executes both:
+
+```ts
+const service = createReliableReportingService({
+  // ...store, adapters, resolveSource, resolveCurrency, resolveCoverage as above
+  reportingSubscriptions: {
+    engine, // createReportingSubscriptionEngineV1(...)
+    resolvePrincipal: ctx => principalScopeFrom(ctx), // the principal runtime's mapping
+    listSubscriptionPrincipals: async () =>
+      (await Promise.all(tenantIds.map(tenantId => engine.listPrincipals(tenantId)))).flat(),
+    // Seller policy for one (subscription version, resolved offering): the facts a
+    // sync_accounts mapping also supplies to installConfiguration.
+    resolveSubscriptionConfiguration: ({ subscription, offering }) => ({
+      requestedMetrics: metricsFor(offering.report_definition_id),
+      requestedDimensions: dimensionsFor(offering.report_definition_id),
+      sourceSettings: settingsFor(offering.offering_id),
+      // finalityPolicy for an official subscription, canonicalization for billing
+    }),
+  },
+});
+```
+
+- **One generation per (account, owning principal, `subscription_id`,
+  `subscription_version`, resolved `offering_id`).** Its `delivery_config_id`
+  is the `subscription_id` and its `delivery_config_version` the
+  `subscription_version`. Subscription ids are unique per principal, so two
+  principals can both own `analytics-daily` on one account. The generation
+  carries an immutable `subscription` block; account generations keep exactly
+  their previous ids and fingerprints.
+- **Sparse, never grid-filled.** Each obligation is one owed period with its own
+  `media_buy_ids` frozen at its `scope_resolved_at` (the period end) and the
+  host-authorized constituents of exactly those buys from `resolveCoverage`. Its
+  `periodOrdinal` is the period start in whole seconds. The offering is
+  authoritative for timing: `expected_at` is the period end plus its
+  `delivery_sla`, and obligations carry `offering_id`.
+- **Completeness is a horizon.** Only periods the engine has frozen are written,
+  and the generation's mutable `owedSet.through` advances after they are
+  durable. A gap is a period that is not owed, never a continuity error. A scope
+  ending after the horizon reports `scope_closed: false` and keeps
+  `coverage_complete: true`.
+- **Caller isolation.** `get_reporting_status`, `get_media_buy_delivery` and
+  `sync_reporting_status` show a principal the account configurations plus only
+  its own subscription generations. `sync_reporting_status` accepts a status
+  without `reporting_obligation_id` against a subscription only for an existing
+  owed obligation.
+- **Failures are isolated per subscription.** One subscription that cannot be
+  planned never stops another or the account's own configurations; it is passed
+  to `onPlanningError`, or `runCycle` rejects with an `AggregateError` after the
+  rest of the cycle has run.
+
+A custom `ReportingLedgerStore` holds subscription generations only when it
+implements `recordOwedSetProgress` (and should implement
+`findObligationByOrdinal`), keys generations by
+`reportingLedgerSubscriptionKeyV1`, and applies `subscription_principal` to every
+snapshot. For PostgreSQL, reapply `REPORTING_LEDGER_MIGRATION`: it adds
+`adcp_reporting_configurations.subscription_key` (empty for every existing row)
+and replaces the three-column generation constraint with a unique index on
+`(account_id, delivery_config_id, delivery_config_version, subscription_key)`.
+Managed delivery of subscription obligations is not supported yet.
+
 ## Advanced: assemble the primitives directly
 
 ```ts
