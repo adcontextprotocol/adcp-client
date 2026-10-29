@@ -5699,7 +5699,8 @@ function productPageStepResult(
   step: StoryboardStep,
   phaseId: string,
   context: StoryboardContext,
-  page: ProductPageObservation
+  page: ProductPageObservation,
+  schemaVersion: string
 ): StoryboardStepResult {
   const failedSchema = page.schemaFailure;
   return {
@@ -5728,9 +5729,21 @@ function productPageStepResult(
             schema_url: failedSchema.schema_url,
             request: page.request,
             response: page.response,
+            strict: { valid: false, variant: 'sync' },
           },
         ]
-      : [],
+      : page.schema_validated
+        ? [
+            {
+              check: 'response_schema',
+              passed: true,
+              description: `Physical product page ${page.page_index} satisfies the get_products response schema`,
+              schema_id: `/schemas/${schemaVersion}/media-buy/get-products-response.json`,
+              schema_url: `https://adcontextprotocol.org/schemas/${schemaVersion}/media-buy/get-products-response.json`,
+              ...(page.strict_schema_validated && { strict: { valid: true, variant: 'sync' as const } }),
+            },
+          ]
+        : [],
   };
 }
 
@@ -6772,7 +6785,13 @@ async function executeStep(
             signal: options.signal,
           }),
         onPage: async observation => {
-          const physical = productPageStepResult(step, phaseId, context, observation);
+          const physical = productPageStepResult(
+            step,
+            phaseId,
+            context,
+            observation,
+            options.adcpVersion ?? ADCP_VERSION
+          );
           await runState.onCollectedProductPage?.(physical, observation.page_index);
           pagesPassed &&= physical.passed;
           pageValidations.push(...physical.validations);
