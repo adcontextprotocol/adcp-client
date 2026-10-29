@@ -60,7 +60,10 @@ export interface ReportingPeriodCalendarSpecV1 {
 /** Ordered, half-open reporting periods derived from one published schedule. */
 export interface ReportingPeriodCalendarV1 {
   readonly spec: Readonly<ReportingPeriodCalendarSpecV1>;
-  /** Epoch milliseconds of boundary `ordinal`. Boundary 0 is the schedule origin. */
+  /**
+   * Epoch milliseconds of boundary `ordinal`. Boundary 0 is the schedule origin. Sub-daily
+   * local calendars (#8588) have no ordinal addressing and throw; use `ceil`/`next`.
+   */
   boundary(ordinal: number): number;
   /** Smallest ordinal whose boundary is at or after `instant`. */
   ceilOrdinal(instant: number): number;
@@ -70,6 +73,11 @@ export interface ReportingPeriodCalendarV1 {
   ceil(instant: number): number;
   /** Last boundary at or before `instant`, in epoch milliseconds. */
   floor(instant: number): number;
+  /**
+   * First boundary strictly after `instant`. Iterating `next` from a boundary yields every
+   * period exactly once and skips zero-length periods (a repeated boundary).
+   */
+  next(instant: number): number;
   /** Stable identity: two calendars with equal keys produce identical boundaries. */
   readonly key: string;
 }
@@ -162,6 +170,21 @@ function instantForWall(wall: number, timeZone: string): number {
   return fromBefore;
 }
 
+/**
+ * Every instant at which `timeZone` reads `wall`: none inside a DST gap, two inside a fold
+ * (earlier offset first), otherwise one.
+ */
+function instantsForWall(wall: number, timeZone: string): number[] {
+  if (timeZone === 'UTC') return [wall];
+  const offsetBefore = wallTime(wall - DAY_MS, timeZone) - (wall - DAY_MS);
+  const offsetAfter = wallTime(wall + DAY_MS, timeZone) - (wall + DAY_MS);
+  const found = new Set<number>();
+  for (const candidate of [wall - offsetBefore, wall - offsetAfter]) {
+    if (wallTime(candidate, timeZone) === wall) found.add(candidate);
+  }
+  return [...found].sort((left, right) => left - right);
+}
+
 function parseInstant(value: string, field: string): number {
   if (
     typeof value !== 'string' ||
@@ -180,9 +203,22 @@ function parseInstant(value: string, field: string): number {
  */
 export function createReportingPeriodCalendarV1(spec: ReportingPeriodCalendarSpecV1): ReportingPeriodCalendarV1 {
   const duration = parseReportingPeriodDurationV1(spec.period_duration);
+  const hasDate = duration.years !== 0 || duration.months !== 0 || duration.days !== 0;
+  const hasTime = duration.seconds !== 0;
+  if (spec.alignment !== 'utc' && hasDate && hasTime) {
+    // adcontextprotocol/adcp#8588: under a local alignment a duration cannot mix date and
+    // time components.
+    throw new TypeError(
+      `Reporting period_duration ${JSON.stringify(spec.period_duration)} mixes date and time components under ${spec.alignment} alignment`
+    );
+  }
+  if (spec.alignment !== 'utc' && !hasDate) {
+    return createSubDailyLocalCalendar(spec, duration.seconds * 1_000);
+  }
   let timeZone: string;
   let originWall: number;
   let anchorKey = '';
+  let anchorInstant: number | undefined;
   switch (spec.alignment) {
     case 'utc':
       timeZone = 'UTC';
@@ -201,6 +237,7 @@ export function createReportingPeriodCalendarV1(spec: ReportingPeriodCalendarSpe
       const anchor = parseInstant(spec.period_anchor, 'period_anchor');
       originWall = wallTime(anchor, timeZone);
       anchorKey = new Date(anchor).toISOString();
+      anchorInstant = anchor;
       break;
     }
     default:
@@ -221,6 +258,9 @@ export function createReportingPeriodCalendarV1(spec: ReportingPeriodCalendarSpe
 
   function boundary(ordinal: number): number {
     if (!Number.isSafeInteger(ordinal)) throw new RangeError('Reporting period ordinal must be a safe integer');
+    // Interval zero is the anchor instant itself, even when it falls in a DST fold whose
+    // wall time would otherwise resolve to the earlier offset.
+    if (ordinal === 0 && anchorInstant !== undefined) return anchorInstant;
     const cached = cache.get(ordinal);
     if (cached !== undefined) return cached;
     let wall = originWall;
@@ -277,6 +317,88 @@ export function createReportingPeriodCalendarV1(spec: ReportingPeriodCalendarSpe
     floorOrdinal,
     ceil: instant => boundary(ceilOrdinal(instant)),
     floor: instant => boundary(floorOrdinal(instant)),
+    next: instant => {
+      let ordinal = floorOrdinal(instant) + 1;
+      let steps = 0;
+      while (boundary(ordinal) <= instant) {
+        ordinal += 1;
+        if (++steps > MAX_CORRECTION_STEPS) throw new RangeError('Reporting period ordinal did not converge');
+      }
+      return boundary(ordinal);
+    },
     key: JSON.stringify([spec.period_duration, spec.alignment, timeZone, anchorKey]),
+  };
+}
+
+/**
+ * Sub-daily periods under a local alignment (adcontextprotocol/adcp#8588): boundaries are the
+ * instants whose local wall-clock time is a whole multiple of the duration after local
+ * midnight, counted afresh each local day. A wall time inside a DST gap yields no boundary;
+ * one inside a fold yields one boundary per offset. The duration must divide 24 hours.
+ */
+function createSubDailyLocalCalendar(spec: ReportingPeriodCalendarSpecV1, stepMs: number): ReportingPeriodCalendarV1 {
+  if (spec.alignment === 'billing_cycle') {
+    assertReportingIanaTimezoneV1(spec.timezone, 'billing_cycle period_timezone');
+  } else {
+    assertReportingIanaTimezoneV1(spec.timezone, `${spec.alignment} timezone`);
+  }
+  if (!(stepMs > 0) || DAY_MS % stepMs !== 0) {
+    throw new TypeError(
+      `Sub-daily period_duration ${JSON.stringify(spec.period_duration)} must divide 24 hours under ${spec.alignment} alignment`
+    );
+  }
+  const timeZone = spec.timezone;
+  const slots = DAY_MS / stepMs;
+  const dayCache = new Map<number, number[]>();
+  /** Boundaries of local day `day` (days since local 1970-01-01), ascending. */
+  function boundariesOfDay(day: number): number[] {
+    const cached = dayCache.get(day);
+    if (cached) return cached;
+    const values: number[] = [];
+    for (let slot = 0; slot < slots; slot += 1) {
+      for (const value of instantsForWall(day * DAY_MS + slot * stepMs, timeZone)) {
+        if (value < MIN_INSTANT || value > MAX_INSTANT) {
+          throw new RangeError('Reporting period boundary is outside the RFC 3339 instant range');
+        }
+        values.push(value);
+      }
+    }
+    values.sort((left, right) => left - right);
+    if (dayCache.size > 512) dayCache.clear();
+    dayCache.set(day, values);
+    return values;
+  }
+  const localDay = (instant: number) => Math.floor(wallTime(instant, timeZone) / DAY_MS);
+  function ceil(instant: number): number {
+    if (!Number.isFinite(instant)) throw new RangeError('Reporting instant must be finite');
+    for (let day = localDay(instant) - 1; day <= localDay(instant) + 2; day += 1) {
+      const found = boundariesOfDay(day).find(value => value >= instant);
+      if (found !== undefined) return found;
+    }
+    throw new RangeError('Reporting period boundary did not converge');
+  }
+  function next(instant: number): number {
+    return ceil(instant + 1);
+  }
+  function floor(instant: number): number {
+    if (!Number.isFinite(instant)) throw new RangeError('Reporting instant must be finite');
+    for (let day = localDay(instant) + 1; day >= localDay(instant) - 2; day -= 1) {
+      const found = [...boundariesOfDay(day)].reverse().find(value => value <= instant);
+      if (found !== undefined) return found;
+    }
+    throw new RangeError('Reporting period boundary did not converge');
+  }
+  const unsupported = (): never => {
+    throw new TypeError('Sub-daily local reporting calendars have no ordinal addressing; use ceil, floor and next');
+  };
+  return {
+    spec: Object.freeze({ ...spec }),
+    boundary: unsupported,
+    ceilOrdinal: unsupported,
+    floorOrdinal: unsupported,
+    ceil,
+    floor,
+    next,
+    key: JSON.stringify([spec.period_duration, spec.alignment, timeZone, 'local-sub-daily']),
   };
 }

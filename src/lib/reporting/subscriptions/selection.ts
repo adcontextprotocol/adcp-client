@@ -19,7 +19,9 @@ import type { ReportingDeliveryOfferingWithDimensionsV1 } from './wire';
 export type ReportingSubscriptionOfferingV1 = ReportingDeliveryOfferingWithDimensionsV1 & {
   /**
    * When the seller began offering it. A resolution that changes because an offering
-   * appears or is withdrawn is a cutover at that instant. Absent: always available.
+   * appears or is withdrawn is a cutover at that instant. Absent: always available. Not on
+   * the wire (a withdrawn offering simply disappears from `reporting_delivery.offerings`), so a
+   * buyer MUST retain offering history to agree with the seller across a resolution change.
    */
   available_from?: string;
   /** When the seller withdrew it. Absent: still available. */

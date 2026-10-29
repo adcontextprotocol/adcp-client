@@ -30,7 +30,7 @@ function comparable(rows) {
 
 describe('expectedSubscriptionPeriods parity table', () => {
   test('the table is non-trivial and every case is uniquely named', () => {
-    assert.ok(table.cases.length >= 40);
+    assert.ok(table.cases.length >= 75);
     assert.equal(new Set(table.cases.map(c => c.name)).size, table.cases.length);
   });
 
@@ -53,6 +53,7 @@ describe('expectedSubscriptionPeriods parity table', () => {
         assert.equal(row.report_definition_id, offerings.get(row.offering_id).report_definition_id);
         assert.equal(row.period_start, iso(instant(row.period_start)), 'emits canonical toISOString form');
       }
+      assert.ok(testCase.expected_obligations, 'every case states its obligations');
       if (testCase.expected_obligations) {
         const grouped = groupExpectedSubscriptionPeriodsV1(actual).map(group => ({
           subscription_version: group.subscription_version,
@@ -84,7 +85,14 @@ describe('expectedSubscriptionPeriods parity table', () => {
     addFormats(ajv);
     for (const dir of ['core', 'enums']) {
       for (const file of fs.readdirSync(path.join(root, dir))) {
-        if (file.endsWith('.json')) ajv.addSchema(JSON.parse(fs.readFileSync(path.join(root, dir, file), 'utf8')));
+        if (!file.endsWith('.json')) continue;
+        const schema = JSON.parse(fs.readFileSync(path.join(root, dir, file), 'utf8'));
+        // The dimension vocabulary is extensible (receivers MUST accept unknown values), as the SDK validates it.
+        if (file === 'reporting-dimension.json') {
+          delete schema.enum;
+          schema.pattern = schema['x-pattern'];
+        }
+        ajv.addSchema(schema);
       }
     }
     const validate = ajv.getSchema(
@@ -216,15 +224,73 @@ describe('createReportingPeriodCalendarV1 (period_generation)', () => {
     ]);
   });
 
-  test('hours are exact elapsed time, not civil time', () => {
+  const walk = (calendar, from, count) => {
+    let at = calendar.ceil(instant(from));
+    const out = [iso(at)];
+    for (let index = 0; index < count; index += 1) {
+      at = calendar.next(at);
+      out.push(iso(at));
+    }
+    return out;
+  };
+
+  test('hours are exact elapsed time under utc', () => {
+    const calendar = createReportingPeriodCalendarV1({ period_duration: 'PT36H', alignment: 'utc' });
+    assert.equal(
+      calendar.next(calendar.ceil(instant('2026-03-07T05:00:00Z'))) - calendar.ceil(instant('2026-03-07T05:00:00Z')),
+      129_600_000
+    );
+  });
+
+  test('sub-daily local periods restart at each local midnight (adcp#8588)', () => {
+    const local = (zone, duration = 'PT1H') =>
+      createReportingPeriodCalendarV1({ period_duration: duration, alignment: 'account_timezone', timezone: zone });
+    assert.deepEqual(walk(local('Asia/Singapore'), '2026-11-03T00:10:00Z', 1), [
+      '2026-11-03T01:00:00.000Z',
+      '2026-11-03T02:00:00.000Z',
+    ]);
+    assert.deepEqual(walk(local('Asia/Kathmandu'), '2026-11-03T00:00:00Z', 1), [
+      '2026-11-03T00:15:00.000Z',
+      '2026-11-03T01:15:00.000Z',
+    ]);
+    const fallBack = walk(local('America/New_York'), '2026-11-01T04:00:00Z', 25);
+    assert.equal(fallBack.at(-1), '2026-11-02T05:00:00.000Z', 'a 25-hour day has 25 hourly periods');
+    const springForward = walk(local('America/New_York'), '2026-03-08T05:00:00Z', 23);
+    assert.equal(springForward.at(-1), '2026-03-09T04:00:00.000Z', 'a 23-hour day has 23 hourly periods');
+    assert.deepEqual(walk(local('America/New_York', 'PT6H'), '2026-03-08T05:00:00Z', 4), [
+      '2026-03-08T05:00:00.000Z',
+      '2026-03-08T10:00:00.000Z',
+      '2026-03-08T16:00:00.000Z',
+      '2026-03-08T22:00:00.000Z',
+      '2026-03-09T04:00:00.000Z',
+    ]);
+    assert.throws(() => local('UTC', 'PT7H'), /must divide 24 hours/);
+    assert.throws(() => local('UTC', 'P1DT1H'), /mixes date and time/);
+    assert.throws(() => local('UTC').boundary(0), /no ordinal addressing/);
+  });
+
+  test('a billing anchor inside a DST fold is interval zero itself', () => {
     const calendar = createReportingPeriodCalendarV1({
-      period_duration: 'PT24H',
-      alignment: 'source_timezone',
+      period_duration: 'P1M',
+      alignment: 'billing_cycle',
       timezone: 'America/New_York',
+      period_anchor: '2026-11-01T06:30:00Z',
     });
-    const first = calendar.ceilOrdinal(instant('2026-03-07T05:00:00Z'));
-    assert.equal(calendar.boundary(first + 1) - calendar.boundary(first), 86_400_000);
-    assert.equal(calendar.boundary(first + 2) - calendar.boundary(first + 1), 86_400_000);
+    assert.equal(iso(calendar.boundary(0)), '2026-11-01T06:30:00.000Z');
+    assert.equal(iso(calendar.ceil(instant('2026-11-01T06:30:00Z'))), '2026-11-01T06:30:00.000Z');
+  });
+
+  test('next skips a zero-length period', () => {
+    const calendar = createReportingPeriodCalendarV1({
+      period_duration: 'P1D',
+      alignment: 'account_timezone',
+      timezone: 'Pacific/Apia',
+    });
+    assert.deepEqual(walk(calendar, '2011-12-29T10:00:00Z', 2), [
+      '2011-12-29T10:00:00.000Z',
+      '2011-12-30T10:00:00.000Z',
+      '2011-12-31T10:00:00.000Z',
+    ]);
   });
 
   test('billing cycles clamp to month end without drifting the anchor day', () => {

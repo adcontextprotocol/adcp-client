@@ -47,6 +47,7 @@ import {
 
 const DAY_MS = 86_400_000;
 const DEFAULT_MAX_PERIODS = 100_000;
+const DEFAULT_MAX_ITERATIONS = 2_000_000;
 
 /** One accepted `subscription_version`, as the buyer recorded it. */
 export interface ReportingSubscriptionVersionRecordV1 {
@@ -91,13 +92,24 @@ export interface ReportingSubscriptionBuyV1 {
   completed_at?: string;
   /** Each package with its product's `reporting_capabilities.reporting_delivery_offering_ids`. */
   packages: ReadonlyArray<{ package_id: string; reporting_delivery_offering_ids: readonly string[] }>;
-  /** Earlier flight values, so an extension or reinstatement never makes an elapsed period owed. */
+  /**
+   * Earlier flight values, so an extension or reinstatement never makes an elapsed period
+   * owed. Not on the wire: `get_media_buys` shows only the current flight, so a buyer MUST
+   * retain them to agree with the seller after a flight change.
+   */
   prior_flights?: readonly ReportingSubscriptionPriorFlightV1[];
 }
 
 /** One grant of reporting authority over the account to the caller. */
 export interface ReportingSubscriptionGrantV1 {
-  /** `authorization.authorized_at` when this grant began. */
+  /**
+   * When this grant began. The wire's `authorization.authorized_at` is the start of the
+   * authorization chain and stays unchanged after a re-grant inside retention
+   * (adcontextprotocol/adcp#8585); a buyer that saw only that value lists the continuation
+   * with it (any value at or before the previous `unauthorized_at`), and the seller's
+   * `gaps[]` then removes what the interruption cost. A later value starts a new chain, or
+   * records the observed re-grant instant inside retention.
+   */
   authorized_at: string;
   /** `accounts_unauthorized[].unauthorized_at` when it ended. Absent: still in force. */
   unauthorized_at?: string;
@@ -151,6 +163,8 @@ export interface ExpectedSubscriptionPeriodsInputV1 {
   now: string;
   /** Fail closed above this many periods. Defaults to 100000. */
   max_periods?: number;
+  /** Fail closed above this many boundaries examined. Defaults to 2000000. */
+  max_iterations?: number;
 }
 
 /** One owed period for one (buy, offering) pair. */
@@ -200,12 +214,17 @@ interface Regime {
   until: number;
   version: ReportingSubscriptionVersionRecordV1;
   offerings: ResolvedOffering[];
+  /** The instant each offering owed from (before its first boundary), set while walking. */
+  handoffs: Map<string, number>;
 }
 
 interface AuthorityChain {
   start: number;
-  /** Revocations followed by a re-grant inside the retention window. */
-  interruptions: Array<{ revokedAt: number; regrantedAt: number }>;
+  /**
+   * Revocations followed by a re-grant inside the retention window. `regrantedAt` is absent
+   * when only the chain-start `authorized_at` was observed; the seller's gaps[] then applies.
+   */
+  interruptions: Array<{ revokedAt: number; regrantedAt?: number }>;
   /** Final revocation, when authority has not returned within retention. */
   end?: number;
 }
@@ -237,6 +256,11 @@ export function expectedSubscriptionPeriods(input: ExpectedSubscriptionPeriodsIn
   const calendars = new Map<string, ReportingPeriodCalendarV1>();
   const result: ExpectedSubscriptionPeriodV1[] = [];
   const seenBuys = new Set<string>();
+  const maxIterations = input.max_iterations ?? DEFAULT_MAX_ITERATIONS;
+  if (!Number.isSafeInteger(maxIterations) || maxIterations < 1) {
+    throw new TypeError('max_iterations must be a positive integer');
+  }
+  let iterations = 0;
 
   for (const buy of input.buys) {
     if (seenBuys.has(buy.media_buy_id)) throw new TypeError('media_buy_id values must be unique');
@@ -255,22 +279,34 @@ export function expectedSubscriptionPeriods(input: ExpectedSubscriptionPeriodsIn
       for (const resolved of regime.offerings) {
         const { calendar, offering } = resolved;
         const handoff = cutoverEnd(regime.from, predecessor ?? null, resolved);
+        regime.handoffs.set(offering.offering_id, handoff);
         // A period starting before the last boundary at or before the earliest flight
         // start ends by then and cannot overlap any flight value, so skip ahead.
-        const lower = Math.max(
-          calendar.ceilOrdinal(Math.max(handoff, confirmedAt)),
-          calendar.floorOrdinal(earliestStart)
-        );
-        for (let ordinal = lower; ; ordinal += 1) {
-          const start = calendar.boundary(ordinal);
-          if (start >= regime.until || start >= latestStop) break;
-          const end = calendar.boundary(ordinal + 1);
+        let start = Math.max(firstOwedBoundary(calendar, handoff, confirmedAt), calendar.floor(earliestStart));
+        while (start < regime.until && start < latestStop) {
+          if (++iterations > maxIterations) {
+            throw new RangeError(`Expected subscription periods exceed the iteration budget (${maxIterations})`);
+          }
+          // next() is strictly later, so a zero-length period (a skipped civil date) is never owed.
+          const end = calendar.next(start);
           if (end > now) break;
-          if (end === start) continue; // a skipped civil date has no period
+          const covering = coveringRemoval(removals, buy.media_buy_id, offering.offering_id, start);
+          if (covering !== undefined) {
+            // Skip the whole removed stretch rather than walking it boundary by boundary.
+            if (!Number.isFinite(covering.until)) break;
+            start = Math.max(end, calendar.ceil(covering.until));
+            continue;
+          }
           const flight = flightAt(flights, end);
-          if (!(start < flight.stop && end > flight.start)) continue;
-          if (!authorized(chains, calendar, start, input.backfill_on_regrant === true)) continue;
-          if (removed(removals, buy.media_buy_id, offering.offering_id, start)) continue;
+          const owed =
+            flight.start < flight.stop && // an empty flight overlaps nothing
+            start < flight.stop &&
+            end > flight.start &&
+            authorized(chains, calendar, start, input.backfill_on_regrant === true);
+          if (!owed) {
+            start = end;
+            continue;
+          }
           result.push({
             subscription_id: input.subscription_id,
             subscription_version: regime.version.subscription_version,
@@ -284,11 +320,24 @@ export function expectedSubscriptionPeriods(input: ExpectedSubscriptionPeriodsIn
           if (result.length > maxPeriods) {
             throw new RangeError(`Expected subscription periods exceed max_periods (${maxPeriods})`);
           }
+          start = end;
         }
       }
     }
   }
   return result.sort(comparePeriods);
+}
+
+/**
+ * The start rule, kept in one place: the first boundary at or after the latest of the
+ * cutover handoff (the version's `accepted_at`, or E after a cutover) and the buy's
+ * `confirmed_at`. The account's `authorized_at` term is applied per authorization chain in
+ * `authorized`; ceil is monotone, so the combination is the first boundary at or after the
+ * latest of the three. Owner decision pending on whether the period containing
+ * `confirmed_at` is owed: if so, the confirmed term becomes `calendar.floor(confirmedAt)`.
+ */
+function firstOwedBoundary(calendar: ReportingPeriodCalendarV1, handoff: number, confirmedAt: number): number {
+  return Math.max(calendar.ceil(handoff), calendar.ceil(confirmedAt));
 }
 
 /** Group owed periods into the obligations that must carry them, with frozen `media_buy_ids`. */
@@ -436,13 +485,17 @@ function authorityChains(
       throw new TypeError('A grant cannot end before it began');
     }
     if (previousEnd === undefined && index > 0) throw new TypeError('Only the last grant may be unrevoked');
-    if (previousEnd !== undefined && authorizedAt < previousEnd) throw new TypeError('Grants must not overlap');
     const current = chains.at(-1);
     if (current !== undefined && previousEnd !== undefined) {
-      if (retentionDays === undefined || !Number.isSafeInteger(retentionDays) || retentionDays < 1) {
+      if (authorizedAt <= previousEnd) {
+        // The wire's authorized_at stays at the chain's first grant after a re-grant inside
+        // retention (adcontextprotocol/adcp#8585), so the buyer does not know the re-grant
+        // instant. The chain continues and the seller's gaps[] says what it removed.
+        current.interruptions.push({ revokedAt: previousEnd });
+        delete current.end;
+      } else if (retentionDays === undefined || !Number.isSafeInteger(retentionDays) || retentionDays < 1) {
         throw new TypeError('status_retention_days is required to evaluate a re-grant');
-      }
-      if (authorizedAt < previousEnd + retentionDays * DAY_MS) {
+      } else if (authorizedAt < previousEnd + retentionDays * DAY_MS) {
         current.interruptions.push({ revokedAt: previousEnd, regrantedAt: authorizedAt });
         delete current.end;
       } else {
@@ -475,6 +528,7 @@ function authorized(
     if (chain.end !== undefined && start >= calendar.floor(chain.end)) return false;
     if (!backfill) {
       for (const gap of chain.interruptions) {
+        if (gap.regrantedAt === undefined) continue;
         if (start >= calendar.floor(gap.revokedAt) && start < calendar.ceil(gap.regrantedAt)) return false;
       }
     }
@@ -565,8 +619,13 @@ function exceptionWindows(coverage: ExpectedSubscriptionPeriodsInputV1['coverage
   return windows;
 }
 
-function removed(windows: readonly ExceptionWindow[], mediaBuyId: string, offeringId: string, start: number): boolean {
-  return windows.some(
+function coveringRemoval(
+  windows: readonly ExceptionWindow[],
+  mediaBuyId: string,
+  offeringId: string,
+  start: number
+): ExceptionWindow | undefined {
+  return windows.find(
     window =>
       (window.mediaBuyId === undefined || window.mediaBuyId === mediaBuyId) &&
       (window.offeringId === undefined || window.offeringId === offeringId) &&
@@ -654,7 +713,7 @@ function buildRegimes(
       previous.until = until;
       continue;
     }
-    regimes.push({ from, until, version: version.record, offerings });
+    regimes.push({ from, until, version: version.record, offerings, handoffs: new Map() });
   }
   return regimes;
 }
@@ -761,8 +820,17 @@ function calendarSpec(
 function cutoverEnd(handoff: number, predecessor: Regime | null, incoming: ResolvedOffering): number {
   if (predecessor === null || predecessor.offerings.length === 0) return handoff;
   const same = predecessor.offerings.find(entry => entry.offering.offering_id === incoming.offering.offering_id);
-  if (same) return same.calendar.ceil(handoff);
-  return Math.max(...predecessor.offerings.map(entry => entry.calendar.ceil(handoff)));
+  const end = same
+    ? same.calendar.ceil(handoff)
+    : Math.max(...predecessor.offerings.map(entry => entry.calendar.ceil(handoff)));
+  // A predecessor that itself only began owing at a later E (two cutovers inside one
+  // period) hands off no earlier than that: its outgoing period still runs to there.
+  const carried = same
+    ? predecessor.handoffs.get(incoming.offering.offering_id)
+    : predecessor.handoffs.size > 0
+      ? Math.max(...predecessor.handoffs.values())
+      : undefined;
+  return carried === undefined ? end : Math.max(end, carried);
 }
 
 function instant(value: unknown, field: string): number {

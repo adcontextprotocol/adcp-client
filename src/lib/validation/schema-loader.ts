@@ -679,9 +679,42 @@ function walkJsonFiles(dir: string): string[] {
 function loadJson(file: string): LoadedSchema {
   if (file.includes(`${path.sep}bundled${path.sep}`)) {
     const bundled = loadBundledSchemaFile(file);
-    if (bundled) return bundled;
+    if (bundled) return openExtensibleReportingDimensions(bundled);
   }
-  return JSON.parse(readFileSync(file, 'utf-8')) as LoadedSchema;
+  return openExtensibleReportingDimensions(JSON.parse(readFileSync(file, 'utf-8')) as LoadedSchema);
+}
+
+const REPORTING_DIMENSION_PATTERN = '^[a-z][a-z0-9_]*$';
+
+/**
+ * `enums/reporting-dimension.json` is an extensible vocabulary: "Receivers MUST accept
+ * unknown values; a selector naming a value the seller does not map matches no offering."
+ * Its JSON Schema `enum` is closed, so validate it against its declared `x-pattern`
+ * instead, wherever a copy is inlined. Other extensible enums are unchanged.
+ */
+function openExtensibleReportingDimensions<T>(schema: T): T {
+  const visit = (node: unknown, key: string | undefined): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item, undefined);
+      return;
+    }
+    if (!node || typeof node !== 'object') return;
+    const record = node as Record<string, unknown>;
+    const id = typeof record.$id === 'string' ? record.$id : '';
+    if (
+      Array.isArray(record.enum) &&
+      (id.endsWith('/enums/reporting-dimension.json') ||
+        record.title === 'Reporting Dimension' ||
+        key?.endsWith('enums/reporting-dimension.json'))
+    ) {
+      delete record.enum;
+      record.type = 'string';
+      record.pattern = typeof record['x-pattern'] === 'string' ? record['x-pattern'] : REPORTING_DIMENSION_PATTERN;
+    }
+    for (const [childKey, child] of Object.entries(record)) visit(child, childKey);
+  };
+  visit(schema, undefined);
+  return schema;
 }
 
 /**
