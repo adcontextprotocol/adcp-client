@@ -27,6 +27,11 @@ import type {
   StoredReportingSubscriptionVersion,
 } from '../../server/principal/reporting-subscriptions';
 import { createReportingPeriodCalendarV1, type ReportingPeriodCalendarV1 } from './calendar';
+import type {
+  ReportingSubscriptionGapV1,
+  ReportingSubscriptionInactiveIntervalV1,
+  ReportingSubscriptionTimezoneCutoverV1,
+} from './wire';
 import {
   expectedSubscriptionPeriods,
   groupExpectedSubscriptionPeriodsV1,
@@ -71,8 +76,8 @@ export interface ReportingSubscriptionCoverageEntryV1 {
   status: 'active' | 'excluded' | 'action_required';
   pending_action?: PendingAction;
   excluded: ReportingSubscriptionExclusionV1[];
-  timezone_cutovers?: Array<{ effective_at: string; timezone: string }>;
-  gaps?: Array<{ from: string; until: string; reason: 'unauthorized' }>;
+  timezone_cutovers?: ReportingSubscriptionTimezoneCutoverV1[];
+  gaps?: ReportingSubscriptionGapV1[];
 }
 
 /** Facts about one account the principal may currently read. */
@@ -143,17 +148,16 @@ interface StoredExclusion extends ReportingSubscriptionExclusionV1 {
 
 interface AccountState {
   operator?: string;
+  /** The account's current timezone. Earlier zones are in each cutover's previous_timezone. */
   timezone?: string;
-  /** Timezone in effect before the first recorded cutover. */
-  initialTimezone?: string;
   sourceTimezone?: string;
   grants: ReportingSubscriptionGrantV1[];
 }
 
 interface SubscriptionAccountState {
   exclusions: StoredExclusion[];
-  gaps: Array<{ from: string; until: string; reason: 'unauthorized' }>;
-  timezoneCutovers: Array<{ effective_at: string; timezone: string }>;
+  gaps: ReportingSubscriptionGapV1[];
+  timezoneCutovers: ReportingSubscriptionTimezoneCutoverV1[];
   /** The subscription covered this account at some point (for accounts_unauthorized). */
   covered: boolean;
 }
@@ -300,21 +304,20 @@ function isAuthorized(account: AccountState | undefined): boolean {
 function versionRecords(history: StoredReportingSubscriptionHistory): ReportingSubscriptionVersionRecordV1[] {
   return history.versions.map((version, index) => {
     const isCurrent = index === history.versions.length - 1;
-    const inactive = history.inactiveIntervals.filter(
-      interval =>
-        Date.parse(interval.from) >= Date.parse(version.acceptedAt) &&
-        (version.supersededAt === undefined || Date.parse(interval.from) < Date.parse(version.supersededAt))
-    );
     return {
       subscription_version: version.subscriptionVersion,
       accepted_at: version.acceptedAt,
       ...(version.supersededAt !== undefined ? { superseded_at: version.supersededAt } : {}),
       ...(isCurrent && history.deactivatedAt !== undefined ? { deactivated_at: history.deactivatedAt } : {}),
-      ...(inactive.length > 0 ? { inactive_intervals: inactive } : {}),
       configuration: { ...version.configuration, active: !(isCurrent && history.deactivatedAt !== undefined) },
       ...(version.destinationMethod ? { destination_method: version.destinationMethod } : {}),
     };
   });
+}
+
+/** Reversed deactivations, as the readback's `inactive_intervals` lists them. */
+function inactiveIntervals(history: StoredReportingSubscriptionHistory): ReportingSubscriptionInactiveIntervalV1[] {
+  return history.inactiveIntervals.map(interval => ({ deactivated_at: interval.from, reactivated_at: interval.until }));
 }
 
 export function createReportingSubscriptionEngineV1(
@@ -372,6 +375,17 @@ export function createReportingSubscriptionEngineV1(
     at: number,
     timezone = account.timezone
   ): ReportingPeriodCalendarV1[] {
+    return [...offeringCalendars(version, account, buys, at, timezone).values()];
+  }
+
+  /** The calendar of each offering an account resolves for a version at `at`, by offering_id. */
+  function offeringCalendars(
+    version: StoredReportingSubscriptionVersion,
+    account: AccountState,
+    buys: readonly ReportingSubscriptionBuyV1[],
+    at: number,
+    timezone = account.timezone
+  ): Map<string, ReportingPeriodCalendarV1> {
     const calendars = new Map<string, ReportingPeriodCalendarV1>();
     for (const buy of buys) {
       for (const pkg of buy.packages) {
@@ -384,11 +398,11 @@ export function createReportingSubscriptionEngineV1(
           at,
         })) {
           const calendar = calendarFor(offeringsById.get(id)!, version, account, timezone);
-          if (calendar) calendars.set(calendar.key, calendar);
+          if (calendar) calendars.set(id, calendar);
         }
       }
     }
-    return [...calendars.values()];
+    return new Map([...calendars].sort(([left], [right]) => compareReportingIdsByteOrderV1(left, right)));
   }
 
   function calendarFor(
@@ -500,7 +514,8 @@ export function createReportingSubscriptionEngineV1(
     accountId: string,
     authorized: boolean,
     at: number,
-    fact?: Partial<ReportingSubscriptionAccountFactV1>
+    fact?: Partial<ReportingSubscriptionAccountFactV1>,
+    observedAt = at
   ) {
     const account = (state.accounts[accountId] ??= { grants: [] });
     if (fact?.operator !== undefined) account.operator = fact.operator;
@@ -508,7 +523,11 @@ export function createReportingSubscriptionEngineV1(
     const last = lastGrant(account);
     if (authorized) {
       if (last && last.unauthorized_at === undefined) return false;
-      const start = last?.unauthorized_at !== undefined ? Math.max(at, Date.parse(last.unauthorized_at)) : at;
+      // authorized_at is the start of the authorization chain (adcontextprotocol/adcp#8585):
+      // a re-grant inside retention leaves it unchanged, so the re-grant instant is when
+      // authority was observed again. A later authorized_at is itself the re-grant.
+      const revokedAt = last?.unauthorized_at !== undefined ? Date.parse(last.unauthorized_at) : undefined;
+      const start = revokedAt === undefined ? at : at > revokedAt ? at : Math.max(observedAt, revokedAt);
       account.grants.push({ authorized_at: iso(start) });
       return true;
     }
@@ -547,10 +566,10 @@ export function createReportingSubscriptionEngineV1(
       notify = false;
       // 1. Authority and account facts.
       for (const [accountId, fact] of facts) {
-        if (applyGrant(current, accountId, true, Date.parse(fact.authorized_at), fact)) notify = true;
+        if (applyGrant(current, accountId, true, Date.parse(fact.authorized_at), fact, nowMs)) notify = true;
         const account = current.accounts[accountId]!;
         if (fact.timezone !== undefined && fact.timezone !== account.timezone) {
-          if (account.timezone !== undefined)
+          if (account.timezone !== undefined) {
             recordTimezoneChange(
               current,
               history,
@@ -560,7 +579,7 @@ export function createReportingSubscriptionEngineV1(
               nowMs,
               buysByAccount.get(accountId) ?? []
             );
-          else account.initialTimezone = fact.timezone;
+          }
           account.timezone = fact.timezone;
         }
       }
@@ -729,7 +748,9 @@ export function createReportingSubscriptionEngineV1(
             target.covered = true;
           }
           // Lost-authority gaps on re-grant inside retention, without backfill.
-          if (!options.backfillOnRegrant) recordRegrantGaps(target, account, calendars);
+          if (!options.backfillOnRegrant) {
+            recordRegrantGaps(target, account, offeringCalendars(version, account, buys, nowMs));
+          }
           if (settleExclusions(target, desired, calendars, nowMs)) notify = true;
         }
       }
@@ -754,22 +775,32 @@ export function createReportingSubscriptionEngineV1(
     for (const entry of history) {
       const version = entry.versions.at(-1)!;
       if (version.configuration.selector.period_timezone !== undefined) continue;
-      const calendars = accountCalendars(version, account, buys, nowMs).filter(
-        calendar => calendar.spec.alignment === 'account_timezone'
+      const calendars = [...offeringCalendars(version, account, buys, nowMs)].filter(
+        ([, calendar]) => calendar.spec.alignment === 'account_timezone'
       );
       if (calendars.length === 0) continue;
       const sub = (state.subscriptions[entry.subscriptionId] ??= { accounts: {}, served: [] });
       const target = (sub.accounts[accountId] ??= { exclusions: [], gaps: [], timezoneCutovers: [], covered: false });
-      target.timezoneCutovers.push({ effective_at: iso(cutoverInstant(calendars, nowMs)), timezone });
+      // E per offering: the end of its last old-timezone period that started before the change.
+      // One account-wide entry when the offerings agree, one per offering_id otherwise.
+      const ends = calendars.map(([offeringId, calendar]) => ({ offeringId, at: calendar.ceil(nowMs) }));
+      const uniform = ends.every(end => end.at === ends[0]!.at);
+      for (const end of uniform ? [ends[0]!] : ends) {
+        target.timezoneCutovers.push({
+          ...(uniform ? {} : { offering_id: end.offeringId }),
+          effective_at: iso(end.at),
+          timezone,
+          previous_timezone: account.timezone!,
+        });
+      }
     }
   }
 
   function recordRegrantGaps(
     target: SubscriptionAccountState,
     account: AccountState,
-    calendars: readonly ReportingPeriodCalendarV1[]
+    calendars: ReadonlyMap<string, ReportingPeriodCalendarV1>
   ) {
-    const calendar = primaryCalendar(calendars);
     for (let index = 1; index < account.grants.length; index += 1) {
       const previous = account.grants[index - 1]!;
       const grant = account.grants[index]!;
@@ -777,12 +808,35 @@ export function createReportingSubscriptionEngineV1(
       const revokedAt = Date.parse(previous.unauthorized_at);
       const regrantedAt = Date.parse(grant.authorized_at);
       if (regrantedAt >= revokedAt + retentionMs) continue; // a fresh start, no gap claimed
-      const from = calendar ? calendar.floor(revokedAt) : revokedAt;
-      const until = calendar ? calendar.ceil(regrantedAt) : regrantedAt;
-      if (until <= from) continue;
-      if (target.gaps.some(gap => Date.parse(gap.from) === from && Date.parse(gap.until) === until)) continue;
-      if (target.gaps.some(gap => Date.parse(gap.from) <= revokedAt && Date.parse(gap.until) >= regrantedAt)) continue;
-      target.gaps.push({ from: iso(from), until: iso(until), reason: 'unauthorized' });
+      // Each offering's own boundaries; one account-wide entry when they agree.
+      const bounds =
+        calendars.size === 0
+          ? [{ offeringId: undefined as string | undefined, from: revokedAt, until: regrantedAt }]
+          : [...calendars].map(([offeringId, calendar]) => ({
+              offeringId: offeringId as string | undefined,
+              from: calendar.floor(revokedAt),
+              until: calendar.ceil(regrantedAt),
+            }));
+      const uniform = bounds.every(bound => bound.from === bounds[0]!.from && bound.until === bounds[0]!.until);
+      for (const bound of uniform ? [{ ...bounds[0]!, offeringId: undefined }] : bounds) {
+        if (bound.until <= bound.from) continue;
+        if (
+          target.gaps.some(
+            gap =>
+              gap.offering_id === bound.offeringId &&
+              Date.parse(gap.from) <= bound.from &&
+              Date.parse(gap.until) >= bound.until
+          )
+        ) {
+          continue;
+        }
+        target.gaps.push({
+          ...(bound.offeringId !== undefined ? { offering_id: bound.offeringId } : {}),
+          from: iso(bound.from),
+          until: iso(bound.until),
+          reason: 'unauthorized',
+        });
+      }
     }
   }
 
@@ -874,14 +928,13 @@ export function createReportingSubscriptionEngineV1(
       account: {
         account_id: accountId,
         ...(account.operator !== undefined ? { operator: account.operator } : {}),
-        ...((cutovers.length > 0 ? account.initialTimezone : account.timezone) !== undefined
-          ? { timezone: (cutovers.length > 0 ? account.initialTimezone : account.timezone)! }
-          : {}),
+        ...(account.timezone !== undefined ? { timezone: account.timezone } : {}),
         ...(account.sourceTimezone !== undefined ? { source_timezone: account.sourceTimezone } : {}),
         grants: account.grants,
       },
       buys,
       offerings: [...offeringsById.values()],
+      ...(entry.inactiveIntervals.length > 0 ? { inactive_intervals: inactiveIntervals(entry) } : {}),
       coverage: {
         excluded: (target?.exclusions ?? []).map(stripExclusion) as never,
         ...(target?.gaps.length ? { gaps: target.gaps } : {}),

@@ -16,7 +16,12 @@ const { validateResponse } = require('../../dist/lib/validation/schema-validator
 const { principalOptionOffTranscript } = require('../helpers/principal-option-off-transcript.js');
 
 const SCOPE = { tenantId: 't', principalId: 'p' };
-const CTX = { callerMutationScope: { tenant_id: 't', principal_id: 'p', principal_kind: 'buyer_agent' } };
+// Served at the release the SDK pins, so every response is valid against its schemas.
+const CTX = {
+  callerMutationScope: { tenant_id: 't', principal_id: 'p', principal_kind: 'buyer_agent' },
+  servedAdcpVersion: '3.3.0-beta.1',
+};
+const CTX_UNPINNED = { callerMutationScope: CTX.callerMutationScope };
 
 function assertSchemaValid(toolName, response) {
   const outcome = validateResponse(toolName, response, '3.3.0-beta.1');
@@ -212,6 +217,13 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
     assert.deepEqual(history[0].inactiveIntervals, [
       { from: '2026-11-04T12:00:00.000Z', until: '2026-11-06T12:00:00.000Z' },
     ]);
+    // The readback lists inactive_intervals (adcontextprotocol/adcp#8585) to callers served a
+    // release that defines it; 3.3.0-beta.1's closed state schema does not.
+    const unpinned = await lifecycle.protocol.getPrincipal({}, CTX_UNPINNED);
+    assert.deepEqual(unpinned.result.configuration.reporting_subscriptions[0].inactive_intervals, [
+      { deactivated_at: '2026-11-04T12:00:00.000Z', reactivated_at: '2026-11-06T12:00:00.000Z' },
+    ]);
+    assert.equal(on.result.configuration.reporting_subscriptions[0].inactive_intervals, undefined);
 
     time.now = new Date('2026-11-08T00:00:00.000Z');
     const omitted = await sync(lifecycle, { reporting_subscriptions: [] });
@@ -219,6 +231,11 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
     assert.equal(retained.state, 'inactive', 'omission deactivates but keeps the subscription readable');
     assert.equal(retained.deactivated_at, '2026-11-08T00:00:00.000Z');
     assertSchemaValid('sync_principal', omitted);
+    const closed = await lifecycle.protocol.getPrincipal({}, CTX_UNPINNED);
+    assert.deepEqual(closed.result.configuration.reporting_subscriptions[0].inactive_intervals, [
+      { deactivated_at: '2026-11-04T12:00:00.000Z', reactivated_at: '2026-11-06T12:00:00.000Z' },
+      { deactivated_at: '2026-11-08T00:00:00.000Z' },
+    ]);
   });
 
   test('validates the cross-field rules of reporting-subscription.json', async () => {

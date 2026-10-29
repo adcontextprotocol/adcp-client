@@ -93,6 +93,7 @@ import {
   isMovingAdcpPrereleaseFamilyAlias,
   resolveAdcpVersion,
 } from '../utils/adcp-version-config';
+import { servesSettledReportingSubscriptionFieldsV1 } from '../reporting/subscriptions/wire';
 import { ConfigurationError } from '../errors';
 import {
   getValidator,
@@ -9854,6 +9855,19 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             section => section !== 'reporting_subscriptions'
           );
           if (principalBlock.supported_sections.length === 0) delete (data.adcp as { principal?: unknown }).principal;
+        }
+      }
+      const reportingOfferings = (data.media_buy?.reporting_delivery as { offerings?: unknown[] } | undefined)
+        ?.offerings;
+      if (
+        Array.isArray(reportingOfferings) &&
+        !servesSettledReportingSubscriptionFieldsV1(release.validationVersion, isAdcpVersionAtLeast)
+      ) {
+        // standard_dimensions and unmapped_dimensions arrive after 3.3.0-beta.1, whose
+        // offering schema is closed (adcontextprotocol/adcp#8585).
+        for (const offering of reportingOfferings as Array<Record<string, unknown>>) {
+          delete offering.standard_dimensions;
+          delete offering.unmapped_dimensions;
         }
       }
       if (selected !== undefined && selected.major === 3 && selected.minor < 3) {

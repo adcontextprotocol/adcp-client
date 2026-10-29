@@ -10,6 +10,8 @@ import { canonicalJsonSha256 } from '../../utils/jcs';
 import type { ReportingSubscription, ReportingSubscriptionState } from '../../types/core.generated';
 import { assertReportingIanaTimezoneV1, parseReportingPeriodDurationV1 } from '../../reporting/subscriptions/calendar';
 import type { ReportingSubscriptionDestinationMethodV1 } from '../../reporting/subscriptions/selection';
+import { servesSettledReportingSubscriptionFieldsV1 } from '../../reporting/subscriptions/wire';
+import { isAdcpVersionAtLeast } from '../../utils/adcp-version-config';
 import type { PrincipalReportingDestination } from './types';
 
 export type { ReportingSubscription, ReportingSubscriptionState };
@@ -375,6 +377,28 @@ function pickInPlace(subscription: ReportingSubscription): Partial<ReportingSubs
  * Readback for one subscription. `accounts_with_exceptions` and `accounts_unauthorized`
  * are carried from the previous readback; the coverage engine maintains them.
  */
+/**
+ * Remove readback fields a release before the settled one does not define (its
+ * `reporting-subscription-state.json` is closed). Applied per response, by served release.
+ */
+export function reportingSubscriptionStatesForRelease<T extends { reporting_subscriptions?: unknown }>(
+  configuration: T,
+  servedAdcpVersion: string | undefined
+): T {
+  if (
+    !Array.isArray(configuration.reporting_subscriptions) ||
+    servesSettledReportingSubscriptionFieldsV1(servedAdcpVersion, isAdcpVersionAtLeast)
+  ) {
+    return configuration;
+  }
+  return {
+    ...configuration,
+    reporting_subscriptions: (configuration.reporting_subscriptions as Array<Record<string, unknown>>).map(
+      ({ inactive_intervals: _intervals, ...state }) => state
+    ),
+  };
+}
+
 export function projectReportingSubscriptionState(
   history: StoredReportingSubscriptionHistory,
   destinations: readonly PrincipalReportingDestination[],
@@ -413,6 +437,11 @@ export function projectReportingSubscriptionState(
   }
   const state: ReportingSubscriptionState['state'] =
     history.deactivatedAt !== undefined ? 'inactive' : issues.length > 0 ? 'action_required' : 'active';
+  // Oldest first; the open interval while inactive has no reactivated_at. Bounded at 64.
+  const intervals = [
+    ...history.inactiveIntervals.map(interval => ({ deactivated_at: interval.from, reactivated_at: interval.until })),
+    ...(history.deactivatedAt !== undefined ? [{ deactivated_at: history.deactivatedAt }] : []),
+  ].slice(-64);
   const prior = history.versions
     .slice(0, -1)
     .reverse()
@@ -428,6 +457,7 @@ export function projectReportingSubscriptionState(
     accepted_at: current.acceptedAt,
     ...(prior.length > 0 ? { prior_versions: prior } : {}),
     ...(history.deactivatedAt !== undefined ? { deactivated_at: history.deactivatedAt } : {}),
+    ...(intervals.length > 0 ? { inactive_intervals: intervals } : {}),
     ...(destination ? { destination_ref: destination.destination_ref } : {}),
     configuration,
     ...(issues.length > 0 ? { issues: issues.slice(0, 16) } : {}),

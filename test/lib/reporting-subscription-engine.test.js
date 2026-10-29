@@ -35,7 +35,7 @@ function offering(id, dimensions) {
     schedule: { period_duration: 'P1D', alignment: 'utc', delivery_sla: 'PT6H' },
     supported_finality: ['official'],
     reconciliation_mode: 'delivery_only',
-    dimensions,
+    standard_dimensions: dimensions,
   };
 }
 const OFFERINGS = [
@@ -44,6 +44,11 @@ const OFFERINGS = [
   offering('off_c_pkg_country', ['package', 'country']),
 ];
 const ALL_IDS = OFFERINGS.map(item => item.offering_id);
+const ACCOUNT_TZ_OFFERING = {
+  ...offering('off_z_pkg_acct_tz', ['package']),
+  schedule: { period_duration: 'P1D', alignment: 'account_timezone', delivery_sla: 'PT6H' },
+};
+OFFERINGS.push(ACCOUNT_TZ_OFFERING);
 
 function subscription(extra = {}) {
   return {
@@ -99,7 +104,7 @@ function world({ maxAccounts, backfillOnRegrant = false } = {}) {
   });
 
   // Buyer-side records.
-  const buyer = { sent: new Map(), grants: new Map() };
+  const buyer = { sent: new Map(), grants: new Map(), timezones: new Map() };
   let key = 0;
   async function sync(subscriptions) {
     key += 1;
@@ -128,15 +133,28 @@ function world({ maxAccounts, backfillOnRegrant = false } = {}) {
   }
   /** The buyer observes list_accounts and get_principal after each step. */
   async function observe() {
+    // authorized_at is the start of the authorization chain (adcontextprotocol/adcp#8585): a
+    // re-grant inside retention leaves it unchanged and continues the chain, and the seller's
+    // gaps[] then says which periods the interruption removed. A different authorized_at is a
+    // new chain.
     for (const account of host.accounts.values()) {
+      buyer.timezones.set(account.account_id, account.timezone);
       const grants = buyer.grants.get(account.account_id) ?? [];
       const last = grants.at(-1);
-      if (!last || last.unauthorized_at !== undefined) grants.push({ authorized_at: account.authorized_at });
+      const chainStart = grants.filter(grant => grant.chain).at(-1)?.authorized_at;
+      if (!last) grants.push({ authorized_at: account.authorized_at, chain: true });
+      else if (last.unauthorized_at !== undefined) {
+        if (account.authorized_at === chainStart) delete last.unauthorized_at;
+        else grants.push({ authorized_at: account.authorized_at, chain: true });
+      }
       buyer.grants.set(account.account_id, grants);
     }
-    const read = await lifecycle.protocol.getPrincipal({}, CTX);
-    const outcome = validateResponse('get_principal', read, '3.3.0-beta.1');
+    // Served at 3.3.0-beta.1 the readback omits fields that release does not define and is
+    // schema-valid; read without a served release, it carries them all.
+    const served = await lifecycle.protocol.getPrincipal({}, { ...CTX, servedAdcpVersion: '3.3.0-beta.1' });
+    const outcome = validateResponse('get_principal', served, '3.3.0-beta.1');
     assert.equal(outcome.valid, true, JSON.stringify(outcome.issues));
+    const read = await lifecycle.protocol.getPrincipal({}, CTX);
     for (const state of read.result.configuration.reporting_subscriptions ?? []) {
       for (const lost of state.accounts_unauthorized ?? []) {
         const grants = buyer.grants.get(lost.account_id) ?? [];
@@ -175,7 +193,12 @@ function world({ maxAccounts, backfillOnRegrant = false } = {}) {
     return expectedSubscriptionPeriods({
       subscription_id: subscriptionId,
       versions,
-      account: { account_id: accountId, timezone: 'America/New_York', grants: buyer.grants.get(accountId) ?? [] },
+      ...(state.inactive_intervals ? { inactive_intervals: state.inactive_intervals } : {}),
+      account: {
+        account_id: accountId,
+        timezone: buyer.timezones.get(accountId) ?? 'America/New_York',
+        grants: (buyer.grants.get(accountId) ?? []).map(({ chain: _chain, ...grant }) => grant),
+      },
       buys: host.buys.get(accountId) ?? [],
       offerings: OFFERINGS,
       ...(coverage ? { coverage } : {}),
@@ -315,7 +338,8 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
       assert.equal(await w.engine.acceptsReceipt(SCOPE, 'acct_1', { readAt: '2026-11-05T06:00:00.000Z' }), false);
       assert.ok(w.emitted.some(event => event.payload.reason === 'reporting_subscription_changed'));
 
-      w.grant('acct_1', '2026-11-06T18:00:00.000Z');
+      // The host keeps reporting the chain's authorized_at; the engine stamps the re-grant.
+      w.grant('acct_1', '2026-10-01T00:00:00.000Z');
       const regranted = await w.step('2026-11-06T18:00:00.000Z');
       assert.equal(regranted.result.configuration.reporting_subscriptions[0].accounts_unauthorized, undefined);
       const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
@@ -476,6 +500,62 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     const owed = await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z');
     assert.deepEqual([...new Set(owed.map(item => item.media_buy_id))], ['mb_1', 'mb_mixed']);
     assert.equal((await w.engine.subscriptionCoverage(SCOPE, 'acct_x'))[0].status, 'excluded');
+  });
+
+  test('reactivation is a fresh start the buyer recomputes from inactive_intervals', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [buy('mb_1')]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    w.clock.now = new Date('2026-11-04T12:00:00.000Z');
+    await w.sync([subscription({ active: false })]);
+    w.clock.now = new Date('2026-11-06T12:00:00.000Z');
+    await w.sync([subscription()]);
+    const read = await w.step('2026-11-06T12:00:00.000Z');
+    assert.deepEqual(read.result.configuration.reporting_subscriptions[0].inactive_intervals, [
+      { deactivated_at: '2026-11-04T12:00:00.000Z', reactivated_at: '2026-11-06T12:00:00.000Z' },
+    ]);
+    const owed = await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z');
+    assert.deepEqual(
+      starts(owed).map(item => item.slice(-10)),
+      ['2026-11-03', '2026-11-04', '2026-11-07', '2026-11-08', '2026-11-09']
+    );
+  });
+
+  test('an account timezone change publishes previous_timezone and the buyer agrees', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [
+      buy('mb_1', {
+        start_time: '2026-11-03T05:00:00Z',
+        end_time: '2026-11-08T08:00:00Z',
+        packages: [{ package_id: 'pkg_1', reporting_delivery_offering_ids: ['off_z_pkg_acct_tz'] }],
+      }),
+    ]);
+    await w.sync([subscription({ selector: { ...subscription().selector, alignment: 'account_timezone' } })]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z', { timezone: 'America/Los_Angeles' });
+    await w.step('2026-11-04T12:00:00.000Z');
+    const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+    assert.deepEqual(coverage[0].timezone_cutovers, [
+      {
+        effective_at: '2026-11-05T05:00:00.000Z',
+        timezone: 'America/Los_Angeles',
+        previous_timezone: 'America/New_York',
+      },
+    ]);
+    const owed = await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z');
+    assert.deepEqual(
+      owed.map(row => row.period_start),
+      [
+        '2026-11-03T05:00:00.000Z',
+        '2026-11-04T05:00:00.000Z',
+        '2026-11-05T08:00:00.000Z',
+        '2026-11-06T08:00:00.000Z',
+        '2026-11-07T08:00:00.000Z',
+      ]
+    );
   });
 
   test('an unfinished account roster fails closed instead of reading as revocations', async () => {

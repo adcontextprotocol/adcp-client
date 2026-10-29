@@ -356,6 +356,11 @@ import type { ReportingSubscriptionEngineV1 } from '../subscriptions/engine';
 import type { PrincipalStoreScope } from '../../server/principal/types';
 import { reportingConfigurationCapabilitiesV1 } from '../subscriptions/capabilities';
 import { isAdcpVersionAtLeast } from '../../utils/adcp-version-config';
+import {
+  servesSettledReportingSubscriptionFieldsV1,
+  withoutSettledCoverageFieldsV1,
+  type ReportingDeliveryOfferingWithDimensionsV1,
+} from '../subscriptions/wire';
 
 export const REPORTING_MANAGED_DELIVERY_COMPOSITION_V1: unique symbol = Symbol.for(
   '@adcp/sdk/reporting/managed-delivery-composition'
@@ -554,6 +559,16 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     }
     if (typeof subscriptionOptions.resolvePrincipal !== 'function') {
       throw new TypeError('reportingSubscriptions requires resolvePrincipal');
+    }
+    // Sellers advertising subscriptions MUST publish standard_dimensions on every offering
+    // (adcontextprotocol/adcp#8585), so buyers resolve match from the wire as the engine does.
+    for (const offering of deliveryOfferings as ReportingDeliveryOfferingWithDimensionsV1[]) {
+      if (!Array.isArray(offering.standard_dimensions)) {
+        throw new TypeError(
+          `Reporting offering ${JSON.stringify(offering.offering_id)} must publish standard_dimensions when ` +
+            'reporting subscriptions are advertised'
+        );
+      }
     }
   }
   // Without subscriptions this is exactly the pre-3.3 shape.
@@ -858,7 +873,10 @@ async function withSubscriptionCoverage<TCtxMeta>(
   const accountId = (context.account as { id?: unknown } | undefined)?.id;
   if (typeof accountId !== 'string') return response;
   const principal = await subscriptions.resolvePrincipal(context);
-  const coverage = await subscriptions.engine.subscriptionCoverage(principal, accountId);
+  const settled = servesSettledReportingSubscriptionFieldsV1(served, isAdcpVersionAtLeast);
+  const coverage = (await subscriptions.engine.subscriptionCoverage(principal, accountId)).map(entry =>
+    settled ? entry : withoutSettledCoverageFieldsV1(entry as unknown as Record<string, unknown>)
+  );
   if (coverage.length === 0) return response;
   return { ...body, subscription_coverage: coverage } as unknown as typeof response;
 }

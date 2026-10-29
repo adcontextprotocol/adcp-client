@@ -618,9 +618,19 @@ describe('ReliableReportingService', () => {
         listAccountBuys: () => [],
       },
     });
+    const subscriptionOptions = { engine, resolvePrincipal: () => ({ tenantId: 't', principalId: 'p' }) };
+    assert.throws(
+      () => serviceFixture({ reportingSubscriptions: subscriptionOptions }),
+      /standard_dimensions/,
+      'sellers advertising subscriptions publish standard_dimensions on every offering'
+    );
+    const reportingAdapter = adapter();
+    reportingAdapter.deliveryOffering.standard_dimensions = ['package'];
     const { service } = serviceFixture({
-      reportingSubscriptions: { engine, resolvePrincipal: () => ({ tenantId: 't', principalId: 'p' }) },
+      adapters: { fixture: reportingAdapter },
+      reportingSubscriptions: subscriptionOptions,
     });
+    assert.deepEqual(service.capabilities.offerings[0].standard_dimensions, ['package']);
     assert.deepEqual(service.capabilities.configuration_tasks, ['sync_principal', 'sync_accounts']);
     assert.equal(service.capabilities.configuration_task, 'sync_accounts');
     assert.deepEqual(service.capabilities.subscriptions, {
@@ -672,7 +682,12 @@ describe('ReliableReportingService', () => {
       'notification_configs',
       'reporting_subscriptions',
     ]);
-    assert.deepEqual(result.structuredContent.media_buy.reporting_delivery, service.capabilities);
+    // standard_dimensions is defined after 3.3.0-beta.1, whose offering schema is closed.
+    const { offerings: advertised, ...rest } = structuredClone(service.capabilities);
+    assert.deepEqual(result.structuredContent.media_buy.reporting_delivery, {
+      ...rest,
+      offerings: advertised.map(({ standard_dimensions: _dimensions, ...offering }) => offering),
+    });
 
     // Callers pinned to 3.2 see neither the 3.3 registration fields nor the 3.3 section.
     const legacy = createAdcpServerFromPlatform(platform, {

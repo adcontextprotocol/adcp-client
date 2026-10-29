@@ -25,3 +25,12 @@ Versioning follows the spec: a version changes only for semantic changes; each v
 It publishes `accounts_with_exceptions` and `accounts_unauthorized`, with `last_owed_period_end` and `withheld_period_count`. It serves `subscription_coverage[]`, `owedPeriods`/`owedObligations` (computed with the same `expectedSubscriptionPeriods` rule buyers run), the receipt roster, and the post-loss receipt window (`acceptsReceipt`).
 
 **Service and capabilities.** `createReliableReportingService({ reportingSubscriptions: { engine, resolvePrincipal } })` advertises `configuration_tasks` and the `subscriptions` block and adds `subscription_coverage[]` to summary and periods views. `createAdcpServerFromPlatform` passes `capabilities.principal` through as `adcp.principal`, adds `protocol.principal` and `media_buy.reporting_subscriptions` to `experimental_features`, and refuses to construct when subscriptions are advertised without the `reporting_subscriptions` section. Callers pinned below 3.3 see neither the 3.3 registration fields nor that section. `createAdcpServer` accepts `capabilities.principal`.
+
+Conforms to adcontextprotocol/adcp#8585:
+
+- The readback lists `inactive_intervals`.
+- The engine publishes per-offering `gaps[]` and `timezone_cutovers[]`, with `previous_timezone`, when offerings' boundaries differ.
+- A host's `authorized_at` is the start of the authorization chain, so a re-grant inside retention is stamped when authority is observed again.
+- `createReliableReportingService({ reportingSubscriptions })` requires `standard_dimensions` on every offering.
+
+Responses served at 3.3.0-beta.1 omit the fields that release's closed schemas don't define (`standard_dimensions`, `unmapped_dimensions`, `inactive_intervals`, `previous_timezone`, per-offering `offering_id`). They are emitted to callers served 3.3.0-beta.2 or later.

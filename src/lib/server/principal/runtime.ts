@@ -26,6 +26,7 @@ import {
   ReportingSubscriptionValidationError,
   applyReportingSubscriptions,
   projectReportingSubscriptionState,
+  reportingSubscriptionStatesForRelease,
   type ApplyReportingSubscriptionsResult,
   type StoredReportingSubscriptionHistory,
 } from './reporting-subscriptions';
@@ -194,6 +195,10 @@ export function createPrincipalLifecycle<TAccount = unknown>(
     params: GetPrincipalRequest,
     ctx: HandlerContext<TAccount>
   ): Promise<ServerPayload<GetPrincipalResponse>> {
+    return forRelease(await readPrincipal(ctx), ctx.servedAdcpVersion);
+  }
+
+  async function readPrincipal(ctx: HandlerContext<TAccount>): Promise<ServerPayload<GetPrincipalResponse>> {
     const resolved = await resolve(ctx);
     const scope = storeScope(resolved);
     const current = await options.store.get(scope);
@@ -227,7 +232,7 @@ export function createPrincipalLifecycle<TAccount = unknown>(
     ctx: HandlerContext<TAccount>
   ): Promise<ServerPayload<SyncPrincipalResponse>> {
     const resolved = await resolve(ctx);
-    return syncConfiguration(resolved, params);
+    return forRelease(await syncConfiguration(resolved, params), ctx.servedAdcpVersion);
   }
 
   async function syncConfiguration(
@@ -1071,6 +1076,19 @@ function reprojectStoredSubscriptions(record: StoredPrincipalRecord): boolean {
   );
   configuration.reporting_subscriptions = next;
   return moved;
+}
+
+/** Project a principal response onto the fields the served release defines. */
+function forRelease<T>(response: T, servedAdcpVersion: string | undefined): T {
+  const result = (response as { result?: { configuration?: { reporting_subscriptions?: unknown } } }).result;
+  if (!result?.configuration?.reporting_subscriptions) return response;
+  return {
+    ...response,
+    result: {
+      ...result,
+      configuration: reportingSubscriptionStatesForRelease(result.configuration, servedAdcpVersion),
+    },
+  } as T;
 }
 
 function storeScope(resolved: Readonly<ResolvedPrincipalScope>): PrincipalStoreScope {
