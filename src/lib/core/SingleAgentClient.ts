@@ -199,6 +199,7 @@ import {
   ConfigurationError,
   FeatureUnsupportedError,
   ProtocolFeatureUnsupportedError,
+  RequestValidationError,
   TaskTimeoutError,
   VersionUnsupportedError,
   is401Error,
@@ -1279,6 +1280,35 @@ const STANDARD_ADCP_TASK_NAMES = new Set<string>([
 ]);
 
 const PRINCIPAL_IDENTITY_INPUT_FIELDS = ['buyer_agent_url', 'agent_url', 'principal_id', 'connection_id'] as const;
+
+/**
+ * Endpoint discovery runs before the task request is sent, so mark its
+ * failures `dispatched: false`. Aborts and timeouts are left as they are: the
+ * caller owns the abort reason, and the object may be shared.
+ */
+async function discoverBeforeDispatch<T>(discovery: Promise<T>, signal?: AbortSignal): Promise<T> {
+  try {
+    return await discovery;
+  } catch (error) {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      !signal?.aborted &&
+      !isAbortOrTimeoutError(error) &&
+      !Object.prototype.hasOwnProperty.call(error, 'dispatched') &&
+      Object.isExtensible(error)
+    ) {
+      Object.defineProperty(error, 'dispatched', { value: false, enumerable: true, configurable: true });
+    }
+    throw error;
+  }
+}
+
+/** RFC 6901 pointer for a Zod issue path, `/` for the root as elsewhere in the SDK. */
+function zodPathToPointer(path: readonly PropertyKey[]): string {
+  if (path.length === 0) return '/';
+  return '/' + path.map(segment => String(segment).replace(/~/g, '~0').replace(/\//g, '~1')).join('/');
+}
 
 function assertNoPrincipalIdentityInput(taskType: string, params: unknown): void {
   if (
@@ -5878,7 +5908,7 @@ export class SingleAgentClient {
       throwIfAborted(options?.signal);
     }
 
-    const agent = await this.ensureEndpointDiscovered(options);
+    const agent = await discoverBeforeDispatch(this.ensureEndpointDiscovered(options), options?.signal);
     throwIfAborted(options?.signal);
 
     // Schema-driven pre-send validation runs on the unadapted v3 shape so
@@ -9926,7 +9956,7 @@ export class SingleAgentClient {
     options: TaskOptions
   ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
     const scopeKey = this.config._reuseConfiguredDiscovery?.() ? this.getCapabilityEvidenceScope().scopeKey : undefined;
-    const agent = await this.ensureEndpointDiscovered(options);
+    const agent = await discoverBeforeDispatch(this.ensureEndpointDiscovered(options), options.signal);
     this.executor.validateRequest('get_adcp_capabilities', params);
     const result = await this.executor.executeTask<GetAdCPCapabilitiesResponse>(
       agent,
@@ -10758,7 +10788,7 @@ export class SingleAgentClient {
       if (this.config.requireV3ForMutations && requestUsesIdempotency(taskName, normalizedParams)) {
         await this.requireSupportedMajor(taskName, options);
       }
-      const agent = await this.ensureEndpointDiscovered(options);
+      const agent = await discoverBeforeDispatch(this.ensureEndpointDiscovered(options), options?.signal);
 
       // Schema-driven pre-send validation runs on the unadapted v3 shape so
       // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
@@ -13465,7 +13495,14 @@ export class SingleAgentClient {
     const result = schema.safeParse(params);
     if (!result.success) {
       const issues = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
-      throw new Error(`Request validation failed for ${taskType}: ${issues}`);
+      // Typed so callers can tell a local refusal from an agent failure
+      // without matching this message, which is kept verbatim for those that do.
+      throw new RequestValidationError(
+        taskType,
+        result.error.issues.map(i => zodPathToPointer(i.path)),
+        `${taskType}: ${issues}`,
+        `Request validation failed for ${taskType}: ${issues}`
+      );
     }
   }
 

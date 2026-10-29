@@ -242,10 +242,61 @@ export class ValidationError extends ADCPError {
   constructor(
     public readonly field: string,
     public readonly value: unknown,
-    public readonly constraint: string
+    public readonly constraint: string,
+    /** Replaces the default `Validation failed for field …` message when given. */
+    message?: string
   ) {
-    super(`Validation failed for field '${field}': ${constraint}`);
+    super(message ?? `Validation failed for field '${field}': ${constraint}`);
     this.details = { field, value, constraint };
+  }
+}
+
+/**
+ * Whether an error marks a request the client refused before sending it.
+ *
+ * Errors raised before dispatch carry `dispatched: false`: the task's request
+ * never left this process, so the agent cannot have acted on it. This checks
+ * the property, not the class, so it also works when the error crosses a
+ * bundle boundary where `instanceof` fails.
+ *
+ * Endpoint discovery runs before dispatch, and its probe can reach the agent.
+ * So `dispatched: false` means this request changed nothing on the agent. It
+ * does not mean the agent is healthy.
+ */
+export function isPreDispatchError(error: unknown): error is Error & { readonly dispatched: false } {
+  return typeof error === 'object' && error !== null && (error as { dispatched?: unknown }).dispatched === false;
+}
+
+/**
+ * Error thrown when the client rejects a request against the request schema
+ * before sending it. `dispatched` is always `false`.
+ *
+ * Carries the task name and the invalid field paths as JSON Pointers (`/` for
+ * the root), never the submitted values. The message is the validator's
+ * existing text, so callers that match on it keep working. To classify the
+ * error without `instanceof`, check `code === 'VALIDATION_ERROR'` and
+ * `dispatched === false`.
+ *
+ * Extends {@link ValidationError} (exported from the package root as
+ * `ADCPValidationError`), so existing `instanceof` checks still match. `field`
+ * is the first invalid path and `value` is always `undefined`.
+ */
+export class RequestValidationError extends ValidationError {
+  /** The request was refused before it was sent. */
+  readonly dispatched = false as const;
+
+  /** JSON Pointers to the invalid fields, without their values. */
+  readonly fields: readonly string[];
+
+  constructor(
+    /** The task whose request was refused, e.g. `sync_creatives`. */
+    public readonly task: string,
+    fields: readonly string[],
+    constraint: string,
+    message?: string
+  ) {
+    super(fields[0] ?? '/', undefined, constraint, message);
+    this.fields = Object.freeze([...new Set(fields)]);
   }
 }
 
@@ -653,6 +704,8 @@ export function mapSdkErrorCodeToProtocolErrorCode(code: string): string | undef
  */
 export class FeatureUnsupportedError extends ADCPError {
   readonly code: string = 'FEATURE_UNSUPPORTED';
+  /** Thrown by the client's feature and version gates; the request was not sent. */
+  readonly dispatched = false as const;
 
   constructor(
     public readonly unsupportedFeatures: string[],
@@ -955,6 +1008,8 @@ export type VersionUnsupportedReason = 'version' | 'idempotency' | 'synthetic';
  */
 export class VersionUnsupportedError extends ADCPError {
   readonly code = 'VERSION_UNSUPPORTED';
+  /** Thrown by the client's version check; the request was not sent. */
+  readonly dispatched = false as const;
 
   constructor(
     public readonly taskType: string,

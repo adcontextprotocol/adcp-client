@@ -5,7 +5,7 @@
  */
 
 import { validateRequest, validateResponse, formatIssues, type ValidationOutcome } from './schema-validator';
-import { buildValidationError } from './schema-errors';
+import { buildRequestValidationError } from './schema-errors';
 
 export type ValidationMode = 'strict' | 'warn' | 'off';
 
@@ -58,7 +58,7 @@ function logWarning(debugLogs: DebugLogEntry[] | undefined, taskName: string, ou
  * Run request validation per the configured mode.
  * - `off`: no-op (true).
  * - `warn`: log to debug + continue (true).
- * - `strict`: throw `ValidationError` with JSON Pointer to the first bad field.
+ * - `strict`: throw `RequestValidationError` (a `ValidationError` with `dispatched: false`) with JSON Pointers to the bad fields.
  *
  * `version` selects which AdCP version's schema bundle to validate against;
  * defaults to the SDK-pinned `ADCP_VERSION`. Pass the per-instance value from
@@ -78,7 +78,7 @@ export function validateOutgoingRequest(
     logWarning(debugLogs, taskName, outcome);
     return outcome;
   }
-  throw buildValidationError(taskName, 'request', outcome.issues);
+  throw buildRequestValidationError(taskName, outcome.issues);
 }
 
 /**

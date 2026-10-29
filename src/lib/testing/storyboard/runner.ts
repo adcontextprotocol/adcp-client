@@ -94,7 +94,7 @@ import {
   withPropertyListCredentialRedaction,
 } from './property-list-reference';
 import { ResponseSchemaValidationError } from '../../utils/response-unwrapper';
-import { PreparedFixturesDeniedError } from '../../errors';
+import { PreparedFixturesDeniedError, isPreDispatchError } from '../../errors';
 import { injectLegacyEnvelopeStatus, normalizeLegacyMediaBuyStatusForReturn } from '../../utils/envelope-status-compat';
 import { queryUpstreamTraffic, type UpstreamTrafficSuccess } from '../test-controller';
 import { IDENTIFIER_DIGEST_LIMIT } from '../../upstream-recorder/constants';
@@ -9535,9 +9535,15 @@ async function executeStep(
   // seller response that storyboard validations can grade.
   const unstructuredStepError = taskResult?.error ?? (taskResult === undefined ? stepResult.error : undefined);
   if (step.expect_error && !taskResult?.data && unstructuredStepError) {
+    // Classify by the structural marker the SDK sets on a local schema
+    // refusal. The message match stays for clients that predate the marker
+    // and for paths that flatten the error into a TaskResult string.
     const localSchemaRejection =
       step.negative_path !== 'payload_well_formed' &&
-      /^(?:Request validation failed for\b|Validation failed for field\b)/.test(unstructuredStepError);
+      ((taskResult === undefined &&
+        isPreDispatchError(caughtError) &&
+        (caughtError as { code?: unknown }).code === 'VALIDATION_ERROR') ||
+        /^(?:Request validation failed for\b|Validation failed for field\b)/.test(unstructuredStepError));
     if (localSchemaRejection) {
       // The standard runner path disables request validation above, but an
       // injected/older client may ignore the internal bypass and still reject

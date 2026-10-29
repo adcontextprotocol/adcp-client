@@ -13,7 +13,7 @@ function validateIdentity33Payload(
     require('../identity-3.3/validation') as typeof import('../identity-3.3/validation')
   ).validateIdentity33Payload(...args);
 }
-import { buildValidationError } from '../validation/schema-errors';
+import { buildRequestValidationError } from '../validation/schema-errors';
 // Core task execution engine for ADCP conversation flow
 // Implements PR #78 async patterns: working/submitted/input-required/completed
 
@@ -1239,7 +1239,7 @@ export class TaskExecutor {
     if (this.config.experimentalIdentity33?.() && this.requestValidationMode !== 'off') {
       const outcome = validateIdentity33Payload(taskName, 'request', params, this.config.adcpVersion);
       if (!outcome.valid) {
-        if (this.requestValidationMode === 'strict') throw buildValidationError(taskName, 'request', outcome.issues);
+        if (this.requestValidationMode === 'strict') throw buildRequestValidationError(taskName, outcome.issues);
         if (debugLogs)
           this.logDebug(debugLogs, 'warning', `Request validation failed for ${taskName}`, { issues: outcome.issues });
       }
