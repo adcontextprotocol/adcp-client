@@ -62,7 +62,10 @@ test('multiple accepted currencies are alternatives and empty matches remain val
     request: { payload: { filters: { pricing_currencies: ['USD', 'EUR'] } } },
   });
   assert.equal(failures(invariant.onStep(context, multiple)).length, 0);
-  assert.deepEqual(check([]), []);
+  const empty = check([]);
+  assert.equal(failures(empty).length, 0);
+  assert.equal(empty[0].status, 'not_applicable');
+  assert.match(empty[0].description, /positive media-pricing coverage is unproven/);
 });
 
 test('optional, removable defaults, and unselected fixed options do not gate media currency', () => {
@@ -306,18 +309,23 @@ test('the default invariant gates real storyboard results without authored curre
       },
     ],
   };
-  for (const price of [cpm('USD'), cpm('EUR')]) {
+  for (const price of [cpm('USD'), cpm('EUR'), undefined]) {
     const result = await runStoryboard('https://seller.example/mcp', storyboard, {
       agentTools: ['get_products'],
       _profile: { tools: ['get_products'] },
       _client: {
         resetContext() {},
         async getProducts() {
-          return { success: true, data: { products: [mandatory([signal([price])])] } };
+          return { success: true, data: { products: price ? [mandatory([signal([price])])] : [] } };
         },
       },
     });
-    assert.equal(result.overall_passed, price.currency === 'USD', JSON.stringify(result.assertions));
+    assert.equal(result.overall_passed, price?.currency !== 'EUR', JSON.stringify(result.assertions));
     assert.ok(result.assertions.some(finding => finding.assertion_id === invariant.id));
+    if (price === undefined) {
+      assert.ok(
+        result.assertions.some(finding => finding.assertion_id === invariant.id && finding.status === 'not_applicable')
+      );
+    }
   }
 });
