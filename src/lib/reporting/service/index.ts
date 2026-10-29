@@ -355,6 +355,7 @@ export type ReliableReportingMaintenanceFactoryV1 = (
 import type { ReportingSubscriptionEngineV1 } from '../subscriptions/engine';
 import type { PrincipalStoreScope } from '../../server/principal/types';
 import { reportingConfigurationCapabilitiesV1 } from '../subscriptions/capabilities';
+import { isAdcpVersionAtLeast } from '../../utils/adcp-version-config';
 
 export const REPORTING_MANAGED_DELIVERY_COMPOSITION_V1: unique symbol = Symbol.for(
   '@adcp/sdk/reporting/managed-delivery-composition'
@@ -851,6 +852,9 @@ async function withSubscriptionCoverage<TCtxMeta>(
 ) {
   const body = response as unknown as Record<string, unknown>;
   if (body.status !== 'completed' || (body.view !== 'summary' && body.view !== 'periods')) return response;
+  // subscription_coverage is a 3.3 field; earlier response shapes are closed.
+  const served = (context as { servedAdcpVersion?: string }).servedAdcpVersion;
+  if (served !== undefined && !isAdcpVersionAtLeast(served, '3.3.0-beta.1')) return response;
   const accountId = (context.account as { id?: unknown } | undefined)?.id;
   if (typeof accountId !== 'string') return response;
   const principal = await subscriptions.resolvePrincipal(context);

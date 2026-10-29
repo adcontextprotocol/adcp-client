@@ -4,7 +4,10 @@ const assert = require('node:assert/strict');
 process.env.NODE_ENV = 'test';
 
 const { createTestPrincipalLifecycle } = require('../helpers/principal-runtime.js');
-const { createReportingSubscriptionEngineV1 } = require('../../dist/lib/reporting/service/index.js');
+const {
+  createInMemoryReportingSubscriptionEngineStoreV1,
+  createReportingSubscriptionEngineV1,
+} = require('../../dist/lib/reporting/service/index.js');
 const { expectedSubscriptionPeriods } = require('../../dist/lib/reporting/consumer/index.js');
 const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
 
@@ -80,9 +83,11 @@ function world({ maxAccounts, backfillOnRegrant = false } = {}) {
   const clock = { now: new Date('2026-11-01T12:00:00.000Z') };
   const { lifecycle, emitted } = createTestPrincipalLifecycle({ clock, reportingSubscriptions: {} });
   const host = { accounts: new Map(), buys: new Map(), configs: new Map() };
+  const engineStore = createInMemoryReportingSubscriptionEngineStoreV1();
   const engine = createReportingSubscriptionEngineV1({
     principal: lifecycle,
     offerings: OFFERINGS,
+    store: engineStore,
     statusRetentionDays: 30,
     ...(maxAccounts !== undefined ? { maxAccounts } : {}),
     backfillOnRegrant,
@@ -188,7 +193,21 @@ function world({ maxAccounts, backfillOnRegrant = false } = {}) {
     assert.deepEqual(seller, expected, `seller and buyer disagree for ${accountId} at ${now}`);
     return expected;
   }
-  return { clock, lifecycle, engine, host, sync, grant, revoke, step, observe, buyerExpected, assertAgree, emitted };
+  return {
+    clock,
+    lifecycle,
+    engine,
+    engineStore,
+    host,
+    sync,
+    grant,
+    revoke,
+    step,
+    observe,
+    buyerExpected,
+    assertAgree,
+    emitted,
+  };
 }
 
 const starts = rows =>
@@ -458,6 +477,29 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     const owed = await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z');
     assert.deepEqual([...new Set(owed.map(item => item.media_buy_id))], ['mb_1', 'mb_mixed']);
     assert.equal((await w.engine.subscriptionCoverage(SCOPE, 'acct_x'))[0].status, 'excluded');
+  });
+
+  test('an unfinished account roster fails closed instead of reading as revocations', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [buy('mb_1')]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    const before = await w.engine.inspect(SCOPE);
+    let page = 0;
+    const endless = createReportingSubscriptionEngineV1({
+      principal: w.lifecycle,
+      offerings: OFFERINGS,
+      statusRetentionDays: 30,
+      now: () => w.clock.now,
+      store: w.engineStore,
+      hooks: {
+        listAuthorizedAccounts: () => ({ accounts: [], nextCursor: `page-${++page}` }),
+        listAccountBuys: () => [],
+      },
+    });
+    await assert.rejects(endless.reconcile(SCOPE), /partial roster/);
+    assert.deepEqual(await w.engine.inspect(SCOPE), before, 'no account was marked unauthorized');
   });
 
   test('a pending account action is an account-level action_required exception', async () => {

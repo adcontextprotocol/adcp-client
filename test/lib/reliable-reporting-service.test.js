@@ -611,7 +611,12 @@ describe('ReliableReportingService', () => {
       offerings: [],
       statusRetentionDays: redactedReportingSourceOfferingV1.retentionDays,
       maxAccounts: 100,
-      hooks: { listAuthorizedAccounts: () => ({ accounts: [] }), listAccountBuys: () => [] },
+      hooks: {
+        listAuthorizedAccounts: () => ({
+          accounts: [{ account_id: 'account-a', authorized_at: '2026-10-01T00:00:00.000Z' }],
+        }),
+        listAccountBuys: () => [],
+      },
     });
     const { service } = serviceFixture({
       reportingSubscriptions: { engine, resolvePrincipal: () => ({ tenantId: 't', principalId: 'p' }) },
@@ -689,6 +694,56 @@ describe('ReliableReportingService', () => {
       false
     );
     assert.deepEqual(legacyResult.structuredContent.adcp.principal.supported_sections, ['notification_configs']);
+
+    // Below 3.2 neither the principal block nor its feature id is advertised.
+    const pinned31 = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: { adcp_version: '3.1' } },
+    });
+    assert.notEqual(pinned31.isError, true, JSON.stringify(pinned31.structuredContent));
+    assert.equal(pinned31.structuredContent.adcp.principal, undefined);
+    assert.equal(pinned31.structuredContent.experimental_features?.includes('protocol.principal') ?? false, false);
+
+    // subscription_coverage reaches 3.3 callers only; 3.2 response shapes are closed.
+    const subscribed = await lifecycle.protocol.syncPrincipal(
+      {
+        idempotency_key: 'subscription-coverage-0001',
+        configuration: {
+          reporting_subscriptions: [
+            {
+              subscription_id: 'analytics-daily',
+              subscription_version: 1,
+              active: true,
+              scope: { all_authorized_accounts: true },
+              selector: { feed_purpose: 'analytics', period_duration: 'P1D', required_finality: 'official' },
+              reconciliation_mode: 'delivery_only',
+            },
+          ],
+        },
+      },
+      { callerMutationScope: { tenant_id: 't', principal_id: 'p', principal_kind: 'buyer_agent' } }
+    );
+    assert.equal(subscribed.result.kind, 'applied', JSON.stringify(subscribed));
+    await engine.reconcile({ tenantId: 't', principalId: 'p' });
+    const statusFor = async target =>
+      target.dispatchTestRequest(
+        {
+          method: 'tools/call',
+          params: {
+            name: 'get_reporting_status',
+            arguments: { account: { account_id: 'account-a' }, view: 'summary' },
+          },
+        },
+        { authInfo: { clientId: 'buyer-a' } }
+      );
+    const current = await statusFor(server);
+    assert.notEqual(current.isError, true, JSON.stringify(current.structuredContent));
+    assert.deepEqual(current.structuredContent.subscription_coverage, [
+      { subscription_id: 'analytics-daily', subscription_version: 1, status: 'active', excluded: [] },
+    ]);
+    const older = await statusFor(legacy);
+    assert.notEqual(older.isError, true, JSON.stringify(older.structuredContent));
+    assert.equal(older.structuredContent.subscription_coverage, undefined);
   });
 
   test('derives Core-only capabilities and installs native server handlers', async () => {

@@ -9841,7 +9841,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const principalBlock = (data.adcp as { principal?: { supported_sections?: string[] } }).principal;
       if (principalBlock && selected !== undefined) {
         if (selected.major === 3 && selected.minor < 2) {
+          // adcp.principal and its protocol.principal feature id are 3.2 surfaces.
           delete (data.adcp as { principal?: unknown }).principal;
+          if (data.experimental_features) {
+            data.experimental_features = (data.experimental_features as string[]).filter(
+              feature => feature !== 'protocol.principal'
+            ) as typeof data.experimental_features;
+          }
         } else if (selected.major === 3 && selected.minor === 2 && principalBlock.supported_sections) {
           // reporting_subscriptions is a 3.3 section.
           principalBlock.supported_sections = principalBlock.supported_sections.filter(

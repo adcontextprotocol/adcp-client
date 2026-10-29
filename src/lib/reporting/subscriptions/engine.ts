@@ -45,6 +45,7 @@ import {
 
 type MaybePromise<T> = T | Promise<T>;
 const DAY_MS = 86_400_000;
+const MAX_AUTHORIZED_ACCOUNT_PAGES = 10_000;
 
 export type ReportingSubscriptionExclusionReasonV1 =
   | 'offering_unsupported'
@@ -477,18 +478,21 @@ export function createReportingSubscriptionEngineV1(
   async function readFacts(principal: Readonly<PrincipalStoreScope>, signal?: AbortSignal) {
     const accounts = new Map<string, ReportingSubscriptionAccountFactV1>();
     let cursor: string | undefined;
-    for (let page = 0; page < 10_000; page += 1) {
+    // A partial roster would read as revocations, so every incomplete walk fails closed.
+    for (let page = 0; page < MAX_AUTHORIZED_ACCOUNT_PAGES; page += 1) {
       signal?.throwIfAborted();
       const result = await options.hooks.listAuthorizedAccounts(principal, {
         ...(cursor !== undefined ? { cursor } : {}),
         ...(signal ? { signal } : {}),
       });
       for (const account of result.accounts) accounts.set(account.account_id, account);
-      if (result.nextCursor === undefined) break;
+      if (result.nextCursor === undefined) return accounts;
       if (result.nextCursor === cursor) throw new Error('listAuthorizedAccounts returned a repeating cursor');
       cursor = result.nextCursor;
     }
-    return accounts;
+    throw new Error(
+      `listAuthorizedAccounts did not finish within ${MAX_AUTHORIZED_ACCOUNT_PAGES} pages; refusing a partial roster`
+    );
   }
 
   function applyGrant(
