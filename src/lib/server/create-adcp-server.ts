@@ -370,6 +370,9 @@ import type {
   GetRightsRequestSchema,
   AcquireRightsRequestSchema,
   UpdateRightsRequestSchema,
+  ReportMediaBuyIssueRequestSchema,
+  GetMediaBuyIssueRequestSchema,
+  RequestAccountRequestSchema,
 } from '../types/schemas.generated';
 import { AccountReferenceSchema } from '../types/schemas.generated';
 
@@ -424,6 +427,9 @@ import type {
   ActivateSignalSuccess,
   ActivateSignalResponse,
   ListAccountChangesResponse,
+  ReportMediaBuyIssueResponse,
+  GetMediaBuyIssueResponse,
+  RequestAccountResponse,
   GetAdCPCapabilitiesResponse,
   CreatePropertyListResponse,
   UpdatePropertyListResponse,
@@ -711,6 +717,21 @@ export function requireSessionKey<TAccount = unknown>(ctx: HandlerContext<TAccou
  * builder only fires on the Success arm.
  */
 export interface AdcpToolMap {
+  report_media_buy_issue: {
+    params: z.input<typeof ReportMediaBuyIssueRequestSchema>;
+    result: ServerPayload<ReportMediaBuyIssueResponse>;
+    response: ReportMediaBuyIssueResponse;
+  };
+  get_media_buy_issue: {
+    params: z.input<typeof GetMediaBuyIssueRequestSchema>;
+    result: ServerPayload<GetMediaBuyIssueResponse>;
+    response: GetMediaBuyIssueResponse;
+  };
+  request_account: {
+    params: z.input<typeof RequestAccountRequestSchema>;
+    result: ServerPayload<RequestAccountResponse>;
+    response: RequestAccountResponse;
+  };
   list_collections: {
     params: z.input<typeof ListCollectionsRequestSchema>;
     result: ServerPayload<ListCollectionsResponse>;
@@ -1155,6 +1176,13 @@ export interface MediaBuyHandlers<TAccount = unknown> {
   updateMediaBuy?: DomainHandler<'update_media_buy', TAccount>;
   getMediaBuys?: DomainHandler<'get_media_buys', TAccount>;
   getMediaBuyDelivery?: DomainHandler<'get_media_buy_delivery', TAccount>;
+  /**
+   * AdCP 3.3 `report_media_buy_issue`. Advertise `media_buy.issue_reporting`
+   * (which requires idempotency support) in capabilities when registered.
+   */
+  reportMediaBuyIssue?: DomainHandler<'report_media_buy_issue', TAccount>;
+  /** AdCP 3.3 `get_media_buy_issue`. */
+  getMediaBuyIssue?: DomainHandler<'get_media_buy_issue', TAccount>;
   getReportingStatus?: DomainHandler<'get_reporting_status', TAccount>;
   /**
    * Partial-success batch handler. Custom handlers must validate each status
@@ -1263,6 +1291,12 @@ export interface AccountHandlers<TAccount = unknown> {
   syncGovernance?: DomainHandler<'sync_governance', TAccount>;
   getAccountFinancials?: DomainHandler<'get_account_financials', TAccount>;
   reportUsage?: DomainHandler<'report_usage', TAccount>;
+  /**
+   * AdCP 3.3 experimental `request_account` (`account.requests`): open or
+   * change an account through the request lifecycle. Sellers registering it
+   * advertise `account.requests` in capabilities and `experimental_features`.
+   */
+  requestAccount?: DomainHandler<'request_account', TAccount>;
 }
 
 export interface SponsoredIntelligenceHandlers<TAccount = unknown> {
@@ -1691,6 +1725,9 @@ export const MEDIA_BUY_MCP_TOOL_PROFILE = [
   'sync_reporting_status',
   'sync_reporting_receipts',
   'list_proposals',
+  'report_media_buy_issue',
+  'get_media_buy_issue',
+  'request_account',
 ] as const;
 
 export type AdcpMcpToolProfile = 'auto' | 'media-buy' | 'all';
@@ -3464,6 +3501,8 @@ const TOOL_META: Record<string, ToolMeta> = {
   update_media_buy: { wrap: updateMediaBuyResponse, annotations: MUT },
   get_media_buys: { wrap: getMediaBuysResponse, annotations: RO },
   get_media_buy_delivery: { wrap: deliveryResponse, annotations: RO },
+  report_media_buy_issue: { wrap: null, annotations: IDEMP },
+  get_media_buy_issue: { wrap: null, annotations: RO },
   get_reporting_status: { wrap: null, annotations: RO },
   sync_reporting_status: { wrap: null, annotations: IDEMP },
   sync_reporting_receipts: { wrap: null, annotations: IDEMP },
@@ -3495,6 +3534,7 @@ const TOOL_META: Record<string, ToolMeta> = {
   sync_accounts: { wrap: syncAccountsResponse, annotations: IDEMP },
   sync_governance: { wrap: syncGovernanceResponse, annotations: IDEMP },
   get_account_financials: { wrap: null, annotations: RO },
+  request_account: { wrap: null, annotations: IDEMP },
   report_usage: { wrap: reportUsageResponse, annotations: MUT },
 
   // Event Tracking
@@ -3758,6 +3798,8 @@ const MEDIA_BUY_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'updateMediaBuy', toolName: 'update_media_buy' },
   { handlerKey: 'getMediaBuys', toolName: 'get_media_buys' },
   { handlerKey: 'getMediaBuyDelivery', toolName: 'get_media_buy_delivery' },
+  { handlerKey: 'reportMediaBuyIssue', toolName: 'report_media_buy_issue' },
+  { handlerKey: 'getMediaBuyIssue', toolName: 'get_media_buy_issue' },
   { handlerKey: 'getReportingStatus', toolName: 'get_reporting_status' },
   { handlerKey: 'syncReportingStatus', toolName: 'sync_reporting_status' },
   { handlerKey: 'syncReportingReceipts', toolName: 'sync_reporting_receipts' },
@@ -3834,6 +3876,7 @@ const ACCOUNT_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'syncGovernance', toolName: 'sync_governance' },
   { handlerKey: 'getAccountFinancials', toolName: 'get_account_financials' },
   { handlerKey: 'reportUsage', toolName: 'report_usage' },
+  { handlerKey: 'requestAccount', toolName: 'request_account' },
 ];
 
 const SI_ENTRIES: HandlerEntry[] = [

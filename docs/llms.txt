@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-10-28
+> Generated at: 2026-10-29
 > Library: @adcp/sdk v17.0.0-beta.4
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -11,7 +11,7 @@
 
 AdCP is an open protocol for AI agents to buy, manage, and optimize advertising programmatically. It defines MCP tools that agents call on publisher ad servers — discover inventory, create media buys, sync creatives, manage brand safety, and track delivery. Every tool follows request/response JSON schemas; the TypeScript client wraps them with async task handling, conversation context, and governance middleware.
 
-## Start here: AdCP 3.3.0-beta.0
+## Start here: AdCP 3.3.0-beta.1
 
 The SDK requires Node.js `^20.19.0 || >=22.12.0`. Install this reference's release train with `npm install @adcp/sdk@beta`; use the documentation from the exact published SDK version you install. For reproducible CLI runs, pin that exact SDK version. After installation, `node -p "require('@adcp/sdk').ADCP_VERSION"` reports its protocol pin; `ls node_modules/@adcp/sdk/compliance/cache` lists its packaged compliance versions. The `adcp-3.2` npm tag selects the maintained SDK 16 line. SDK 17 previews use `beta` and are intended for development and staging.
 
@@ -303,7 +303,7 @@ Request parameters for cross-protocol capability discovery.
 
 **Response (success branch):**
 - Required: `adcp: object`, `supported_protocols: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative' | 'brand' | 'measurement')[]`
-- Optional: `account: object`, `media_buy: object`, `signals: object`, `governance: object`, `sponsored_intelligence: object`, `brand: object`, `creative: object`, `oauth: object`, +15 more
+- Optional: `business_calendars: Business Calendar[]`, `account: object`, `media_buy: object`, `signals: object`, `governance: object`, `sponsored_intelligence: object`, `brand: object`, `creative: object`, +16 more
 
 #### `get_task_status`
 
@@ -382,11 +382,23 @@ Request parameters for reading the durable account change feed.
 Request parameters for listing accounts accessible to the authenticated agent.
 
 **Request:**
-- Optional: `account: Account Ref`, `status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed'`, `pagination: Pagination Request`, `sandbox: boolean`, `include_webhook_activity: boolean`, `webhook_activity_limit: integer`, `context: Context`
+- Optional: `account: Account Ref`, `status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed'`, `pagination: Pagination Request`, `sandbox: boolean`, `include_requests: boolean`, `request_ids: string[]`, `requests_pagination: Pagination Request`, `include_webhook_activity: boolean`, +2 more
 
 **Response (success branch):**
 - Required: `accounts: Account With Authorization[]`
-- Optional: `errors: Error[]`, `pagination: Pagination Response`, `context: Context`
+- Optional: `errors: Error[]`, `account_requests: Account Request Record[]`, `account_requests_pagination: Pagination Response`, `pagination: Pagination Response`, `context: Context`
+
+#### `request_account`
+
+Experimental: request parameters for asking a seller to find or create an advertiser account.
+
+**Request:**
+- Required: `idempotency_key: string`
+- Optional: `adcp_version: string`, `account_id: string`, `request_id: string`, `revision: integer`, `brand: Brand Key`, `operator: string`, `operator_unit: Operator Unit`, `currency: string`, +6 more
+
+**Response (success branch):**
+- Required: `request: Account Request Record`, `status: 'completed'`
+- Optional: `errors: Error[]`, `context: Context`
 
 #### `sync_accounts`
 
@@ -447,10 +459,10 @@ AdCP 3.
 
 **Request:**
 - Required: `buying_mode: 'brief' | 'wholesale' | 'refine'`
-- Optional: `idempotency_key: string`, `brief: string`, `refine: object[]`, `brand: Brand Ref`, `acceptance_context: Acceptance Context`, `catalog: Catalog`, `account: Account Ref`, `preferred_delivery_types: Delivery Type[]`, +15 more
+- Optional: `idempotency_key: string`, `brief: string`, `refine: object[]`, `brand: Brand Ref`, `acceptance_context: Acceptance Context`, `catalog: Catalog`, `account: Account Ref`, `preferred_delivery_types: Delivery Type[]`, +16 more
 
 **Response (success branch):**
-- Optional: `products: Product[]`, `collections: Response Collection[]`, `targeting_resolution: Get Products Targeting Resolution`, `extensions: object`, `proposals: Proposal[]`, `errors: Error[]`, `reason: string`, `suggestions: string[]`, +12 more
+- Optional: `products: Product[]`, `collections: Response Collection[]`, `targeting_resolution: Get Products Targeting Resolution`, `extensions: object`, `proposals: Proposal[]`, `errors: Error[]`, `reason: string`, `suggestions: string[]`, +13 more
 
 **Watch out:**
 - `cache_scope` is required whenever the response includes `products` or `unchanged: true`. Use `public` for the universal rate card and `account` for account-specific rate cards or pricing overlays.
@@ -632,7 +644,7 @@ Request parameters for reconciling managed reporting obligations, revisions, and
 
 **Response (success branch):**
 - Required: `status: 'completed'`
-- Optional: `view: 'summary' | 'periods' | 'revision'`, `ledger_snapshot_id: string`, `ledger_as_of: string`, `changes_checkpoint: string`, `account_id: string`, `scope: object`, `health: Reporting Health`, `coverage: Reporting Coverage`, +15 more
+- Optional: `view: 'summary' | 'periods' | 'revision'`, `ledger_snapshot_id: string`, `ledger_as_of: string`, `changes_checkpoint: string`, `account_id: string`, `scope: object`, `health: Reporting Health`, `coverage: Reporting Coverage`, +16 more
 
 #### `sync_reporting_status`
 
@@ -661,6 +673,30 @@ Submit authenticated consumer reconciliation receipts for durable reporting mate
 **Response (success branch):**
 - Required: `status: 'completed'`, `results: union[]`
 - Optional: `context: Context`
+
+#### `report_media_buy_issue`
+
+Raise a seller-action report against an authorized media buy, optionally scoped to a package or creative.
+
+**Request:**
+- Required: `account: Canonical Account Ref`, `media_buy_id: string`, `idempotency_key: string`, `severity: 'critical' | 'warning'`, `category: 'malicious_creative' | 'wrong_creative' | 'brand_safety' | 'tracking' | 'delivery' | 'other'`, `description: string`
+- Optional: `adcp_version: string`, `context: Context`, `package_id: string`, `creative_id: string`, `governance_context: string`, `push_notification_config: Push Notification Config`
+
+**Response (success branch):**
+- Required: `outcome: 'recorded'`, `issue: Media Buy Issue`
+- Optional: `context: Context`, `replayed: boolean`
+
+#### `get_media_buy_issue`
+
+Read the latest seller-owned state of one issue within an authorized account and media buy.
+
+**Request:**
+- Required: `account: Canonical Account Ref`, `media_buy_id: string`, `issue_id: string`
+- Optional: `adcp_version: string`, `context: Context`, `governance_context: string`, `push_notification_config: Push Notification Config`, `idempotency_key: string`
+
+**Response (success branch):**
+- Required: `outcome: 'found'`, `issue: Media Buy Issue`
+- Optional: `context: Context`, `replayed: boolean`
 
 #### `provide_performance_feedback`
 
@@ -848,7 +884,7 @@ Request parameters for discovering signals based on description.
 - Optional: `discovery_mode: 'brief' | 'wholesale'`, `account: Account Ref`, `signal_spec: string`, `signal_refs: Signal Ref[]`, `signal_ids: Signal Id[]`, `destinations: Destination[]`, `countries: string[]`, `filters: Signal Filters`, +7 more
 
 **Response (success branch):**
-- Optional: `signals: Signal Listing[]`, `errors: Error[]`, `incomplete: object[]`, `wholesale_feed_version: string`, `pricing_version: string`, `cache_scope: 'public' | 'account'`, `unchanged: 'true'`, `pagination: Pagination Response`, +2 more
+- Optional: `signals: Signal Listing[]`, `signal_pricing_group_rules: Signal Pricing Group Rule[]`, `errors: Error[]`, `incomplete: object[]`, `wholesale_feed_version: string`, `pricing_version: string`, `cache_scope: 'public' | 'account'`, `unchanged: 'true'`, +3 more
 
 #### `activate_signal`
 
@@ -1357,10 +1393,10 @@ Flow: `get_adcp_capabilities → get_products`
 **Shared-account change feed convergence** — Bootstraps a shared account, forces a connected-platform creative change, observes account.change_recorded, drains list_account_changes, and repairs through list_creatives.
 Flow: `sync_accounts → list_account_changes → comply_test_controller → expect_webhook → list_account_changes → list_creatives → comply_test_controller → expect_webhook → list_account_changes → list_creatives → list_account_changes → comply_test_controller → list_account_changes → list_creatives → list_account_changes`
 
-**Buyer-selected account timezone resolution** — Verifies advertised timezone reconciliation, cold-start reconnect, and separate account identities when a buyer selects another timezone.
-Flow: `get_adcp_capabilities → sync_accounts → list_accounts → sync_accounts → list_accounts → get_adcp_capabilities → sync_accounts → list_accounts`
+**Buyer-selected account timezone resolution** — Verifies advertised timezone selection, cold-start lookup through list_accounts, and a separate account when a buyer selects another timezone.
+Flow: `get_adcp_capabilities → sync_accounts → list_accounts → get_adcp_capabilities → sync_accounts → list_accounts`
 
-**Seller-assigned account timezone discovery** — Verifies that buyers omit timezone input and discover the seller-assigned immutable value from account readback.
+**Seller-assigned account timezone discovery** — Verifies that buyers omit timezone input and discover the seller-assigned account value from account readback.
 Flow: `get_adcp_capabilities → sync_accounts → list_accounts`
 
 **Seller-fixed account timezone resolution** — Verifies that seller-fixed account capabilities declare one timezone and every account write and read echoes it.
@@ -1405,8 +1441,17 @@ Flow: `get_media_buys → control_media_buy → get_media_buys → control_media
 **Seller fulfills a media buy with a clicks optimization goal (target CPC)** — Verifies that a seller advertising clicks in supported_optimization_metrics can accept a media buy whose metric-kind optimization_goal targets cost-per-click and reports clicks + cost_per_click on delivery. Lightweight sibling to the performance scenarios on the click-optimization side: sellers that don't advertise clicks as an optimization metric (rare — most do; pure brand sellers like broadcast TV upper-funnel video are the not_applicable population) grade not_applicable.
 Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
 
-**Buyer commits collection selection and the seller echoes it as concrete selectors on readback** — Verifies mode: selected accepts an explicit domain-qualified subset, mode: default materializes the product's full bundle on readback, package readback always echoes committed collection_selection as concrete selectors, and a fixed (non-selectable) bundle rejects partial selection while accepting an exact restatement.
-Flow: `get_products → create_media_buy → get_media_buys → create_media_buy → get_media_buys → create_media_buy`
+**Seller materializes a catalog product default as its complete concrete collection set** — Independently grades any collection support with at least 1 distinct domain-qualified pair.
+Flow: `create_media_buy`
+
+**Seller persists the materialized default catalog collection set** — Independently catalog-qualifies persisted collection readback when get_media_buys is advertised.
+Flow: `create_media_buy → get_media_buys`
+
+**Seller accepts a catalog collection subset and preserves its exact selectors** — Independently grades selectable collection support with at least 2 distinct domain-qualified pairs.
+Flow: `create_media_buy`
+
+**Seller persists the exact catalog collection subset** — Independently catalog-qualifies persisted collection readback when get_media_buys is advertised.
+Flow: `create_media_buy → get_media_buys`
 
 **Seller completes the compact direct-buy lifecycle** — Verifies published-offer discovery, direct purchase, revision-checked operational control, and authoritative readback through AdCP 3.2 compact tools.
 Flow: `comply_test_controller → list_products → buy_products → control_media_buy → get_media_buys`
@@ -1453,17 +1498,29 @@ Flow: `get_products → create_media_buy → sync_creatives → update_media_buy
 **Seller deduplicates the same event across multiple registered event sources** — Verifies that a seller advertising conversion_tracking.multi_source_event_dedup can register multiple event sources for the same buy and deduplicate inbound events by event_id so the same conversion from a pixel and a CAPI source counts once, not twice. Sibling to media_buy_seller/performance_buy_flow gated on the dedup sub-capability bit: sellers that don't advertise multi-source dedup grade not_applicable.
 Flow: `sync_accounts → get_products → sync_event_sources → create_media_buy → log_event → comply_test_controller → get_media_buy_delivery`
 
+**Seller reports per-account execution readiness honestly** — Verifies readiness for a unique candidate, missing setup, several candidates, and an account the seller cannot read, without changing the public cache scope.
+Flow: `sync_accounts → sync_event_sources → get_products → sync_event_sources → get_products`
+
 **Seller rejects execution after a proposal hold expires** — Verifies that an expired committed proposal returns PROPOSAL_EXPIRED instead of creating a MediaBuy.
 Flow: `comply_test_controller → request_proposals → refine_proposals → comply_test_controller → accept_proposal → create_media_buy`
 
 **Seller binds an external audience source into a targetable audience** — Verifies dataset-source ingestion, discovery echo, media-buy targeting, unsupported-rail rejection, and transport immutability.
 Flow: `sync_audiences → create_media_buy → sync_audiences`
 
+**Seller accepts a fixed catalog bundle and rejects a strict subset** — Independently grades fixed collection support with at least 2 distinct domain-qualified pairs.
+Flow: `create_media_buy`
+
+**Seller accepts an exact restatement of a fixed catalog collection bundle** — Independently grades fixed collection support with at least 1 distinct domain-qualified pair.
+Flow: `create_media_buy`
+
 **Package frequency-cap capability and update boundaries** — Verifies constrained discovery with seller-wide unit inheritance, create-only rejection, out-of-range rejection, mutable update, package-qualified actions, and exact readback.
 Flow: `sync_accounts → get_products → create_media_buy → get_media_buys → control_media_buy → get_media_buys`
 
 **Seller honors a package-level frequency cap and reports observed frequency at-or-below the cap** — Verifies that a seller advertising frequency_capping accepts a package-level frequency_cap (max_impressions + per + window form) on create_media_buy and, after simulated delivery, reports observed reach and frequency on get_media_buy_delivery with the observed frequency at-or-below the requested cap. Runtime-enforcement scenario — no rejection arm. Sellers without frequency_capping grade not_applicable.
 Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
+
+**Seller executes exact gender predicates with non-binary support and lossless readback** — >-
+Flow: `get_products → create_media_buy → get_media_buys → create_media_buy → update_media_buy → get_media_buys → update_media_buy → get_media_buys → update_media_buy → get_media_buys → update_media_buy → get_media_buys`
 
 **Seller resolves, validates, and echoes identifier-based place targeting** — Verifies known-now place discovery, declared-later place permission, create/update persistence, package-state echo, and deterministic semantic rejection cases.
 Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media_buys → update_media_buy → get_media_buys → create_media_buy → get_media_buys → create_media_buy → get_media_buys → create_media_buy`
@@ -1534,8 +1591,11 @@ Flow: `list_products`
 **Seller plans a vendor-measured outcome target** — Verifies criteria.outcome_target with a vendor_metric goal: the seller answers a volume with a forecast whose points carry the goal's (vendor, metric_id) in vendor_metric_values[] and metrics.spend, binds the goal and its reporting commitment on every purchase, and answers a cost target through commercial_terms.bidding.cost_per.
 Flow: `sync_accounts → request_proposals`
 
-**Seller declares owner-sold channel carriage and enforces collection selector boundaries** — Verifies an owner-sold channel product combines host property scope with the owner's canonical collection selector, that buyer collection selection requires explicit collection_ids, and that unknown or mismatched collection selectors are rejected rather than silently substituted.
-Flow: `get_products → create_media_buy`
+**Seller accepts declared cross-publisher collection selectors and rejects invalid selectors** — Independently grades any collection support with at least 1 distinct domain-qualified pair
+Flow: `create_media_buy`
+
+**Seller preserves a cross-publisher collection when accepting a catalog subset** — Independently grades selectable collection support with at least 2 distinct
+Flow: `create_media_buy`
 
 **Seller preserves explicit package automatic bidding** — Verifies package-scoped automatic bidding independently of media-buy bidding support.
 Flow: `sync_accounts → create_media_buy → get_media_buys`
@@ -1603,11 +1663,14 @@ Flow: `sync_accounts → get_products → create_media_buy`
 **Seller-optimized proposal carries subordinate package pacing into the buy** — Verifies that a seller advertising seller-optimized budgets, package pacing, and proposals can express subordinate allocation pacing on a seller-optimized proposal and translate it into package pacing on execution and readback.
 Flow: `sync_accounts → get_products → create_media_buy → get_media_buys`
 
-**Seller-assigned account_id is a durable AccountRef for a buyer-declared account** — Provisions a fresh buyer-declared account, then verifies the returned account_id resolves the same account as its natural key, is accepted as an AccountRef on an account-scoped task, and survives a re-sync unchanged.
+**Seller-assigned account_id is a durable AccountRef for a buyer-declared account** — Provisions a fresh buyer-declared account, then verifies the returned account_id resolves the same account as its natural key is accepted as an AccountRef on an account-scoped task, and, as a SHOULD, comes back when the provisioning entry is sent again.
 Flow: `get_adcp_capabilities → sync_accounts → list_accounts → get_media_buys → sync_accounts`
 
 **Seller resolves targeting during discovery and persists inventory selection** — Verifies targeting-scoped discovery forecasts, future overlay support, sparse configured-product modifications, opaque product acceptance, and inventory targeting across create/update/readback.
 Flow: `get_products → create_media_buy → update_media_buy → get_media_buys → update_media_buy → create_media_buy → get_products → create_media_buy → update_media_buy → get_media_buys → update_media_buy → get_media_buys`
+
+**Canceled buys retain recorded package identities and configuration** — Verifies that individual and whole-buy cancellation preserve the complete recorded package set, updated configuration, and earlier cancellation timestamp and party.
+Flow: `get_media_buys → update_media_buy → get_media_buys → update_media_buy → get_media_buys`
 
 **Atomic media-buy total budget redistribution** — Verifies that a fixed media-buy total_budget update proportionally rescales active packages, returns auditable package state, and rejects competing package patches atomically.
 Flow: `sync_accounts → create_media_buy → get_media_buys → update_media_buy → get_media_buys → update_media_buy`
@@ -1680,8 +1743,8 @@ Flow: `get_products`
 
 ### Reporting
 
-**Seller narrows metrics and reports delivery by canonical format** — Verifies requested-metric narrowing, time-threshold video views, negotiated format breakdowns, truncation disclosure, and applied-sort echoes.
-Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
+**Seller reports negotiated format breakdowns on a catalog product** — Exercises independent format-breakdown support, required arrays and companions,
+Flow: `create_media_buy → comply_test_controller → get_media_buy_delivery`
 
 **Billing finality delivery and usage reporting** — Verifies that 3.1 billing-grade delivery rows distinguish provisional from final numbers and that report_usage accepts final usage records with finality metadata.
 Flow: `sync_accounts → create_media_buy → comply_test_controller → get_media_buy_delivery → comply_test_controller → get_media_buy_delivery → report_usage`
@@ -1703,6 +1766,9 @@ Flow: `sync_accounts → create_media_buy → comply_test_controller → get_med
 
 **Seller applies deterministic media-buy read filters** — Verifies get_media_buys membership filters and half-open get_media_buy_delivery date bounds instead of accepting them as no-ops.
 Flow: `get_media_buys → comply_test_controller → get_media_buy_delivery`
+
+**Seller accepts a time-based-view request on a catalog product and narrows metrics** — Exercises independent time-based-view support, schema-valid seller thresholds, and
+Flow: `create_media_buy → comply_test_controller → get_media_buy_delivery`
 
 **End-to-end vendor-metric accountability: declaration → commitment → delivery audit** — Buyer commits vendor metrics on two packages, then verifies one clean package, one overdue gap, and one not-yet-measurable omission.
 Flow: `sync_accounts → get_products → create_media_buy → get_media_buys → comply_test_controller → get_media_buy_delivery`
@@ -1773,7 +1839,7 @@ Flow: `get_adcp_capabilities → sync_accounts → list_accounts → sync_govern
 **Brand identity and rights licensing** — Brand agent that serves identity assets and licenses rights for AI-generated content.
 Flow: `get_adcp_capabilities → get_brand_identity → get_rights → acquire_rights → update_rights → acquire_rights`
 
-**Account identity reconciliation** — Validates revision-guarded operator identity rekeying, collision safety, and former-key redirects for sellers that advertise identity updates.
+**Account identity reconciliation** — Deprecated in 3.3 with account.identity_updates. Validates revision-guarded operator identity rekeying, collision safety, and former-key redirects for sellers that advertise identity updates.
 Flow: `get_adcp_capabilities → list_accounts → sync_accounts → list_accounts → sync_accounts → list_accounts → sync_accounts → list_accounts → comply_test_controller → sync_accounts → list_accounts → get_media_buys → sync_accounts → list_accounts → sync_accounts → list_accounts → sync_accounts → list_accounts → sync_accounts → list_accounts → sync_accounts → list_accounts → sync_accounts → list_accounts`
 
 **Agent notification config lifecycle** — Validates the 3.2 agent-level capabilities.changed registration surface: advertised revision fencing, NO_AUTH rejection, and dry-run clear semantics.
@@ -1905,7 +1971,7 @@ Flow: `get_adcp_capabilities → activate_signal → get_signals → activate_si
 Flow: `get_adcp_capabilities → create_media_buy → get_products → create_media_buy → get_products → create_media_buy`
 
 **STALE_RESPONSE advisory-success wire placement** — Validates that STALE_RESPONSE rides in errors[] on a populated success response with transport success preserved, and that STALE_RESPONSE is absent on healthy upstream responses.
-Flow: `get_adcp_capabilities → comply_test_controller → get_products`
+Flow: `get_adcp_capabilities → get_products → comply_test_controller → get_products`
 
 ### Security
 
@@ -1931,13 +1997,13 @@ Agents use the `recovery` classification to decide what to do: `transient` → r
 
 | Code | Recovery | Description |
 |------|----------|-------------|
-| `ACCOUNT_AMBIGUOUS` | correctable | Natural key resolves to multiple accounts. |
-| `ACCOUNT_IDENTITY_CONFLICT` | correctable | The complete operator_identity requested through sync_accounts would rekey the account onto a natural key already owned by another account. The seller MUST reject the change atomically, MUST NOT merge the accounts, and MUST preserve both accounts and every account-scoped resource unchanged. Distinct from CONFLICT, which reports a transient stale revision or concurrent write. |
-| `ACCOUNT_MOVED` | correctable | An authorized caller used a former natural key that was tombstoned after the same account was rekeyed through sync_accounts. The seller MUST return the current canonical reference in error.details.current_account, conforming to error-details/account-moved.json, and MUST NOT provision or resolve a second account from the former key. Sellers retain the tombstone while the account or any account-scoped historical resources are retained. To avoid a cross-tenant existence oracle, sellers return ACCOUNT_MOVED only when the caller is authorized to resolve the current account; otherwise they return ACCOUNT_NOT_FOUND. |
+| `ACCOUNT_AMBIGUOUS` | correctable | A natural-key reference matches more than one of the caller's accounts. error.details MAY list candidates[] (account_id, name), conforming to error-details/account-ambiguous.json, limited to accounts the caller is already granted. |
+| `ACCOUNT_IDENTITY_CONFLICT` | correctable | **Deprecated in 3.3**, planned for removal in 4.0: an attribute update never changes identity, so it cannot collide. Sellers that still support the deprecated operator_identity rekey return it during 3.x. The complete operator_identity requested through sync_accounts would rekey the account onto a natural key already owned by another account. The seller MUST reject the change atomically, MUST NOT merge the accounts, and MUST preserve both accounts and every account-scoped resource unchanged. Distinct from CONFLICT, which reports a transient stale revision or concurrent write. |
+| `ACCOUNT_MOVED` | correctable | **Deprecated in 3.3**, planned for removal in 4.0: account_id never changes, so no former reference exists. Sellers that still support the deprecated operator_identity rekey return it during 3.x. An authorized caller used a former natural key that was tombstoned after the same account was rekeyed through sync_accounts. The seller MUST return the current canonical reference in error.details.current_account, conforming to error-details/account-moved.json, and MUST NOT provision or resolve a second account from the former key. Sellers retain the tombstone while the account or any account-scoped historical resources are retained. To avoid a cross-tenant existence oracle, sellers return ACCOUNT_MOVED only when the caller is authorized to resolve the current account; otherwise they return ACCOUNT_NOT_FOUND. |
 | `ACCOUNT_NOT_FOUND` | terminal | The account reference could not be resolved: an account_id that does not exist, a buyer-declared natural key the seller has not provisioned, or an account outside the caller's authorized set. Sellers return it on tasks where account is optional too, rather than ignoring the reference, unless a lazy-provisioning seller answers a discovery task for the account it would create. |
 | `ACCOUNT_PAYMENT_REQUIRED` | terminal | Account has an outstanding balance requiring payment before new buys. |
 | `ACCOUNT_REQUIRED` | correctable | The service must resolve the commercial account before it can determine governance applicability, but the request and referenced resource do not identify one. |
-| `ACCOUNT_SETUP_REQUIRED` | correctable | Natural key resolved but the account needs setup before use. |
+| `ACCOUNT_SETUP_REQUIRED` | correctable | The account reference resolved but the account needs setup before use. |
 | `ACCOUNT_SUSPENDED` | terminal | Account has been suspended. |
 | `ACTION_NOT_ALLOWED` | correctable | The requested mutation maps to an action that is not currently available on this media buy. Sellers MUST populate `error.details` with `attempted_action` (the structured available-action identifier the request maps to), `reason` (an `action-not-allowed-reason` value: `wrong_status`, `not_supported_on_product`, `not_supported_on_buy`, `mode_mismatch`, or `condition_unresolved`), and `currently_available_actions` (echo of the buy's resolved `available_actions[]` so the buyer SDK can offer recovery without a separate get_media_buys round-trip). For `not_supported_on_buy`, sellers SHOULD also populate `decline_reason` from `seller-policy-decline-reason` when they have a structured reason and disclosure does not expose private thresholds or enforcement controls. `decline_reason` SHOULD be omitted for structural reasons. All producer-authored explanatory text, including message, suggestion, and extension detail values, MUST remain buyer-safe and MUST NOT contain vendor identifiers, internal object names, internal IDs, stack traces, or other producer-private implementation details. |
 | `AGENT_BLOCKED` | terminal | The calling buyer agent's commercial relationship with the seller is permanently denied — the agent is blocked. Sibling to `AGENT_SUSPENDED` on the agent-relationship axis but with no recovery path (a suspension may lift via re-onboarding; a block does not). The code itself is the discriminator — same posture as `AGENT_SUSPENDED`: no `error.details` payload, no per-agent commercial state, cross-tenant onboarding oracle clamp + channel-coverage requirements normative in error-handling.mdx Per-Agent Authorization Gate. |
@@ -2058,7 +2124,7 @@ Agents use the `recovery` classification to decide what to do: `transient` → r
 | `UNPRICEABLE_OUTPUT` | correctable | A creative transformer build targets an output capability that no pricing option covers — no transformer.pricing_options entry has a matching applies_to_output_capability_ids and none is unscoped. The build is rejected rather than billed at a guessed rate. |
 | `UNSUPPORTED_FEATURE` | correctable | A requested feature or field is not supported by this seller. When rejecting a `refine_proposals` request that uses a typed dimension omitted from an explicit `proposal_refinement.supported_dimensions` declaration, the error details SHOULD follow `error-details/unsupported-refinement-dimension.json` — `unsupported_dimension` names the offending dimension and `supported_dimensions` echoes the seller's declaration so the buyer can remove or translate the field without another capability round trip. When rejecting a targeting dimension that is unsupported for the product or seller, or has been removed, the error details SHOULD follow `error-details/unsupported-targeting-dimension.json` (`unsupported_dimension`, optional `supported_dimensions`, `deprecated`, `replacement_dimension`) and `error.field` SHOULD point at the targeting path. |
 | `UNSUPPORTED_GRANULARITY` | correctable | The requested `time_granularity` on `get_media_buy_delivery` is not in the product's declared `reporting_capabilities.windowed_pull_granularities`. Distinct from `UNSUPPORTED_FEATURE` (generic capability mismatch) by being narrowly about reporting-window granularity — the buyer asked for hourly pull-recovery on a product that only honors daily pulls, for example. Sellers MAY echo the declared set in `error.details.supported_granularities` when the caller is authorized to read the product's reporting capabilities — the same set is already available via `get_adcp_capabilities`, so the echo is a convenience, not load-bearing. Sellers MUST NOT echo a granularity set the caller could not otherwise read (per-product capability views vary by buyer entitlement). The `error.field` SHOULD point at `time_granularity`. Buyers that need higher-frequency recovery than the seller's pull set supports MUST rely on the webhook channel as primary at that frequency — the seller's `available_reporting_frequencies` may legitimately exceed `windowed_pull_granularities` (e.g., a stream-tap webhook on Kafka with warehouse pulls only at daily). |
-| `UNSUPPORTED_PROVISIONING` | correctable | The seller does not support the `sync_accounts` mode the entry requested. Returned per-entry in the `sync_accounts` response when (a) an entry keyed by the natural-key trio (`brand` + `operator` + `billing`) is sent to a seller that does not provision accounts via AdCP — typical for account-id namespaces where accounts are pre-provisioned out of band or discovered via `list_accounts`; or (b) an entry keyed by `account` (AccountRef) is sent to a seller that has not implemented the settings-update mode. Distinct from `UNSUPPORTED_FEATURE` (generic capability mismatch) by being narrowly about which of the two `sync_accounts` modes the seller implements. The two modes are mutually exclusive per-entry — the seller MUST NOT silently downgrade or upgrade between them. Sellers MAY declare which modes they implement via `get_adcp_capabilities` (forward-looking — capability declaration shape is open). The `error.field` SHOULD point at the entry index where the unsupported shape was found. |
+| `UNSUPPORTED_PROVISIONING` | correctable | The seller does not support the `sync_accounts` mode the entry requested. Returned per-entry in the `sync_accounts` response when (a) an entry keyed by the natural-key trio (`brand` + `operator` + `billing`) is sent to a seller that does not provision accounts via AdCP — typical for account-id namespaces where accounts are pre-provisioned out of band or discovered via `list_accounts`; or (b) an entry keyed by `account` (AccountRef) is sent to an account-id-namespace seller that does not expose settings updates. A seller that opens buyer-declared accounts through `sync_accounts` accepts settings-update entries and declines an attribute change it cannot make with `UNSUPPORTED_FEATURE`. Distinct from `UNSUPPORTED_FEATURE` (generic capability mismatch) by being narrowly about which of the two `sync_accounts` modes the seller implements. The two modes are mutually exclusive per-entry — the seller MUST NOT silently downgrade or upgrade between them. Sellers MAY declare which modes they implement via `get_adcp_capabilities` (forward-looking — capability declaration shape is open). The `error.field` SHOULD point at the entry index where the unsupported shape was found. |
 | `VALIDATION_ERROR` | correctable | Request contains invalid field values or violates business rules beyond schema validation. |
 | `VAST_PARSE_FAILED` | correctable | A submitted `vast` asset failed document-level validation: the inline `content` (or the document fetched from `url`) is not well-formed XML, has no `<VAST>` root element, contains no `<Ad>` element, or an `<InLine>` linear creative carries no `<MediaFile>`. Returned by sellers that declare `creative_specs.vast_validation` of `document` or `wrapper`; sellers at the default `structural` level do not inspect the VAST document and MUST NOT return this code. Distinct from `VALIDATION_ERROR` (manifest-level format validation): the manifest was structurally valid, the VAST document inside it was not. Sellers SHOULD set `error.field` to the offending asset path and SHOULD populate `error.details.reason` with one of `not_xml`, `no_vast_root`, `no_ad`, `no_media_file`. Unresolved ad-server macros in URLs (`[MACRO]`, `${MACRO}`, `{UNIVERSAL_MACRO}`) are opaque tokens, not parse failures. |
 | `VAST_VERSION_MISMATCH` | correctable | A submitted `vast` asset is version-incompatible when its exact `vast_version` is absent from the intersection of the selected product format option's `params.vast_versions` and the seller's `execution.creative_specs.vast_versions`, or when an inspected document violates its applicable VAST version rule. Modern `error.details` MUST conform to `error-details/vast-version-mismatch.json`: acceptance failures carry `mismatch_reason: asset_outside_acceptance`, `asset_vast_version`, `product_vast_versions`, and `seller_vast_versions`, plus `format_option_ref` only when the selected option is addressable; inspected-document failures carry `mismatch_reason: document_version_mismatch`, `asset_vast_version`, `observed_document_vast_version`, and `document_role`. Only the submitted document is compared for equality with the asset declaration; wrapper and terminal documents are checked against the acceptance intersection. The deprecated `supported_versions` field remains accepted for older 3.x peers. Distinct from `VERSION_UNSUPPORTED`, which concerns AdCP protocol negotiation. |

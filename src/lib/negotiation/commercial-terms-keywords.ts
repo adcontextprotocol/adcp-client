@@ -51,6 +51,26 @@ function validate(
       '',
       'definition pins require current-source verification, which this beta snapshot verifier does not provide'
     );
+  // AdCP 3.3 experimental installment selection: membership is judged against
+  // the allocated products' published installments, which a commercial-terms
+  // snapshot does not carry. Refuse rather than certify an unchecked slot list.
+  if (record(metadata.verifier_constraints) && metadata.verifier_constraints.installment_membership !== undefined)
+    return fail(
+      '',
+      'installment selections require product installment membership verification, which this beta snapshot verifier does not provide'
+    );
+  // AdCP 3.3 business-clock SLAs resolve against capability calendars that a
+  // snapshot does not carry. Elapsed-clock windows need no calendar.
+  if (
+    record(metadata.verifier_constraints) &&
+    metadata.verifier_constraints.calendar_reference !== undefined &&
+    record(data) &&
+    data.business_calendar_id !== undefined
+  )
+    return fail(
+      '/business_calendar_id',
+      'business-calendar SLA windows require capability calendar verification, which this beta snapshot verifier does not provide'
+    );
   if (record(metadata.disjoint_place_fields) && record(data)) {
     const { include, exclude, identity } = metadata.disjoint_place_fields;
     if (typeof include === 'string' && typeof exclude === 'string' && Array.isArray(identity)) {

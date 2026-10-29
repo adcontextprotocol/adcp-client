@@ -127,6 +127,8 @@ export type KnownToolRequestSchemas = {
   create_media_buy: typeof CreateMediaBuyToolRequestSchema;
   update_media_buy: typeof UpdateMediaBuyToolRequestSchema;
   get_media_buys: typeof schemas.GetMediaBuysRequestSchema;
+  report_media_buy_issue: typeof schemas.ReportMediaBuyIssueRequestSchema;
+  get_media_buy_issue: typeof schemas.GetMediaBuyIssueRequestSchema;
   get_media_buy_delivery: typeof schemas.GetMediaBuyDeliveryRequestSchema;
   get_reporting_status: typeof schemas.GetReportingStatusRequestSchema;
   sync_reporting_status: typeof schemas.SyncReportingStatusRequestSchema;
@@ -147,6 +149,7 @@ export type KnownToolRequestSchemas = {
   sync_governance: typeof schemas.SyncGovernanceRequestSchema;
   sync_audiences: typeof schemas.SyncAudiencesRequestSchema;
   report_usage: typeof schemas.ReportUsageRequestSchema;
+  request_account: typeof schemas.RequestAccountRequestSchema;
   get_account_financials: typeof schemas.GetAccountFinancialsRequestSchema;
   get_task_status: typeof schemas.GetTaskStatusRequestSchema;
   list_tasks: typeof schemas.ListTasksRequestSchema;
@@ -215,6 +218,8 @@ export const TOOL_REQUEST_SCHEMAS: ToolRequestSchemas = {
   create_media_buy: CreateMediaBuyToolRequestSchema,
   update_media_buy: UpdateMediaBuyToolRequestSchema,
   get_media_buys: schemas.GetMediaBuysRequestSchema,
+  report_media_buy_issue: schemas.ReportMediaBuyIssueRequestSchema,
+  get_media_buy_issue: schemas.GetMediaBuyIssueRequestSchema,
   get_media_buy_delivery: schemas.GetMediaBuyDeliveryRequestSchema,
   get_reporting_status: schemas.GetReportingStatusRequestSchema,
   sync_reporting_status: schemas.SyncReportingStatusRequestSchema,
@@ -241,6 +246,7 @@ export const TOOL_REQUEST_SCHEMAS: ToolRequestSchemas = {
   sync_governance: schemas.SyncGovernanceRequestSchema,
   sync_audiences: schemas.SyncAudiencesRequestSchema,
   report_usage: schemas.ReportUsageRequestSchema,
+  request_account: schemas.RequestAccountRequestSchema,
   get_account_financials: schemas.GetAccountFinancialsRequestSchema,
 
   // Catalogs & events

@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.3.0-beta.0/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.3.0-beta.1/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.3.0-beta.0.
+ * Manifest-derived constants for AdCP 3.3.0-beta.1.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.3.0-beta.0/manifest.json` (adcp_version: 3.3.0-beta.0, generated_at:
- * 2026-10-22T08:17:27.562Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.3.0-beta.1/manifest.json` (adcp_version: 3.3.0-beta.1, generated_at:
+ * 2026-10-29T02:57:09.556Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -44,17 +44,17 @@ export const DEFAULT_UNKNOWN_RECOVERY: ErrorRecovery = "transient";
  */
 export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
   "ACCOUNT_AMBIGUOUS": {
-    description: "Natural key resolves to multiple accounts.",
+    description: "A natural-key reference matches more than one of the caller's accounts. error.details MAY list candidates[] (account_id, name), conforming to error-details/account-ambiguous.json, limited to accounts the caller is already granted.",
     recovery: "correctable",
-    suggestion: "pass explicit account_id or a more specific natural key"
+    suggestion: "pass the account_id of the intended account from error.details.candidates or list_accounts"
   },
   "ACCOUNT_IDENTITY_CONFLICT": {
-    description: "The complete operator_identity requested through sync_accounts would rekey the account onto a natural key already owned by another account. The seller MUST reject the change atomically, MUST NOT merge the accounts, and MUST preserve both accounts and every account-scoped resource unchanged. Distinct from CONFLICT, which reports a transient stale revision or concurrent write.",
+    description: "**Deprecated in 3.3**, planned for removal in 4.0: an attribute update never changes identity, so it cannot collide. Sellers that still support the deprecated operator_identity rekey return it during 3.x. The complete operator_identity requested through sync_accounts would rekey the account onto a natural key already owned by another account. The seller MUST reject the change atomically, MUST NOT merge the accounts, and MUST preserve both accounts and every account-scoped resource unchanged. Distinct from CONFLICT, which reports a transient stale revision or concurrent write.",
     recovery: "correctable",
     suggestion: "choose a different operator or operator_unit identity, or retain the account's current identity; do not retry the same desired identity unchanged"
   },
   "ACCOUNT_MOVED": {
-    description: "An authorized caller used a former natural key that was tombstoned after the same account was rekeyed through sync_accounts. The seller MUST return the current canonical reference in error.details.current_account, conforming to error-details/account-moved.json, and MUST NOT provision or resolve a second account from the former key. Sellers retain the tombstone while the account or any account-scoped historical resources are retained. To avoid a cross-tenant existence oracle, sellers return ACCOUNT_MOVED only when the caller is authorized to resolve the current account; otherwise they return ACCOUNT_NOT_FOUND.",
+    description: "**Deprecated in 3.3**, planned for removal in 4.0: account_id never changes, so no former reference exists. Sellers that still support the deprecated operator_identity rekey return it during 3.x. An authorized caller used a former natural key that was tombstoned after the same account was rekeyed through sync_accounts. The seller MUST return the current canonical reference in error.details.current_account, conforming to error-details/account-moved.json, and MUST NOT provision or resolve a second account from the former key. Sellers retain the tombstone while the account or any account-scoped historical resources are retained. To avoid a cross-tenant existence oracle, sellers return ACCOUNT_MOVED only when the caller is authorized to resolve the current account; otherwise they return ACCOUNT_NOT_FOUND.",
     recovery: "correctable",
     suggestion: "replace the stale reference with error.details.current_account, refresh through list_accounts, and retry with a fresh idempotency key"
   },
@@ -74,7 +74,7 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "pass account, or reference an existing resource whose owning account the service can resolve"
   },
   "ACCOUNT_SETUP_REQUIRED": {
-    description: "Natural key resolved but the account needs setup before use.",
+    description: "The account reference resolved but the account needs setup before use.",
     recovery: "correctable",
     suggestion: "check details.setup for URL or instructions"
   },
@@ -629,7 +629,7 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "pick a granularity from the product's reporting_capabilities.windowed_pull_granularities (via get_adcp_capabilities) and resubmit, or omit time_granularity to fall back to cumulative date-range pulls"
   },
   "UNSUPPORTED_PROVISIONING": {
-    description: "The seller does not support the `sync_accounts` mode the entry requested. Returned per-entry in the `sync_accounts` response when (a) an entry keyed by the natural-key trio (`brand` + `operator` + `billing`) is sent to a seller that does not provision accounts via AdCP — typical for account-id namespaces where accounts are pre-provisioned out of band or discovered via `list_accounts`; or (b) an entry keyed by `account` (AccountRef) is sent to a seller that has not implemented the settings-update mode. Distinct from `UNSUPPORTED_FEATURE` (generic capability mismatch) by being narrowly about which of the two `sync_accounts` modes the seller implements. The two modes are mutually exclusive per-entry — the seller MUST NOT silently downgrade or upgrade between them. Sellers MAY declare which modes they implement via `get_adcp_capabilities` (forward-looking — capability declaration shape is open). The `error.field` SHOULD point at the entry index where the unsupported shape was found.",
+    description: "The seller does not support the `sync_accounts` mode the entry requested. Returned per-entry in the `sync_accounts` response when (a) an entry keyed by the natural-key trio (`brand` + `operator` + `billing`) is sent to a seller that does not provision accounts via AdCP — typical for account-id namespaces where accounts are pre-provisioned out of band or discovered via `list_accounts`; or (b) an entry keyed by `account` (AccountRef) is sent to an account-id-namespace seller that does not expose settings updates. A seller that opens buyer-declared accounts through `sync_accounts` accepts settings-update entries and declines an attribute change it cannot make with `UNSUPPORTED_FEATURE`. Distinct from `UNSUPPORTED_FEATURE` (generic capability mismatch) by being narrowly about which of the two `sync_accounts` modes the seller implements. The two modes are mutually exclusive per-entry — the seller MUST NOT silently downgrade or upgrade between them. Sellers MAY declare which modes they implement via `get_adcp_capabilities` (forward-looking — capability declaration shape is open). The `error.field` SHOULD point at the entry index where the unsupported shape was found.",
     recovery: "correctable",
     suggestion: "re-issue with the entry shape the seller supports — `account: {account_id: ...}` for settings-update sellers with account-id namespaces, or `brand+operator+billing` for provisioning sellers; check seller documentation or capability declaration for which modes are implemented"
   },
@@ -669,6 +669,7 @@ export const ACCOUNT_TOOLS_FROM_MANIFEST = [
   "list_account_changes",
   "list_accounts",
   "report_usage",
+  "request_account",
   "sync_accounts",
   "sync_governance",
 ] as const;
@@ -731,6 +732,7 @@ export const MEDIA_BUY_TOOLS_FROM_MANIFEST = [
   "create_media_buy",
   "decline_proposals",
   "get_media_buy_delivery",
+  "get_media_buy_issue",
   "get_media_buys",
   "get_products",
   "get_reporting_status",
@@ -741,6 +743,7 @@ export const MEDIA_BUY_TOOLS_FROM_MANIFEST = [
   "log_event",
   "provide_performance_feedback",
   "refine_proposals",
+  "report_media_buy_issue",
   "request_proposals",
   "sync_audiences",
   "sync_catalogs",

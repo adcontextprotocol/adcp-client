@@ -9651,6 +9651,52 @@ export class SingleAgentClient {
     return this.executeTaskUnprojected<ToolTypes.ReportUsageResponse>('report_usage', params, inputHandler, options);
   }
 
+  /**
+   * Open or change an advertiser account through the seller's account-request
+   * lifecycle (experimental `account.requests`, AdCP 3.3). Read requests back
+   * through `listAccounts({ include_requests: true })`.
+   */
+  async requestAccount(
+    params: MutatingRequestInput<ToolTypes.RequestAccountRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.RequestAccountResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.RequestAccountResponse>(
+      'request_account',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Raise a seller-action issue report against an authorized media buy (AdCP 3.3). */
+  async reportMediaBuyIssue(
+    params: MutatingRequestInput<ToolTypes.ReportMediaBuyIssueRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ReportMediaBuyIssueResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.ReportMediaBuyIssueResponse>(
+      'report_media_buy_issue',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
+  /** Read the latest seller-owned state of one media-buy issue (AdCP 3.3). */
+  async getMediaBuyIssue(
+    params: ToolTypes.GetMediaBuyIssueRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetMediaBuyIssueResponse>> {
+    return this.executeTaskUnprojected<ToolTypes.GetMediaBuyIssueResponse>(
+      'get_media_buy_issue',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
   /** Ask a seller to create one or more draft media-plan proposals from a campaign brief. */
   async requestProposals(
     params: MutatingRequestInput<ToolTypes.RequestProposalsRequest>,

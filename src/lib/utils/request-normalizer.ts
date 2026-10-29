@@ -116,11 +116,15 @@ export function normalizeRequestParams(
   // to prevent Zod strict validation failures on unknown keys.
 
   // account_id (bare string) → account: { account_id }
-  if (typeof normalized.account_id === 'string' && !normalized.account) {
-    warnOnce('account_id', 'account_id is deprecated. Use account: { account_id } instead.');
-    normalized.account = { account_id: normalized.account_id };
+  // AdCP 3.3 request_account names the account to change with a top-level
+  // account_id and has no `account` field, so the legacy shim must not apply.
+  if (taskType !== 'request_account') {
+    if (typeof normalized.account_id === 'string' && !normalized.account) {
+      warnOnce('account_id', 'account_id is deprecated. Use account: { account_id } instead.');
+      normalized.account = { account_id: normalized.account_id };
+    }
+    delete normalized.account_id;
   }
-  delete normalized.account_id;
 
   // campaign_ref → buyer_campaign_ref
   if (normalized.campaign_ref && !normalized.buyer_campaign_ref) {

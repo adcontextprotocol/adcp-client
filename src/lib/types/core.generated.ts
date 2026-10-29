@@ -1,11 +1,23 @@
-// Generated AdCP core types from official schemas v3.3.0-beta.0
-// Generated at: 2026-10-27T03:07:48.612Z
+// Generated AdCP core types from official schemas v3.3.0-beta.1
+// Generated at: 2026-10-29T02:20:19.835Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
  * How a seller binds transaction currency to advertiser accounts.
  */
 export type AccountCurrencyMode = 'fixed' | 'per_media_buy';
+
+// ACCOUNTREQUESTRESOLUTION CANONICAL ENUM
+/**
+ * How a resolved account request produced its account (experimental, account.requests).
+ */
+export type AccountRequestResolution = 'matched' | 'created' | 'updated';
+
+// ACCOUNTREQUESTSTATE CANONICAL ENUM
+/**
+ * Lifecycle state of an account request (experimental, account.requests). in_review and ambiguous are open; resolved and rejected are terminal for that request.
+ */
+export type AccountRequestState = 'in_review' | 'resolved' | 'ambiguous' | 'rejected';
 
 // ACCOUNTSCOPE CANONICAL ENUM
 /**
@@ -248,6 +260,12 @@ export type AttributionModel = 'last_touch' | 'first_touch' | 'linear' | 'time_d
  */
 export type AudienceEvidenceMethodology = 'observed' | 'declared' | 'derived' | 'inferred' | 'modeled' | 'projected';
 
+// AUDIENCEEVIDENCERELATIONSHIP CANONICAL ENUM
+/**
+ * What an audience-evidence estimate says. The vocabulary of buyer targets. Same values as the inline enum on audience_evidence.relationship, which stays inline because it is a stable 3.2 field; a test pins the two lists equal.
+ */
+export type AudienceEvidenceRelationship = 'composition' | 'index' | 'reach_estimate';
+
 // AUDIENCEMATCHRATEBASIS CANONICAL ENUM
 /**
  * Where an audience match rate came from. Qualifies effective_match_rate on a sync_audiences result so a buyer can tell a rate the platform reported from one computed from approximate counts.
@@ -443,9 +461,10 @@ export type CanonicalMediaBuyActionMode =
 
 // CANONICALMEDIABUYACTIONNAME CANONICAL ENUM
 /**
- * Fine-grained MediaBuy action vocabulary for compact product and lifecycle surfaces. Deprecated coarse 3.x actions are absent.
+ * Fine-grained MediaBuy action vocabulary for compact product and lifecycle surfaces. Deprecated coarse 3.x actions are absent. report_media_buy_issue is new in 3.3 and routes to the seller's operational issue-reporting task.
  */
 export type CanonicalMediaBuyActionName =
+  | 'report_media_buy_issue'
   | 'pause'
   | 'resume'
   | 'cancel'
@@ -1129,6 +1148,12 @@ export type EventType =
  */
 export type Exclusivity = 'none' | 'category' | 'exclusive';
 
+// EXECUTIONREADINESSSTATUS CANONICAL ENUM
+/**
+ * Experimental (`media_buy.execution_readiness`). Whether the account can satisfy one execution requirement of a product, and the product rollup. `unknown` means the seller could not check: never evidence the account lacks the resource, never a reason to treat the product as not runnable.
+ */
+export type ExecutionReadinessStatus = 'ready' | 'setup_required' | 'selection_required' | 'input_required' | 'unknown';
+
 // FEATURECHECKSTATUS CANONICAL ENUM
 /**
  * Per-feature evaluation outcome in content standards checks. For the two-outcome overall record verdict, see binary-verdict.
@@ -1365,6 +1390,12 @@ export type IndicatorType =
  * Lifecycle status of an installment
  */
 export type InstallmentStatus = 'scheduled' | 'tentative' | 'live' | 'postponed' | 'cancelled' | 'aired' | 'published';
+
+// INVOICEKIND CANONICAL ENUM
+/**
+ * Kind of an invoice record in get_account_financials. Amounts on invoices and invoice lines are non-negative, so the kind carries the sign: a credit_note reduces what the buyer owes by its amount. A document is one direction: net-negative corrections go on a credit_note, never on an invoice. Experimental in AdCP 3.3. Absent means invoice. Sellers MUST NOT send credit_note records to callers pinned below AdCP 3.3, because a caller that sums invoices[].amount without knowing the kind would count the credit as a charge; a caller with no declared pin is treated as pinned below AdCP 3.3.
+ */
+export type InvoiceKind = 'invoice' | 'credit_note';
 
 // JAVASCRIPTMODULETYPE CANONICAL ENUM
 /**
@@ -1623,7 +1654,7 @@ export type CreativeMotionLevel = 'static' | 'limited_motion' | 'full_motion';
 
 // NOTIFICATIONTYPE CANONICAL ENUM
 /**
- * Type of push notification fired by a seller agent. Media-buy-anchored cadence reports (`scheduled`, `final`, `delayed`, `adjusted`, `window_update`) fire against a media buy's `reporting_webhook`; `impairment` is media-buy-anchored but fires against `push_notification_config`. Account-anchored notifications include creative, account, product, signal, wholesale-feed, collection-card, and reporting events, including `reporting.delivery_ready`, `reporting.status_changed`, and `reporting.ledger_changed`; these outlive any single media buy and fire against matching account `notification_configs[]`. The reporting events repair through `get_reporting_status`: delivery_ready is managed-delivery-only, while status_changed and ledger_changed are valid in every reporting tier. Caller-anchored notifications (`capabilities.changed`, `principal.changed`) fire against the caller-scoped subscriber set managed by `sync_principal` or the specialized `sync_agent_notification_configs` compatibility task. New notification types MUST declare their anchor (media-buy, account, or caller), logical notification_id semantics, repair key, and classification in enumDescriptions; only invalidation-only caller-eligible types flow through include_future_event_types. Account-level subscribers MUST reject media-buy- or caller-anchored event types, and persistent account- or caller-anchored types MUST NOT use push_notification_config. Caller-level entries MAY include account-anchored types only with all_authorized_accounts true; each delivery attempt, including retries, is scoped to accounts currently authorized for that caller. Caller-level entries MUST NOT include media-buy-anchored types. Caller- and account-level subscriptions to the same event are independent and receivers dedupe by logical notification_id.
+ * Type of push notification fired by a seller agent. Media-buy-anchored cadence reports (`scheduled`, `final`, `delayed`, `adjusted`, `window_update`) fire against a media buy's `reporting_webhook`; `impairment` is media-buy-anchored but fires against `push_notification_config`. Account-anchored notifications include creative, account, product, signal, wholesale-feed, collection-card, and reporting events, including `reporting.delivery_ready`, `reporting.status_changed`, and `reporting.ledger_changed`; these outlive any single media buy and fire against matching account `notification_configs[]`. The reporting events repair through `get_reporting_status`: delivery_ready is managed-delivery-only, while status_changed and ledger_changed are valid in every reporting tier. Caller-anchored notifications (`capabilities.changed`, `principal.changed`, `account_request.changed`) fire against the caller-scoped subscriber set managed by `sync_principal` or the specialized `sync_agent_notification_configs` compatibility task. New notification types MUST declare their anchor (media-buy, account, or caller), logical notification_id semantics, repair key, and classification in enumDescriptions; only invalidation-only caller-eligible types flow through include_future_event_types. Account-level subscribers MUST reject media-buy- or caller-anchored event types, and persistent account- or caller-anchored types MUST NOT use push_notification_config. Caller-level entries MAY include account-anchored types only with all_authorized_accounts true; each delivery attempt, including retries, is scoped to accounts currently authorized for that caller. Caller-level entries MUST NOT include media-buy-anchored types. Caller- and account-level subscriptions to the same event are independent and receivers dedupe by logical notification_id.
  */
 export type NotificationType =
   | 'scheduled'
@@ -1655,7 +1686,8 @@ export type NotificationType =
   | 'reporting.status_changed'
   | 'reporting.ledger_changed'
   | 'principal.changed'
-  | 'proposal.created';
+  | 'proposal.created'
+  | 'account_request.changed';
 
 // OFFERINGAVAILABILITYSTATUS CANONICAL ENUM
 /**
@@ -1693,6 +1725,25 @@ export type Pacing = 'even' | 'asap' | 'front_loaded';
  */
 export type PaymentTerms = 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay';
 
+// PENDINGACTIONKIND CANONICAL ENUM
+/**
+ * What a pending account request, account, or relationship needs next (experimental): review by the seller, a grant, or a human completing a step at url. Receivers MUST accept unknown values and fall back to message and url.
+ */
+export type PendingActionKind =
+  | 'review'
+  | 'sign_up'
+  | 'accept_terms'
+  | 'credit_application'
+  | 'add_payment'
+  | 'grant'
+  | 'connect_credentials';
+
+// PENDINGACTIONPARTY CANONICAL ENUM
+/**
+ * Whose turn it is on a pending account request or relationship (experimental): the seller, or a buyer-side human at url.
+ */
+export type PendingActionParty = 'seller' | 'buyer';
+
 // PERFORMANCEBASELINE CANONICAL ENUM
 /**
  * The expectation represented by performance_index = 1.0. Naming the baseline makes normalized feedback interpretable without disclosing the underlying benchmark value.
@@ -1707,7 +1758,7 @@ export type PerformanceBaseline =
 
 // PERFORMANCESTANDARDMETRIC CANONICAL ENUM
 /**
- * Performance metrics that support rate thresholds on media buys — the verification subset of the broader metric vocabulary. Each metric specifies whether its threshold is a floor (must exceed) or ceiling (must not exceed). Shared values with `available-metric.json` mirror the delivery vocabulary (`viewability` → `viewable_rate` family, `completion_rate` → same name); verification-only values (`ivt`, `brand_safety`, `attention_score`) are typically vendor-attested and do not appear in `available-metric.json` because they're not seller-reportable scalars — they flow through `vendor_metric_values` or vendor-scope `committed_metrics` entries with the matching `performance_standard.vendor` BrandRef anchoring identity.
+ * Performance metrics that support rate thresholds on media buys — the verification subset of the broader metric vocabulary. Each metric specifies whether its threshold is a floor (must exceed) or ceiling (must not exceed). Shared values with `available-metric.json` mirror the delivery vocabulary (`viewability` → `viewable_rate` family, `completion_rate` → same name); verification-only values (`ivt`, `brand_safety`, `attention_score`) are typically vendor-attested and do not appear in `available-metric.json` because they're not seller-reportable scalars — they flow through `vendor_metric_values` or vendor-scope `committed_metrics` entries. `performance_standard.vendor` anchors vendor identity and `performance_standard.metric_id` names which of that vendor's metrics is judged; without it a party MUST NOT infer one.
  */
 export type PerformanceStandardMetric = 'viewability' | 'ivt' | 'completion_rate' | 'brand_safety' | 'attention_score';
 
@@ -1911,6 +1962,12 @@ export type ReportingCustody = 'system_of_record' | 'upstream_derived';
  */
 export type ReportingDestinationSetupState = 'validating' | 'ready' | 'action_required' | 'inactive' | 'rejected';
 
+// REPORTINGDIMENSION CANONICAL ENUM
+/**
+ * Standard breakdown vocabulary that reporting subscriptions select by, stable across sellers (experimental, media_buy.reporting_subscriptions). Sellers map each report definition's native dimensions onto these values. Receivers MUST accept unknown values; a selector naming a value the seller does not map matches no offering.
+ */
+export type ReportingDimension = 'package' | 'creative' | 'country' | 'region' | 'metro';
+
 // REPORTINGFINALITY CANONICAL ENUM
 /**
  * Finality of a reporting revision. Snapshot revisions are provisional and may be superseded. An official revision is the immutable, invoice-addressable close for its reporting slice and MUST NOT be superseded; later source corrections are explicit reporting adjustments rather than silent replacement revisions.
@@ -1978,7 +2035,7 @@ export type TMPResponseType = 'activation' | 'catalog_items' | 'creative' | 'dea
 
 // RESTRICTEDATTRIBUTE CANONICAL ENUM
 /**
- * Personal data categories that may be restricted from use in audience targeting. Combines GDPR Article 9 special categories with US civil-rights protected classes (FHA familial_status, ADEA age). Used in two places: (1) on campaign plans via restricted_attributes to declare which categories are prohibited, and (2) on signal-definition.json via restricted_attributes to declare which categories a signal touches. Governance agents match plan restrictions against signal declarations for structural validation.
+ * Personal data categories that may be restricted from use in audience targeting. Includes GDPR Article 9 special categories and other policy-sensitive attributes such as age, familial_status, and sex_gender. The enum does not itself prohibit an attribute or establish its legal classification. Campaign plans declare prohibited categories through restricted_attributes; signals declare categories they touch. Direct demographic age and gender predicates map to age and sex_gender, respectively. Governance agents match effective targeting against applicable plan and policy restrictions.
  */
 export type RestrictedAttribute =
   | 'racial_ethnic_origin'
@@ -1990,7 +2047,8 @@ export type RestrictedAttribute =
   | 'genetic_data'
   | 'biometric_data'
   | 'age'
-  | 'familial_status';
+  | 'familial_status'
+  | 'sex_gender';
 
 // RIGHTTYPE CANONICAL ENUM
 /**
@@ -2014,7 +2072,9 @@ export type RightUse =
   | 'background_music'
   | 'editorial'
   | 'commercial'
-  | 'ai_generated_image';
+  | 'ai_generated_image'
+  | 'paid_amplification'
+  | 'content_reuse';
 
 // RIGHTSBILLINGPERIOD CANONICAL ENUM
 /**
@@ -2052,6 +2112,12 @@ export type SISessionStatus = 'active' | 'pending_handoff' | 'complete' | 'termi
  * Commercial/provenance types for signals available for audience targeting
  */
 export type SignalAvailabilityType = 'marketplace' | 'custom' | 'owned';
+
+// SIGNALDELIVERYSTATUS CANONICAL ENUM
+/**
+ * Arrival of provider-initiated membership delivery to an agent destination. Separate from addressability (is_live) and match outcome (match_status). Experimental (signals.delivery_methods).
+ */
+export type SignalDeliveryStatus = 'awaiting_read' | 'delivered' | 'failed';
 
 // SIGNALSOURCE CANONICAL ENUM
 /**
@@ -2552,12 +2618,12 @@ export interface ExtensionObject {
 
 // BRANDKEY PRIORITY CANONICAL SCHEMA
 /**
- * Brand within a house-of-brands manifest. Omit for a single-brand domain.
+ * Brand within a brand.json that lists several brands. Omit for a single-brand domain.
  */
 export type BrandID = string;
 
 /**
- * Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.
+ * Stable brand identity used to resolve the canonical brand manifest. A brand is its domain plus brand_id where that domain's brand.json lists several brands. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. countries is an account attribute, not part of the brand's identity, and does not target delivery.
  */
 export interface BrandKey {
   /**
@@ -2567,7 +2633,7 @@ export interface BrandKey {
   domain: string;
   brand_id?: BrandID;
   /**
-   * Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.
+   * ISO 3166-1 alpha-2 countries the advertiser account serves. This is an account attribute: it does not identify the brand or the account, and it is not delivery targeting. Omit when the account is not limited to particular countries. Array order is not meaningful.
    *
    * @minItems 1
    */
@@ -2858,7 +2924,7 @@ export type OptimizationGoal =
 export type VendorMetricID = string;
 
 /**
- * Reference to a brand by domain and optional brand_id. The domain hosts /.well-known/brand.json or is registered in the brand registry. For single-brand domains, brand_id can be omitted. For house-of-brands domains, brand_id identifies the specific brand. For creative production, brand.json is the canonical source of master brand identity (logo, palette, fonts, voice, and visual guidelines), subject only to the supported per-call fields in brand_kit_override. Catalogs supply product or item payload; catalog item asset groups, including property- or franchise-level logos, are item identity and do not override these master brand fields.
+ * Reference to a brand by domain and optional brand_id. The domain hosts /.well-known/brand.json or is registered in the brand registry. For single-brand domains, brand_id can be omitted. For a brand.json that lists several brands, brand_id identifies the specific brand. For creative production, brand.json is the canonical source of master brand identity (logo, palette, fonts, voice, and visual guidelines), subject only to the supported per-call fields in brand_kit_override. Catalogs supply product or item payload; catalog item asset groups, including property- or franchise-level logos, are item identity and do not override these master brand fields.
  */
 export interface BrandReference {
   /**
@@ -2867,7 +2933,7 @@ export interface BrandReference {
   domain: string;
   brand_id?: BrandID;
   /**
-   * Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit for a global/default identity. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account identity and is not delivery targeting.
+   * ISO 3166-1 alpha-2 countries the advertiser account serves. This is an account attribute: it does not identify the brand or the account, and it is not delivery targeting. Omit when the account is not limited to particular countries. Array order is not meaningful.
    *
    * @minItems 1
    */
@@ -4941,7 +5007,7 @@ export type KeywordSupport =
       ext?: ExtensionObject;
     };
 /**
- * Product-scoped package targeting dimensions that may be supplied or changed after discovery. This is the seller response shape and may disclose seller limits such as max_values_per_package, max_packages, and max_references. Product.overlay_support is the binding selectable-targeting contract: presence means the seller can apply protocol-valid values within the declared systems, countries, values, types, versions, and limits. Inherent product coverage alone does not satisfy a future-support requirement. Support does not guarantee inventory or a value-specific forecast before values are supplied; fixed prices and floors remain binding for supported selections. geo_regions and geo_regions_exclude are independent: structured support either exhaustively declares every value active in the seller's support snapshot for a country or lists the exact finite selectable subset. Buyer minimums use targeting-overlay-requirements.json. A requirement value of true matches true or any valid support object; an object requirement matches true or a containing support object. The daypart_targets boolean is the backward-compatible exception: true promises inventory_local and whole-hour granularity only, and structured support opts into IANA zones and finer time_granularity. Every valid structured support object represents a positive capability; empty, extension-only, and false-only objects are invalid. Unrequested object fields and numeric seller limits do not participate in matching. A product declares at most one of frequency_cap: true and frequency_cap_support. Legacy frequency_cap: true keeps its broad meaning within seller-wide limits, including update support. A constrained or create-only product instead advertises frequency_cap_support, so older buyers safely treat it as unsupported.
+ * Product-scoped package targeting dimensions that may be supplied or changed after discovery. This is the seller response shape and may disclose seller limits such as max_values_per_package, max_packages, and max_references. Product.overlay_support is the binding selectable-targeting contract: presence means the seller can apply protocol-valid values within the declared systems, countries, values, types, versions, and limits. Inherent product coverage alone does not satisfy a future-support requirement. Support does not guarantee inventory or a value-specific forecast before values are supplied; fixed prices and floors remain binding for supported selections, uniform across values except for adjustments declared by the selected fixed-price pricing option's price_adjustments, which price format option and placement_selection selections and dated windows. geo_regions and geo_regions_exclude are independent: structured support either exhaustively declares every value active in the seller's support snapshot for a country or lists the exact finite selectable subset. Buyer minimums use targeting-overlay-requirements.json. A requirement value of true matches true or any valid support object; an object requirement matches true or a containing support object. The daypart_targets boolean is the backward-compatible exception: true promises inventory_local and whole-hour granularity only, and structured support opts into IANA zones and finer time_granularity. Every valid structured support object represents a positive capability; empty, extension-only, and false-only objects are invalid. Unrequested object fields and numeric seller limits do not participate in matching. A product declares at most one of frequency_cap: true and frequency_cap_support. Legacy frequency_cap: true keeps its broad meaning within seller-wide limits, including update support. A constrained or create-only product instead advertises frequency_cap_support, so older buyers safely treat it as unsupported.
  */
 export interface TargetingOverlaySupport {
   geo_countries?: CountrySupport;
@@ -4976,7 +5042,11 @@ export interface TargetingOverlaySupport {
   demographics?:
     | Supported
     | {
-        age: Supported;
+        age?: Supported;
+        /**
+         * Experimental in AdCP 3.3 (media_buy.gender_targeting). AdCP 3.2 core remains age-only.
+         */
+        gender?: true;
         ext?: ExtensionObject;
       };
   frequency_cap?: Supported;
@@ -5275,7 +5345,11 @@ export interface TargetingOverlayRequirements {
   demographics?:
     | Required
     | {
-        age: Required;
+        age?: Required;
+        /**
+         * Experimental in AdCP 3.3 (media_buy.gender_targeting). AdCP 3.2 core remains age-only.
+         */
+        gender?: true;
       };
   frequency_cap?: Required;
   frequency_cap_support?: FrequencyCapRequirements;
@@ -5880,7 +5954,37 @@ export type EffectiveTimingConstraints = {
 /**
  * The action identifier.
  */
-export type MediaBuyAvailableActionID = MediaBuyValidAction | 'update_media_buy_frequency_cap';
+export type MediaBuyAvailableActionID =
+  | 'update_creative_start_policy'
+  | 'report_media_buy_issue'
+  | MediaBuyValidAction
+  | 'update_media_buy_frequency_cap';
+/**
+ * Optional SLA commitment for this action on this buy. Absence means no commitment, not zero commitment.
+ */
+export type SLAWindow = {
+} & {
+  /**
+   * Business time starts at seller receipt, advancing to the next working period when outside working time.
+   */
+  clock?: 'elapsed' | 'business';
+  /**
+   * Immutable seller-local ID in get_adcp_capabilities.business_calendars; required only for business time.
+   */
+  business_calendar_id?: string;
+  /**
+   * ISO 8601 acknowledgement bound: synchronous response for self_serve, tolerance decision for conditional_self_serve, queue receipt for seller_managed/requires_approval. Elapsed action SLAs start at buyer issuance. Review and report SLAs start at seller receipt; reports require human acknowledgement.
+   */
+  response_max?: string;
+  /**
+   * ISO 8601 completion bound: mutation applied, proposal finalized, or seller-managed decision resolved. Elapsed action SLAs start at buyer issuance. Review SLAs start at seller receipt and complete at an approved or rejected decision.
+   */
+  completion_max?: string;
+};
+/**
+ * Product review commitment resolved for applicable packages. Separate from the SLA for applying the creative mutation; not a negotiated change term.
+ */
+export type CreativeReviewSLA = SLAWindow;
 /**
  * The accepted proposal change_terms[].term_id from which this current-state action projection was derived.
  */
@@ -5895,35 +5999,23 @@ export type MediaBuyTermsReference = string;
 export type ApplicablePackageID = string;
 
 /**
- * An action currently available on a media buy, resolved against the buy's current status, accepted commercial_terms.change_terms, account authorization, and applicable governance delegation. Authoritative for current availability, but not a replacement for negotiated rights: when explicit change_terms exist, this projection may temporarily omit an action because state changed, but MUST NOT silently replace its negotiated service mode, SLA, constraints, conditions, or contract reference. The containing array is uniquely keyed by action.
+ * An action currently available on a media buy, resolved against the buy's current status, account authorization, and applicable governance delegation. Buy changes also resolve accepted commercial_terms.change_terms: this projection MUST NOT replace negotiated rights. Issue reporting is an independent operational capability and requires no negotiated change term. The containing array is uniquely keyed by action.
  */
 export interface MediaBuyAvailableAction {
   action: MediaBuyAvailableActionID;
   mode: MediaBuyActionMode;
   /**
-   * Compact-lifecycle task for this resolved action: operational control, commercial refinement, or creative lifecycle mutation.
+   * Task for this resolved action: operational control, commercial refinement, creative lifecycle mutation, or seller-side issue reporting.
    */
-  task?: 'control_media_buy' | 'refine_proposals' | 'sync_creatives';
+  task?: 'control_media_buy' | 'refine_proposals' | 'sync_creatives' | 'report_media_buy_issue';
   sla?: SLAWindow;
+  review_sla?: CreativeReviewSLA;
   change_term_id?: MediaBuyChangeTermID;
   terms_ref?: MediaBuyTermsReference;
   /**
    * For a package-scoped action, the exact packages currently eligible. Omission means every relevant package. Root actions omit this field.
    */
   applicable_package_ids?: ApplicablePackageID[];
-}
-/**
- * Optional SLA commitment for this action on this buy. Absence means no commitment, not zero commitment.
- */
-export interface SLAWindow {
-  /**
-   * Maximum elapsed time from when the buyer issues the action to when the seller acknowledges receipt (mode-appropriate: synchronous response for self_serve, tolerance decision for conditional_self_serve, or queue acknowledgement for seller_managed and legacy requires_approval). Sellers include weekends and non-working periods in the maximum. ISO 8601 duration.
-   */
-  response_max?: string;
-  /**
-   * Maximum elapsed time from buyer issuing the action to the seller completing it (mutation applied, proposal finalized, or seller-managed decision resolved). Sellers include weekends and non-working periods in the maximum. ISO 8601 duration.
-   */
-  completion_max?: string;
 }
 
 // PRODUCTALLOWEDACTION PRIORITY CANONICAL SCHEMA
@@ -5947,6 +6039,7 @@ export interface ProductAllowedAction {
    */
   terms_ref?: string;
 }
+
 // AUDIENCEACTIVATIONMETHOD PRIORITY CANONICAL SCHEMA
 /**
  * One way buyer audience data can reach a seller for targeting. The pattern field discriminates the entry; each pattern carries only its own fields. Two patterns are AdCP-canonical (sync_audiences, tmp_identity_match); the rest describe integration paths that move data outside the protocol while remaining discoverable through it. Vendor identity is a BrandRef domain so new platforms declare a domain rather than waiting on an enum change. Experimental (x-status: experimental): the audience-activation surface — this schema, product.audience_activation, audience_targeting.supported_activation_methods, and the audience_activation_methods product filter — is new and not yet field-tested across parties. Sellers that implement it MUST list media_buy.audience_activation in experimental_features. Per docs/reference/experimental-status, it MAY change between 3.x releases with notice.
@@ -5996,6 +6089,7 @@ export interface DatasetQuery {
   vendor: BrandReference;
   /**
    * Principals the buyer grants access to in the vendor's system. identity is always required. cloud and region are optional, paired deployment metadata: omit both for global principals (for example, an IAM principal or federated identity). Their operational meaning is vendor-specific — they may constrain direct-share reachability or select a fulfillment route, or may be routing and cost hints only. They are not compliance boundaries; data-transfer assessments key on the recipient entity's jurisdiction, not the grantee account's region. Optional: sellers MAY instead communicate identities during account setup.
+   * @maxItems 32
    */
   consumer_identities?: {
     /**
@@ -6004,11 +6098,13 @@ export interface DatasetQuery {
     cloud?: 'aws' | 'azure' | 'gcp';
     /**
      * Vendor/cloud region identifier. Format follows the cloud family's region naming; not constrained by this schema.
+     * @maxLength 128
      */
     region?: string;
     /**
      * Principal to grant, interpreted relative to the enclosing entry's vendor.domain. Format is vendor-specific and opaque — Snowflake: orgname.accountname; Databricks: sharing recipient identifier; BigQuery: IAM principal.
      * @minLength 1
+     * @maxLength 128
      */
     identity: string;
   }[];
@@ -6331,6 +6427,9 @@ export type TargetingOverlayInput = TargetingUnknownAgeEligibilityConstraint &
      * @minItems 1
      */
     signal_targeting?: [SignalTargeting, ...SignalTargeting[]] | null;
+    /**
+     * Whole demographics dimension mutation: omit to inherit on create or preserve on update; null suppresses or clears both age and gender; a non-null object replaces the complete age-and-gender selection. To remove gender while retaining age, submit demographics containing age only. Nested age:null or gender:null are invalid. Apply atomically and omit cleared dimensions from strict readback.
+     */
     demographics?: DemographicTargetingIntent | null;
     frequency_cap?: TargetingFrequencyCap | null;
     property_list?: TargetingPropertyList | null;
@@ -6693,13 +6792,13 @@ export type TargetingFrequencyCap = {
   window?: Duration;
 };
 /**
- * Experimental. Several collection_list refs: intersection. Not with collection_list. Over max_references is rejected, never truncated.
+ * Experimental. Several collection_list refs: intersection. Not with collection_list. Over max_references is rejected, never truncated. On an undisclosed roster a seller MAY accept them.
  *
  * @minItems 1
  */
 export type CollectionLists = [CollectionListReference, ...CollectionListReference[]];
 /**
- * Experimental. Several collection_list_exclude refs: union. Not with collection_list_exclude. Over max_references is rejected, never truncated.
+ * Experimental. Several collection_list_exclude refs: union. Not with collection_list_exclude. Over max_references is rejected, never truncated. On an undisclosed roster the same rule as collection_list_exclude applies.
  *
  * @minItems 1
  */
@@ -6867,7 +6966,7 @@ export type TargetingNegativeKeywordsInput = [NegativeKeyword, ...NegativeKeywor
 export type CreativeAssignment = {
 } & {
   /**
-   * Unique identifier for the creative
+   * Unique identifier for an existing library creative. pending_review and rejected creatives may be assigned; the seller retains the assignment through review and correction under the same creative_id. Assignment does not authorize delivery before package approval. The package start_requires_all_creatives_approved policy controls whether approved assignments may start independently.
    */
   creative_id: string;
   /**
@@ -7169,147 +7268,6 @@ export type MacroDeclaration = {
 } & {
 } & {
 } & {
-} & {
-  /**
-   * Identifier unique within the enclosing asset, used to correlate validation results.
-   */
-  declaration_id: string;
-  /**
-   * Exact byte-preserved token expression at this occurrence, including delimiters.
-   */
-  token: string;
-  dialect: MacroDialectFamily;
-  /**
-   * Authority-controlled registry or mapping URI. Required for IAB VAST, IAB DAAST, and vendor dialects.
-   */
-  dialect_namespace?: string;
-  /**
-   * Immutable registry/mapping revision, release, commit, or digest. Required for IAB VAST, IAB DAAST, and vendor dialects.
-   */
-  dialect_revision?: string;
-  /**
-   * Exact semantic identifier in the cited dialect, such as `CACHEBUSTING`, `PLAYERSTATE`, or a documented vendor name. This is not inferred from token spelling.
-   */
-  dialect_semantic: string;
-  mapping_status: MacroMappingStatus;
-  universal_semantic?: UniversalMacro;
-  operation: MacroProcessingOperation;
-  performed_by?: MacroProcessingActor;
-  translation_target?: MacroTranslationTarget;
-  location: {
-    /**
-     * Asset field containing this occurrence.
-     */
-    field: 'url' | 'markup' | 'content' | 'ad_request_url' | 'clickthrough_url';
-    /**
-     * Zero-based occurrence of this exact token within the named field.
-     */
-    occurrence: number;
-    context: MacroValueContext;
-  };
-  encoding: MacroEncoding;
-  /**
-   * Whether terminal delivery must fail if the declared operation cannot complete.
-   */
-  required: boolean;
-  /**
-   * Action when the responsible actor has no value. Omission is legal only for a complete URL query-value occurrence; dialect sentinels require a cited dialect rule.
-   */
-  unavailable_behavior: 'preserve' | 'omit_parameter' | 'dialect_sentinel' | 'reject';
-} & {
-  /**
-   * Identifier unique within the enclosing asset, used to correlate validation results.
-   */
-  declaration_id: string;
-  /**
-   * Exact byte-preserved token expression at this occurrence, including delimiters.
-   */
-  token: string;
-  dialect: MacroDialectFamily;
-  /**
-   * Authority-controlled registry or mapping URI. Required for IAB VAST, IAB DAAST, and vendor dialects.
-   */
-  dialect_namespace?: string;
-  /**
-   * Immutable registry/mapping revision, release, commit, or digest. Required for IAB VAST, IAB DAAST, and vendor dialects.
-   */
-  dialect_revision?: string;
-  /**
-   * Exact semantic identifier in the cited dialect, such as `CACHEBUSTING`, `PLAYERSTATE`, or a documented vendor name. This is not inferred from token spelling.
-   */
-  dialect_semantic: string;
-  mapping_status: MacroMappingStatus;
-  universal_semantic?: UniversalMacro;
-  operation: MacroProcessingOperation;
-  performed_by?: MacroProcessingActor;
-  translation_target?: MacroTranslationTarget;
-  location: {
-    /**
-     * Asset field containing this occurrence.
-     */
-    field: 'url' | 'markup' | 'content' | 'ad_request_url' | 'clickthrough_url';
-    /**
-     * Zero-based occurrence of this exact token within the named field.
-     */
-    occurrence: number;
-    context: MacroValueContext;
-  };
-  encoding: MacroEncoding;
-  /**
-   * Whether terminal delivery must fail if the declared operation cannot complete.
-   */
-  required: boolean;
-  /**
-   * Action when the responsible actor has no value. Omission is legal only for a complete URL query-value occurrence; dialect sentinels require a cited dialect rule.
-   */
-  unavailable_behavior: 'preserve' | 'omit_parameter' | 'dialect_sentinel' | 'reject';
-} & {
-  /**
-   * Identifier unique within the enclosing asset, used to correlate validation results.
-   */
-  declaration_id: string;
-  /**
-   * Exact byte-preserved token expression at this occurrence, including delimiters.
-   */
-  token: string;
-  dialect: MacroDialectFamily;
-  /**
-   * Authority-controlled registry or mapping URI. Required for IAB VAST, IAB DAAST, and vendor dialects.
-   */
-  dialect_namespace?: string;
-  /**
-   * Immutable registry/mapping revision, release, commit, or digest. Required for IAB VAST, IAB DAAST, and vendor dialects.
-   */
-  dialect_revision?: string;
-  /**
-   * Exact semantic identifier in the cited dialect, such as `CACHEBUSTING`, `PLAYERSTATE`, or a documented vendor name. This is not inferred from token spelling.
-   */
-  dialect_semantic: string;
-  mapping_status: MacroMappingStatus;
-  universal_semantic?: UniversalMacro;
-  operation: MacroProcessingOperation;
-  performed_by?: MacroProcessingActor;
-  translation_target?: MacroTranslationTarget;
-  location: {
-    /**
-     * Asset field containing this occurrence.
-     */
-    field: 'url' | 'markup' | 'content' | 'ad_request_url' | 'clickthrough_url';
-    /**
-     * Zero-based occurrence of this exact token within the named field.
-     */
-    occurrence: number;
-    context: MacroValueContext;
-  };
-  encoding: MacroEncoding;
-  /**
-   * Whether terminal delivery must fail if the declared operation cannot complete.
-   */
-  required: boolean;
-  /**
-   * Action when the responsible actor has no value. Omission is legal only for a complete URL query-value occurrence; dialect sentinels require a cited dialect rule.
-   */
-  unavailable_behavior: 'preserve' | 'omit_parameter' | 'dialect_sentinel' | 'reject';
 } & {
   /**
    * Identifier unique within the enclosing asset, used to correlate validation results.
@@ -8585,6 +8543,10 @@ export interface PackageUpdate {
    */
   end_time?: string;
   /**
+   * AdCP 3.3 initial-start policy. False (default) serves eligible approved assignments. True MUST retain booking and inventory commitment but block first enablement for serving until every current assignment is approved in all applicable package scopes; an empty set or library approval alone is insufficient. Retain pending-review/rejected assignments; same-creative_id resubmission needs no reassignment. Flight, pause, format-coverage and commitment constraints still apply. After first enablement, ordinary serving and impairment rules apply. Opt-in requires media_buy.features.creative_start_policy: true; otherwise buyers MUST NOT send true and sellers MUST reject true with UNSUPPORTED_FEATURE before mutation. Stage the full initial set atomically or while paused; the gate cannot anticipate future assignments. Omission preserves the stored policy; false clears the gate before first enablement for serving. A change to this policy after the package has first been enabled for serving MUST be rejected with INVALID_STATE.
+   */
+  start_requires_all_creatives_approved?: boolean;
+  /**
    * Pause/resume specific package (true = paused, false = active)
    */
   paused?: boolean;
@@ -8656,7 +8618,7 @@ export interface PackageUpdate {
     match_type: MatchType;
   }[];
   /**
-   * Replace creative assignments for this package with optional rotation, grouping, weights, and placement routing. Uses replacement semantics - omit to leave assignments unchanged. rotation_mode is package-scoped: omission resolves to weighted, and every assignment MUST resolve to the same effective mode. In sequential mode, sequence_position MUST be unique within each package-local group. Sellers reject conflicts with VALIDATION_ERROR before mutation. When the same mutation narrows or clears targeting_overlay.placement_selection, this complete replacement MUST remove or reroute every assignment reference that would otherwise be orphaned; the seller validates both changes atomically.
+   * Replace creative assignments for this package with optional rotation, grouping, weights, and placement routing. Uses replacement semantics - omit to leave assignments unchanged. rotation_mode is package-scoped: omission resolves to weighted, and every assignment MUST resolve to the same effective mode. In sequential mode, sequence_position MUST be unique within each package-local group. Sellers reject conflicts with VALIDATION_ERROR before mutation. When the same mutation narrows or clears targeting_overlay.placement_selection, this complete replacement MUST remove or reroute every assignment reference that would otherwise be orphaned; the seller validates both changes atomically. A pending_review or rejected library creative MAY be assigned if the reference and other assignment constraints are valid; sellers MUST NOT reject or remove an assignment solely for its review status. Only package-approved eligible creatives may serve. See the package start_requires_all_creatives_approved policy and docs/media-buy/specification.mdx#starting-with-assigned-creatives-under-review.
    */
   creative_assignments?: CreativeAssignment[];
   /**
@@ -8797,10 +8759,10 @@ export interface PackageSignalTargetingGroup {
   signals: [PackageSignalTargeting, ...PackageSignalTargeting[]];
 }
 /**
- * Canonical demographic audience targeting intent with optional constraints on how age may be determined. This is distinct from age_restriction: demographics selects an audience, while age_restriction expresses a legal eligibility or verification floor. Fresh create/update targeting MUST compile exactly or be rejected. During get_products, a seller may offer a different configured predicate only through sparse targeting_resolution modifications on a distinguishable product_id; selecting that product accepts the alternative. Sellers never silently broaden, narrow, default, drop, or substitute the basis.
+ * Canonical age and gender audience targeting, distinct from age_restriction legal eligibility. Named dimensions compose with AND and have independent explicit unknown handling. Age determination constraints remain age-specific. Fresh create/update requests MUST compile exactly or be rejected; get_products may offer a configured alternative only with sparse targeting_resolution modifications and a distinguishable product_id. A non-null request-side demographics value replaces the entire demographics dimension, including both age and gender; retain age when changing only gender. Sellers MUST NOT silently drop, broaden, narrow, or substitute a predicate.
  */
 export interface DemographicTargetingIntent {
-  age: DemographicAgeRange & {
+  age?: DemographicAgeRange & {
     /**
      * User-level age determination bases the buyer permits for this predicate. Sellers MUST use only these bases or reject the request; they MUST NOT silently fall back to another basis. When omitted, the buyer imposes no determination-basis constraint beyond product capability and any age_restriction. population_estimate is structurally unavailable because aggregate evidence cannot identify an eligible user.
      *
@@ -8814,9 +8776,25 @@ export interface DemographicTargetingIntent {
      */
     accepted_verification_methods?: [AgeVerificationMethod, ...AgeVerificationMethod[]];
   };
+  gender?: DemographicGender;
 }
 /**
- * Reference to a property list for targeting specific properties within this product. The package runs on the intersection of the product's publisher_properties and this list. Sellers SHOULD return a validation error if the product has property_targeting_allowed: false.
+ * Experimental in AdCP 3.3 (media_buy.gender_targeting). AdCP 3.2 core remains age-only.
+ */
+export interface DemographicGender {
+  /**
+   * Nonempty set of selected gender categories. Sellers MUST execute every selected category exactly or reject the request.
+   *
+   * @minItems 1
+   */
+  values: ['female' | 'male' | 'non_binary', ...('female' | 'male' | 'non_binary')[]];
+  /**
+   * Include unstated/unknown gender: unavailable or explicitly withheld (prefer not to say). Required; no default. Independent of unknown age; known categories outside values are excluded.
+   */
+  include_unknown: boolean;
+}
+/**
+ * Reference to a property list for targeting specific properties within this product. The package runs on the intersection of the product's publisher_properties and this list. Sellers SHOULD return a validation error if the product has property_targeting_allowed: false. On an undisclosed roster (empty publisher_properties) a seller MAY accept it and runs only on the properties it matches.
  */
 export interface TargetingPropertyList {
   /**
@@ -8833,7 +8811,7 @@ export interface TargetingPropertyList {
   auth_token?: string;
 }
 /**
- * Reference to a property list whose properties must not carry the buyer's ads. Matched properties are removed from delivery. Use for brand-safety do-not-run lists (apps, sites). Exclude wins on overlap with property_list, and applies regardless of the product's property_targeting_allowed flag. Seller must declare support in get_adcp_capabilities.
+ * Reference to a property list whose properties must not carry the buyer's ads. Matched properties are removed from delivery. Use for brand-safety do-not-run lists (apps, sites). Exclude wins on overlap with property_list, and applies regardless of the product's property_targeting_allowed flag. Seller must declare support in get_adcp_capabilities. On an undisclosed roster (empty publisher_properties) a seller MAY accept it and MUST then apply it against its full internal roster; a seller that cannot rejects it with UNSUPPORTED_FEATURE.
  */
 export interface PropertyListReference {
   /**
@@ -8850,7 +8828,7 @@ export interface PropertyListReference {
   auth_token?: string;
 }
 /**
- * Reference to a collection list for including specific collections (programs, publications, channels) within this product. The package runs on the intersection of matched collections and this list. Use for inclusion-based collection targeting. Seller must declare support in get_adcp_capabilities.
+ * Reference to a collection list for including specific collections (programs, publications, channels) within this product. The package runs on the intersection of matched collections and this list. Use for inclusion-based collection targeting. Seller must declare support in get_adcp_capabilities. On an undisclosed roster (empty collections) a seller MAY accept it and runs only on the collections it matches.
  */
 export interface TargetingCollectionList {
   /**
@@ -8867,7 +8845,7 @@ export interface TargetingCollectionList {
   auth_token?: string;
 }
 /**
- * Reference to a collection list for excluding specific collections (programs, publications, channels) from this product. Matched collections must not carry the buyer's ads. Use for brand safety do-not-air lists. Seller must declare support in get_adcp_capabilities.
+ * Reference to a collection list for excluding specific collections (programs, publications, channels) from this product. Matched collections must not carry the buyer's ads. Use for brand safety do-not-air lists. Seller must declare support in get_adcp_capabilities. On an undisclosed roster (empty collections) a seller MAY accept it and MUST then apply it against its full internal roster; a seller that cannot rejects it with UNSUPPORTED_FEATURE.
  */
 export interface CollectionListReference {
   /**
@@ -9252,89 +9230,21 @@ export interface AudioAsset {
 }
 export interface TagURL {
   asset_type: 'display_tag';
-  /**
-   * @minItems 1
-   */
-  macro_declarations?: [
-    MacroDeclaration & {
-      location?: {
-        field?: 'url';
-      };
-    },
-    ...(MacroDeclaration & {
-      location?: {
-        field?: 'url';
-      };
-    })[]
-  ];
-  provenance?: Provenance;
-  /**
-   * Rendered width in logical pixels of the entry canvas, independent of target placement and embedded image density. For expandable units, this is the initial width. When set, height must also be set. Mutually exclusive with sizes.
-   */
-  width?: number;
-  /**
-   * Rendered height in logical pixels of the entry canvas. For expandable units, this is the initial height. When set, width must also be set. Mutually exclusive with sizes.
-   */
-  height?: number;
-  /**
-   * Selectable entry-canvas sizes in logical pixels at which the same representation can render, rather than placement constraints or expanded states. Mutually exclusive with width/height. Omit all size fields for an unsized or responsive asset; absence does not establish compatibility with a size-constrained option.
-   *
-   * @minItems 1
-   */
-  sizes?: [
-    {
-      width: number;
-      height: number;
-    },
-    ...{
-      width: number;
-      height: number;
-    }[]
-  ];
+  macro_declarations?: {
+    location?: {
+      field?: 'url';
+    };
+  }[];
   delivery_type: 'tag_url';
   url: MacroBearingURL3;
 }
 export interface InlineMarkup {
   asset_type: 'display_tag';
-  /**
-   * @minItems 1
-   */
-  macro_declarations?: [
-    MacroDeclaration & {
-      location?: {
-        field?: 'markup';
-      };
-    },
-    ...(MacroDeclaration & {
-      location?: {
-        field?: 'markup';
-      };
-    })[]
-  ];
-  provenance?: Provenance;
-  /**
-   * Rendered width in logical pixels of the entry canvas, independent of target placement and embedded image density. For expandable units, this is the initial width. When set, height must also be set. Mutually exclusive with sizes.
-   */
-  width?: number;
-  /**
-   * Rendered height in logical pixels of the entry canvas. For expandable units, this is the initial height. When set, width must also be set. Mutually exclusive with sizes.
-   */
-  height?: number;
-  /**
-   * Selectable entry-canvas sizes in logical pixels at which the same representation can render, rather than placement constraints or expanded states. Mutually exclusive with width/height. Omit all size fields for an unsized or responsive asset; absence does not establish compatibility with a size-constrained option.
-   *
-   * @minItems 1
-   */
-  sizes?: [
-    {
-      width: number;
-      height: number;
-    },
-    ...{
-      width: number;
-      height: number;
-    }[]
-  ];
+  macro_declarations?: {
+    location?: {
+      field?: 'markup';
+    };
+  }[];
   delivery_type: 'inline_markup';
   /**
    * How the destination traffics the byte-preserved markup.
@@ -9347,45 +9257,11 @@ export interface InlineMarkup {
 }
 export interface PairedRedirect {
   asset_type: 'display_tag';
-  /**
-   * @minItems 1
-   */
-  macro_declarations?: [
-    MacroDeclaration & {
-      location?: {
-        field?: 'ad_request_url' | 'clickthrough_url';
-      };
-    },
-    ...(MacroDeclaration & {
-      location?: {
-        field?: 'ad_request_url' | 'clickthrough_url';
-      };
-    })[]
-  ];
-  provenance?: Provenance;
-  /**
-   * Rendered width in logical pixels of the entry canvas, independent of target placement and embedded image density. For expandable units, this is the initial width. When set, height must also be set. Mutually exclusive with sizes.
-   */
-  width?: number;
-  /**
-   * Rendered height in logical pixels of the entry canvas. For expandable units, this is the initial height. When set, width must also be set. Mutually exclusive with sizes.
-   */
-  height?: number;
-  /**
-   * Selectable entry-canvas sizes in logical pixels at which the same representation can render, rather than placement constraints or expanded states. Mutually exclusive with width/height. Omit all size fields for an unsized or responsive asset; absence does not establish compatibility with a size-constrained option.
-   *
-   * @minItems 1
-   */
-  sizes?: [
-    {
-      width: number;
-      height: number;
-    },
-    ...{
-      width: number;
-      height: number;
-    }[]
-  ];
+  macro_declarations?: {
+    location?: {
+      field?: 'ad_request_url' | 'clickthrough_url';
+    };
+  }[];
   delivery_type: 'paired_redirect';
   ad_request_url: MacroBearingURL4;
   clickthrough_url: MacroBearingURL5;
@@ -14006,7 +13882,7 @@ export type None2 = None;
 export type AccountReference =
   | {
       /**
-       * Seller-assigned account identifier. For upstream-managed account namespaces, this value comes from list_accounts; for seller-defined namespaces without a list_accounts surface, it is supplied out-of-band. Buyer-declared account sellers SHOULD return account_id from sync_accounts and MUST continue accepting the account's current natural-key AccountRef on subsequent calls. When the seller declares account.stable_account_id: true, it accepts account_id for every account the caller can operate and buyers SHOULD send it; otherwise buyers of buyer-declared accounts send the natural key, a seller MAY also accept its returned account_id, and buyers MUST NOT assume it does. A former key tombstoned by identity reconciliation returns ACCOUNT_MOVED to authorized callers.
+       * Seller-assigned account identifier and the account's identity. For upstream-managed account namespaces, this value comes from list_accounts; for seller-defined namespaces without a list_accounts surface, it is supplied out-of-band. Buyer-declared account sellers MUST return account_id from sync_accounts. Every seller MUST accept account_id for every account the caller can operate and MUST NOT change it for the life of the account. Buyers SHOULD send it on every call after the account opens. Changing an account attribute never changes its account_id.
        */
       account_id: string;
     }
@@ -14018,15 +13894,15 @@ export type AccountReference =
       operator: string;
       operator_unit?: OperatorUnit;
       /**
-       * Immutable ISO 4217 transaction currency when the seller's advertiser object is currency-bound. When present, this is part of the natural account key and media buys on the account MUST use it. Omit when currency is selected independently per media buy.
+       * ISO 4217 transaction currency when the seller's advertiser object is currency-bound. An account attribute that acts as a lookup filter; media buys on the account MUST use it. Omit when currency is selected independently per media buy.
        */
       currency?: string;
       /**
-       * Immutable account timezone. Include it in the natural key when get_adcp_capabilities.account.timezone declares account_fixed with buyer_selected; omit it for seller_fixed or seller_assigned accounts.
+       * Account timezone. An account attribute that acts as a lookup filter when get_adcp_capabilities.account.timezone declares account_fixed with buyer_selected; omit it for seller_fixed or seller_assigned accounts.
        */
       timezone?: string;
       /**
-       * When true, references the sandbox account for this brand/operator pair. Defaults to false (production account).
+       * When true, selects the sandbox account for this brand/operator pair. Defaults to false, which selects the production account.
        */
       sandbox?: boolean;
     };
@@ -14072,7 +13948,7 @@ export interface ValidatePropertyDeliveryRequest {
   ext?: ExtensionObject;
 }
 /**
- * Optional operator-owned business unit, agency seat, or platform account. Only id participates in the natural account key; name is mutable display metadata.
+ * Optional operator-owned business unit, agency seat, or platform account. An account attribute: id acts as a lookup filter; name is display metadata and never filters.
  */
 export interface OperatorUnit {
   /**
@@ -14080,7 +13956,7 @@ export interface OperatorUnit {
    */
   id: string;
   /**
-   * Human-readable seat or business-unit name, such as Nova EMEA. This label may change and is not part of the natural account key.
+   * Human-readable seat or business-unit name, such as Nova EMEA. This display label may change and never filters a natural-key lookup.
    */
   name?: string;
 }
@@ -14436,7 +14312,7 @@ export interface PushNotificationConfig {
   token?: string;
   /**
    * @deprecated
-   * Legacy authentication configuration (A2A-compatible). Opts the seller into Bearer or HMAC-SHA256 signing instead of the default RFC 9421 webhook profile. Deprecated; removed in AdCP 4.0. **Precedence is a switch, not a fallback:** presence of this block selects the legacy scheme; absence selects 9421. A seller MUST NOT sign the same webhook both ways, and a buyer MUST NOT attempt 'try 9421 first, fall back to HMAC' verification — signature mode is determined solely by whether this block was present at registration time. The seller's baseline 9421 webhook key is published at its brand.json `agents[]` `jwks_uri` using `adcp_use: "request-signing"` (deprecated `webhook-signing` keys remain accepted during the compatibility window); it does not override this selector and is only used when `authentication` is omitted. See docs/building/by-layer/L1/security.mdx#webhook-callbacks for the full precedence and downgrade-resistance rules (including the `webhook_mode_mismatch` rejection a buyer MUST apply when a received webhook's signing mode does not match the registered mode).
+   * Legacy authentication configuration (A2A-compatible), deprecated; removed in AdCP 4.0. Sending this block asks the seller for Bearer or HMAC-SHA256 instead of RFC 9421 signing; omitting it selects the profile that `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the registration with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. A seller MUST NOT sign the same webhook both ways, and a buyer MUST NOT try 9421 first and fall back to HMAC. The seller's 9421 webhook key is published at its brand.json `agents[]` `jwks_uri` with `adcp_use: "request-signing"` (deprecated `webhook-signing` keys stay accepted during the compatibility window). See docs/building/by-layer/L1/security.mdx#webhook-callbacks, including the `webhook_mode_mismatch` rejection buyers apply on a mode mismatch.
    */
   authentication?: {
     /**
@@ -15491,7 +15367,7 @@ export interface CommittedMediaBuy {
 }
 // MEDIA-BUY SCHEMA
 /**
- * Pending or rejected operator-identity transition. While present, the top-level operator and operator_unit remain the current canonical identity. Re-read list_accounts until the request is applied (canonical fields change and this object disappears) or rejected.
+ * Deprecated in 3.3. Pending or rejected operator-identity transition. While present, the top-level operator and operator_unit remain the current canonical identity. Re-read list_accounts until the request is applied (canonical fields change and this object disappears) or rejected.
  */
 export type AccountIdentityChange = AccountIdentityChangePending | AccountIdentityChangeRejected;
 /**
@@ -15568,7 +15444,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -15657,7 +15533,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -15746,7 +15622,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -15835,7 +15711,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -15924,7 +15800,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -16013,7 +15889,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -16102,7 +15978,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -16191,7 +16067,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -16280,7 +16156,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -16369,7 +16245,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -16458,7 +16334,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -16547,7 +16423,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -16636,7 +16512,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -16725,7 +16601,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -16814,7 +16690,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -16903,7 +16779,7 @@ export type NotificationConfig = {
   product_payload_view?: 'canonical' | 'legacy';
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. The same signed-registration downgrade-resistance rules apply to accounts[].notification_configs[].authentication. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry as a per-account validation failure with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
    */
   authentication?: {
     /**
@@ -17887,7 +17763,7 @@ export type Package = {
    */
   committed_metrics?: [CommittedMetric, ...CommittedMetric[]];
   /**
-   * Creative assets assigned to this package, including the committed package-scoped rotation policy. Omitted rotation_mode reads as weighted for backward compatibility; all assignments resolve to one effective mode, and sequential positions are unique within each package-local group.
+   * Creative assets assigned to this package, including the committed package-scoped rotation policy. Omitted rotation_mode reads as weighted for backward compatibility; all assignments resolve to one effective mode, and sequential positions are unique within each package-local group. A pending_review or rejected library creative MAY be assigned if the reference and other assignment constraints are valid; sellers MUST NOT reject or remove an assignment solely for its review status. Only package-approved eligible creatives may serve. See the package start_requires_all_creatives_approved policy and docs/media-buy/specification.mdx#starting-with-assigned-creatives-under-review.
    */
   creative_assignments?: CreativeAssignment[];
   /**
@@ -17924,6 +17800,10 @@ export type Package = {
    * Flight end date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's end_time. Sellers SHOULD always include the resolved value in responses, even when inherited.
    */
   end_time?: string;
+  /**
+   * AdCP 3.3 initial-start policy. False (default) serves eligible approved assignments. True MUST retain booking and inventory commitment but block first enablement for serving until every current assignment is approved in all applicable package scopes; an empty set or library approval alone is insufficient. Retain pending-review/rejected assignments; same-creative_id resubmission needs no reassignment. Flight, pause, format-coverage and commitment constraints still apply. After first enablement, ordinary serving and impairment rules apply. Opt-in requires media_buy.features.creative_start_policy: true; otherwise buyers MUST NOT send true and sellers MUST reject true with UNSUPPORTED_FEATURE before mutation. Stage the full initial set atomically or while paused; the gate cannot anticipate future assignments. Sellers MUST echo the effective value on package readback, including false when defaulted.
+   */
+  start_requires_all_creatives_approved?: boolean;
   /**
    * Whether this package is paused by the buyer. Paused packages do not deliver impressions. Defaults to false.
    */
@@ -18283,13 +18163,13 @@ export type TargetingOverlay = TargetingUnknownAgeEligibilityConstraint &
     collection_list?: TargetingCollectionList;
     collection_list_exclude?: CollectionListReference;
     /**
-     * Experimental. Several collection_list refs: intersection. Not with collection_list. Over max_references is rejected, never truncated.
+     * Experimental. Several collection_list refs: intersection. Not with collection_list. Over max_references is rejected, never truncated. On an undisclosed roster a seller MAY accept them.
      *
      * @minItems 1
      */
     collection_lists?: [CollectionListReference, ...CollectionListReference[]];
     /**
-     * Experimental. Several collection_list_exclude refs: union. Not with collection_list_exclude. Over max_references is rejected, never truncated.
+     * Experimental. Several collection_list_exclude refs: union. Not with collection_list_exclude. Over max_references is rejected, never truncated. On an undisclosed roster the same rule as collection_list_exclude applies.
      *
      * @minItems 1
      */
@@ -18476,7 +18356,7 @@ export type DemographicTargetingResolution = {
   requested: DemographicTargetingIntent;
   applied: DemographicPredicate;
   /**
-   * Always true for a stored package. requested and applied MUST denote exactly the same set, including unknown-age membership; sellers reject non-equivalent requests instead of storing an alternative.
+   * Always true for a stored package. All requested and applied dimensions MUST match exactly, including independent unknown-age and unknown-gender membership. Sellers reject non-equivalent requests rather than store alternatives.
    */
   equivalent: true;
   execution:
@@ -18503,9 +18383,63 @@ export type DemographicTargetingResolution = {
          */
         signal_refs: [SignalRef, ...SignalRef[]];
         ext?: ExtensionObject;
+      }
+    | {
+        type: 'gender_values';
+        ext?: ExtensionObject;
+      }
+    | {
+        type: 'per_dimension';
+        /**
+         * Exact age execution. Signal references MUST carry age-only predicates; dropping a correlated gender constraint is forbidden.
+         */
+        age:
+          | {
+              type: 'continuous_bounds';
+              ext?: ExtensionObject;
+            }
+          | {
+              type: 'enumerated_intervals';
+              /**
+               * Seller-scoped interval identifiers whose union produced applied.
+               *
+               * @minItems 1
+               */
+              interval_ids: [string, ...string[]];
+              ext?: ExtensionObject;
+            }
+          | {
+              type: 'signals';
+              /**
+               * Authoritative signal references whose demographic predicates were unioned to produce applied. Signal names alone never establish equivalence.
+               *
+               * @minItems 1
+               */
+              signal_refs: [SignalRef, ...SignalRef[]];
+              ext?: ExtensionObject;
+            };
+        /**
+         * Exact gender execution. Signal references MUST carry gender-only predicates; dropping a correlated age constraint is forbidden. Experimental in AdCP 3.3 (media_buy.gender_targeting). AdCP 3.2 core remains age-only.
+         */
+        gender:
+          | {
+              type: 'gender_values';
+              ext?: ExtensionObject;
+            }
+          | {
+              type: 'signals';
+              /**
+               * Authoritative signal references whose demographic predicates were unioned to produce applied. Signal names alone never establish equivalence.
+               *
+               * @minItems 1
+               */
+              signal_refs: [SignalRef, ...SignalRef[]];
+              ext?: ExtensionObject;
+            };
+        ext?: ExtensionObject;
       };
   /**
-   * Effective user-level determination bases configured for this package after intersecting buyer accepted_bases, product supported_bases, and age_restriction. This is an auditable configuration readback, not proof that every impression used every listed basis.
+   * Effective user-level age determination bases configured for this package after intersecting buyer accepted_bases, product supported_bases, and age_restriction. This is an auditable configuration readback, not proof that every impression used every listed basis.
    *
    * @minItems 1
    */
@@ -18517,6 +18451,37 @@ export type DemographicTargetingResolution = {
    */
   applied_verification_methods?: [AgeVerificationMethod, ...AgeVerificationMethod[]];
   ext?: ExtensionObject;
+};
+/**
+ * Canonical demographic predicate actually applied by the seller.
+ */
+export type DemographicPredicate = {
+} & {
+  age?: DemographicAgeRange;
+  gender?: DemographicGender;
+};
+/**
+ * A rate threshold for a performance metric, measured by a specified vendor. The threshold is a floor or ceiling depending on the metric: viewability, completion_rate, brand_safety, and attention_score are floors (must exceed); ivt is a ceiling (must not exceed).
+ */
+export type PerformanceStandard = {
+} & {
+  metric: PerformanceStandardMetric;
+  /**
+   * Rate threshold as a decimal (e.g., 0.70 for 70%). Whether this is a floor or ceiling depends on the metric: for viewability, completion_rate, brand_safety, attention_score the actual rate must be >= threshold; for ivt the actual rate must be <= threshold.
+   */
+  threshold: number;
+  standard?: ViewabilityStandard;
+  vendor: BrandReference;
+  metric_id?: VendorMetricID;
+} & {
+  metric: PerformanceStandardMetric;
+  /**
+   * Rate threshold as a decimal (e.g., 0.70 for 70%). Whether this is a floor or ceiling depends on the metric: for viewability, completion_rate, brand_safety, attention_score the actual rate must be >= threshold; for ivt the actual rate must be <= threshold.
+   */
+  threshold: number;
+  standard?: ViewabilityStandard;
+  vendor: BrandReference;
+  metric_id?: VendorMetricID;
 };
 /**
  * One metric in a package's binding reporting contract. Each entry uses `scope` as the discriminator and identifies a standard or vendor-defined metric that the seller has committed to populate in delivery reports.
@@ -18771,6 +18736,11 @@ export interface MediaBuy {
     reason?: string;
   };
   /**
+   * When the seller moved the buy to completed; present when status is completed. Sellers advertising media_buy.reporting_subscriptions MUST populate it for completed buys, because a buy that completes before end_time stops being owed reporting at this instant.
+   * @format date-time
+   */
+  completed_at?: string;
+  /**
    * Hard aggregate lifetime budget amount
    * @minimum 0
    */
@@ -18838,7 +18808,7 @@ export interface MediaBuy {
  */
 export interface Account {
   /**
-   * Unique identifier for this account
+   * Seller-assigned identifier and the account's identity; it never changes.
    */
   account_id: string;
   /**
@@ -18861,16 +18831,16 @@ export interface Account {
   operator?: string;
   operator_unit?: OperatorUnit;
   /**
-   * Monotonically increasing optimistic-concurrency token for this account. Incremented on every persisted settings change, identity-change request, and identity-change disposition; reads, dry runs, validation failures, and exact idempotency replays do not increment it. Pass the latest observed value in a sync_accounts settings-update entry to prevent lost updates.
+   * Monotonically increasing optimistic-concurrency token for this account. Incremented on every persisted settings change, identity-change request, and identity-change disposition; reads, dry runs, validation failures, and exact idempotency replays do not increment it. Pass the latest observed value in a sync_accounts settings-update entry, or a request_account change, to prevent lost updates. A timezone change shows here as a new revision with the new timezone. Reporting subscription writes through sync_principal, including replace_account_configs deactivations, are caller configuration and do not increment it.
    */
   revision?: number;
   identity_change?: AccountIdentityChange;
   /**
-   * Immutable transaction currency when the seller's advertiser object is currency-bound. Media buys on this account MUST use this currency. Omit when the account selects currency independently per media buy.
+   * Transaction currency when the seller's advertiser object is currency-bound. An account attribute set when the account opens. Media buys on this account MUST use this currency. Omit when the account selects currency independently per media buy.
    */
   currency?: string;
   /**
-   * Immutable operational timezone for this account, expressed as UTC or an IANA timezone identifier. AdCP 3.2 sellers return it on every account. It is the default calendar-day boundary for account-scoped behavior unless a feature explicitly declares another timezone basis. For buyer-selected account_fixed provisioning it participates in the natural account key.
+   * Operational timezone for this account, expressed as UTC or an IANA timezone identifier. An account attribute set when the account opens. AdCP 3.2 sellers return it on every account. It is the default calendar-day boundary for account-scoped behavior unless a feature explicitly declares another timezone basis.
    */
   timezone?: string;
   billing?: BillingParty;
@@ -18908,6 +18878,8 @@ export interface Account {
      * When this setup link expires.
      */
     expires_at?: string;
+    waiting_on?: PendingActionParty;
+    kind?: PendingActionKind;
   };
   account_scope?: AccountScope;
   /**
@@ -18959,7 +18931,7 @@ export interface Account {
     setup_instructions?: string;
   };
   /**
-   * When true, this is a sandbox account — no real platform calls, no real spend. For account-id namespaces, sandbox accounts are pre-existing test accounts on the platform discovered via list_accounts or supplied out-of-band. For buyer-declared accounts, sandbox is part of the natural key: the same brand/operator pair can have both a production and sandbox account.
+   * When true, this is a sandbox account — no real platform calls, no real spend. For account-id namespaces, sandbox accounts are pre-existing test accounts on the platform discovered via list_accounts or supplied out-of-band. For buyer-declared accounts, sandbox is an account attribute set when the account opens and never changed: the same brand/operator pair can have a production and a sandbox account.
    */
   sandbox?: boolean;
   /**
@@ -18996,6 +18968,7 @@ export interface AccountIdentityChangePending {
   requested_at?: string;
 }
 /**
+ * @deprecated
  * Complete desired operator identity submitted by the buyer.
  */
 export interface OperatorIdentity {
@@ -19227,24 +19200,6 @@ export interface PackageTargetingResolution {
   demographics: DemographicTargetingResolution;
   ext?: ExtensionObject;
 }
-/**
- * Canonical demographic predicate actually applied by the seller.
- */
-export interface DemographicPredicate {
-  age: DemographicAgeRange;
-}
-/**
- * A rate threshold for a performance metric, measured by a specified vendor. The threshold is a floor or ceiling depending on the metric: viewability, completion_rate, brand_safety, and attention_score are floors (must exceed); ivt is a ceiling (must not exceed).
- */
-export interface PerformanceStandard {
-  metric: PerformanceStandardMetric;
-  /**
-   * Rate threshold as a decimal (e.g., 0.70 for 70%). Whether this is a floor or ceiling depends on the metric: for viewability, completion_rate, brand_safety, attention_score the actual rate must be >= threshold; for ivt the actual rate must be <= threshold.
-   */
-  threshold: number;
-  standard?: ViewabilityStandard;
-  vendor: BrandReference;
-}
 export interface ImageFormatDeclaration {
   format_kind: 'image';
   params: CanonicalFormatImage;
@@ -19361,7 +19316,7 @@ export type Product = {
    */
   description: string;
   /**
-   * SDK implementers MUST enforce singular-only at runtime: each entry uses the singular `publisher_domain` form; the compact `publisher_domains[]` form is rejected on products. Codegen toolchains (json-schema-to-typescript, quicktype, datamodel-code-generator, openapi-typescript-codegen) often flatten the `allOf + $ref + not.required` restriction below poorly and may drop the rejection constraint silently, emitting an unrestricted type — runtime enforcement is the safety net. Publisher properties covered by this product. Buyers fetch actual property definitions from each publisher's adagents.json and validate agent authorization. Selection patterns mirror the authorization patterns in adagents.json for consistency. The compact `publisher_domains[]` form is reserved for adagents.json `authorized_agents[].publisher_properties[]` so that buy-side traffic-and-pricing flatteners can always treat each entry as exactly one publisher.
+   * SDK implementers MUST enforce singular-only at runtime: each entry uses the singular `publisher_domain` form; the compact `publisher_domains[]` form is rejected on products. Codegen toolchains (json-schema-to-typescript, quicktype, datamodel-code-generator, openapi-typescript-codegen) often flatten the `allOf + $ref + not.required` restriction below poorly and may drop the rejection constraint silently, emitting an unrestricted type — runtime enforcement is the safety net. Publisher properties covered by this product. A non-empty array is the complete roster. `[]` means the seller does not disclose it (undisclosed), not that the product has no properties; it bounds nothing. MUST NOT be `[]` on a response served below 3.3. Buyers fetch actual property definitions from each publisher's adagents.json and validate agent authorization. Selection patterns mirror the authorization patterns in adagents.json for consistency. The compact `publisher_domains[]` form is reserved for adagents.json `authorized_agents[].publisher_properties[]` so that buy-side traffic-and-pricing flatteners can always treat each entry as exactly one publisher.
    */
   publisher_properties: PublisherPropertySelector[];
   /**
@@ -19406,7 +19361,7 @@ export type Product = {
   delivery_type: DeliveryType;
   exclusivity?: Exclusivity;
   /**
-   * Available pricing models for this product. Fixed prices and auction floors are binding for every later targeting selection permitted by this product's overlay_support; price_guidance remains non-binding. Declaring broad overlay support alongside a binding option is therefore a uniform-price promise, not permission to calculate a different price at create time. A seller with value-dependent rates MUST return a request-specific configured product after rediscovery with concrete targeting, split the inventory into separately priced products, or expose only non-binding guidance until it can issue a binding option. The seller MUST mint a new pricing_option_id whenever a binding price, floor, currency, model, or priced applicability changes. It MUST NOT silently reprice a create request or reuse the selected option ID with different terms.
+   * Available pricing models for this product. Fixed prices and auction floors are binding for every later targeting selection permitted by this product's overlay_support; price_guidance remains non-binding. Declaring broad overlay support alongside a binding option is therefore a uniform-price promise, not permission to calculate a different price at create time, except for adjustments the selected fixed-price option itself declares in price_adjustments: those rows are part of the option's binding terms, and the resolved rate follows from the buyer's selections by the deterministic rules in price-adjustments.json. A price_adjustments table is optional and has equal standing with a fully priced offer: a seller that does not publish one (for example a yield-managed seller) returns priced options, whose price applies only to what was quoted, and is not expected to publish its method. A seller with other value-dependent rates MUST return a request-specific configured product after rediscovery with concrete targeting, split the inventory into separately priced products, or expose only non-binding guidance until it can issue a binding option. The seller MUST mint a new pricing_option_id whenever a binding price, floor, currency, model, or priced applicability changes. It MUST NOT silently reprice a create request or reuse the selected option ID with different terms.
    */
   pricing_options: PricingOption[];
   forecast?: DeliveryForecast;
@@ -19657,7 +19612,7 @@ export type Product = {
     reference_assets?: ProductCardReferenceAsset[];
   };
   /**
-   * Collections available in this product. Each entry references collections declared in an adagents.json by domain and collection ID. Full collection objects arrive in the response's top-level collections array when the request sets include_collections and the seller supports it (experimental, media_buy.collection_cards); otherwise buyers resolve them from the referenced adagents.json, which remains the authorization source either way. Product selectors must name explicit collection_ids — the domain-only bulk-grant selector form is for authorization scoping, not product composition.
+   * Collections available in this product. A non-empty array is the complete roster. `[]` means the seller does not disclose it (undisclosed); absent makes no collection declaration. It bounds nothing. MUST NOT be `[]` on a response served below 3.3. Each entry references collections declared in an adagents.json by domain and collection ID. Full collection objects arrive in the response's top-level collections array when the request sets include_collections and the seller supports it (experimental, media_buy.collection_cards); otherwise buyers resolve them from the referenced adagents.json, which remains the authorization source either way. Product selectors must name explicit collection_ids — the domain-only bulk-grant selector form is for authorization scoping, not product composition.
    */
   collections?: (CollectionSelector & {
   })[];
@@ -19870,6 +19825,31 @@ export type PricingOption =
   | FlatRatePricingOption
   | TimeBasedPricingOption;
 /**
+ * Optional ordered adjustment table on a binding fixed-price option; fixed_price is the base rate. A table and a fully priced seller offer have equal standing: a table tells the buyer it can compute the price locally for the selections and dates it covers; without one the price applies only to what was quoted, and yield-managed sellers are not expected to publish one. Composition is one running total in declared order: each firing row adds (fee) or subtracts (discount) round(running x rate) or its amount, so a 10% fee then a 10% fee is x1.21. An index factor f is a fee rate f - 1 or a discount rate 1 - f. Selection rows fire once per dimension (first applicable row); always rows each fire; valid_from/valid_until bound a row at the purchase start_time. A table applies only to the account it was returned for and expires with its quote (proposal or offer expires_at, or the discovery response's validity). Any change to the table mints a new pricing_option_id, so the accepted pricing_option_id (covered by terms_digest) identifies exactly one immutable table: changes the agreement already permits are priced from that table, which both parties retain from discovery and the seller MUST price from, not from a later table. The table grants no change rights; those come only from change_terms[]. Sellers MUST NOT return a table to callers below adcp_version 3.3. See pricing-models.mdx#selection-dependent-price-adjustments.
+ *
+ * @minItems 1
+ * @maxItems 20
+ */
+export type PriceAdjustments =
+  (| (
+          | {
+            }
+          | {
+            }
+        )
+      | (
+          | {
+            }
+          | {
+            }
+        )
+      | (
+          | {
+            }
+          | {
+            }
+        ))[];
+/**
  * Revenue-share pricing. The advertiser pays a fixed decimal commission rate applied to settled commissionable_value attributed to the declared conversion event and event source. Spend is rounded once to the ISO 4217 minor-unit precision of currency after multiplication: spend = round_currency(commissionable_value × commission_rate). This is contingent pricing, not fixed-unit pricing or an auction.
  */
 export type RevenueSharePricingOption = {
@@ -20060,11 +20040,15 @@ export type SignalListing = {
     max: number;
   };
   /**
-   * Restricted attribute categories this listing touches. Required with demographic_predicate and must include age. For referenced provider/source signals, any projected values must match the authoritative definition.
+   * Restricted attribute categories this listing touches. Required with demographic_predicate and must include age for age predicates and sex_gender for gender predicates. For referenced provider/source signals, any projected values must match the authoritative definition.
    *
    * @minItems 1
    */
   restricted_attributes?: [RestrictedAttribute, ...RestrictedAttribute[]];
+  /**
+   * Experimental (signals.pricing_groups). Optional seller-defined key naming the set of signals whose fees combine under one signal_pricing_group_rules entry when selected in the same package. The key is scoped to the listing surface (product options or the get_signals agent) it appears on. A product-scoped value overrides the get_signals value, as product-scoped pricing_options do; an option omitting it inherits. Omit when the fee is independent. Distinct from selection_group, which governs targeting composability, not fees.
+   */
+  pricing_group?: string;
   demographic_predicate?: DemographicPredicate;
   /**
    * User-level bases by which the ages of this signal's members were established: verified, declared, and/or inferred. Sibling of demographic_predicate, not nested in it; only valid when demographic_predicate.age is present. Population estimates are out of scope (aggregate composition cannot establish an individual's age; use audience_evidence). Absent means the signal makes no basis claim (for a listing that projects a data_provider or signal_source definition, resolve the value from that definition; only the resolved value counts), and a buyer whose request names accepted_bases MUST NOT treat a signal with no resolved basis as satisfying the age predicate. A signal satisfies a requested age predicate with accepted_bases only when its demographic_predicate.age is within the request AND every value in age_determination_bases is in accepted_bases. The bases describe how known ages were established; unknown-age membership is governed only by include_unknown. Forward note: when gender targeting (#7925, experimental) graduates, gender will need an equivalent disclosure; this field is age-specific and the enum is not generalized. For product-scoped listings this listing is authoritative; for data_provider and signal_source refs, any projected value MUST match the referenced authoritative definition, the same rule demographic_predicate follows.
@@ -20165,6 +20149,38 @@ export type VendorPricingOption = {
  * Pricing model for a vendor service. Discriminated by model: 'cpm' (fixed CPM), 'percent_of_media' (percentage of spend with optional CPM cap), 'flat_fee' (fixed charge per reporting period), 'per_unit' (fixed price per unit of work), or 'custom' (escape hatch for models not covered by the enumerated forms — requires a description and structured metadata).
  */
 export type VendorPricing = CpmPricing | PercentOfMediaPricing | FlatFeePricing | PerUnitPricing | CustomPricing;
+/**
+ * Exact demographic execution available for this product. Buyers MUST use this product-scoped declaration, not the seller-wide get_adcp_capabilities rollup, to preflight a demographic predicate.
+ */
+export type DemographicTargetingCapability = {
+} & {
+  /**
+   * Age-targeting execution available for this product.
+   */
+  age?: {
+  };
+  /**
+   * Product-scoped exact gender targeting. Missing capability makes no gender execution commitment. Every nonempty subset of values is executable with compatible unknown handling, subject to policy and commercial checks. Native age and gender modes MUST compose as AND when both dimensions are advertised; signal-backed combinations require authoritative predicates proving the complete intersection. Experimental in AdCP 3.3 (media_buy.gender_targeting). AdCP 3.2 core remains age-only.
+   */
+  gender?: {
+    /**
+     * native compiles gender values into seller controls; signals uses authoritative demographic_predicate metadata, never labels or approximate mappings.
+     *
+     * @minItems 1
+     */
+    execution_modes: ['native' | 'signals', ...('native' | 'signals')[]];
+    /**
+     * Nonempty set of selected gender categories. Sellers MUST execute every selected category exactly or reject the request.
+     *
+     * @minItems 1
+     */
+    values: ['female' | 'male' | 'non_binary', ...('female' | 'male' | 'non_binary')[]];
+    /**
+     * Unstated/unknown gender: selectable allows either include_unknown value; always_excluded only false; always_included only true. MUST reject incompatible requests.
+     */
+    unknown_handling: 'selectable' | 'always_excluded' | 'always_included';
+  };
+};
 /**
  * Optional product support detail for aggregate MediaBuy frequency caps. Aggregate support in 3.2 is max-impressions only.
  */
@@ -20333,6 +20349,7 @@ export interface CPMPricingOption {
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
+  price_adjustments?: PriceAdjustments;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
@@ -20394,6 +20411,7 @@ export interface VCPMPricingOption {
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
+  price_adjustments?: PriceAdjustments;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
@@ -20434,6 +20452,7 @@ export interface CPCPricingOption {
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
+  price_adjustments?: PriceAdjustments;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
@@ -20474,6 +20493,7 @@ export interface CPCVPricingOption {
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
+  price_adjustments?: PriceAdjustments;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
@@ -20527,6 +20547,7 @@ export interface CPVPricingOption {
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
+  price_adjustments?: PriceAdjustments;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
@@ -20576,6 +20597,7 @@ export interface CPPPricingOption {
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
+  price_adjustments?: PriceAdjustments;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
@@ -20654,6 +20676,7 @@ export interface FlatRatePricingOption {
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
+  price_adjustments?: PriceAdjustments;
   /**
    * Adjustment kinds applicable to this pricing option. Tells buyer agents which adjustments are available before negotiation. When absent, no adjustments are pre-declared — the buyer should check price_breakdown if present.
    */
@@ -20968,6 +20991,7 @@ export interface DOOHInventorySummary {
  * Creative requirements and restrictions for a product
  */
 export interface CreativePolicy {
+  review_sla?: CreativeReviewSLA;
   co_branding: CoBrandingRequirement;
   landing_page: LandingPageRequirement;
   /**
@@ -21173,6 +21197,12 @@ export interface SignalTargetingRules {
    * @minItems 1
    */
   selection_group_rules?: [SignalSelectionGroupRule, ...SignalSelectionGroupRule[]];
+  /**
+   * Experimental (signals.pricing_groups). Product-scoped rules for how fees of signals sharing a pricing_group combine; they override get_signals signal_pricing_group_rules for the same pricing_group. A group with no rule is charged 'each', so a seller opts in to 'highest' explicitly. Ungrouped signals are always 'each'.
+   *
+   * @minItems 1
+   */
+  signal_pricing_group_rules?: [SignalPricingGroupRule, ...SignalPricingGroupRule[]];
 }
 /**
  * Product-scoped override for one ProductSignalTargetingOption.selection_group value. Use this when a product has mixed signal-selection behavior, such as fixed suppressions plus a required pick-one include tier.
@@ -21200,14 +21230,17 @@ export interface SignalSelectionGroupRule {
   max_selected_signals?: number;
 }
 /**
- * Exact demographic execution available for this product. Buyers MUST use this product-scoped declaration, not the seller-wide get_adcp_capabilities rollup, to preflight a demographic predicate.
+ * Declares how the fees of signals sharing one pricing_group combine when selected in the same package. A group with no rule is charged 'each'. Only the selected cpm options of one currency are compared per thousand impressions; flat_fee, per_unit, custom and percent_of_media options are not comparable and are always charged 'each'. At most one rule per pricing_group. Experimental (x-status: experimental): sellers declaring this MUST list signals.pricing_groups in experimental_features.
  */
-export interface DemographicTargetingCapability {
+export interface SignalPricingGroupRule {
   /**
-   * Age-targeting execution available for this product.
+   * The pricing_group key this rule applies to.
    */
-  age: {
-  };
+  pricing_group: string;
+  /**
+   * 'highest': charge only the highest selected cpm fee in the group; the seller applies this and the buyer still sends pricing_option_id for every priced signal it selects. 'each': charge every selected signal's fee.
+   */
+  pricing_combination: 'highest' | 'each';
 }
 /**
  * Binding product participation in shared MediaBuy-level controls. This is separate from overlay_support because a root frequency cap aggregates exposures across packages rather than targeting one package. Returned products MUST cover every field requested through required_media_buy_support.
@@ -21758,7 +21791,7 @@ export type GetProductsResponse = AdCPVersionEnvelope &
      */
     catalog_applied?: boolean;
     /**
-     * Seller's response to each change request in the refine array, matched by position. Each entry acknowledges whether the corresponding ask was applied, partially applied, or unable to be fulfilled. MUST contain the same number of entries in the same order as the request's refine array. Only present when the request used buying_mode: 'refine'. Each entry MUST echo the request entry's scope and — for product and proposal scopes — the matching id field (product_id or proposal_id), so orchestrators can cross-validate alignment.
+     * Seller's response to each change request in the refine array, matched by position. Each entry acknowledges whether the corresponding ask was applied, partially applied, or unable to be fulfilled. MUST contain the same number of entries in the same order as the request's refine array. Only present when the request used buying_mode: 'refine'. Each entry MUST echo the request entry's scope and — for product and proposal scopes — the matching id field (product_id or proposal_id), so orchestrators can cross-validate alignment. In AdCP 3.3, when any refine entry carries package, this array is REQUIRED for the entire request. For each package entry, applied requires result_product_id, resolved_start_time, and resolved_end_time and confirms that the mapped returned product forecast uses exactly the resolved package inputs, including its goal; unable requires non-empty notes explaining why those exact inputs could not be forecast, and the product MUST NOT carry a substitute forecast. partial MUST NOT be used to imply exact package forecast support. Insufficient inventory is an applied forecast with availability_status unavailable, not an unable outcome.
      */
     refinement_applied?: (
       | {
@@ -21776,22 +21809,6 @@ export type GetProductsResponse = AdCPVersionEnvelope &
           notes?: string;
         }
       | {
-          /**
-           * Echoes scope 'product' from the corresponding refine entry.
-           */
-          scope: 'product';
-          /**
-           * Echoes product_id from the corresponding refine entry.
-           */
-          product_id: string;
-          /**
-           * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
-           */
-          status: 'applied' | 'partial' | 'unable';
-          /**
-           * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
-           */
-          notes?: string;
         }
       | {
           /**
@@ -21890,6 +21907,26 @@ export type GetProductsResponse = AdCPVersionEnvelope &
      * Opaque token representing the version of the pricing layer, including product pricing_options and nested signal_targeting_options pricing_options. When the seller supports independent pricing versioning, pricing_version changes when prices move but wholesale_feed_version changes only when structure/metadata moves. Same cache_scope keying as wholesale_feed_version. Sellers not separating these MAY omit pricing_version and use wholesale_feed_version for both.
      */
     pricing_version?: string;
+    /**
+     * Experimental (`media_buy.execution_readiness`). Whether the request's `account` can satisfy the `execution_requirements[]` of the products on this response, keyed by `product_id`. Present only when the request set `include_execution_readiness: true` and carried an authorized `account`. Advisory: `create_media_buy` revalidates. Not part of the cache layer: it does not change `cache_scope`, `wholesale_feed_version`, or `pricing_version`, buyers key it by (account, `version`) and MUST NOT cache it under the public key, sellers MUST NOT put it in wholesale feed webhooks and MUST omit it on `unchanged: true` responses. Covers only this response's products; merge pages by `product_id`. See the media-buy specification, 'Per-account execution readiness'.
+     */
+    execution_readiness?: {
+      /**
+       * Opaque token for the account's readiness state, independent of `wholesale_feed_version` and `pricing_version`. Compare for equality only. Equal versions MUST imply identical entries for any product present in both responses.
+       */
+      version: string;
+      /**
+       * When the seller read the account's resources. Readiness may be stale by then; `create_media_buy` is authoritative.
+       */
+      evaluated_at?: string;
+      /**
+       * Readiness keyed by `product_id`, for returned products that declare `execution_requirements`. A missing entry means not evaluated, not ready.
+       */
+      products: {
+        [k: string]: ProductExecutionReadiness | undefined;
+      };
+      ext?: ExtensionObject;
+    };
     /**
      * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the seller's published rate card; the buyer MAY dedupe under (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog) without scoping by account. 'account': this response includes account-specific overrides; the buyer MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the seller MUST return `cache_scope: 'public'`. When the request included `account`, the seller MUST return either: 'public' (this account prices off the public rate card — buyer dedupes) or 'account' (account-specific overrides exist — buyer caches under the account key). Sellers MAY return 'public' on an account-scoped request that previously had overrides — buyers SHOULD interpret this as a downgrade and drop their account-overlay. Without schema-required cache_scope, a seller silently omitting the field on an account-scoped response would cause buyers to mis-key the cache and serve account-overlay payloads to other accounts. **Backward-compatibility note for 3.1 validators:** SDKs that validate strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version` (release-precision version negotiation, 3.1). For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed.
      */
@@ -22016,6 +22053,168 @@ export type Proposal = {
   ext?: ExtensionObject;
 };
 /**
+ * Experimental (`media_buy.execution_readiness`). Whether the caller's account can satisfy one entry of a product's `execution_requirements[]`. Account-scoped; appears only in the `get_products` `execution_readiness` map and MUST NOT be disclosed across accounts. Advisory: `create_media_buy` revalidates.
+ */
+export type ExecutionRequirementReadiness = {
+} & {
+} & {
+} & {
+} & {
+  requirement: ProductExecutionRequirement;
+  readiness_status: ExecutionReadinessStatus1;
+  /**
+   * Where the buyer binds the resource, in the form of `error.field`. Omitted for `downstream_connection`. For `event_source` and `catalog`, SHOULD be present when `ready` or `selection_required`.
+   */
+  binding_field?: string;
+  /**
+   * The resource to use when `readiness_status` is `ready`, for `event_source` and `catalog`; REQUIRED then. The buyer MUST still bind `resource_id`: `ready` does not waive binding (`not_bound` per `error-details/execution-requirement-unmet.json`).
+   */
+  resolved?: {
+    /**
+     * Directly usable in `binding_field`: the `event_source_id` from `sync_event_sources` (including a seller-managed source) or a `catalog_id`. Never a raw platform ID unless that is what the field accepts.
+     */
+    resource_id: string;
+    /**
+     * Human-readable name of the resource on the seller's platform.
+     */
+    name?: string;
+    ext?: ExtensionObject;
+  };
+  /**
+   * Resources the account has, when `selection_required`, for `event_source` and `catalog`. Account-scoped, never disclosed across accounts. Lists resources the seller has no evidence would fail the requirement; MAY include one whose event types or catalog type it cannot verify.
+   *
+   * @minItems 2
+   */
+  candidates?: [
+    {
+      /**
+       * Directly usable in `binding_field`, as for `resolved.resource_id`.
+       */
+      resource_id: string;
+      /**
+       * Human-readable name of the resource on the seller's platform.
+       */
+      name?: string;
+      ext?: ExtensionObject;
+    },
+    {
+      /**
+       * Directly usable in `binding_field`, as for `resolved.resource_id`.
+       */
+      resource_id: string;
+      /**
+       * Human-readable name of the resource on the seller's platform.
+       */
+      name?: string;
+      ext?: ExtensionObject;
+    },
+    ...{
+      /**
+       * Directly usable in `binding_field`, as for `resolved.resource_id`.
+       */
+      resource_id: string;
+      /**
+       * Human-readable name of the resource on the seller's platform.
+       */
+      name?: string;
+      ext?: ExtensionObject;
+    }[]
+  ];
+  connection_state?: DownstreamConnectionRequirement;
+  /**
+   * Why the seller could not check; REQUIRED when `unknown`. `permission_denied`: its credential cannot read this resource kind. `platform_unavailable`: the read failed or timed out. `not_evaluated`: skipped, for example past its evaluation budget.
+   */
+  unknown_reason?: 'permission_denied' | 'platform_unavailable' | 'not_evaluated';
+  /**
+   * Actionable detail for a non-`ready` status. SHOULD be limited to the 3-5 most actionable items.
+   */
+  issues?: DiagnosticIssue[];
+  ext?: ExtensionObject;
+} & {
+  requirement: ProductExecutionRequirement;
+  readiness_status: ExecutionReadinessStatus1;
+  /**
+   * Where the buyer binds the resource, in the form of `error.field`. Omitted for `downstream_connection`. For `event_source` and `catalog`, SHOULD be present when `ready` or `selection_required`.
+   */
+  binding_field?: string;
+  /**
+   * The resource to use when `readiness_status` is `ready`, for `event_source` and `catalog`; REQUIRED then. The buyer MUST still bind `resource_id`: `ready` does not waive binding (`not_bound` per `error-details/execution-requirement-unmet.json`).
+   */
+  resolved?: {
+    /**
+     * Directly usable in `binding_field`: the `event_source_id` from `sync_event_sources` (including a seller-managed source) or a `catalog_id`. Never a raw platform ID unless that is what the field accepts.
+     */
+    resource_id: string;
+    /**
+     * Human-readable name of the resource on the seller's platform.
+     */
+    name?: string;
+    ext?: ExtensionObject;
+  };
+  /**
+   * Resources the account has, when `selection_required`, for `event_source` and `catalog`. Account-scoped, never disclosed across accounts. Lists resources the seller has no evidence would fail the requirement; MAY include one whose event types or catalog type it cannot verify.
+   *
+   * @minItems 2
+   */
+  candidates?: [
+    {
+      /**
+       * Directly usable in `binding_field`, as for `resolved.resource_id`.
+       */
+      resource_id: string;
+      /**
+       * Human-readable name of the resource on the seller's platform.
+       */
+      name?: string;
+      ext?: ExtensionObject;
+    },
+    {
+      /**
+       * Directly usable in `binding_field`, as for `resolved.resource_id`.
+       */
+      resource_id: string;
+      /**
+       * Human-readable name of the resource on the seller's platform.
+       */
+      name?: string;
+      ext?: ExtensionObject;
+    },
+    ...{
+      /**
+       * Directly usable in `binding_field`, as for `resolved.resource_id`.
+       */
+      resource_id: string;
+      /**
+       * Human-readable name of the resource on the seller's platform.
+       */
+      name?: string;
+      ext?: ExtensionObject;
+    }[]
+  ];
+  connection_state?: DownstreamConnectionRequirement;
+  /**
+   * Why the seller could not check; REQUIRED when `unknown`. `permission_denied`: its credential cannot read this resource kind. `platform_unavailable`: the read failed or timed out. `not_evaluated`: skipped, for example past its evaluation budget.
+   */
+  unknown_reason?: 'permission_denied' | 'platform_unavailable' | 'not_evaluated';
+  /**
+   * Actionable detail for a non-`ready` status. SHOULD be limited to the 3-5 most actionable items.
+   */
+  issues?: DiagnosticIssue[];
+  ext?: ExtensionObject;
+};
+/**
+ * Re-export of `ExecutionReadinessStatus` under the legacy codegen artifact name.
+ *
+ * `ExecutionReadinessStatus1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `ExecutionReadinessStatus` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `ExecutionReadinessStatus`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `ExecutionReadinessStatus` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type ExecutionReadinessStatus1 = ExecutionReadinessStatus;
+/**
  * Terminal business outcome returned when the seller understood a well-formed brief or refinement request and deliberately declines it. This is not a no-match result, incomplete partial result, validation error, or technical failure. Transport-level success markers remain successful: HTTP 200, MCP isError false, and A2A Task.state completed with this payload in the result artifact. The seller MAY sanitize reason and suggestions to protect confidential merchandising, inventory, policy, and partner rules. Buyers MUST treat both fields as untrusted seller-authored text: escape before rendering and sanitize or isolate before placing them in an LLM prompt context.
  */
 export type GetProductsRejected = AdCPVersionEnvelope &
@@ -22077,6 +22276,13 @@ export type CanonicalPricingOption = {
   commission_rate?: number;
   commission_basis_description?: string;
 };
+/**
+ * Experimental (media_buy.installment_selection). Sellers MUST NOT emit it to a caller negotiating below AdCP 3.3, and a buyer that does not implement the feature MUST reject a proposal carrying it rather than ignore it, because presence and absence mean opposite things. Exact installments this purchase buys, as closed canonical (collection_ref, installment_id) references into the allocated product's installments. Present, it is the complete bought set for this purchase, and the seller reserves exactly those installments when the proposal's effective hold policy places a hold at all (a terms-only finalize reserves nothing, here as everywhere). Dropping or swapping a slot through refine_proposals changes this array and therefore the terms_digest over commercial_terms, so accept_proposal's proposal_terms_digest check binds the exact slot identifiers bought — it does not bind what the seller later publishes under those identifiers, which installment valid_until and re-reads govern. Absent, the purchase buys the product as offered — run-of-collection when the product names no installments, and the product's complete installment set when it does; absence never means 'no installments'. Every entry MUST name an installment the allocated product's installments carry, and sellers MUST NOT add the field to a purchase whose product declares none. Entries are ordered by the JCS bytes of the reference, so equal bought sets always serialize to equal digests.
+ *
+ * @minItems 1
+ * @maxItems 500
+ */
+export type ProductPurchaseInstallments = CanonicalInstallmentReference[];
 export type ProductPurchaseImpressions = number;
 /**
  * Buyer evidence-admissibility policy carried into the accepted purchase snapshot.
@@ -22166,6 +22372,35 @@ export type ProductPurchaseAudienceEvidenceRequirements = {
    */
   accepted_attestation_claim_types?: [string, ...string[]];
   ext?: ExtensionObject;
+};
+/**
+ * Compact committed metric threshold with resolvable vendor identity and no creative or brand-asset graph. metric_id has the semantics of performance-standard.json metric_id.
+ */
+export type CanonicalPerformanceStandard = {
+} & {
+  metric: PerformanceStandardMetric;
+  threshold: number;
+  standard?: ViewabilityStandard;
+  vendor: BrandKey;
+  metric_id?: VendorMetricID;
+} & {
+  metric: PerformanceStandardMetric;
+  threshold: number;
+  standard?: ViewabilityStandard;
+  vendor: BrandKey;
+  metric_id?: VendorMetricID;
+} & {
+  metric: PerformanceStandardMetric;
+  threshold: number;
+  standard?: ViewabilityStandard;
+  vendor: BrandKey;
+  metric_id?: VendorMetricID;
+} & {
+  metric: PerformanceStandardMetric;
+  threshold: number;
+  standard?: ViewabilityStandard;
+  vendor: BrandKey;
+  metric_id?: VendorMetricID;
 };
 /**
  * Campaign start timing: 'asap' or ISO 8601 date-time
@@ -22308,18 +22543,15 @@ export type ForecastRateRange = ForecastRange & {
  */
 export type CanonicalProduct = {
 } & {
+  creative_policy?: CreativePolicy;
   product_id: string;
   name: string;
   description?: string;
   /**
-   * @minItems 1
+   * A non-empty array is the complete roster. `[]` means undisclosed, not no properties. MUST NOT be `[]` below 3.3.
    */
-  publisher_properties?: [
-    PublisherPropertySelector & {
-    },
-    ...(PublisherPropertySelector & {
-    })[]
-  ];
+  publisher_properties?: (PublisherPropertySelector & {
+  })[];
   channels?: MediaChannel[];
   /**
    * @minItems 1
@@ -22343,20 +22575,21 @@ export type CanonicalProduct = {
   format_options?: [CanonicalFormatOption, ...CanonicalFormatOption[]];
   placements?: CanonicalProductPlacement[];
   /**
-   * Collections available in this product, each referencing collections declared in an adagents.json by domain and explicit collection_ids. Full collection objects arrive in the response's top-level collections array when the request sets include_collections and the seller supports it (experimental, media_buy.collection_cards); otherwise buyers resolve them from the referenced adagents.json, which remains the authorization source either way. The domain-only bulk-grant selector form is for authorization scoping, not product composition. A selected-mode collection_selection names collections from this set.
-   *
-   * @minItems 1
+   * A non-empty array is the complete roster. `[]` means undisclosed. MUST NOT be `[]` below 3.3. Each entry references collections declared in an adagents.json by domain and explicit collection_ids. Full collection objects arrive in the response's top-level collections array when the request sets include_collections and the seller supports it (experimental, media_buy.collection_cards); otherwise buyers resolve them from the referenced adagents.json, which remains the authorization source either way. The domain-only bulk-grant selector form is for authorization scoping, not product composition. A selected-mode collection_selection names collections from this set.
    */
-  collections?: [
-    CollectionSelector & {
-    },
-    ...(CollectionSelector & {
-    })[]
-  ];
+  collections?: (CollectionSelector & {
+  })[];
   /**
    * Whether buyers can select a subset of this product's collections through targeting_overlay.collection_list, collection_lists, or collection_selection. When false, the product is a fixed bundle (a collection_selection that exactly restates the complete bundle remains an inherent match).
    */
   collection_targeting_allowed?: boolean;
+  /**
+   * Specific installments this product includes — the episodes, issues, airings, rotation periods, or creator slots being sold. Each entry names its parent through the canonical collection_ref tuple; unlike the legacy get_products installment there is no publisher-domain-free shorthand. Every referenced collection MUST be one the product's collections selectors name, so collections is required alongside. Absence is meaningful within a projection that requested this field, and is not 'no installments known': a product that carries collections and omits installments is run-of-collection — inventory across those collections, whatever publishes during the flight. Absence from a list_products response whose fields projection did not request installments carries no meaning at all, which is why a buyer that depends on the run-of-collection reading MUST request the field explicitly. Buyers MUST reject a product whose installment collection_ref is not one its own collections selectors name; the seller's collections are what the referenced adagents.json authorizes. A purchase names the exact installments it buys in commercial_terms.purchases[].installments (experimental, media_buy.installment_selection); a purchase that omits that field buys the product as offered.
+   *
+   * @minItems 1
+   * @maxItems 500
+   */
+  installments?: CanonicalInstallment[];
   delivery_type?: DeliveryType;
   exclusivity?: Exclusivity;
   /**
@@ -22586,6 +22819,27 @@ export type CanonicalAudienceEvidence = {
   ext?: ExtensionObject;
 };
 /**
+ * Fine-grained action template advertised on a compact product. The resulting MediaBuy exposes the authoritative routed task in available_actions.
+ */
+export type CanonicalProductAction = {
+} & {
+  action: CanonicalMediaBuyActionName;
+  /**
+   * @minItems 1
+   */
+  modes: [CanonicalMediaBuyActionMode, ...CanonicalMediaBuyActionMode[]];
+  /**
+   * @minItems 1
+   */
+  allowed_statuses?: [MediaBuyStatus, ...MediaBuyStatus[]];
+  sla?: SLAWindow;
+  constraints?: MediaBuyChangeTermConstraints;
+  /**
+   * Optional advisory pointer to published commercial terms. It is not a proposal change-term identity.
+   */
+  terms_ref?: string;
+};
+/**
  * Acknowledgment for submitted request_proposals (consultative planning requiring upstream queries or human review)
  */
 export type RequestProposalsAsyncSubmitted = CompactTaskSubmitted;
@@ -22746,9 +23000,31 @@ export type RefineProposalsAsyncSubmitted = CompactTaskSubmitted & {
  */
 export type MediaBuyCommitmentResponse = CommittedMediaBuy | CommitmentError | CommitmentSubmitted;
 /**
- * A currently available MediaBuy action with the compact-lifecycle task an SDK calls to exercise it. Deprecated coarse action values are absent.
+ * A currently available MediaBuy action with the compact-lifecycle task an SDK calls to exercise it. Deprecated coarse action values are absent. In AdCP 3.3, update_creative_start_policy is an operational package control with an explicit eligible package scope, independent of commercial change terms.
  */
-export type CanonicalMediaBuyAction = CanonicalMediaBuyActionFields;
+export type CanonicalMediaBuyAction =
+  | CanonicalMediaBuyActionFields
+  | (CanonicalMediaBuyActionFields & {
+    });
+/**
+ * Shared closed field set for task-discriminated canonical MediaBuy actions.
+ */
+export type CanonicalMediaBuyActionFields = {
+} & {
+  task: 'control_media_buy' | 'refine_proposals' | 'sync_creatives' | 'report_media_buy_issue';
+  action: string;
+  mode: CanonicalMediaBuyActionMode;
+  sla?: SLAWindow;
+  review_sla?: CreativeReviewSLA;
+  change_term_id?: MediaBuyChangeTermID;
+  terms_ref?: MediaBuyTermsReference;
+  /**
+   * Exact eligible packages for a package-scoped action; omission means all relevant packages.
+   *
+   * @minItems 1
+   */
+  applicable_package_ids?: [ApplicablePackageID, ...ApplicablePackageID[]];
+};
 /**
  * A non-blocking observation returned with a successful operation. The operation succeeded exactly as its success arm states. Warnings are immediate receipts, not durable lifecycle state; a continuing condition MUST also appear on its authoritative read surface as an indicator, defect, delivery issue, approval state, or other applicable resource state.
  */
@@ -22782,6 +23058,12 @@ export type GetSignalsResponse = AdCPVersionEnvelope &
     signals?: (SignalListing &
       SignalDefinitionEnrichment & {
       })[];
+    /**
+     * Experimental (signals.pricing_groups). Signal-agent default rules for how fees of signals sharing a pricing_group combine. Product-scoped signal_targeting_rules.signal_pricing_group_rules override these for the same pricing_group. A group with no rule is charged 'each'.
+     *
+     * @minItems 1
+     */
+    signal_pricing_group_rules?: [SignalPricingGroupRule, ...SignalPricingGroupRule[]];
     /**
      * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
      */
@@ -23996,6 +24278,19 @@ export interface PaginationResponse {
   total_count?: number;
 }
 /**
+ * Experimental (`media_buy.execution_readiness`). Whether the caller's account can satisfy a product's `execution_requirements[]`: one entry per requirement plus a rollup. Carried only in the `get_products` `execution_readiness` map. Annotate, never filter: a product that is not `ready`, including `unknown`, may still be runnable.
+ */
+export interface ProductExecutionReadiness {
+  readiness_status: ExecutionReadinessStatus;
+  /**
+   * Readiness of each declared `execution_requirements[]` entry, once each. A seller that did not evaluate one reports it `unknown` with `unknown_reason: not_evaluated`.
+   *
+   * @minItems 1
+   */
+  requirements: [ExecutionRequirementReadiness, ...ExecutionRequirementReadiness[]];
+  ext?: ExtensionObject;
+}
+/**
  * Progress data for working get_products
  */
 export interface GetProductsAsyncWorking {
@@ -24175,6 +24470,7 @@ export interface ProductPurchase {
    * @minItems 1
    */
   format_option_refs?: [FormatOptionReference, ...FormatOptionReference[]];
+  installments?: ProductPurchaseInstallments;
   /**
    * Previously synchronized account catalog IDs promoted by this selection. Callers manage catalog bodies through sync_catalogs rather than inlining them here.
    *
@@ -24229,6 +24525,29 @@ export interface ProductPurchase {
    * @minItems 1
    */
   performance_standards?: [CanonicalPerformanceStandard, ...CanonicalPerformanceStandard[]];
+  /**
+   * Experimental (`media_buy.purchase_rights`). Usage and amplification rights granted with this purchase, priced inside it; the media seller grants or warrants them. Bound by terms_digest. Exclusivity is per purchase. Sellers MUST list media_buy.purchase_rights in experimental_features.
+   *
+   * @minItems 1
+   */
+  rights?: [RightsScope, ...RightsScope[]];
+}
+/**
+ * Closed canonical identity of one installment within a publisher-scoped collection. Only the identity members below are permitted, so the same installment always has one reference value and a set of references always serializes to the same JCS bytes. Use this wherever a reference is matched by identity against a canonical set — digest-covered terms, and references a receiving agent resolves and acts on. core/installment-ref.json stays open for delivery-reporting rows, where a reference is a self-identifying dimension key rather than something compared against a reference set, so extra members are harmless. Resolution is against the referenced product's declared installments; the publisher_domain names the adagents.json that scopes the collection ID and MUST NOT be dereferenced to resolve a reference.
+ */
+export interface CanonicalInstallmentReference {
+  collection_ref: CanonicalCollectionReference;
+  /**
+   * Installment ID within the referenced collection.
+   */
+  installment_id: string;
+}
+/**
+ * Closed parent collection identity. Collection IDs are scoped to the adagents.json at publisher_domain, so both members participate in identity.
+ */
+export interface CanonicalCollectionReference {
+  publisher_domain: string;
+  collection_id: string;
 }
 /**
  * Buyer-authored pin to one exact immutable audience-evidence snapshot selected during discovery. Sellers MUST match all four fields against a single published snapshot; they MUST reject the package rather than substitute a newer version or reuse snapshot_id with changed content. A confirmed package MUST return the same identity in audience_evidence_selections with decision_use package_construction.
@@ -24258,13 +24577,22 @@ export interface ProductPurchaseMeasurementTerms {
   };
 }
 /**
- * Compact committed metric threshold with resolvable vendor identity and no creative or brand-asset graph.
+ * Uses, grant window, and exclusivity of a rights grant. Shared by rights-terms and media-buy purchases.
  */
-export interface CanonicalPerformanceStandard {
-  metric: PerformanceStandardMetric;
-  threshold: number;
-  standard?: ViewabilityStandard;
-  vendor: BrandKey;
+export interface RightsScope {
+  /**
+   * @minItems 1
+   */
+  uses: [RightUse, ...RightUse[]];
+  start_date?: string;
+  end_date?: string;
+  /**
+   * Exclusivity terms if applicable
+   */
+  exclusivity?: {
+    scope?: string;
+    countries?: string[];
+  };
 }
 /**
  * Compact qualifier set that distinguishes incompatible reporting definitions for the same metric ID.
@@ -24281,6 +24609,9 @@ export interface CanonicalMetricQualifier {
  */
 export interface MediaBuyChangeTerm {
   term_id: string;
+  /**
+   * A buyer change right. Operational issue reporting is not a commercial amendment and cannot be negotiated here.
+   */
   action: CanonicalMediaBuyActionName;
   service_mode: CanonicalMediaBuyActionMode;
   /**
@@ -24424,6 +24755,70 @@ export interface CanonicalDOOHAddress {
   country?: string;
 }
 /**
+ * Compact closed installment view for the AdCP compact product lifecycle — one episode, issue, event, rotation period, or creator slot within a collection. Identity is the tuple (collection_ref, installment_id), so both fields are required and the deprecated publisher-domain-free collection_id shorthand carried by the legacy get_products installment is absent. The parent collection's kind indicates how to interpret each installment. Installments inherit collection-level fields they don't override: content_rating defaults to the collection's baseline, guest_talent is additive to the collection's recurring talent, and topics add context beyond the collection's genre.
+ */
+export interface CanonicalInstallment {
+  /**
+   * Installment ID within the referenced collection. Collection-scoped, not globally unique.
+   */
+  installment_id: string;
+  collection_ref: CollectionReference;
+  /**
+   * Installment title
+   */
+  name?: string;
+  /**
+   * Season identifier (e.g., '1', '2024', 'spring_2026')
+   */
+  season?: string;
+  /**
+   * Installment number within the season (e.g., '3', '47')
+   */
+  installment_number?: string;
+  /**
+   * When the installment airs or publishes (ISO 8601)
+   */
+  scheduled_at?: string;
+  status?: InstallmentStatus;
+  /**
+   * Expected duration of the installment in seconds
+   */
+  duration_seconds?: number;
+  /**
+   * Whether the end time is approximate (live events, sports)
+   */
+  flexible_end?: boolean;
+  /**
+   * When this installment data expires and should be re-queried. Buyers should re-query before committing budget to a product with tentative installments.
+   */
+  valid_until?: string;
+  content_rating?: ContentRating;
+  /**
+   * Content topics for this installment. Uses the same taxonomy as the collection's genre_taxonomy when present. Enables installment-level brand safety evaluation beyond content_rating.
+   *
+   * @minItems 1
+   */
+  topics?: [string, ...string[]];
+  special?: Special;
+  /**
+   * Installment-specific guests and talent. Additive to the collection's recurring talent.
+   *
+   * @minItems 1
+   */
+  guest_talent?: [Talent, ...Talent[]];
+  ad_inventory?: AdInventoryConfiguration;
+  deadlines?: InstallmentDeadlines;
+  derivative_of?: CanonicalInstallmentDerivation;
+  ext?: ExtensionObject;
+}
+/**
+ * When this installment is a clip, highlight, or recap derived from a full installment. Unlike the legacy form, the source is a canonical installment_ref, so a derivative may name a source in another collection.
+ */
+export interface CanonicalInstallmentDerivation {
+  installment_ref: CanonicalInstallmentReference;
+  type: DerivativeType;
+}
+/**
  * Compact product reporting contract. Vendor metrics use identity-only BrandKey references and do not inline brand or creative assets.
  */
 export interface CanonicalReportingCapabilities {
@@ -24515,26 +24910,6 @@ export interface CanonicalAudienceEvidenceSelection {
   ext?: ExtensionObject;
 }
 /**
- * Fine-grained action template advertised on a compact product. The resulting MediaBuy exposes the authoritative routed task in available_actions.
- */
-export interface CanonicalProductAction {
-  action: CanonicalMediaBuyActionName;
-  /**
-   * @minItems 1
-   */
-  modes: [CanonicalMediaBuyActionMode, ...CanonicalMediaBuyActionMode[]];
-  /**
-   * @minItems 1
-   */
-  allowed_statuses?: [MediaBuyStatus, ...MediaBuyStatus[]];
-  sla?: SLAWindow;
-  constraints?: MediaBuyChangeTermConstraints;
-  /**
-   * Optional advisory pointer to published commercial terms. It is not a proposal change-term identity.
-   */
-  terms_ref?: string;
-}
-/**
  * Experimental (media_buy.open_opportunities). Effective later-proposal consent for the request's opportunity, as the seller recorded it. Sellers that advertise media_buy.open_opportunities.later_proposals.supported MUST return it whenever the request carried opportunity.later_proposals. accepted false here means the seller will not send later proposals, whatever the request asked for.
  */
 export interface LaterProposalsState {
@@ -24563,23 +24938,6 @@ export interface LaterProposalsState {
    * When the consent was last set or changed. A change the buyer does not recognize indicates another principal on the account updated the opportunity.
    */
   updated_at: string;
-}
-/**
- * Shared closed field set for task-discriminated canonical MediaBuy actions.
- */
-export interface CanonicalMediaBuyActionFields {
-  task: 'control_media_buy' | 'refine_proposals' | 'sync_creatives';
-  action: string;
-  mode: CanonicalMediaBuyActionMode;
-  sla?: SLAWindow;
-  change_term_id?: MediaBuyChangeTermID;
-  terms_ref?: MediaBuyTermsReference;
-  /**
-   * Exact eligible packages for a package-scoped action; omission means all relevant packages.
-   *
-   * @minItems 1
-   */
-  applicable_package_ids?: [ApplicablePackageID, ...ApplicablePackageID[]];
 }
 export interface CommitmentError {
   status: 'failed';
@@ -26489,6 +26847,17 @@ export type AcquireRightsResponse = {
    */
   adcp_major_version?: number;
 } & (AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected | AcquireRightsError);
+/**
+ * Agreed contractual terms
+ */
+export type RightsTerms = RightsScope & {
+  pricing_option_id: string;
+  amount: number;
+  currency: string;
+  period?: RightsBillingPeriod;
+  impression_cap?: number;
+  overage_cpm?: number;
+};
 export interface AcquireRightsAcquired {
   /**
    * Rights grant identifier
@@ -26536,27 +26905,6 @@ export interface AcquireRightsAcquired {
   };
   context?: ContextObject;
   ext?: ExtensionObject;
-}
-/**
- * Agreed contractual terms
- */
-export interface RightsTerms {
-  pricing_option_id: string;
-  amount: number;
-  currency: string;
-  period?: RightsBillingPeriod;
-  uses: RightUse[];
-  impression_cap?: number;
-  overage_cpm?: number;
-  start_date?: string;
-  end_date?: string;
-  /**
-   * Exclusivity terms if applicable
-   */
-  exclusivity?: {
-    scope?: string;
-    countries?: string[];
-  };
 }
 /**
  * A scoped credential issued by an LLM provider for generating rights-cleared content. The rights agent coordinates with the provider to issue the credential; the provider enforces usage constraints at generation time. Any creative agent can use the credential.
@@ -28523,7 +28871,7 @@ export type GetProductsCompletion = AdCPVersionEnvelope &
      */
     catalog_applied?: boolean;
     /**
-     * Seller's response to each change request in the refine array, matched by position. Each entry acknowledges whether the corresponding ask was applied, partially applied, or unable to be fulfilled. MUST contain the same number of entries in the same order as the request's refine array. Only present when the request used buying_mode: 'refine'. Each entry MUST echo the request entry's scope and — for product and proposal scopes — the matching id field (product_id or proposal_id), so orchestrators can cross-validate alignment.
+     * Seller's response to each change request in the refine array, matched by position. Each entry acknowledges whether the corresponding ask was applied, partially applied, or unable to be fulfilled. MUST contain the same number of entries in the same order as the request's refine array. Only present when the request used buying_mode: 'refine'. Each entry MUST echo the request entry's scope and — for product and proposal scopes — the matching id field (product_id or proposal_id), so orchestrators can cross-validate alignment. In AdCP 3.3, when any refine entry carries package, this array is REQUIRED for the entire request. For each package entry, applied requires result_product_id, resolved_start_time, and resolved_end_time and confirms that the mapped returned product forecast uses exactly the resolved package inputs, including its goal; unable requires non-empty notes explaining why those exact inputs could not be forecast, and the product MUST NOT carry a substitute forecast. partial MUST NOT be used to imply exact package forecast support. Insufficient inventory is an applied forecast with availability_status unavailable, not an unable outcome.
      */
     refinement_applied?: (
       | {
@@ -28541,22 +28889,6 @@ export type GetProductsCompletion = AdCPVersionEnvelope &
           notes?: string;
         }
       | {
-          /**
-           * Echoes scope 'product' from the corresponding refine entry.
-           */
-          scope: 'product';
-          /**
-           * Echoes product_id from the corresponding refine entry.
-           */
-          product_id: string;
-          /**
-           * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
-           */
-          status: 'applied' | 'partial' | 'unable';
-          /**
-           * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
-           */
-          notes?: string;
         }
       | {
           /**
@@ -28656,6 +28988,26 @@ export type GetProductsCompletion = AdCPVersionEnvelope &
      */
     pricing_version?: string;
     /**
+     * Experimental (`media_buy.execution_readiness`). Whether the request's `account` can satisfy the `execution_requirements[]` of the products on this response, keyed by `product_id`. Present only when the request set `include_execution_readiness: true` and carried an authorized `account`. Advisory: `create_media_buy` revalidates. Not part of the cache layer: it does not change `cache_scope`, `wholesale_feed_version`, or `pricing_version`, buyers key it by (account, `version`) and MUST NOT cache it under the public key, sellers MUST NOT put it in wholesale feed webhooks and MUST omit it on `unchanged: true` responses. Covers only this response's products; merge pages by `product_id`. See the media-buy specification, 'Per-account execution readiness'.
+     */
+    execution_readiness?: {
+      /**
+       * Opaque token for the account's readiness state, independent of `wholesale_feed_version` and `pricing_version`. Compare for equality only. Equal versions MUST imply identical entries for any product present in both responses.
+       */
+      version: string;
+      /**
+       * When the seller read the account's resources. Readiness may be stale by then; `create_media_buy` is authoritative.
+       */
+      evaluated_at?: string;
+      /**
+       * Readiness keyed by `product_id`, for returned products that declare `execution_requirements`. A missing entry means not evaluated, not ready.
+       */
+      products: {
+        [k: string]: ProductExecutionReadiness | undefined;
+      };
+      ext?: ExtensionObject;
+    };
+    /**
      * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the seller's published rate card; the buyer MAY dedupe under (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog) without scoping by account. 'account': this response includes account-specific overrides; the buyer MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the seller MUST return `cache_scope: 'public'`. When the request included `account`, the seller MUST return either: 'public' (this account prices off the public rate card — buyer dedupes) or 'account' (account-specific overrides exist — buyer caches under the account key). Sellers MAY return 'public' on an account-scoped request that previously had overrides — buyers SHOULD interpret this as a downgrade and drop their account-overlay. Without schema-required cache_scope, a seller silently omitting the field on an account-scoped response would cause buyers to mis-key the cache and serve account-overlay payloads to other accounts. **Backward-compatibility note for 3.1 validators:** SDKs that validate strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version` (release-precision version negotiation, 3.1). For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed.
      */
     cache_scope?: 'public' | 'account';
@@ -28681,6 +29033,12 @@ export type GetSignalsCompletion = AdCPVersionEnvelope &
     signals?: (SignalListing &
       SignalDefinitionEnrichment & {
       })[];
+    /**
+     * Experimental (signals.pricing_groups). Signal-agent default rules for how fees of signals sharing a pricing_group combine. Product-scoped signal_targeting_rules.signal_pricing_group_rules override these for the same pricing_group. A group with no rule is charged 'each'.
+     *
+     * @minItems 1
+     */
+    signal_pricing_group_rules?: [SignalPricingGroupRule, ...SignalPricingGroupRule[]];
     /**
      * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
      */
@@ -29525,11 +29883,31 @@ export interface AccountAuthorization {
    */
   scope_name?: StandardScope | CustomScope;
   /**
+   * When the current grant to this caller began. Reporting subscriptions cover the account from the first period boundary at or after it. Sellers advertising media_buy.reporting_subscriptions MUST populate it.
+   * @format date-time
+   */
+  authorized_at?: string;
+  /**
    * Convenience flag. When true, the caller is permitted only non-mutating tasks. Sellers MUST reject any mutation from a read-only caller with READ_ONLY_SCOPE. For the AdCP 3.2 product split, read-only permits list_products but rejects request_proposals, refine_proposals, and decline_proposals; a legacy get_products call is permitted only when the seller can guarantee the selected arm is a synchronous side-effect-free read. Sellers MAY omit this field; omission is equivalent to `false`. Callers MUST NOT infer read-only from `allowed_tasks` alone — the seller MUST set this explicitly when it applies.
    */
   read_only?: boolean;
 }
 
+
+// core/account-candidate.json
+/**
+ * An account that matches an account request or an ambiguous account reference, offered so a human can pick one. Only accounts the caller is already granted are ever offered.
+ */
+export interface AccountCandidate {
+  account_id: string;
+  name: string;
+  brand?: BrandKey;
+  operator?: string;
+  /**
+   * @pattern ^[A-Z]{3}$
+   */
+  currency?: string;
+}
 
 // core/account-change-recorded-webhook.json
 /**
@@ -29766,7 +30144,7 @@ export interface AccountChange {
 
 // core/account-identity-change-preview.json
 /**
- * Non-persisted dry-run result for a requested operator-identity change. Canonical account fields and revision remain unchanged.
+ * Deprecated in 3.3, planned for removal in 4.0. Non-persisted dry-run result for a requested operator-identity change. Canonical account fields and revision remain unchanged.
  */
 export type AccountIdentityChangePreview =
   | AccountIdentityChangeWouldApply
@@ -29812,7 +30190,151 @@ export interface AccountIdentityChangeBlocked {
 }
 
 
-// core/account-status-changed-webhook.json
+// core/account-request-changed-webhook.json
+/**
+ * Caller-anchored webhook payload fired when one of the caller's account requests changes state or pending action (experimental, account.requests). Not fired for the response to the caller's own request_account call, which already reports the result. Registered through the caller-scoped notification_configs (sync_principal or sync_agent_notification_configs) with event_types containing account_request.changed. The payload is an invalidation signal, not request state: receivers repair by calling list_accounts with request_ids. Sellers MUST make the new state observable on that read before firing.
+ */
+export interface AccountRequestChangedWebhook {
+  /**
+   * Sender-generated key stable across retries of the same fire. Sellers MUST generate a cryptographically random value (UUID v4 recommended) per distinct fire and reuse it on every retry of the same fire. Receivers MUST dedupe by this key, scoped to the authenticated sender identity.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
+   */
+  idempotency_key: string;
+  /**
+   * Stable identifier for this logical request transition. Re-emissions of the same transition reuse this value under a new idempotency_key; a later transition receives a new id.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  notification_id: string;
+  /**
+   * Fixed notification type discriminator. Matches the value registered on the subscriber's event_types.
+   */
+  notification_type: 'account_request.changed';
+  /**
+   * When the seller initiated this fire. Distinct from changed_at.
+   * @format date-time
+   */
+  fired_at: string;
+  /**
+   * Identifies which caller-scoped notification_configs[] entry is receiving this fire. Echoed verbatim from the entry's subscriber_id.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  subscriber_id: string;
+  /**
+   * Canonical seller agent URL that holds the request. Receivers connected to several sellers use this to pick where to re-read.
+   */
+  agent_url: string;
+  /**
+   * The request that changed.
+   * @minLength 1
+   * @maxLength 128
+   */
+  request_id: string;
+  previous_state?: AccountRequestState;
+  state: AccountRequestState;
+  /**
+   * When the seller recorded the transition.
+   * @format date-time
+   */
+  changed_at: string;
+  ext?: ExtensionObject;
+}
+
+// core/account-request-record.json
+/**
+ * A buyer agent's request to open or change an advertiser account, and its lifecycle (experimental, account.requests). The request is its own object: no account exists until the request resolves, so a seller can match the request to an existing account without changing an account_id. Requests are scoped to the authenticated caller that made them and are never visible to another caller.
+ */
+export interface AccountRequest {
+  /**
+   * Seller-assigned identifier for this request. Stable for the life of the request. It is not an account_id and is never accepted as an AccountRef.
+   * @minLength 1
+   * @maxLength 128
+   * @pattern ^[A-Za-z0-9_.:-]{1,128}$
+   */
+  request_id: string;
+  state: AccountRequestState;
+  requested: RequestedAccount;
+  pending_action?: PendingAction;
+  /**
+   * Present when state is resolved. The account to use on every account-scoped task. Never changes for the life of the account.
+   */
+  account_id?: string;
+  account?: Account;
+  resolution?: AccountRequestResolution;
+  /**
+   * Present when state is ambiguous. Accounts that match the request, limited to accounts the caller is already granted. The seller MUST NOT list accounts the caller cannot already reach. When the only matches are outside the caller's grants, every caller-visible state, pending-action kind, and error MUST be one the seller could also return when nothing matches.
+   * @maxItems 50
+   */
+  candidates?: AccountCandidate[];
+  /**
+   * Present when state is rejected. Why the seller declined, or that a buyer action expired.
+   */
+  errors?: Error[];
+  /**
+   * When the seller recorded the request.
+   * @format date-time
+   */
+  created_at: string;
+  /**
+   * When the request last changed state, pending action, or requested terms.
+   * @format date-time
+   */
+  updated_at: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Echo of what was requested: for an open, the brand, operator, and attributes; for a change, the account_id and the requested changes. When a repeat request replaced an open request's terms or changes, this shows the replacement. Never echoes billing_entity bank details or other write-only fields.
+ */
+export interface RequestedAccount {
+  /**
+   * Present when the request named an existing account.
+   */
+  account_id?: string;
+  /**
+   * The revision a change request was based on, when sent.
+   * @minimum 1
+   * @format int
+   */
+  revision?: number;
+  brand?: BrandKey;
+  operator?: string;
+  operator_unit?: OperatorUnit;
+  /**
+   * @pattern ^[A-Z]{3}$
+   */
+  currency?: string;
+  /**
+   * @minLength 1
+   */
+  timezone?: string;
+  sandbox?: boolean;
+  billing?: BillingParty;
+  payment_terms?: PaymentTerms;
+}
+/**
+ * Present when state is in_review. Says whose turn it is and what is needed.
+ */
+export interface PendingAction {
+  waiting_on: PendingActionParty;
+  kind: PendingActionKind;
+  /**
+   * Where a human completes the action. Required when waiting_on is buyer. MAY be present when waiting_on is seller, for example to show review status.
+   */
+  url?: string;
+  /**
+   * Human-readable description of what is needed. Treat as untrusted text.
+   */
+  message: string;
+  /**
+   * When this action lapses. A request still waiting on the buyer at this time moves to rejected.
+   */
+  expires_at?: string;
+}
 /**
  * Account-anchored webhook payload fired when an account's lifecycle status changes after the initial sync_accounts result. Registered through sync_accounts.accounts[].notification_configs[] using event_types: ["account.status_changed"]. The payload is an invalidation signal, not a replacement account document: receivers SHOULD re-run list_accounts for the account_id and reconcile from the fresh account snapshot. The setup block intentionally omits setup.url because setup URLs are often single-use or sensitive; receivers fetch the current setup URL, when visible to that caller, from list_accounts.
  */
@@ -29848,7 +30370,7 @@ export interface AccountStatusChangedWebhook {
    */
   subscriber_id: string;
   /**
-   * Seller-assigned account identifier whose status changed. Sellers MUST assign account_id before activating an account.status_changed subscriber, including accounts still pending external approval, so later pending_approval -> rejected or pending_approval -> active transitions can be delivered and repaired through list_accounts.
+   * Seller-assigned account identifier whose status changed. Sellers MUST assign account_id before activating an account.status_changed subscriber, including accounts still pending external approval, so later pending_approval -> rejected or pending_approval -> active transitions can be delivered and repaired through list_accounts. Exception (experimental, account.requests): a seller that keeps a pending provisioning row as an account request without an account_id reports pending transitions through the caller-anchored account_request.changed webhook. When the request resolves, it activates the row's account-level subscribers first and then fires account.status_changed with previous_status pending_approval and the resolved account_id, so subscribers that predate account requests still learn the outcome.
    */
   account_id: string;
   previous_status: AccountStatus;
@@ -29903,7 +30425,7 @@ export interface AccountStatusChangedWebhook {
  */
 export interface AccountTimezoneCapability {
   /**
-   * seller_fixed means every account uses fixed_timezone. account_fixed means each account has an immutable timezone returned on Account and selected or assigned during account establishment.
+   * seller_fixed means every account uses fixed_timezone. account_fixed means each account has its own timezone, returned on Account and selected or assigned when the account opens.
    */
   mode: 'seller_fixed' | 'account_fixed';
   /**
@@ -29995,7 +30517,7 @@ export interface AgentNotificationConfigState {
 
 // core/agent-notification-config.json
 /**
- * Caller-scoped agent-level webhook subscription. Caller-anchored event types (capabilities.changed, principal.changed) always fire principal-wide; account-anchored event types may also be listed here with the explicit all_authorized_accounts acknowledgment and fire with per-delivery-attempt authorization scoping over the caller's currently authorized accounts. Registration goes through the task declared by get_adcp_capabilities.adcp.capability_changes.notifications.registration_task: sync_principal when the broader principal surface is supported, or the specialized sync_agent_notification_configs compatibility task. Both tasks operate on one underlying caller-scoped subscriber set. This surface is intentionally separate from account-level notification_configs[]: a registry or buyer can subscribe before it has an account, and one fire invalidates the agent-wide get_adcp_capabilities cache. The persisted set is scoped to the authenticated caller or registry identity, so one caller's declarative replacement cannot clear another caller's subscribers. As with other AdCP webhooks, the default signing scheme is the RFC 9421 webhook profile against the seller's brand.json agents[] JWKS; the optional authentication block opts into the deprecated Bearer / HMAC-SHA256 fallback for compatibility. Credentials and shared secrets in authentication.credentials are write-only and MUST NOT be echoed on reads. Sellers MUST verify endpoint control before activating a new or changed active agent-level notification config; delivery-time SSRF validation still applies to every fire.
+ * Caller-scoped agent-level webhook subscription. Caller-anchored event types (capabilities.changed, principal.changed, and the experimental account_request.changed) always fire principal-wide; account-anchored event types may also be listed here with the explicit all_authorized_accounts acknowledgment and fire with per-delivery-attempt authorization scoping over the caller's currently authorized accounts. Registration goes through the task declared by get_adcp_capabilities.adcp.capability_changes.notifications.registration_task: sync_principal when the broader principal surface is supported, or the specialized sync_agent_notification_configs compatibility task. Both tasks operate on one underlying caller-scoped subscriber set. This surface is intentionally separate from account-level notification_configs[]: a registry or buyer can subscribe before it has an account, and one fire invalidates the agent-wide get_adcp_capabilities cache. The persisted set is scoped to the authenticated caller or registry identity, so one caller's declarative replacement cannot clear another caller's subscribers. As with other AdCP webhooks, the default signing scheme is the RFC 9421 webhook profile against the seller's brand.json agents[] JWKS; the optional authentication block opts into the deprecated Bearer / HMAC-SHA256 fallback for compatibility. Credentials and shared secrets in authentication.credentials are write-only and MUST NOT be echoed on reads. Sellers MUST verify endpoint control before activating a new or changed active agent-level notification config; delivery-time SSRF validation still applies to every fire.
  */
 export interface AgentNotificationConfig {
   /**
@@ -30010,7 +30532,7 @@ export interface AgentNotificationConfig {
    */
   url: string;
   /**
-   * Notification types this subscriber wishes to receive on the registered `url`. Caller-anchored types (`capabilities.changed`, `principal.changed`) always fire principal-wide. Account-anchored types additionally require the explicit all_authorized_accounts acknowledgment. Account-anchored types (such as `creative.status_changed` or `account.change_recorded`) are also accepted here: each fire then covers only accounts the authenticated caller is authorized for at each delivery attempt — the subscription is standing, authorization is evaluated per attempt including retries, and losing account authority both stops new fires and suppresses queued retries carrying that account's data. Media-buy-anchored types are rejected on this surface; their per-buy cadence configuration stays on `push_notification_config`. Caller-level and account-level subscriptions to the same event are independent — both fire, and receivers dedupe by the event's logical `notification_id`.
+   * Notification types this subscriber wishes to receive on the registered `url`. Caller-anchored types (`capabilities.changed`, `principal.changed`, and the experimental `account_request.changed`) always fire principal-wide. Account-anchored types additionally require the explicit all_authorized_accounts acknowledgment. Account-anchored types (such as `creative.status_changed` or `account.change_recorded`) are also accepted here: each fire then covers only accounts the authenticated caller is authorized for at each delivery attempt — the subscription is standing, authorization is evaluated per attempt including retries, and losing account authority both stops new fires and suppresses queued retries carrying that account's data. Media-buy-anchored types are rejected on this surface; their per-buy cadence configuration stays on `push_notification_config`. Caller-level and account-level subscriptions to the same event are independent — both fire, and receivers dedupe by the event's logical `notification_id`.
    */
   event_types: NotificationType[];
   /**
@@ -30023,7 +30545,7 @@ export interface AgentNotificationConfig {
   include_future_event_types?: boolean;
   /**
    * @deprecated
-   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` and account-level `notification-config.authentication`: presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on reads.
+   * Legacy authentication selector. Same semantics as `push-notification-config.authentication` and account-level `notification-config.authentication`: presence asks the seller for Bearer or HMAC-SHA256, and absence selects the profile `signing_profile` names. A seller whose `webhook_signing.legacy_hmac_fallback` is `false` rejects the entry with `UNSUPPORTED_FEATURE` and `error.field` pointing at it. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on reads.
    */
   authentication?: {
     /**
@@ -30052,22 +30574,27 @@ export interface AgentOnboardingRequirement {
   kind: AgentOnboardingRequirementKind;
   /**
    * aao_verified: the badge role required, such as media-buy.
+   * @maxLength 128
    */
   role?: string;
   /**
    * aao_verified: accepted verification modes, as the badge token names them.
+   * @maxItems 32
    */
   verification_modes?: string[];
   /**
    * aao_verified: specialisms the badge's verified_specialisms claim must include.
+   * @maxItems 32
    */
   verified_specialisms?: string[];
   /**
    * aao_verified: the AdCP release the badge must cover.
+   * @maxLength 32
    */
   adcp_version?: string;
   /**
    * storyboard: the storyboard id. experimental_feature: the feature id.
+   * @maxLength 128
    */
   id?: string;
   ext?: ExtensionObject;
@@ -30085,6 +30612,7 @@ export interface AgentOnboardingTier {
   url?: string;
   /**
    * What the counterparty must satisfy for this mode.
+   * @maxItems 16
    */
   requirements?: AgentOnboardingRequirement[];
   ext?: ExtensionObject;
@@ -30108,6 +30636,7 @@ export interface AgentOnboardingPosture {
   url?: string;
   /**
    * Human-readable summary of the process and what to have ready. The fallback whenever a reader does not understand a requirement.
+   * @maxLength 1024
    */
   message?: string;
   ext?: ExtensionObject;
@@ -30702,6 +31231,21 @@ export interface AudienceEvidenceRequirements {
   ext?: ExtensionObject;
 }
 
+// core/audience-evidence-target.json
+/**
+ * Experimental (media_buy.audience_evidence_targets). An audience the buyer wants evidence for. Satisfied only by an admissible audience_evidence item with an exactly matching audience, the same relationship, and value >= minimum_value. Planning and ranking input, never a targeting predicate. Matching rules: get_products docs.
+ */
+export interface AudienceEvidenceTarget {
+  audience: AudienceCharacteristic;
+  relationship: AudienceEvidenceRelationship;
+  /**
+   * Smallest satisfying evidence value: a fraction for composition, a ratio for index, an integer count for reach_estimate.
+   * @minimum 0
+   */
+  minimum_value: number;
+  ext?: ExtensionObject;
+}
+
 // core/audience-member.json
 /**
  * A CRM audience member identified by a buyer-assigned external_id and at least one matchable identifier. All identifiers must be normalized before hashing: emails to lowercase+trim, phone numbers to E.164 format (e.g. +12065551234). Providing multiple identifiers for the same person improves match rates. Composite identifiers (e.g. hashed first name + last name + zip for Google Customer Match) are not yet standardized — use the ext field for platform-specific extensions.
@@ -30988,6 +31532,55 @@ export interface BudgetRange {
 }
 
 
+// core/business-calendar.json
+/**
+ * Immutable seller working-time calendar, declared before use. A changed schedule, timezone, closure list, or coverage requires a new calendar_id. Retain declarations while requests using them are pending. Non-working dates are complete over the inclusive coverage dates. Sellers MUST NOT offer a business commitment whose deadline falls beyond this coverage.
+ */
+export interface BusinessCalendar {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  calendar_id: string;
+  timezone: IANATimezoneIdentifier;
+  /**
+   * @format date
+   */
+  valid_from: string;
+  /**
+   * @format date
+   */
+  valid_through: string;
+  /**
+   * Working minutes represented by P1D. P1DT4H consumes this many minutes plus four working hours, even with unequal daily schedules.
+   * @minimum 1
+   * @maximum 1440
+   * @format int
+   */
+  business_day_minutes: number;
+  /**
+   * Non-overlapping half-open local-time periods. start_time MUST precede end_time. Split overnight periods at midnight; 24:00 is accepted only as an end. On DST transitions nonexistent local boundaries advance to the first existing instant; ambiguous starts use the earlier instant and ambiguous ends the later instant. Count actual elapsed seconds within the resulting union of working intervals.
+   * @maxItems 14
+   */
+  working_periods: {
+    days: ('monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday')[];
+    /**
+     * @pattern ^(?:[01][0-9]|2[0-3]):[0-5][0-9]$
+     */
+    start_time: string;
+    /**
+     * @pattern ^(?:(?:[01][0-9]|2[0-3]):[0-5][0-9]|24:00)$
+     */
+    end_time: string;
+  }[];
+  /**
+   * Complete list of local non-working dates within coverage, overriding weekly periods. An empty list explicitly means no additional closures in that interval.
+   * @maxItems 1024
+   */
+  non_working_dates: string[];
+}
+
+
 // core/buyer-onboarding-posture.json
 /**
  * How a buying agent considers sellers: a mode, the requirements a seller must meet, and where a seller's human starts. Published only in the buyer's trust.json: in the agent entry (agents[].profiles.adcp.onboarding), or as a record-level default (profiles.adcp.onboarding). Public and identical for every reader. mode uses the same enum as the seller's posture; here it says how the buyer considers sellers. See specs/agent-identity-3-3.md R7 (#8114).
@@ -31011,7 +31604,7 @@ export interface BuyerOnboardingPosture {
 
 // core/canonical-account-ref.json
 /**
- * Compact advertiser-account identity for canonical 3.2 tools. Uses either the seller/storefront account_id returned by list_accounts or the buyer-declared natural key without BrandRef inline overrides. The natural key is brand + operator + optional operator_unit.id + optional fixed currency + optional buyer-selected account timezone + sandbox. brand.countries qualifies the commercial advertiser identity without targeting delivery; operator_unit identifies the operator-owned buying context. operator_unit.name is display metadata and is excluded from identity.
+ * Compact advertiser-account reference for canonical 3.2 tools. Uses either the seller/storefront account_id, which is the account's identity, or the buyer-declared natural key without BrandRef inline overrides. The natural key is brand + operator; its optional brand.countries, operator_unit.id, currency, timezone, and sandbox fields are account attributes that act as lookup filters, matched as in account-ref.json. A natural key resolves only when exactly one of the caller's accounts matches; otherwise the seller returns ACCOUNT_AMBIGUOUS. brand.countries does not target delivery; operator_unit.name is display metadata and never filters.
  */
 export type CanonicalAccountReference =
   | {
@@ -31028,12 +31621,12 @@ export type CanonicalAccountReference =
       operator: string;
       operator_unit?: OperatorUnit;
       /**
-       * Immutable ISO 4217 transaction currency when the advertiser object is currency-bound. When present, this is part of the natural key and all media buys on the account use it. Omit for per-media-buy currency selection.
+       * ISO 4217 transaction currency when the advertiser object is currency-bound. An account attribute that acts as a lookup filter; all media buys on the account use it. Omit for per-media-buy currency selection.
        * @pattern ^[A-Z]{3}$
        */
       currency?: string;
       /**
-       * Immutable account timezone. Include it in the natural key only for buyer-selected account_fixed provisioning.
+       * Account timezone. An account attribute that acts as a lookup filter, sent only for buyer-selected account_fixed accounts.
        * @minLength 1
        */
       timezone?: string;
@@ -32172,7 +32765,54 @@ export type Deployment =
        * @format date-time
        */
       deployed_at?: string;
+      delivery_status?: SignalDeliveryStatus;
+      /**
+       * What the signal agent shipped, as a core/audience-source.json reference: the destination-side join key. No access_expires_at. Omitted when the rail has no vendor-addressable artifact. Never a credential.
+       */
+      delivery?: AudienceSource;
+      delivery_error?: Error;
+      match_status?: AudienceStatus;
+      /**
+       * Members matched; absence is not zero.
+       * @minimum 0
+       * @format int
+       */
+      matched_count?: number;
+      /**
+       * Deduplicated match rate; absence is not zero.
+       * @minimum 0
+       * @maximum 1
+       */
+      effective_match_rate?: number;
+      match_rate_basis?: AudienceMatchRateBasis;
+      audience_size?: AudienceSize;
     };
+/**
+ * The seller reads a table or share the buyer has granted access to through the vendor's grantee-identified sharing mechanism (Snowflake Secure Data Sharing, Databricks Delta Sharing using D2D or OIDC token federation, BigQuery authorized views). The grant MUST name a principal without conveying a secret through AdCP; classic bearer-token recipient profiles are excluded. The buyer grants the seller's declared consumer identity in the vendor's system before calling; a missing or revoked grant at read time is a retryable per-audience failure (SOURCE_ACCESS_FAILED), not a lifecycle state. The shared object MUST expose the canonical AdCP identifier columns mirroring core/audience-member.json.
+ */
+export interface Dataset {
+  kind: 'dataset';
+  vendor: BrandReference;
+  /**
+   * Vendor-native reference to the shared object (share/database/table path). Opaque to AdCP; meaningful to the vendor. Never a credential. For the Databricks path, the locator convention is share://<provider-sharing-identifier>/<share-name>/<schema>.<object>; this identifies what to read and is distinct from the seller's recipient identity in consumer_identities[].
+   */
+  locator: string;
+  /**
+   * ISO 8601 time after which the buyer will revoke the grant. Declarative — tells the seller when the pipe closes so re-read behavior is predictable. Expiry bounds the access window, not retention: revocation does not claw back matched membership, and retention remains governed by the buyer-seller data processing agreement.
+   */
+  access_expires_at?: string;
+}
+/**
+ * The vendor's rails deliver the segment to the seller's declared platform_distribution destination; the buyer initiates distribution in the vendor's system and this reference binds the arriving segment to an audience_id. Order-independent: if the bind arrives before the segment, the audience sits in processing. Sellers MAY expire an unfulfilled bind after their declared bind_expiry_days (per-audience action: failed).
+ */
+export interface PlatformSegment {
+  kind: 'platform_segment';
+  vendor: BrandReference;
+  /**
+   * The vendor's segment identifier as issued to the buyer (the ID observable in the vendor's console/API). The seller owns the mapping to whatever identifier its ingest minted — it configured the destination and is the only party that can see both sides.
+   */
+  segment_ref: string;
+}
 
 // core/destination-item.json
 /**
@@ -32283,8 +32923,17 @@ export type Destination =
        * Optional account identifier on the agent
        */
       account?: string;
+      /**
+       * Optional operator pin for provider-initiated delivery to this agent destination. The signal agent MUST use a matching rail or fail this destination with UNSUPPORTED_FEATURE, never falling back. Agents that do not list signals.delivery_methods MUST reject a pin. Without a pin it chooses from the pattern+vendor intersection. Applies to activate_signal only; ignored on get_signals destinations, where it neither filters nor errors. Experimental (signals.delivery_methods).
+       */
+      delivery_method?: {
+        /**
+         * Delivery pattern (see core/signal-delivery-method.json). tmp_identity_match is not one.
+         */
+        pattern: 'sync_audiences' | 'file_transfer' | 'dataset_query' | 'clean_room' | 'platform_distribution';
+        vendor?: BrandReference;
+      };
     };
-
 
 // core/education-item.json
 /**
@@ -32359,6 +33008,27 @@ export interface EducationItem {
   assets?: OfferingAssetGroup[];
   ext?: ExtensionObject;
 }
+
+// core/escalation-sla.json
+/**
+ * Critical-report commitment. response_max is the maximum elapsed time from seller receipt to human acknowledgement. Business time and resolution-time commitments are outside this contract.
+ */
+export interface EscalationSLA {
+  /**
+   * Business time starts at seller receipt, advancing to the next working period when outside working time.
+   */
+  clock?: 'elapsed';
+  /**
+   * Immutable seller-local ID in get_adcp_capabilities.business_calendars; required only for business time.
+   */
+  business_calendar_id?: string;
+  /**
+   * @pattern ^P(?!$)(?:[0-9]+D)?(?:T(?=[0-9])(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+S)?)?$
+   */
+  response_max: string;
+  completion_max?: never;
+}
+
 
 // core/evaluator-spec.json
 /**
@@ -33968,6 +34638,26 @@ export type IndicatorsChangedWebhook =
       ext?: ExtensionObject;
     };
 
+// core/installment-change-set.json
+/**
+ * Installment-level membership actions for one proposal refinement, each naming the purchase it applies to by product_id and the installment by its closed canonical (collection_ref, installment_id) reference. A tuple cannot be an object key, so this is a list rather than a map. Unlike core/product-change-map.json, whose object keys make a contradiction structurally unrepresentable, uniqueness here is a requirement rather than a guarantee: entries MUST be unique by (product_id, installment_ref), and a seller receiving a repeated or contradictory pair rejects the request at task level with INVALID_REQUEST rather than applying the entries in an arbitrary order. Buyers SHOULD order entries by the JCS bytes of (product_id, installment_ref) so a rebuilt retry hashes to the same idempotency payload, and sellers MUST NOT make the result depend on order.
+ * @maxItems 500
+ */
+export type InstallmentChangeSet = InstallmentChange[];
+
+export interface InstallmentChange {
+  /**
+   * Product whose purchase in commercial_terms.purchases carries the installment.
+   * @minLength 1
+   */
+  product_id: string;
+  installment_ref: CanonicalInstallmentReference;
+  /**
+   * Required, because a drop that silently defaulted to include is the expensive failure. include requires the installment to be present in that purchase's installments in every returned draft; omit requires its absence. Swapping a slot is one omit plus one include in the same refinement.
+   */
+  action: 'include' | 'omit';
+}
+
 // core/installment-delivery-metrics.json
 /**
  * Delivery metrics for one canonically identified installment.
@@ -34029,6 +34719,67 @@ export type InstallmentPropertyDeliveryMetrics = DeliveryMetrics & {
    */
   property_name?: string;
 };
+
+// core/invoice-line.json
+/**
+ * Quantity this line bills, in the control-total value and unit shape (for example impressions or spots). The name matches a control total of the referenced revisions' pinned report definition, and all referenced revisions share one report definition when billed_quantity is present. The value MUST be non-negative; direction is carried by invoice_kind.
+ */
+export type ReportingControlTotal = IntegerReportingControlTotal | DecimalReportingControlTotal;
+
+/**
+ * One itemised line of an invoice: the media buy (and optionally package) it bills, and the reporting revisions and adjustments that amount is drawn from. Reference only, never settles: a line identifies which reporting an invoice amount covers and does not create, approve, or settle an invoice, calculate tax or FX, or determine payment obligations. Experimental in AdCP 3.3 under the account.invoice_lines feature id.
+ */
+export interface InvoiceLine {
+  /**
+   * Seller's identifier of the media buy this line bills.
+   * @minLength 1
+   */
+  media_buy_id: string;
+  /**
+   * Package within the media buy this line bills. Omit when the line covers the media buy as a whole.
+   * @minLength 1
+   */
+  package_id?: string;
+  /**
+   * Official reporting revisions this line bills from. Each MUST belong to this line's media_buy_id (and package_id when present) and MUST be an official revision (enums/reporting-finality.json); a snapshot revision is provisional and is not invoice-addressable. A line MAY carry both revisions and adjustments; reporting_revision_ids and reporting_adjustment_ids are opaque references from the media_buy.reporting_delivery surface, and the seller's billing system, not this schema, defines how they net into billed_quantity and amount.
+   */
+  reporting_revision_ids?: string[];
+  /**
+   * Reporting adjustments this line applies (each MUST belong to this line's media_buy_id and package_id when present), for post-official corrections billed in a later period than the revision they adjust.
+   */
+  reporting_adjustment_ids?: string[];
+  billed_quantity?: ReportingControlTotal;
+  /**
+   * Line amount in the response currency. Non-negative on every line; on a credit note the invoice_kind carries the sign. The sum of line amounts SHOULD NOT exceed the invoice amount; the remainder is unitemised tax, fees, or other charges.
+   * @minimum 0
+   */
+  amount?: number;
+}
+export interface IntegerReportingControlTotal {
+  name: string;
+  /**
+   * Canonical base-10 integer with no exponent, grouping separator, decimal point, or insignificant leading zeroes.
+   */
+  value: string;
+  value_type: 'integer';
+  /**
+   * Profile-defined unit such as impressions or an ISO 4217 currency code.
+   */
+  unit?: string;
+}
+export interface DecimalReportingControlTotal {
+  name: string;
+  /**
+   * Canonical base-10 decimal with no exponent, grouping separator, or insignificant leading zeroes.
+   */
+  value: string;
+  value_type: 'decimal';
+  /**
+   * Profile-defined unit such as impressions or an ISO 4217 currency code.
+   */
+  unit?: string;
+}
+
 
 // core/job-item.json
 /**
@@ -34203,6 +34954,10 @@ export interface MacroResolutionResult {
  */
 export interface MediaBuyFeatures {
   /**
+   * Supports the package start_requires_all_creatives_approved initial-serving gate through control_media_buy package controls and any advertised create_media_buy/update_media_buy compatibility facades. When true, the seller MUST honor and echo the policy, retain pending-review and rejected assignments, and expose the package-scoped update_creative_start_policy action before first enablement so the buyer can set or clear it outside commercial proposal negotiation. Buyers MUST NOT send true without this capability. Sellers that do not declare true MUST reject an opted-in request atomically with UNSUPPORTED_FEATURE; explicit false is the ordinary default. This capability can be checked before booking; it does not alter inventory guarantees or create a reservation on non-guaranteed inventory.
+   */
+  creative_start_policy?: boolean;
+  /**
    * @deprecated
    * Deprecated 3.x compatibility capability for creatives provided inline in create_media_buy and update_media_buy package payloads. buy_products, accept_proposal, and control_media_buy never accept inline creatives. New integrations use the dedicated creative lifecycle. Removed in 4.0.
    */
@@ -34273,6 +35028,60 @@ export type MediaBuyFrequencyCapCapability = FrequencyCapConstraints & {
 export type MediaBuyFrequencyCapRequirement = FrequencyCapRequirements & {
   supported_control_modes?: MediaBuyFrequencyCapControlMode[];
 };
+
+// core/media-buy-issue.json
+/**
+ * Seller-owned report status, separate from transport task status and MediaBuy revision. Only the seller may acknowledge or resolve it. Reporting never changes delivery or commercial terms.
+ */
+export interface MediaBuyIssue {
+  /**
+   * @minLength 1
+   */
+  issue_id: string;
+  /**
+   * @minLength 1
+   */
+  media_buy_id: string;
+  /**
+   * @minLength 1
+   */
+  package_id?: string;
+  /**
+   * @minLength 1
+   */
+  creative_id?: string;
+  severity: 'critical' | 'warning';
+  category: 'malicious_creative' | 'wrong_creative' | 'brand_safety' | 'tracking' | 'delivery' | 'other';
+  /**
+   * @minLength 1
+   * @maxLength 4000
+   */
+  description: string;
+  /**
+   * reported is an automated receipt only. acknowledged means a person has taken responsibility. resolved means that person or their team recorded a terminal resolution. A seller may resolve immediately only if it also records human acknowledgement.
+   */
+  status: 'reported' | 'acknowledged' | 'resolved';
+  /**
+   * @format date-time
+   */
+  received_at: string;
+  /**
+   * Time of human acknowledgement, never an automated receipt.
+   * @format date-time
+   */
+  acknowledged_at?: string;
+  /**
+   * @format date-time
+   */
+  resolved_at?: string;
+  /**
+   * Buyer-safe resolution summary. Resolution may explain why no seller action was warranted; it does not prove the buyer agreed or waive a dispute.
+   * @minLength 1
+   * @maxLength 4000
+   */
+  resolution?: string;
+  ext?: ExtensionObject;
+}
 
 // core/media-buy-support-requirements.json
 /**
@@ -35380,7 +36189,7 @@ export interface PrincipalChangedWebhook {
    */
   changed_at: string;
   /**
-   * Coarse reason for the invalidation. Advisory routing/debug metadata; receivers MUST re-read get_principal rather than inferring the new state from the reason. relationship_changed and relationship_expiring were added in 3.3 (experimental, with get_principal relationship).
+   * Coarse reason for the invalidation. Advisory routing/debug metadata; receivers MUST re-read get_principal rather than inferring the new state from the reason. relationship_changed and relationship_expiring were added in 3.3 (experimental, with get_principal relationship). reporting_subscription_changed was added in 3.3 (experimental, media_buy.reporting_subscriptions): a subscription's accounts_unauthorized changed (an account added on revocation, removed on re-grant or retention expiry), an account's coverage exception opened or closed, or the subscription moved to action_required.
    */
   reason:
     | 'destination_state_changed'
@@ -35390,6 +36199,7 @@ export interface PrincipalChangedWebhook {
     | 'declarations_intersection_changed'
     | 'relationship_changed'
     | 'relationship_expiring'
+    | 'reporting_subscription_changed'
     | 'other';
   /**
    * Optional advisory hint naming the affected reporting destination for destination-scoped reasons. Receivers MAY use it for selective handling but MUST still treat the get_principal read as authoritative.
@@ -35487,11 +36297,194 @@ export interface PrincipalRelationship {
      * @format date-time
      */
     expires_at?: string;
+    waiting_on?: PendingActionParty;
+    kind?: PendingActionKind;
   };
   ext?: ExtensionObject;
 }
 
 // core/principal-state.json
+/**
+ * Seller readback for one principal-level reporting subscription (experimental, media_buy.reporting_subscriptions). Per-account coverage and exclusions are read through get_reporting_status subscription_coverage while the caller is authorized; accounts whose authority the caller lost are reported here in accounts_unauthorized, because get_reporting_status treats them as unknown.
+ */
+export type ReportingSubscriptionState = {
+} & {
+  subscription_id: string;
+  subscription_version: number;
+  /**
+   * active: accepted and resolving per account. inactive: the caller set active false. action_required: the subscription cannot deliver anywhere until the caller acts, for example because its destination is suspended or not ready; issues names the cause. Moving to action_required fires principal.changed with reason reporting_subscription_changed.
+   */
+  state: 'active' | 'inactive' | 'action_required';
+  /**
+   * When the seller accepted the current subscription_version. Immutable for that version. Coverage starts at the first boundary at or after the latest of this instant, the buy's confirmed_at, and the account's authorized_at.
+   */
+  accepted_at: string;
+  /**
+   * Earlier versions, newest first, retained while any obligation of that version is retained, so a buyer can recompute their expected periods after local-state loss.
+   */
+  prior_versions?: {
+    subscription_version: number;
+    accepted_at: string;
+    /**
+     * The next version's accepted_at, the cutover instant: this version owes its periods that start before it, in full.
+     */
+    superseded_at: string;
+  }[];
+  /**
+   * When active false was applied. Present when and only when state is inactive.
+   */
+  deactivated_at?: string;
+  /**
+   * Destination generation currently bound. Present when and only when the configuration names a destination.
+   */
+  destination_ref?: string;
+  configuration: ReportingSubscription;
+  /**
+   * Structured issues. Messages are untrusted display data.
+   *
+   * @maxItems 16
+   */
+  issues?:
+    Error[];
+  /**
+   * Accounts where this subscription has an open get_reporting_status exception, so a caller need not poll every account. Changes fire principal.changed with reason reporting_subscription_changed.
+   *
+   * @maxItems 1000
+   */
+  accounts_with_exceptions?: {
+    account_id: string;
+    /**
+     * Reasons of the open exceptions, account- or buy-level.
+     *
+     * @minItems 1
+     */
+    reasons: [
+      'offering_unsupported' | 'capacity' | 'overridden' | 'excluded_by_buyer' | 'action_required',
+      ...('offering_unsupported' | 'capacity' | 'overridden' | 'excluded_by_buyer' | 'action_required')[]
+    ];
+  }[];
+  /**
+   * Accounts this subscription covered whose authority the caller has since lost, so a revoked grant reads differently from a seller that stopped publishing. Only accounts the subscription previously covered appear. Entries carry no current account data and nothing created after unauthorized_at. An entry is removed on re-grant and is otherwise retained for status_retention_days after unauthorized_at; after that it drops, and a later re-grant is a fresh coverage start from authorized_at with no gap claimed. Every addition or removal fires principal.changed with reason reporting_subscription_changed.
+   *
+   * @maxItems 1000
+   */
+  accounts_unauthorized?: {
+    account_id: string;
+    /**
+     * When the caller's authority for the account ended. Nothing is delivered for periods ending after it, including on retries.
+     */
+    unauthorized_at: string;
+    /**
+     * Last period boundary at or before unauthorized_at: the end of the last period owed before authority ended.
+     */
+    last_owed_period_end?: string;
+    /**
+     * Owed periods that ended at or before unauthorized_at but were not delivered by then. They are withheld, not missing, and never count as seller delay. If authority returns, they are owed again, due at the re-grant time plus the offering's delivery_sla.
+     */
+    withheld_period_count: number;
+    /**
+     * Obligations of the withheld periods, when the seller lists them.
+     *
+     * @maxItems 1000
+     */
+    withheld_reporting_obligation_ids?: string[];
+  }[];
+};
+/**
+ * Desired configuration currently associated with this subscription.
+ */
+export type ReportingSubscription = {
+} & {
+  /**
+   * Caller-selected stable key, unique within the authenticated principal and not equal to any delivery_config_id the caller uses on any account with this seller. Never . or .., because it may appear in a destination path.
+   */
+  subscription_id: string;
+  /**
+   * Caller-selected immutable semantic generation, with its own accepted_at. Increment when the selector, reconciliation_mode, destination, scope, exclude_account_ids, or operator_domains change. active and replace_account_configs change in place. Sellers reject a reused version with different semantic content.
+   */
+  subscription_version: number;
+  /**
+   * Whether the subscription creates new obligations. false is a cutover at deactivated_at: periods that started before it remain owed in full, and no later ones are created. The subscription stays readable for history.
+   */
+  active: boolean;
+  /**
+   * Accounts covered. all_authorized_accounts is an explicit acknowledgment, never implicit, and follows the caller's account authority as it changes, including accounts other operators grant later; narrow it with operator_domains when the destination serves one operator. account_ids names specific accounts.
+   */
+  scope: {
+    all_authorized_accounts?: true;
+    /**
+     * @minItems 1
+     * @maxItems 1000
+     */
+    account_ids?: string[];
+  };
+  /**
+   * Accounts opted out of an all_authorized_accounts subscription. Not valid with account_ids scope.
+   *
+   * @minItems 1
+   * @maxItems 1000
+   */
+  exclude_account_ids?: string[];
+  /**
+   * Only accounts whose operator is one of these domains are in scope. Keeps an all-accounts subscription feeding an operator-specific destination from picking up accounts another operator grants later.
+   *
+   * @minItems 1
+   * @maxItems 64
+   */
+  operator_domains?: string[];
+  /**
+   * Offering attributes that are stable across sellers. The seller resolves the selector separately for each account and its products. An account, buy, or package with no matching offering is excluded with reason offering_unsupported; that never fails the subscription.
+   */
+  selector: {
+    /**
+     * Same values as the offering feed_purpose.
+     */
+    feed_purpose: 'pacing' | 'analytics' | 'billing';
+    /**
+     * ISO 8601 duration matched exactly against the offering's schedule.period_duration.
+     */
+    period_duration: string;
+    required_finality: ReportingFinality;
+    /**
+     * Optional: only offerings whose schedule uses this alignment are candidates. Without it, the resolved offering's published alignment governs period boundaries.
+     */
+    alignment?: 'utc' | 'account_timezone' | 'source_timezone' | 'billing_cycle';
+    /**
+     * Breakdown in the standard vocabulary. With match exact (the default when present) the offering's dimensions must equal this set; with finest or all they must include it. Omit to match any breakdown.
+     *
+     * @minItems 1
+     * @maxItems 16
+     */
+    dimensions?:
+      ReportingDimension[];
+    /**
+     * exact selects the offering whose dimension set equals dimensions; native dimensions that do not map to the vocabulary count as distinct, so package by device does not equal package. finest selects the single offering with the most mapped dimensions among those including every selector dimension. Ties under exact and finest go to the lowest offering_id in byte order. all selects every offering including every selector dimension, each with its own obligations. Defaults to exact when dimensions is present and finest when it is absent. Billing subscriptions SHOULD use exact.
+     */
+    match?: 'exact' | 'finest' | 'all';
+    /**
+     * IANA timezone override for period boundaries. Only valid when scope.account_ids names exactly one account. Only offerings that can produce periods in that zone match.
+     */
+    period_timezone?: string;
+  };
+  reconciliation_mode: ReportingReconciliationMode;
+  /**
+   * When true, ends the caller's own active sync_accounts reporting_delivery_configs with the same feed_purpose on in-scope accounts where this subscription resolves an offering, by cutover, and the subscription takes over. Applied once per subscription_version, or when the flag changes to true. Never affects another principal's configurations or accounts this subscription excludes, and never advances an account's revision.
+   */
+  replace_account_configs?: boolean;
+  /**
+   * Managed delivery target. Omit to select only API-delivered (Core) offerings. When present, only offerings whose method matches the destination's pattern and transport match.
+   */
+  destination?: {
+    /**
+     * A destination_id in the caller's principal reporting_destinations. The seller binds the current generation and echoes its destination_ref in state.
+     */
+    destination_id: string;
+    /**
+     * Relative path under the destination location, without . or .. segments. Placeholders: {account_id}, {subscription_id}, {offering_id}, {period_start}. Each substituted value fills exactly one segment: the seller percent-encodes (RFC 3986) any value containing / or equal to . or .., so no value can add or escape a segment. MUST contain {account_id} when the scope can cover more than one account or another active subscription of the caller shares the destination, and is then required for file_transfer destinations.
+     */
+    path_template?: string;
+  };
+};
 /**
  * Complete principal-scoped standing configuration visible after sync or read. Secrets are never returned. The seller keys this state by its own agent identity and the stable authenticated caller principal. Each section is present when and only when the seller advertises it in principal.supported_sections, so an empty supported array is distinguishable from an unsupported section.
  */
@@ -35507,6 +36500,11 @@ export interface PrincipalState {
    */
   reporting_destinations?: AgentReportingDestinationState[];
   declarations?: PrincipalDeclarationsState;
+  /**
+   * Current and deactivated reporting subscriptions (experimental, media_buy.reporting_subscriptions). A subscription omitted from a later sync stays here as inactive while its obligations are retained.
+   * @maxItems 64
+   */
+  reporting_subscriptions?: ReportingSubscriptionState[];
   /**
    * Destinations the caller revoked by omitting them from a submitted reporting_destinations section, retained while any generation remains resolvable for reporting history. Enumerable only by the owning principal. Reusing a retired destination_id requires fresh registration and proof and produces a new generation.
    * @maxItems 64
@@ -35929,6 +36927,11 @@ export interface ProductFilters {
     match_type?: MatchType;
   }[];
   audience_evidence_requirements?: AudienceEvidenceRequirements;
+  /**
+   * Experimental (media_buy.audience_evidence_targets). Audiences the buyer wants evidence for, evaluated against the admissibility rules, requirement_mode and evidence_presence of the sibling audience_evidence_requirements, which MUST be present with it. Targets combine with AND. required excludes a product whose published evidence misses any target; preferred only ranks and explains via audience_evidence_selections. A seller that does not list media_buy.audience_evidence_targets in experimental_features MUST NOT apply it and, when audience_evidence_requirements.requirement_mode is required, MUST fail with UNSUPPORTED_FEATURE. Not a targeting predicate.
+   * @maxItems 10
+   */
+  target_audiences?: AudienceEvidenceTarget[];
   ext?: ExtensionObject;
 }
 
@@ -36029,6 +37032,7 @@ export interface ProductOfferFilters {
     threshold: number;
     standard?: ViewabilityStandard;
     vendor: BrandKey;
+    metric_id?: VendorMetricID;
   }[];
   required_metrics?: AvailableMetric[];
   required_vendor_metrics?: {
@@ -36898,11 +37902,6 @@ export interface ReportingAdjustmentReceipt {
 
 // core/reporting-adjustment.json
 /**
- * One profile-defined aggregate used to reconcile a reporting revision without rereading every row. Names and units are defined by the immutable report definition. Values use canonical strings so currency and large integer comparisons are exact across SDKs.
- */
-export type ReportingControlTotal = IntegerReportingControlTotal | DecimalReportingControlTotal;
-
-/**
  * One immutable post-official accounting-only correction to billing-purpose reporting evidence/control totals. It never edits rows, supersedes a revision, creates or changes invoices, calculates tax or FX, authorizes accounting entries, settles payment, or determines legal payment obligations.
  */
 export interface ReportingAdjustment {
@@ -36966,31 +37965,6 @@ export interface ReportingAdjustment {
    */
   created_at: string;
 }
-export interface IntegerReportingControlTotal {
-  name: string;
-  /**
-   * Canonical base-10 integer with no exponent, grouping separator, decimal point, or insignificant leading zeroes.
-   */
-  value: string;
-  value_type: 'integer';
-  /**
-   * Profile-defined unit such as impressions or an ISO 4217 currency code.
-   */
-  unit?: string;
-}
-export interface DecimalReportingControlTotal {
-  name: string;
-  /**
-   * Canonical base-10 decimal with no exponent, grouping separator, or insignificant leading zeroes.
-   */
-  value: string;
-  value_type: 'decimal';
-  /**
-   * Profile-defined unit such as impressions or an ISO 4217 currency code.
-   */
-  unit?: string;
-}
-
 
 // core/reporting-canonical-content-digest.json
 /**
@@ -37284,8 +38258,9 @@ export type ReportingDeliveryOffering = {
     grain: string;
     /**
      * @minItems 1
+     * @maxItems 32
      */
-    primary_keys: [ReportingPrimaryKey, ...ReportingPrimaryKey[]];
+    primary_keys: ReportingPrimaryKey[];
     /**
      * Rules for stable logical row ordering, value encoding, nulls, and schema used by canonical_content_digest.
      */
@@ -37361,14 +38336,17 @@ export type ReportingReliabilityStatistics = {
   adjustment_latency_seconds?: LatencyPercentiles;
   /**
    * Optional absolute adjustment-magnitude percentiles for comparable control totals such as spend.
+   *
+   * @maxItems 16
    */
-  adjustment_magnitude?: {
-    control_total_name: string;
-    unit: string;
-    sample_count: number;
-    p50_absolute_delta: string;
-    p95_absolute_delta: string;
-  }[];
+  adjustment_magnitude?:
+    {
+          control_total_name: string;
+          unit: string;
+          sample_count: number;
+          p50_absolute_delta: string;
+          p95_absolute_delta: string;
+        }[];
   evidence: {
   };
 };
@@ -37390,7 +38368,35 @@ export interface ReportingDeliveryCapabilities {
    * Tier flag: this seller supports canonical-digest verification and authenticated consumer receipts for both report materializations and post-official adjustments through receipt_task. Offerings with reconciliation_mode consumer_receipt and billing-grade canonicalization require this tier.
    */
   reconciled_billing?: boolean;
-  configuration_task: 'sync_accounts';
+  /**
+   * @deprecated
+   * Deprecated in 3.3: 3.3 clients use configuration_tasks. Present when and only when configuration_tasks lists sync_accounts, or configuration_tasks is absent. Callers pinned below 3.3 know only this field, so a seller MUST serve sync_accounts registration to them; a seller listing only sync_principal serves reporting registration to 3.3 callers only.
+   */
+  configuration_task?: 'sync_accounts';
+  /**
+   * Every task this seller accepts reporting registrations through. sync_principal means principal-level reporting_subscriptions; sync_accounts means account-level reporting_delivery_configs, listed by sellers that also serve that registration. A seller may list sync_principal alone. Buyers choose from the list.
+   */
+  configuration_tasks?: ('sync_principal' | 'sync_accounts')[];
+  /**
+   * Principal-level reporting subscriptions through the sync_principal reporting_subscriptions section (experimental): sellers advertising this block MUST list media_buy.reporting_subscriptions in experimental_features and sync_principal in configuration_tasks. Sellers supporting subscriptions MUST support per-account destinations through account-scoped subscriptions.
+   */
+  subscriptions?: {
+    supported: true;
+    /**
+     * Most accounts one subscription serves. Beyond it the seller excludes accounts with reason capacity, deterministically, and reports which. Absent means no declared limit.
+     * @minimum 1
+     * @format int
+     */
+    max_accounts?: number;
+    /**
+     * Whether periods missed during a loss of authorization are delivered after re-grant. When true, no gap is recorded and every period in the revoked interval stays owed, due at the re-grant time plus the offering's delivery_sla. When false, the interval is recorded in subscription_coverage gaps with reason unauthorized and its periods are not owed.
+     */
+    backfill_on_regrant?: boolean;
+    /**
+     * Standard dimensions this seller maps its report definitions onto for selector matching.
+     */
+    dimensions?: ReportingDimension[];
+  };
   status_task: 'get_reporting_status';
   /**
    * Opt-in consumer-status loop during the published migration window, becoming required Core in the next eligible minor after that window. Buyers call this seller-hosted task to record whether each expected reporting period was received, missing, or unreadable. Buyers expose no reverse endpoint, and the status is not a billing receipt.
@@ -37418,6 +38424,7 @@ export interface ReportingDeliveryCapabilities {
   ledger_notification?: 'reporting.ledger_changed';
   /**
    * Atomic supported feed/profile/schedule/finality/method combinations. offering_id values MUST be unique.
+   * @maxItems 64
    */
   offerings: ReportingDeliveryOffering[];
   /**
@@ -37457,6 +38464,7 @@ export interface ReportingDeliveryCapabilities {
   };
   /**
    * Optional evidence-scoped observed performance for advertised offerings. offering_id values MUST be unique and name offerings in this capability block.
+   * @maxItems 64
    */
   reliability_statistics?: ReportingReliabilityStatistics[];
   /**
@@ -37926,6 +38934,13 @@ export interface ReportingObligation {
    * @pattern ^[A-Za-z0-9_.:-]{1,255}$
    */
   report_definition_id: string;
+  /**
+   * Offering this obligation was resolved to. Present on obligations derived from a reporting subscription (media_buy.reporting_subscriptions), where the seller resolves the selector per account and buy; a resolution change is a cutover, so no period is owed under two offerings. Authoritative for this obligation's timing: its schedule alignment, anchor, and delivery_sla, and so expected_at. Buyers compute which periods are owed themselves but read timing from here.
+   * @minLength 1
+   * @maxLength 128
+   * @pattern ^[A-Za-z0-9_.:-]{1,128}$
+   */
+  offering_id?: string;
   feed_purpose: ReportingFeedPurpose;
   /**
    * @minLength 1
@@ -38465,6 +39480,106 @@ export interface ReportingStatusChangedWebhook {
    */
   issue_ids?: string[];
   ext?: ExtensionObject;
+}
+
+// core/reporting-subscription-coverage.json
+/**
+ * offering_unsupported: no offering matching the selector is available on this account's or buy's products. capacity: refused for a seller limit such as max_accounts. overridden: the caller's own sync_accounts delivery config, or its own account_ids subscription replacing an all-accounts one, takes this account and feed_purpose. excluded_by_buyer: listed in exclude_account_ids. action_required: the account is not served until pending_action completes; account-level only.
+ */
+export type ReportingSubscriptionExclusionReason =
+  | 'offering_unsupported'
+  | 'capacity'
+  | 'overridden'
+  | 'excluded_by_buyer'
+  | 'action_required';
+/**
+ * Exceptions to one principal-level reporting subscription's coverage of one account (experimental, media_buy.reporting_subscriptions), returned in get_reporting_status. Coverage itself is computable by the buyer without asking, by the rule in reporting-subscription.json: each visible confirmed buy and resolved offering is owed the complete periods of that offering's published schedule that start on or after the first boundary at or after the latest of the version's accepted_at, the buy's confirmed_at, and the account's authorized_at, and that overlap the buy's flight. The seller reports only exceptions. Each removes the periods whose start falls in the half-open interval [from, until) of cutover instants; none adds one. Readable only while the caller is authorized for the account; loss of authority is reported in the caller's own get_principal subscription state.
+ */
+export interface ReportingSubscriptionCoverage {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  subscription_id: string;
+  /**
+   * @minimum 1
+   * @format int
+   */
+  subscription_version: number;
+  /**
+   * Current account-level state. active: no account-level exclusion is in effect; individual buys may still be excluded. excluded: an open account-level entry is in effect and none has reason action_required. action_required: an open account-level entry with reason action_required is in effect and pending_action says what must happen.
+   */
+  status: 'active' | 'excluded' | 'action_required';
+  pending_action?: PendingAction;
+  /**
+   * Exceptions that remove periods. An entry without media_buy_id applies to the whole account. Opening or closing one fires principal.changed with reason reporting_subscription_changed. Retained for status_retention_days after until.
+   */
+  excluded: {
+    media_buy_id?: ReportingMediaBuyID;
+    reason: ReportingSubscriptionExclusionReason;
+    /**
+     * Cutover instant: periods starting at or after it are removed.
+     * @format date-time
+     */
+    from: string;
+    /**
+     * Cutover instant at which the exception ended; periods starting at or after it are owed again. Absent while still in effect.
+     * @format date-time
+     */
+    until?: string;
+    /**
+     * With media_buy_id and reason offering_unsupported: only these packages lack a matching offering. The buy stays covered for its other packages; these are removed from its coverage rather than its periods.
+     */
+    package_ids?: ReportingPackageID[];
+    /**
+     * The caller's own sync_accounts delivery config or subscription that takes this account; never another principal's. Present when and only when reason is overridden.
+     */
+    overridden_by?: {
+      /**
+       * @minLength 1
+       * @maxLength 64
+       */
+      subscription_id?: string;
+      /**
+       * @minLength 1
+       * @maxLength 64
+       */
+      delivery_config_id?: string;
+    };
+  }[];
+  /**
+   * Account timezone changes affecting account_timezone-aligned periods, retained for status_retention_days. A cutover: periods under the old timezone are owed when they start before the change, so they end by effective_at; periods under the new timezone are owed when they start at or after effective_at. Any stretch from effective_at to the first new-timezone boundary is owed under neither.
+   */
+  timezone_cutovers?: {
+    /**
+     * End of the last old-timezone period that started before the change.
+     * @format date-time
+     */
+    effective_at: string;
+    /**
+     * The account's new IANA timezone, as list_accounts shows it.
+     * @minLength 1
+     * @maxLength 255
+     */
+    timezone: string;
+  }[];
+  /**
+   * Intervals between a loss of authority and re-grant that the seller did not backfill (backfill_on_regrant false or absent). Periods starting in [from, until) are not owed. With backfill_on_regrant true no gap is recorded. A re-grant after the accounts_unauthorized entry expired is a fresh coverage start from authorized_at, with no gap. Retained for status_retention_days after until.
+   */
+  gaps?: {
+    /**
+     * Last period boundary at or before unauthorized_at.
+     * @format date-time
+     */
+    from: string;
+    /**
+     * First period boundary at or after the re-grant.
+     * @format date-time
+     */
+    until: string;
+    reason: 'unauthorized';
+  }[];
 }
 
 // core/reporting-webhook.json
@@ -39529,6 +40644,12 @@ export interface SignalDefinition {
    */
   dts_compliant_version?: string;
 }
+
+// core/signal-delivery-method.json
+/**
+ * One rail a signal agent can use to deliver licensed segment membership to an agent destination: the send-side reading of core/audience-activation-method.json, same pattern vocabulary, receiver-neutral fields only. Compatibility is pattern+vendor intersection with the destination's audience_activation.methods; receiver fields (destination_ref, consumer_identities, bind_expiry_days) are resolved from the destination at activation time. tmp_identity_match is excluded because no membership file moves. Experimental (signals.delivery_methods); see docs/reference/experimental-status.
+ */
+export type SignalDeliveryMethod = AdCPAudienceSync | FileTransfer | DatasetQuery | CleanRoom | PlatformDistribution;
 
 // core/signal-filters.json
 /**
@@ -40796,6 +41917,10 @@ export type Product1 = Product;
  */
 export type RemovalReason = 'withdrawn' | 'cancellation' | 'expired' | 'depublication' | 'policy_takedown';
 /**
+ * External source reference for an audience: a pointer to buyer data that the seller ingests over a declared activation rail, instead of inline member deltas. The data never transits AdCP — the protocol carries the reference; ingestion happens on the vendor's rails. kind discriminates the entry. A buyer MUST only send a source kind whose corresponding activation pattern (dataset_query for dataset, platform_distribution for platform_segment) the seller has declared via audience_activation; sellers reject undeclared kinds with UNSUPPORTED_FEATURE. References are never credentials: grant-based paths are in-protocol only when the vendor flow is grantee-identified (the grant names a principal; no secret is conveyed), and requests carrying credential material are rejected with CREDENTIAL_IN_ARGS. Experimental (x-status: experimental): part of the media_buy.audience_activation surface — sellers implementing external sources MUST list media_buy.audience_activation in experimental_features. Per docs/reference/experimental-status, this surface MAY change between 3.x releases with notice.
+ */
+export type AudienceSourceReference = Dataset | PlatformSegment;
+/**
  * Full post-change signal object.
  */
 export interface WholesaleSignalObject {
@@ -40832,9 +41957,13 @@ export interface WholesaleSignalObject {
     max: number;
   };
   /**
-   * Restricted attribute categories this listing touches. Required with demographic_predicate and must include age. For referenced provider/source signals, any projected values must match the authoritative definition.
+   * Restricted attribute categories this listing touches. Required with demographic_predicate and must include age for age predicates and sex_gender for gender predicates. For referenced provider/source signals, any projected values must match the authoritative definition.
    */
   restricted_attributes?: RestrictedAttribute[];
+  /**
+   * Experimental (signals.pricing_groups). Optional seller-defined key naming the set of signals whose fees combine under one signal_pricing_group_rules entry when selected in the same package. The key is scoped to the listing surface (product options or the get_signals agent) it appears on. A product-scoped value overrides the get_signals value, as product-scoped pricing_options do; an option omitting it inherits. Omit when the fee is independent. Distinct from selection_group, which governs targeting composability, not fees.
+   */
+  pricing_group?: string;
   demographic_predicate?: DemographicPredicate;
   /**
    * User-level bases by which the ages of this signal's members were established: verified, declared, and/or inferred. Sibling of demographic_predicate, not nested in it; only valid when demographic_predicate.age is present. Population estimates are out of scope (aggregate composition cannot establish an individual's age; use audience_evidence). Absent means the signal makes no basis claim (for a listing that projects a data_provider or signal_source definition, resolve the value from that definition; only the resolved value counts), and a buyer whose request names accepted_bases MUST NOT treat a signal with no resolved basis as satisfying the age predicate. A signal satisfies a requested age predicate with accepted_bases only when its demographic_predicate.age is within the request AND every value in age_determination_bases is in accepted_bases. The bases describe how known ages were established; unknown-age membership is governed only by include_unknown. Forward note: when gender targeting (#7925, experimental) graduates, gender will need an equivalent disclosure; this field is age-specific and the enum is not generalized. For product-scoped listings this listing is authoritative; for data_provider and signal_source refs, any projected value MUST match the referenced authoritative definition, the same rule demographic_predicate follows.
@@ -40941,6 +42070,8 @@ export type XEntityTypes =
   | 'operator'
   | 'operator_unit'
   | 'media_buy'
+  | 'media_buy_issue'
+  | 'business_calendar'
   | 'package'
   | 'product'
   | 'proposal'
@@ -41003,6 +42134,7 @@ export type XEntityTypes =
   | 'reporting_destination'
   | 'reporting_offering'
   | 'reporting_delivery_config'
+  | 'reporting_subscription'
   | 'reporting_definition'
   | 'reporting_obligation'
   | 'reporting_revision'
@@ -41326,9 +42458,21 @@ export interface AccessibilityViolationDetails {
 }
 
 
+// error-details/account-ambiguous.json
+/**
+ * Recommended details shape for ACCOUNT_AMBIGUOUS errors. Lists the matching accounts the caller is already granted, so a human can pick one. Sellers MUST NOT list accounts the caller cannot already reach.
+ */
+export interface AccountAmbiguousDetails {
+  /**
+   * @maxItems 50
+   */
+  candidates?: AccountCandidate[];
+}
+
 // error-details/account-moved.json
 /**
- * Recommended details shape for ACCOUNT_MOVED. Provides the current canonical account reference after an authorized caller used a tombstoned natural key.
+ * @deprecated
+ * Deprecated in 3.3 with ACCOUNT_MOVED and planned for removal in 4.0. Recommended details shape for ACCOUNT_MOVED. Provides the current canonical account reference after an authorized caller used a tombstoned natural key.
  */
 export interface AccountMovedDetails {
   current_account: CanonicalAccountReference;
@@ -41369,6 +42513,7 @@ export interface ActionNotAllowedDetails {
   currently_available_actions?: MediaBuyAvailableAction[];
   decline_reason?: SellerPolicyDeclineReason;
 }
+
 
 // error-details/agent-permission-denied.json
 /**
@@ -41730,6 +42875,19 @@ export interface PolicyViolationDetails {
   category?: string;
 }
 
+
+// error-details/price-adjustments-mismatch.json
+/**
+ * Recommended details shape for an INVALID_REQUEST that rejects a buyer-supplied pricing whose fixed_price or price_breakdown differs from the price the selected option's price_adjustments table resolves to for the purchase's selections and flight. Carries the resolved values so the buyer can see which row it disagrees on. Experimental (media_buy.price_adjustments).
+ */
+export interface PriceAdjustmentsMismatchDetails {
+  /**
+   * The price the table resolves to for this purchase.
+   * @minimum 0
+   */
+  resolved_fixed_price: number;
+  resolved_price_breakdown?: PriceBreakdown;
+}
 
 // error-details/rate-limited.json
 /**
@@ -42664,6 +43822,10 @@ export interface PackageControl {
   impressions?: number;
   pacing?: Pacing;
   bidding?: BiddingPolicy | null;
+  /**
+   * AdCP 3.3 initial-start policy. False (default) serves eligible approved assignments. True MUST retain booking and inventory commitment but block first enablement for serving until every current assignment is approved in all applicable package scopes; an empty set or library approval alone is insufficient. Retain pending-review/rejected assignments; same-creative_id resubmission needs no reassignment. Flight, pause, format-coverage and commitment constraints still apply. After first enablement, ordinary serving and impairment rules apply. Opt-in requires media_buy.features.creative_start_policy: true; otherwise buyers MUST NOT send true and sellers MUST reject true with UNSUPPORTED_FEATURE before mutation. Stage the full initial set atomically or while paused; the gate cannot anticipate future assignments. Omission preserves the stored policy; false clears the gate before first enablement for serving. A change to this policy after the package has first been enabled for serving MUST be rejected with INVALID_STATE. Operational control on control_media_buy, authorized by update_creative_start_policy in available_actions; it does not change accepted commercial terms.
+   */
+  start_requires_all_creatives_approved?: boolean;
   paused?: boolean;
   /**
    * Exercise an already-accepted unilateral package cancellation right. If seller agreement is required, refine the accepted proposal with change_kind amendment; cancellation proposals terminate the whole MediaBuy.
@@ -42684,6 +43846,242 @@ export interface PackageControl {
   negative_keywords_add?: KeywordTarget[];
   negative_keywords_remove?: KeywordTarget[];
   optimization_goals?: CanonicalOptimizationGoal[];
+}
+
+// media-buy/package-forecast-input.json
+/**
+ * Deprecated in AdCP 3.2; removed in AdCP 4.0. Legacy named-format selector with the same receiver rules as Package Request.
+ *
+ * @minItems 1
+ */
+export type FormatIds = [FormatReferenceStructuredObject, ...FormatReferenceStructuredObject[]];
+/**
+ * Canonical 3.2 format-option selector. Each reference matches one target product `format_options[]` entry. Publisher-backed options match `{ scope: "publisher", publisher_domain, format_option_id }`; product-local options match `{ scope: "product", format_option_id }`. Sellers reject unresolved options with `UNSUPPORTED_FEATURE` and a field path to the failing entry before comparing co-present routes. New buyers MUST use this route by itself and MUST NOT dual-emit either a direct canonical selector or deprecated `format_ids`. Receivers handling older 3.x multi-route requests MUST resolve every present route, require each route to select the same product option set, and reject disagreement with `CONFLICTING_SELECTORS` before treating `format_option_refs` as authoritative.
+ *
+ * @minItems 1
+ */
+export type FormatOptionRefs = [FormatOptionReference, ...FormatOptionReference[]];
+/**
+ * Catalogs this package promotes. Each catalog MUST have a distinct type (e.g., one product catalog, one store catalog). This constraint is enforced at the application level — sellers MUST reject requests containing multiple catalogs of the same type with a validation_error. Makes the package catalog-driven: one budget envelope, platform optimizes across items.
+ */
+export type Catalogs = Catalog[];
+/**
+ * Optimization targets for this package. The seller optimizes delivery toward these goals in priority order. Common pattern: event goals (purchase, install) as primary targets at priority 1; metric goals (clicks, views) as secondary proxy signals at priority 2+.
+ *
+ * @minItems 1
+ */
+export type OptimizationGoals = [OptimizationGoal, ...OptimizationGoal[]];
+/**
+ * Experimental (media_buy.audience_evidence_targets). Package-level restatement of the audiences the buyer wants evidence for, with the same semantics as target_audiences on get_products filters, evaluated against the sibling audience_evidence_requirements, which MUST be present with it. Sellers reject an unsatisfied required policy rather than dropping it. Not a targeting predicate. The same field on buy_products purchases arrives in 4.0.
+ *
+ * @minItems 1
+ * @maxItems 10
+ */
+export type TargetAudiences =
+  AudienceEvidenceTarget[];
+/**
+ * Exact immutable evidence snapshots selected by the buyer during discovery. The seller MUST match evidence_id, snapshot_id, version, and content_digest against one published snapshot and MUST reject catalog mutation, snapshot reuse, missing snapshots, or substitutions. Every accepted pin MUST be echoed in the confirmed package's audience_evidence_selections with decision_use package_construction.
+ *
+ * @minItems 1
+ */
+export type AudienceEvidencePins = [AudienceEvidencePin, ...AudienceEvidencePin[]];
+/**
+ * Buyer's proposed performance standards for this package. Overrides product defaults. Seller accepts, rejects with TERMS_REJECTED, or adjusts. When absent, product's performance_standards apply.
+ *
+ * @minItems 1
+ */
+export type PerformanceStandards = [PerformanceStandard, ...PerformanceStandard[]];
+/**
+ * Buyer's proposed reporting contract for this package — the metrics the buyer wants the seller to commit to populating in delivery reports. Same negotiation pattern as `measurement_terms` and `performance_standards`: seller accepts (echoes on confirmed package with `committed_at` stamped), rejects with `TERMS_REJECTED` (with explanation of which entries were unworkable), or normalizes (echoes a different but compatible list — buyer can accept by retrying with the normalized terms). When absent, the seller decides what to commit based on the product's `available_metrics` and the buyer's `required_metrics` filter on `get_products`. Each entry uses an explicit `scope` discriminator (`standard` or `vendor`) and identifies the metric — request-side entries do NOT carry `committed_at`; that timestamp is stamped by the seller on accept. Constraints on what the buyer MAY propose: each `scope: standard` entry's `metric_id` MUST be in the product's `available_metrics`, and each `scope: vendor` entry's `(vendor, metric_id)` MUST appear in the product's `vendor_metrics` — sellers SHOULD reject with `TERMS_REJECTED` and reference the offending entry when the proposal exceeds product capability.
+ *
+ * @minItems 1
+ */
+export type CommittedMetrics = [
+  (
+    | {
+        /**
+         * Standard metric from the closed `available-metric.json` enum.
+         */
+        scope: 'standard';
+        metric_id: AvailableMetric;
+        /**
+         * Disambiguator — same shape as on the response-side `committed_metrics`. Required when the buyer wants to pin a specific measurement path: `viewability_standard` for MRC vs GroupM viewability; `completion_source` for seller- vs vendor-attested `completion_rate`; `attribution_methodology` for how attribution was computed (deterministic_purchase, probabilistic, panel_based, modeled); `attribution_window` for the time window over which outcomes are attributed. See response-side description for full semantics.
+         */
+        qualifier?: {
+          viewability_standard?: ViewabilityStandard;
+          completion_source?: CompletionSource;
+          attribution_methodology?: AttributionMethodology;
+          attribution_window?: Duration;
+          lift_dimension?: LiftDimension;
+        };
+      }
+    | {
+        /**
+         * Vendor-defined metric, identified by the tuple `(vendor, metric_id)`.
+         */
+        scope: 'vendor';
+        vendor: BrandReference;
+        metric_id: VendorMetricID;
+        /**
+         * Optional buyer-proposed pin of the vendor's `measurement.metrics[].methodology_version`. The seller accepts by echoing it on the confirmed package's `committed_metrics` entry, normalizes to the version it can actually deliver, or rejects with `TERMS_REJECTED`. Opaque string — equality comparison only.
+         */
+        methodology_version?: string;
+        /**
+         * Optional disambiguator for vendor metrics committed under more than one methodology or window — same closed key set as standard-scope entries.
+         */
+        qualifier?: {
+          viewability_standard?: ViewabilityStandard;
+          completion_source?: CompletionSource;
+          attribution_methodology?: AttributionMethodology;
+          attribution_window?: Duration;
+          lift_dimension?: LiftDimension;
+        };
+      }
+  ),
+  ...(
+    | {
+        /**
+         * Standard metric from the closed `available-metric.json` enum.
+         */
+        scope: 'standard';
+        metric_id: AvailableMetric;
+        /**
+         * Disambiguator — same shape as on the response-side `committed_metrics`. Required when the buyer wants to pin a specific measurement path: `viewability_standard` for MRC vs GroupM viewability; `completion_source` for seller- vs vendor-attested `completion_rate`; `attribution_methodology` for how attribution was computed (deterministic_purchase, probabilistic, panel_based, modeled); `attribution_window` for the time window over which outcomes are attributed. See response-side description for full semantics.
+         */
+        qualifier?: {
+          viewability_standard?: ViewabilityStandard;
+          completion_source?: CompletionSource;
+          attribution_methodology?: AttributionMethodology;
+          attribution_window?: Duration;
+          lift_dimension?: LiftDimension;
+        };
+      }
+    | {
+        /**
+         * Vendor-defined metric, identified by the tuple `(vendor, metric_id)`.
+         */
+        scope: 'vendor';
+        vendor: BrandReference;
+        metric_id: VendorMetricID;
+        /**
+         * Optional buyer-proposed pin of the vendor's `measurement.metrics[].methodology_version`. The seller accepts by echoing it on the confirmed package's `committed_metrics` entry, normalizes to the version it can actually deliver, or rejects with `TERMS_REJECTED`. Opaque string — equality comparison only.
+         */
+        methodology_version?: string;
+        /**
+         * Optional disambiguator for vendor metrics committed under more than one methodology or window — same closed key set as standard-scope entries.
+         */
+        qualifier?: {
+          viewability_standard?: ViewabilityStandard;
+          completion_source?: CompletionSource;
+          attribution_methodology?: AttributionMethodology;
+          attribution_window?: Duration;
+          lift_dimension?: LiftDimension;
+        };
+      }
+  )[]
+];
+/**
+ * Assign existing library creatives to this package with optional rotation, grouping, weights, and placement targeting. rotation_mode is package-scoped: omission resolves to weighted, and every assignment MUST resolve to the same effective mode. In sequential mode, sequence_position MUST be unique within each package-local group. Sellers reject conflicts with VALIDATION_ERROR before creating the package. A pending_review or rejected library creative MAY be assigned if the reference and other assignment constraints are valid; sellers MUST NOT reject or remove an assignment solely for its review status. Only package-approved eligible creatives may serve. See the package start_requires_all_creatives_approved policy and docs/media-buy/specification.mdx#starting-with-assigned-creatives-under-review.
+ *
+ * @minItems 1
+ */
+export type CreativeAssignments = [CreativeAssignment, ...CreativeAssignment[]];
+/**
+ * Upload creative assets inline and assign to this package. Native localization is not accepted on this path; use sync_creatives before assigning the library creative. When the seller also advertises creative.has_creative_library: true, these creatives enter the seller's creative library and can be reused by creative_id while retained; inline-only sellers may store them as package-scoped assets. Use creative_assignments instead for existing library creatives.
+ *
+ * @minItems 1
+ * @maxItems 100
+ */
+export type Creatives = CreativeAsset[];
+/**
+ * Proposed package for a read-only availability forecast in get_products refine mode (AdCP 3.3). Field shapes and package validation rules are shared with Package Request. The enclosing refine entry supplies product_id; it MUST NOT be repeated here. pricing_option_id and budget are required. The budget uses the selected pricing option's currency, and impressions, when supplied, has its create_media_buy goal semantics. Omitted flight boundaries inherit filters.start_date/end_date; if an exact flight or goal cannot be resolved, the seller reports unable with notes rather than guessing. Targeting inherits the effective discovery configuration and applies package-level per-dimension replacement or clearing exactly as on create. All supplied fields are forecast inputs only: no booking, hold, reservation, creative upload, or assignment is performed.
+ */
+export interface PackageForecastInput {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Opaque configured product ID returned by get_products. Selecting it accepts the product's disclosed targeting_resolution, pricing, forecast assumptions, and terms. Sellers MUST echo this value on every response package object that represents this requested package.
+   */
+  product_id: string;
+  format_ids?: FormatIds;
+  format_option_refs?: FormatOptionRefs;
+  format_kind?: CanonicalFormatKind;
+  params?: Params;
+  /**
+   * Hard lifetime spend cap for this package in the media buy's currency. Required in fixed allocation mode. Optional in seller-optimized mode; when omitted, the package is bounded by the shared total_budget and any other package constraints. In seller-optimized mode this is a ceiling, not a reserved or current allocation, and requires advertised media_buy.features.seller_optimized_package_budgets; otherwise rejected with UNSUPPORTED_FEATURE before any over-subscription validation.
+   */
+  budget: number;
+  /**
+   * Soft lifetime spend target for this package in the media buy's currency. Only valid with seller-optimized budget allocation. Requires advertised media_buy.features.seller_optimized_min_spend_targets; otherwise rejected with UNSUPPORTED_FEATURE before any over-subscription validation. The seller SHOULD attempt to deliver at least this amount before allocating incremental spend elsewhere, but inventory, policy, optimization targets, or other delivery constraints may prevent it. This is not a billing guarantee. Must not exceed the package budget when both are present; a seller advertising both seller_optimized_min_spend_targets and seller_optimized_package_budgets MUST reject a violation with `INVALID_REQUEST`, while a seller missing either capability rejects the undeclared control with UNSUPPORTED_FEATURE before any over-subscription validation.
+   */
+  min_spend_target?: number;
+  pacing?: Pacing;
+  /**
+   * ID of the selected pricing option from the product's pricing_options array
+   */
+  pricing_option_id: string;
+  /**
+   * @deprecated
+   * DEPRECATED in 3.2 and removed in the next major. Use bidding.bid_amount or bidding.max_bid. Legacy normalization: selected pricing_option.max_bid=true maps to bidding.max_bid; otherwise maps to bidding.bid_amount. A package MUST NOT supply both representations.
+   */
+  bid_price?: number;
+  /**
+   * Package-authored bidding policy. This complete block replaces, rather than field-merges with, any media-buy bidding policy for this package. `{automatic:true}` explicitly overrides a media-buy policy with provider automatic bidding; omission inherits the complete media-buy block. Monetary fields use the media-buy currency, while the selected pricing option supplies only the auction unit and MUST declare that same currency. Sellers MUST reject a new bidding block combined with legacy bid_price or legacy monetary optimization-goal targets on the same effective package with AMBIGUOUS_BIDDING_POLICY.
+   */
+  bidding?: BiddingPolicy;
+  /**
+   * Impression goal for this package
+   */
+  impressions?: number;
+  /**
+   * Optional hard package daily spend ceiling in the media-buy currency. It is subordinate, not a reserved allocation; package caps need not sum to the aggregate cap. Uses the media buy's cap timezone. Requires advertised package budget-capping scope; otherwise rejected with UNSUPPORTED_FEATURE.
+   */
+  daily_budget_cap?: number;
+  /**
+   * Flight start date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's start_time. Must fall within the media buy's date range.
+   */
+  start_time?: string;
+  /**
+   * Flight end date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's end_time. Must fall within the media buy's date range.
+   */
+  end_time?: string;
+  /**
+   * AdCP 3.3 initial-start policy. False (default) serves eligible approved assignments. True MUST retain booking and inventory commitment but block first enablement for serving until every current assignment is approved in all applicable package scopes; an empty set or library approval alone is insufficient. Retain pending-review/rejected assignments; same-creative_id resubmission needs no reassignment. Flight, pause, format-coverage and commitment constraints still apply. After first enablement, ordinary serving and impairment rules apply. Opt-in requires media_buy.features.creative_start_policy: true; otherwise buyers MUST NOT send true and sellers MUST reject true with UNSUPPORTED_FEATURE before mutation. Stage the full initial set atomically or while paused; the gate cannot anticipate future assignments. This includes packages added through update_media_buy.new_packages.
+   */
+  start_requires_all_creatives_approved?: boolean;
+  /**
+   * Whether this package should be created in a paused state. Paused packages do not deliver impressions. Defaults to false.
+   */
+  paused?: boolean;
+  catalogs?: Catalogs;
+  optimization_goals?: OptimizationGoals;
+  targeting_overlay?: TargetingOverlayInput;
+  audience_evidence_requirements?: AudienceEvidenceRequirements;
+  target_audiences?: TargetAudiences;
+  audience_evidence_pins?: AudienceEvidencePins;
+  measurement_terms?: MeasurementTerms;
+  performance_standards?: PerformanceStandards;
+  committed_metrics?: CommittedMetrics;
+  creative_assignments?: CreativeAssignments;
+  creatives?: Creatives;
+  /**
+   * Agency estimate or authorization number for this package. Overrides the media buy-level estimate number when different packages correspond to different agency estimates (e.g., different stations or flights within the same buy).
+   */
+  agency_estimate_number?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Parameters for the direct canonical selector in `format_kind`. Shape follows the selected canonical's parameter vocabulary: dimensions (`width`, `height`, `sizes`), duration (`duration_ms_exact`, `duration_ms_range`), codecs, asset-source and slot narrowing, or other canonical-specific constraints. Requires `format_kind`. For fixed-size image selectors, `width` and `height` MUST co-occur; a selector containing only one dimension is schema-invalid. New buyers omit `params` when selecting by `format_option_refs` or `format_ids`; older multi-route requests are accepted only when every route selects the same product option set.
+ */
+export interface Params {
 }
 
 // media-buy/product-discovery-criteria.json
@@ -42728,7 +44126,7 @@ export type BrandKey1 = BrandKey;
 
 // media-buy/product-fields.json
 /**
- * Canonical product fields a buyer requests from list_products. Required product_id and name fields are always returned. list_applications also overrides projection whenever a property or collection list is in the effective targeting because it is the decision receipt for seller-specific list matching. targeting_resolution and expires_at override projection whenever the seller returns modifications, as does collection_targeting_allowed whenever returned overlay_support declares collection_list or collection_lists. Legacy named-format fields remain available only through get_products. A projection that omits collections also omits the response-level collections array.
+ * Canonical product fields a buyer requests from list_products. Required product_id and name fields are always returned. list_applications also overrides projection whenever a property or collection list is in the effective targeting because it is the decision receipt for seller-specific list matching. targeting_resolution and expires_at override projection whenever the seller returns modifications, as does collection_targeting_allowed whenever returned overlay_support declares collection_list or collection_lists. Legacy named-format fields remain available only through get_products. A projection that omits collections also omits the response-level collections array. On the canonical list_products path, requesting installments also returns collections, because a canonical installment names its collection and canonical-product.json requires the product to declare it. Legacy get_products shares this enum but not that rule: its installment keeps the deprecated single-namespace shorthand, so it can be returned without collections.
  */
 export type ProductResponseFields = (
   | 'product_id'
@@ -42756,6 +44154,7 @@ export type ProductResponseFields = (
   | 'overlay_support'
   | 'collections'
   | 'collection_targeting_allowed'
+  | 'installments'
   | 'media_buy_support'
   | 'audience_evidence'
   | 'audience_evidence_selections'
@@ -42769,38 +44168,17 @@ export type ProductResponseFields = (
   | 'execution_requirements'
   | 'expires_at'
   | 'allowed_actions'
+  | 'creative_policy'
 )[];
 
 
 // media-buy/product-purchase-input.json
-/**
- * Canonical format options selected from the published product offer. Legacy named-format identifiers are not accepted.
- *
- * @minItems 1
- */
-export type FormatOptionRefs = [FormatOptionReference, ...FormatOptionReference[]];
 /**
  * Previously synchronized account catalog IDs promoted by this selection. Callers manage catalog bodies through sync_catalogs rather than inlining them here.
  *
  * @minItems 1
  */
 export type CatalogIds = [string, ...string[]];
-/**
- * @minItems 1
- */
-export type OptimizationGoals = [CanonicalOptimizationGoal, ...CanonicalOptimizationGoal[]];
-/**
- * Exact immutable audience-evidence snapshots selected for package construction.
- *
- * @minItems 1
- */
-export type AudienceEvidencePins = [AudienceEvidencePin, ...AudienceEvidencePin[]];
-/**
- * Published or negotiated metric thresholds and measurement vendors. Direct buyers may omit this to inherit the product defaults; accepted proposal snapshots preserve every applicable standard.
- *
- * @minItems 1
- */
-export type PerformanceStandards = [CanonicalPerformanceStandard, ...CanonicalPerformanceStandard[]];
 /**
  * Request-only canonical product selection for buy_products. It shares the strict Product Purchase field shapes but uses Targeting Input so a buyer can distinguish inheritance, replacement, and explicit clearing. Accepted commercial snapshots use product-purchase.json and contain only resolved, non-null effective targeting.
  */
@@ -42949,7 +44327,7 @@ export interface ProposalDecline {
 
 // media-buy/proposal-refinement.json
 /**
- * Fork an immutable proposal, finalize a draft into a held committed snapshot, or extend a committed hold into a new committed snapshot. Revising with structured criteria, typed boundaries, product changes, requested alternatives, and/or a semantic ask creates one or more new drafts; finalizing and extending a hold change no terms. Refining an accepted proposal creates a draft amendment or cancellation proposal against its MediaBuy; the source remains accepted and unchanged. A revised product mix must support the resulting root frequency cap; because omitted criteria inherit, clearing the cap is explicit through remove_media_buy_frequency_cap.
+ * Fork an immutable proposal, finalize a draft into a held committed snapshot, or extend a committed hold into a new committed snapshot. Revising with structured criteria, typed boundaries, product changes, installment changes, requested alternatives, and/or a semantic ask creates one or more new drafts; finalizing and extending a hold change no terms. Refining an accepted proposal creates a draft amendment or cancellation proposal against its MediaBuy; the source remains accepted and unchanged. A revised product mix must support the resulting root frequency cap; because omitted criteria inherit, clearing the cap is explicit through remove_media_buy_frequency_cap.
  */
 export type ProposalRefinement = {
   /**
@@ -43000,6 +44378,7 @@ export type ProposalRefinement = {
     };
   };
   product_changes?: ProductChangeMap;
+  installment_changes?: InstallmentChangeSet;
   /**
    * Request drafts with distinct commercial terms by count. Every returned alternative MUST carry distinct commercial_terms and therefore a unique terms_digest; diversity preferences remain in ask.
    */
@@ -43545,10 +44924,12 @@ export interface SICapabilities {
       | {
           /**
            * TTS provider (elevenlabs, openai, etc.)
+           * @maxLength 128
            */
           provider?: string;
           /**
            * Brand voice identifier
+           * @maxLength 128
            */
           voice_id?: string;
         };
@@ -43560,6 +44941,7 @@ export interface SICapabilities {
       | {
           /**
            * Supported video formats (mp4, webm, etc.)
+           * @maxItems 32
            */
           formats?: string[];
           /**
@@ -43576,10 +44958,12 @@ export interface SICapabilities {
       | {
           /**
            * Avatar provider (d-id, heygen, synthesia, etc.)
+           * @maxLength 128
            */
           provider?: string;
           /**
            * Brand avatar identifier
+           * @maxLength 128
            */
           avatar_id?: string;
         };
@@ -43590,6 +44974,7 @@ export interface SICapabilities {
   components?: {
     /**
      * Standard components that all SI hosts must render
+     * @maxItems 16
      */
     standard?: ('text' | 'link' | 'image' | 'product_card' | 'carousel' | 'action_button')[];
     /**
@@ -43616,6 +45001,7 @@ export interface SICapabilities {
     supported?: boolean;
     /**
      * Supported A2UI component catalogs (e.g., 'si-standard', 'standard')
+     * @maxItems 32
      */
     catalogs?: string[];
   };
@@ -44025,7 +45411,7 @@ export interface TrustRecord {
    */
   grants?: Grant[];
   /**
-   * When true, grants[] is exhaustive for every scope it names: relying parties MUST reject acts-for claims no active grant covers. When false or absent, an uncovered claim is at the relying party's discretion.
+   * When true, grants[] is exhaustive: relying parties MUST reject an acts-for claim that no active grant covers, whatever its scope. When false or absent, an uncovered claim is at the relying party's discretion. In the AdCP profile, only the parent organization's record counts. Relying parties ignore exclusive_grants in an intermediary's record, and in a brand's own record when the brand has a separate parent organization.
    */
   exclusive_grants?: boolean;
   /**
@@ -44090,7 +45476,7 @@ export interface Agent {
  */
 export interface Grant {
   /**
-   * Registrable domain (eTLD+1) of the organization receiving the grant, under the pinned Public Suffix List snapshot, ICANN and private sections (spec R3a step 1). Its agents resolve to this domain through its own trust.json. A host below a registrable domain (t1.vendor.example) is not one, and neither is a public suffix itself (github.io); alice.github.io is one, because github.io is in the private section. A grant whose grantee is not a registrable domain covers no claim, and its scopes still count for exclusive_grants, as L2 §Grants in trust records describes (docs/building/by-layer/L2/accounts-and-agents.mdx). A pattern can't evaluate the Public Suffix List, so verifiers apply the rule. To limit a grant to some of the grantee's agents, list them in agents[].
+   * Registrable domain (eTLD+1) of the organization receiving the grant, under the pinned Public Suffix List snapshot, ICANN and private sections (spec R3a step 1). Its agents resolve to this domain through its own trust.json. A host below a registrable domain (t1.vendor.example) is not one, and neither is a public suffix itself (github.io); alice.github.io is one, because github.io is in the private section. A grant whose grantee is not a registrable domain covers no claim, as L2 §Grants in trust records describes (docs/building/by-layer/L2/accounts-and-agents.mdx). A pattern can't evaluate the Public Suffix List, so verifiers apply the rule. To limit a grant to some of the grantee's agents, list them in agents[].
    */
   grantee: string;
   /**

@@ -6221,6 +6221,7 @@ export const INTENTIONALLY_UNHYDRATED_ENTITIES: ReadonlySet<string> = new Set([
   'governance_outcome', // Durable governance receipt identifier; no SDK ResourceKind/store yet.
   'seller_adjustment', // Seller-authored adjustment reference; resolved by governance workflows, not ctx metadata.
   'reporting_revision', // Reporting status/receipt handlers own revision lookup; no ctx-metadata ResourceKind yet.
+  'media_buy_issue', // AdCP 3.3 get_media_buy_issue id; seller-owned issue state, no ctx-metadata ResourceKind yet.
 ]);
 
 /**

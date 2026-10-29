@@ -29,7 +29,12 @@ import type {
 } from './types';
 import { NotificationSubscriptionValidationError } from './types';
 
-export const CALLER_NOTIFICATION_TYPES = Object.freeze(['capabilities.changed', 'principal.changed'] as const);
+export const CALLER_NOTIFICATION_TYPES = Object.freeze([
+  'capabilities.changed',
+  'principal.changed',
+  // AdCP 3.3 experimental account.requests: caller-anchored invalidation.
+  'account_request.changed',
+] as const);
 
 export const ACCOUNT_NOTIFICATION_TYPES = Object.freeze([
   'creative.status_changed',

@@ -299,6 +299,9 @@ export type TaskResponseTypeMap = {
   log_event: ToolTypes.LogEventResponse;
   preview_creative: CanonicalPreviewCreativeResponse;
   report_usage: ToolTypes.ReportUsageResponse;
+  request_account: ToolTypes.RequestAccountResponse;
+  report_media_buy_issue: ToolTypes.ReportMediaBuyIssueResponse;
+  get_media_buy_issue: ToolTypes.GetMediaBuyIssueResponse;
   search_brands: CoreTypes.SearchBrandsResponse;
   sync_catalogs: ToolTypes.SyncCatalogsResponse;
   sync_event_sources: ToolTypes.SyncEventSourcesResponse;
@@ -390,6 +393,9 @@ export type TaskRequestTypeMap = {
   log_event: MutatingRequestInput<ToolTypes.LogEventRequest>;
   preview_creative: CanonicalPreviewCreativeRequest;
   report_usage: MutatingRequestInput<ToolTypes.ReportUsageRequest>;
+  request_account: MutatingRequestInput<ToolTypes.RequestAccountRequest>;
+  report_media_buy_issue: MutatingRequestInput<ToolTypes.ReportMediaBuyIssueRequest>;
+  get_media_buy_issue: ToolTypes.GetMediaBuyIssueRequest;
   search_brands: CoreTypes.SearchBrandsRequest;
   sync_catalogs: MutatingRequestInput<ToolTypes.SyncCatalogsRequest>;
   sync_event_sources: MutatingRequestInput<ToolTypes.SyncEventSourcesRequest>;
@@ -2202,6 +2208,51 @@ export class AgentClient {
       params,
       inputHandler,
       this.withSession('report_usage', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /**
+   * Open or change an advertiser account through the seller's account-request
+   * lifecycle (experimental `account.requests`, AdCP 3.3). Read requests back
+   * through `listAccounts({ include_requests: true })`.
+   */
+  async requestAccount(
+    params: MutatingRequestInput<ToolTypes.RequestAccountRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.RequestAccountResponse>> {
+    const result = await this.client.requestAccount(params, inputHandler, this.withSession('request_account', options));
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Raise a seller-action issue report against an authorized media buy (AdCP 3.3). */
+  async reportMediaBuyIssue(
+    params: MutatingRequestInput<ToolTypes.ReportMediaBuyIssueRequest>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.ReportMediaBuyIssueResponse>> {
+    const result = await this.client.reportMediaBuyIssue(
+      params,
+      inputHandler,
+      this.withSession('report_media_buy_issue', options)
+    );
+    this.retainSession(result);
+    return result;
+  }
+
+  /** Read the latest seller-owned state of one media-buy issue (AdCP 3.3). */
+  async getMediaBuyIssue(
+    params: ToolTypes.GetMediaBuyIssueRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ToolTypes.GetMediaBuyIssueResponse>> {
+    const result = await this.client.getMediaBuyIssue(
+      params,
+      inputHandler,
+      this.withSession('get_media_buy_issue', options)
     );
     this.retainSession(result);
     return result;

@@ -3773,6 +3773,9 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'ExistingBinding1', base: 'ExistingBinding' },
   { numbered: 'SignalTargeting1', base: 'SignalTargeting' },
   { numbered: 'FileTransfer1', base: 'ReportingFileTransfer' },
+  // AdCP 3.3.0-beta.1 products inline execution-readiness statuses that copy
+  // enums/execution-readiness-status.json.
+  { numbered: 'ExecutionReadinessStatus1', base: 'ExecutionReadinessStatus' },
   // tasks-list-request.json in rc.6 carries a lagging inline copy of the
   // canonical task-type enum that omits get_creative_features. Keep the
   // public filter type aligned with the authoritative enum document.
@@ -3805,6 +3808,9 @@ const JSTS_REPEATED_UNDER_RESOLUTION_BASES = [
  */
 const JSTS_NUMBERED_SEMANTIC_RENAMES: Array<{ numbered: string; semantic: string }> = [
   { numbered: 'TaskStatus2', semantic: 'GetProductsRejectedStatus' },
+  // core/audience-source.json (external dataset or platform segment) shares its
+  // title with the enums/audience-source.json enum; it is not the same type.
+  { numbered: 'AudienceSource1', semantic: 'AudienceSourceReference' },
 ];
 
 /**

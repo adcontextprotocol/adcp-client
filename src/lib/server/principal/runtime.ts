@@ -363,6 +363,12 @@ export function createPrincipalLifecycle<TAccount = unknown>(
       next.reporting_destinations = reporting.current;
       next.retired_destinations = reporting.retired;
     }
+    if (input.reporting_subscriptions !== undefined) {
+      // AdCP 3.3 (experimental media_buy.reporting_subscriptions): unsupported
+      // sections are rejected rather than silently ignored. This runtime does
+      // not yet resolve principal-level subscriptions into account obligations.
+      throw new UnsupportedPrincipalFeatureError('reporting_subscriptions are not supported by this seller');
+    }
     if (input.declarations !== undefined) {
       if (!options.declarations) {
         throw new UnsupportedPrincipalFeatureError('declarations are not supported by this seller');

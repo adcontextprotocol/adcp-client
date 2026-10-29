@@ -24,6 +24,7 @@ export const TASK_TO_METHOD: Record<string, string> = {
   // Account & audience
   sync_accounts: 'syncAccounts',
   list_accounts: 'listAccounts',
+  request_account: 'requestAccount',
   sync_audiences: 'syncAudiences',
 
   // Product discovery & media buy
@@ -41,6 +42,8 @@ export const TASK_TO_METHOD: Record<string, string> = {
   update_media_buy: 'updateMediaBuy',
   get_media_buys: 'getMediaBuys',
   get_media_buy_delivery: 'getMediaBuyDelivery',
+  report_media_buy_issue: 'reportMediaBuyIssue',
+  get_media_buy_issue: 'getMediaBuyIssue',
   provide_performance_feedback: 'providePerformanceFeedback',
 
   // Creative
