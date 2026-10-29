@@ -13,7 +13,6 @@ const { validateResponse } = require('../../dist/lib/validation/schema-validator
 
 const SCOPE = { tenantId: 't', principalId: 'p' };
 const CTX = { callerMutationScope: { tenant_id: 't', principal_id: 'p', principal_kind: 'buyer_agent' } };
-const DAY = 86_400_000;
 
 const profile = {
   id: 'adcp.delivery.v1',
