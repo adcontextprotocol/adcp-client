@@ -158,6 +158,7 @@ import { REQUEST_SIGNING_PROBE_TASK } from './request-signing/synthesize';
 import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
 import {
+  buildSeedCalls,
   runControllerSeeding,
   type ControllerSeedingResult,
   type PreparedFixtureCaptures,
@@ -8164,6 +8165,67 @@ async function runStoryboardStepBody(
       }
       runState.fixtureBindings = preparedBindingRegistryFor(prepared.state);
       runState.preparedFixtures = prepared.state;
+    }
+
+    // Legacy fixture storyboards rely on the full runner's seeding preflight.
+    // A standalone step does not run that preflight: without a controller it
+    // must not send literal fixture IDs or grade a contribution that no phase
+    // could establish. Keep discovery independent, and preserve intrinsic
+    // applicability/authoring outcomes instead of relabelling them as setup.
+    // Modern fixture resolution and authorized prepared state have their own
+    // discovery and reuse paths, so neither is gated by controller presence.
+    if (
+      storyboard.prerequisites?.controller_seeding === true &&
+      storyboard.fixture_resolution === undefined &&
+      options.skip_controller_seeding !== true &&
+      runState.preparedFixtures === undefined &&
+      options.agentTools !== undefined &&
+      !options.agentTools.includes('comply_test_controller')
+    ) {
+      const seeds = buildSeedCalls(storyboard.fixtures);
+      const resolvedTask = resolveTaskName(found.step, options);
+      const intrinsicSkip =
+        (found.step.requires_tool !== undefined && !options.agentTools.includes(found.step.requires_tool)) ||
+        (found.step.requires_contract !== undefined &&
+          !(options.contracts ?? []).includes(found.step.requires_contract)) ||
+        (resolvedTask !== undefined && !isRunnerOwnedTask(resolvedTask) && !options.agentTools.includes(resolvedTask));
+      if (
+        seeds.length > 0 &&
+        !seeds.some(seed => seed.authoring_error !== undefined) &&
+        resolvedTask !== undefined &&
+        resolvedTask !== 'get_adcp_capabilities' &&
+        !intrinsicSkip
+      ) {
+        const capabilityDetail = collectPhaseCapabilitySkipDetails(
+          storyboard,
+          profile,
+          options.agentTools,
+          options.adcpVersion
+        ).get(found.phaseId);
+        const detail =
+          capabilityDetail ??
+          'Standalone step requires controller-seeded fixtures, but comply_test_controller is unavailable. ' +
+            'Run fixture preparation or explicitly opt out of controller seeding for externally prepared state.';
+        return {
+          storyboard_id: storyboard.id,
+          step_id: found.step.id,
+          phase_id: found.phaseId,
+          title: found.step.title,
+          task: found.step.task,
+          passed: true,
+          skipped: true,
+          skip_reason: capabilityDetail === undefined ? 'missing_test_controller' : 'not_applicable',
+          skip:
+            capabilityDetail === undefined
+              ? { reason: 'missing_test_controller', requirement: 'controller', detail }
+              : { reason: 'not_applicable', detail },
+          duration_ms: 0,
+          validations: [],
+          context: withoutProtectedCaptures(context),
+          extraction: { path: 'none' },
+          contributions: Array.from(contributions),
+        };
+      }
     }
 
     // The product step depends on a remotely verified catalog that is normally
