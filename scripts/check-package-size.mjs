@@ -247,7 +247,10 @@ const MAX_PACKED_FILE_COUNT =
   // Signed 3.2.8 adds exactly these two compliance files over 3.2.5:
   // test-kits/creative-build-probe-runner.yaml and universal/v4-compatibility.yaml.
   // Verified against the published 15.9.6 archive with version directories normalized.
-  2;
+  2 +
+  // Discovery invariants and redaction evidence add three dual-format module/declaration
+  // sets (+12 files); the wholesale collection guide adds one. Byte budgets stay fixed.
+  13;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
