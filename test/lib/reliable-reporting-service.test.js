@@ -574,7 +574,7 @@ describe('ReliableReportingService', () => {
     assert.equal(wireExact.structuredContent.reporting_revision.reporting_revision_id, revision.reporting_revision_id);
   });
 
-  test('advertises media_buy.reporting_subscriptions only beside a subscriptions block', async () => {
+  test('builds 3.3 registration capabilities without changing the default shape', async () => {
     const { service } = serviceFixture();
     assert.deepEqual(reportingConfigurationCapabilitiesV1(), { configuration_task: 'sync_accounts' });
     assert.equal(service.capabilities.configuration_task, 'sync_accounts');
@@ -592,36 +592,6 @@ describe('ReliableReportingService', () => {
     );
     assert.throws(() => reportingConfigurationCapabilitiesV1({ accountConfigurations: false }), TypeError);
     assert.throws(() => reportingConfigurationCapabilitiesV1({ subscriptions: { maxAccounts: 0 } }), TypeError);
-
-    const platform = {
-      capabilities: { specialisms: [], config: {} },
-      accounts: {
-        resolution: 'explicit',
-        resolve: async ref => ({ id: ref?.account_id ?? 'account-a', ctx_metadata: {} }),
-        upsert: async () => [],
-      },
-      reporting: { ...service.platform, capabilities: { ...service.capabilities, ...registration } },
-    };
-    const server = createAdcpServerFromPlatform(platform, {
-      name: 'reporting-subscriptions-capabilities-test',
-      version: '1.0.0',
-      // The 3.3 schema also requires adcp.principal.supported_sections to list
-      // reporting_subscriptions; the principal runtime advertises that block.
-      validation: { requests: 'strict', responses: 'off' },
-    });
-    const result = await server.dispatchTestRequest({
-      method: 'tools/call',
-      params: { name: 'get_adcp_capabilities', arguments: {} },
-    });
-    assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
-    assert.deepEqual(result.structuredContent.experimental_features, [
-      'media_buy.reporting_delivery',
-      'media_buy.reporting_subscriptions',
-    ]);
-    assert.deepEqual(result.structuredContent.media_buy.reporting_delivery.configuration_tasks, [
-      'sync_principal',
-      'sync_accounts',
-    ]);
   });
 
   test('derives Core-only capabilities and installs native server handlers', async () => {

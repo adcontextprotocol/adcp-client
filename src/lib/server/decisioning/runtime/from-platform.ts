@@ -3160,26 +3160,17 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const adopterCapabilityExt = platform.capabilities.ext;
   const adopterOverrides = platform.capabilities.overrides;
   const adopterExperimentalFeatures = (adopterOverrides?.experimental_features ?? []) as readonly string[];
-  // AdCP 3.3: a reporting capability that advertises principal-level subscriptions also
-  // requires the media_buy.reporting_subscriptions feature id. Without a subscriptions
-  // block the list is exactly what it was before 3.3.
-  const reportingFeatureIds = reportingDelivery
-    ? [
-        'media_buy.reporting_delivery',
-        ...(reportingDelivery.subscriptions !== undefined ? ['media_buy.reporting_subscriptions'] : []),
-      ]
-    : [];
   if (
     reportingDelivery &&
-    new Set([...adopterExperimentalFeatures, ...reportingFeatureIds]).size > 32 &&
-    reportingFeatureIds.some(id => !adopterExperimentalFeatures.includes(id))
+    !adopterExperimentalFeatures.includes('media_buy.reporting_delivery') &&
+    adopterExperimentalFeatures.length >= 32
   ) {
     throw new PlatformConfigError(
       'Reliable Reporting Core cannot be added because experimental_features already contains 32 entries'
     );
   }
   const experimentalFeatures = reportingDelivery
-    ? Array.from(new Set([...adopterExperimentalFeatures, ...reportingFeatureIds]))
+    ? Array.from(new Set([...adopterExperimentalFeatures, 'media_buy.reporting_delivery']))
     : adopterOverrides?.experimental_features;
   const adopterSupportedVersions = platform.capabilities.supported_versions;
   const hasOverridesObject = hasOverridesProjection || adopterOverrides !== undefined;
