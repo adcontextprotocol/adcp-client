@@ -121,6 +121,8 @@ describe('standalone legacy controller setup (#8576)', () => {
       assert.equal(result.skipped, true);
       assert.equal(result.skip_reason, 'missing_test_controller');
       assert.equal(result.skip.requirement, 'controller');
+      assert.match(result.error, /controller-seeded fixtures/);
+      if (step === 'purchase') assert.equal(result.next.step_id, 'assertion');
       assert.deepEqual(result.validations, []);
       assert.deepEqual(result.contributions, []);
       assert.ok(agent.calls.every(call => call.name === 'get_adcp_capabilities'));

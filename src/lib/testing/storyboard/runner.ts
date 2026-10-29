@@ -8219,9 +8219,11 @@ async function runStoryboardStepBody(
             capabilityDetail === undefined
               ? { reason: 'missing_test_controller', requirement: 'controller', detail }
               : { reason: 'not_applicable', detail },
+          error: detail,
           duration_ms: 0,
           validations: [],
           context: withoutProtectedCaptures(context),
+          next: getNextStepPreview(found.step.id, allSteps, context, runState.runnerVars),
           extraction: { path: 'none' },
           contributions: Array.from(contributions),
         };
