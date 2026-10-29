@@ -158,15 +158,20 @@ those refs by constraint satisfaction rather than requiring them to be
 identical:
 
 - Every package must resolve to the same format (`agent_url` and `id`).
-- `width`/`height` and `duration_ms` are constraints a package either states or
-  leaves open. A package states one through its resolved ref or, where the ref
-  is silent, through its declaration `params` or the catalog entry for the id.
-  A package that leaves a constraint open accepts the value another package
-  states. The shared ref carries each value a package's resolved ref states
-  and omits values no ref states, so the declarations decide whether size is
-  required. Size lists (`sizes`) and `duration_ms_range` must accept the
-  shared value.
-- Only packages that state *different* values conflict.
+- `width`/`height` and `duration_ms` are constraints a package either leaves
+  open or restricts to a set of values. A package restricts one through its
+  resolved ref or, where the ref is silent, through its declarations: their
+  `params` (one size, a `sizes` list, an exact duration or a
+  `duration_ms_range`) or the catalog entry for the id. A package with several
+  declarations accepts what any of them accepts, and nothing else: a package
+  declaring 640x360 and 940x529 refuses a 300x250 that another package states.
+  A package that leaves a constraint open accepts any value.
+- The shared ref takes `width`/`height` and `duration_ms` from the resolved
+  refs only. Values that only declarations state are used to detect conflicts
+  but are never copied into the shared ref, because the shared ref must match
+  what each package resolves to on its own. When no ref states a size, the
+  shared ref omits it.
+- Projection refuses only when no value satisfies every package.
 
 So a VAST creative assigned to nine packages declaring `video_vast` at 940x529
 and three declaring an unsized `video_vast` is sent once as
@@ -175,8 +180,8 @@ size the shared ref omits it.
 
 When no single ref satisfies every package, projection throws a
 `CreativeFormatProjectionError`. Its `details.conflicts` names each conflicting
-constraint (`format_id`, `size` or `duration`) with the packages stating each
-value, and the message repeats it. `details.package_refs` lists each
+constraint (`format_id`, `size` or `duration`) with each package's allowed
+values, and the message repeats it. `details.package_refs` lists each
 `package_id` and resolved `ref`, or the remaining `refs` and a `reason` when
 that package cannot resolve uniquely.
 
@@ -193,15 +198,18 @@ evidence. Supply a selector per assigned package, and update creative resolvers
 that read `selector_containers` to read the package container directly.
 
 `creativeFormatProjection.playerSizedRefs: 'omit_unstated_size'` (the seventh
-argument of the pure `projectSyncCreativesForDelivery()` helper) is deprecated:
-mixed sized and unsized packages no longer need it. It is still accepted, and
-keeps its earlier meaning only where the declarations conflict: `video_vast`
-and `audio_vast` packages that state different player sizes but agree on
-owner, ID, duration and other format parameters, for a creative that states no
-size. Setting it asserts that the seller accepts a ref without `width` and
-`height`, and the shared ref then omits them while keeping the agreed
-duration. Confirm the seller accepts omitted player dimensions before relying
-on it.
+argument of the pure `projectSyncCreativesForDelivery()` helper) is deprecated
+and will be removed in 18.0.0. Mixed sized and unsized packages no longer need
+it. Until removal it is still accepted, and keeps its earlier meaning only
+where the declarations conflict: `video_vast` and `audio_vast` packages that
+state different player sizes but agree on owner, ID, duration and other format
+parameters, for a creative that states no size. Setting it asserts that the
+seller accepts a ref without `width` and `height`, and the shared ref then
+omits them while keeping the agreed duration. Whether a stated VAST size is a
+hard requirement or a player hint is a fact about the seller's format, so it
+belongs in the seller's format definition or the AdCP format params rather
+than in host policy; see
+[adcontextprotocol/adcp#8583](https://github.com/adcontextprotocol/adcp/issues/8583).
 
 Capability resolution uses the client's
 emitted wire release pin: AdCP 3.2+ is canonical by contract, 3.0 is legacy, and 3.1

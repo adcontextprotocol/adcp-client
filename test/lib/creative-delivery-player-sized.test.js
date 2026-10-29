@@ -732,11 +732,15 @@ describe('legacy format_id reconciliation by constraint satisfaction (#3506)', (
     assert.equal(project(assign(accepting), accepting).creatives[0].format_id.width, 640);
     const refusing = [vastPackage('A', { width: 940, height: 529 }), vastPackage('B', {}, listed)];
     const error = refusal(assign(refusing), refusing);
-    assert.equal(error.details.conflicts[0].constraint, 'size');
-    assert.deepEqual(
-      error.details.conflicts[0].values.flatMap(entry => entry.package_ids),
-      ['B', 'A']
-    );
+    assert.deepEqual(error.details.conflicts, [
+      {
+        constraint: 'size',
+        values: [
+          { value: '940x529', package_ids: ['A'] },
+          { value: 'one of 640x360, 1280x720', package_ids: ['B'] },
+        ],
+      },
+    ]);
   });
 
   test('every package unsized: the shared ref omits size', () => {
@@ -797,11 +801,107 @@ describe('legacy format_id reconciliation by constraint satisfaction (#3506)', (
       {
         constraint: 'duration',
         values: [
-          { value: 'duration_ms_range [1000,5000]', package_ids: ['B'] },
           { value: '30000', package_ids: ['A'] },
+          { value: 'duration_ms_range [1000,5000]', package_ids: ['B'] },
         ],
       },
     ]);
+  });
+
+  // A package whose resolved ref is silent but whose declarations state
+  // several values accepts exactly those values, not anything. Here package A
+  // declares two canonical options with no legacy route, and a creative
+  // resolver maps it to the unsized video_vast ref.
+  function multiDeclarationPackage(package_id, params) {
+    return {
+      package_id,
+      product_id: `product-${package_id}`,
+      format_options: params.map((value, index) => ({
+        format_kind: 'video_vast',
+        format_option_id: `${package_id}-option-${index}`,
+        params: value,
+      })),
+    };
+  }
+  const silentRefForA = context =>
+    context.source === 'creative' && context.selector.package_id === 'A'
+      ? { agent_url: OWNER, id: 'video_vast' }
+      : undefined;
+
+  test('a package declaring several sizes accepts only one of them', () => {
+    const declared = [
+      { width: 640, height: 360 },
+      { width: 940, height: 529 },
+    ];
+    const refusing = [multiDeclarationPackage('A', declared), vastPackage('B', { width: 300, height: 250 })];
+    let error;
+    try {
+      project(assign(refusing), refusing, undefined, 'legacy', silentRefForA);
+    } catch (cause) {
+      error = cause;
+    }
+    assert.ok(error instanceof CreativeFormatProjectionError);
+    assert.deepEqual(error.details.conflicts, [
+      {
+        constraint: 'size',
+        values: [
+          { value: 'one of 640x360, 940x529', package_ids: ['A'] },
+          { value: '300x250', package_ids: ['B'] },
+        ],
+      },
+    ]);
+    assert.match(error.message, /size \(width, height\) conflicts: one of 640x360, 940x529 for "A" vs 300x250 for "B"/);
+    const accepting = [multiDeclarationPackage('A', declared), vastPackage('B', { width: 940, height: 529 })];
+    assert.deepEqual(project(assign(accepting), accepting, undefined, 'legacy', silentRefForA).creatives[0].format_id, {
+      agent_url: OWNER,
+      id: 'video_vast',
+      width: 940,
+      height: 529,
+    });
+  });
+
+  test('a package declaring several durations accepts only one of them', () => {
+    const declared = [{ duration_ms_exact: 15000 }, { duration_ms_exact: 30000 }];
+    const refusing = [multiDeclarationPackage('A', declared), vastPackage('B', { duration_ms: 45000 })];
+    let error;
+    try {
+      project(assign(refusing), refusing, undefined, 'legacy', silentRefForA);
+    } catch (cause) {
+      error = cause;
+    }
+    assert.ok(error instanceof CreativeFormatProjectionError);
+    assert.deepEqual(error.details.conflicts, [
+      {
+        constraint: 'duration',
+        values: [
+          { value: 'one of 15000, 30000', package_ids: ['A'] },
+          { value: '45000', package_ids: ['B'] },
+        ],
+      },
+    ]);
+    const accepting = [multiDeclarationPackage('A', declared), vastPackage('B', { duration_ms: 30000 })];
+    assert.deepEqual(project(assign(accepting), accepting, undefined, 'legacy', silentRefForA).creatives[0].format_id, {
+      agent_url: OWNER,
+      id: 'video_vast',
+      duration_ms: 30000,
+    });
+  });
+
+  test('declaration-only values never flow into the shared ref', () => {
+    // Both refs are silent on size; A's declarations state sizes. The refs
+    // differ only in duration, so the shared ref keeps size unstated.
+    const selectors = [vastPackage('A', {}, { width: 940, height: 529 }), vastPackage('B', { duration_ms: 30000 })];
+    assert.deepEqual(project(assign(selectors), selectors).creatives[0].format_id, {
+      agent_url: OWNER,
+      id: 'video_vast',
+      duration_ms: 30000,
+    });
+    // Declarations that state disjoint sizes still conflict.
+    const disjoint = [
+      vastPackage('A', {}, { width: 940, height: 529 }),
+      vastPackage('B', { duration_ms: 30000 }, { width: 640, height: 360, duration_ms: 30000 }),
+    ];
+    assert.equal(refusal(assign(disjoint), disjoint).details.conflicts[0].constraint, 'size');
   });
 
   test('different format identities are refused, naming the format_id conflict', () => {

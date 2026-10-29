@@ -684,14 +684,21 @@ export interface SyncCreativeFormatProjection {
   /** Seller-provided legacy slot contracts, matched by exact format owner and id. */
   legacyFormatDefinitions?: readonly V1FormatDefinition[];
   /**
-   * @deprecated Not needed: on the legacy wire the SDK reconciles a creative's
-   * per-package refs by constraint satisfaction, so a package that leaves the
-   * player size unstated accepts the size another package states, and the
-   * shared ref omits size when no package states one. Still accepted with its
-   * beta.5 meaning for the one case the declarations cannot settle: VAST
-   * packages that state *different* player sizes. Setting it asserts the
-   * seller accepts a ref without width/height, and the shared ref then omits
-   * the conflicting size. Canonical delivery ignores it.
+   * @deprecated Removed in 18.0.0. Not needed: on the legacy wire the SDK
+   * reconciles a creative's per-package refs by constraint satisfaction, so a
+   * package that leaves the player size unstated accepts the size another
+   * package states, and the shared ref omits size when no package states one.
+   *
+   * Until removal it is still accepted with its beta.5 meaning, for the one
+   * case the declarations cannot settle: VAST packages that state *different*
+   * player sizes. Setting it asserts the seller accepts a ref without
+   * width/height, and the shared ref then omits the conflicting size.
+   * Canonical delivery ignores it.
+   *
+   * Whether a stated VAST size is a hard requirement or a player hint is a
+   * fact about the seller's format, so it belongs in the seller's format
+   * definition or the AdCP format params, not in host policy. See
+   * https://github.com/adcontextprotocol/adcp/issues/8583.
    */
   playerSizedRefs?: 'omit_unstated_size';
 }
@@ -2310,6 +2317,103 @@ function describeLegacyFormatRefConflict(conflict: LegacyFormatRefConflict): str
 }
 
 /**
+ * What one package's declarations accept for one constraint: `undefined` when
+ * some declaration leaves it open, else the union of what its declarations
+ * state. A package accepts a value when any of its declarations does.
+ */
+type PackageConstraint = {
+  accepts(value: string): boolean;
+  /** Every accepted value, when no declaration uses a range. */
+  values?: Set<string>;
+  label: string;
+};
+
+function legacySizeKey(width: number | undefined, height: number | undefined): string | undefined {
+  return width === undefined && height === undefined ? undefined : `${width ?? '(unstated)'}x${height ?? '(unstated)'}`;
+}
+
+function packageConstraint(
+  declarations: ReadonlyArray<{ values?: string[]; range?: unknown; params?: Record<string, unknown> } | undefined>
+): PackageConstraint | undefined {
+  if (declarations.length === 0 || declarations.some(declaration => declaration === undefined)) return undefined;
+  const values = new Set(declarations.flatMap(declaration => declaration!.values ?? []));
+  const ranged = declarations.filter(declaration => declaration!.range !== undefined);
+  const labels = [
+    ...(values.size === 1 ? [...values] : values.size > 1 ? [`one of ${[...values].join(', ')}`] : []),
+    ...ranged.map(declaration => `duration_ms_range ${JSON.stringify(declaration!.range)}`),
+  ];
+  return {
+    accepts: value =>
+      values.has(value) || ranged.some(declaration => matchesDurationRange(declaration!.params, Number(value))),
+    ...(ranged.length === 0 && { values }),
+    label: labels.join(' or '),
+  };
+}
+
+/** Size a package accepts: its ref's size, else each declaration's size or `sizes` list. */
+function packageSizeConstraint(entry: ResolvedLegacyAssignment): PackageConstraint | undefined {
+  const declarations = (entry.declarationParams.length > 0 ? entry.declarationParams : [undefined]).map(paramsValue => {
+    const params = record(paramsValue);
+    const listed = Array.isArray(params?.sizes)
+      ? params.sizes.flatMap(size => (record(size) ? [record(size)!] : []))
+      : [];
+    if (entry.ref.width === undefined && entry.ref.height === undefined && listed.length > 1) {
+      const values = listed.flatMap(size => {
+        const key = legacySizeKey(positiveConstraint(size.width), positiveConstraint(size.height));
+        return key ? [key] : [];
+      });
+      return values.length > 0 ? { values } : undefined;
+    }
+    const stated = legacyRefParameterConstraints(entry.ref, paramsValue);
+    const key = legacySizeKey(stated.width, stated.height);
+    return key ? { values: [key] } : undefined;
+  });
+  return packageConstraint(declarations);
+}
+
+/** Duration a package accepts: its ref's duration, else each declaration's exact duration or range. */
+function packageDurationConstraint(entry: ResolvedLegacyAssignment): PackageConstraint | undefined {
+  const declarations = (entry.declarationParams.length > 0 ? entry.declarationParams : [undefined]).map(paramsValue => {
+    const params = record(paramsValue);
+    const stated = legacyRefParameterConstraints(entry.ref, paramsValue).durationMs;
+    if (stated !== undefined) return { values: [String(stated)] };
+    return params?.duration_ms_range !== undefined ? { range: params.duration_ms_range, params } : undefined;
+  });
+  return packageConstraint(declarations);
+}
+
+/**
+ * Check one constraint across packages. `stated` maps each value a resolved
+ * ref states to its packages. With one stated value, every package must
+ * accept it; with none, packages that each accept only a finite set of values
+ * must share one.
+ */
+function constraintConflict(
+  constraint: 'size' | 'duration',
+  resolved: readonly ResolvedLegacyAssignment[],
+  constraints: ReadonlyArray<PackageConstraint | undefined>,
+  stated: readonly string[]
+): LegacyFormatRefConflict | undefined {
+  let conflicting = new Set(stated).size > 1;
+  if (!conflicting && stated.length > 0) {
+    conflicting = constraints.some(value => value !== undefined && !value.accepts(stated[0]!));
+  } else if (!conflicting) {
+    const finite = constraints.flatMap(value => (value?.values ? [value.values] : []));
+    conflicting = finite.length > 1 && ![...finite[0]!].some(value => finite.every(values => values.has(value)));
+  }
+  if (!conflicting) return undefined;
+  const groups = new Map<string, Set<string>>();
+  resolved.forEach((entry, index) => {
+    const value = constraints[index];
+    if (value) addToGroup(groups, value.label, entry.packageId);
+  });
+  return {
+    constraint,
+    values: [...groups].map(([value, packageIds]) => ({ value, package_ids: [...packageIds] })),
+  };
+}
+
+/**
  * Legacy wire only. A legacy sync_creatives record carries one `format_id` for
  * a creative however many packages it is assigned to, so after each package
  * resolves independently the SDK must pick one ref they all accept. On the
@@ -2317,14 +2421,24 @@ function describeLegacyFormatRefConflict(conflict: LegacyFormatRefConflict): str
  * `format_kind` + `params`, so there is no shared identity and this never runs.
  *
  * Reconcile by constraint satisfaction, not identity: every ref must name the
- * same format (agent_url + id). Width/height and duration_ms are constraints
- * a package either states or leaves open. A package that leaves one open
- * accepts any value; packages that state it must agree. A package states a
- * value through its resolved ref or, where the ref is silent, through its
- * declaration params or the catalog entry for the id. The shared ref carries
- * each value some package's ref states and omits values no ref states, so
- * declarations alone decide whether size is required. Only when two packages
- * state different values does reconciliation fail, naming each conflict.
+ * same format (agent_url + id). Width/height and duration_ms are constraints a
+ * package either leaves open or restricts to a set of values. A package
+ * restricts one through its resolved ref or, where the ref is silent, through
+ * its declarations: their params (one size, a `sizes` list, an exact duration
+ * or a `duration_ms_range`) or the catalog entry for the id. A package with
+ * several declarations accepts what any of them accepts, but never more: a
+ * package declaring 640x360 and 940x529 refuses a 300x250 another package
+ * states. Reconciliation fails, naming each package's allowed values, only
+ * when no value satisfies every package.
+ *
+ * The shared ref takes width/height and duration_ms from the resolved refs
+ * only. Values stated only by declarations count for conflict detection but
+ * never flow into the shared ref, because the shared ref must match what each
+ * package resolves to on its own: a package whose ref is silent was resolved
+ * to a ref without that value, and the shared ref adds only what another
+ * package's ref already states. Copying declaration values into the ref would
+ * widen what the SDK sends beyond any per-package resolution. When no ref
+ * states a size, the shared ref omits it.
  */
 function reconcileLegacyAssignmentRefs(
   resolved: readonly ResolvedLegacyAssignment[]
@@ -2340,69 +2454,33 @@ function reconcileLegacyAssignmentRefs(
     : undefined;
   if (identityConflict) return { conflicts: [identityConflict] };
 
-  const sizeOf = (width: number | undefined, height: number | undefined): string | undefined =>
-    width === undefined && height === undefined ? undefined : `${width ?? '(unstated)'}x${height ?? '(unstated)'}`;
-  const sizes = new Map<string, Set<string>>();
-  const durations = new Map<string, Set<string>>();
-  for (const entry of resolved) {
-    // A ref's own value wins. Where the ref is silent, the package's declarations
-    // state a value only when they agree; several differing options leave it open.
-    const stated = (entry.declarationParams.length > 0 ? entry.declarationParams : [undefined]).map(paramsValue =>
-      legacyRefParameterConstraints(entry.ref, paramsValue)
-    );
-    const packageSizes = new Set(stated.flatMap(value => sizeOf(value.width, value.height) ?? []));
-    const packageDurations = new Set(stated.flatMap(value => value.durationMs ?? []));
-    if (packageSizes.size === 1) addToGroup(sizes, [...packageSizes][0]!, entry.packageId);
-    if (packageDurations.size === 1) addToGroup(durations, String([...packageDurations][0]), entry.packageId);
-  }
-  const conflicts = [groupConflict('size', sizes), groupConflict('duration', durations)].filter(
-    (conflict): conflict is LegacyFormatRefConflict => conflict !== undefined
-  );
+  const sized = resolved.filter(entry => entry.ref.width !== undefined || entry.ref.height !== undefined);
+  const timed = resolved.filter(entry => entry.ref.duration_ms !== undefined);
+  const conflicts = [
+    constraintConflict(
+      'size',
+      resolved,
+      resolved.map(packageSizeConstraint),
+      sized.map(entry => legacySizeKey(entry.ref.width, entry.ref.height)!)
+    ),
+    constraintConflict(
+      'duration',
+      resolved,
+      resolved.map(packageDurationConstraint),
+      timed.map(entry => String(entry.ref.duration_ms))
+    ),
+  ].filter((conflict): conflict is LegacyFormatRefConflict => conflict !== undefined);
   if (conflicts.length > 0) return { conflicts };
 
-  // Every stated value agrees, so any ref stating one states the agreed value.
-  const sized = resolved.find(entry => entry.ref.width !== undefined || entry.ref.height !== undefined);
-  const timed = resolved.find(entry => entry.ref.duration_ms !== undefined);
-  const durationMs = timed?.ref.duration_ms;
-  // Open-ended declarations (a size list, a duration range) still bound the
-  // shared value. A package refuses it only when none of its declarations accepts it.
-  const sizeLists = new Map<string, Set<string>>();
-  const ranges = new Map<string, Set<string>>();
-  for (const entry of resolved) {
-    const declarations = entry.declarationParams.map(record);
-    const excludingList = (params: Record<string, unknown> | undefined): unknown[] | undefined => {
-      const listed = Array.isArray(params?.sizes)
-        ? params.sizes.flatMap(size => (record(size) ? [record(size)!] : []))
-        : [];
-      return sized &&
-        listed.length > 1 &&
-        !listed.some(size => size.width === sized.ref.width && size.height === sized.ref.height)
-        ? (params!.sizes as unknown[])
-        : undefined;
-    };
-    const excludingRange = (params: Record<string, unknown> | undefined): unknown =>
-      durationMs !== undefined && params?.duration_ms_range !== undefined && !matchesDurationRange(params, durationMs)
-        ? params.duration_ms_range
-        : undefined;
-    if (declarations.length > 0 && declarations.every(params => excludingList(params) !== undefined)) {
-      addToGroup(sizeLists, `sizes ${JSON.stringify(excludingList(declarations[0]))}`, entry.packageId);
-    }
-    if (declarations.length > 0 && declarations.every(params => excludingRange(params) !== undefined)) {
-      addToGroup(ranges, `duration_ms_range ${JSON.stringify(excludingRange(declarations[0]))}`, entry.packageId);
-    }
-  }
-  if (sizeLists.size > 0) addToGroup(sizeLists, sizeOf(sized!.ref.width, sized!.ref.height)!, sized!.packageId);
-  if (ranges.size > 0) addToGroup(ranges, String(durationMs), timed!.packageId);
-  const boundConflicts = [groupConflict('size', sizeLists), groupConflict('duration', ranges)].filter(
-    (conflict): conflict is LegacyFormatRefConflict => conflict !== undefined
-  );
-  if (boundConflicts.length > 0) return { conflicts: boundConflicts };
-  const source = sized ?? timed ?? first;
+  // Every ref-stated value agrees and every package accepts it.
+  const size = sized[0]?.ref;
+  const durationMs = timed[0]?.ref.duration_ms;
+  const source = sized[0] ?? timed[0] ?? first;
   const ref: V1FormatId = {
     agent_url: source.ref.agent_url,
     id: source.ref.id,
-    ...(sized?.ref.width !== undefined && { width: sized.ref.width }),
-    ...(sized?.ref.height !== undefined && { height: sized.ref.height }),
+    ...(size?.width !== undefined && { width: size.width }),
+    ...(size?.height !== undefined && { height: size.height }),
     ...(durationMs !== undefined && { duration_ms: durationMs }),
   };
   // Prefer a package that resolved to exactly this ref, so its projected record is used unchanged.
