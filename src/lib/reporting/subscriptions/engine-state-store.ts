@@ -13,6 +13,7 @@ import type { PrincipalStoreScope } from '../../server/principal/types';
 import type { ReportingSubscriptionEngineStateV1, ReportingSubscriptionEngineStoreV1 } from './engine';
 
 export const DEFAULT_REPORTING_SUBSCRIPTION_ENGINE_COLLECTION = 'adcp_reporting_subscription_engine';
+const MAX_PRINCIPAL_PAGES = 10_000;
 
 export interface CreateReportingSubscriptionEngineStateStoreOptionsV1 {
   store: AdcpStateStore;
@@ -78,9 +79,10 @@ export function createReportingSubscriptionEngineStateStoreV1(
       return result.ok ? { outcome: 'applied', revision: String(result.version) } : { outcome: 'conflict' };
     },
     async listPrincipals() {
+      // A truncated list would drop consumers that owe receipts, so every incomplete walk fails closed.
       const scopes: PrincipalStoreScope[] = [];
       let cursor: string | undefined;
-      for (let page = 0; page < 10_000; page += 1) {
+      for (let page = 0; page < MAX_PRINCIPAL_PAGES; page += 1) {
         const result = await store.list<EngineDocument>(collection, {
           limit: 500,
           ...(cursor === undefined ? {} : { cursor }),
@@ -90,10 +92,15 @@ export function createReportingSubscriptionEngineStateStoreV1(
             scopes.push({ tenantId: document.tenantId, principalId: document.principalId });
           }
         }
-        if (result.nextCursor === undefined) break;
+        if (result.nextCursor === undefined) return scopes;
+        if (result.nextCursor === cursor) {
+          throw new Error('Reporting subscription engine store returned a repeating cursor');
+        }
         cursor = result.nextCursor;
       }
-      return scopes;
+      throw new Error(
+        `Reporting subscription engine store did not finish within ${MAX_PRINCIPAL_PAGES} pages; refusing a partial list`
+      );
     },
   };
 }

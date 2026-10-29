@@ -122,6 +122,29 @@ describe('reporting subscription engine state store', () => {
     );
   });
 
+  test('an incomplete principal walk fails closed', async () => {
+    const backing = new InMemoryStateStore();
+    let page = 0;
+    const endless = Object.assign(Object.create(backing), {
+      list: async () => ({ items: [], nextCursor: `page-${++page}` }),
+      getWithVersion: backing.getWithVersion.bind(backing),
+      putIfMatch: backing.putIfMatch.bind(backing),
+    });
+    await assert.rejects(
+      createReportingSubscriptionEngineStateStoreV1({ store: endless }).listPrincipals(),
+      /refusing a partial list/
+    );
+    const repeating = Object.assign(Object.create(backing), {
+      list: async () => ({ items: [], nextCursor: 'same' }),
+      getWithVersion: backing.getWithVersion.bind(backing),
+      putIfMatch: backing.putIfMatch.bind(backing),
+    });
+    await assert.rejects(
+      createReportingSubscriptionEngineStateStoreV1({ store: repeating }).listPrincipals(),
+      /repeating cursor/
+    );
+  });
+
   test('a fresh engine over the same store reads the same coverage', async () => {
     const clock = { now: new Date('2026-11-01T12:00:00.000Z') };
     const { lifecycle } = createTestPrincipalLifecycle({ clock, reportingSubscriptions: {} });
