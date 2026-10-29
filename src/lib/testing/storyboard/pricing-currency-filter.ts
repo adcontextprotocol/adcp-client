@@ -100,6 +100,16 @@ export const pricingCurrencyFilterAssertion: AssertionSpec = {
     const response = record(raw?.data) ?? raw;
     // Success payload presence is authoritative; advisory errors may coexist.
     if (!Array.isArray(response?.products)) return [];
+    if (response.products.length === 0) {
+      return [
+        {
+          passed: true,
+          status: 'not_applicable',
+          step_id: step.step_id,
+          description: 'No currency-compatible products were returned; positive media-pricing coverage is unproven',
+        },
+      ];
+    }
     const currencies = new Set<string>(requested);
     const findings: Finding[] = [];
     const add = (path: string, compatibility: Compatibility): void => {
