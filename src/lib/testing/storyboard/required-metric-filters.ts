@@ -77,7 +77,7 @@ export const requiredMetricFiltersAssertion: AssertionSpec = {
       : [];
     if (required.length === 0 && requiredVendors.length === 0) return [];
     const raw = record(step.response ?? step.response_record?.payload);
-    const response = record(raw?.data) ?? raw;
+    const response = Array.isArray(raw?.products) ? raw : (record(raw?.data) ?? raw);
     if (!Array.isArray(response?.products) || response.products.length === 0) return [];
     const reportingProjectedAway = Array.isArray(request?.fields) && !request.fields.includes('reporting_capabilities');
     const findings: Finding[] = [];
