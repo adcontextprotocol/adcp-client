@@ -1,8 +1,10 @@
 import type { GetReportingStatusRequest } from '../types';
 import type {
+  PrincipalChangedWebhook,
   ReportingDeliveryReadyWebhook,
   ReportingLedgerChangedWebhook,
   ReportingStatusChangedWebhook,
+  ReportingSubscriptionCoverage,
 } from '../types/core.generated';
 import type {
   ReportingChangesCheckpointStoreV1,
@@ -21,6 +23,7 @@ import {
   type ReportingCheckpointStore,
   type ReportingReconciliationClient,
   type ReportingReconciliationResult,
+  type ExpectedReportingPeriod,
 } from './reconciliation';
 
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
@@ -45,6 +48,18 @@ export interface ReliableReportingConsumerAccountV1<TCredential = unknown> {
   accountId: string;
   /** Full-snapshot reconciliation inputs. Durable stores are injected by this runtime. */
   reconciliation: Omit<ReconcileReportingOptions<TCredential>, DurableOptionKeys>;
+  /**
+   * Subscription-derived expectations (experimental `media_buy.reporting_subscriptions`).
+   * Before each reconciliation the runtime reads the summary view's
+   * `subscription_coverage[]` and passes it here; the returned periods are reconciled
+   * alongside `reconciliation.expectedPeriods`. Compute them with
+   * `expectedSubscriptionPeriods` and `subscriptionExpectedReportingPeriodsV1`.
+   */
+  subscriptionExpectations?: (input: {
+    subscriptionCoverage: readonly ReportingSubscriptionCoverage[];
+    now: Date;
+    signal: AbortSignal;
+  }) => readonly ExpectedReportingPeriod[] | Promise<readonly ExpectedReportingPeriod[]>;
 }
 
 export interface ReliableReportingConsumerPersistenceV1 {
@@ -66,6 +81,11 @@ export interface CreateReliableReportingConsumerOptionsV1<TCredential = unknown>
   maxConcurrentAccounts?: number;
   runOnStart?: boolean;
   onResult?: (result: ReliableReportingConsumerRunResultV1) => void | Promise<void>;
+  /** Called for an authenticated `principal.changed` before the scope's accounts are reconciled. */
+  onPrincipalChanged?: (input: {
+    consumerScope: string;
+    notification: PrincipalChangedWebhook;
+  }) => void | Promise<void>;
   /** Errors from background work and hooks. The third argument identifies the durable partition. */
   onError?: (
     error: unknown,
@@ -78,6 +98,7 @@ export type ReliableReportingConsumerRunReasonV1 =
   | 'startup'
   | 'poll'
   | 'manual'
+  | 'principal.changed'
   | ReportingNotificationV1['notification_type'];
 
 export interface ReliableReportingConsumerErrorContextV1 {
@@ -114,6 +135,16 @@ export interface ReliableReportingConsumerV1<TCredential = unknown> {
     /** Required when the same account ID is configured under multiple authenticated sellers/principals. */
     consumerScope?: string
   ): Promise<ReliableReportingConsumerRunResultV1>;
+  /**
+   * Handle an authenticated, signature-verified `principal.changed` webhook: call
+   * `onPrincipalChanged` (for example to re-read `get_principal`, record
+   * `accounts_unauthorized` and replace the roster), then reconcile every account of that
+   * consumer scope. Returns null for any other payload.
+   */
+  handleAuthenticatedPrincipalChanged(
+    payload: unknown,
+    authentication: { consumerScope: string }
+  ): Promise<ReliableReportingConsumerRunResultV1[] | null>;
   /** Call only after authenticating and verifying the webhook signature. */
   handleAuthenticatedNotification(
     payload: unknown,
@@ -526,8 +557,14 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
         }
       }
 
+      const subscriptionExpected = account.subscriptionExpectations
+        ? await subscriptionExpectedPeriods(account, runSignal)
+        : undefined;
       const reconciliation = await reconcileReporting({
         ...account.reconciliation,
+        ...(subscriptionExpected
+          ? { expectedPeriods: [...(account.reconciliation.expectedPeriods ?? []), ...subscriptionExpected] }
+          : {}),
         client: abortableClient(account.reconciliation.client, runSignal, account.accountId),
         request: withoutChangesAfter(account.reconciliation.request),
         checkpointStore: leaseGuardedCheckpointStore(options.persistence.checkpointStore, assertLeaseCurrent),
@@ -625,6 +662,34 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
     return work;
   };
 
+  /** Read the summary view's subscription_coverage and ask the account for its expectations. */
+  const subscriptionExpectedPeriods = async (
+    account: ReliableReportingConsumerAccountV1<TCredential>,
+    signal: AbortSignal
+  ): Promise<ExpectedReportingPeriod[]> => {
+    const response = (await abortableClient(
+      account.reconciliation.client,
+      signal,
+      account.accountId
+    ).getReportingStatus(
+      { ...withoutChangesAfter(account.reconciliation.request), view: 'summary' } as GetReportingStatusRequest,
+      { signal }
+    )) as unknown as { status?: unknown; account_id?: unknown; subscription_coverage?: unknown };
+    if (response.status !== 'completed' || response.account_id !== account.accountId) {
+      throw consumerError('INCOMPLETE_SUMMARY', 'get_reporting_status returned an incomplete subscription summary');
+    }
+    const coverage = Array.isArray(response.subscription_coverage)
+      ? (response.subscription_coverage as ReportingSubscriptionCoverage[])
+      : [];
+    const expected = await account.subscriptionExpectations!({
+      subscriptionCoverage: coverage,
+      now: new Date(),
+      signal,
+    });
+    if (!Array.isArray(expected)) throw new TypeError('subscriptionExpectations must return an array');
+    return [...expected];
+  };
+
   const runAccount = (
     accountId: string,
     reason: ReliableReportingConsumerRunReasonV1 = 'manual',
@@ -676,6 +741,27 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
       replaceAccounts(configured);
     },
     runAccount,
+    async handleAuthenticatedPrincipalChanged(payload, authentication) {
+      const notification = principalChangedNotification(payload);
+      if (!notification) return null;
+      if (!authentication) throw new TypeError('consumerScope is required for a principal.changed notification');
+      boundedString(authentication.consumerScope, 'consumerScope', 4_096);
+      await options.onPrincipalChanged?.({ consumerScope: authentication.consumerScope, notification });
+      const scoped = [...accounts.values()].filter(account => account.consumerScope === authentication.consumerScope);
+      const results: ReliableReportingConsumerRunResultV1[] = [];
+      for (const account of scoped) {
+        try {
+          results.push(await runSelectedAccount(account, 'principal.changed'));
+        } catch (error) {
+          await reportError(error, {
+            consumerScope: account.consumerScope,
+            accountId: account.accountId,
+            reason: 'principal.changed',
+          });
+        }
+      }
+      return results;
+    },
     async handleAuthenticatedNotification(payload, authentication) {
       const notification = reportingNotification(payload);
       if (!notification) return null;
@@ -910,6 +996,19 @@ function reportingNotification(value: unknown): ReportingNotificationV1 | null {
     throw consumerError('INVALID_NOTIFICATION', 'reporting notification has an invalid idempotency key');
   }
   return value as ReportingNotificationV1;
+}
+
+function principalChangedNotification(value: unknown): PrincipalChangedWebhook | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as { notification_type?: unknown; idempotency_key?: unknown; reason?: unknown };
+  if (candidate.notification_type !== 'principal.changed') return null;
+  try {
+    boundedString(candidate.idempotency_key, 'notification.idempotency_key', 255);
+    boundedString(candidate.reason, 'notification.reason', 128);
+  } catch {
+    throw consumerError('INVALID_NOTIFICATION', 'principal.changed notification has invalid identity fields');
+  }
+  return value as PrincipalChangedWebhook;
 }
 
 function runtimeAccountKey(consumerScope: string, accountId: string): string {

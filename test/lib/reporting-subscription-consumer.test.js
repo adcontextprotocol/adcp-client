@@ -1,0 +1,449 @@
+const { describe, test } = require('node:test');
+const assert = require('node:assert/strict');
+
+process.env.NODE_ENV = 'test';
+
+const { InMemoryStateStore } = require('../../dist/lib/server/index.js');
+const {
+  createReportingSubscriptionEngineStateStoreV1,
+  createReportingSubscriptionEngineV1,
+} = require('../../dist/lib/reporting/service/index.js');
+const {
+  createReliableReportingConsumerV1,
+  expectedSubscriptionPeriods,
+  groupExpectedSubscriptionPeriodsV1,
+  reportingSubscriptionVersionRecordsV1,
+  subscriptionExpectedReportingPeriodsV1,
+} = require('../../dist/lib/reporting/consumer/index.js');
+const { syncReportingSubscriptionsV1 } = require('../../dist/lib/index.js');
+const { createTestPrincipalLifecycle } = require('../helpers/principal-runtime.js');
+
+const SCOPE = { tenantId: 't', principalId: 'p' };
+const CTX = { callerMutationScope: { tenant_id: 't', principal_id: 'p', principal_kind: 'buyer_agent' } };
+const ACCOUNT_ID = 'acct_1';
+
+const OFFERING = {
+  offering_id: 'off_a_pkg',
+  feed_purpose: 'analytics',
+  report_definition_id: 'rd_off_a_pkg',
+  report_definition_uri: 'https://seller.example/report-definitions/off_a_pkg.json',
+  report_definition_sha256: 'b'.repeat(64),
+  reporting_profile: {
+    id: 'adcp.delivery.v1',
+    version: '1.0.0',
+    schema_uri: 'https://seller.example/schemas/delivery.json',
+    schema_sha256: 'a'.repeat(64),
+    schema_dialect: 'https://json-schema.org/draft/2020-12/schema',
+    schema_ref_policy: 'local_fragment_only',
+    grain: 'daily',
+    primary_keys: ['account_id', 'package_id'],
+  },
+  schedule: { period_duration: 'P1D', alignment: 'utc', delivery_sla: 'PT6H' },
+  supported_finality: ['official'],
+  reconciliation_mode: 'delivery_only',
+  dimensions: ['package'],
+};
+
+function subscription(extra = {}) {
+  return {
+    subscription_id: 'analytics-daily',
+    subscription_version: 1,
+    active: true,
+    scope: { all_authorized_accounts: true },
+    selector: {
+      feed_purpose: 'analytics',
+      period_duration: 'P1D',
+      required_finality: 'official',
+      dimensions: ['package'],
+    },
+    reconciliation_mode: 'delivery_only',
+    ...extra,
+  };
+}
+
+const BUY = {
+  media_buy_id: 'mb_1',
+  confirmed_at: '2026-11-02T15:00:00Z',
+  start_time: '2026-11-03T00:00:00Z',
+  end_time: '2026-11-06T00:00:00Z',
+  packages: [{ package_id: 'pkg_1', reporting_delivery_offering_ids: ['off_a_pkg'] }],
+};
+
+/** A PrincipalLifecycleClient over the in-process principal runtime. */
+function principalClient(lifecycle) {
+  const wrap = data => ({
+    success: true,
+    status: 'completed',
+    data,
+    metadata: { status: 'completed', taskName: 'principal' },
+    conversation: [],
+    debug_logs: [],
+  });
+  return {
+    getPrincipal: async params => wrap(await lifecycle.protocol.getPrincipal(params ?? {}, CTX)),
+    syncPrincipal: async params => wrap(await lifecycle.protocol.syncPrincipal(params, CTX)),
+  };
+}
+
+function engineFor(lifecycle, clock, store) {
+  return createReportingSubscriptionEngineV1({
+    principal: lifecycle,
+    offerings: [OFFERING],
+    statusRetentionDays: 30,
+    now: () => clock.now,
+    ...(store ? { store } : {}),
+    hooks: {
+      listAuthorizedAccounts: () => ({
+        accounts: [{ account_id: ACCOUNT_ID, authorized_at: '2026-10-01T00:00:00.000Z' }],
+      }),
+      listAccountBuys: () => [structuredClone(BUY)],
+    },
+  });
+}
+
+describe('reporting subscription engine state store', () => {
+  test('persists one CAS document per principal over an AdcpStateStore', async () => {
+    const backing = new InMemoryStateStore();
+    const store = createReportingSubscriptionEngineStateStoreV1({ store: backing });
+    assert.equal(store.durability, 'process-local');
+    assert.equal(await store.get(SCOPE), null);
+    const state = { accounts: { a: { grants: [{ authorized_at: '2026-10-01T00:00:00.000Z' }] } }, subscriptions: {} };
+    const first = await store.put(SCOPE, state, null);
+    assert.equal(first.outcome, 'applied');
+    assert.deepEqual(await store.put(SCOPE, state, null), { outcome: 'conflict' });
+    const read = await store.get(SCOPE);
+    assert.deepEqual(read.state, state);
+    assert.equal((await store.put(SCOPE, state, read.revision)).outcome, 'applied');
+    await store.put({ tenantId: 't', principalId: 'q' }, state, null);
+    assert.deepEqual((await store.listPrincipals()).map(scope => scope.principalId).sort(), ['p', 'q']);
+    assert.throws(
+      () => createReportingSubscriptionEngineStateStoreV1({ store: backing, durability: 'durable' }),
+      /cannot be declared durable/
+    );
+  });
+
+  test('a fresh engine over the same store reads the same coverage', async () => {
+    const clock = { now: new Date('2026-11-01T12:00:00.000Z') };
+    const { lifecycle } = createTestPrincipalLifecycle({ clock, reportingSubscriptions: {} });
+    const store = createReportingSubscriptionEngineStateStoreV1({ store: new InMemoryStateStore() });
+    await syncReportingSubscriptionsV1(principalClient(lifecycle), [subscription()], {
+      createIdempotencyKey: () => 'idempotency-key-0001',
+    });
+    clock.now = new Date('2026-11-02T00:00:00.000Z');
+    await engineFor(lifecycle, clock, store).reconcile(SCOPE);
+    const restarted = engineFor(lifecycle, clock, store);
+    const owed = await restarted.owedPeriods(SCOPE, ACCOUNT_ID, { now: '2026-11-10T00:00:00.000Z' });
+    assert.deepEqual(
+      owed.map(row => row.period_start),
+      ['2026-11-03T00:00:00.000Z', '2026-11-04T00:00:00.000Z', '2026-11-05T00:00:00.000Z']
+    );
+  });
+});
+
+describe('buyer helpers', () => {
+  test('syncReportingSubscriptionsV1 writes and reads back subscriptions, and its records rebuild coverage', async () => {
+    const clock = { now: new Date('2026-11-01T12:00:00.000Z') };
+    const { lifecycle } = createTestPrincipalLifecycle({ clock, reportingSubscriptions: {} });
+    const client = principalClient(lifecycle);
+    let key = 0;
+    const keys = { createIdempotencyKey: () => `idempotency-key-${String(++key).padStart(4, '0')}` };
+    const sent = { 1: subscription() };
+    const first = await syncReportingSubscriptionsV1(client, [sent[1]], keys);
+    assert.equal(first.subscriptions[0].state, 'active');
+    assert.equal(first.subscriptions[0].accepted_at, '2026-11-01T12:00:00.000Z');
+    clock.now = new Date('2026-11-04T12:00:00.000Z');
+    sent[2] = subscription({ subscription_version: 2, exclude_account_ids: ['acct_other'] });
+    const second = await syncReportingSubscriptionsV1(client, [sent[2]], keys);
+    const versions = reportingSubscriptionVersionRecordsV1({ state: second.subscriptions[0], configurations: sent });
+    assert.deepEqual(
+      versions.map(version => [version.subscription_version, version.accepted_at, version.superseded_at]),
+      [
+        [1, '2026-11-01T12:00:00.000Z', '2026-11-04T12:00:00.000Z'],
+        [2, '2026-11-04T12:00:00.000Z', undefined],
+      ]
+    );
+    assert.throws(
+      () => reportingSubscriptionVersionRecordsV1({ state: second.subscriptions[0], configurations: { 2: sent[2] } }),
+      /keep every version/
+    );
+
+    // The buyer's rebuilt input yields the seller's owed set.
+    const engine = engineFor(lifecycle, clock);
+    await engine.reconcile(SCOPE);
+    const buyer = expectedSubscriptionPeriods({
+      subscription_id: 'analytics-daily',
+      versions,
+      account: { account_id: ACCOUNT_ID, grants: [{ authorized_at: '2026-10-01T00:00:00.000Z' }] },
+      buys: [BUY],
+      offerings: [OFFERING],
+      now: '2026-11-10T00:00:00.000Z',
+    });
+    assert.deepEqual(buyer, await engine.owedPeriods(SCOPE, ACCOUNT_ID, { now: '2026-11-10T00:00:00.000Z' }));
+    assert.deepEqual(
+      buyer.map(row => [row.subscription_version, row.period_start.slice(0, 10)]),
+      [
+        [1, '2026-11-03'],
+        [1, '2026-11-04'],
+        [2, '2026-11-05'],
+      ]
+    );
+
+    // A readback that drops a submitted subscription is refused.
+    const lying = {
+      getPrincipal: client.getPrincipal,
+      syncPrincipal: async params => {
+        const response = await client.syncPrincipal(params);
+        response.data.result.configuration.reporting_subscriptions = [];
+        return response;
+      },
+    };
+    await assert.rejects(
+      syncReportingSubscriptionsV1(lying, [subscription({ subscription_version: 3 })], keys),
+      /does not carry subscription/
+    );
+  });
+
+  test('subscriptionExpectedReportingPeriodsV1 maps owed obligations onto expected periods', () => {
+    const obligations = groupExpectedSubscriptionPeriodsV1(
+      expectedSubscriptionPeriods({
+        subscription_id: 'analytics-daily',
+        versions: [{ subscription_version: 1, accepted_at: '2026-11-01T12:00:00Z', configuration: subscription() }],
+        account: { account_id: ACCOUNT_ID, grants: [{ authorized_at: '2026-10-01T00:00:00Z' }] },
+        buys: [BUY],
+        offerings: [OFFERING],
+        now: '2026-11-10T00:00:00Z',
+      })
+    );
+    const expected = subscriptionExpectedReportingPeriodsV1(obligations, () => template());
+    assert.equal(expected.length, 3);
+    assert.deepEqual(
+      {
+        deliveryConfigId: expected[0].deliveryConfigId,
+        deliveryConfigVersion: expected[0].deliveryConfigVersion,
+        reportDefinitionId: expected[0].reportDefinitionId,
+        mediaBuyIds: expected[0].mediaBuyIds,
+        periodStart: expected[0].periodStart,
+        periodEnd: expected[0].periodEnd,
+        status: expected[0].coverage.status,
+        covered: expected[0].coverage.fully_covered_media_buy_ids,
+      },
+      {
+        deliveryConfigId: 'analytics-daily',
+        deliveryConfigVersion: 1,
+        reportDefinitionId: 'rd_off_a_pkg',
+        mediaBuyIds: ['mb_1'],
+        periodStart: '2026-11-03T00:00:00.000Z',
+        periodEnd: '2026-11-04T00:00:00.000Z',
+        status: 'full',
+        covered: ['mb_1'],
+      }
+    );
+  });
+});
+
+function template() {
+  return {
+    feedPurpose: 'analytics',
+    reportingProfile: 'adcp.delivery.v1',
+    destinationRef: 'api',
+    deliveryMethod: 'api',
+    requiredFinality: 'official',
+    reconciliationMode: 'delivery_only',
+    coverageRequirement: 'full',
+    reportDefinitionUri: OFFERING.report_definition_uri,
+    reportDefinitionSha256: OFFERING.report_definition_sha256,
+    schemaVersion: '1.0.0',
+    schemaUri: OFFERING.reporting_profile.schema_uri,
+    schemaSha256: OFFERING.reporting_profile.schema_sha256,
+    schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
+    schemaRefPolicy: 'local_fragment_only',
+    verificationProfile: 'native_commit',
+  };
+}
+
+function emptyPeriodsPage(view = 'periods') {
+  return {
+    status: 'completed',
+    view,
+    ledger_snapshot_id: 'snapshot-1',
+    ledger_as_of: '2026-11-10T00:00:00.000Z',
+    changes_checkpoint: 'checkpoint-1',
+    account_id: ACCOUNT_ID,
+    scope: {
+      period_start: '2026-01-01T00:00:00.000Z',
+      period_end: '2027-01-01T00:00:00.000Z',
+      all_accessible_media_buys: true,
+      media_buy_ids: [],
+      delivery_config_generations: [],
+      feed_purposes: [],
+      finality: [],
+      scope_closed: true,
+      coverage_complete: true,
+    },
+    periods: [],
+    revisions: [],
+    materializations: [],
+    receipts: [],
+    consumer_statuses: [],
+    pagination: { total_count: 0, has_more: false },
+  };
+}
+
+function memoryPersistence() {
+  const cursors = new Map();
+  const leases = new Map();
+  const id = key => `${key.consumerScope}|${key.accountId}`;
+  return {
+    checkpointStore: { async get() {}, async put() {} },
+    pendingConsumerStatusStore: { async get() {}, async put() {}, async clear() {} },
+    changesCheckpointStore: {
+      async get(key) {
+        return cursors.get(id(key));
+      },
+      async compareAndSet(key, expected, checkpoint) {
+        const existing = cursors.get(id(key));
+        if ((existing?.checkpoint ?? null) !== expected) return 'conflict';
+        if (expected === checkpoint) return 'unchanged';
+        cursors.set(id(key), { checkpoint, generation: (existing?.generation ?? 0) + 1 });
+        return 'applied';
+      },
+    },
+    workLeases: {
+      async claim({ key, ownerToken }) {
+        const keyId = id(key);
+        if (leases.has(keyId)) return null;
+        const lease = { scopeKey: keyId, ownerToken, generation: 1, expiresAt: '2099-01-01T00:00:00.000Z' };
+        leases.set(keyId, lease);
+        return lease;
+      },
+      async renew(lease) {
+        return leases.get(lease.scopeKey) === lease ? lease : null;
+      },
+      async release(lease) {
+        if (leases.get(lease.scopeKey) !== lease) return false;
+        leases.delete(lease.scopeKey);
+        return true;
+      },
+    },
+  };
+}
+
+describe('consumer runtime with subscription expectations', () => {
+  test('reconciles subscription-derived expectations read from subscription_coverage', async () => {
+    const coverage = [{ subscription_id: 'analytics-daily', subscription_version: 1, status: 'active', excluded: [] }];
+    const calls = [];
+    const client = {
+      async getReportingStatus(params) {
+        calls.push(params.view);
+        return params.view === 'summary'
+          ? { ...emptyPeriodsPage('summary'), subscription_coverage: coverage }
+          : emptyPeriodsPage();
+      },
+      async syncReportingReceipts() {
+        return { status: 'completed', results: [] };
+      },
+    };
+    const seen = [];
+    const consumer = createReliableReportingConsumerV1({
+      persistence: memoryPersistence(),
+      ownerToken: 'buyer-worker-1',
+      runOnStart: false,
+      accounts: [
+        {
+          consumerScope: 'seller.example|buyer',
+          accountId: ACCOUNT_ID,
+          reconciliation: {
+            client,
+            request: { account: { account_id: ACCOUNT_ID } },
+            expectedPeriods: [],
+            inspect: async () => ({ rowCount: 0, controlTotals: [] }),
+          },
+          subscriptionExpectations: ({ subscriptionCoverage }) => {
+            seen.push(subscriptionCoverage);
+            const obligations = groupExpectedSubscriptionPeriodsV1(
+              expectedSubscriptionPeriods({
+                subscription_id: 'analytics-daily',
+                versions: [
+                  { subscription_version: 1, accepted_at: '2026-11-01T12:00:00Z', configuration: subscription() },
+                ],
+                account: { account_id: ACCOUNT_ID, grants: [{ authorized_at: '2026-10-01T00:00:00Z' }] },
+                buys: [BUY],
+                offerings: [OFFERING],
+                coverage: subscriptionCoverage[0],
+                now: '2026-11-10T00:00:00Z',
+              })
+            );
+            return subscriptionExpectedReportingPeriodsV1(obligations, () => template());
+          },
+        },
+      ],
+    });
+    const result = await consumer.runAccount(ACCOUNT_ID);
+    assert.equal(result.state, 'reconciled');
+    assert.equal(calls[0], 'summary', 'coverage is read before reconciling');
+    assert.deepEqual(seen, [coverage]);
+    assert.equal(
+      result.reconciliation.missingExpectedPeriods.length,
+      3,
+      'owed periods without obligations are missing'
+    );
+    assert.equal(result.reconciliation.definitive, false);
+
+    // principal.changed refreshes through the hook and re-reconciles the scope's accounts.
+    const refreshed = [];
+    const scoped = createReliableReportingConsumerV1({
+      persistence: memoryPersistence(),
+      ownerToken: 'buyer-worker-2',
+      runOnStart: false,
+      onPrincipalChanged: input => refreshed.push(input.notification.reason),
+      accounts: [
+        {
+          consumerScope: 'seller.example|buyer',
+          accountId: ACCOUNT_ID,
+          reconciliation: {
+            client,
+            request: { account: { account_id: ACCOUNT_ID } },
+            expectedPeriods: [],
+            inspect: async () => ({ rowCount: 0, controlTotals: [] }),
+          },
+        },
+      ],
+    });
+    const results = await scoped.handleAuthenticatedPrincipalChanged(
+      {
+        notification_type: 'principal.changed',
+        idempotency_key: 'principal-change-0001',
+        reason: 'reporting_subscription_changed',
+        agent_url: 'https://seller.example/mcp',
+        fired_at: '2026-11-05T00:00:00Z',
+        changed_at: '2026-11-05T00:00:00Z',
+      },
+      { consumerScope: 'seller.example|buyer' }
+    );
+    assert.deepEqual(refreshed, ['reporting_subscription_changed']);
+    assert.deepEqual(
+      results.map(item => [item.accountId, item.reason, item.state]),
+      [[ACCOUNT_ID, 'principal.changed', 'reconciled']]
+    );
+    assert.equal(
+      await scoped.handleAuthenticatedPrincipalChanged(
+        { notification_type: 'reporting.ledger_changed' },
+        {
+          consumerScope: 'seller.example|buyer',
+        }
+      ),
+      null
+    );
+    await assert.rejects(
+      scoped.handleAuthenticatedPrincipalChanged(
+        { notification_type: 'principal.changed' },
+        {
+          consumerScope: 'seller.example|buyer',
+        }
+      ),
+      /invalid identity fields/
+    );
+    await consumer.stop();
+    await scoped.stop();
+  });
+});
