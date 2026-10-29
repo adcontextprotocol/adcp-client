@@ -97,7 +97,7 @@ export const pricingCurrencyFilterAssertion: AssertionSpec = {
       return [];
     }
     const raw = record(step.response ?? step.response_record?.payload);
-    const response = record(raw?.data) ?? raw;
+    const response = Array.isArray(raw?.products) ? raw : (record(raw?.data) ?? raw);
     // Success payload presence is authoritative; advisory errors may coexist.
     if (!Array.isArray(response?.products)) return [];
     if (response.products.length === 0) {

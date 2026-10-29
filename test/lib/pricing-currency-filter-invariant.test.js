@@ -57,6 +57,15 @@ test('every price on every product is constrained; option IDs and ordering are i
   assert.equal(failures(check([product(), product({ pricing_options: [media('EUR')] })])).length, 1);
 });
 
+test('direct products take precedence over an unrelated data extension', () => {
+  const products = [product({ pricing_options: [media('EUR')] })];
+  for (const data of [{}, { products: [product()] }]) {
+    const findings = invariant.onStep(context, step(products, { response: { products, data } }));
+    assert.equal(failures(findings).length, 1);
+    assert.match(failures(findings)[0].error, /pricing_options\[0\]\.currency/);
+  }
+});
+
 test('multiple accepted currencies are alternatives and empty matches remain valid', () => {
   const multiple = step([product({ pricing_options: [media('USD'), media('EUR')] })], {
     request: { payload: { filters: { pricing_currencies: ['USD', 'EUR'] } } },
@@ -316,7 +325,7 @@ test('the default invariant gates real storyboard results without authored curre
       _client: {
         resetContext() {},
         async getProducts() {
-          return { success: true, data: { products: price ? [mandatory([signal([price])])] : [] } };
+          return { success: true, data: { products: price ? [mandatory([signal([price])])] : [], data: {} } };
         },
       },
     });

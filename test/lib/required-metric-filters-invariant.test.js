@@ -43,6 +43,21 @@ test('all standard requirements apply to every returned product', () => {
   assert.equal(failures(check(filters, [{ product_id: 'no-reporting-declaration' }])).length, 1);
 });
 
+test('direct products cannot hide standard or vendor metric failures behind a data extension', () => {
+  const filters = { required_metrics: ['completed_views'], required_vendor_metrics: [{ metric_id: 'attention' }] };
+  const products = [product()];
+  for (const data of [{}, { products: [product(['completed_views'], [vendor('metrics.example', 'attention')])] }]) {
+    const findings = invariant.onStep(context, {
+      step_id: 'filtered',
+      task: 'get_products',
+      passed: true,
+      request: { payload: { filters } },
+      response: { products, data },
+    });
+    assert.equal(failures(findings).length, 2);
+  }
+});
+
 test('implicit impressions/spend and documented scalar derivations are honored', () => {
   assert.equal(failures(check({ required_metrics: ['impressions', 'spend', 'cpm'] }, [product()])).length, 0);
   assert.equal(failures(check({ required_metrics: ['ctr', 'cost_per_click'] }, [product(['clicks'])])).length, 0);
@@ -228,7 +243,7 @@ test('real storyboard results fail for a later product that does not meet the me
       _client: {
         resetContext() {},
         async getProducts() {
-          return { success: true, data: { products } };
+          return { success: true, data: { products, data: {} } };
         },
       },
     });
