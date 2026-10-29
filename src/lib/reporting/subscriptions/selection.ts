@@ -6,22 +6,17 @@
  * so both sides resolve the same offering for the same facts.
  */
 import type { ReportingDeliveryOffering, ReportingSubscription } from '../../types/core.generated';
+import type { ReportingDeliveryOfferingWithDimensionsV1 } from './wire';
 
 /**
- * A seller delivery offering plus the dimension mapping selection needs.
+ * A seller delivery offering as published in `media_buy.reporting_delivery.offerings`.
  *
- * The wire offering does not carry its mapped standard dimensions: the seller maps each
- * report definition's native dimensions onto `enums/reporting-dimension.json`. A buyer
- * reads that mapping from the report definition or from the seller's documentation.
+ * Matching reads the offering's own `standard_dimensions` (its breakdown in
+ * `enums/reporting-dimension.json`) and `unmapped_dimensions` (native dimensions with no
+ * mapping, which count as distinct under `exact` and never toward `finest`), so buyer and
+ * seller resolve `match` from the same wire facts.
  */
-export type ReportingSubscriptionOfferingV1 = ReportingDeliveryOffering & {
-  /** Standard-vocabulary dimensions this offering's report definition maps onto. */
-  dimensions: readonly string[];
-  /**
-   * Native dimensions that map to no standard value. They count as distinct, so a
-   * `package` × device offering never equals a `package` selector under `exact`.
-   */
-  unmapped_dimensions?: readonly string[];
+export type ReportingSubscriptionOfferingV1 = ReportingDeliveryOfferingWithDimensionsV1 & {
   /**
    * When the seller began offering it. A resolution that changes because an offering
    * appears or is withdrawn is a cutover at that instant. Absent: always available.
@@ -71,32 +66,16 @@ export function compareReportingIdsByteOrderV1(left: string, right: string): num
   return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'));
 }
 
-const UTC_ZONE_NAMES = new Set([
-  'UTC',
-  'Etc/UTC',
-  'Etc/UCT',
-  'UCT',
-  'Etc/Universal',
-  'Universal',
-  'Etc/Zulu',
-  'Zulu',
-  'GMT',
-  'Etc/GMT',
-  'Etc/GMT+0',
-  'Etc/GMT-0',
-  'Etc/GMT0',
-  'GMT+0',
-  'GMT-0',
-  'GMT0',
-  'Etc/Greenwich',
-  'Greenwich',
-]);
+/** The UTC aliases `core/reporting-subscription.json` names for a `utc` offering. */
+const UTC_ZONE_NAMES = new Set(['UTC', 'Etc/UTC']);
 
 /**
- * Whether an offering's published schedule can produce periods in a `period_timezone`
- * override. A `utc` schedule only in a UTC alias; a fixed-timezone schedule only in that
- * zone; an account-resolved or account-timezone schedule in any zone; a configurable
- * billing cycle has no anchor a subscription can supply and so is never resolvable.
+ * Whether an offering matches a `period_timezone` override
+ * (`core/reporting-subscription.json` `selector.period_timezone`): an `account_timezone`
+ * offering matches and uses the override; a `utc` offering only for `UTC` or `Etc/UTC`; a
+ * `source_timezone` or fixed `billing_cycle` offering only when its published
+ * `period_timezone` equals the override. A billing cycle whose anchor the buyer configures
+ * never matches a subscription, which cannot supply the anchor.
  */
 function canProduceTimezone(offering: ReportingDeliveryOffering, timezone: string | undefined): boolean {
   const schedule = offering.schedule;
@@ -108,7 +87,7 @@ function canProduceTimezone(offering: ReportingDeliveryOffering, timezone: strin
     case 'account_timezone':
       return true;
     case 'source_timezone':
-      return schedule.period_timezone_policy !== 'fixed' || schedule.period_timezone === timezone;
+      return schedule.period_timezone !== undefined && schedule.period_timezone === timezone;
     case 'billing_cycle':
       return schedule.period_timezone === timezone;
     default:
@@ -160,12 +139,23 @@ export function resolveReportingSubscriptionOfferingsV1(input: ResolveReportingS
   const candidates = input.offerings
     .filter(offering => isReportingSubscriptionCandidateV1(offering, input))
     .sort((left, right) => compareReportingIdsByteOrderV1(left.offering_id, right.offering_id));
+  const standard = (offering: ReportingSubscriptionOfferingV1): readonly string[] => {
+    // Sellers advertising subscriptions MUST publish it; without it match cannot be resolved.
+    if (!Array.isArray(offering.standard_dimensions)) {
+      throw new TypeError(
+        `Offering ${JSON.stringify(offering.offering_id)} does not publish standard_dimensions; ` +
+          'a subscription selector cannot be resolved against it'
+      );
+    }
+    return offering.standard_dimensions;
+  };
   const includesWanted = (offering: ReportingSubscriptionOfferingV1) =>
-    wanted === undefined || wanted.every(dimension => offering.dimensions.includes(dimension));
+    wanted === undefined || wanted.every(dimension => standard(offering).includes(dimension));
   if (match === 'exact') {
     const equal = candidates.filter(offering => {
+      const own = new Set(standard(offering));
+      // With no dimensions every candidate qualifies and the lowest offering_id wins.
       if (wanted === undefined) return true;
-      const own = new Set(offering.dimensions);
       return (
         (offering.unmapped_dimensions?.length ?? 0) === 0 &&
         own.size === new Set(wanted).size &&
@@ -178,7 +168,7 @@ export function resolveReportingSubscriptionOfferingsV1(input: ResolveReportingS
   if (match === 'all') return including.map(offering => offering.offering_id);
   let best: ReportingSubscriptionOfferingV1 | undefined;
   for (const offering of including) {
-    if (best === undefined || new Set(offering.dimensions).size > new Set(best.dimensions).size) best = offering;
+    if (best === undefined || new Set(standard(offering)).size > new Set(standard(best)).size) best = offering;
   }
   return best ? [best.offering_id] : [];
 }

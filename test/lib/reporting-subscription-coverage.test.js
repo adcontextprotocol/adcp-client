@@ -73,6 +73,30 @@ describe('expectedSubscriptionPeriods parity table', () => {
     });
   }
 
+  test('every subscription in the table is schema-valid', () => {
+    // The subscription schema is unchanged by adcontextprotocol/adcp#8585 apart from
+    // descriptions, so the cached 3.3.0-beta.1 copy validates the table's configurations.
+    const Ajv = require('ajv');
+    const addFormats = require('ajv-formats');
+    const fs = require('node:fs');
+    const root = path.join(__dirname, '..', '..', 'schemas', 'cache', '3.3.0-beta.1');
+    const ajv = new Ajv({ strict: false, allErrors: true });
+    addFormats(ajv);
+    for (const dir of ['core', 'enums']) {
+      for (const file of fs.readdirSync(path.join(root, dir))) {
+        if (file.endsWith('.json')) ajv.addSchema(JSON.parse(fs.readFileSync(path.join(root, dir, file), 'utf8')));
+      }
+    }
+    const validate = ajv.getSchema(
+      'https://adcontextprotocol.org/schemas/3.3.0-beta.1/core/reporting-subscription.json'
+    );
+    for (const testCase of table.cases) {
+      for (const version of testCase.input.versions) {
+        assert.equal(validate(version.configuration), true, `${testCase.name}: ${JSON.stringify(validate.errors)}`);
+      }
+    }
+  });
+
   test('the function is pure: inputs are not mutated and repeated calls agree', () => {
     for (const testCase of table.cases.filter(c => !c.expected_error)) {
       const input = structuredClone(testCase.input);
@@ -332,7 +356,7 @@ describe('selector resolution and scope', () => {
     );
   });
 
-  test('a utc schedule matches a period_timezone override only for a UTC alias', () => {
+  test('a utc schedule matches a period_timezone override only for UTC or Etc/UTC', () => {
     const resolve = zone =>
       resolveReportingSubscriptionOfferingsV1({
         selector: selector({ dimensions: ['package'], period_timezone: zone }),
@@ -341,6 +365,8 @@ describe('selector resolution and scope', () => {
         eligible_offering_ids: ids,
       });
     assert.deepEqual(resolve('Etc/UTC'), ['off_a_pkg']);
+    assert.deepEqual(resolve('UTC'), ['off_a_pkg']);
+    assert.deepEqual(resolve('GMT'), [], 'only UTC and Etc/UTC are UTC aliases for matching');
     assert.deepEqual(resolve('Europe/London'), []);
   });
 

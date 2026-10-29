@@ -26,7 +26,12 @@
  *
  * @packageDocumentation
  */
-import type { ReportingSubscription, ReportingSubscriptionCoverage } from '../../types/core.generated';
+import type { ReportingSubscription } from '../../types/core.generated';
+import type {
+  ReportingSubscriptionCoverageWithOfferingsV1,
+  ReportingSubscriptionInactiveIntervalV1,
+  ReportingSubscriptionTimezoneCutoverV1,
+} from './wire';
 import {
   assertReportingIanaTimezoneV1,
   createReportingPeriodCalendarV1,
@@ -53,15 +58,8 @@ export interface ReportingSubscriptionVersionRecordV1 {
    * next record when absent.
    */
   superseded_at?: string;
-  /** When `active: false` was applied (`deactivated_at`). */
+  /** When `active: false` was applied (`deactivated_at`), for the current version. */
   deactivated_at?: string;
-  /**
-   * Earlier in-place deactivations that were later reversed, as the buyer recorded them.
-   * The readback drops `deactivated_at` once a subscription is active again, so only the
-   * buyer can supply these. Each interval is a cutover out at `from` (periods that started
-   * before it stay owed) and a fresh start at `until`.
-   */
-  inactive_intervals?: ReadonlyArray<{ from: string; until?: string }>;
   /** That version's subscription, as sent (readback `configuration`). */
   configuration: ReportingSubscription;
   /**
@@ -110,14 +108,15 @@ export interface ReportingSubscriptionCoverageAccountV1 {
   /** The account's `operator` domain, needed when a version names `operator_domains`. */
   operator?: string;
   /**
-   * The account's IANA timezone before the first `timezone_cutovers` entry (the current
-   * one when there are none). Required when an `account_timezone` offering resolves.
+   * The account's current IANA timezone as `list_accounts` shows it. Before a
+   * `timezone_cutovers` entry, the entry's `previous_timezone` governs. Required when an
+   * `account_timezone` offering resolves and no cutover covers the instant.
    */
   timezone?: string;
   /**
    * The seller-resolved upstream reporting timezone, the obligation's
    * `period.source_timezone`. Required when an `account_resolved` `source_timezone`
-   * offering resolves without a `period_timezone` override.
+   * offering resolves.
    */
   source_timezone?: string;
   /**
@@ -134,10 +133,16 @@ export interface ExpectedSubscriptionPeriodsInputV1 {
   versions: readonly ReportingSubscriptionVersionRecordV1[];
   account: ReportingSubscriptionCoverageAccountV1;
   buys: readonly ReportingSubscriptionBuyV1[];
-  /** Seller offerings with their standard-dimension mapping. */
+  /** Seller offerings as published, with `standard_dimensions` and `unmapped_dimensions`. */
   offerings: readonly ReportingSubscriptionOfferingV1[];
+  /**
+   * The readback's `inactive_intervals`, oldest first. Reactivation is a fresh start: nothing
+   * that starts inside an interval is owed, and coverage resumes at the first boundary at or
+   * after `reactivated_at`. An interval without `reactivated_at` is still open.
+   */
+  inactive_intervals?: readonly ReportingSubscriptionInactiveIntervalV1[];
   /** This subscription's `subscription_coverage` entry for the account, when one was read. */
-  coverage?: Pick<ReportingSubscriptionCoverage, 'excluded' | 'gaps' | 'timezone_cutovers'>;
+  coverage?: Pick<ReportingSubscriptionCoverageWithOfferingsV1, 'excluded' | 'gaps' | 'timezone_cutovers'>;
   /** The seller's `subscriptions.backfill_on_regrant`. Defaults to false. */
   backfill_on_regrant?: boolean;
   /** The seller's `status_retention_days`. Required when a grant was revoked and re-granted. */
@@ -220,7 +225,7 @@ export function expectedSubscriptionPeriods(input: ExpectedSubscriptionPeriodsIn
   if (typeof input.subscription_id !== 'string' || input.subscription_id.length === 0) {
     throw new TypeError('subscription_id is required');
   }
-  const versions = normalizeVersions(input.versions, input.subscription_id);
+  const versions = normalizeVersions(input.versions, input.subscription_id, inactiveWindows(input.inactive_intervals));
   const chains = authorityChains(input.account.grants, input.status_retention_days);
   const timezones = timezoneTimeline(input.account.timezone, input.coverage?.timezone_cutovers);
   const removals = exceptionWindows(input.coverage);
@@ -265,7 +270,7 @@ export function expectedSubscriptionPeriods(input: ExpectedSubscriptionPeriodsIn
           const flight = flightAt(flights, end);
           if (!(start < flight.stop && end > flight.start)) continue;
           if (!authorized(chains, calendar, start, input.backfill_on_regrant === true)) continue;
-          if (removed(removals, buy.media_buy_id, start)) continue;
+          if (removed(removals, buy.media_buy_id, offering.offering_id, start)) continue;
           result.push({
             subscription_id: input.subscription_id,
             subscription_version: regime.version.subscription_version,
@@ -345,7 +350,8 @@ interface NormalizedVersion {
 
 function normalizeVersions(
   records: readonly ReportingSubscriptionVersionRecordV1[],
-  subscriptionId: string
+  subscriptionId: string,
+  globalInactive: readonly Window[]
 ): NormalizedVersion[] {
   if (!Array.isArray(records) || records.length === 0) throw new TypeError('versions must list at least one version');
   const versions: NormalizedVersion[] = [];
@@ -382,27 +388,36 @@ function normalizeVersions(
     if (next !== undefined && supersededAt !== instant(next.accepted_at, 'accepted_at')) {
       throw new TypeError(`${label} superseded_at must equal the next version's accepted_at`);
     }
-    const inactive: Window[] = (record.inactive_intervals ?? []).map((interval: { from: string; until?: string }) => ({
-      from: instant(interval.from, `${label} inactive_intervals.from`),
-      until:
-        interval.until === undefined
-          ? Number.POSITIVE_INFINITY
-          : instant(interval.until, `${label} inactive_intervals.until`),
-    }));
+    const inactive: Window[] = [];
     if (record.deactivated_at !== undefined) {
       inactive.push({
         from: instant(record.deactivated_at, `${label} deactivated_at`),
         until: Number.POSITIVE_INFINITY,
       });
-    } else if (record.configuration.active === false && next === undefined) {
-      throw new TypeError(`${label} is inactive; deactivated_at is required`);
+    } else if (
+      record.configuration.active === false &&
+      next === undefined &&
+      !globalInactive.some(window => !Number.isFinite(window.until))
+    ) {
+      throw new TypeError(`${label} is inactive; deactivated_at or an open inactive_intervals entry is required`);
     }
-    for (const window of inactive) {
-      if (!(window.until > window.from)) throw new TypeError(`${label} inactive interval must have until after from`);
-    }
-    versions.push({ record, acceptedAt, endsAt: supersededAt, inactive });
+    versions.push({ record, acceptedAt, endsAt: supersededAt, inactive: [...inactive, ...globalInactive] });
   }
   return versions;
+}
+
+/** The readback's `inactive_intervals` as half-open windows. */
+function inactiveWindows(intervals: readonly ReportingSubscriptionInactiveIntervalV1[] | undefined): Window[] {
+  if (intervals !== undefined && !Array.isArray(intervals)) throw new TypeError('inactive_intervals must be an array');
+  return (intervals ?? []).map(interval => {
+    const from = instant(interval.deactivated_at, 'inactive_intervals.deactivated_at');
+    const until =
+      interval.reactivated_at === undefined
+        ? Number.POSITIVE_INFINITY
+        : instant(interval.reactivated_at, 'inactive_intervals.reactivated_at');
+    if (!(until > from)) throw new TypeError('inactive_intervals reactivated_at must be after deactivated_at');
+    return { from, until };
+  });
 }
 
 function authorityChains(
@@ -467,38 +482,65 @@ function authorized(
   });
 }
 
-interface TimezoneSegment {
-  from: number;
-  timezone: string | undefined;
+interface TimezoneCutover {
+  at: number;
+  timezone: string;
+  previous?: string;
+  offeringId?: string;
+}
+
+interface TimezoneTimeline {
+  current: string | undefined;
+  cutovers: TimezoneCutover[];
 }
 
 function timezoneTimeline(
-  initial: string | undefined,
-  cutovers: ReportingSubscriptionCoverage['timezone_cutovers']
-): TimezoneSegment[] {
-  if (initial !== undefined) assertReportingIanaTimezoneV1(initial, 'account.timezone');
-  const segments: TimezoneSegment[] = [{ from: Number.NEGATIVE_INFINITY, timezone: initial }];
-  const sorted = [...(cutovers ?? [])]
+  current: string | undefined,
+  entries: readonly ReportingSubscriptionTimezoneCutoverV1[] | undefined
+): TimezoneTimeline {
+  if (current !== undefined) assertReportingIanaTimezoneV1(current, 'account.timezone');
+  const cutovers = [...(entries ?? [])]
     .map(entry => {
       assertReportingIanaTimezoneV1(entry.timezone, 'timezone_cutovers.timezone');
-      return { from: instant(entry.effective_at, 'timezone_cutovers.effective_at'), timezone: entry.timezone };
+      if (entry.previous_timezone !== undefined) {
+        assertReportingIanaTimezoneV1(entry.previous_timezone, 'timezone_cutovers.previous_timezone');
+      }
+      return {
+        at: instant(entry.effective_at, 'timezone_cutovers.effective_at'),
+        timezone: entry.timezone,
+        ...(entry.previous_timezone !== undefined ? { previous: entry.previous_timezone } : {}),
+        ...(entry.offering_id !== undefined ? { offeringId: entry.offering_id } : {}),
+      };
     })
-    .sort((left, right) => left.from - right.from);
-  if (sorted.length > 0 && initial === undefined) {
-    throw new TypeError('account.timezone is required with timezone_cutovers');
-  }
-  segments.push(...sorted);
-  return segments;
+    .sort((left, right) => left.at - right.at);
+  return { current, cutovers };
 }
 
-function timezoneAt(segments: readonly TimezoneSegment[], at: number): string | undefined {
-  let current = segments[0]!.timezone;
-  for (const segment of segments) if (segment.from <= at) current = segment.timezone;
-  return current;
+/**
+ * The account timezone governing one offering at an instant. Entries without `offering_id`
+ * apply to every offering. Before an offering's first cutover its `previous_timezone`
+ * governs; after the last, its `timezone`; with no cutovers, the account's current zone.
+ */
+function timezoneFor(timeline: TimezoneTimeline, offeringId: string, at: number): string | undefined {
+  const applicable = timeline.cutovers.filter(
+    cutover => cutover.offeringId === undefined || cutover.offeringId === offeringId
+  );
+  if (applicable.length === 0) return timeline.current;
+  if (at < applicable[0]!.at) {
+    if (applicable[0]!.previous === undefined) {
+      throw new TypeError('timezone_cutovers entries require previous_timezone');
+    }
+    return applicable[0]!.previous;
+  }
+  let zone = applicable[0]!.timezone;
+  for (const cutover of applicable) if (cutover.at <= at) zone = cutover.timezone;
+  return zone;
 }
 
 interface ExceptionWindow extends Window {
   mediaBuyId?: string;
+  /** Gaps may name one offering; absent applies to every offering. */
+  offeringId?: string;
 }
 
 function exceptionWindows(coverage: ExpectedSubscriptionPeriodsInputV1['coverage']): ExceptionWindow[] {
@@ -514,15 +556,20 @@ function exceptionWindows(coverage: ExpectedSubscriptionPeriodsInputV1['coverage
     });
   }
   for (const gap of coverage?.gaps ?? []) {
-    windows.push({ from: instant(gap.from, 'gaps.from'), until: instant(gap.until, 'gaps.until') });
+    windows.push({
+      from: instant(gap.from, 'gaps.from'),
+      until: instant(gap.until, 'gaps.until'),
+      ...(gap.offering_id !== undefined ? { offeringId: gap.offering_id } : {}),
+    });
   }
   return windows;
 }
 
-function removed(windows: readonly ExceptionWindow[], mediaBuyId: string, start: number): boolean {
+function removed(windows: readonly ExceptionWindow[], mediaBuyId: string, offeringId: string, start: number): boolean {
   return windows.some(
     window =>
       (window.mediaBuyId === undefined || window.mediaBuyId === mediaBuyId) &&
+      (window.offeringId === undefined || window.offeringId === offeringId) &&
       start >= window.from &&
       start < window.until
   );
@@ -563,7 +610,7 @@ function buildRegimes(
   versions: readonly NormalizedVersion[],
   input: ExpectedSubscriptionPeriodsInputV1,
   offeringsById: ReadonlyMap<string, ReportingSubscriptionOfferingV1>,
-  timezones: readonly TimezoneSegment[],
+  timezones: TimezoneTimeline,
   calendars: Map<string, ReportingPeriodCalendarV1>
 ): Array<Regime | null> {
   const points = new Set<number>();
@@ -579,7 +626,7 @@ function buildRegimes(
     if (offering.available_from !== undefined) points.add(instant(offering.available_from, 'available_from'));
     if (offering.withdrawn_at !== undefined) points.add(instant(offering.withdrawn_at, 'withdrawn_at'));
   }
-  for (const segment of timezones) if (Number.isFinite(segment.from)) points.add(segment.from);
+  for (const cutover of timezones.cutovers) points.add(cutover.at);
   const ordered = [...points].sort((left, right) => left - right);
   const regimes: Array<Regime | null> = [];
   for (let index = 0; index < ordered.length; index += 1) {
@@ -601,15 +648,7 @@ function buildRegimes(
       if (regimes.at(-1) !== null) regimes.push(null);
       continue;
     }
-    const offerings = resolveForBuy(
-      buy,
-      version.record,
-      input,
-      offeringsById,
-      timezoneAt(timezones, from),
-      from,
-      calendars
-    );
+    const offerings = resolveForBuy(buy, version.record, input, offeringsById, timezones, from, calendars);
     const previous = regimes.at(-1);
     if (previous && previous.version === version.record && sameResolution(previous.offerings, offerings)) {
       previous.until = until;
@@ -636,7 +675,7 @@ function resolveForBuy(
   version: ReportingSubscriptionVersionRecordV1,
   input: ExpectedSubscriptionPeriodsInputV1,
   offeringsById: ReadonlyMap<string, ReportingSubscriptionOfferingV1>,
-  accountTimezone: string | undefined,
+  timezones: TimezoneTimeline,
   at: number,
   calendars: Map<string, ReportingPeriodCalendarV1>
 ): ResolvedOffering[] {
@@ -658,7 +697,9 @@ function resolveForBuy(
     const spec = calendarSpec(
       offering,
       version.configuration.selector.period_timezone,
-      accountTimezone,
+      offering.schedule.alignment === 'account_timezone' && version.configuration.selector.period_timezone === undefined
+        ? timezoneFor(timezones, id, at)
+        : undefined,
       input.account.source_timezone
     );
     const key = JSON.stringify(spec);
@@ -693,8 +734,8 @@ function calendarSpec(
       return { ...base, timezone };
     }
     case 'source_timezone': {
-      const timezone =
-        schedule.period_timezone_policy === 'fixed' ? schedule.period_timezone : (override ?? sourceTimezone);
+      // A period_timezone override only ever matches the offering's own published zone.
+      const timezone = schedule.period_timezone_policy === 'fixed' ? schedule.period_timezone : sourceTimezone;
       if (timezone === undefined) {
         throw new TypeError(
           `Offering ${offering.offering_id} resolves its source timezone per account; account.source_timezone is required`

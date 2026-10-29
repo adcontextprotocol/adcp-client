@@ -44,3 +44,11 @@ export type {
 } from './coverage';
 export { reportingConfigurationCapabilitiesV1 } from './capabilities';
 export type { ReportingConfigurationCapabilitiesInputV1, ReportingConfigurationCapabilitiesV1 } from './capabilities';
+export type {
+  ReportingDeliveryOfferingWithDimensionsV1,
+  ReportingSubscriptionCoverageWithOfferingsV1,
+  ReportingSubscriptionGapV1,
+  ReportingSubscriptionInactiveIntervalV1,
+  ReportingSubscriptionStateWithIntervalsV1,
+  ReportingSubscriptionTimezoneCutoverV1,
+} from './wire';
