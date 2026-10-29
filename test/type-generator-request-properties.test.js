@@ -105,7 +105,7 @@ test('age provenance constraints compile with canonical enums and non-empty arra
   const cases = ['core', 'tools']
     .map(
       surface => `
-    type ${surface}Age = ${surface}.DemographicTargetingIntent['age'];
+    type ${surface}Age = NonNullable<${surface}.DemographicTargetingIntent['age']>;
     type ${surface}IntentFields = Assert<Exclude<${intentKeys}, keyof ${surface}.DemographicTargetingIntent> extends never ? true : false>;
     type ${surface}AgeFields = Assert<Exclude<${ageKeys}, keyof ${surface}Age> extends never ? true : false>;
     type ${surface}Bases = Assert<Equal<NonNullable<${surface}Age['accepted_bases']>, [core.AgeDeterminationBasis, ...core.AgeDeterminationBasis[]]>>;

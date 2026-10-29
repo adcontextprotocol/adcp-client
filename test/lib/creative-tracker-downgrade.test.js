@@ -292,8 +292,12 @@ describe('explicit legacy URL tracker slots', () => {
 });
 
 describe('tracker delivery over the official in-process MCP transport', () => {
-  for (const release of ['3.0', '3.1']) {
-    test(`${release} sends the correct tracker shape and surfaces any loss`, async () => {
+  for (const [release, withDefinitions] of [
+    ['3.0', false],
+    ['3.1', false],
+    ['3.1', true],
+  ]) {
+    test(`${release}, seller definitions ${withDefinitions}: sends the correct tracker shape and surfaces any loss`, async () => {
       const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
       const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
       const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
@@ -349,17 +353,33 @@ describe('tracker delivery over the official in-process MCP transport', () => {
             creatives: [creative({ measurement: tracker('viewable_mrc_50', 'js') })],
           },
           undefined,
-          { creativeFormatProjection: { selectorContainers: [{ format_ids: [formatId] }] } }
+          {
+            creativeFormatProjection: {
+              selectorContainers: [
+                {
+                  format_ids: [formatId],
+                  ...(withDefinitions && {
+                    format_options: [
+                      { format_kind: 'image', format_option_id: formatId.id, params: { width: 300, height: 250 } },
+                    ],
+                  }),
+                },
+              ],
+              ...(withDefinitions && { legacyFormatDefinitions: [explicitDefinition()] }),
+            },
+            ...(withDefinitions && { canonicalFormatLegacyResolver: () => formatId }),
+          }
         );
         assert.equal(result.success, true, JSON.stringify(result));
         assert.equal(calls.length, 1);
+        assert.equal(calls[0].creativeFormatProjection, undefined);
         assert.equal(
           calls[0].creatives[0].assets.viewability_tracker.asset_type,
-          release === '3.0' ? 'url' : 'pixel_tracker'
+          release === '3.0' || withDefinitions ? 'url' : 'pixel_tracker'
         );
         assert.equal(
           (result.debug_logs ?? []).some(log => log.type === 'PIXEL_TRACKER_LOSSY_DOWNGRADE'),
-          release === '3.0'
+          release === '3.0' || withDefinitions
         );
         if (release === '3.1') {
           const explicit = projectExplicit(creative({ viewability_tracker: tracker('viewable_mrc_100', 'js') }));
@@ -381,6 +401,69 @@ describe('tracker delivery over the official in-process MCP transport', () => {
         await mcp.close();
         await server.close();
       }
+    });
+  }
+});
+
+describe('seller legacy format definitions through public creative APIs (#3491)', () => {
+  for (const method of ['syncCreatives', 'createMediaBuy', 'updateMediaBuy']) {
+    test(`${method} snapshots seller definitions before discovery and keeps them local`, async () => {
+      const { SingleAgentClient } = require('../../dist/lib/index.js');
+      const client = new SingleAgentClient(
+        { id: 'legacy-slots', name: 'Legacy slots', protocol: 'mcp', agent_uri: 'https://seller.example/mcp' },
+        { adcpVersion: '3.1.29' }
+      );
+      const definitions = [explicitDefinition()];
+      const input = creative({ viewability_tracker: tracker('viewable_mrc_100', 'js') });
+      const options = {
+        creativeFormatProjection: {
+          legacyFormatDefinitions: definitions,
+          ...(method === 'syncCreatives' && { selectorContainers: [{ format_ids: [formatId] }] }),
+        },
+      };
+      client.resolveCreativeWireMode = async () => {
+        // The caller can reuse/mutate its catalog while discovery is pending.
+        definitions[0].assets.length = 0;
+        return 'legacy';
+      };
+      const calls = [];
+      client.executeAndHandle = async (tool, _handler, params, _input, taskOptions) => {
+        calls.push({ tool, params });
+        assert.equal(taskOptions.creativeFormatProjection, undefined);
+        return { success: true, status: 'completed' };
+      };
+      const request =
+        method === 'syncCreatives'
+          ? { account: { account_id: 'account' }, idempotency_key: 'seller-slot-sync-001', creatives: [input] }
+          : {
+              account: { account_id: 'account' },
+              idempotency_key: 'seller-slot-buy-0001',
+              ...(method === 'createMediaBuy'
+                ? { brand: { domain: 'brand.example' }, start_time: 'asap', end_time: '2027-12-31T00:00:00Z' }
+                : { media_buy_id: 'buy' }),
+              packages: [
+                {
+                  product_id: 'product',
+                  package_id: 'package',
+                  pricing_option_id: 'price',
+                  budget: 1000,
+                  format_ids: [formatId],
+                  creatives: [input],
+                },
+              ],
+            };
+      const before = structuredClone(request);
+      await client[method](request, undefined, options);
+      assert.equal(calls.length, 1);
+      const delivered = (calls[0].params.creatives ?? calls[0].params.packages[0].creatives)[0];
+      assert.deepEqual(delivered.assets.viewability_tracker, {
+        asset_type: 'url',
+        url_type: 'tracker_pixel',
+        url: tracker().url,
+      });
+      assert.equal(getCreativeDeliveryDiagnostics(delivered)[0].type, 'PIXEL_TRACKER_LOSSY_DOWNGRADE');
+      assert.equal(calls[0].params.creativeFormatProjection, undefined);
+      assert.deepEqual(request, before);
     });
   }
 });

@@ -13,7 +13,7 @@ import type { MediaBuyValidAction } from './types';
  * Actions routed exclusively to other tasks are excluded.
  * Empty when the schema cache predates that file.
  */
-export const STRUCTURED_ONLY_MEDIA_BUY_ACTIONS = ["update_media_buy_frequency_cap"] as const;
+export const STRUCTURED_ONLY_MEDIA_BUY_ACTIONS = ["update_creative_start_policy", "update_media_buy_frequency_cap"] as const;
 
 export type StructuredOnlyMediaBuyAction = (typeof STRUCTURED_ONLY_MEDIA_BUY_ACTIONS)[number];
 
@@ -155,6 +155,11 @@ export const UPDATE_FIELDS_BY_ACTION: Readonly<
     rollup: ["replace_creative", "update_creative_assignments", "remove_creative"] as const,
     deprecated: true,
   },
+  "update_creative_start_policy": {
+    update_fields: ["packages[].start_requires_all_creatives_approved"] as const,
+    rollup: null,
+    deprecated: false,
+  },
   "update_media_buy_frequency_cap": {
     update_fields: ["frequency_cap"] as const,
     rollup: null,
@@ -186,6 +191,7 @@ export const ACTIONS_BY_FIELD: Readonly<
   "packages[].negative_keywords_add": ["update_targeting"] as const,
   "packages[].negative_keywords_remove": ["update_targeting"] as const,
   "packages[].pacing": ["update_pacing"] as const,
+  "packages[].start_requires_all_creatives_approved": ["update_creative_start_policy"] as const,
   "packages[].start_time": ["update_flight_dates"] as const,
   "packages[].targeting_overlay": ["update_targeting"] as const,
   "packages[].targeting_overlay.frequency_cap": ["update_frequency_caps"] as const,

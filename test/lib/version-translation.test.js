@@ -424,15 +424,15 @@ describe('SingleAgentClient against an older seller', () => {
   test('both public buyers refuse an unadvertised beta before any tool dispatch', async t => {
     const calls = captureDispatch(t);
     for (const evidence of [
-      caps(['3.3-beta.1']),
-      caps(undefined, { servedVersion: '3.3-beta.0' }),
-      caps(['3.3-beta.0'], { _synthetic: true }),
+      caps(['3.3-beta.0']),
+      caps(undefined, { servedVersion: '3.3-beta.1' }),
+      caps(['3.3-beta.1'], { _synthetic: true }),
     ]) {
       for (const useWrapper of [false, true]) {
-        const client = makeClient(evidence, { adcpVersion: '3.3.0-beta.0' });
+        const client = makeClient(evidence, { adcpVersion: '3.3.0-beta.1' });
         let buyer = client;
         if (useWrapper) {
-          buyer = new AgentClient(client.agent, { adcpVersion: '3.3.0-beta.0' });
+          buyer = new AgentClient(client.agent, { adcpVersion: '3.3.0-beta.1' });
           buyer.client = client;
         }
         await assert.rejects(() => buyer.listCollections(), ProtocolFeatureUnsupportedError);
@@ -443,7 +443,7 @@ describe('SingleAgentClient against an older seller', () => {
 
   test('a beta buyer retains the 3.0 downgrade for real metadata-free v3 discovery', async t => {
     const calls = captureDispatch(t);
-    const client = makeClient(caps(undefined), { adcpVersion: '3.3.0-beta.0' });
+    const client = makeClient(caps(undefined), { adcpVersion: '3.3.0-beta.1' });
     await assert.rejects(() => client.listCollections(), ProtocolFeatureUnsupportedError);
     assert.deepEqual(calls, []);
     const negotiated = client.negotiateCallRelease(caps(undefined), undefined);
@@ -637,7 +637,7 @@ describe('sized inline-markup creatives to a seller before AdCP 3.3 (adcp-client
   ]) {
     test(`${label}: the size selects the legacy ref and is not sent as 3.3 asset fields`, async t => {
       const calls = captureDispatch(t, { structuredContent: { adcp_version: wire, creatives: [] } });
-      const client = makeClient(sellerCaps, { adcpVersion: '3.3.0-beta.0' });
+      const client = makeClient(sellerCaps, { adcpVersion: '3.3.0-beta.1' });
 
       const synced = await client.syncCreatives(
         { account: ACCOUNT, idempotency_key: 'markup-sync-000001', creatives: [creative()] },
@@ -677,7 +677,7 @@ describe('sized inline-markup creatives to a seller before AdCP 3.3 (adcp-client
 
   test('a 3.3 seller receives the canonical display_tag with its rendered size', async t => {
     const calls = captureDispatch(t, { structuredContent: { creatives: [] } });
-    const client = makeClient(caps(['3.2', '3.3.0-beta.0']), { adcpVersion: '3.3.0-beta.0' });
+    const client = makeClient(caps(['3.2', '3.3.0-beta.1']), { adcpVersion: '3.3.0-beta.1' });
     await client.syncCreatives(
       { account: ACCOUNT, idempotency_key: 'markup-sync-000002', creatives: [creative()] },
       undefined,

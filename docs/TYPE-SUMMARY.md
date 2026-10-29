@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-10-28
-> @adcp/sdk v17.0.0-beta.4
+> Generated at: 2026-10-29
+> @adcp/sdk v17.0.0-beta.5
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -541,6 +541,7 @@ _Response (success branch):_
 {
   adcp: object  // required
   supported_protocols: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative' | 'brand' | 'measurement')[]  // required
+  business_calendars: Business Calendar[]
   account: object
   media_buy: object
   signals: object
@@ -740,6 +741,9 @@ _Request:_
   status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed'
   pagination: Pagination Request
   sandbox: boolean
+  include_requests: boolean
+  request_ids: string[]
+  requests_pagination: Pagination Request
   include_webhook_activity: boolean
   webhook_activity_limit: integer
   context: Context
@@ -751,7 +755,44 @@ _Response (success branch):_
 {
   accounts: Account With Authorization[]  // required
   errors: Error[]
+  account_requests: Account Request Record[]
+  account_requests_pagination: Pagination Response
   pagination: Pagination Response
+  context: Context
+}
+```
+
+#### `request_account`
+
+Experimental: request parameters for asking a seller to find or create an advertiser account.
+
+_Request:_
+```
+{
+  idempotency_key: string  // required
+  adcp_version: string
+  account_id: string
+  request_id: string
+  revision: integer
+  brand: Brand Key
+  operator: string
+  operator_unit: Operator Unit
+  currency: string
+  timezone: string
+  sandbox: boolean
+  billing: Billing Party
+  billing_entity: Business Entity
+  payment_terms: Payment Terms
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  request: Account Request Record  // required
+  status: 'completed'  // required
+  errors: Error[]
   context: Context
 }
 ```
@@ -880,7 +921,8 @@ _Request:_
   required_overlay_support: Targeting Overlay Requirements
   required_media_buy_support: Media Buy Support Requirements
   property_list: Property List Ref
-  fields: ('product_id' | 'name' | 'description' | 'publisher_properties' | 'channels' | 'video_placement_types' | 'audio_distribution_types' | 'sponsored_placement_types' | 'social_placement_surfaces' | 'format_options' | 'placements' | 'delivery_type' | 'exclusivity' | 'pricing_options' | 'forecast' | 'reporting_capabilities' | 'measurement_terms' | 'performance_standards' | 'catalog_types' | 'signal_targeting_allowed' | 'signal_targeting_rules' | 'demographic_targeting' | 'overlay_support' | 'collections' | 'collection_targeting_allowed' | 'media_buy_support' | 'audience_evidence' | 'audience_evidence_selections' | 'max_optimization_goals' | 'catalog_match' | 'list_applications' | 'brief_relevance' | 'targeting_resolution' | 'acceptance_policy_profile_ids' | 'identity' | 'execution_requirements' | 'expires_at' | 'allowed_actions' | 'format_ids' | 'outcome_measurement' | 'delivery_measurement' | 'creative_policy' | 'metric_optimization' | 'conversion_tracking' | 'data_provider_signals' | 'included_signals' | 'signal_targeting_options' | 'overlay_support' | 'media_buy_support' | 'installments' | 'is_custom' | 'product_card' | 'product_card_detailed' | 'enforced_policies' | 'trusted_match')[]
+  include_execution_readiness: boolean
+  fields: ('product_id' | 'name' | 'description' | 'publisher_properties' | 'channels' | 'video_placement_types' | 'audio_distribution_types' | 'sponsored_placement_types' | 'social_placement_surfaces' | 'format_options' | 'placements' | 'delivery_type' | 'exclusivity' | 'pricing_options' | 'forecast' | 'reporting_capabilities' | 'measurement_terms' | 'performance_standards' | 'catalog_types' | 'signal_targeting_allowed' | 'signal_targeting_rules' | 'demographic_targeting' | 'overlay_support' | 'collections' | 'collection_targeting_allowed' | 'installments' | 'media_buy_support' | 'audience_evidence' | 'audience_evidence_selections' | 'max_optimization_goals' | 'catalog_match' | 'list_applications' | 'brief_relevance' | 'targeting_resolution' | 'acceptance_policy_profile_ids' | 'identity' | 'execution_requirements' | 'expires_at' | 'allowed_actions' | 'creative_policy' | 'format_ids' | 'outcome_measurement' | 'delivery_measurement' | 'creative_policy' | 'metric_optimization' | 'conversion_tracking' | 'data_provider_signals' | 'included_signals' | 'signal_targeting_options' | 'overlay_support' | 'media_buy_support' | 'installments' | 'is_custom' | 'product_card' | 'product_card_detailed' | 'enforced_policies' | 'trusted_match')[]
   include_collections: boolean
   time_budget: Duration
   push_notification_config: Push Notification Config
@@ -911,6 +953,7 @@ _Response (success branch):_
   pagination: Pagination Response
   wholesale_feed_version: string
   pricing_version: string
+  execution_readiness: object
   cache_scope: 'public' | 'account'
   unchanged: 'true'
   sandbox: boolean
@@ -1557,6 +1600,7 @@ _Response (success branch):_
   revision: Reporting Revision
   materializations: Reporting Materialization[]
   receipts: Reporting Receipt[]
+  subscription_coverage: Reporting Subscription Coverage[]
   errors: Error[]
   context: Context
 }
@@ -1612,6 +1656,66 @@ _Response (success branch):_
   status: 'completed'  // required
   results: union[]  // required
   context: Context
+}
+```
+
+#### `report_media_buy_issue`
+
+Raise a seller-action report against an authorized media buy, optionally scoped to a package or creative.
+
+_Request:_
+```
+{
+  account: Canonical Account Ref  // required
+  media_buy_id: string  // required
+  idempotency_key: string  // required
+  severity: 'critical' | 'warning'  // required
+  category: 'malicious_creative' | 'wrong_creative' | 'brand_safety' | 'tracking' | 'delivery' | 'other'  // required
+  description: string  // required
+  adcp_version: string
+  context: Context
+  package_id: string
+  creative_id: string
+  governance_context: string
+  push_notification_config: Push Notification Config
+}
+```
+
+_Response (success branch):_
+```
+{
+  outcome: 'recorded'  // required
+  issue: Media Buy Issue  // required
+  context: Context
+  replayed: boolean
+}
+```
+
+#### `get_media_buy_issue`
+
+Read the latest seller-owned state of one issue within an authorized account and media buy.
+
+_Request:_
+```
+{
+  account: Canonical Account Ref  // required
+  media_buy_id: string  // required
+  issue_id: string  // required
+  adcp_version: string
+  context: Context
+  governance_context: string
+  push_notification_config: Push Notification Config
+  idempotency_key: string
+}
+```
+
+_Response (success branch):_
+```
+{
+  outcome: 'found'  // required
+  issue: Media Buy Issue  // required
+  context: Context
+  replayed: boolean
 }
 ```
 
@@ -2098,6 +2202,7 @@ _Response (success branch):_
 ```
 {
   signals: Signal Listing[]
+  signal_pricing_group_rules: Signal Pricing Group Rule[]
   errors: Error[]
   incomplete: object[]
   wholesale_feed_version: string

@@ -24,7 +24,7 @@ for (const tool of ['create_media_buy', 'update_media_buy']) {
       const server = createAdcpServer({
         name: 'adoption-seller',
         version: '1.0.0',
-        adcpVersion: '3.3.0-beta.0',
+        adcpVersion: '3.3.0-beta.1',
         defaultAdcpVersion: '3.1',
         idempotency: 'disabled',
         capabilities: { supported_versions: ['3.0', '3.1', '3.2'] },
@@ -162,7 +162,7 @@ test('stable 3.3 pin gives a concise exact-beta suggestion', () => {
     () => sdk.resolveAdcpVersion('3.3.0'),
     error => {
       assert.ok(error.message.length < 600, error.message);
-      assert.match(error.message, /3\.3\.0-beta\.0/);
+      assert.match(error.message, /3\.3\.0-beta\.1/);
       assert.match(error.message, /stable version does not select a prerelease/);
       return true;
     }

@@ -193,7 +193,7 @@ keep its external root registered throughout client creation and the workflow:
 import { ADCPMultiAgentClient } from '@adcp/sdk';
 import { withExternalSchemaRoot } from '@adcp/sdk/testing';
 
-const candidateVersion = '3.3.0-beta.0';
+const candidateVersion = '3.3.0-beta.1';
 const candidateSchemaRoot = '/absolute/path/to/extracted/candidate/schemas';
 
 await withExternalSchemaRoot(candidateVersion, candidateSchemaRoot, async () => {
@@ -220,3 +220,5 @@ to `validateRefineProposalsResponseShape()` to pin the already-selected served
 contract explicitly.
 
 AdCP 3.3 definition pins require revalidation against the current third-party published definitions at commitment time. This beta's synchronous standalone commercial-terms verifier cannot perform that source verification: it fails closed on definition pins, publisher format references, and any placement/collection/signal targeting. Use the seller-served stable 3.2.7 contract for existing snapshot-verification flows until pin verification is supported. It continues to compare ordinary 3.3 commercial snapshots and enforces collection-list uniqueness by reference identity.
+
+AdCP 3.3.0-beta.1 adds three snapshot rules that need data the snapshot does not carry. The verifier fails closed on purchase `installments[]` (experimental `media_buy.installment_selection`; membership is judged against the products' published installments) and on SLA windows that name a `business_calendar_id` (business-clock SLAs resolve against capability calendars). Elapsed-clock SLA windows verify normally. For `price_adjustments`, the accepted snapshot deliberately omits the discovery-time table, so the verifier checks schema validity and `pricing_option_id` identity but does not re-resolve `pricing.fixed_price`; a buyer holding the table must resolve it before accepting.

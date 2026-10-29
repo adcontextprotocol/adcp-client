@@ -62,14 +62,16 @@ describe('conformance: oracle', () => {
     assert.equal(out.verdict, 'accepted', out.invariantFailures.join('; '));
   });
 
-  test('decline_proposals still rejects invalid versions, unknown fields, and forbidden sync status', () => {
+  test('decline_proposals still rejects invalid versions and forbidden sync status', () => {
     const payload = { results: [{ proposal_id: 'proposal-1', outcome: 'declined' }] };
+    // AdCP 3.3.0-beta.1 reopens the proposal-flow response roots (DR-0019 / DR-0036).
+    const extended = accepted('decline_proposals', { ...payload, unexpected: true });
+    assert.equal(extended.verdict, 'accepted', extended.invariantFailures.join('; '));
     for (const invalid of [
       { ...payload, adcp_version: 'not-a-version' },
       { ...payload, adcp_version: '3.2.6' },
       { ...payload, adcp_version: 3.2 },
       { ...payload, adcp_major_version: '3' },
-      { ...payload, unexpected: true },
       { ...payload, status: 'completed' },
       { ...payload, task_id: 'unexpected-task' },
       { results: [{ proposal_id: 'proposal-1' }] },

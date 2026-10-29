@@ -130,7 +130,14 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // Measured: 25,702,691 packed bytes, 146,739,833 unpacked bytes and 8,293
 // files, including a new 774,320-byte bundled schema archive. These caps
 // preserve small release-note/compression margins and the archive-only policy.
-const MAX_PACKED_TARBALL_BYTES = 26_000_000;
+// AdCP 3.3.0-beta.1 replaces the beta.0 schema and compliance bundles (no
+// duplicate preview root is packaged) and adds the request_account,
+// media-buy issue and reporting-subscription schema families, their generated
+// types and typed client methods. Measured locally after the signed sync:
+// 26,314,876 packed bytes, 144,462,916 unpacked bytes and 8,411 files. Allow
+// about 45 KB of compressor variance; the unpacked, file-count, bundled-schema
+// and declaration budgets are unchanged and still pass.
+const MAX_PACKED_TARBALL_BYTES = 26_360_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 144 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview

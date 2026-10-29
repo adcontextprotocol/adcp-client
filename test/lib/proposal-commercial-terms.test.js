@@ -636,3 +636,28 @@ test('3.3 snapshot verification refuses definition pins and references needing c
     assert.ok(result.mismatches.some(m => m.message.includes('current-source')));
   }
 });
+
+test('3.3 beta.1 snapshot verification refuses installment selections and business-calendar SLAs', () => {
+  const installments = structuredClone(current);
+  installments.purchases[0].installments = [
+    { collection_ref: { publisher_domain: 'publisher.example', collection_id: 'show-1' }, installment_id: 'ep-1' },
+  ];
+  const refusedInstallments = verify(candidate(installments), installments);
+  assert.equal(refusedInstallments.ok, false);
+  assert.ok(refusedInstallments.mismatches.some(m => m.message.includes('installment membership')));
+
+  const business = structuredClone(current);
+  business.change_terms[0].processing_sla = {
+    clock: 'business',
+    business_calendar_id: 'cal-us',
+    response_max: 'PT5M',
+    completion_max: 'PT1H',
+  };
+  const refusedCalendar = verify(candidate(business), business);
+  assert.equal(refusedCalendar.ok, false);
+  assert.ok(refusedCalendar.mismatches.some(m => m.message.includes('capability calendar')));
+
+  const elapsed = structuredClone(current);
+  elapsed.change_terms[0].processing_sla = { clock: 'elapsed', response_max: 'PT5M', completion_max: 'PT1H' };
+  assert.deepEqual(verify(candidate(elapsed), elapsed), { ok: true, schemaVersion: ADCP_VERSION, mismatches: [] });
+});

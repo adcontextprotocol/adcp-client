@@ -61,9 +61,9 @@ test('the official MCP client reaches both 3.3 discovery tools without provision
   assert.ok(!stableCapabilities.structuredContent.media_buy?.lifecycle_tools?.includes('list_proposals'));
   const betaCapabilities = await seller.dispatchTestRequest({
     method: 'tools/call',
-    params: { name: 'get_adcp_capabilities', arguments: { adcp_version: '3.3-beta.0' } },
+    params: { name: 'get_adcp_capabilities', arguments: { adcp_version: '3.3-beta.1' } },
   });
-  assert.ok(betaCapabilities.structuredContent.adcp.supported_versions.includes('3.3-beta.0'));
+  assert.ok(betaCapabilities.structuredContent.adcp.supported_versions.includes('3.3-beta.1'));
   assert.ok(betaCapabilities.structuredContent.adcp.supported_versions.includes('3.2'));
   for (const feature of [
     'media_buy.collection_catalog',
@@ -211,4 +211,126 @@ test('a preview buyer discovers a stable seller without sending an unsupported p
   assert.ok(probes.every(probe => probe.adcp_version === undefined));
   assert.equal(requests.length, 1);
   assert.equal(requests[0].adcp_version, '3.2');
+});
+
+test('a buyer pinned to the 3.3.0-beta.1 bundle negotiates 3.3-beta.1 and sends typed request_account changes', async t => {
+  const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+  const { z } = require('zod');
+  assert.equal(ADCP_VERSION, '3.3.0-beta.1');
+  const requests = [];
+  const seller = new McpServer({ name: 'AdCP 3.3 beta.1 seller', version: '1.0.0' });
+  seller.registerTool('get_adcp_capabilities', { inputSchema: { adcp_version: z.string().optional() } }, async () => ({
+    content: [],
+    structuredContent: {
+      status: 'completed',
+      adcp_version: '3.3-beta.1',
+      adcp: { major_versions: [3], supported_versions: ['3.2', '3.3-beta.1'], idempotency: { supported: false } },
+      supported_protocols: ['media_buy'],
+      experimental_features: ['account.requests'],
+      account: { supported_billing: ['operator'] },
+      media_buy: { features: { canonical_creatives: true }, buying_modes: ['wholesale'] },
+    },
+  }));
+  seller.registerTool(
+    'request_account',
+    {
+      inputSchema: {
+        adcp_version: z.string(),
+        idempotency_key: z.string(),
+        account_id: z.string(),
+        revision: z.number().int(),
+        payment_terms: z.string(),
+      },
+    },
+    async params => {
+      requests.push(params);
+      return {
+        content: [],
+        structuredContent: {
+          status: 'completed',
+          adcp_version: '3.3-beta.1',
+          request: {
+            request_id: 'areq_change_1',
+            state: 'in_review',
+            requested: { account_id: params.account_id, payment_terms: params.payment_terms },
+            pending_action: { waiting_on: 'seller', kind: 'review', message: 'Seller credit review' },
+            created_at: '2026-10-29T00:00:00Z',
+            updated_at: '2026-10-29T00:00:00Z',
+          },
+        },
+      };
+    }
+  );
+  const [buyerTransport, sellerTransport] = InMemoryTransport.createLinkedPair();
+  const mcp = new Client({ name: 'SDK 17 beta.1 buyer', version: '1.0.0' });
+  await seller.connect(sellerTransport);
+  await mcp.connect(buyerTransport);
+  t.after(async () => {
+    await mcp.close();
+    await seller.close();
+  });
+  const buyer = AgentClient.fromMCPClient(mcp, { adcpVersion: ADCP_VERSION });
+  const result = await buyer.requestAccount({ account_id: 'acct_renault_fr', revision: 4, payment_terms: 'net_60' });
+  assert.equal(result.success, true, result.error);
+  assert.equal(result.data.request.state, 'in_review');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].adcp_version, '3.3-beta.1');
+  assert.match(requests[0].idempotency_key, /^[A-Za-z0-9_.:-]{16,255}$/);
+  assert.equal(requests[0].account_id, 'acct_renault_fr');
+});
+
+test('createAdcpServer serves raw request_account and media-buy issue handlers on the 3.3-beta.1 route', async t => {
+  const received = [];
+  const seller = createAdcpServer({
+    stateStore: new InMemoryStateStore(),
+    name: 'AdCP 3.3 beta.1 account requests',
+    version: '1.0.0',
+    adcpVersion: ADCP_VERSION,
+    validation: { requests: 'strict', responses: 'strict' },
+    resolveAccount: async ref => (ref.account_id === 'acct_1' ? { id: ref.account_id } : null),
+    accounts: {
+      requestAccount: async params => {
+        received.push(params);
+        return {
+          request: {
+            request_id: 'areq_1',
+            state: 'resolved',
+            account_id: params.account_id,
+            resolution: 'updated',
+            requested: { account_id: params.account_id, payment_terms: params.payment_terms },
+            created_at: '2026-10-29T00:00:00Z',
+            updated_at: '2026-10-29T00:00:00Z',
+          },
+        };
+      },
+    },
+  });
+  t.after(() => seller.close());
+  const listed = await seller.dispatchTestRequest({
+    method: 'tools/list',
+    params: { _meta: { adcp_version: '3.3-beta.1' } },
+  });
+  assert.ok(listed.tools.some(tool => tool.name === 'request_account'));
+  const stable = await seller.dispatchTestRequest({ method: 'tools/list', params: { _meta: { adcp_version: '3.2' } } });
+  assert.ok(!stable.tools.some(tool => tool.name === 'request_account'));
+  const response = await seller.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'request_account',
+        arguments: {
+          adcp_version: '3.3-beta.1',
+          idempotency_key: 'request-account-change-0001',
+          account_id: 'acct_1',
+          revision: 2,
+          payment_terms: 'net_30',
+        },
+      },
+    },
+    { authInfo: { token: 'test-buyer', clientId: 'buyer', scopes: [] } }
+  );
+  assert.equal(response.isError, undefined, JSON.stringify(response));
+  assert.equal(response.structuredContent.request.resolution, 'updated');
+  assert.equal(received.length, 1);
+  assert.equal(received[0].account_id, 'acct_1');
 });

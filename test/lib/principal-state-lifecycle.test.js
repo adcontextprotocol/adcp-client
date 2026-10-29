@@ -926,6 +926,20 @@ test('rejects submitted sections that the seller does not support', async () => 
   assert.equal(reporting.result.errors[0].code, 'UNSUPPORTED_FEATURE');
 });
 
+test('rejects AdCP 3.3 reporting_subscriptions instead of silently ignoring them', async () => {
+  const { lifecycle } = setup();
+  const subscriptions = await lifecycle.protocol.syncPrincipal(
+    {
+      idempotency_key: 'principal-unsupported-reporting-subscriptions',
+      configuration: { reporting_subscriptions: [] },
+    },
+    ctx()
+  );
+  assert.equal(subscriptions.result.kind, 'failed');
+  assert.equal(subscriptions.result.errors[0].code, 'UNSUPPORTED_FEATURE');
+  assert.match(subscriptions.result.errors[0].message, /reporting_subscriptions/);
+});
+
 test('rejects false durability claims and missing delivery-attempt checkpoints', () => {
   assert.throws(
     () => createPrincipalStateStore({ store: new InMemoryStateStore(), durability: 'durable' }),

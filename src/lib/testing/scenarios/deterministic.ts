@@ -613,7 +613,8 @@ export async function testDeliverySimulation(
       task: 'comply_test_controller',
       passed: true,
       duration_ms: simDur,
-      details: simResult.message || 'Delivery simulated',
+      details:
+        ('message' in simResult && typeof simResult.message === 'string' && simResult.message) || 'Delivery simulated',
       response_preview: JSON.stringify(simResult.simulated, null, 2),
     });
   } else {
@@ -714,7 +715,9 @@ export async function testBudgetSimulation(
       task: 'comply_test_controller',
       passed: true,
       duration_ms: simDur,
-      details: simResult.message || 'Budget spend simulated to 95%',
+      details:
+        ('message' in simResult && typeof simResult.message === 'string' && simResult.message) ||
+        'Budget spend simulated to 95%',
       response_preview: JSON.stringify(simResult.simulated, null, 2),
     });
   } else {
@@ -740,7 +743,9 @@ export async function testBudgetSimulation(
       task: 'comply_test_controller',
       passed: true,
       duration_ms: depletedDur,
-      details: depletedResult.message || 'Budget fully depleted',
+      details:
+        ('message' in depletedResult && typeof depletedResult.message === 'string' && depletedResult.message) ||
+        'Budget fully depleted',
       response_preview: JSON.stringify(depletedResult.simulated, null, 2),
     });
   } else {

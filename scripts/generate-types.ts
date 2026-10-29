@@ -2419,6 +2419,20 @@ export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): 
 function materializeProposalResponseBranches(schema: any, schemaName: string): any {
   if (!schema?.properties || !Array.isArray(schema.anyOf) || schema.anyOf.length < 2) return schema;
 
+  // A submitted branch can inherit its required task handle from an envelope
+  // conditional. jsts drops if/then, so materialize that requirement alongside
+  // the discriminator, including the envelope's original task-id validator.
+  const submittedTaskIds = (schema.allOf ?? []).flatMap((member: any) => {
+    const envelope = typeof member?.$ref === 'string' ? loadCachedSchema(member.$ref) : member;
+    const requiresTaskId = envelope?.allOf?.some(
+      (condition: any) =>
+        condition?.if?.properties?.status?.const === 'submitted' &&
+        condition.if.required?.includes('status') &&
+        condition.then?.required?.includes('task_id')
+    );
+    return requiresTaskId && envelope.properties?.task_id ? [envelope.properties.task_id] : [];
+  });
+  if (submittedTaskIds.length > 1) throw new Error(`${schemaName} has ambiguous submitted task-id contracts.`);
   const branches: any[] = [];
   for (const member of schema.anyOf) {
     let overlay = member;
@@ -2432,6 +2446,12 @@ function materializeProposalResponseBranches(schema: any, schemaName: string): a
       required: [...new Set([...(schema.required ?? []), ...(overlay.required ?? [])])],
       additionalProperties: schema.additionalProperties ?? false,
     };
+    if (overlay.properties?.status?.const === 'submitted' && submittedTaskIds.length === 1) {
+      // Keep any branch-specific narrowing; the outer envelope composition
+      // continues enforcing its original validator as well.
+      if (branch.properties.task_id === undefined) branch.properties.task_id = submittedTaskIds[0];
+      branch.required = [...new Set([...branch.required, 'task_id'])];
+    }
     for (const forbiddenArm of overlay.not?.anyOf ?? []) {
       for (const forbiddenField of forbiddenArm?.required ?? []) {
         if (schemaName === 'RequestProposalsResponse') {
@@ -2475,7 +2495,14 @@ function materializeProposalResponseBranches(schema: any, schemaName: string): a
     }
   }
 
-  const result = { ...schema, oneOf: branches };
+  // jsts gives a root allOf precedence over oneOf and drops every outcome
+  // branch. Distribute the shared envelope into each materialized branch so
+  // both envelope and task payload survive the TypeScript/Zod projection.
+  const result = {
+    ...schema,
+    oneOf: Array.isArray(schema.allOf) ? branches.map(branch => ({ allOf: [...schema.allOf, branch] })) : branches,
+  };
+  delete result.allOf;
   delete result.type;
   delete result.properties;
   delete result.required;
@@ -3746,6 +3773,9 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'ExistingBinding1', base: 'ExistingBinding' },
   { numbered: 'SignalTargeting1', base: 'SignalTargeting' },
   { numbered: 'FileTransfer1', base: 'ReportingFileTransfer' },
+  // AdCP 3.3.0-beta.1 products inline execution-readiness statuses that copy
+  // enums/execution-readiness-status.json.
+  { numbered: 'ExecutionReadinessStatus1', base: 'ExecutionReadinessStatus' },
   // tasks-list-request.json in rc.6 carries a lagging inline copy of the
   // canonical task-type enum that omits get_creative_features. Keep the
   // public filter type aligned with the authoritative enum document.
@@ -3778,6 +3808,9 @@ const JSTS_REPEATED_UNDER_RESOLUTION_BASES = [
  */
 const JSTS_NUMBERED_SEMANTIC_RENAMES: Array<{ numbered: string; semantic: string }> = [
   { numbered: 'TaskStatus2', semantic: 'GetProductsRejectedStatus' },
+  // core/audience-source.json (external dataset or platform segment) shares its
+  // title with the enums/audience-source.json enum; it is not the same type.
+  { numbered: 'AudienceSource1', semantic: 'AudienceSourceReference' },
 ];
 
 /**

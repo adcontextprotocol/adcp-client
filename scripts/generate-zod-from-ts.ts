@@ -1552,13 +1552,10 @@ function postProcessCanonicalFormatMarkerIntersections(content: string): string 
  * Keep `CompactTaskSubmittedSchema` (and the `RequestProposalsAsyncSubmitted` /
  * `RefineProposalsAsyncSubmitted` aliases of it) a ZodObject.
  *
- * The canonical schema is `allOf: [protocol-envelope]` (which itself composes
- * `version-envelope`) plus its own `properties`, so ts-to-zod emits
- * `ProtocolEnvelope.and(z.object(...))` with `ProtocolEnvelope` itself an
- * `AdCPVersionEnvelope.and(z.object(...))` — ZodIntersections with no
- * `.shape`/`.extend()`/`.pick()`/`.omit()`, unlike the plain object this public
- * export was in 3.2.3. The two envelope halves have disjoint keys, so the
- * envelope is flattened to a ZodObject first; `.merge()` lets the right side win
+ * The canonical schema is `allOf: [version-envelope, protocol-envelope]` plus
+ * its own `properties`, so ts-to-zod emits `Envelope.merge(Envelope).and(z.object(...))`
+ * — a ZodIntersection with no `.shape`/`.extend()`/`.pick()`/`.omit()`, unlike the
+ * plain object this public export was in 3.2.3. `.merge()` lets the right side win
  * on overlap, so it matches the intersection only while every top-level key the
  * compact object shares with either envelope is a strict narrowing of the envelope's
  * declaration (`status: TaskStatus` → `'submitted'`, optional `task_id` → required
@@ -1567,32 +1564,14 @@ function postProcessCanonicalFormatMarkerIntersections(content: string): string 
  * overlapping declaration, and fails generation on any drift — including a new
  * overlapping field — rather than silently dropping an envelope constraint.
  */
-type CompactOverlap = Readonly<Record<string, { envelope: string; compact: string }>>;
-
-/**
- * Releases before the envelope composition (3.3.0-beta.0 and earlier) emit
- * `AdCPVersionEnvelope.merge(ProtocolEnvelope).and(z.object(...))` and the
- * compact object also narrows `message` (`maxLength: 2000`).
- */
-const COMPACT_TASK_SUBMITTED_LEGACY_OVERLAP: CompactOverlap = {
+const COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP: Readonly<Record<string, { envelope: string; compact: string }>> = {
   status: { envelope: 'TaskStatusSchema', compact: 'z.literal("submitted")' },
   task_id: { envelope: 'z.string().optional()', compact: 'z.string().min(1)' },
   message: { envelope: 'z.string().optional()', compact: 'z.string().max(2000).optional()' },
   context: { envelope: 'ContextObjectSchema.optional()', compact: 'ContextObjectSchema.optional()' },
 };
 
-/**
- * Composed releases (`allOf: [protocol-envelope]`, which composes the version
- * envelope itself) emit `ProtocolEnvelope.and(z.object(...))`, and no longer
- * narrow `message`.
- */
-const COMPACT_TASK_SUBMITTED_COMPOSED_OVERLAP: CompactOverlap = {
-  status: { envelope: 'TaskStatusSchema', compact: 'z.literal("submitted")' },
-  task_id: { envelope: 'z.string().optional()', compact: 'z.string().min(1)' },
-  context: { envelope: 'ContextObjectSchema.optional()', compact: 'ContextObjectSchema.optional()' },
-};
-
-function postProcessCompactTaskSubmittedEnvelope(content: string): string {
+function postProcessCompactTaskSubmittedEnvelope(content: string, protocolSource?: any): string {
   const fail = (reason: string): never => {
     throw new Error(
       `postProcessCompactTaskSubmittedEnvelope: ${reason}; merging would no longer match the canonical ` +
@@ -1644,33 +1623,84 @@ function postProcessCompactTaskSubmittedEnvelope(content: string): string {
     return { keys, passthrough };
   };
 
-  const version = topLevelObject('AdCPVersionEnvelopeSchema', blockOf('AdCPVersionEnvelopeSchema').text);
-  const protocol = topLevelObject('ProtocolEnvelopeSchema', blockOf('ProtocolEnvelopeSchema').text);
-  for (const key of protocol.keys.keys()) {
-    if (version.keys.has(key)) fail(`${key} is declared by both envelopes`);
-  }
-  const compact = blockOf('CompactTaskSubmittedSchema');
-  const own = topLevelObject('CompactTaskSubmittedSchema', compact.text);
-  const composedFrom = 'ProtocolEnvelopeSchema.and(z.object({';
-  const legacyFrom = 'AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).and(z.object({';
-  const composedLayout = compact.text.includes(composedFrom);
-  if (!composedLayout && !compact.text.includes(legacyFrom)) {
-    throw new Error('postProcessCompactTaskSubmittedEnvelope: expected the generated envelope intersection.');
-  }
-  const from = composedLayout ? composedFrom : legacyFrom;
-  const to = composedLayout
-    ? 'ProtocolEnvelopeSchema.merge(z.object({'
-    : 'AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).merge(z.object({';
-  const knownOverlap = composedLayout ? COMPACT_TASK_SUBMITTED_COMPOSED_OVERLAP : COMPACT_TASK_SUBMITTED_LEGACY_OVERLAP;
-  if (composedLayout) {
-    // An earlier pass already flattens the envelope halves into one ZodObject. `.merge()` below
-    // needs that: refuse to merge into a ZodIntersection, which has no `.merge`.
-    const protocolHead = 'export const ProtocolEnvelopeSchema = AdCPVersionEnvelopeSchema.merge(z.object({';
-    if (!blockOf('ProtocolEnvelopeSchema').text.startsWith(protocolHead)) {
-      throw new Error(
-        'postProcessCompactTaskSubmittedEnvelope: expected ProtocolEnvelopeSchema to be a flattened ZodObject.'
-      );
+  const mergeRefinementExtension = (parents: readonly { keys: Map<string, string> }[]): string => {
+    // 3.3 adds an optional finalize estimate to the refinement submitted arm.
+    // It is disjoint from the shared envelope, so merging preserves both
+    // constraints while retaining the public ZodObject helpers.
+    const refinement = blockOf('RefineProposalsAsyncSubmittedSchema');
+    const refinementFrom = 'CompactTaskSubmittedSchema.and(z.object({';
+    if (refinement.text.includes(refinementFrom)) {
+      const extra = topLevelObject('RefineProposalsAsyncSubmittedSchema', refinement.text);
+      if (
+        !extra.passthrough ||
+        [...extra.keys.keys()].join(',') !== 'expected_confirmation_at' ||
+        parents.some(parent => parent.keys.has('expected_confirmation_at'))
+      )
+        fail('refinement submitted extension changed');
+      content =
+        content.slice(0, refinement.start) +
+        refinement.text.replace(refinementFrom, 'CompactTaskSubmittedSchema.merge(z.object({') +
+        content.slice(refinement.end);
     }
+    return content;
+  };
+  const version = topLevelObject('AdCPVersionEnvelopeSchema', blockOf('AdCPVersionEnvelopeSchema').text);
+  const compact = blockOf('CompactTaskSubmittedSchema');
+  const composedFrom = 'export const CompactTaskSubmittedSchema = ProtocolEnvelopeSchema.and(z.object({';
+  if (compact.text.startsWith(composedFrom)) {
+    // New envelope composition moves the submitted task-id requirement into
+    // the protocol envelope's conditional. Keep that source-owned condition
+    // explicit on the submitted object; the TS round-trip loses if/then.
+    const protocolBlock = blockOf('ProtocolEnvelopeSchema').text;
+    const protocolPrefix =
+      'export const ProtocolEnvelopeSchema = AdCPVersionEnvelopeSchema.merge(z.object({}).passthrough()).merge(z.object({';
+    if (!protocolBlock.startsWith(protocolPrefix)) fail('unsupported composed protocol envelope');
+    const protocol = topLevelObject(
+      'ProtocolEnvelopeSchema',
+      protocolBlock.replace('.merge(z.object({}).passthrough())', '')
+    );
+    const own = topLevelObject('CompactTaskSubmittedSchema', compact.text);
+    if (!protocol.passthrough || !version.passthrough || !own.passthrough) fail('composed unknown-key policy changed');
+    const overlap = [...own.keys.keys()].filter(key => protocol.keys.has(key) || version.keys.has(key)).sort();
+    if (overlap.join(',') !== 'context,status') fail('composed top-level overlap changed');
+    for (const key of overlap) {
+      const reviewed = COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP[key];
+      if (
+        version.keys.has(key) ||
+        protocol.keys.get(key) !== reviewed.envelope ||
+        own.keys.get(key) !== reviewed.compact
+      ) {
+        fail(`composed overlapping field ${key} changed`);
+      }
+    }
+    if (protocol.keys.get('task_id') !== 'TaskIDSchema.optional()' || own.keys.has('task_id'))
+      fail('composed task_id changed');
+    const source =
+      protocolSource ??
+      JSON.parse(readFileSync(path.join(__dirname, '../schemas/cache/latest/core/protocol-envelope.json'), 'utf8'));
+    const conditions = source.allOf?.filter((member: any) => member.if || member.then || member.else);
+    const condition = { ...conditions?.[0] };
+    delete condition.description;
+    if (
+      conditions?.length !== 1 ||
+      !isDeepStrictEqual(condition, {
+        if: { properties: { status: { const: 'submitted' } }, required: ['status'] },
+        then: { required: ['task_id'] },
+      })
+    ) {
+      fail('composed submitted task_id condition changed');
+    }
+    const replacement = compact.text
+      .replace(composedFrom, composedFrom.replace('.and(', '.merge('))
+      .replace(/;$/, '.extend({ task_id: TaskIDSchema });');
+    content = content.slice(0, compact.start) + replacement + content.slice(compact.end);
+    return mergeRefinementExtension([version, protocol, own]);
+  }
+  const protocol = topLevelObject('ProtocolEnvelopeSchema', blockOf('ProtocolEnvelopeSchema').text);
+  const own = topLevelObject('CompactTaskSubmittedSchema', compact.text);
+  const from = 'AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).and(z.object({';
+  if (!compact.text.includes(from)) {
+    throw new Error('postProcessCompactTaskSubmittedEnvelope: expected the generated envelope intersection.');
   }
 
   for (const [name, shape] of [
@@ -1690,12 +1720,12 @@ function postProcessCompactTaskSubmittedEnvelope(content: string): string {
     if (envelopeInits.length === 1) overlap.set(key, { envelope: envelopeInits[0], compact: compactInit });
   }
   const actual = [...overlap.keys()].sort().join(',');
-  const expected = Object.keys(knownOverlap).sort().join(',');
+  const expected = Object.keys(COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP).sort().join(',');
   if (actual !== expected) {
     fail(`top-level overlap with the envelopes changed (expected {${expected}}, found {${actual}})`);
   }
   for (const [key, declared] of overlap) {
-    const reviewed = knownOverlap[key];
+    const reviewed = COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP[key];
     if (declared.envelope !== reviewed.envelope || declared.compact !== reviewed.compact) {
       fail(
         `overlapping field ${key} changed (envelope \`${declared.envelope}\` / compact \`${declared.compact}\`, ` +
@@ -1704,28 +1734,9 @@ function postProcessCompactTaskSubmittedEnvelope(content: string): string {
     }
   }
 
+  const to = 'AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).merge(z.object({';
   content = content.slice(0, compact.start) + compact.text.replace(from, to) + content.slice(compact.end);
-  // 3.3 adds an optional finalize estimate to the refinement submitted arm.
-  // It is disjoint from the shared envelope, so merging preserves both
-  // constraints while retaining the public ZodObject helpers.
-  const refinement = blockOf('RefineProposalsAsyncSubmittedSchema');
-  const refinementFrom = 'CompactTaskSubmittedSchema.and(z.object({';
-  if (refinement.text.includes(refinementFrom)) {
-    const extra = topLevelObject('RefineProposalsAsyncSubmittedSchema', refinement.text);
-    if (
-      !extra.passthrough ||
-      [...extra.keys.keys()].join(',') !== 'expected_confirmation_at' ||
-      version.keys.has('expected_confirmation_at') ||
-      protocol.keys.has('expected_confirmation_at') ||
-      own.keys.has('expected_confirmation_at')
-    )
-      fail('refinement submitted extension changed');
-    content =
-      content.slice(0, refinement.start) +
-      refinement.text.replace(refinementFrom, 'CompactTaskSubmittedSchema.merge(z.object({') +
-      content.slice(refinement.end);
-  }
-  return content;
+  return mergeRefinementExtension([version, protocol, own]);
 }
 
 /**
@@ -1907,19 +1918,172 @@ function postProcessCompatibilityPurchaseCoordinatorInput(content: string): stri
 
 /** Restore beta.4 runtime-only membership constraints on projected legacy continuations. */
 function postProcessLegacyPurchaseContinuationResponse(content: string): string {
-  const schemaStart = content.indexOf('export const RequestProposalsResponseSchema = ');
-  const schemaEnd = content.indexOf('\n\nexport const ', schemaStart + 1);
-  if (schemaStart < 0 || schemaEnd < 0) {
-    throw new Error('Could not locate RequestProposalsResponseSchema.');
+  const source = ts.createSourceFile('adcp-generated-zod.ts', content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const fail = (reason: string): never => {
+    throw new Error(`Could not locate the legacy_create purchase continuation response arm: ${reason}`);
+  };
+  const declaration = (name: string): ts.Expression => {
+    const matches = source.statements.flatMap(statement =>
+      ts.isVariableStatement(statement)
+        ? statement.declarationList.declarations.filter(node => ts.isIdentifier(node.name) && node.name.text === name)
+        : []
+    );
+    if (matches.length !== 1 || !matches[0].initializer) return fail(`missing or ambiguous ${name}`);
+    return matches[0].initializer;
+  };
+  const root = declaration('RequestProposalsResponseSchema');
+  // Follow only schema composition at the current object level. In particular,
+  // never search unrelated object fields, callback bodies or metadata for a
+  // matching literal. Aliases are resolved to their owning declarations.
+  const objects = (node: ts.Expression, visited = new Set<string>()): ts.CallExpression[] => {
+    if (ts.isParenthesizedExpression(node)) return objects(node.expression, visited);
+    if (ts.isIdentifier(node)) {
+      if (visited.has(node.text)) return fail(`cyclic alias ${node.text}`);
+      return objects(declaration(node.text), new Set(visited).add(node.text));
+    }
+    if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) {
+      return fail('unsupported schema composition');
+    }
+    const receiver = node.expression.expression;
+    const method = node.expression.name.text;
+    if (ts.isIdentifier(receiver) && receiver.text === 'z') {
+      if (method === 'object') return [node];
+      if (method === 'union' || method === 'discriminatedUnion') {
+        const arms = node.arguments[method === 'union' ? 0 : 1];
+        if (!arms || !ts.isArrayLiteralExpression(arms)) return fail('unsupported union arms');
+        return arms.elements.flatMap(arm => objects(arm as ts.Expression, visited));
+      }
+      if (method === 'intersection' && node.arguments.length === 2) {
+        return node.arguments.flatMap(arm => objects(arm, visited));
+      }
+      if (method === 'never') return [];
+      return fail(`unsupported z.${method}`);
+    }
+    if (['and', 'merge', 'or'].includes(method) && node.arguments.length === 1) {
+      const left = objects(receiver, visited);
+      const right = objects(node.arguments[0], visited);
+      if (method === 'merge') {
+        const leftKeys = new Set(left.flatMap(object => [...fields(object).keys()]));
+        if (right.some(object => [...fields(object).keys()].some(key => leftKeys.has(key)))) {
+          return fail('ambiguous overlapping merge fields');
+        }
+      }
+      return [...left, ...right];
+    }
+    if (['passthrough', 'strict', 'strip', 'optional', 'nullable', 'nullish', 'describe', 'meta'].includes(method)) {
+      return objects(receiver, visited);
+    }
+    return fail(`unsupported schema method ${method}`);
+  };
+  const fields = (object: ts.CallExpression): Map<string, ts.Expression> => {
+    const shape = object.arguments[0];
+    if (!shape || !ts.isObjectLiteralExpression(shape)) return fail('unsupported object shape');
+    const result = new Map<string, ts.Expression>();
+    for (const property of shape.properties) {
+      if (!ts.isPropertyAssignment(property)) return fail('unsupported object property');
+      const name = propertyNameText(property.name);
+      if (name === undefined || result.has(name)) return fail('ambiguous object property');
+      result.set(name, property.initializer);
+    }
+    return result;
+  };
+  const base = (node: ts.Expression, visited = new Set<string>()): ts.CallExpression => {
+    if (ts.isParenthesizedExpression(node)) return base(node.expression, visited);
+    if (ts.isIdentifier(node)) {
+      if (visited.has(node.text)) return fail(`cyclic field alias ${node.text}`);
+      return base(declaration(node.text), new Set(visited).add(node.text));
+    }
+    if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression))
+      return fail('malformed arm field');
+    const receiver = node.expression.expression;
+    if (ts.isIdentifier(receiver) && receiver.text === 'z') return node;
+    if (receiver.getText(source) === 'z.iso' && node.expression.name.text === 'datetime') return node;
+    if (['min', 'max', 'length', 'nonempty', 'datetime', 'describe', 'meta'].includes(node.expression.name.text)) {
+      return base(receiver, visited);
+    }
+    return fail('optional or unsupported arm field');
+  };
+  const literal = (node: ts.Expression | undefined, value: string | boolean): boolean => {
+    if (!node) return false;
+    const call = base(node);
+    if ((call.expression as ts.PropertyAccessExpression).name.text !== 'literal') return false;
+    const argument = call.arguments[0];
+    return typeof value === 'string'
+      ? argument !== undefined && ts.isStringLiteral(argument) && argument.text === value
+      : argument?.kind === (value ? ts.SyntaxKind.TrueKeyword : ts.SyntaxKind.FalseKeyword);
+  };
+  const finiteStrings = (node: ts.Expression): string[] => {
+    const call = base(node);
+    const method = (call.expression as ts.PropertyAccessExpression).name.text;
+    const argument = call.arguments[0];
+    if (method === 'literal' && argument && ts.isStringLiteral(argument)) return [argument.text];
+    if ((method === 'enum' || method === 'union') && argument && ts.isArrayLiteralExpression(argument)) {
+      return argument.elements.flatMap(element => {
+        if (method === 'union') return finiteStrings(element as ts.Expression);
+        return ts.isStringLiteral(element) ? [element.text] : fail('malformed enum member');
+      });
+    }
+    return fail('unbounded continuation enum');
+  };
+  const expectDomain = (node: ts.Expression, expected: readonly string[]): void => {
+    const values = finiteStrings(node);
+    if (
+      values.length !== expected.length ||
+      new Set(values).size !== expected.length ||
+      values.some(value => !expected.includes(value))
+    )
+      fail('continuation enum domain changed');
+  };
+  const targets = new Set<ts.Expression>();
+  for (const object of objects(root)) {
+    const continuation = fields(object).get('purchase_continuation');
+    if (!continuation) continue;
+    const arms = objects(continuation).filter(arm => literal(fields(arm).get('kind'), 'legacy_create'));
+    if (arms.length > 1) return fail('ambiguous legacy_create arms');
+    for (const arm of arms) {
+      const properties = fields(arm);
+      for (const name of [
+        'continuation_token',
+        'continuation_expires_at',
+        'source_adcp_version',
+        'product_ids',
+        'losses',
+      ]) {
+        if (!properties.has(name)) return fail(`missing ${name}`);
+      }
+      if (!literal(properties.get('requires_explicit_acceptance'), true)) return fail('missing explicit acceptance');
+      for (const name of ['continuation_token', 'continuation_expires_at']) {
+        const scalar = base(properties.get(name)!);
+        const method = (scalar.expression as ts.PropertyAccessExpression).name.text;
+        if (method !== 'string' && !(name === 'continuation_expires_at' && method === 'datetime')) {
+          return fail(`malformed ${name}`);
+        }
+      }
+      expectDomain(properties.get('source_adcp_version')!, ['2.5', '3.0', '3.1']);
+      for (const name of ['product_ids', 'losses']) {
+        const array = base(properties.get(name)!);
+        if (!isZodArrayCall(array) || !array.arguments[0]) return fail(`malformed ${name}`);
+        if (
+          name === 'product_ids' &&
+          (base(array.arguments[0]).expression as ts.PropertyAccessExpression).name.text !== 'string'
+        ) {
+          return fail('malformed product ID');
+        }
+        if (name === 'losses')
+          expectDomain(array.arguments[0], [
+            'feed_version_not_atomic',
+            'pricing_version_not_atomic',
+            'mutation_idempotency_not_guaranteed',
+          ]);
+      }
+      // Refine after the complete use-site composition. Refining a shared
+      // object first would make a subsequent Zod .merge() throw at import.
+      targets.add(continuation);
+    }
   }
-  const block = content.slice(schemaStart, schemaEnd);
-  const armPattern =
-    /z\.object\(\{\n\s+kind: z\.literal\("legacy_create"\),[\s\S]*?requires_explicit_acceptance: z\.literal\(true\)\n\s+\}\)\.passthrough\(\)/g;
-  const matches = [...block.matchAll(armPattern)];
-  if (matches.length === 0) {
-    throw new Error('Could not locate the legacy_create purchase continuation response arm.');
-  }
+  if (targets.size === 0) return fail('missing source-owned continuation');
   const refineArm = (arm: string) => `${arm}.superRefine((value, ctx) => {
+            if (value?.kind !== "legacy_create") return;
             if (value.product_ids.length === 0) {
                 ctx.addIssue({ code: "custom", path: ["product_ids"], message: "product_ids must contain at least one entry" });
             }
@@ -1944,10 +2108,6 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
                 ctx.addIssue({ code: "custom", path: ["losses"], message: "AdCP 2.5 losses must contain mutation_idempotency_not_guaranteed" });
             }
         })`;
-  const corrected = block.replace(armPattern, refineArm);
-  if (!corrected.endsWith(';')) {
-    throw new Error('RequestProposalsResponseSchema has an unexpected generated terminator.');
-  }
   // Attach the source-schema invariants to whichever top-level expression
   // ts-to-zod emits. The old lossy type produced union(...).and(object(...));
   // while the materialized discriminated type correctly produces union(...);
@@ -1964,6 +2124,9 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
             if (present(field)) ctx.addIssue({ code: "custom", path: [field], message: \`\${field} is forbidden for this outcome\` });
         }
     };
+    if (value.status === "submitted" && (typeof value.task_id !== "string" || value.task_id.length === 0)) {
+        ctx.addIssue({ code: "custom", path: ["task_id"], message: "submitted responses require a non-empty task_id" });
+    }
     forbid(["refinement_applied", "pagination", "unchanged", "wholesale_feed_version"]);
     if (value.suggestions !== undefined && (value.suggestions.length === 0 || value.suggestions.some((suggestion: string) => suggestion.length === 0))) {
         ctx.addIssue({ code: "custom", path: ["suggestions"], message: "suggestions must contain non-empty strings" });
@@ -1977,7 +2140,7 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
         forbid(["reason", "suggestions", "purchase_continuation", "task_id"]);
     } else if (value.outcome === "products_available") {
         requireNonEmptyArray("products");
-        if (!present("purchase_continuation")) {
+        if (!present("purchase_continuation") || value.purchase_continuation === undefined) {
             ctx.addIssue({ code: "custom", path: ["purchase_continuation"], message: "purchase_continuation is required" });
         }
         forbid(["proposals", "reason", "suggestions", "task_id"]);
@@ -2014,8 +2177,15 @@ function postProcessLegacyPurchaseContinuationResponse(content: string): string 
         forbid(["proposals", "products", "incomplete", "purchase_continuation", "task_id"]);
     }
 });`;
-  const constrained = corrected.slice(0, -1) + rootRefinement;
-  return content.slice(0, schemaStart) + constrained + content.slice(schemaEnd);
+  const edits = [...targets].map(arm => ({
+    start: arm.getStart(source),
+    end: arm.end,
+    text: refineArm(arm.getText(source)),
+  }));
+  edits.push({ start: root.end, end: root.end, text: rootRefinement.slice(0, -1) });
+  return edits
+    .sort((a, b) => b.start - a.start)
+    .reduce((result, edit) => result.slice(0, edit.start) + edit.text + result.slice(edit.end), content);
 }
 
 /** Replace the lossy TS round-trip with Zod generated from the dereferenced canonical wire schema. */
@@ -6054,6 +6224,14 @@ async function generateZodSchemas() {
       if (Array.isArray(value)) return;
       const node = value as Record<string, any>;
       delete node.discriminator;
+      // Canonical proposals and targeting state are digest-bound snapshots.
+      // Parsing must not materialize annotation defaults (AdCP 3.3 added
+      // `clock: "elapsed"` to SLA windows), or a parsed proposal changes bytes
+      // and gains fields that older releases reject. A property schema that is
+      // itself named `default` is an object, so only primitive defaults go.
+      if (node.default === null || (node.default !== undefined && typeof node.default !== 'object')) {
+        delete node.default;
+      }
       if (node.properties && node.type === undefined) node.type = 'object';
       // json-schema-to-zod does not project draft-07 if/then/else. Rewrite
       // the logically equivalent boolean schema using the supported
@@ -6515,6 +6693,7 @@ export const __test__ = {
   postProcessPrimitiveIntersections,
   postProcessPrimitiveEnumExclusions,
   postProcessCompatibilityPurchaseCoordinatorInput,
+  postProcessLegacyPurchaseContinuationResponse,
   postProcessForPassthrough,
   postProcessTupleRestArrays,
   postProcessNonemptyArrays,

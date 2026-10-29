@@ -67,6 +67,11 @@ const KEYWORDS = new Set([
   'x-added-in',
   'x-entity',
   'x-extensible',
+  // AdCP 3.3 structural-bound advisories (capabilities_structural_bounds_required_in_4_0):
+  // SHOULD-level through 3.x and not validated, so verification ignores them like AJV does.
+  'x-max-items-4.0',
+  'x-max-length-4.0',
+  'x-max-properties-4.0',
   'x-pattern',
   'x-status',
 ]);

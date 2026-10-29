@@ -1,6 +1,6 @@
 # Migrating from SDK 16 to 17
 
-SDK 17 beta pins the signed AdCP `3.3.0-beta.0` release. Use the beta in
+SDK 17 beta pins the signed AdCP `3.3.0-beta.1` release. Use the beta in
 development and staging; production remains on SDK 16 and AdCP 3.2.
 
 ## Companion packages
@@ -105,7 +105,7 @@ request release. Existing cursor, account identity, and acknowledgement checks
 still apply.
 
 A `3.3.0` or `3.3` configuration pin does not select a beta. Use the exact
-`3.3.0-beta.0` bundle (wire alias `3.3-beta.0`); unavailable pins now produce a
+`3.3.0-beta.1` bundle (wire alias `3.3-beta.1`); unavailable pins now produce a
 short list of bundled release lines instead of every compatible patch.
 
 ## pnpm peer resolution
@@ -139,7 +139,7 @@ and [peer-dependency settings](https://pnpm.io/settings#dedupepeerdependents).
 
 The SDK packages the exact 3.3 beta schema and compliance bundle alongside
 maintained AdCP 3.2.7, 3.1.29 and 3.0.25 bundles. A seller must advertise
-`3.3-beta.0` (or its full bundle version, `3.3.0-beta.0`) before the buyer
+`3.3-beta.1` (or its full bundle version, `3.3.0-beta.1`) before the buyer
 selects that preview. A different beta, a moving `3.3-beta` alias, or a
 served-version echo alone does not establish support. The buyer can negotiate
 an older stable release the seller advertises. Missing or synthetic capability
@@ -150,6 +150,38 @@ evidence cannot authorize a preview request.
 server handlers are `mediaBuy.listCollections` and `mediaBuy.listProposals`,
 or optional methods on `MediaBuyLifecyclePlatform`. Their synchronous results
 use `outcome` and do not acquire a synthetic task `status` field.
+
+## AdCP 3.3.0-beta.1
+
+SDK 17 now pins AdCP `3.3.0-beta.1` and no longer packages or advertises
+`3.3.0-beta.0`. Preview negotiation is exact, so a beta.0 seller and a beta.1
+buyer settle on a stable release they share. Upgrade both sides together when
+you test preview-only features.
+
+- **Account requests (experimental `account.requests`).** `requestAccount()`
+  opens an account (`brand` + `operator`) or, with `account_id` plus fields,
+  requests a change. Send `revision` when changing `billing`, `billing_entity`
+  or `payment_terms`; a stale revision returns `CONFLICT`. A completed change
+  resolves with `resolution: 'updated'`. Send `request_id` to pick a candidate
+  from an `ambiguous` request. Read requests back with
+  `listAccounts({ include_requests: true })` or `request_ids`; requests page
+  through `requests_pagination` / `account_requests_pagination`, independent of
+  the account `pagination`. There is no `get_account_requests` task.
+  `sync_accounts` stays stable. Servers can register a raw
+  `accounts.requestAccount` handler; the decisioning platform (`definePlatform`)
+  has no `request_account` hook yet.
+- **Media-buy issues.** `reportMediaBuyIssue()` and `getMediaBuyIssue()` cover
+  `media_buy.issue_reporting`. Servers can register raw `mediaBuy` handlers.
+- **Reporting subscriptions (experimental `media_buy.reporting_subscriptions`).**
+  The `sync_principal` / `get_principal` `reporting_subscriptions` section,
+  `get_reporting_status` `subscription_coverage`, `configuration_tasks`, and
+  `account.authorization.authorized_at` are typed. The built-in principal
+  runtime does not implement subscriptions and answers a submitted
+  `reporting_subscriptions` section with `UNSUPPORTED_FEATURE`.
+- **Type changes.** `DemographicTargetingIntent.age` is optional because 3.3
+  adds gender-only targeting; narrow it before reading. Product
+  `publisher_properties` and `collections` may be empty arrays, which mean an
+  undisclosed roster rather than an empty one.
 
 ## Postgres replay store
 
@@ -268,6 +300,8 @@ Account verification applies to the selected request release. Unversioned caller
 The direct governance helpers and governance middleware retain their configured client protocol pin. For a stable governance agent, use a client configured with `adcpVersion: '3.2.7'`; `syncPlans` and `getPlanAuditLogs` also accept an explicit `wireAdcpVersion` in their task options. Per-agent negotiation for these direct governance paths remains follow-up work.
 
 AdCP 3.3 definition pins require revalidation against the current third-party published definitions at commitment time. This beta's synchronous standalone commercial-terms verifier cannot perform that source verification: it fails closed on definition pins, publisher format references, and any placement/collection/signal targeting. Use the seller-served stable 3.2.7 contract for existing snapshot-verification flows until pin verification is supported. It continues to compare ordinary 3.3 commercial snapshots and enforces collection-list uniqueness by reference identity.
+
+AdCP 3.3.0-beta.1 adds three snapshot rules that need data the snapshot does not carry. The verifier fails closed on purchase `installments[]` (experimental `media_buy.installment_selection`; membership is judged against the products' published installments) and on SLA windows that name a `business_calendar_id` (business-clock SLAs resolve against capability calendars). Elapsed-clock SLA windows verify normally. For `price_adjustments`, the accepted snapshot deliberately omits the discovery-time table, so the verifier checks schema validity and `pricing_option_id` identity but does not re-resolve `pricing.fixed_price`; a buyer holding the table must resolve it before accepting.
 
 For AdCP 3.0 buyers, `create_media_buy` and `update_media_buy` responses move
 `media_buy_status` back into lifecycle `status` before schema projection. A buy
