@@ -136,7 +136,9 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
         const pagination = step.sample_request.pagination;
         if (
           (pagination && typeof pagination === 'object' && 'cursor' in pagination) ||
-          step.sample_request.if_none_match !== undefined
+          ['if_none_match', 'if_wholesale_feed_version', 'if_pricing_version'].some(
+            field => step.sample_request?.[field] !== undefined
+          )
         ) {
           throw new Error(
             `[${storyboard.id}] ${step.id}: collect_product_pages starts with an unconditional first page, without a cursor`
