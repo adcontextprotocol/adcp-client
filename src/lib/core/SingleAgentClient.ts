@@ -1281,29 +1281,6 @@ const STANDARD_ADCP_TASK_NAMES = new Set<string>([
 
 const PRINCIPAL_IDENTITY_INPUT_FIELDS = ['buyer_agent_url', 'agent_url', 'principal_id', 'connection_id'] as const;
 
-/**
- * Endpoint discovery runs before the task request is sent, so mark its
- * failures `dispatched: false`. Aborts and timeouts are left as they are: the
- * caller owns the abort reason, and the object may be shared.
- */
-async function discoverBeforeDispatch<T>(discovery: Promise<T>, signal?: AbortSignal): Promise<T> {
-  try {
-    return await discovery;
-  } catch (error) {
-    if (
-      typeof error === 'object' &&
-      error !== null &&
-      !signal?.aborted &&
-      !isAbortOrTimeoutError(error) &&
-      !Object.prototype.hasOwnProperty.call(error, 'dispatched') &&
-      Object.isExtensible(error)
-    ) {
-      Object.defineProperty(error, 'dispatched', { value: false, enumerable: true, configurable: true });
-    }
-    throw error;
-  }
-}
-
 /** RFC 6901 pointer for a Zod issue path, `/` for the root as elsewhere in the SDK. */
 function zodPathToPointer(path: readonly PropertyKey[]): string {
   if (path.length === 0) return '/';
@@ -5908,7 +5885,7 @@ export class SingleAgentClient {
       throwIfAborted(options?.signal);
     }
 
-    const agent = await discoverBeforeDispatch(this.ensureEndpointDiscovered(options), options?.signal);
+    const agent = await this.ensureEndpointDiscovered(options);
     throwIfAborted(options?.signal);
 
     // Schema-driven pre-send validation runs on the unadapted v3 shape so
@@ -7721,7 +7698,7 @@ export class SingleAgentClient {
     negotiated?: NegotiatedAdcpRelease
   ): { params: any; driftLogs: Record<string, unknown>[] } {
     if (serverVersion !== 'v3') {
-      throw new VersionUnsupportedError(taskType, 'version', 'v2', this.agent.agent_uri);
+      throw new VersionUnsupportedError(taskType, 'version', 'v2', this.agent.agent_uri, { dispatched: false });
     }
     const driftLogs: Record<string, unknown>[] = [];
     let adapted = params;
@@ -9956,7 +9933,7 @@ export class SingleAgentClient {
     options: TaskOptions
   ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
     const scopeKey = this.config._reuseConfiguredDiscovery?.() ? this.getCapabilityEvidenceScope().scopeKey : undefined;
-    const agent = await discoverBeforeDispatch(this.ensureEndpointDiscovered(options), options.signal);
+    const agent = await this.ensureEndpointDiscovered(options);
     this.executor.validateRequest('get_adcp_capabilities', params);
     const result = await this.executor.executeTask<GetAdCPCapabilitiesResponse>(
       agent,
@@ -10788,7 +10765,7 @@ export class SingleAgentClient {
       if (this.config.requireV3ForMutations && requestUsesIdempotency(taskName, normalizedParams)) {
         await this.requireSupportedMajor(taskName, options);
       }
-      const agent = await discoverBeforeDispatch(this.ensureEndpointDiscovered(options), options?.signal);
+      const agent = await this.ensureEndpointDiscovered(options);
 
       // Schema-driven pre-send validation runs on the unadapted v3 shape so
       // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
@@ -13371,17 +13348,23 @@ export class SingleAgentClient {
         !isAdcpVersionSupported(this.resolvedAdcpVersion, supportedVersions) &&
         this.negotiateCallRelease(capabilities, options as TaskOptions | undefined) === undefined
       ) {
-        throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
+        throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri, {
+          dispatched: false,
+        });
       }
     } else {
       const expectedMajor = parseAdcpMajorVersion(this.resolvedAdcpVersion);
       const advertisedMajors = capabilities.majorVersions;
       if (!Number.isFinite(expectedMajor) || !advertisedMajors.includes(expectedMajor)) {
-        throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
+        throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri, {
+          dispatched: false,
+        });
       }
     }
     if (capabilities.idempotency?.replayTtlSeconds === undefined) {
-      throw new VersionUnsupportedError(taskType, 'idempotency', capabilities.version, this.agent.agent_uri);
+      throw new VersionUnsupportedError(taskType, 'idempotency', capabilities.version, this.agent.agent_uri, {
+        dispatched: false,
+      });
     }
     assertValidIdempotencyReplayTtlSeconds(capabilities.idempotency.replayTtlSeconds);
   }

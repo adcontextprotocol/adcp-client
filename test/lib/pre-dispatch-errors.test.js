@@ -5,16 +5,18 @@
  * A buyer that tracks seller health must tell "we refused to send it" from
  * "the seller failed" without matching message text. These tests pin the
  * request-validation error (class, fields, no submitted values, unchanged
- * message) and the marker on each pre-dispatch path that sets it.
+ * message), the marker on each local refusal that sets it, and its absence
+ * wherever the agent was contacted or the task was already sent.
  */
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
+const http = require('node:http');
+const net = require('node:net');
 
 const {
   AdCPClient,
   ADCPValidationError,
-  AuthenticationRequiredError,
   FeatureUnsupportedError,
   ProtocolClient,
   ProtocolFeatureUnsupportedError,
@@ -24,6 +26,8 @@ const {
   isPreDispatchError,
 } = require('../../dist/lib/index.js');
 const { validateOutgoingRequest } = require('../../dist/lib/validation/index.js');
+const { TaskExecutor } = require('../../dist/lib/core/TaskExecutor.js');
+const { MemoryStorage } = require('../../dist/lib/storage/MemoryStorage.js');
 
 const SENTINEL = 'sentinel-submitted-value-7f3a';
 
@@ -202,20 +206,47 @@ describe('RequestValidationError from schema-driven request validation (AJV)', (
   });
 });
 
-describe('dispatched: false on other pre-dispatch failures', () => {
-  test('the version check', async t => {
+describe('dispatched: false on local refusals', () => {
+  for (const [label, sellerCaps, reason] of [
+    ['no release on or below the client line', caps(['4.0']), 'version'],
+    ['no idempotency replay window', caps(['3.2'], { idempotency: undefined }), 'idempotency'],
+  ]) {
+    test(`the version check from known capabilities: ${label}`, async t => {
+      const calls = captureDispatch(t);
+      const client = makeClient(sellerCaps, { requireV3ForMutations: true });
+      client.ensureEndpointDiscovered = async () => client.agent;
+      const err = await client.createMediaBuy(mediaBuyRequest()).then(
+        () => assert.fail('expected a version error'),
+        e => e
+      );
+      assert.deepEqual(calls, []);
+      assert.ok(err instanceof VersionUnsupportedError, `got ${err?.constructor?.name}: ${err?.message}`);
+      assert.equal(err.reason, reason);
+      assert.equal(err.taskType, 'create_media_buy');
+      assert.equal(err.dispatched, false);
+      assert.equal(isPreDispatchError(err), true);
+    });
+  }
+
+  test('a v2 server version passed to the executor', async t => {
     const calls = captureDispatch(t);
-    const client = makeClient(caps(['4.0'], { majorVersions: [4] }), { requireV3ForMutations: true });
-    client.ensureEndpointDiscovered = async () => client.agent;
-    const err = await client.createMediaBuy(mediaBuyRequest()).then(
-      () => assert.fail('expected a version error'),
-      e => e
-    );
+    const executor = new TaskExecutor();
+    const err = await executor
+      .executeTask(
+        { id: 'a', name: 'a', agent_uri: 'https://seller.example/mcp', protocol: 'mcp' },
+        'get_products',
+        {},
+        undefined,
+        {},
+        'v2'
+      )
+      .then(
+        () => assert.fail('expected a version error'),
+        e => e
+      );
     assert.deepEqual(calls, []);
-    assert.ok(err instanceof VersionUnsupportedError, `got ${err?.constructor?.name}: ${err?.message}`);
+    assert.ok(err instanceof VersionUnsupportedError);
     assert.equal(err.dispatched, false);
-    assert.equal(isPreDispatchError(err), true);
-    await assert.rejects(client.requireSupportedMajor('create_media_buy'), e => e.dispatched === false);
   });
 
   test('the release and feature gates', async t => {
@@ -232,54 +263,17 @@ describe('dispatched: false on other pre-dispatch failures', () => {
     assert.equal(new FeatureUnsupportedError(['audience_targeting'], []).dispatched, false);
   });
 
-  test('endpoint discovery on a typed task method', async t => {
+  test('executeTask throws the marked validation error in strict request mode', async t => {
     const calls = captureDispatch(t);
-    const client = makeClient(caps(['3.2']), {}, 'https://seller.example');
-    client.discoverMCPEndpoint = async () => {
-      throw new Error('no MCP endpoint answered at https://seller.example');
-    };
-    const err = await client.getProducts({ buying_mode: 'brief', brief: 'shoes' }).then(
-      () => assert.fail('expected a discovery error'),
+    const client = makeClient(caps(['3.2']), { validation: { requests: 'strict', responses: 'off' } });
+    client.ensureEndpointDiscovered = async () => client.agent;
+    const err = await client.executeTask('get_products', { buying_mode: SENTINEL }).then(
+      result => assert.fail(`expected a throw, got ${JSON.stringify(result)}`),
       e => e
     );
     assert.deepEqual(calls, []);
-    assert.match(err.message, /no MCP endpoint answered/);
+    assert.ok(err instanceof RequestValidationError, `got ${err?.constructor?.name}: ${err?.message}`);
     assert.equal(err.dispatched, false);
-    assert.equal(isPreDispatchError(err), true);
-  });
-
-  test('endpoint discovery on executeTask', async t => {
-    const calls = captureDispatch(t);
-    const client = makeClient(caps(['3.2']), {}, 'https://seller.example');
-    client.discoverMCPEndpoint = async () => {
-      throw new AuthenticationRequiredError('https://seller.example');
-    };
-    const err = await client.executeTask('get_products', { buying_mode: 'brief', brief: 'shoes' }).then(
-      () => assert.fail('expected a discovery error'),
-      e => e
-    );
-    assert.deepEqual(calls, []);
-    assert.ok(err instanceof AuthenticationRequiredError, `got ${err?.constructor?.name}: ${err?.message}`);
-    assert.equal(err.dispatched, false);
-  });
-
-  test('a caller abort during discovery is left unmarked', async t => {
-    captureDispatch(t);
-    const controller = new AbortController();
-    const reason = new Error('caller cancelled');
-    const client = makeClient(caps(['3.2']), {}, 'https://seller.example');
-    client.discoverMCPEndpoint = async () => {
-      controller.abort(reason);
-      throw reason;
-    };
-    const err = await client
-      .getProducts({ buying_mode: 'brief', brief: 'shoes' }, undefined, { signal: controller.signal })
-      .then(
-        () => assert.fail('expected an abort'),
-        e => e
-      );
-    assert.equal(err.dispatched, undefined);
-    assert.equal(Object.hasOwn(reason, 'dispatched'), false);
   });
 
   test('isPreDispatchError checks the property, not the class', () => {
@@ -289,5 +283,109 @@ describe('dispatched: false on other pre-dispatch failures', () => {
     assert.equal(isPreDispatchError(Object.assign(new Error('sent'), { dispatched: true })), false);
     assert.equal(isPreDispatchError(undefined), false);
     assert.equal(isPreDispatchError('dispatched: false'), false);
+  });
+});
+
+/** A local port with nothing listening on it. */
+async function refusedPort() {
+  const server = net.createServer();
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  await new Promise(resolve => server.close(resolve));
+  return port;
+}
+
+/** A seller that answers every request with 503. */
+async function unavailableSeller(t) {
+  const server = http.createServer((req, res) => {
+    req.resume();
+    res.writeHead(503, { 'content-type': 'text/plain' });
+    res.end('service unavailable');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  return server.address().port;
+}
+
+function liveClient(port, config) {
+  return new SingleAgentClient(
+    { id: 'down-seller', name: 'Down seller', agent_uri: `http://127.0.0.1:${port}/mcp`, protocol: 'mcp' },
+    config
+  );
+}
+
+describe('no dispatched marker where the agent was contacted or the task was sent', () => {
+  const configs = [
+    ['default config', {}],
+    ['validateFeatures: false', { validateFeatures: false }],
+  ];
+  const calls = [
+    ['getProducts', client => client.getProducts({ buying_mode: 'brief', brief: 'shoes' })],
+    ['createMediaBuy', client => client.createMediaBuy(mediaBuyRequest())],
+  ];
+  const sellers = [
+    ['a seller refusing connections', async () => refusedPort()],
+    ['a seller answering 503', async t => unavailableSeller(t)],
+  ];
+
+  for (const [sellerName, seller] of sellers) {
+    for (const [configName, config] of configs) {
+      for (const [method, call] of calls) {
+        test(`${method} against ${sellerName} under ${configName}`, async t => {
+          const client = liveClient(await seller(t), config);
+          const outcome = await call(client).then(
+            result => ({ result }),
+            error => ({ error })
+          );
+          const failure = outcome.error ?? outcome.result;
+          assert.ok(outcome.error || outcome.result?.success === false, 'the call must fail');
+          assert.equal(isPreDispatchError(failure), false, `marked: ${failure?.message ?? failure?.error}`);
+          assert.equal(failure?.dispatched, undefined);
+        });
+      }
+    }
+  }
+
+  test('getCapabilities() rejecting a v2 seller', async t => {
+    t.mock.method(console, 'warn', () => {});
+    const client = new SingleAgentClient({
+      id: 'v2-seller',
+      name: 'v2 seller',
+      agent_uri: 'https://seller.example/mcp',
+      protocol: 'mcp',
+    });
+    const sent = [];
+    client.getAgentInfo = async () => ({ tools: [{ name: 'get_adcp_capabilities' }] });
+    client.ensureEndpointDiscovered = async () => client.agent;
+    client.executor.executeTask = async (_agent, task) => {
+      sent.push(task);
+      return { success: true, status: 'completed', data: { adcp: { major_versions: [2] } } };
+    };
+    const err = await client.getCapabilities().then(
+      () => assert.fail('expected a version error'),
+      e => e
+    );
+    assert.deepEqual(sent, ['get_adcp_capabilities'], 'the capabilities request was sent');
+    assert.ok(err instanceof VersionUnsupportedError, `got ${err?.constructor?.name}: ${err?.message}`);
+    assert.equal(err.dispatched, undefined);
+    assert.equal(isPreDispatchError(err), false);
+  });
+
+  test('refusing to resume a deferred task', async () => {
+    const storage = new MemoryStorage({ autoCleanup: false });
+    const token = 'B'.repeat(43);
+    await storage.putIfAbsent(
+      token,
+      { serverVersion: 'v2', taskName: 'create_media_buy', expiresAt: Date.now() + 60000 },
+      60
+    );
+    const executor = new TaskExecutor({ deferredStorage: storage });
+    const err = await executor.resumeDeferredTask(token, {}).then(
+      () => assert.fail('expected a version error'),
+      e => e
+    );
+    assert.ok(err instanceof VersionUnsupportedError, `got ${err?.constructor?.name}: ${err?.message}`);
+    assert.equal(err.dispatched, undefined);
+    assert.equal(isPreDispatchError(err), false);
   });
 });

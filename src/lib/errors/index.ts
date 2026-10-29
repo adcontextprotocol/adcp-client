@@ -252,18 +252,24 @@ export class ValidationError extends ADCPError {
 }
 
 /**
- * Whether an error marks a request the client refused before sending it.
+ * Whether the SDK refused this request locally, before sending any of it.
  *
- * Errors raised before dispatch carry `dispatched: false`: the task's request
- * never left this process, so the agent cannot have acted on it. This checks
- * the property, not the class, so it also works when the error crosses a
- * bundle boundary where `instanceof` fails.
+ * Such errors carry `dispatched: false`: no bytes of the task's request left
+ * this process, so the agent cannot have acted on it, and the failure says
+ * nothing about the agent's health. The SDK sets the marker only on refusals it
+ * decides by itself: request schema validation, the release and feature gates,
+ * and the version refusals that follow already-known capabilities.
  *
- * Endpoint discovery runs before dispatch, and its probe can reach the agent.
- * So `dispatched: false` means this request changed nothing on the agent. It
- * does not mean the agent is healthy.
+ * Failures that involve contacting the agent are never marked, even when the
+ * task itself was not sent: endpoint discovery, OAuth token fetches, and the
+ * `get_adcp_capabilities` fetch (including its v2 rejection). A refused
+ * connection, a 5xx or a 429 there is an agent failure. Refusing to resume a
+ * deferred task is not marked either, because the original task was sent.
+ *
+ * This checks the property, not the class, so it also works when the error
+ * crosses a bundle boundary where `instanceof` fails.
  */
-export function isPreDispatchError(error: unknown): error is Error & { readonly dispatched: false } {
+export function isPreDispatchError(error: unknown): error is { readonly dispatched: false } {
   return typeof error === 'object' && error !== null && (error as { dispatched?: unknown }).dispatched === false;
 }
 
@@ -704,7 +710,10 @@ export function mapSdkErrorCodeToProtocolErrorCode(code: string): string | undef
  */
 export class FeatureUnsupportedError extends ADCPError {
   readonly code: string = 'FEATURE_UNSUPPORTED';
-  /** Thrown by the client's feature and version gates; the request was not sent. */
+  /**
+   * Every construction site is a local gate that runs before the task is sent.
+   * A future site that throws after a send must not use this class as is.
+   */
   readonly dispatched = false as const;
 
   constructor(
@@ -997,6 +1006,14 @@ function buildModeMismatchRecovery(details: ActionNotAllowedErrorDetails): Actio
  */
 export type VersionUnsupportedReason = 'version' | 'idempotency' | 'synthetic';
 
+export interface VersionUnsupportedErrorOptions {
+  /**
+   * Pass `false` only where no bytes of the task's request left the process.
+   * See {@link isPreDispatchError}.
+   */
+  dispatched?: false;
+}
+
 /**
  * Error thrown when a mutating call would dispatch to a seller whose
  * capabilities cannot be corroborated as v3. Provides an explicit
@@ -1008,20 +1025,29 @@ export type VersionUnsupportedReason = 'version' | 'idempotency' | 'synthetic';
  */
 export class VersionUnsupportedError extends ADCPError {
   readonly code = 'VERSION_UNSUPPORTED';
-  /** Thrown by the client's version check; the request was not sent. */
-  readonly dispatched = false as const;
+  /**
+   * `false` when the SDK refused the task locally from already-known
+   * capabilities and sent nothing for it. Absent when the refusal came from a
+   * capabilities response the agent just returned, or when it refuses to resume
+   * a task that was already sent. See {@link isPreDispatchError}.
+   */
+  declare readonly dispatched?: false;
 
   constructor(
     public readonly taskType: string,
     public readonly reason: VersionUnsupportedReason,
     public readonly actualVersion: 'v2' | 'v3',
-    public readonly agentUrl?: string
+    public readonly agentUrl?: string,
+    options: VersionUnsupportedErrorOptions = {}
   ) {
     super(
       (taskType === 'get_adcp_capabilities'
         ? 'Cannot discover supported AdCP capabilities: '
         : `Refusing to dispatch task '${taskType}': `) + VersionUnsupportedError.explain(reason, actualVersion)
     );
+    if (options.dispatched === false) {
+      Object.defineProperty(this, 'dispatched', { value: false, enumerable: true });
+    }
   }
 
   private static explain(reason: VersionUnsupportedReason, actualVersion: 'v2' | 'v3'): string {

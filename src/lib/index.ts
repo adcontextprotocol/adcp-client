@@ -783,6 +783,7 @@ export type {
   ClientPreflightAdcpErrorRecovery,
   FeatureUnsupportedErrorOptions,
   ProtocolFeatureUnsupportedErrorOptions,
+  VersionUnsupportedErrorOptions,
   ActionNotAllowedErrorDetails,
   ActionNotAllowedReasonValue,
   ActionNotAllowedAttemptedAction,

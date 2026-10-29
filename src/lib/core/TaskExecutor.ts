@@ -1372,7 +1372,8 @@ export class TaskExecutor {
     beforeProtocolDispatch?: BeforeProtocolDispatchHook<T>,
     deferredClientContext?: unknown
   ): Promise<TaskResult<T>> {
-    if (serverVersion === 'v2') throw new VersionUnsupportedError(taskName, 'version', 'v2', agent.agent_uri);
+    if (serverVersion === 'v2')
+      throw new VersionUnsupportedError(taskName, 'version', 'v2', agent.agent_uri, { dispatched: false });
     const effectiveServerVersion = serverVersion ?? 'v3';
     this.lastKnownServerVersion = effectiveServerVersion;
     // Own the request graph before the first awaited activity/governance

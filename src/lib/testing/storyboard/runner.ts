@@ -9536,8 +9536,8 @@ async function executeStep(
   const unstructuredStepError = taskResult?.error ?? (taskResult === undefined ? stepResult.error : undefined);
   if (step.expect_error && !taskResult?.data && unstructuredStepError) {
     // Classify by the structural marker the SDK sets on a local schema
-    // refusal. The message match stays for clients that predate the marker
-    // and for paths that flatten the error into a TaskResult string.
+    // refusal. The message match stays for injected or older clients that
+    // throw without the marker or report the refusal as a TaskResult string.
     const localSchemaRejection =
       step.negative_path !== 'payload_well_formed' &&
       ((taskResult === undefined &&
