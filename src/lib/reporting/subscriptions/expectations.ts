@@ -10,6 +10,7 @@ import type { ReportingSubscriptionDestinationMethodV1 } from './selection';
 /**
  * The coverage function's version records from the seller readback plus the buyer's own
  * records of each version's configuration (the readback carries only the current one).
+ * Pass the readback's `inactive_intervals` to `expectedSubscriptionPeriods` unchanged.
  */
 export function reportingSubscriptionVersionRecordsV1(input: {
   state: ReportingSubscriptionState;
@@ -17,8 +18,6 @@ export function reportingSubscriptionVersionRecordsV1(input: {
   configurations: Readonly<Record<number, ReportingSubscription>>;
   /** Pattern and transport of the destination each version named. */
   destinationMethods?: Readonly<Record<number, ReportingSubscriptionDestinationMethodV1>>;
-  /** In-place deactivations the buyer observed and later reversed. */
-  inactiveIntervals?: ReadonlyArray<{ subscription_version: number; from: string; until?: string }>;
 }): ReportingSubscriptionVersionRecordV1[] {
   const { state } = input;
   const entries = [
@@ -42,16 +41,12 @@ export function reportingSubscriptionVersionRecordsV1(input: {
         `No recorded configuration for ${state.subscription_id} version ${entry.version}; keep every version you send`
       );
     }
-    const intervals = (input.inactiveIntervals ?? [])
-      .filter(item => item.subscription_version === entry.version)
-      .map(({ from, until }) => ({ from, ...(until !== undefined ? { until } : {}) }));
     const method = input.destinationMethods?.[entry.version];
     return {
       subscription_version: entry.version,
       accepted_at: entry.accepted_at,
       ...(entry.superseded_at !== undefined ? { superseded_at: entry.superseded_at } : {}),
       ...(entry.deactivated_at !== undefined ? { deactivated_at: entry.deactivated_at } : {}),
-      ...(intervals.length > 0 ? { inactive_intervals: intervals } : {}),
       configuration: structuredClone({
         ...configuration,
         active: entry.deactivated_at === undefined ? true : false,

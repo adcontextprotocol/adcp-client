@@ -100,7 +100,7 @@ describe('reporting subscriptions on PostgreSQL', { skip: !DATABASE_URL && 'DATA
           schedule: { period_duration: 'P1D', alignment: 'utc', delivery_sla: 'PT6H' },
           supported_finality: ['official'],
           reconciliation_mode: 'delivery_only',
-          dimensions: ['package'],
+          standard_dimensions: ['package'],
         },
       ],
       statusRetentionDays: 30,
