@@ -485,3 +485,36 @@ for (const field of ['if_wholesale_feed_version', 'if_pricing_version']) {
     );
   });
 }
+
+test('AdCP 3.1 official SDK transport preserves legacy products across all pages', async () => {
+  const { ENDPOINT, transport } = require('../helpers/fixture-discovery-seller.js');
+  const io = transport([], {
+    capabilities: () => ({
+      status: 'completed',
+      adcp: { major_versions: [3], supported_versions: ['3.1'], idempotency: { supported: false } },
+      supported_protocols: ['media_buy'],
+      media_buy: { buying_modes: ['brief', 'wholesale'], features: { canonical_creatives: false } },
+    }),
+    read: request => (request.pagination?.cursor ? page(['target']) : page(['first'], 'legacy-next')),
+  });
+  const result = await runStoryboard(ENDPOINT, storyboard(), { ...io.options, adcpVersion: '3.1.29' });
+  assert.equal(result.overall_passed, true, JSON.stringify(result));
+  const step = result.phases.find(phase => phase.phase_id === 'discovery').steps[0];
+  const requests = io.calls.filter(call => call.task === 'get_products').map(call => call.request);
+  assert.deepEqual(
+    requests.map(request => request.pagination.cursor),
+    [undefined, 'legacy-next']
+  );
+  assert.ok(requests.every(request => request.ext?.adcp?.creative_wire === undefined));
+  const selected = step.product_page_collection.logical_response.products[1];
+  assert.equal(selected.format_ids[0].id, 'fmt-1');
+  assert.equal(selected.format_options, undefined);
+  assert.equal(selected.pricing_options[0].currency, 'USD');
+  assert.equal(step.product_page_collection.pages[1].schema_validated, true);
+  assert.equal(result.strict_validation_summary.checked, 2);
+  assert.ok(
+    step.validations
+      .filter(validation => validation.check === 'response_schema')
+      .every(validation => validation.schema_id.includes('/3.1.29/'))
+  );
+});
