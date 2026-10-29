@@ -583,6 +583,7 @@ export interface DiscoveryExchange {
 export interface DiscoveryCatalog {
   products: Array<Record<string, unknown>>;
   firstPage: ProductPageObservation;
+  errors: unknown[];
   evidence: { page_count: number; product_count: number; cursors: string[]; restart_count?: number };
   /** Per-page exchanges, in request order. */
   exchanges: DiscoveryExchange[];
@@ -1565,6 +1566,7 @@ export async function collectWholesaleProductPages(
     ((request: Record<string, unknown>) =>
       executeStoryboardTask(client, 'get_products', request, { signal: options.signal }));
   const products: Array<Record<string, unknown>> = [];
+  const errors: unknown[] = [];
   const seenProductIds = new Set<string>();
   const cursors: string[] = [];
   const seenCursors = new Set<string>();
@@ -1837,6 +1839,7 @@ export async function collectWholesaleProductPages(
       }
       restarts++;
       products.length = 0;
+      errors.length = 0;
       seenProductIds.clear();
       cursors.length = 0;
       seenCursors.clear();
@@ -1849,6 +1852,16 @@ export async function collectWholesaleProductPages(
     }
     feedIdentity = identity;
     firstPage ??= observation;
+    if (Array.isArray(result.data.errors)) {
+      if (errors.length + result.data.errors.length > 100_000) {
+        return {
+          ok: false,
+          error: 'fixture discovery exceeded the 100,000-advisory safety limit',
+          exchange: failedExchange,
+        };
+      }
+      for (const error of result.data.errors) errors.push(error);
+    }
     const pageProducts = result.data.products;
     if (pageProducts !== undefined && !Array.isArray(pageProducts)) {
       return {
@@ -1915,6 +1928,7 @@ export async function collectWholesaleProductPages(
     catalog: {
       products,
       firstPage: firstPage!,
+      errors,
       evidence: {
         page_count: pageCount,
         product_count: products.length,

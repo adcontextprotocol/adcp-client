@@ -518,3 +518,65 @@ test('AdCP 3.1 official SDK transport preserves legacy products across all pages
       .every(validation => validation.schema_id.includes('/3.1.29/'))
   );
 });
+
+const advisory = code => ({ code, source: 'producer', message: 'Product format advisory' });
+const advisoryCheck = {
+  check: 'field_contains',
+  path: 'errors[*]',
+  value: { code: 'FORMAT_DECLARATION_DIVERGENT', source: 'producer' },
+};
+
+test('an advisory returned only after page one is visible to logical authored checks', async () => {
+  const warning = advisory('FORMAT_DECLARATION_DIVERGENT');
+  const { result, step } = await run(
+    [page(['first'], 'next'), page(['target'], undefined, 'feed-v1', { errors: [warning] })],
+    { validations: [advisoryCheck] }
+  );
+  assert.equal(result.overall_passed, true, JSON.stringify(step));
+  assert.deepEqual(step.product_page_collection.logical_response.errors, [warning]);
+  assert.equal(step.response.errors, undefined);
+  assert.equal(step.response_record.payload.errors, undefined);
+  assert.deepEqual(step.product_page_collection.pages[1].response.payload.errors, [warning]);
+  assert.equal(
+    step.validations.find(validation => validation.check === 'field_contains').json_pointer,
+    '/product_page_collection/logical_response/errors/*'
+  );
+});
+
+test('advisories past retained receipt bodies are still collected and checked', async () => {
+  const warning = advisory('FORMAT_DECLARATION_DIVERGENT');
+  const { result, step } = await run(
+    (_request, index) =>
+      page(
+        [`product-${index}`],
+        index < 17 ? `cursor-${index}` : undefined,
+        'feed-v1',
+        index === 16 ? { errors: [warning] } : {}
+      ),
+    { validations: [advisoryCheck] }
+  );
+  assert.equal(result.overall_passed, true);
+  assert.equal(step.product_page_collection.pages.length, 18);
+  assert.match(step.product_page_collection.pages[16].response.payload.response_not_retained, /retention budget/);
+  assert.deepEqual(step.product_page_collection.logical_response.errors, [warning]);
+});
+
+test('restarts discard advisories from abandoned products and the triggering changed page', async () => {
+  const warning = advisory('FORMAT_DECLARATION_DIVERGENT');
+  const old = advisory('ABANDONED_OLD_FEED');
+  const changed = advisory('DISCARDED_CHANGED_PAGE');
+  const { result, step } = await run(
+    [
+      page(['old'], 'next', 'old-feed', { errors: [old] }),
+      page(['changed'], undefined, 'new-feed', { errors: [changed] }),
+      page(['fresh'], 'fresh-next', 'new-feed'),
+      page(['target'], undefined, 'new-feed', { errors: [warning] }),
+    ],
+    { validations: [advisoryCheck] }
+  );
+  assert.equal(result.overall_passed, true);
+  assert.deepEqual(step.product_page_collection.logical_response.errors, [warning]);
+  assert.deepEqual(step.product_page_collection.pages[0].response.payload.errors, [old]);
+  assert.deepEqual(step.product_page_collection.pages[1].response.payload.errors, [changed]);
+  assert.equal(step.response.errors, undefined);
+});

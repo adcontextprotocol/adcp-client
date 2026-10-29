@@ -9419,6 +9419,7 @@ async function executeStep(
         ? {
             ...(collection.catalog.firstPage.result!.data as Record<string, unknown>),
             products: collection.catalog.products,
+            ...(collection.catalog.errors.length > 0 && { errors: collection.catalog.errors }),
           }
         : undefined;
       if (logical) delete logical.pagination;

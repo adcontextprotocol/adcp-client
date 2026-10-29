@@ -28,11 +28,15 @@ runner preserves account, filters, fields, context, idempotency key, extensions,
 and the authored page size on each continuation. It follows every cursor,
 validates every response, rejects duplicate identities and broken cursors, and
 restarts when the feed identity changes. It permits at most three restarts,
-1,000 physical requests, and 100,000 products. Exhausting a budget fails the
+1,000 physical requests, 100,000 products, and 100,000 advisory errors. Exhausting a budget fails the
 logical read and never publishes a successful partial snapshot.
 
 Authored field checks and context captures use
-`product_page_collection.logical_response`. The ordinary `response` and
+`product_page_collection.logical_response`. Its products and advisory errors
+combine all pages of the final stable enumeration, including pages beyond the
+response-retention limit. A restart discards their abandoned counterparts. Other
+envelope fields are representative metadata from the first stable page; this
+feature does not merge arbitrary response fields or extension definitions. The ordinary `response` and
 `response_record` retain an actual physical page; they never masquerade as a
 merged seller response. Each page has its own request, response, extraction,
 schema disposition, and restart number under `product_page_collection.pages`.
