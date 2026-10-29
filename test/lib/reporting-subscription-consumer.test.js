@@ -203,6 +203,54 @@ describe('buyer helpers', () => {
     );
   });
 
+  test('reportingSubscriptionVersionRecordsV1 orders newest-first prior_versions oldest first', () => {
+    const configurations = {
+      1: subscription(),
+      2: subscription({ subscription_version: 2, exclude_account_ids: ['x'] }),
+      3: subscription({ subscription_version: 3, exclude_account_ids: ['y'] }),
+    };
+    const state = {
+      subscription_id: 'analytics-daily',
+      subscription_version: 3,
+      state: 'active',
+      accepted_at: '2026-11-06T00:00:00.000Z',
+      prior_versions: [
+        { subscription_version: 2, accepted_at: '2026-11-04T00:00:00.000Z', superseded_at: '2026-11-06T00:00:00.000Z' },
+        { subscription_version: 1, accepted_at: '2026-11-01T00:00:00.000Z', superseded_at: '2026-11-04T00:00:00.000Z' },
+      ],
+      configuration: configurations[3],
+    };
+    const versions = reportingSubscriptionVersionRecordsV1({ state, configurations });
+    assert.deepEqual(
+      versions.map(version => [version.subscription_version, version.accepted_at, version.superseded_at]),
+      [
+        [1, '2026-11-01T00:00:00.000Z', '2026-11-04T00:00:00.000Z'],
+        [2, '2026-11-04T00:00:00.000Z', '2026-11-06T00:00:00.000Z'],
+        [3, '2026-11-06T00:00:00.000Z', undefined],
+      ]
+    );
+    assert.deepEqual(versions[1].configuration.exclude_account_ids, ['x']);
+    // The records drive cutovers: each period belongs to the version in force when it started.
+    const owed = expectedSubscriptionPeriods({
+      subscription_id: 'analytics-daily',
+      versions,
+      account: { account_id: ACCOUNT_ID, grants: [{ authorized_at: '2026-10-01T00:00:00Z' }] },
+      buys: [{ ...BUY, end_time: '2026-11-08T00:00:00Z' }],
+      offerings: [OFFERING],
+      now: '2026-11-10T00:00:00Z',
+    });
+    assert.deepEqual(
+      owed.map(row => [row.subscription_version, row.period_start.slice(0, 10)]),
+      [
+        [1, '2026-11-03'],
+        [2, '2026-11-04'],
+        [2, '2026-11-05'],
+        [3, '2026-11-06'],
+        [3, '2026-11-07'],
+      ]
+    );
+  });
+
   test('subscriptionExpectedReportingPeriodsV1 maps owed obligations onto expected periods', () => {
     const obligations = groupExpectedSubscriptionPeriodsV1(
       expectedSubscriptionPeriods({
