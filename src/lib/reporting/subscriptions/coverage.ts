@@ -12,11 +12,13 @@
  *
  * 1. Each confirmed buy and each offering its packages resolve to under the version's
  *    selector is owed the complete periods of that offering's published schedule that
- *    start on or after the first boundary at or after the latest of the version's
- *    `accepted_at`, the buy's `confirmed_at`, and the account's `authorized_at`;
+ *    start on or after the first boundary at or after the later of the version's
+ *    `accepted_at` and the account's `authorized_at`, and that end after the buy's
+ *    `confirmed_at` (so the period in which the buy is confirmed is owed in full);
  * 2. and that overlap the flight from `start_time` to the stop time, the earliest of
  *    `end_time`, `canceled_at` and `completed_at`, with flight values taken as of the
- *    period's `scope_resolved_at` (its end). Periods are never clipped.
+ *    period's `scope_resolved_at` (its end). A flight whose stop is at or before its start
+ *    owes nothing. Periods are never clipped.
  * 3. Every change at an instant T that hands periods from an outgoing schedule to an
  *    incoming one (a new version, deactivation, a resolution change, an account timezone
  *    change) is a cutover: the outgoing schedule owes its periods that start before T in
@@ -329,15 +331,16 @@ export function expectedSubscriptionPeriods(input: ExpectedSubscriptionPeriodsIn
 }
 
 /**
- * The start rule, kept in one place: the first boundary at or after the latest of the
- * cutover handoff (the version's `accepted_at`, or E after a cutover) and the buy's
- * `confirmed_at`. The account's `authorized_at` term is applied per authorization chain in
- * `authorized`; ceil is monotone, so the combination is the first boundary at or after the
- * latest of the three. Owner decision pending on whether the period containing
- * `confirmed_at` is owed: if so, the confirmed term becomes `calendar.floor(confirmedAt)`.
+ * The start rule, kept in one place (adcp#8593): the first boundary at or after the cutover
+ * handoff (the version's `accepted_at`, or E after a cutover), and no period ending at or
+ * before the buy's `confirmed_at`. A period ends after `confirmed_at` exactly when it starts
+ * at or after the last boundary at or before it, so the period in which the buy is confirmed
+ * is owed in full. The account's `authorized_at` term is applied per authorization chain in
+ * `authorized`; ceil is monotone, so together the start bound is the first boundary at or
+ * after the later of `accepted_at` and `authorized_at`.
  */
 function firstOwedBoundary(calendar: ReportingPeriodCalendarV1, handoff: number, confirmedAt: number): number {
-  return Math.max(calendar.ceil(handoff), calendar.ceil(confirmedAt));
+  return Math.max(calendar.ceil(handoff), calendar.floor(confirmedAt));
 }
 
 /** Group owed periods into the obligations that must carry them, with frozen `media_buy_ids`. */

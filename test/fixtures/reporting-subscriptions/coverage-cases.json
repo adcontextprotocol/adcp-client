@@ -1,9 +1,9 @@
 {
-  "$comment": "Cross-SDK parity table for expectedSubscriptionPeriods (AdCP 3.3 media_buy.reporting_subscriptions), conforming to adcontextprotocol/adcp#8585 and #8588 (sub-daily local periods). Each case gives expected_obligations (the rows grouped by version, offering and period, with byte-sorted media_buy_ids) and, where the input needs data no AdCP response carries, non_wire_inputs. Each case gives the input and the exact owed periods (or expected_error). Compare instants, not strings: the TypeScript SDK emits toISOString() form. Expected rows are hand-derived from the spec rule. subscription_id, account_id and report_definition_id are omitted from expected rows; they are input.subscription_id, input.account.account_id and the offering's report_definition_id. Rows are ordered by period_start, subscription_version, offering_id and media_buy_id (byte order).",
+  "$comment": "Cross-SDK parity table for expectedSubscriptionPeriods (AdCP 3.3 media_buy.reporting_subscriptions), conforming to adcontextprotocol/adcp#8585, #8588 (sub-daily local periods) and #8593 (the start bound is the later of accepted_at and authorized_at; a buy is owed every period ending after its confirmed_at). Each case gives expected_obligations (the rows grouped by version, offering and period, with byte-sorted media_buy_ids) and, where the input needs data no AdCP response carries, non_wire_inputs. Each case gives the input and the exact owed periods (or expected_error). Compare instants, not strings: the TypeScript SDK emits toISOString() form. Expected rows are hand-derived from the spec rule. subscription_id, account_id and report_definition_id are omitted from expected rows; they are input.subscription_id, input.account.account_id and the offering's report_definition_id. Rows are ordered by period_start, subscription_version, offering_id and media_buy_id (byte order).",
   "cases": [
     {
       "name": "baseline",
-      "rule": "Owed from the first boundary at or after max(accepted_at 11-01T12, confirmed_at 11-02T15, authorized_at 10-01) = 11-03, through the period containing the stop time.",
+      "rule": "adcp#8593: the start bound is the first boundary at or after max(accepted_at 11-01T12, authorized_at 10-01) = 11-02; owed are the periods from it that end after confirmed_at 11-02T15 and overlap the flight (11-03 on), through the period containing the stop time.",
       "input": {
         "subscription_id": "analytics-daily",
         "versions": [
@@ -128,7 +128,7 @@
     },
     {
       "name": "mid-period confirmed_at",
-      "rule": "confirmed_at 11-03T10 falls inside the first flight day: coverage starts at the next boundary, 11-04, though the flight began 11-03.",
+      "rule": "adcp#8593: confirmed_at 11-03T10 falls inside the first flight day. That period ends after confirmed_at, so it is owed in full; confirmed_at no longer moves the start to the next boundary.",
       "input": {
         "subscription_id": "analytics-daily",
         "versions": [
@@ -209,6 +209,13 @@
           "subscription_version": 1,
           "media_buy_id": "mb_1",
           "offering_id": "off_a_pkg",
+          "period_start": "2026-11-03T00:00:00Z",
+          "period_end": "2026-11-04T00:00:00Z"
+        },
+        {
+          "subscription_version": 1,
+          "media_buy_id": "mb_1",
+          "offering_id": "off_a_pkg",
           "period_start": "2026-11-04T00:00:00Z",
           "period_end": "2026-11-05T00:00:00Z"
         },
@@ -221,6 +228,13 @@
         }
       ],
       "expected_obligations": [
+        {
+          "subscription_version": 1,
+          "offering_id": "off_a_pkg",
+          "period_start": "2026-11-03T00:00:00Z",
+          "period_end": "2026-11-04T00:00:00Z",
+          "media_buy_ids": ["mb_1"]
+        },
         {
           "subscription_version": 1,
           "offering_id": "off_a_pkg",
@@ -5109,7 +5123,7 @@
     },
     {
       "name": "account timezone",
-      "rule": "An account_timezone offering uses New York midnights (05:00Z in November). confirmed_at 11-02T15Z: first boundary 11-03T05Z.",
+      "rule": "An account_timezone offering uses New York midnights (05:00Z in November). accepted_at 11-01T12Z: first boundary 11-02T05Z. The 11-02T05Z day contains confirmed_at 11-02T15Z and overlaps the flight from 11-03T00Z, so it is owed (adcp#8593).",
       "input": {
         "subscription_id": "analytics-daily",
         "versions": [
@@ -5190,6 +5204,13 @@
           "subscription_version": 1,
           "media_buy_id": "mb_1",
           "offering_id": "off_e_pkg_acct_tz",
+          "period_start": "2026-11-02T05:00:00Z",
+          "period_end": "2026-11-03T05:00:00Z"
+        },
+        {
+          "subscription_version": 1,
+          "media_buy_id": "mb_1",
+          "offering_id": "off_e_pkg_acct_tz",
           "period_start": "2026-11-03T05:00:00Z",
           "period_end": "2026-11-04T05:00:00Z"
         },
@@ -5209,6 +5230,13 @@
         }
       ],
       "expected_obligations": [
+        {
+          "subscription_version": 1,
+          "offering_id": "off_e_pkg_acct_tz",
+          "period_start": "2026-11-02T05:00:00Z",
+          "period_end": "2026-11-03T05:00:00Z",
+          "media_buy_ids": ["mb_1"]
+        },
         {
           "subscription_version": 1,
           "offering_id": "off_e_pkg_acct_tz",
@@ -5521,7 +5549,7 @@
     },
     {
       "name": "period_timezone override",
-      "rule": "A single-account subscription with period_timezone Asia/Tokyo uses Tokyo midnights (15:00Z). confirmed_at 11-02T15Z is itself a boundary.",
+      "rule": "A single-account subscription with period_timezone Asia/Tokyo uses Tokyo midnights (15:00Z). confirmed_at 11-02T15Z is itself a boundary, so the period ending at it is not owed and the one starting at it is.",
       "input": {
         "subscription_id": "analytics-daily",
         "versions": [
@@ -5648,7 +5676,7 @@
     },
     {
       "name": "hourly periods are never clipped",
-      "rule": "Flight 10:30-13:15, confirmed 10:20: coverage starts at 11:00 (the 10:00 period started before the confirmation boundary) and the 13:00 period containing the stop is owed in full.",
+      "rule": "Flight 10:30-13:15, confirmed 10:20: the 10:00 period ends after confirmed_at and overlaps the flight, so it is owed in full (adcp#8593), and the 13:00 period containing the stop is owed in full.",
       "input": {
         "subscription_id": "analytics-daily",
         "versions": [
@@ -5729,6 +5757,13 @@
           "subscription_version": 1,
           "media_buy_id": "mb_1",
           "offering_id": "off_h_pkg_hourly",
+          "period_start": "2026-11-03T10:00:00Z",
+          "period_end": "2026-11-03T11:00:00Z"
+        },
+        {
+          "subscription_version": 1,
+          "media_buy_id": "mb_1",
+          "offering_id": "off_h_pkg_hourly",
           "period_start": "2026-11-03T11:00:00Z",
           "period_end": "2026-11-03T12:00:00Z"
         },
@@ -5748,6 +5783,13 @@
         }
       ],
       "expected_obligations": [
+        {
+          "subscription_version": 1,
+          "offering_id": "off_h_pkg_hourly",
+          "period_start": "2026-11-03T10:00:00Z",
+          "period_end": "2026-11-03T11:00:00Z",
+          "media_buy_ids": ["mb_1"]
+        },
         {
           "subscription_version": 1,
           "offering_id": "off_h_pkg_hourly",
@@ -5818,6 +5860,273 @@
             "media_buy_id": "mb_1",
             "confirmed_at": "2026-10-20T00:00:00Z",
             "start_time": "2026-11-10T00:00:00Z",
+            "end_time": "2027-01-15T00:00:00Z",
+            "packages": [
+              {
+                "package_id": "pkg_1",
+                "reporting_delivery_offering_ids": ["off_m_billing_monthly"]
+              }
+            ]
+          }
+        ],
+        "offerings": [
+          {
+            "offering_id": "off_m_billing_monthly",
+            "feed_purpose": "billing",
+            "report_definition_id": "rd_off_m_billing_monthly",
+            "report_definition_uri": "https://seller.example/report-definitions/off_m_billing_monthly.json",
+            "report_definition_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "reporting_profile": {
+              "id": "adcp.delivery.v1",
+              "version": "1.0.0",
+              "schema_uri": "https://seller.example/schemas/delivery.json",
+              "schema_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "schema_dialect": "https://json-schema.org/draft/2020-12/schema",
+              "schema_ref_policy": "local_fragment_only",
+              "grain": "daily",
+              "primary_keys": ["account_id", "package_id"]
+            },
+            "schedule": {
+              "period_duration": "P1M",
+              "alignment": "billing_cycle",
+              "delivery_sla": "P5D",
+              "period_anchor_policy": "fixed",
+              "period_anchor": "2026-01-01T05:00:00Z",
+              "period_timezone": "America/New_York"
+            },
+            "supported_finality": ["official"],
+            "reconciliation_mode": "consumer_receipt",
+            "standard_dimensions": ["package"],
+            "method": {
+              "pattern": "file_transfer",
+              "transport": "s3",
+              "orchestration": "producer_managed",
+              "destination_modes": ["existing"],
+              "formats": ["jsonl"]
+            }
+          }
+        ],
+        "now": "2027-03-01T00:00:00Z"
+      },
+      "expected": [
+        {
+          "subscription_version": 1,
+          "media_buy_id": "mb_1",
+          "offering_id": "off_m_billing_monthly",
+          "period_start": "2026-11-01T04:00:00Z",
+          "period_end": "2026-12-01T05:00:00Z"
+        },
+        {
+          "subscription_version": 1,
+          "media_buy_id": "mb_1",
+          "offering_id": "off_m_billing_monthly",
+          "period_start": "2026-12-01T05:00:00Z",
+          "period_end": "2027-01-01T05:00:00Z"
+        },
+        {
+          "subscription_version": 1,
+          "media_buy_id": "mb_1",
+          "offering_id": "off_m_billing_monthly",
+          "period_start": "2027-01-01T05:00:00Z",
+          "period_end": "2027-02-01T05:00:00Z"
+        }
+      ],
+      "expected_obligations": [
+        {
+          "subscription_version": 1,
+          "offering_id": "off_m_billing_monthly",
+          "period_start": "2026-11-01T04:00:00Z",
+          "period_end": "2026-12-01T05:00:00Z",
+          "media_buy_ids": ["mb_1"]
+        },
+        {
+          "subscription_version": 1,
+          "offering_id": "off_m_billing_monthly",
+          "period_start": "2026-12-01T05:00:00Z",
+          "period_end": "2027-01-01T05:00:00Z",
+          "media_buy_ids": ["mb_1"]
+        },
+        {
+          "subscription_version": 1,
+          "offering_id": "off_m_billing_monthly",
+          "period_start": "2027-01-01T05:00:00Z",
+          "period_end": "2027-02-01T05:00:00Z",
+          "media_buy_ids": ["mb_1"]
+        }
+      ]
+    },
+    {
+      "name": "ASAP buy confirmed mid-day owes the confirmation day",
+      "rule": "adcp#8593: an ASAP buy starts when it is confirmed, 11-03T14:30Z. The 11-03 period ends after confirmed_at and overlaps the flight, so it is owed in full.",
+      "input": {
+        "subscription_id": "analytics-daily",
+        "versions": [
+          {
+            "subscription_version": 1,
+            "accepted_at": "2026-11-01T12:00:00Z",
+            "configuration": {
+              "subscription_id": "analytics-daily",
+              "subscription_version": 1,
+              "active": true,
+              "scope": {
+                "all_authorized_accounts": true
+              },
+              "selector": {
+                "feed_purpose": "analytics",
+                "period_duration": "P1D",
+                "required_finality": "official",
+                "dimensions": ["package"]
+              },
+              "reconciliation_mode": "delivery_only"
+            }
+          }
+        ],
+        "account": {
+          "account_id": "acct_1",
+          "timezone": "America/New_York",
+          "grants": [
+            {
+              "authorized_at": "2026-10-01T00:00:00Z"
+            }
+          ]
+        },
+        "buys": [
+          {
+            "media_buy_id": "mb_1",
+            "confirmed_at": "2026-11-03T14:30:00Z",
+            "start_time": "2026-11-03T14:30:00Z",
+            "end_time": "2026-11-06T00:00:00Z",
+            "packages": [
+              {
+                "package_id": "pkg_1",
+                "reporting_delivery_offering_ids": ["off_a_pkg"]
+              }
+            ]
+          }
+        ],
+        "offerings": [
+          {
+            "offering_id": "off_a_pkg",
+            "feed_purpose": "analytics",
+            "report_definition_id": "rd_off_a_pkg",
+            "report_definition_uri": "https://seller.example/report-definitions/off_a_pkg.json",
+            "report_definition_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "reporting_profile": {
+              "id": "adcp.delivery.v1",
+              "version": "1.0.0",
+              "schema_uri": "https://seller.example/schemas/delivery.json",
+              "schema_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "schema_dialect": "https://json-schema.org/draft/2020-12/schema",
+              "schema_ref_policy": "local_fragment_only",
+              "grain": "daily",
+              "primary_keys": ["account_id", "package_id"]
+            },
+            "schedule": {
+              "period_duration": "P1D",
+              "alignment": "utc",
+              "delivery_sla": "PT6H"
+            },
+            "supported_finality": ["official"],
+            "reconciliation_mode": "delivery_only",
+            "standard_dimensions": ["package"]
+          }
+        ],
+        "now": "2026-12-01T00:00:00Z"
+      },
+      "expected": [
+        {
+          "subscription_version": 1,
+          "media_buy_id": "mb_1",
+          "offering_id": "off_a_pkg",
+          "period_start": "2026-11-03T00:00:00Z",
+          "period_end": "2026-11-04T00:00:00Z"
+        },
+        {
+          "subscription_version": 1,
+          "media_buy_id": "mb_1",
+          "offering_id": "off_a_pkg",
+          "period_start": "2026-11-04T00:00:00Z",
+          "period_end": "2026-11-05T00:00:00Z"
+        },
+        {
+          "subscription_version": 1,
+          "media_buy_id": "mb_1",
+          "offering_id": "off_a_pkg",
+          "period_start": "2026-11-05T00:00:00Z",
+          "period_end": "2026-11-06T00:00:00Z"
+        }
+      ],
+      "expected_obligations": [
+        {
+          "subscription_version": 1,
+          "offering_id": "off_a_pkg",
+          "period_start": "2026-11-03T00:00:00Z",
+          "period_end": "2026-11-04T00:00:00Z",
+          "media_buy_ids": ["mb_1"]
+        },
+        {
+          "subscription_version": 1,
+          "offering_id": "off_a_pkg",
+          "period_start": "2026-11-04T00:00:00Z",
+          "period_end": "2026-11-05T00:00:00Z",
+          "media_buy_ids": ["mb_1"]
+        },
+        {
+          "subscription_version": 1,
+          "offering_id": "off_a_pkg",
+          "period_start": "2026-11-05T00:00:00Z",
+          "period_end": "2026-11-06T00:00:00Z",
+          "media_buy_ids": ["mb_1"]
+        }
+      ]
+    },
+    {
+      "name": "monthly billing buy confirmed on the 12th owes that month",
+      "rule": "adcp#8593: the version was accepted 10-15, so the start bound is the November boundary (11-01T04Z). The buy is confirmed and starts on 11-12; the November month ends after confirmed_at and overlaps the flight, so it is owed in full rather than starting in December.",
+      "input": {
+        "subscription_id": "analytics-daily",
+        "versions": [
+          {
+            "subscription_version": 1,
+            "accepted_at": "2026-10-15T00:00:00Z",
+            "destination_method": {
+              "pattern": "file_transfer",
+              "transport": "s3"
+            },
+            "configuration": {
+              "subscription_id": "analytics-daily",
+              "subscription_version": 1,
+              "active": true,
+              "scope": {
+                "account_ids": ["acct_1"]
+              },
+              "selector": {
+                "feed_purpose": "billing",
+                "period_duration": "P1M",
+                "required_finality": "official",
+                "dimensions": ["package"]
+              },
+              "reconciliation_mode": "consumer_receipt",
+              "destination": {
+                "destination_id": "billing-archive"
+              }
+            }
+          }
+        ],
+        "account": {
+          "account_id": "acct_1",
+          "timezone": "America/New_York",
+          "grants": [
+            {
+              "authorized_at": "2026-10-01T00:00:00Z"
+            }
+          ]
+        },
+        "buys": [
+          {
+            "media_buy_id": "mb_1",
+            "confirmed_at": "2026-11-12T15:00:00Z",
+            "start_time": "2026-11-12T15:00:00Z",
             "end_time": "2027-01-15T00:00:00Z",
             "packages": [
               {
@@ -6112,7 +6421,7 @@
     },
     {
       "name": "multiple buys group into obligations",
-      "rule": "Each (buy, offering) pair is owed its own periods; obligations group them by period with frozen media_buy_ids.",
+      "rule": "Each (buy, offering) pair is owed its own periods; obligations group them by period with frozen media_buy_ids. mb_0, confirmed 11-03T12, is owed the 11-03 period it was confirmed in (adcp#8593).",
       "input": {
         "subscription_id": "analytics-daily",
         "versions": [
@@ -6203,6 +6512,13 @@
       "expected": [
         {
           "subscription_version": 1,
+          "media_buy_id": "mb_0",
+          "offering_id": "off_a_pkg",
+          "period_start": "2026-11-03T00:00:00Z",
+          "period_end": "2026-11-04T00:00:00Z"
+        },
+        {
+          "subscription_version": 1,
           "media_buy_id": "mb_1",
           "offering_id": "off_a_pkg",
           "period_start": "2026-11-03T00:00:00Z",
@@ -6236,7 +6552,7 @@
           "offering_id": "off_a_pkg",
           "period_start": "2026-11-03T00:00:00Z",
           "period_end": "2026-11-04T00:00:00Z",
-          "media_buy_ids": ["mb_1"]
+          "media_buy_ids": ["mb_0", "mb_1"]
         },
         {
           "subscription_version": 1,
@@ -7022,6 +7338,13 @@
           "subscription_version": 1,
           "media_buy_id": "mb_1",
           "offering_id": "off_s_fixed",
+          "period_start": "2026-11-02T05:00:00Z",
+          "period_end": "2026-11-03T05:00:00Z"
+        },
+        {
+          "subscription_version": 1,
+          "media_buy_id": "mb_1",
+          "offering_id": "off_s_fixed",
           "period_start": "2026-11-03T05:00:00Z",
           "period_end": "2026-11-04T05:00:00Z"
         },
@@ -7034,6 +7357,13 @@
         }
       ],
       "expected_obligations": [
+        {
+          "subscription_version": 1,
+          "offering_id": "off_s_fixed",
+          "period_start": "2026-11-02T05:00:00Z",
+          "period_end": "2026-11-03T05:00:00Z",
+          "media_buy_ids": ["mb_1"]
+        },
         {
           "subscription_version": 1,
           "offering_id": "off_s_fixed",
@@ -7424,6 +7754,13 @@
           "subscription_version": 1,
           "media_buy_id": "mb_1",
           "offering_id": "off_e_pkg_acct_tz",
+          "period_start": "2026-11-02T05:00:00Z",
+          "period_end": "2026-11-03T05:00:00Z"
+        },
+        {
+          "subscription_version": 1,
+          "media_buy_id": "mb_1",
+          "offering_id": "off_e_pkg_acct_tz",
           "period_start": "2026-11-03T05:00:00Z",
           "period_end": "2026-11-04T05:00:00Z"
         },
@@ -7457,6 +7794,13 @@
         }
       ],
       "expected_obligations": [
+        {
+          "subscription_version": 1,
+          "offering_id": "off_e_pkg_acct_tz",
+          "period_start": "2026-11-02T05:00:00Z",
+          "period_end": "2026-11-03T05:00:00Z",
+          "media_buy_ids": ["mb_1"]
+        },
         {
           "subscription_version": 1,
           "offering_id": "off_e_pkg_acct_tz",
@@ -7609,6 +7953,13 @@
           "subscription_version": 1,
           "media_buy_id": "mb_1",
           "offering_id": "off_e_pkg_acct_tz",
+          "period_start": "2026-11-02T05:00:00Z",
+          "period_end": "2026-11-03T05:00:00Z"
+        },
+        {
+          "subscription_version": 1,
+          "media_buy_id": "mb_1",
+          "offering_id": "off_e_pkg_acct_tz",
           "period_start": "2026-11-03T05:00:00Z",
           "period_end": "2026-11-04T05:00:00Z"
         },
@@ -7642,6 +7993,13 @@
         }
       ],
       "expected_obligations": [
+        {
+          "subscription_version": 1,
+          "offering_id": "off_e_pkg_acct_tz",
+          "period_start": "2026-11-02T05:00:00Z",
+          "period_end": "2026-11-03T05:00:00Z",
+          "media_buy_ids": ["mb_1"]
+        },
         {
           "subscription_version": 1,
           "offering_id": "off_e_pkg_acct_tz",
@@ -8622,7 +8980,7 @@
     },
     {
       "name": "sub-daily local periods start on the local hour (Asia/Singapore)",
-      "rule": "adcp#8588: hourly periods under account_timezone are local wall-clock hours counted from each local midnight, not 1970 offsets (Singapore was +07:30 in 1970). confirmed_at 00:05Z: first boundary 01:00Z (09:00 local).",
+      "rule": "adcp#8588: hourly periods under account_timezone are local wall-clock hours counted from each local midnight, not 1970 offsets (Singapore was +07:30 in 1970). confirmed_at 00:05Z falls in the 00:00Z (08:00 local) hour, which ends after it and overlaps the flight, so it is owed (adcp#8593).",
       "input": {
         "subscription_id": "analytics-daily",
         "versions": [
@@ -8704,6 +9062,13 @@
           "subscription_version": 1,
           "media_buy_id": "mb_1",
           "offering_id": "off_p_hourly_local",
+          "period_start": "2026-11-03T00:00:00Z",
+          "period_end": "2026-11-03T01:00:00Z"
+        },
+        {
+          "subscription_version": 1,
+          "media_buy_id": "mb_1",
+          "offering_id": "off_p_hourly_local",
           "period_start": "2026-11-03T01:00:00Z",
           "period_end": "2026-11-03T02:00:00Z"
         },
@@ -8716,6 +9081,13 @@
         }
       ],
       "expected_obligations": [
+        {
+          "subscription_version": 1,
+          "offering_id": "off_p_hourly_local",
+          "period_start": "2026-11-03T00:00:00Z",
+          "period_end": "2026-11-03T01:00:00Z",
+          "media_buy_ids": ["mb_1"]
+        },
         {
           "subscription_version": 1,
           "offering_id": "off_p_hourly_local",
