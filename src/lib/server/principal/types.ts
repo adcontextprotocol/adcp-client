@@ -1,5 +1,6 @@
 import type { GetPrincipalResponse, SyncPrincipalRequest, SyncPrincipalResponse } from '../../types/tools.generated';
 import type { MaybePromise } from '../create-adcp-server';
+import type { StoredReportingSubscriptionHistory } from './reporting-subscriptions';
 import type {
   NotificationRecipientRef,
   NotificationSubscriptionMatch,
@@ -51,6 +52,7 @@ export interface PendingPrincipalNotification {
     | 'setup_expired'
     | 'proof_invalidated'
     | 'declarations_intersection_changed'
+    | 'reporting_subscription_changed'
     | 'other';
   destinationId?: string;
   recipients: NotificationRecipientRef[];
@@ -79,6 +81,11 @@ export interface StoredPrincipalRecord extends Record<string, unknown> {
   notificationSubscriptions: StoredNotificationSubscription[];
   reportingGenerations: StoredReportingDestinationGeneration[];
   pendingNotifications: PendingPrincipalNotification[];
+  /**
+   * Reporting subscription history the readback omits (experimental, AdCP 3.3). Absent on
+   * rows written without subscription support.
+   */
+  reportingSubscriptionHistory?: StoredReportingSubscriptionHistory[];
 }
 
 export interface VersionedPrincipalRecord {
@@ -163,4 +170,64 @@ export interface ResolvedReportingDestination {
   state: PrincipalReportingDestination['state'];
   lifecycle: StoredReportingDestinationGeneration['lifecycle'];
   deliveryEligible: boolean;
+}
+
+export type PrincipalReportingSubscriptionState = NonNullable<
+  PrincipalConfiguration['reporting_subscriptions']
+>[number];
+
+/**
+ * Opt-in support for the `sync_principal` `reporting_subscriptions` section
+ * (experimental `media_buy.reporting_subscriptions`). Without it the section is refused
+ * with `UNSUPPORTED_FEATURE`, as before.
+ */
+export interface PrincipalReportingSubscriptionSupport {
+  /**
+   * The caller's `sync_accounts` `delivery_config_id` values on any account. A
+   * `subscription_id` equal to one is rejected; the host's `sync_accounts` must reject the
+   * reverse clash using {@link PrincipalLifecycleRuntimeSubscriptions.reportingSubscriptionIds}.
+   */
+  listDeliveryConfigIds?(scope: Readonly<PrincipalStoreScope>): MaybePromise<readonly string[]>;
+  /**
+   * Apply `replace_account_configs`: deactivate the caller's own active
+   * `reporting_delivery_configs` with this `feed_purpose`, by cutover at `at`, on in-scope
+   * accounts where the subscription resolves an offering, without advancing any account's
+   * revision. Called after the principal row commits, never on `dry_run`. Without it a
+   * subscription with `replace_account_configs: true` is refused with `UNSUPPORTED_FEATURE`.
+   */
+  replaceAccountConfigs?(input: {
+    scope: Readonly<PrincipalStoreScope>;
+    subscriptionId: string;
+    subscriptionVersion: number;
+    feedPurpose: string;
+    at: string;
+  }): MaybePromise<void>;
+  /** Most subscriptions per principal. Defaults to 64. */
+  maxSubscriptions?: number;
+}
+
+/** Runtime surface the reporting subscription engine and hosts use. */
+export interface PrincipalLifecycleRuntimeSubscriptions {
+  /** Current readback plus the retained version history, for coverage computation. */
+  listReportingSubscriptions(scope: Readonly<PrincipalStoreScope>): Promise<{
+    states: PrincipalReportingSubscriptionState[];
+    history: StoredReportingSubscriptionHistory[];
+  }>;
+  /** Subscription IDs of this principal, active or retained, for the reverse namespace check. */
+  reportingSubscriptionIds(scope: Readonly<PrincipalStoreScope>): Promise<string[]>;
+  /**
+   * Record engine-maintained readback (`accounts_with_exceptions`, `accounts_unauthorized`).
+   * Any change enqueues `principal.changed` with reason `reporting_subscription_changed`.
+   * Returns whether anything changed.
+   */
+  recordReportingSubscriptionCoverage(
+    scope: Readonly<PrincipalStoreScope>,
+    updates: ReadonlyArray<{
+      subscriptionId: string;
+      accountsWithExceptions: NonNullable<PrincipalReportingSubscriptionState['accounts_with_exceptions']>;
+      accountsUnauthorized: NonNullable<PrincipalReportingSubscriptionState['accounts_unauthorized']>;
+    }>,
+    /** `forceNotification` fires even when the readback is unchanged, for example when an exception opened and another closed. */
+    options?: { deferNotification?: boolean; forceNotification?: boolean }
+  ): Promise<boolean>;
 }

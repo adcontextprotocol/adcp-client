@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { compare as compareSemver } from 'semver';
 import { canonicalJsonSha256 } from '../../utils/jcs';
 import type {
+  GetAdCPCapabilitiesResponse,
   GetPrincipalRequest,
   GetPrincipalResponse,
   SyncAgentNotificationConfigsRequest,
@@ -21,6 +22,13 @@ import {
   projectStoredNotificationSubscriptionReadback,
 } from '../notification-subscriptions/runtime';
 import { PRINCIPAL_NOTIFICATION_STORE_OWNER } from './store';
+import {
+  ReportingSubscriptionValidationError,
+  applyReportingSubscriptions,
+  projectReportingSubscriptionState,
+  type ApplyReportingSubscriptionsResult,
+  type StoredReportingSubscriptionHistory,
+} from './reporting-subscriptions';
 import type {
   PendingPrincipalNotification,
   PrepareReportingDestination,
@@ -31,8 +39,11 @@ import type {
   PrincipalDeclarationsState,
   PrincipalDestinationTransition,
   PrincipalKind,
+  PrincipalLifecycleRuntimeSubscriptions,
   PrincipalNotificationRecoveryResult,
   PrincipalReportingDestination,
+  PrincipalReportingSubscriptionState,
+  PrincipalReportingSubscriptionSupport,
   PrincipalReportingDestinationInput,
   ResolvedReportingDestination,
   PrincipalStateStore,
@@ -56,6 +67,13 @@ export interface CreatePrincipalLifecycleOptions<TAccount = unknown> {
   agentUrl: string;
   declarations?: PrincipalDeclarationSupport;
   prepareReportingDestination?: PrepareReportingDestination;
+  /**
+   * Opt in to the `reporting_subscriptions` section (experimental
+   * `media_buy.reporting_subscriptions`, AdCP 3.3). Requires `prepareReportingDestination`
+   * when subscriptions name destinations. Without it the section is refused with
+   * `UNSUPPORTED_FEATURE` and every response is unchanged.
+   */
+  reportingSubscriptions?: PrincipalReportingSubscriptionSupport;
   issuePrincipalId?: (scope: Readonly<PrincipalStoreScope>) => string;
   issueConfigurationVersion?: () => string;
   issueDestinationRef?: () => string;
@@ -69,11 +87,25 @@ export interface CreatePrincipalLifecycleOptions<TAccount = unknown> {
   maxReportingGenerations?: number;
   /** Expose the legacy notification-only protocol task in addition to sync_principal. */
   includeCompatibilityNotificationTask?: boolean;
+  /**
+   * Seller facts the `adcp.principal` capability block carries beside `supported_sections`,
+   * such as `max_reporting_destinations`, `reporting_destination_offerings` and
+   * `suspension_interval_seconds` (required when `reporting_destinations` is supported).
+   */
+  capabilityDetails?: Omit<
+    NonNullable<GetAdCPCapabilitiesResponse['adcp']['principal']>,
+    'supported' | 'sync_task' | 'read_task' | 'supported_sections' | 'optimistic_concurrency'
+  >;
   /** Explicitly accept crash-window duplicate delivery without an attempt checkpoint. */
   acknowledgeMissingAttemptCheckpoint?: boolean;
 }
 
-export interface PrincipalLifecycleRuntime<TAccount = unknown> {
+export interface PrincipalLifecycleRuntime<TAccount = unknown> extends PrincipalLifecycleRuntimeSubscriptions {
+  /**
+   * The `adcp.principal` capability block this runtime serves, for
+   * `capabilities.principal`. `supported_sections` follows the options it was created with.
+   */
+  readonly capabilities: NonNullable<GetAdCPCapabilitiesResponse['adcp']['principal']>;
   protocol: Pick<ProtocolHandlers<TAccount>, 'resolvePrincipalScope' | 'getPrincipal' | 'syncPrincipal'> &
     Partial<Pick<ProtocolHandlers<TAccount>, 'resolveScope' | 'syncAgentNotificationConfigs'>>;
   recognizePrincipal(input: {
@@ -149,6 +181,7 @@ export function createPrincipalLifecycle<TAccount = unknown>(
   const maxPendingNotifications = boundedOption(options.maxPendingNotifications, 256, 'maxPendingNotifications');
   const maxNotificationsPerFlush = boundedOption(options.maxNotificationsPerFlush, 100, 'maxNotificationsPerFlush');
   const maxReportingGenerations = boundedOption(options.maxReportingGenerations, 256, 'maxReportingGenerations');
+  const maxSubscriptions = boundedOption(options.reportingSubscriptions?.maxSubscriptions, 64, 'maxSubscriptions');
 
   async function resolve(ctx: HandlerContext<TAccount>): Promise<ResolvedPrincipalScope> {
     const cached = ctx.callerMutationScope as (ResolvedPrincipalScope & Record<string, unknown>) | undefined;
@@ -237,13 +270,22 @@ export function createPrincipalLifecycle<TAccount = unknown>(
         notificationPlan = prepared.plan;
       }
 
+      const subscriptionPlan: { result?: ApplyReportingSubscriptionsResult } = {};
       const nextConfiguration = await buildConfiguration(
         scope,
         current?.record.configuration,
         params.configuration,
         notificationPlan,
-        params.dry_run === true
+        params.dry_run === true,
+        current?.record.reportingSubscriptionHistory ?? [],
+        subscriptionPlan
       );
+      if (
+        (subscriptionPlan.result?.replaceAccountConfigs.length ?? 0) > 0 &&
+        !options.reportingSubscriptions?.replaceAccountConfigs
+      ) {
+        throw new UnsupportedPrincipalFeatureError('replace_account_configs is not supported by this seller');
+      }
       const reportingGenerations = mergeReportingGenerations(
         current?.record.reportingGenerations ?? [],
         current?.record.configuration?.reporting_destinations ?? [],
@@ -297,6 +339,9 @@ export function createPrincipalLifecycle<TAccount = unknown>(
         reportingGenerations,
         pendingNotifications: structuredClone(current?.record.pendingNotifications ?? []),
       };
+      const subscriptionHistory =
+        subscriptionPlan.result?.history ?? current?.record.reportingSubscriptionHistory ?? undefined;
+      if (subscriptionHistory !== undefined) record.reportingSubscriptionHistory = structuredClone(subscriptionHistory);
       const persisted = await options.store.replace({
         scope,
         expectedRevision: current?.revision ?? null,
@@ -307,6 +352,9 @@ export function createPrincipalLifecycle<TAccount = unknown>(
         return syncFailure('CONFLICT', 'The principal configuration changed; read current state and retry');
       }
       await notificationPlan?.commitCredentials();
+      for (const replacement of subscriptionPlan.result?.replaceAccountConfigs ?? []) {
+        await options.reportingSubscriptions!.replaceAccountConfigs!({ scope: structuredClone(scope), ...replacement });
+      }
       return {
         result: {
           ...currentResult(persisted.value.record),
@@ -318,6 +366,9 @@ export function createPrincipalLifecycle<TAccount = unknown>(
     } catch (error) {
       await notificationPlan?.discardCredentials();
       if (error instanceof NotificationSubscriptionValidationError) {
+        return syncFailure('INVALID_REQUEST', error.message);
+      }
+      if (error instanceof ReportingSubscriptionValidationError) {
         return syncFailure('INVALID_REQUEST', error.message);
       }
       if (error instanceof UnsupportedPrincipalFeatureError) {
@@ -335,12 +386,15 @@ export function createPrincipalLifecycle<TAccount = unknown>(
     current: PrincipalConfiguration | undefined,
     input: PrincipalConfigurationInput,
     notifications: PreparedNotificationReplacement | undefined,
-    dryRun: boolean
+    dryRun: boolean,
+    subscriptionHistory: readonly StoredReportingSubscriptionHistory[] = [],
+    subscriptionPlan: { result?: ApplyReportingSubscriptionsResult } = {}
   ): Promise<PrincipalConfiguration> {
     const next: PrincipalConfiguration = structuredClone(
       current ?? {
         notification_configs: [],
         ...(options.prepareReportingDestination ? { reporting_destinations: [], retired_destinations: [] } : {}),
+        ...(options.reportingSubscriptions ? { reporting_subscriptions: [] } : {}),
         ...(options.declarations ? { declarations: intersectDeclarations({}, options.declarations) } : {}),
       }
     );
@@ -364,10 +418,40 @@ export function createPrincipalLifecycle<TAccount = unknown>(
       next.retired_destinations = reporting.retired;
     }
     if (input.reporting_subscriptions !== undefined) {
-      // AdCP 3.3 (experimental media_buy.reporting_subscriptions): unsupported
-      // sections are rejected rather than silently ignored. This runtime does
-      // not yet resolve principal-level subscriptions into account obligations.
-      throw new UnsupportedPrincipalFeatureError('reporting_subscriptions are not supported by this seller');
+      // AdCP 3.3 (experimental media_buy.reporting_subscriptions): without the
+      // opt-in, unsupported sections are rejected rather than silently ignored.
+      if (!options.reportingSubscriptions) {
+        throw new UnsupportedPrincipalFeatureError('reporting_subscriptions are not supported by this seller');
+      }
+      const reserved = new Set(await (options.reportingSubscriptions.listDeliveryConfigIds?.(scope) ?? []));
+      const result = applyReportingSubscriptions({
+        previous: current?.reporting_subscriptions ?? [],
+        history: subscriptionHistory,
+        desired: input.reporting_subscriptions as never,
+        destinations: next.reporting_destinations ?? [],
+        reservedDeliveryConfigIds: reserved,
+        now: now().toISOString(),
+        maxSubscriptions,
+      });
+      next.reporting_subscriptions = result.states as PrincipalConfiguration['reporting_subscriptions'];
+      subscriptionPlan.result = result;
+    } else if (input.reporting_destinations !== undefined && subscriptionHistory.length > 0) {
+      // A destination change must leave every active subscription naming a destination
+      // that still exists, and re-derives action_required states.
+      for (const state of current?.reporting_subscriptions ?? []) {
+        if (state.state === 'inactive' || !state.configuration.destination) continue;
+        const id = state.configuration.destination.destination_id;
+        if (!(next.reporting_destinations ?? []).some(item => item.destination_id === id)) {
+          throw new ReportingSubscriptionValidationError(
+            `Active reporting subscription ${JSON.stringify(state.subscription_id)} names destination ${JSON.stringify(id)}, which this request removes`
+          );
+        }
+      }
+      next.reporting_subscriptions = reprojectSubscriptionStates(
+        subscriptionHistory,
+        next.reporting_destinations ?? [],
+        current?.reporting_subscriptions ?? []
+      );
     }
     if (input.declarations !== undefined) {
       if (!options.declarations) {
@@ -635,6 +719,7 @@ export function createPrincipalLifecycle<TAccount = unknown>(
       storedGeneration.state = transition.state;
       storedGeneration.updatedAt = now().toISOString();
       const timestamp = now().toISOString();
+      const subscriptionMovedToActionRequired = reprojectStoredSubscriptions(record);
       enqueuePrincipalNotification(
         record,
         {
@@ -648,6 +733,20 @@ export function createPrincipalLifecycle<TAccount = unknown>(
         },
         maxPendingNotifications
       );
+      if (subscriptionMovedToActionRequired) {
+        enqueuePrincipalNotification(
+          record,
+          {
+            notificationId: `principal_${randomUUID()}`,
+            emissionId: randomUUID(),
+            changedAt: timestamp,
+            firedAt: timestamp,
+            reason: 'reporting_subscription_changed',
+            recipients: principalNotificationRecipients(record, scope),
+          },
+          maxPendingNotifications
+        );
+      }
       const result = await options.store.replace({
         scope,
         expectedRevision: current.revision,
@@ -824,6 +923,76 @@ export function createPrincipalLifecycle<TAccount = unknown>(
     throw new Error('Principal declaration reconciliation conflicted repeatedly');
   }
 
+  async function listReportingSubscriptions(scope: Readonly<PrincipalStoreScope>) {
+    assertStoreScope(scope);
+    const current = await options.store.get(scope);
+    return {
+      states: structuredClone(current?.record.configuration?.reporting_subscriptions ?? []),
+      history: structuredClone(current?.record.reportingSubscriptionHistory ?? []),
+    };
+  }
+
+  async function reportingSubscriptionIds(scope: Readonly<PrincipalStoreScope>): Promise<string[]> {
+    const { history } = await listReportingSubscriptions(scope);
+    return history.map(entry => entry.subscriptionId);
+  }
+
+  async function recordReportingSubscriptionCoverage(
+    scope: Readonly<PrincipalStoreScope>,
+    updates: Parameters<PrincipalLifecycleRuntimeSubscriptions['recordReportingSubscriptionCoverage']>[1],
+    recordOptions: { deferNotification?: boolean; forceNotification?: boolean } = {}
+  ): Promise<boolean> {
+    assertStoreScope(scope);
+    for (let attempt = 0; attempt < maxCasAttempts; attempt++) {
+      const current = await options.store.get(scope);
+      const states = current?.record.configuration?.reporting_subscriptions;
+      if (!current || !states) return false;
+      const record = structuredClone(current.record);
+      const nextStates = record.configuration!.reporting_subscriptions!;
+      let changed = false;
+      for (const update of updates) {
+        const state = nextStates.find(item => item.subscription_id === update.subscriptionId);
+        if (!state) continue;
+        const before = canonicalJsonSha256([state.accounts_with_exceptions ?? [], state.accounts_unauthorized ?? []]);
+        const withExceptions = [...update.accountsWithExceptions]
+          .sort((left, right) => compareBytes(left.account_id, right.account_id))
+          .slice(0, 1000);
+        const unauthorized = [...update.accountsUnauthorized]
+          .sort((left, right) => compareBytes(left.account_id, right.account_id))
+          .slice(0, 1000);
+        if (withExceptions.length > 0) state.accounts_with_exceptions = structuredClone(withExceptions);
+        else delete state.accounts_with_exceptions;
+        if (unauthorized.length > 0) state.accounts_unauthorized = structuredClone(unauthorized);
+        else delete state.accounts_unauthorized;
+        if (canonicalJsonSha256([state.accounts_with_exceptions ?? [], state.accounts_unauthorized ?? []]) !== before) {
+          changed = true;
+        }
+      }
+      if (!changed && !recordOptions.forceNotification) return false;
+      const timestamp = now().toISOString();
+      // Engine-maintained readback is not a caller write: the configuration version
+      // still changes so readers can tell, but no account revision is involved.
+      if (changed) record.configurationVersion = issueConfigurationVersion();
+      enqueuePrincipalNotification(
+        record,
+        {
+          notificationId: `principal_${randomUUID()}`,
+          emissionId: randomUUID(),
+          changedAt: timestamp,
+          firedAt: timestamp,
+          reason: 'reporting_subscription_changed',
+          recipients: principalNotificationRecipients(record, scope),
+        },
+        maxPendingNotifications
+      );
+      const persisted = await options.store.replace({ scope, expectedRevision: current.revision, record });
+      if (persisted.outcome === 'conflict') continue;
+      if (!recordOptions.deferNotification) await flushPrincipalNotifications(scope);
+      return changed;
+    }
+    throw new Error('Reporting subscription coverage update conflicted repeatedly');
+  }
+
   const resolveProtocolScope = async (ctx: HandlerContext<TAccount>) => {
     return resolve(ctx);
   };
@@ -841,7 +1010,22 @@ export function createPrincipalLifecycle<TAccount = unknown>(
       : {}),
   };
 
+  const capabilities = Object.freeze({
+    supported: true as const,
+    sync_task: 'sync_principal' as const,
+    read_task: 'get_principal' as const,
+    supported_sections: [
+      'notification_configs' as const,
+      ...(options.prepareReportingDestination ? ['reporting_destinations' as const] : []),
+      ...(options.declarations ? ['declarations' as const] : []),
+      ...(options.reportingSubscriptions ? ['reporting_subscriptions' as const] : []),
+    ] as NonNullable<GetAdCPCapabilitiesResponse['adcp']['principal']>['supported_sections'],
+    optimistic_concurrency: true,
+    ...structuredClone(options.capabilityDetails ?? {}),
+  }) as NonNullable<GetAdCPCapabilitiesResponse['adcp']['principal']>;
+
   return {
+    capabilities,
     protocol,
     recognizePrincipal,
     transitionDestination,
@@ -849,7 +1033,44 @@ export function createPrincipalLifecycle<TAccount = unknown>(
     recoverPrincipalNotifications,
     resolveReportingDestination,
     reconcileDeclarations,
+    listReportingSubscriptions,
+    reportingSubscriptionIds,
+    recordReportingSubscriptionCoverage,
   };
+}
+
+function compareBytes(left: string, right: string): number {
+  return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'));
+}
+
+function reprojectSubscriptionStates(
+  history: readonly StoredReportingSubscriptionHistory[],
+  destinations: readonly PrincipalReportingDestination[],
+  previous: readonly PrincipalReportingSubscriptionState[]
+): PrincipalConfiguration['reporting_subscriptions'] {
+  return previous.map(state => {
+    const entry = history.find(item => item.subscriptionId === state.subscription_id);
+    return entry ? projectReportingSubscriptionState(entry, destinations, state, state.configuration) : state;
+  }) as PrincipalConfiguration['reporting_subscriptions'];
+}
+
+/** Re-derive subscription states after a destination transition; true when one newly needs action. */
+function reprojectStoredSubscriptions(record: StoredPrincipalRecord): boolean {
+  const configuration = record.configuration;
+  const previous = configuration?.reporting_subscriptions;
+  if (!configuration || !previous || !record.reportingSubscriptionHistory) return false;
+  const next = reprojectSubscriptionStates(
+    record.reportingSubscriptionHistory,
+    configuration.reporting_destinations ?? [],
+    previous
+  )!;
+  const moved = next.some(
+    state =>
+      state.state === 'action_required' &&
+      previous.find(item => item.subscription_id === state.subscription_id)?.state !== 'action_required'
+  );
+  configuration.reporting_subscriptions = next;
+  return moved;
 }
 
 function storeScope(resolved: Readonly<ResolvedPrincipalScope>): PrincipalStoreScope {

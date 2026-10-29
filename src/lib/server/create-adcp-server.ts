@@ -1386,6 +1386,13 @@ export interface AdcpCapabilitiesConfig {
   };
   /** Freshness and notification support for the capability document. */
   capability_changes?: NonNullable<GetAdCPCapabilitiesResponse['adcp']['capability_changes']>;
+  /**
+   * The `adcp.principal` block (experimental `protocol.principal`): the caller-scoped
+   * configuration sections `sync_principal` accepts. Use the principal runtime's
+   * `capabilities`, which derives `supported_sections` from what it was configured with.
+   * Advertised to callers pinned to 3.2 or later; `reporting_subscriptions` only to 3.3+.
+   */
+  principal?: NonNullable<GetAdCPCapabilitiesResponse['adcp']['principal']>;
   portfolio?: {
     publisher_domains: string[];
     primary_channels?: MediaChannel[];
@@ -9515,6 +9522,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       ...(advertisedSupportedVersions?.length && { supported_versions: [...advertisedSupportedVersions] }),
       idempotency: idempotencyCapability,
       ...(capConfig?.capability_changes && { capability_changes: structuredClone(capConfig.capability_changes) }),
+      ...(capConfig?.principal && { principal: structuredClone(capConfig.principal) }),
     },
     supported_protocols: protocols as GetAdCPCapabilitiesResponse['supported_protocols'],
   };
@@ -9830,6 +9838,43 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           releaseDefinesTool(tool, { validationVersion: version }) && toolAvailableForRelease(tool, version)
       );
       const selected = parseAdcpRelease(release.validationVersion);
+      const principalBlock = (data.adcp as { principal?: { supported_sections?: string[] } }).principal;
+      if (principalBlock && selected !== undefined) {
+        if (selected.major === 3 && selected.minor < 2) {
+          delete (data.adcp as { principal?: unknown }).principal;
+        } else if (selected.major === 3 && selected.minor === 2 && principalBlock.supported_sections) {
+          // reporting_subscriptions is a 3.3 section.
+          principalBlock.supported_sections = principalBlock.supported_sections.filter(
+            section => section !== 'reporting_subscriptions'
+          );
+          if (principalBlock.supported_sections.length === 0) delete (data.adcp as { principal?: unknown }).principal;
+        }
+      }
+      if (selected !== undefined && selected.major === 3 && selected.minor < 3) {
+        // AdCP 3.3 reporting registration fields. A seller listing only sync_principal
+        // serves reporting registration to 3.3 callers only.
+        const reporting = data.media_buy?.reporting_delivery as
+          | (Record<string, unknown> & { configuration_task?: string })
+          | undefined;
+        const features = data.experimental_features as string[] | undefined;
+        if (reporting) {
+          delete reporting.configuration_tasks;
+          delete reporting.subscriptions;
+          if (reporting.configuration_task === undefined) {
+            delete (data.media_buy as { reporting_delivery?: unknown }).reporting_delivery;
+            if (features) {
+              data.experimental_features = features.filter(
+                feature => feature !== 'media_buy.reporting_delivery'
+              ) as typeof data.experimental_features;
+            }
+          }
+        }
+        if (data.experimental_features) {
+          data.experimental_features = (data.experimental_features as string[]).filter(
+            feature => feature !== 'media_buy.reporting_subscriptions'
+          ) as typeof data.experimental_features;
+        }
+      }
       if (
         selected !== undefined &&
         (selected.major > 3 || (selected.major === 3 && selected.minor >= 2)) &&

@@ -1,0 +1,481 @@
+const { describe, test } = require('node:test');
+const assert = require('node:assert/strict');
+
+process.env.NODE_ENV = 'test';
+
+const { createTestPrincipalLifecycle } = require('../helpers/principal-runtime.js');
+const { createReportingSubscriptionEngineV1 } = require('../../dist/lib/reporting/service/index.js');
+const { expectedSubscriptionPeriods } = require('../../dist/lib/reporting/consumer/index.js');
+const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
+
+const SCOPE = { tenantId: 't', principalId: 'p' };
+const CTX = { callerMutationScope: { tenant_id: 't', principal_id: 'p', principal_kind: 'buyer_agent' } };
+const DAY = 86_400_000;
+
+const profile = {
+  id: 'adcp.delivery.v1',
+  version: '1.0.0',
+  schema_uri: 'https://seller.example/schemas/delivery.json',
+  schema_sha256: 'a'.repeat(64),
+  schema_dialect: 'https://json-schema.org/draft/2020-12/schema',
+  schema_ref_policy: 'local_fragment_only',
+  grain: 'daily',
+  primary_keys: ['account_id', 'package_id'],
+};
+function offering(id, dimensions) {
+  return {
+    offering_id: id,
+    feed_purpose: 'analytics',
+    report_definition_id: `rd_${id}`,
+    report_definition_uri: `https://seller.example/report-definitions/${id}.json`,
+    report_definition_sha256: 'b'.repeat(64),
+    reporting_profile: profile,
+    schedule: { period_duration: 'P1D', alignment: 'utc', delivery_sla: 'PT6H' },
+    supported_finality: ['official'],
+    reconciliation_mode: 'delivery_only',
+    dimensions,
+  };
+}
+const OFFERINGS = [
+  offering('off_a_pkg', ['package']),
+  offering('off_b_pkg_creative', ['package', 'creative']),
+  offering('off_c_pkg_country', ['package', 'country']),
+];
+const ALL_IDS = OFFERINGS.map(item => item.offering_id);
+
+function subscription(extra = {}) {
+  return {
+    subscription_id: 'analytics-daily',
+    subscription_version: 1,
+    active: true,
+    scope: { all_authorized_accounts: true },
+    selector: {
+      feed_purpose: 'analytics',
+      period_duration: 'P1D',
+      required_finality: 'official',
+      dimensions: ['package'],
+    },
+    reconciliation_mode: 'delivery_only',
+    ...extra,
+  };
+}
+
+function buy(id, extra = {}) {
+  return {
+    media_buy_id: id,
+    confirmed_at: '2026-11-02T15:00:00Z',
+    start_time: '2026-11-03T00:00:00Z',
+    end_time: '2026-11-10T00:00:00Z',
+    packages: [{ package_id: `${id}_pkg`, reporting_delivery_offering_ids: ALL_IDS }],
+    ...extra,
+  };
+}
+
+/**
+ * One seller (principal runtime + engine + host facts) and one buyer that keeps only what
+ * it can observe: its own requests, get_principal readback, list_accounts authorized_at,
+ * get_media_buys, and get_reporting_status subscription_coverage.
+ */
+function world({ maxAccounts, backfillOnRegrant = false } = {}) {
+  const clock = { now: new Date('2026-11-01T12:00:00.000Z') };
+  const { lifecycle, emitted } = createTestPrincipalLifecycle({ clock, reportingSubscriptions: {} });
+  const host = { accounts: new Map(), buys: new Map(), configs: new Map() };
+  const engine = createReportingSubscriptionEngineV1({
+    principal: lifecycle,
+    offerings: OFFERINGS,
+    statusRetentionDays: 30,
+    ...(maxAccounts !== undefined ? { maxAccounts } : {}),
+    backfillOnRegrant,
+    now: () => clock.now,
+    hooks: {
+      listAuthorizedAccounts: () => ({ accounts: [...host.accounts.values()].map(item => structuredClone(item)) }),
+      listAccountBuys: (_principal, accountId) => structuredClone(host.buys.get(accountId) ?? []),
+      listAccountDeliveryConfigs: (_principal, accountId) => structuredClone(host.configs.get(accountId) ?? []),
+    },
+  });
+
+  // Buyer-side records.
+  const buyer = { sent: new Map(), grants: new Map() };
+  let key = 0;
+  async function sync(subscriptions) {
+    key += 1;
+    const response = await lifecycle.protocol.syncPrincipal(
+      {
+        idempotency_key: `buyer-key-${String(key).padStart(6, '0')}`,
+        configuration: {
+          notification_configs: [
+            { subscriber_id: 'events', url: 'https://buyer.example/events', event_types: ['principal.changed'] },
+          ],
+          reporting_subscriptions: subscriptions,
+        },
+      },
+      CTX
+    );
+    assert.equal(response.result.kind, 'applied', JSON.stringify(response));
+    for (const item of subscriptions)
+      buyer.sent.set(`${item.subscription_id}@${item.subscription_version}`, structuredClone(item));
+    return response;
+  }
+  function grant(accountId, at, extra = {}) {
+    host.accounts.set(accountId, { account_id: accountId, authorized_at: at, timezone: 'America/New_York', ...extra });
+  }
+  function revoke(accountId) {
+    host.accounts.delete(accountId);
+  }
+  /** The buyer observes list_accounts and get_principal after each step. */
+  async function observe() {
+    for (const account of host.accounts.values()) {
+      const grants = buyer.grants.get(account.account_id) ?? [];
+      const last = grants.at(-1);
+      if (!last || last.unauthorized_at !== undefined) grants.push({ authorized_at: account.authorized_at });
+      buyer.grants.set(account.account_id, grants);
+    }
+    const read = await lifecycle.protocol.getPrincipal({}, CTX);
+    const outcome = validateResponse('get_principal', read, '3.3.0-beta.1');
+    assert.equal(outcome.valid, true, JSON.stringify(outcome.issues));
+    for (const state of read.result.configuration.reporting_subscriptions ?? []) {
+      for (const lost of state.accounts_unauthorized ?? []) {
+        const grants = buyer.grants.get(lost.account_id) ?? [];
+        const last = grants.at(-1);
+        if (last && last.unauthorized_at === undefined) last.unauthorized_at = lost.unauthorized_at;
+      }
+    }
+    return read;
+  }
+  async function step(at) {
+    clock.now = new Date(at);
+    await engine.reconcile(SCOPE);
+    return observe();
+  }
+  /** What the buyer expects, from its observations only. */
+  async function buyerExpected(accountId, now, subscriptionId = 'analytics-daily') {
+    const read = await lifecycle.protocol.getPrincipal({}, CTX);
+    const state = read.result.configuration.reporting_subscriptions.find(
+      item => item.subscription_id === subscriptionId
+    );
+    const versions = [...(state.prior_versions ?? [])].reverse().map(prior => ({
+      subscription_version: prior.subscription_version,
+      accepted_at: prior.accepted_at,
+      superseded_at: prior.superseded_at,
+      configuration: { ...buyer.sent.get(`${subscriptionId}@${prior.subscription_version}`), active: true },
+    }));
+    versions.push({
+      subscription_version: state.subscription_version,
+      accepted_at: state.accepted_at,
+      ...(state.deactivated_at ? { deactivated_at: state.deactivated_at } : {}),
+      configuration: buyer.sent.get(`${subscriptionId}@${state.subscription_version}`),
+    });
+    const coverage = (await engine.subscriptionCoverage(SCOPE, accountId)).find(
+      item => item.subscription_id === subscriptionId
+    );
+    return expectedSubscriptionPeriods({
+      subscription_id: subscriptionId,
+      versions,
+      account: { account_id: accountId, timezone: 'America/New_York', grants: buyer.grants.get(accountId) ?? [] },
+      buys: host.buys.get(accountId) ?? [],
+      offerings: OFFERINGS,
+      ...(coverage ? { coverage } : {}),
+      backfill_on_regrant: backfillOnRegrant,
+      status_retention_days: 30,
+      now,
+    });
+  }
+  async function assertAgree(accountId, now, subscriptionId) {
+    const seller = (await engine.owedPeriods(SCOPE, accountId, { now })).filter(
+      item => subscriptionId === undefined || item.subscription_id === subscriptionId
+    );
+    const expected = await buyerExpected(accountId, now, subscriptionId);
+    assert.deepEqual(seller, expected, `seller and buyer disagree for ${accountId} at ${now}`);
+    return expected;
+  }
+  return { clock, lifecycle, engine, host, sync, grant, revoke, step, observe, buyerExpected, assertAgree, emitted };
+}
+
+const starts = rows =>
+  rows.map(
+    row => `${row.subscription_version}:${row.media_buy_id}:${row.offering_id}:${row.period_start.slice(0, 10)}`
+  );
+
+describe('reporting subscription engine conformance (buyer periods equal seller periods)', () => {
+  test('a mid-period confirmed_at, cancellation mid-flight, and early completion', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [
+      buy('mb_mid', { confirmed_at: '2026-11-03T10:00:00Z' }),
+      buy('mb_cancel', { canceled_at: '2026-11-05T06:00:00Z' }),
+      buy('mb_done', { completed_at: '2026-11-04T00:00:00Z' }),
+    ]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    const owed = await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z');
+    assert.deepEqual(
+      starts(owed)
+        .filter(item => item.includes('mb_mid'))
+        .map(item => item.slice(-10)),
+      ['2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08', '2026-11-09']
+    );
+    assert.deepEqual(
+      starts(owed)
+        .filter(item => item.includes('mb_cancel'))
+        .map(item => item.slice(-10)),
+      ['2026-11-03', '2026-11-04', '2026-11-05']
+    );
+    assert.deepEqual(
+      starts(owed)
+        .filter(item => item.includes('mb_done'))
+        .map(item => item.slice(-10)),
+      ['2026-11-03']
+    );
+    const grouped = await w.engine.owedObligations(SCOPE, 'acct_1', { now: '2026-11-12T00:00:00.000Z' });
+    assert.deepEqual(grouped[0].media_buy_ids, ['mb_cancel', 'mb_done']);
+  });
+
+  test('a flight extension adds only unresolved periods', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [
+      buy('mb_1', {
+        end_time: '2026-11-08T00:00:00Z',
+        prior_flights: [
+          { replaced_at: '2026-11-07T12:00:00Z', start_time: '2026-11-03T00:00:00Z', end_time: '2026-11-06T00:00:00Z' },
+        ],
+      }),
+    ]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    const owed = await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z');
+    assert.deepEqual(
+      starts(owed).map(item => item.slice(-10)),
+      ['2026-11-03', '2026-11-04', '2026-11-05', '2026-11-07']
+    );
+  });
+
+  test('a new subscription version is a cutover', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [buy('mb_1')]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    w.clock.now = new Date('2026-11-05T12:00:00.000Z');
+    await w.sync([subscription({ subscription_version: 2, selector: { ...subscription().selector, match: 'all' } })]);
+    await w.step('2026-11-06T00:00:00.000Z');
+    const owed = await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z');
+    assert.deepEqual(
+      starts(owed)
+        .filter(item => item.startsWith('1:'))
+        .map(item => item.slice(-10)),
+      ['2026-11-03', '2026-11-04', '2026-11-05']
+    );
+    assert.equal(
+      starts(owed).filter(item => item.startsWith('2:') && item.endsWith('2026-11-05')).length,
+      0,
+      'nothing owed twice'
+    );
+    assert.equal(
+      starts(owed).filter(item => item.startsWith('2:')).length,
+      3 * 4,
+      'v2 match all: three offerings from 11-06'
+    );
+  });
+
+  for (const backfillOnRegrant of [false, true]) {
+    test(`revocation and re-grant ${backfillOnRegrant ? 'with' : 'without'} backfill_on_regrant`, async () => {
+      const w = world({ backfillOnRegrant });
+      w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+      w.host.buys.set('acct_1', [buy('mb_1')]);
+      await w.sync([subscription()]);
+      await w.step('2026-11-02T00:00:00.000Z');
+      w.revoke('acct_1');
+      const revoked = await w.step('2026-11-05T05:00:00.000Z');
+      const lost = revoked.result.configuration.reporting_subscriptions[0].accounts_unauthorized;
+      assert.equal(lost[0].account_id, 'acct_1');
+      assert.equal(lost[0].unauthorized_at, '2026-11-05T05:00:00.000Z');
+      assert.equal(lost[0].last_owed_period_end, '2026-11-05T00:00:00.000Z');
+      assert.equal(lost[0].withheld_period_count, 1, 'the 11-04 period (due 11-05T06) was not yet due at revocation');
+      assert.deepEqual(await w.engine.subscriptionCoverage(SCOPE, 'acct_1'), [], 'caller isolation is unchanged');
+      assert.equal(await w.engine.acceptsReceipt(SCOPE, 'acct_1', { readAt: '2026-11-05T01:00:00.000Z' }), true);
+      assert.equal(await w.engine.acceptsReceipt(SCOPE, 'acct_1', { readAt: '2026-11-05T06:00:00.000Z' }), false);
+      assert.ok(w.emitted.some(event => event.payload.reason === 'reporting_subscription_changed'));
+
+      w.grant('acct_1', '2026-11-06T18:00:00.000Z');
+      const regranted = await w.step('2026-11-06T18:00:00.000Z');
+      assert.equal(regranted.result.configuration.reporting_subscriptions[0].accounts_unauthorized, undefined);
+      const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+      if (backfillOnRegrant) assert.equal(coverage[0].gaps, undefined);
+      else
+        assert.deepEqual(coverage[0].gaps, [
+          { from: '2026-11-05T00:00:00.000Z', until: '2026-11-07T00:00:00.000Z', reason: 'unauthorized' },
+        ]);
+      const owed = await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z');
+      assert.deepEqual(
+        starts(owed).map(item => item.slice(-10)),
+        backfillOnRegrant
+          ? ['2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08', '2026-11-09']
+          : ['2026-11-03', '2026-11-04', '2026-11-07', '2026-11-08', '2026-11-09']
+      );
+    });
+  }
+
+  test('max_accounts excludes deterministically and reports capacity', async () => {
+    const w = world({ maxAccounts: 2 });
+    for (const id of ['acct_c', 'acct_a', 'acct_b']) {
+      w.grant(id, '2026-10-01T00:00:00.000Z');
+      w.host.buys.set(id, [buy(`mb_${id}`)]);
+    }
+    await w.sync([subscription()]);
+    const read = await w.step('2026-11-02T00:00:00.000Z');
+    assert.deepEqual(read.result.configuration.reporting_subscriptions[0].accounts_with_exceptions, [
+      { account_id: 'acct_c', reasons: ['capacity'] },
+    ]);
+    const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_c');
+    assert.equal(coverage[0].status, 'excluded');
+    assert.deepEqual(coverage[0].excluded, [{ reason: 'capacity', from: '2026-11-02T00:00:00.000Z' }]);
+    for (const id of ['acct_a', 'acct_b', 'acct_c']) await w.assertAgree(id, '2026-11-12T00:00:00.000Z');
+    assert.equal((await w.engine.owedPeriods(SCOPE, 'acct_c', { now: '2026-11-12T00:00:00.000Z' })).length, 0);
+    // A served account keeps its slot when a lower id appears later.
+    w.grant('acct_0', '2026-11-03T00:00:00.000Z');
+    w.host.buys.set('acct_0', [buy('mb_acct_0')]);
+    await w.step('2026-11-03T00:00:00.000Z');
+    const zero = await w.engine.subscriptionCoverage(SCOPE, 'acct_0');
+    assert.equal(zero[0].excluded[0].reason, 'capacity');
+    assert.equal((await w.engine.receiptRoster('acct_a')).length, 1);
+    assert.equal((await w.engine.receiptRoster('acct_c')).length, 0);
+  });
+
+  test("precedence: the caller's account-level configuration overrides the subscription", async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [buy('mb_1')]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    w.host.configs.set('acct_1', [
+      { delivery_config_id: 'acme-analytics', feed_purpose: 'analytics', active_from: '2026-11-04T12:00:00.000Z' },
+    ]);
+    await w.step('2026-11-04T12:00:00.000Z');
+    let coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+    assert.deepEqual(coverage[0].excluded, [
+      {
+        reason: 'overridden',
+        overridden_by: { delivery_config_id: 'acme-analytics' },
+        from: '2026-11-05T00:00:00.000Z',
+      },
+    ]);
+    w.host.configs.set('acct_1', []);
+    await w.step('2026-11-06T12:00:00.000Z');
+    coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+    assert.equal(coverage[0].excluded[0].until, '2026-11-07T00:00:00.000Z');
+    assert.equal(coverage[0].status, 'active');
+    const owed = await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z');
+    assert.deepEqual(
+      starts(owed).map(item => item.slice(-10)),
+      ['2026-11-03', '2026-11-04', '2026-11-07', '2026-11-08', '2026-11-09']
+    );
+  });
+
+  test('precedence: an account_ids subscription overrides an all-accounts one', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.grant('acct_2', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [buy('mb_1')]);
+    w.host.buys.set('acct_2', [buy('mb_2')]);
+    await w.sync([
+      subscription(),
+      subscription({ subscription_id: 'analytics-acct1', scope: { account_ids: ['acct_1'] } }),
+    ]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+    const all = coverage.find(item => item.subscription_id === 'analytics-daily');
+    assert.deepEqual(all.excluded[0].overridden_by, { subscription_id: 'analytics-acct1' });
+    for (const id of ['analytics-daily', 'analytics-acct1'])
+      await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z', id);
+    const owed = await w.engine.owedPeriods(SCOPE, 'acct_1', { now: '2026-11-12T00:00:00.000Z' });
+    assert.ok(
+      owed.every(item => item.subscription_id === 'analytics-acct1'),
+      'one feed per account and purpose'
+    );
+    await w.assertAgree('acct_2', '2026-11-12T00:00:00.000Z', 'analytics-daily');
+  });
+
+  for (const [match, dimensions, expected] of [
+    ['exact', ['package'], ['off_a_pkg']],
+    ['finest', ['package'], ['off_b_pkg_creative']],
+    ['all', ['package'], ['off_a_pkg', 'off_b_pkg_creative', 'off_c_pkg_country']],
+    ['exact', ['package', 'country'], ['off_c_pkg_country']],
+  ]) {
+    test(`selector ${match} ${dimensions.join(' x ')}`, async () => {
+      const w = world();
+      w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+      w.host.buys.set('acct_1', [buy('mb_1', { end_time: '2026-11-04T00:00:00Z' })]);
+      await w.sync([subscription({ selector: { ...subscription().selector, dimensions, match } })]);
+      await w.step('2026-11-02T00:00:00.000Z');
+      const owed = await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z');
+      assert.deepEqual(
+        owed.map(item => item.offering_id),
+        expected
+      );
+    });
+  }
+
+  test('offering_unsupported and excluded_by_buyer are reported without removing owed periods elsewhere', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.grant('acct_x', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [
+      buy('mb_1'),
+      buy('mb_dooh', { packages: [{ package_id: 'dooh_pkg', reporting_delivery_offering_ids: [] }] }),
+      buy('mb_mixed', {
+        packages: [
+          { package_id: 'ok_pkg', reporting_delivery_offering_ids: ['off_a_pkg'] },
+          { package_id: 'bad_pkg', reporting_delivery_offering_ids: [] },
+        ],
+      }),
+    ]);
+    await w.sync([subscription({ exclude_account_ids: ['acct_x'] })]);
+    const read = await w.step('2026-11-02T00:00:00.000Z');
+    assert.deepEqual(read.result.configuration.reporting_subscriptions[0].accounts_with_exceptions, [
+      { account_id: 'acct_1', reasons: ['offering_unsupported'] },
+      { account_id: 'acct_x', reasons: ['excluded_by_buyer'] },
+    ]);
+    const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+    assert.equal(coverage[0].status, 'active');
+    assert.deepEqual(
+      coverage[0].excluded.map(item => [item.media_buy_id, item.package_ids]),
+      [
+        ['mb_dooh', undefined],
+        ['mb_mixed', ['bad_pkg']],
+      ]
+    );
+    const outcome = validateResponse(
+      'get_reporting_status',
+      { status: 'completed', view: 'summary', subscription_coverage: coverage },
+      '3.3.0-beta.1'
+    );
+    assert.equal(
+      outcome.issues?.some(issue => /subscription_coverage/.test(issue.pointer ?? issue.path ?? '')) ?? false,
+      false,
+      JSON.stringify(outcome.issues)
+    );
+    const owed = await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z');
+    assert.deepEqual([...new Set(owed.map(item => item.media_buy_id))], ['mb_1', 'mb_mixed']);
+    assert.equal((await w.engine.subscriptionCoverage(SCOPE, 'acct_x'))[0].status, 'excluded');
+  });
+
+  test('a pending account action is an account-level action_required exception', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z', {
+      pending_action: {
+        waiting_on: 'buyer',
+        kind: 'accept_terms',
+        message: 'Accept reporting terms',
+        url: 'https://seller.example/terms',
+      },
+    });
+    w.host.buys.set('acct_1', [buy('mb_1')]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+    assert.equal(coverage[0].status, 'action_required');
+    assert.equal(coverage[0].pending_action.kind, 'accept_terms');
+    await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z');
+  });
+});

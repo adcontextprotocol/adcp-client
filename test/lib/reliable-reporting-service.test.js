@@ -7,6 +7,7 @@ const {
   REPORTING_MANAGED_DELIVERY_COMPOSITION_V1,
   ReportingConfigurationImmutableError,
   createReliableReportingService,
+  createReportingSubscriptionEngineV1,
   isReportingConfigurationImmutableError,
   reportingConfigurationCapabilitiesV1,
   runReliableReportingServiceConformanceV1,
@@ -19,6 +20,7 @@ const {
 } = require('../../dist/lib/reporting/source/index.js');
 const { createAdcpServerFromPlatform } = require('../../dist/lib/server/decisioning/runtime/from-platform.js');
 const { MemoryLedgerStore } = require('../helpers/memory-reporting-ledger-store.js');
+const { createTestPrincipalLifecycle } = require('../helpers/principal-runtime.js');
 const { canonicalize } = require('../../dist/lib/utils/jcs.js');
 const { createHash } = require('node:crypto');
 
@@ -592,6 +594,101 @@ describe('ReliableReportingService', () => {
     );
     assert.throws(() => reportingConfigurationCapabilitiesV1({ accountConfigurations: false }), TypeError);
     assert.throws(() => reportingConfigurationCapabilitiesV1({ subscriptions: { maxAccounts: 0 } }), TypeError);
+  });
+
+  test('advertises reporting subscriptions end to end, valid under strict 3.3 validation', async () => {
+    const { lifecycle } = createTestPrincipalLifecycle({
+      reportingSubscriptions: {},
+      includeCompatibilityNotificationTask: true,
+    });
+    const capabilityChanges = {
+      capabilities_version: 'caps-1',
+      cache_ttl_seconds: 3600,
+      notifications: { supported: true, registration_task: 'sync_principal', event_types: ['capabilities.changed'] },
+    };
+    const engine = createReportingSubscriptionEngineV1({
+      principal: lifecycle,
+      offerings: [],
+      statusRetentionDays: redactedReportingSourceOfferingV1.retentionDays,
+      maxAccounts: 100,
+      hooks: { listAuthorizedAccounts: () => ({ accounts: [] }), listAccountBuys: () => [] },
+    });
+    const { service } = serviceFixture({
+      reportingSubscriptions: { engine, resolvePrincipal: () => ({ tenantId: 't', principalId: 'p' }) },
+    });
+    assert.deepEqual(service.capabilities.configuration_tasks, ['sync_principal', 'sync_accounts']);
+    assert.equal(service.capabilities.configuration_task, 'sync_accounts');
+    assert.deepEqual(service.capabilities.subscriptions, {
+      supported: true,
+      max_accounts: 100,
+      backfill_on_regrant: false,
+    });
+    assert.deepEqual(lifecycle.capabilities.supported_sections, ['notification_configs', 'reporting_subscriptions']);
+    const accounts = {
+      resolution: 'explicit',
+      resolve: async ref => ({ id: ref?.account_id ?? 'account-a', ctx_metadata: {} }),
+      upsert: async () => [],
+    };
+    assert.throws(
+      () =>
+        createAdcpServerFromPlatform(service.install({ capabilities: { specialisms: [], config: {} }, accounts }), {
+          name: 'reporting-subscriptions-without-principal',
+          version: '1.0.0',
+        }),
+      /capabilities\.principal/,
+      'subscriptions without the principal section fail at construction, not on the wire'
+    );
+    const platform = service.install({
+      capabilities: {
+        specialisms: [],
+        config: {},
+        principal: lifecycle.capabilities,
+        capability_changes: capabilityChanges,
+      },
+      accounts,
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'reporting-subscriptions-capabilities-test',
+      version: '1.0.0',
+      protocol: lifecycle.protocol,
+      validation: { requests: 'strict', responses: 'strict' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: {} },
+    });
+    assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepEqual(result.structuredContent.experimental_features, [
+      'media_buy.reporting_delivery',
+      'media_buy.reporting_subscriptions',
+      'protocol.principal',
+    ]);
+    assert.deepEqual(result.structuredContent.adcp.principal.supported_sections, [
+      'notification_configs',
+      'reporting_subscriptions',
+    ]);
+    assert.deepEqual(result.structuredContent.media_buy.reporting_delivery, service.capabilities);
+
+    // Callers pinned to 3.2 see neither the 3.3 registration fields nor the 3.3 section.
+    const legacy = createAdcpServerFromPlatform(platform, {
+      name: 'reporting-subscriptions-capabilities-3-2',
+      version: '1.0.0',
+      adcpVersion: '3.2.1',
+      protocol: lifecycle.protocol,
+      validation: { requests: 'strict', responses: 'strict' },
+    });
+    const legacyResult = await legacy.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: {} },
+    });
+    assert.notEqual(legacyResult.isError, true, JSON.stringify(legacyResult.structuredContent));
+    assert.equal(legacyResult.structuredContent.media_buy.reporting_delivery.configuration_tasks, undefined);
+    assert.equal(legacyResult.structuredContent.media_buy.reporting_delivery.subscriptions, undefined);
+    assert.equal(
+      legacyResult.structuredContent.experimental_features.includes('media_buy.reporting_subscriptions'),
+      false
+    );
+    assert.deepEqual(legacyResult.structuredContent.adcp.principal.supported_sections, ['notification_configs']);
   });
 
   test('derives Core-only capabilities and installs native server handlers', async () => {

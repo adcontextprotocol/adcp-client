@@ -272,6 +272,25 @@ export interface CreateReliableReportingServiceOptionsV1<TCtxMeta = Record<strin
    * `docs/guides/REPORTING-LEDGER-CUTOVER.md`.
    */
   legacyRevisionReader?: ReportingLegacyRevisionReaderV1;
+  /**
+   * Opt in to principal-level reporting subscriptions (experimental
+   * `media_buy.reporting_subscriptions`, AdCP 3.3). Advertises `configuration_tasks` with
+   * `sync_principal` and the `subscriptions` block, and adds `subscription_coverage[]` to
+   * `get_reporting_status` summary and periods views. Pair it with a principal runtime
+   * created with `reportingSubscriptions` and a {@link ReportingSubscriptionEngineV1}. Without
+   * it capabilities and responses are unchanged.
+   */
+  reportingSubscriptions?: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>;
+}
+
+export interface ReliableReportingSubscriptionsOptionsV1<TCtxMeta = Record<string, unknown>> {
+  engine: Pick<ReportingSubscriptionEngineV1, 'subscriptionCoverage' | 'settings'>;
+  /** The same authenticated mapping the principal runtime uses. Never derive it from request content. */
+  resolvePrincipal(context: RequestContext<Account<TCtxMeta>>): PrincipalStoreScope | Promise<PrincipalStoreScope>;
+  /** Standard dimensions the seller maps its report definitions onto (`subscriptions.dimensions`). */
+  dimensions?: readonly string[];
+  /** Keep serving `sync_accounts` `reporting_delivery_configs`. Defaults to true. */
+  accountConfigurations?: boolean;
 }
 
 /**
@@ -333,6 +352,10 @@ export type ReliableReportingMaintenanceFactoryV1 = (
  *
  * @experimental Storage-facing building block: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
+import type { ReportingSubscriptionEngineV1 } from '../subscriptions/engine';
+import type { PrincipalStoreScope } from '../../server/principal/types';
+import { reportingConfigurationCapabilitiesV1 } from '../subscriptions/capabilities';
+
 export const REPORTING_MANAGED_DELIVERY_COMPOSITION_V1: unique symbol = Symbol.for(
   '@adcp/sdk/reporting/managed-delivery-composition'
 ) as never;
@@ -523,10 +546,39 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   ): Promise<readonly ReliableReportingMaintenanceTaskResultV1[]> =>
     maintenance!.run({ signal, ...(report ? { report } : {}) });
 
+  const subscriptionOptions = options.reportingSubscriptions;
+  if (subscriptionOptions !== undefined) {
+    if (typeof subscriptionOptions.engine?.subscriptionCoverage !== 'function') {
+      throw new TypeError('reportingSubscriptions requires a reporting subscription engine');
+    }
+    if (typeof subscriptionOptions.resolvePrincipal !== 'function') {
+      throw new TypeError('reportingSubscriptions requires resolvePrincipal');
+    }
+  }
+  // Without subscriptions this is exactly the pre-3.3 shape.
+  const registration = subscriptionOptions
+    ? reportingConfigurationCapabilitiesV1({
+        subscriptions: {
+          ...(subscriptionOptions.engine.settings.maxAccounts !== undefined
+            ? { maxAccounts: subscriptionOptions.engine.settings.maxAccounts }
+            : {}),
+          backfillOnRegrant: subscriptionOptions.engine.settings.backfillOnRegrant,
+          ...(subscriptionOptions.dimensions ? { dimensions: subscriptionOptions.dimensions } : {}),
+        },
+        ...(subscriptionOptions.accountConfigurations !== undefined
+          ? { accountConfigurations: subscriptionOptions.accountConfigurations }
+          : {}),
+      })
+    : ({ configuration_task: 'sync_accounts' } as ReturnType<typeof reportingConfigurationCapabilitiesV1>);
+  if (subscriptionOptions && subscriptionOptions.engine.settings.statusRetentionDays !== options.statusRetentionDays) {
+    throw new TypeError('The reporting subscription engine must use the statusRetentionDays this service advertises');
+  }
+  const servesAccountConfigurations = registration.configuration_task === 'sync_accounts';
+
   const capabilities = deepFreeze({
     supported: true as const,
     reliable_reporting_version: '1.0' as const,
-    configuration_task: 'sync_accounts' as const,
+    ...registration,
     status_task: 'get_reporting_status' as const,
     ...(hasConsumerStatus ? { consumer_status_task: 'sync_reporting_status' as const } : {}),
     revision_content_task: 'get_media_buy_delivery' as const,
@@ -558,7 +610,12 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
 
   const reportingPlatform: ReliableReportingPlatform<TCtxMeta> = {
     capabilities,
-    getReportingStatus: (request, context) => getReportingStatus(request, context as never),
+    getReportingStatus: subscriptionOptions
+      ? async (request, context) => {
+          const response = await getReportingStatus(request, context as never);
+          return withSubscriptionCoverage(response, context as never, subscriptionOptions);
+        }
+      : (request, context) => getReportingStatus(request, context as never),
     getMediaBuyDelivery: (request, context) => getMediaBuyDelivery(request, context as never),
     ...(syncReportingStatus && {
       syncReportingStatus: (request, context) => syncReportingStatus(request, context),
@@ -694,7 +751,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     install<TPlatform extends DecisioningPlatform<any, TCtxMeta>>(platform: TPlatform) {
-      if (typeof platform.accounts.upsert !== 'function') {
+      if (servesAccountConfigurations && typeof platform.accounts.upsert !== 'function') {
         throw new TypeError(
           'Reliable reporting requires accounts.upsert so the advertised sync_accounts configuration task is installed'
         );
@@ -781,6 +838,25 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   };
 
   return service;
+}
+
+/**
+ * Add `subscription_coverage[]` to a completed summary or periods response. The revision
+ * view never carries it, and an account the caller cannot read has no entries.
+ */
+async function withSubscriptionCoverage<TCtxMeta>(
+  response: Awaited<ReturnType<ReliableReportingPlatform<TCtxMeta>['getReportingStatus']>>,
+  context: RequestContext<Account<TCtxMeta>>,
+  subscriptions: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>
+) {
+  const body = response as unknown as Record<string, unknown>;
+  if (body.status !== 'completed' || (body.view !== 'summary' && body.view !== 'periods')) return response;
+  const accountId = (context.account as { id?: unknown } | undefined)?.id;
+  if (typeof accountId !== 'string') return response;
+  const principal = await subscriptions.resolvePrincipal(context);
+  const coverage = await subscriptions.engine.subscriptionCoverage(principal, accountId);
+  if (coverage.length === 0) return response;
+  return { ...body, subscription_coverage: coverage } as unknown as typeof response;
 }
 
 function createRoutedSource(
@@ -1567,5 +1643,19 @@ export {
   type ReportingConfigurationCapabilitiesInputV1,
   type ReportingConfigurationCapabilitiesV1,
 } from '../subscriptions/capabilities';
+export {
+  createInMemoryReportingSubscriptionEngineStoreV1,
+  createReportingSubscriptionEngineV1,
+  type CreateReportingSubscriptionEngineOptionsV1,
+  type ReportingSubscriptionAccountConfigV1,
+  type ReportingSubscriptionAccountFactV1,
+  type ReportingSubscriptionCoverageEntryV1,
+  type ReportingSubscriptionEngineHooksV1,
+  type ReportingSubscriptionEngineStateV1,
+  type ReportingSubscriptionEngineStoreV1,
+  type ReportingSubscriptionEngineV1,
+  type ReportingSubscriptionExclusionReasonV1,
+  type ReportingSubscriptionExclusionV1,
+} from '../subscriptions/engine';
 export * from './conformance';
 export * from './scheduler-support';
