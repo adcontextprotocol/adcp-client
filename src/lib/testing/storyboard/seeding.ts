@@ -24,6 +24,7 @@
 import { resolveAccount, resolveBrand, validateResponseSchema, type TestClient } from '../client';
 import { getValidator } from '../../validation/schema-loader';
 import { ADCP_VERSION } from '../../version';
+import { resolveCreativeFormatWireMode } from '../../v2/projection/creative-delivery';
 import { injectLegacyEnvelopeStatus } from '../../utils/envelope-status-compat';
 import { readExtractionPath, unwrapProtocolResponse } from '../../utils/response-unwrapper';
 import { callControllerRaw } from '../test-controller';
@@ -1524,7 +1525,10 @@ async function discoverProductCatalog(
     buying_mode: 'wholesale',
     brand,
     account,
-    ext: { adcp: { creative_wire: 'canonical' } },
+    ...(resolveCreativeFormatWireMode(
+      options._profile?.raw_capabilities,
+      options._serverAdcpVersion ?? options.adcpVersion ?? ADCP_VERSION
+    ) === 'canonical' && { ext: { adcp: { creative_wire: 'canonical' } } }),
   });
   let lastExchange: Extract<DiscoveryCatalogResult, { ok: false }>['exchange'];
   const exchanges: DiscoveryExchange[] = [];

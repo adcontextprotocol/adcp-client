@@ -27,6 +27,7 @@ const BUILTIN_ASSERTION_IDS = [
   'governance.denial_blocks_mutation',
   'status.monotonic',
   'impairment.coherence',
+  'discovery.pricing_currency_filter',
 ];
 
 describe('default-invariants: auto-registration', () => {
