@@ -263,7 +263,8 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
       starts(owed)
         .filter(item => item.includes('mb_mid'))
         .map(item => item.slice(-10)),
-      ['2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08', '2026-11-09']
+      // adcp#8593: the period in which the buy is confirmed is owed in full.
+      ['2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08', '2026-11-09']
     );
     assert.deepEqual(
       starts(owed)
@@ -278,7 +279,7 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
       ['2026-11-03']
     );
     const grouped = await w.engine.owedObligations(SCOPE, 'acct_1', { now: '2026-11-12T00:00:00.000Z' });
-    assert.deepEqual(grouped[0].media_buy_ids, ['mb_cancel', 'mb_done']);
+    assert.deepEqual(grouped[0].media_buy_ids, ['mb_cancel', 'mb_done', 'mb_mid']);
   });
 
   test('a flight extension adds only unresolved periods', async () => {
