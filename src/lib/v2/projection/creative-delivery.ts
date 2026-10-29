@@ -683,7 +683,16 @@ export interface SyncCreativeFormatProjection {
   legacyFormatConverter?: LegacyFormatConverter;
   /** Seller-provided legacy slot contracts, matched by exact format owner and id. */
   legacyFormatDefinitions?: readonly V1FormatDefinition[];
-  /** Opt in only for sellers that accept player-sized refs without width/height. */
+  /**
+   * @deprecated Not needed: on the legacy wire the SDK reconciles a creative's
+   * per-package refs by constraint satisfaction, so a package that leaves the
+   * player size unstated accepts the size another package states, and the
+   * shared ref omits size when no package states one. Still accepted with its
+   * beta.5 meaning for the one case the declarations cannot settle: VAST
+   * packages that state *different* player sizes. Setting it asserts the
+   * seller accepts a ref without width/height, and the shared ref then omits
+   * the conflicting size. Canonical delivery ignores it.
+   */
   playerSizedRefs?: 'omit_unstated_size';
 }
 
@@ -700,6 +709,14 @@ export class CreativeFormatProjectionError extends Error {
         ref?: V1FormatId;
         refs?: readonly V1FormatId[];
         reason?: string;
+      }>;
+      /**
+       * Legacy wire only: constraints no single shared `format_id` could
+       * satisfy across the assigned packages, with the packages stating each value.
+       */
+      conflicts?: ReadonlyArray<{
+        constraint: 'format_id' | 'size' | 'duration';
+        values: ReadonlyArray<{ value: string; package_ids: readonly string[] }>;
       }>;
     }
   ) {
@@ -2247,6 +2264,155 @@ function matchesDurationRange(
   );
 }
 
+/** One package's independent legacy resolution, kept for cross-package reconciliation. */
+type ResolvedLegacyAssignment = {
+  packageId: string;
+  ref: V1FormatId;
+  value: Record<string, unknown>;
+  /** Params of the package declarations that produced `ref`. */
+  declarationParams: readonly unknown[];
+};
+
+/** A legacy format_id constraint that assigned packages state incompatibly. */
+type LegacyFormatRefConflict = {
+  constraint: 'format_id' | 'size' | 'duration';
+  values: Array<{ value: string; package_ids: string[] }>;
+};
+
+function groupConflict(
+  constraint: LegacyFormatRefConflict['constraint'],
+  groups: Map<string, Set<string>>
+): LegacyFormatRefConflict | undefined {
+  if (groups.size <= 1) return undefined;
+  return {
+    constraint,
+    values: [...groups].map(([value, packageIds]) => ({ value, package_ids: [...packageIds] })),
+  };
+}
+
+function addToGroup(groups: Map<string, Set<string>>, value: string, packageId: string): void {
+  const group = groups.get(value) ?? new Set<string>();
+  group.add(packageId);
+  groups.set(value, group);
+}
+
+function describeLegacyFormatRefConflict(conflict: LegacyFormatRefConflict): string {
+  const label =
+    conflict.constraint === 'format_id'
+      ? 'format identity (agent_url, id)'
+      : conflict.constraint === 'size'
+        ? 'size (width, height)'
+        : 'duration (duration_ms)';
+  const values = conflict.values
+    .map(entry => `${entry.value} for ${entry.package_ids.map(id => JSON.stringify(id)).join(', ')}`)
+    .join(' vs ');
+  return `${label} conflicts: ${values}`;
+}
+
+/**
+ * Legacy wire only. A legacy sync_creatives record carries one `format_id` for
+ * a creative however many packages it is assigned to, so after each package
+ * resolves independently the SDK must pick one ref they all accept. On the
+ * canonical wire each package checks the creative against its own
+ * `format_kind` + `params`, so there is no shared identity and this never runs.
+ *
+ * Reconcile by constraint satisfaction, not identity: every ref must name the
+ * same format (agent_url + id). Width/height and duration_ms are constraints
+ * a package either states or leaves open. A package that leaves one open
+ * accepts any value; packages that state it must agree. A package states a
+ * value through its resolved ref or, where the ref is silent, through its
+ * declaration params or the catalog entry for the id. The shared ref carries
+ * each value some package's ref states and omits values no ref states, so
+ * declarations alone decide whether size is required. Only when two packages
+ * state different values does reconciliation fail, naming each conflict.
+ */
+function reconcileLegacyAssignmentRefs(
+  resolved: readonly ResolvedLegacyAssignment[]
+): { value: Record<string, unknown> } | { conflicts: LegacyFormatRefConflict[] } {
+  const first = resolved[0]!;
+  if (resolved.every(entry => candidateKey({ ref: entry.ref }) === candidateKey({ ref: first.ref }))) {
+    return { value: first.value };
+  }
+  const identities = new Map<string, Set<string>>();
+  for (const entry of resolved) addToGroup(identities, `${entry.ref.id} at ${entry.ref.agent_url}`, entry.packageId);
+  const identityConflict = resolved.some(entry => !sameLegacyIdentity(entry.ref, first.ref))
+    ? groupConflict('format_id', identities)
+    : undefined;
+  if (identityConflict) return { conflicts: [identityConflict] };
+
+  const sizeOf = (width: number | undefined, height: number | undefined): string | undefined =>
+    width === undefined && height === undefined ? undefined : `${width ?? '(unstated)'}x${height ?? '(unstated)'}`;
+  const sizes = new Map<string, Set<string>>();
+  const durations = new Map<string, Set<string>>();
+  for (const entry of resolved) {
+    // A ref's own value wins. Where the ref is silent, the package's declarations
+    // state a value only when they agree; several differing options leave it open.
+    const stated = (entry.declarationParams.length > 0 ? entry.declarationParams : [undefined]).map(paramsValue =>
+      legacyRefParameterConstraints(entry.ref, paramsValue)
+    );
+    const packageSizes = new Set(stated.flatMap(value => sizeOf(value.width, value.height) ?? []));
+    const packageDurations = new Set(stated.flatMap(value => value.durationMs ?? []));
+    if (packageSizes.size === 1) addToGroup(sizes, [...packageSizes][0]!, entry.packageId);
+    if (packageDurations.size === 1) addToGroup(durations, String([...packageDurations][0]), entry.packageId);
+  }
+  const conflicts = [groupConflict('size', sizes), groupConflict('duration', durations)].filter(
+    (conflict): conflict is LegacyFormatRefConflict => conflict !== undefined
+  );
+  if (conflicts.length > 0) return { conflicts };
+
+  // Every stated value agrees, so any ref stating one states the agreed value.
+  const sized = resolved.find(entry => entry.ref.width !== undefined || entry.ref.height !== undefined);
+  const timed = resolved.find(entry => entry.ref.duration_ms !== undefined);
+  const durationMs = timed?.ref.duration_ms;
+  // Open-ended declarations (a size list, a duration range) still bound the
+  // shared value. A package refuses it only when none of its declarations accepts it.
+  const sizeLists = new Map<string, Set<string>>();
+  const ranges = new Map<string, Set<string>>();
+  for (const entry of resolved) {
+    const declarations = entry.declarationParams.map(record);
+    const excludingList = (params: Record<string, unknown> | undefined): unknown[] | undefined => {
+      const listed = Array.isArray(params?.sizes)
+        ? params.sizes.flatMap(size => (record(size) ? [record(size)!] : []))
+        : [];
+      return sized &&
+        listed.length > 1 &&
+        !listed.some(size => size.width === sized.ref.width && size.height === sized.ref.height)
+        ? (params!.sizes as unknown[])
+        : undefined;
+    };
+    const excludingRange = (params: Record<string, unknown> | undefined): unknown =>
+      durationMs !== undefined && params?.duration_ms_range !== undefined && !matchesDurationRange(params, durationMs)
+        ? params.duration_ms_range
+        : undefined;
+    if (declarations.length > 0 && declarations.every(params => excludingList(params) !== undefined)) {
+      addToGroup(sizeLists, `sizes ${JSON.stringify(excludingList(declarations[0]))}`, entry.packageId);
+    }
+    if (declarations.length > 0 && declarations.every(params => excludingRange(params) !== undefined)) {
+      addToGroup(ranges, `duration_ms_range ${JSON.stringify(excludingRange(declarations[0]))}`, entry.packageId);
+    }
+  }
+  if (sizeLists.size > 0) addToGroup(sizeLists, sizeOf(sized!.ref.width, sized!.ref.height)!, sized!.packageId);
+  if (ranges.size > 0) addToGroup(ranges, String(durationMs), timed!.packageId);
+  const boundConflicts = [groupConflict('size', sizeLists), groupConflict('duration', ranges)].filter(
+    (conflict): conflict is LegacyFormatRefConflict => conflict !== undefined
+  );
+  if (boundConflicts.length > 0) return { conflicts: boundConflicts };
+  const source = sized ?? timed ?? first;
+  const ref: V1FormatId = {
+    agent_url: source.ref.agent_url,
+    id: source.ref.id,
+    ...(sized?.ref.width !== undefined && { width: sized.ref.width }),
+    ...(sized?.ref.height !== undefined && { height: sized.ref.height }),
+    ...(durationMs !== undefined && { duration_ms: durationMs }),
+  };
+  // Prefer a package that resolved to exactly this ref, so its projected record is used unchanged.
+  const exact = resolved.find(entry => candidateKey({ ref: entry.ref }) === candidateKey({ ref }));
+  if (exact) return { value: exact.value };
+  const value = { ...source.value, format_id: ref };
+  transferLegacyCreativeMetadata(source.value, value);
+  return { value };
+}
+
 /** Resolve assignments independently before selecting the one creative wire identity. */
 function projectAssignedCreative(
   creative: Record<string, unknown>,
@@ -2258,7 +2424,7 @@ function projectAssignedCreative(
   options: Pick<SyncCreativeFormatProjection, 'playerSizedRefs'> | undefined
 ): Record<string, unknown> {
   const packageRefs: NonNullable<CreativeFormatProjectionError['details']>['package_refs'][number][] = [];
-  const projected: Record<string, unknown>[] = [];
+  const resolved: ResolvedLegacyAssignment[] = [];
   const parameterKeys = new Set<string>();
   let compatibleParameters = true;
   const playerSized = creative.format_kind === 'video_vast' || creative.format_kind === 'audio_vast';
@@ -2382,9 +2548,11 @@ function projectAssignedCreative(
           String(creative.creative_id),
           'the projected legacy reference does not match the selected package format options'
         );
-      for (const paramsValue of allowed.length > 0
-        ? allowed.map(candidate => candidate.selectorParams)
-        : assignedDeclarationParameters(creative, selector)) {
+      const declarationParams =
+        allowed.length > 0
+          ? allowed.map(candidate => candidate.selectorParams)
+          : assignedDeclarationParameters(creative, selector);
+      for (const paramsValue of declarationParams) {
         const nonSize = { ...record(paramsValue) };
         delete nonSize.width;
         delete nonSize.height;
@@ -2413,7 +2581,7 @@ function projectAssignedCreative(
           compatibleParameters = false;
         }
       }
-      projected.push(value);
+      resolved.push({ packageId, ref, value, declarationParams });
       packageRefs.push({ package_id: packageId, ref });
     } catch (error) {
       if (!(error instanceof CreativeFormatProjectionError)) throw error;
@@ -2437,10 +2605,18 @@ function projectAssignedCreative(
       });
     }
   }
-  const refs = packageRefs.flatMap(entry => (entry.ref && !entry.reason ? [entry.ref] : []));
-  if (refs.length === packageIds.size) {
+  let conflicts: LegacyFormatRefConflict[] = [];
+  let attemptedPlayerSizedOverride = false;
+  if (resolved.length === packageIds.size) {
+    const reconciled = reconcileLegacyAssignmentRefs(resolved);
+    if ('value' in reconciled) return reconciled.value;
+    conflicts = reconciled.conflicts;
+    // Deprecated `playerSizedRefs` host override, kept with its beta.5 meaning
+    // for the one case declarations cannot settle: packages that state
+    // different player sizes. The host asserts the seller accepts a VAST ref
+    // without width/height, so the shared ref omits the conflicting size.
+    const refs = resolved.map(entry => entry.ref);
     const first = refs[0]!;
-    if (refs.every(ref => candidateKey({ ref }) === candidateKey({ ref: first }))) return projected[0]!;
     const statesSize = (value: Record<string, unknown> | undefined): boolean =>
       value !== undefined &&
       [
@@ -2456,9 +2632,9 @@ function projectAssignedCreative(
       ].some(key => Object.hasOwn(value, key));
     const originalRef = record(creative.format_id);
     const rangeMatches = matchesDurationRange(params, first.duration_ms, true);
+    attemptedPlayerSizedOverride = options?.playerSizedRefs === 'omit_unstated_size' && playerSized;
     if (
-      options?.playerSizedRefs === 'omit_unstated_size' &&
-      playerSized &&
+      attemptedPlayerSizedOverride &&
       compatibleParameters &&
       parameterKeys.size === 1 &&
       rangeMatches &&
@@ -2481,8 +2657,8 @@ function projectAssignedCreative(
         id: first.id,
         ...(first.duration_ms !== undefined && { duration_ms: first.duration_ms }),
       };
-      const value = { ...projected[0]!, format_id: shared };
-      transferLegacyCreativeMetadata(projected[0]!, value);
+      const value = { ...resolved[0]!.value, format_id: shared };
+      transferLegacyCreativeMetadata(resolved[0]!.value, value);
       return value;
     }
   }
@@ -2492,15 +2668,19 @@ function projectAssignedCreative(
         `${JSON.stringify(entry.package_id)}: ${JSON.stringify(entry.ref ?? entry.refs ?? [])}${entry.reason ? ` (${entry.reason})` : ''}`
     )
     .join('; ');
+  const conflictReason =
+    conflicts.length > 0
+      ? `; no single legacy format_id satisfies every package: ${conflicts.map(describeLegacyFormatRefConflict).join('; ')}`
+      : '';
   const constraintReason =
-    !compatibleParameters || parameterKeys.size > 1
+    attemptedPlayerSizedOverride && (!compatibleParameters || parameterKeys.size > 1)
       ? '; package declarations disagree on non-size format parameters'
       : '';
   throw new CreativeFormatProjectionError(
     'sync_creatives',
     typeof creative.creative_id === 'string' ? creative.creative_id : '(unknown)',
-    `assigned packages do not share a compatible legacy format reference (${packages})${constraintReason}; split the assignments or inspect details.package_refs`,
-    { package_refs: packageRefs }
+    `assigned packages do not share a compatible legacy format reference (${packages})${conflictReason}${constraintReason}; inspect details.package_refs`,
+    { package_refs: packageRefs, ...(conflicts.length > 0 && { conflicts }) }
   );
 }
 
@@ -2562,6 +2742,8 @@ export function projectSyncCreativesForDelivery<T>(
         : selectorContainers.filter(
             container => typeof container.package_id === 'string' && assignedPackageIds.has(container.package_id)
           );
+    // Legacy wire only: one format_id must satisfy every assigned package. The
+    // canonical wire checks each package's format_kind + params on its own.
     if (wireMode !== 'canonical' && assignedPackageIds.size > 1) {
       const projected = projectAssignedCreative(
         creative,
