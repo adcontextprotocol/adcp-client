@@ -49,6 +49,7 @@ import {
 } from '../../server/state-machine';
 import { registerAssertion } from './assertions';
 import { pricingCurrencyFilterAssertion } from './pricing-currency-filter';
+import { requiredMetricFiltersAssertion } from './required-metric-filters';
 
 // Register only once per process. `registerAssertion` throws on duplicates —
 // consumers who import `@adcp/sdk/testing` multiple times would hit that.
@@ -72,6 +73,7 @@ function registerOnce(id: string, spec: Parameters<typeof registerAssertion>[0])
  */
 export function registerDefaultInvariants(): void {
   registerOnce(pricingCurrencyFilterAssertion.id, pricingCurrencyFilterAssertion);
+  registerOnce(requiredMetricFiltersAssertion.id, requiredMetricFiltersAssertion);
   registerOnce('idempotency.conflict_no_payload_leak', {
     id: 'idempotency.conflict_no_payload_leak',
     default: true,

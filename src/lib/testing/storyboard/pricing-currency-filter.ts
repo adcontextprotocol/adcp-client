@@ -58,6 +58,24 @@ function isFixedSelection(signal: RecordValue, rules: RecordValue): boolean {
     : rules.selection_mode === 'fixed';
 }
 
+function selectionCapacity(
+  options: RecordValue[],
+  compatible: Compatibility[],
+  rules: RecordValue,
+  possible: boolean
+): number {
+  const grouped = new Map<unknown, number>();
+  for (const [index, option] of options.entries()) {
+    if (compatible[index] !== 'compatible' && !(possible && compatible[index] === 'indeterminate')) continue;
+    // Missing grouping metadata is not evidence that two options share a cap.
+    const group = option.selection_group ?? option;
+    grouped.set(group, (grouped.get(group) ?? 0) + 1);
+  }
+  const perGroup = typeof rules.max_selected_per_group === 'number' ? rules.max_selected_per_group : Infinity;
+  const capacity = [...grouped.values()].reduce((sum, count) => sum + Math.min(count, perGroup), 0);
+  return typeof rules.max_selected_signals === 'number' ? Math.min(capacity, rules.max_selected_signals) : capacity;
+}
+
 /**
  * Validate the observable currency contract on the effective discovery result.
  * This does not compare against fixture rate-card IDs or source currencies:
@@ -108,6 +126,15 @@ export const pricingCurrencyFilterAssertion: AssertionSpec = {
       }
       const rules = record(product.signal_targeting_rules) ?? {};
       const signals = records(product.signal_targeting_options);
+      const groups = records(rules.selection_group_rules);
+      if (
+        product.signal_targeting_options === undefined &&
+        (rules.selection_mode === 'fixed' ||
+          rules.selection_mode === 'required' ||
+          groups.some(group => ['fixed', 'required'].includes(String(group.selection_mode))))
+      ) {
+        add(`${productPath}.signal_targeting_options: mandatory inline menu is unavailable`, 'indeterminate');
+      }
       for (const [signalIndex, signal] of signals.entries()) {
         if (isFixedSelection(signal, rules)) {
           add(`${productPath}.signal_targeting_options[${signalIndex}]`, signalCompatibility(signal, currencies));
@@ -115,14 +142,20 @@ export const pricingCurrencyFilterAssertion: AssertionSpec = {
       }
       const requiredGroups = records(rules.selection_group_rules)
         .map((group, index) => ({ group, index }))
-        .filter(({ group }) => group.selection_mode === 'required');
-      const requirements: Array<{ path: string; minimum: unknown; options: RecordValue[] }> = requiredGroups.map(
-        ({ group, index }) => ({
+        .filter(({ group }) => (group.selection_mode ?? rules.selection_mode) === 'required');
+      const requirements: Array<{ path: string; minimum: unknown; options: RecordValue[]; bounds: RecordValue }> =
+        requiredGroups.map(({ group, index }) => ({
           path: `${productPath}.signal_targeting_rules.selection_group_rules[${index}]`,
           minimum: group.min_selected_signals ?? 1,
           options: signals.filter(signal => groupRulesFor(signal, rules).includes(group)),
-        })
-      );
+          bounds: {
+            ...rules,
+            max_selected_signals: Math.min(
+              typeof rules.max_selected_signals === 'number' ? rules.max_selected_signals : Infinity,
+              typeof group.max_selected_signals === 'number' ? group.max_selected_signals : Infinity
+            ),
+          },
+        }));
       // Group overrides can change the selection obligation. Check the global
       // minimum only when no override makes that aggregate ambiguous.
       if (rules.selection_mode === 'required' && records(rules.selection_group_rules).length === 0) {
@@ -130,6 +163,14 @@ export const pricingCurrencyFilterAssertion: AssertionSpec = {
           path: `${productPath}.signal_targeting_rules`,
           minimum: rules.min_selected_signals ?? 1,
           options: signals,
+          bounds: rules,
+        });
+      } else if (rules.selection_mode === 'required') {
+        findings.push({
+          passed: true,
+          status: 'not_applicable',
+          step_id: step.step_id,
+          description: `${productPath}.signal_targeting_rules: aggregate required-selection feasibility with group overrides is unproven`,
         });
       }
       for (const requirement of requirements) {
@@ -137,8 +178,8 @@ export const pricingCurrencyFilterAssertion: AssertionSpec = {
         // not evidence that a required choice cannot be fulfilled.
         if (product.signal_targeting_options === undefined || typeof requirement.minimum !== 'number') continue;
         const compatible = requirement.options.map(signal => signalCompatibility(signal, currencies));
-        const proven = compatible.filter(value => value === 'compatible').length;
-        const possible = compatible.filter(value => value !== 'incompatible').length;
+        const proven = selectionCapacity(requirement.options, compatible, requirement.bounds, false);
+        const possible = selectionCapacity(requirement.options, compatible, requirement.bounds, true);
         add(
           requirement.path,
           proven >= requirement.minimum
