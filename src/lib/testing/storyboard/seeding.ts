@@ -1540,6 +1540,8 @@ export interface ProductPageObservation {
   extraction: RunnerExtractionRecord;
   result?: ProductPageTaskResult;
   schema_validated: boolean;
+  /** A cached JSON-schema validator, rather than the legacy fallback, checked this page. */
+  strict_schema_validated?: boolean;
   schemaFailure?: { detail: string; schema_id: string; schema_url: string };
 }
 
@@ -1768,6 +1770,12 @@ export async function collectWholesaleProductPages(
       extraction,
       result,
       schema_validated: schemaCheck === undefined && !sellerRejected && result.success,
+      ...(!schemaCheck &&
+        !sellerRejected &&
+        result.success && {
+          strict_schema_validated:
+            getValidator('get_products', 'sync', options.adcpVersion ?? ADCP_VERSION) !== undefined,
+        }),
       ...(schemaCheck?.schemaFailure && { schemaFailure: schemaCheck.schemaFailure }),
     };
     await controls.onPage?.(observation);

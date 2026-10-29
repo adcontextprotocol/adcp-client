@@ -116,6 +116,8 @@ test('collection follows every page with the actual authored query and separates
   const evidence = step.product_page_collection;
   assert.equal(evidence.complete, true);
   assert.equal(evidence.page_count, 2);
+  assert.equal(result.strict_validation_summary.checked, 2);
+  assert.equal(result.strict_validation_summary.failed, 0);
   assert.deepEqual(
     evidence.logical_response.products.map(product => product.product_id),
     ['first', 'target']
