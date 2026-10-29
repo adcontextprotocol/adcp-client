@@ -159,6 +159,8 @@ import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } f
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
 import {
   runControllerSeeding,
+  collectWholesaleProductPages,
+  type ProductPageObservation,
   type ControllerSeedingResult,
   type PreparedFixtureCaptures,
   type SeedCall,
@@ -230,6 +232,8 @@ import type {
   RunnerExtractionRecord,
   RunnerRequestRecord,
   RunnerResponseRecord,
+  ProductPageCollectionRecord,
+  ProductPageRecord,
   RunnerSelectionResult,
   RequirementName,
   RunnerSkipReason,
@@ -2138,6 +2142,7 @@ function buildPhaseCapabilitySkippedSteps(
  */
 const REQUIREMENT_TO_SKIP_REASON: Record<RequirementName, RunnerSkipReason> = {
   controller: 'missing_test_controller',
+  collect_product_pages_runner: 'requirement_unmet',
   seeded_state: 'requirement_unmet',
   real_wire: 'requirement_unmet',
   webhook_receiver: 'requirement_unmet',
@@ -2405,6 +2410,10 @@ async function checkRequires(
       continue;
     }
     switch (requirement) {
+      case 'collect_product_pages_runner':
+        // Intrinsic support in this SDK; older runners safely reject the
+        // unknown requirement before they can seed or run a partial read.
+        break;
       case 'controller': {
         if (!options.agentTools) continue;
         if (!options.agentTools.includes('comply_test_controller')) {
@@ -6163,6 +6172,11 @@ async function executeStoryboardPass(
 
       assignment ??= dispatch.nextFor(step);
       const stepExecutionState = buildExecutionState(assignment.agentUrl, assignment.profile);
+      stepExecutionState.onCollectedProductPage = async (page, pageIndex) => {
+        const observed = await applyStepAssertions(step, page, assertions, assertionContexts, pageIndex);
+        assertionResults.push(...observed);
+        if (observed.some(assertion => !assertion.passed)) assertionsFailed = true;
+      };
       if (routingContext) {
         // Route identity includes the selected credential even when two entries
         // share a URL. Cross-agent step/context dependencies remain run-scoped.
@@ -6306,91 +6320,10 @@ async function executeStoryboardPass(
       stepResults.push(result);
       priorStepResults.set(step.id, result);
 
-      // Schema-validation short-circuit (adcp-client#1709). When the
-      // response unwrapper rejected the agent's response against the SDK's
-      // Zod schema, the step-execution path synthesized a failing
-      // `response_schema` ValidationResult on `result.validations`.
-      // Running step-scope invariants against a response the SDK has
-      // already declared malformed produces noise — the invariants
-      // can't meaningfully grade a payload that didn't parse. Worse,
-      // before #1709 the invariants' failure entries crowded out the
-      // schema-validation entry in `extractFailures`, masking the root
-      // cause across BidMachine's 10+ deploys (see adcp#4419). Skip the
-      // invariant pass entirely on this step and emit a single skipped
-      // `assertion` entry per invariant so consumers can still see WHICH
-      // invariants were skipped and why.
-      const schemaInvalidResponse = result.validations.some(
-        v => v.check === 'response_schema' && validationFailsStep(v)
-      );
-
-      // Rate-limit exhaustion is a contract-defined applicability result,
-      // not a response to grade. Preserve its empty validations array and
-      // passing skip status. Step assertions still run and remain visible on
-      // the storyboard-level assertions surface, but are not mirrored onto
-      // this skipped step or counted as a failed step.
-      const rateLimitTripNotApplicable = result.skipped === true && result.skip_reason === 'rate_limit_not_triggered';
-
-      // Fire per-step assertions. Each result is appended to the step's
-      // `validations[]` under `check: "assertion"` so existing UI renders
-      // them alongside inline checks, and mirrored into `assertionResults`
-      // for the storyboard-level `assertions[]` surface. Any failure flips
-      // `result.passed` so the counting below treats it like a validation
-      // failure — that's what makes assertions gating, not advisory.
-      for (const spec of assertions) {
-        if (!spec.onStep) continue;
-        // Per-step opt-out: authors use `step.invariants.disable: [id]` to
-        // suppress a default invariant on a step that deliberately models
-        // behavior the invariant would flag (validated at runner start).
-        if (stepDisablesAssertion(step.invariants, spec.id)) continue;
-        if (schemaInvalidResponse) {
-          // Emit a skipped marker so the report shows the invariant was
-          // intentionally bypassed (not silently dropped). `passed: true`
-          // keeps it from flipping `result.passed` — the schema-validation
-          // failure already did that.
-          result.validations.push({
-            check: 'assertion',
-            passed: true,
-            description: `${spec.id}: skipped — response failed schema validation (adcp-client#1709)`,
-          });
-          continue;
-        }
-        // The step result's `context` IS the live run context object, which
-        // the runner adopts as the next step's context. Handing it to an
-        // operator-supplied `--invariants` module let that module delete a
-        // committed capture with no funnel involvement — the next step then
-        // built its request without the pinned entity. Invariants get a
-        // detached projection; everything else about `result` is unchanged.
-        const raw = await spec.onStep(assertionContexts.get(spec.id)!, {
-          ...result,
-          context: withoutProtectedCaptures(result.context ?? {}),
-        });
-        for (const r of raw) {
-          const full: AssertionResult = { ...r, assertion_id: spec.id, scope: 'step', step_id: step.id };
-          assertionResults.push(full);
-          if (!rateLimitTripNotApplicable) {
-            result.validations.push({
-              check: 'assertion',
-              passed: r.passed,
-              description: `${spec.id}: ${r.description}`,
-              ...(r.error !== undefined && { error: r.error }),
-            });
-          }
-          // Issue #935: assertions can attach a structured hint that the
-          // runner mirrors into the owning step's `hints[]`. Producers today
-          // include `status.monotonic` (monotonic_violation) and
-          // `impairment.coherence` (impairment_coherence_violation); the
-          // merge here keeps the taxonomy unified so a single CLI/JUnit/Addie
-          // renderer can drive off `step.hints[]` regardless of which
-          // subsystem produced it.
-          if (r.hint) {
-            const existing = result.hints ?? [];
-            result.hints = [...existing, r.hint];
-          }
-          if (!r.passed) {
-            if (!rateLimitTripNotApplicable) result.passed = false;
-            assertionsFailed = true;
-          }
-        }
+      if (!result.product_page_collection) {
+        const observedAssertions = await applyStepAssertions(step, result, assertions, assertionContexts);
+        assertionResults.push(...observedAssertions);
+        if (observedAssertions.some(assertion => !assertion.passed)) assertionsFailed = true;
       }
 
       // PRM presence accounting — must happen after the step result lands so
@@ -8224,6 +8157,19 @@ async function runStoryboardStepBody(
       }
     }
 
+    if (found.step.collect_product_pages) {
+      const pageAssertions = resolveAssertions(storyboard.invariants);
+      const pageContexts = new Map<string, AssertionContext>();
+      for (const spec of pageAssertions) {
+        const assertionContext = { storyboard, agentUrl, options, state: {} };
+        pageContexts.set(spec.id, assertionContext);
+        if (spec.onStart) await spec.onStart(assertionContext);
+      }
+      runState.onCollectedProductPage = async (page, pageIndex) => {
+        await applyStepAssertions(found.step, page, pageAssertions, pageContexts, pageIndex);
+      };
+    }
+
     const result =
       prerequisiteFailure ??
       (await executeStep(client, found.step, storyboard.id, found.phaseId, context, allSteps, options, runState));
@@ -8258,7 +8204,92 @@ async function runStoryboardStepBody(
 // Internal: execute a single step
 // ────────────────────────────────────────────────────────────
 
+/** Grade physical pages with the same invariant contexts as ordinary steps. */
+async function applyStepAssertions(
+  step: StoryboardStep,
+  result: StoryboardStepResult,
+  assertions: AssertionSpec[],
+  assertionContexts: Map<string, AssertionContext>,
+  pageIndex?: number
+): Promise<AssertionResult[]> {
+  const findings: AssertionResult[] = [];
+  const schemaInvalid = result.validations.some(v => v.check === 'response_schema' && validationFailsStep(v));
+  const rateSkip = result.skipped === true && result.skip_reason === 'rate_limit_not_triggered';
+  for (const spec of assertions) {
+    if (!spec.onStep || stepDisablesAssertion(step.invariants, spec.id)) continue;
+    if (schemaInvalid) {
+      result.validations.push({
+        check: 'assertion',
+        passed: true,
+        description: `${spec.id}: skipped — response failed schema validation (adcp-client#1709)`,
+      });
+      continue;
+    }
+    const raw = await spec.onStep(assertionContexts.get(spec.id)!, {
+      ...result,
+      context: withoutProtectedCaptures(result.context ?? {}),
+    });
+    for (const observed of raw) {
+      const description = `${pageIndex === undefined ? '' : `[physical page ${pageIndex}] `}${observed.description}`;
+      findings.push({ ...observed, description, assertion_id: spec.id, scope: 'step', step_id: step.id });
+      if (!rateSkip)
+        result.validations.push({
+          check: 'assertion',
+          passed: observed.passed,
+          description: `${spec.id}: ${description}`,
+          ...(observed.error !== undefined && { error: observed.error }),
+          ...(pageIndex !== undefined &&
+            !observed.passed && { request: result.request, response: result.response_record ?? null }),
+        });
+      if (observed.hint) result.hints = [...(result.hints ?? []), observed.hint];
+      if (!observed.passed && !rateSkip) result.passed = false;
+    }
+  }
+  return findings;
+}
+
+function productPageStepResult(
+  step: StoryboardStep,
+  phaseId: string,
+  context: StoryboardContext,
+  page: ProductPageObservation
+): StoryboardStepResult {
+  const failedSchema = page.schemaFailure;
+  return {
+    step_id: step.id,
+    phase_id: phaseId,
+    task: 'get_products',
+    title: step.title,
+    passed: page.schema_validated && page.result?.success === true,
+    duration_ms: page.response?.duration_ms ?? 0,
+    request: page.request,
+    ...(page.response && { response_record: page.response }),
+    response: redactSecrets(page.result?.data),
+    extraction: page.extraction,
+    context,
+    validations: failedSchema
+      ? [
+          {
+            check: 'response_schema',
+            passed: false,
+            description: `Physical product page ${page.page_index} satisfies the get_products response schema`,
+            error: failedSchema.detail,
+            json_pointer: null,
+            expected: failedSchema.schema_id,
+            actual: 'schema_validation_failed',
+            schema_id: failedSchema.schema_id,
+            schema_url: failedSchema.schema_url,
+            request: page.request,
+            response: page.response,
+          },
+        ]
+      : [],
+  };
+}
+
 interface ExecutionState {
+  /** Physical pages share the run's invariant contexts, including restart attempts. */
+  onCollectedProductPage?: (page: StoryboardStepResult, pageIndex: number) => Promise<void>;
   contributions: Set<string>;
   priorStepResults: Map<string, StoryboardStepResult>;
   priorProbes: Map<string, HttpProbeResult>;
@@ -9066,6 +9097,42 @@ async function executeStep(
     };
   }
   const useRawProbe = rawProbeHeaders !== undefined && !useSdkAuthOverride;
+  if (
+    step.collect_product_pages &&
+    (useRawProbe ||
+      request.buying_mode !== 'wholesale' ||
+      (request.pagination !== null && typeof request.pagination === 'object' && 'cursor' in request.pagination) ||
+      request.if_none_match !== undefined)
+  ) {
+    const detail =
+      'collect_product_pages requires an unconditional wholesale first page through the official SDK client';
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      task: step.task,
+      title: step.title,
+      passed: false,
+      duration_ms: 0,
+      context,
+      extraction: { path: 'none' },
+      error: detail,
+      validations: [
+        {
+          check: 'product_page_collection',
+          passed: false,
+          description: detail,
+          json_pointer: null,
+          expected: 'unconditional wholesale query',
+          actual: redactSecrets(request),
+          schema_id: null,
+          schema_url: null,
+          request: null,
+          response: null,
+        },
+      ],
+    };
+  }
+
   const stepClient = () => authOverrideClient ?? client;
 
   let taskResult: TaskResult | undefined;
@@ -9080,6 +9147,9 @@ async function executeStep(
   let requestUrl: string | undefined;
   let a2aEnvelope: A2ATaskEnvelope | undefined;
   let crossResponses: CrossResponseSet | undefined;
+  let productPageCollection: ProductPageCollectionRecord | undefined;
+  let collectedPageValidations: ValidationResult[] = [];
+  let actualCollectedResponse: unknown;
 
   // Parallel-dispatch fan-out: when the storyboard step declares
   // `parallel_dispatch`, the runner fires N concurrent dispatches against
@@ -9280,7 +9350,99 @@ async function executeStep(
     // lands, key the capture off the negotiated transport instead.
     const captureA2a = options.protocol === 'a2a';
     let a2aCaptures: RawHttpCapture[] | undefined;
-    if (step.parallel_dispatch) {
+    if (step.collect_product_pages) {
+      const started = Date.now();
+      const pages: ProductPageRecord[] = [];
+      const pageValidations: ValidationResult[] = [];
+      let pagesPassed = true;
+      const collection = await collectWholesaleProductPages(stepClient(), options, request, {
+        retainRestartEvidence: true,
+        dispatch: pageRequest =>
+          executeStoryboardTask(stepClient(), effectiveStep.task, pageRequest, {
+            skipIdempotencyAutoInject: testsIdempotencyKeyOmission,
+            skipAccountValidation: testsMissingAccount,
+            skipRequestValidation: testsSchemaInvalidRequest,
+            preserveGovernedPayload: governedRequest,
+            responseProjection,
+            mediaBuyLifecycleCompatibility: options.mediaBuyLifecycleCompatibility,
+            signal: options.signal,
+          }),
+        onPage: async observation => {
+          const physical = productPageStepResult(step, phaseId, context, observation);
+          await runState.onCollectedProductPage?.(physical, observation.page_index);
+          pagesPassed &&= physical.passed;
+          pageValidations.push(...physical.validations);
+          const page: ProductPageRecord = {
+            page_index: observation.page_index,
+            restart_count: observation.restart_count,
+            request: observation.request,
+            response: observation.response,
+            extraction: observation.extraction,
+            schema_validated: observation.schema_validated,
+          };
+          // Preserve every request. A bounded number of response bodies avoids
+          // retaining a second unbounded catalog solely for diagnostics. Pages
+          // beyond the budget were still schema/invariant checked above.
+          if (pages.length >= 16 && page.response) {
+            page.response = {
+              ...page.response,
+              payload: {
+                response_not_retained:
+                  'Physical page was checked; response evidence exceeded the 16-page retention budget.',
+              },
+            };
+          }
+          pages.push(page);
+        },
+      });
+      if (options.signal?.aborted) options.signal.throwIfAborted();
+      const logical: Record<string, unknown> | undefined = collection.ok
+        ? {
+            ...(collection.catalog.firstPage.result!.data as Record<string, unknown>),
+            products: collection.catalog.products,
+          }
+        : undefined;
+      if (logical) delete logical.pagination;
+      productPageCollection = {
+        complete: collection.ok,
+        page_count: pages.length,
+        restart_count: pages.reduce((maximum, page) => Math.max(maximum, page.restart_count), 0),
+        pages,
+        ...(logical && { logical_response: redactSecrets(logical) as Record<string, unknown> }),
+      };
+      const observedResponse = collection.ok ? collection.catalog.firstPage.response : collection.exchange?.response;
+      responseRecord = observedResponse ?? undefined;
+      actualCollectedResponse = collection.ok
+        ? collection.catalog.firstPage.result!.data
+        : collection.exchange?.response?.payload;
+      taskResult = collection.ok
+        ? { ...collection.catalog.firstPage.result!, data: logical }
+        : {
+            success: false,
+            error: collection.error.replace(/^fixture discovery/, 'Product page collection'),
+          };
+      stepResult = {
+        duration_ms: Date.now() - started,
+        passed: collection.ok && pagesPassed,
+        ...(!collection.ok && { error: collection.error.replace(/^fixture discovery/, 'Product page collection') }),
+      };
+      collectedPageValidations = pageValidations;
+      if (!collection.ok && !pageValidations.some(validation => validationFailsStep(validation))) {
+        collectedPageValidations.push({
+          check: 'product_page_collection',
+          passed: false,
+          description: 'Wholesale collection completes one stable, duplicate-free feed',
+          error: collection.error,
+          json_pointer: null,
+          expected: 'a complete stable wholesale collection',
+          actual: collection.error,
+          schema_id: null,
+          schema_url: null,
+          ...(collection.exchange?.request && { request: collection.exchange.request }),
+          response: collection.exchange?.response ?? null,
+        });
+      }
+    } else if (step.parallel_dispatch) {
       // Fan out N concurrent dispatches via the SDK client. All dispatches
       // share the runner-minted idempotency_key (default) so the seller
       // sees one logical request and resolves the race deterministically.
@@ -9670,27 +9832,29 @@ async function executeStep(
           data: schemaValidationError.data,
         }
       : undefined);
-  let validations: ValidationResult[] = [];
+  let validations: ValidationResult[] = [...collectedPageValidations];
   // Run validations. Resolve `$context.<key>` placeholders in `value` and
   // `allowed_values` fields so expected values can reference prior steps
   // (e.g., replay tests assert `media_buy_id === $context.initial_media_buy_id`).
   if (step.validations?.length && (validationTaskResult || httpResult)) {
-    const resolvedValidations = step.validations.map(v => {
-      const resolved = { ...v };
-      if (resolved.value !== undefined) {
-        resolved.value = injectContext({ __v: resolved.value }, context, runState.runnerVars).__v;
-      }
-      if (Array.isArray(resolved.allowed_values)) {
-        resolved.allowed_values = resolved.allowed_values.map(
-          av => injectContext({ __v: av }, context, runState.runnerVars).__v
-        );
-      }
-      if (resolved.denied_list_id !== undefined) {
-        resolved.denied_list_id = injectContext({ value: resolved.denied_list_id }, context, runState.runnerVars)
-          .value as string;
-      }
-      return resolved;
-    });
+    const resolvedValidations = step.validations
+      .filter(v => !productPageCollection || v.check !== 'response_schema')
+      .map(v => {
+        const resolved = { ...v };
+        if (resolved.value !== undefined) {
+          resolved.value = injectContext({ __v: resolved.value }, context, runState.runnerVars).__v;
+        }
+        if (Array.isArray(resolved.allowed_values)) {
+          resolved.allowed_values = resolved.allowed_values.map(
+            av => injectContext({ __v: av }, context, runState.runnerVars).__v
+          );
+        }
+        if (resolved.denied_list_id !== undefined) {
+          resolved.denied_list_id = injectContext({ value: resolved.denied_list_id }, context, runState.runnerVars)
+            .value as string;
+        }
+        return resolved;
+      });
     // Pre-fetch upstream_traffic data: any `check: upstream_traffic`
     // validation needs the controller's `query_upstream_traffic` response,
     // but the validation dispatcher is synchronous. Async-fetch here once
@@ -9745,9 +9909,11 @@ async function executeStep(
         };
       })(),
     };
-    validations = runValidations(
-      resolvedValidations.filter(validation => validation.check !== 'property_list_reference'),
-      vctx
+    validations.push(
+      ...runValidations(
+        resolvedValidations.filter(validation => validation.check !== 'property_list_reference'),
+        vctx
+      )
     );
     for (const validation of resolvedValidations.filter(validation => validation.check === 'property_list_reference')) {
       const result =
@@ -10141,6 +10307,14 @@ async function executeStep(
       }
     }
   }
+  if (productPageCollection) {
+    for (const validation of validations) {
+      if (collectedPageValidations.includes(validation)) continue;
+      if (validation.json_pointer)
+        validation.json_pointer = `/product_page_collection/logical_response${validation.json_pointer}`;
+      validation.description = `[logical product collection] ${validation.description ?? validation.check}`;
+    }
+  }
   // Re-evaluate after any synthesized capture-failure validations are
   // appended — the step's overall pass/fail must reflect them.
   if (protectedViolations.length > 0) validations.push(...protectedViolations);
@@ -10221,7 +10395,8 @@ async function executeStep(
     // Legacy `response` field (new code reads `response_record`).
     // Redact in case a downstream consumer still keys off it; the
     // modern `response_record.payload` path is already redacted.
-    response: redactSecrets(taskResult?.data),
+    response: redactSecrets(productPageCollection ? actualCollectedResponse : taskResult?.data),
+    ...(productPageCollection && { product_page_collection: productPageCollection }),
     validations,
     // NOT projected here: the full runner threads this map from step to
     // step, so stripping the reserved namespace would break the very
@@ -10247,7 +10422,12 @@ async function executeStep(
     next,
     request: requestRecord,
     ...(responseRecord && { response_record: responseRecord }),
-    extraction: extractionFromTaskResult(taskResult),
+    extraction: productPageCollection
+      ? {
+          path: 'none',
+          note: 'Authored checks and context use product_page_collection.logical_response; response_record remains an actual physical page.',
+        }
+      : extractionFromTaskResult(taskResult),
     ...(inputSchemaStripNotices.length > 0 && { notices: inputSchemaStripNotices }),
     ...(hints.length > 0 && { hints }),
   };
