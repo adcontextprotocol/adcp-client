@@ -77,6 +77,24 @@ const PATH_TEMPLATE = /^(?!\/)(?!(?:.*\/)?\.{1,2}(?:\/|$))[A-Za-z0-9_.=/{}-]+$/;
 const PLACEHOLDERS = new Set(['{account_id}', '{subscription_id}', '{offering_id}', '{period_start}']);
 const DIMENSION = /^[a-z][a-z0-9_]*$/;
 
+/** `{name}` placeholders in one linear pass, or undefined when braces do not pair. */
+function templatePlaceholders(template: string): string[] | undefined {
+  const found: string[] = [];
+  let open = -1;
+  for (let index = 0; index < template.length; index += 1) {
+    const char = template[index];
+    if (char === '{') {
+      if (open !== -1) return undefined;
+      open = index;
+    } else if (char === '}') {
+      if (open === -1) return undefined;
+      found.push(template.slice(open, index + 1));
+      open = -1;
+    }
+  }
+  return open === -1 ? found : undefined;
+}
+
 /** Fields whose change requires a new `subscription_version`. `active` and `replace_account_configs` change in place. */
 export function reportingSubscriptionSemanticFingerprint(subscription: ReportingSubscription): string {
   const { active: _active, replace_account_configs: _replace, ...semantic } = subscription;
@@ -188,10 +206,11 @@ export function validateReportingSubscription(
       if (typeof template !== 'string' || template.length > 512 || !PATH_TEMPLATE.test(template)) {
         fail('destination.path_template must be a relative path without . or .. segments');
       }
-      for (const placeholder of template.match(/\{[^}]*\}/g) ?? []) {
+      const placeholders = templatePlaceholders(template);
+      if (placeholders === undefined) fail('destination.path_template has an unbalanced brace');
+      for (const placeholder of placeholders!) {
         if (!PLACEHOLDERS.has(placeholder)) fail(`destination.path_template has unknown placeholder ${placeholder}`);
       }
-      if (/[{}]/.test(template.replace(/\{[a-z_]+\}/g, ''))) fail('destination.path_template has an unbalanced brace');
     }
     if (isMultiAccount(subscription)) {
       if (template === undefined && destinationPattern(destination!).pattern === 'file_transfer') {

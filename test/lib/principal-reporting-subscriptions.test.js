@@ -256,6 +256,18 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
         subscription({ destination: { destination_id: 'archive', path_template: 'a/{buyer}/{account_id}' } }),
         /unknown placeholder/,
       ],
+      [
+        subscription({ destination: { destination_id: 'archive', path_template: 'a/{{account_id}}' } }),
+        /unbalanced brace/,
+      ],
+      [
+        subscription({ destination: { destination_id: 'archive', path_template: 'a/{account_id' } }),
+        /unbalanced brace/,
+      ],
+      [
+        subscription({ destination: { destination_id: 'archive', path_template: 'a/account_id}/{account_id}' } }),
+        /unbalanced brace/,
+      ],
       [subscription({ subscription_id: 'acme-pacing' }), /delivery_config_id/],
       [subscription({ subscription_id: '..' }), /subscription_id/],
     ];
