@@ -86,7 +86,13 @@ function buy(id, extra = {}) {
 function world({ maxAccounts, backfillOnRegrant = false } = {}) {
   const clock = { now: new Date('2026-11-01T12:00:00.000Z') };
   const { lifecycle, emitted } = createTestPrincipalLifecycle({ clock, reportingSubscriptions: {} });
-  const host = { accounts: new Map(), buys: new Map(), configs: new Map() };
+  const host = {
+    accounts: new Map(),
+    buys: new Map(),
+    configs: new Map(),
+    revokedAt: new Map(),
+    delivered: () => false,
+  };
   const engineStore = createInMemoryReportingSubscriptionEngineStoreV1();
   const engine = createReportingSubscriptionEngineV1({
     principal: lifecycle,
@@ -100,6 +106,9 @@ function world({ maxAccounts, backfillOnRegrant = false } = {}) {
       listAuthorizedAccounts: () => ({ accounts: [...host.accounts.values()].map(item => structuredClone(item)) }),
       listAccountBuys: (_principal, accountId) => structuredClone(host.buys.get(accountId) ?? []),
       listAccountDeliveryConfigs: (_principal, accountId) => structuredClone(host.configs.get(accountId) ?? []),
+      // The host records when it revoked authority; the engine never stamps reconcile time.
+      resolveRevocationInstant: (_principal, accountId, input) => host.revokedAt.get(accountId) ?? input.observedAt,
+      isPeriodDelivered: (_principal, period) => host.delivered(period),
     },
   });
 
@@ -128,8 +137,9 @@ function world({ maxAccounts, backfillOnRegrant = false } = {}) {
   function grant(accountId, at, extra = {}) {
     host.accounts.set(accountId, { account_id: accountId, authorized_at: at, timezone: 'America/New_York', ...extra });
   }
-  function revoke(accountId) {
+  function revoke(accountId, at) {
     host.accounts.delete(accountId);
+    if (at !== undefined) host.revokedAt.set(accountId, at);
   }
   /** The buyer observes list_accounts and get_principal after each step. */
   async function observe() {
@@ -155,7 +165,7 @@ function world({ maxAccounts, backfillOnRegrant = false } = {}) {
     const outcome = validateResponse('get_principal', served, '3.3.0-beta.1');
     assert.equal(outcome.valid, true, JSON.stringify(outcome.issues));
     const read = await lifecycle.protocol.getPrincipal({}, CTX);
-    for (const state of read.result.configuration.reporting_subscriptions ?? []) {
+    for (const state of (await lifecycle.listReportingSubscriptions(SCOPE)).states) {
       for (const lost of state.accounts_unauthorized ?? []) {
         const grants = buyer.grants.get(lost.account_id) ?? [];
         const last = grants.at(-1);
@@ -171,10 +181,9 @@ function world({ maxAccounts, backfillOnRegrant = false } = {}) {
   }
   /** What the buyer expects, from its observations only. */
   async function buyerExpected(accountId, now, subscriptionId = 'analytics-daily') {
-    const read = await lifecycle.protocol.getPrincipal({}, CTX);
-    const state = read.result.configuration.reporting_subscriptions.find(
-      item => item.subscription_id === subscriptionId
-    );
+    // The complete readback (served at 3.3.0-beta.1 the wire omits inactive_intervals).
+    const { states } = await lifecycle.listReportingSubscriptions(SCOPE);
+    const state = states.find(item => item.subscription_id === subscriptionId);
     const versions = [...(state.prior_versions ?? [])].reverse().map(prior => ({
       subscription_version: prior.subscription_version,
       accepted_at: prior.accepted_at,
@@ -216,6 +225,7 @@ function world({ maxAccounts, backfillOnRegrant = false } = {}) {
     return expected;
   }
   return {
+    buyer,
     clock,
     lifecycle,
     engine,
@@ -326,7 +336,9 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
       w.host.buys.set('acct_1', [buy('mb_1')]);
       await w.sync([subscription()]);
       await w.step('2026-11-02T00:00:00.000Z');
-      w.revoke('acct_1');
+      w.revoke('acct_1', '2026-11-05T05:00:00.000Z');
+      // Delivered on time: due by period end + PT6H before the revocation.
+      w.host.delivered = period => Date.parse(period.period_end) + 6 * 3_600_000 <= Date.parse('2026-11-05T05:00:00Z');
       const revoked = await w.step('2026-11-05T05:00:00.000Z');
       const lost = revoked.result.configuration.reporting_subscriptions[0].accounts_unauthorized;
       assert.equal(lost[0].account_id, 'acct_1');
@@ -338,8 +350,8 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
       assert.equal(await w.engine.acceptsReceipt(SCOPE, 'acct_1', { readAt: '2026-11-05T06:00:00.000Z' }), false);
       assert.ok(w.emitted.some(event => event.payload.reason === 'reporting_subscription_changed'));
 
-      // The host keeps reporting the chain's authorized_at; the engine stamps the re-grant.
-      w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+      // The host keeps reporting the chain's authorized_at and reports when it re-granted.
+      w.grant('acct_1', '2026-10-01T00:00:00.000Z', { granted_at: '2026-11-06T18:00:00.000Z' });
       const regranted = await w.step('2026-11-06T18:00:00.000Z');
       assert.equal(regranted.result.configuration.reporting_subscriptions[0].accounts_unauthorized, undefined);
       const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
@@ -380,8 +392,8 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     await w.step('2026-11-03T00:00:00.000Z');
     const zero = await w.engine.subscriptionCoverage(SCOPE, 'acct_0');
     assert.equal(zero[0].excluded[0].reason, 'capacity');
-    assert.equal((await w.engine.receiptRoster('acct_a')).length, 1);
-    assert.equal((await w.engine.receiptRoster('acct_c')).length, 0);
+    assert.equal((await w.engine.receiptRoster('t', 'acct_a')).length, 1);
+    assert.equal((await w.engine.receiptRoster('t', 'acct_c')).length, 0);
   });
 
   test("precedence: the caller's account-level configuration overrides the subscription", async () => {
@@ -512,8 +524,9 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     await w.sync([subscription({ active: false })]);
     w.clock.now = new Date('2026-11-06T12:00:00.000Z');
     await w.sync([subscription()]);
-    const read = await w.step('2026-11-06T12:00:00.000Z');
-    assert.deepEqual(read.result.configuration.reporting_subscriptions[0].inactive_intervals, [
+    await w.step('2026-11-06T12:00:00.000Z');
+    const { states } = await w.lifecycle.listReportingSubscriptions(SCOPE);
+    assert.deepEqual(states[0].inactive_intervals, [
       { deactivated_at: '2026-11-04T12:00:00.000Z', reactivated_at: '2026-11-06T12:00:00.000Z' },
     ]);
     const owed = await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z');
@@ -535,7 +548,10 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     ]);
     await w.sync([subscription({ selector: { ...subscription().selector, alignment: 'account_timezone' } })]);
     await w.step('2026-11-02T00:00:00.000Z');
-    w.grant('acct_1', '2026-10-01T00:00:00.000Z', { timezone: 'America/Los_Angeles' });
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z', {
+      timezone: 'America/Los_Angeles',
+      timezone_changed_at: '2026-11-04T12:00:00.000Z',
+    });
     await w.step('2026-11-04T12:00:00.000Z');
     const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
     assert.deepEqual(coverage[0].timezone_cutovers, [
@@ -558,6 +574,202 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     );
   });
 
+  test('withdrawing an offering keeps the elapsed owed history', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [buy('mb_1', { end_time: '2026-12-31T00:00:00Z' })]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    await w.step('2026-11-15T00:00:00.000Z');
+    const before = await w.engine.owedPeriods(SCOPE, 'acct_1', { now: '2026-11-15T00:00:00.000Z' });
+    assert.equal(before.length, 12, '11-03 through 11-14');
+    // The seller withdraws the offering at 11-20 (kept, with withdrawn_at).
+    const withdrawn = OFFERINGS.find(item => item.offering_id === 'off_a_pkg');
+    withdrawn.withdrawn_at = '2026-11-20T00:00:00Z';
+    try {
+      await w.step('2026-11-21T00:00:00.000Z');
+      const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+      const unsupported = coverage[0].excluded.find(item => item.reason === 'offering_unsupported');
+      assert.equal(unsupported.from, '2026-11-20T00:00:00.000Z', 'opened at the E of the withdrawal, not accepted_at');
+      const after = await w.engine.owedPeriods(SCOPE, 'acct_1', { now: '2026-11-25T00:00:00.000Z' });
+      assert.deepEqual(
+        after.map(item => item.period_start.slice(0, 10)),
+        before
+          .map(item => item.period_start.slice(0, 10))
+          .concat(['2026-11-15', '2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19'])
+      );
+    } finally {
+      delete withdrawn.withdrawn_at;
+    }
+  });
+
+  test('a product dropping the offering mid-flight keeps the elapsed owed history', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [buy('mb_1', { end_time: '2026-12-31T00:00:00Z' })]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    await w.step('2026-11-10T12:00:00.000Z');
+    w.host.buys.set('acct_1', [
+      buy('mb_1', {
+        end_time: '2026-12-31T00:00:00Z',
+        packages: [{ package_id: 'mb_1_pkg', reporting_delivery_offering_ids: [] }],
+      }),
+    ]);
+    await w.step('2026-11-12T12:00:00.000Z');
+    const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+    assert.equal(
+      coverage[0].excluded.find(item => item.reason === 'offering_unsupported').from,
+      '2026-11-13T00:00:00.000Z',
+      'the product edit is observed at 11-12T12; E is the next boundary'
+    );
+    const owed = await w.engine.owedPeriods(SCOPE, 'acct_1', { now: '2026-11-20T00:00:00.000Z' });
+    assert.deepEqual(
+      owed.map(item => item.period_start.slice(0, 10)),
+      [
+        '2026-11-03',
+        '2026-11-04',
+        '2026-11-05',
+        '2026-11-06',
+        '2026-11-07',
+        '2026-11-08',
+        '2026-11-09',
+        '2026-11-10',
+        '2026-11-11',
+        '2026-11-12',
+      ]
+    );
+  });
+
+  test('a product gaining the offering mid-flight owes periods from the edit, not retroactively', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    const noOffering = [{ package_id: 'mb_1_pkg', reporting_delivery_offering_ids: [] }];
+    w.host.buys.set('acct_1', [buy('mb_1', { end_time: '2026-12-31T00:00:00Z', packages: noOffering })]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    await w.step('2026-11-10T12:00:00.000Z');
+    w.host.buys.set('acct_1', [buy('mb_1', { end_time: '2026-12-31T00:00:00Z' })]);
+    await w.step('2026-11-12T12:00:00.000Z');
+    const owed = await w.engine.owedPeriods(SCOPE, 'acct_1', { now: '2026-11-16T00:00:00.000Z' });
+    assert.deepEqual(
+      owed.map(item => item.period_start.slice(0, 10)),
+      ['2026-11-13', '2026-11-14', '2026-11-15']
+    );
+  });
+
+  test('pruning retained exceptions after status_retention_days never re-owes elapsed periods', async () => {
+    const w = world({ maxAccounts: 1 });
+    for (const id of ['acct_a', 'acct_b']) {
+      w.grant(id, '2026-10-01T00:00:00.000Z');
+      w.host.buys.set(id, [buy(`mb_${id}`, { end_time: '2026-12-31T00:00:00Z' })]);
+    }
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    // acct_a loses its slot's need: it leaves the roster, so acct_b takes a slot from 11-11.
+    w.revoke('acct_a', '2026-11-10T12:00:00.000Z');
+    await w.step('2026-11-11T00:00:00.000Z');
+    const owedBefore = await w.engine.owedPeriods(SCOPE, 'acct_b', { now: '2026-11-12T00:00:00.000Z' });
+    assert.deepEqual(
+      owedBefore.map(item => item.period_start.slice(0, 10)),
+      ['2026-11-11']
+    );
+    // Long after status_retention_days (30), the closed capacity exception is pruned.
+    for (const day of ['2026-11-20', '2026-12-05', '2026-12-20']) await w.step(`${day}T00:00:00.000Z`);
+    const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_b');
+    assert.equal(coverage[0].excluded.length, 0, 'the closed capacity entry left the wire');
+    const owedAfter = await w.engine.owedPeriods(SCOPE, 'acct_b', { now: '2026-11-12T00:00:00.000Z' });
+    assert.deepEqual(
+      owedAfter,
+      owedBefore.filter(item => Date.parse(item.period_end) + 30 * 86_400_000 > Date.parse('2026-12-20T00:00:00Z'))
+    );
+    const later = await w.engine.owedPeriods(SCOPE, 'acct_b', { now: '2026-12-20T00:00:00.000Z' });
+    assert.ok(
+      later.every(item => item.period_start >= '2026-11-11'),
+      'periods refused under capacity never become owed'
+    );
+  });
+
+  test("an override closes at the configuration's own active_until, not when the engine notices", async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [buy('mb_1', { end_time: '2026-11-20T00:00:00Z' })]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    w.host.configs.set('acct_1', [
+      { delivery_config_id: 'acme-analytics', feed_purpose: 'analytics', active_from: '2026-11-04T12:00:00.000Z' },
+    ]);
+    await w.step('2026-11-04T12:00:00.000Z');
+    // replace_account_configs ended it at 11-10T12; the engine reconciles only at 11-12T03.
+    w.host.configs.set('acct_1', [
+      {
+        delivery_config_id: 'acme-analytics',
+        feed_purpose: 'analytics',
+        active_from: '2026-11-04T12:00:00.000Z',
+        active_until: '2026-11-10T12:00:00.000Z',
+        schedule: { period_duration: 'P1D', alignment: 'utc' },
+      },
+    ]);
+    await w.step('2026-11-12T03:00:00.000Z');
+    const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+    assert.equal(coverage[0].excluded[0].until, '2026-11-11T00:00:00.000Z');
+    const owed = await w.engine.owedPeriods(SCOPE, 'acct_1', { now: '2026-11-14T00:00:00.000Z' });
+    assert.deepEqual(
+      owed.map(item => item.period_start.slice(0, 10)),
+      ['2026-11-03', '2026-11-04', '2026-11-11', '2026-11-12', '2026-11-13']
+    );
+  });
+
+  test('capacity first observed after coverage began opens at the coverage start', async () => {
+    const w = world({ maxAccounts: 1 });
+    for (const id of ['acct_a', 'acct_b']) {
+      w.grant(id, '2026-10-01T00:00:00.000Z');
+      w.host.buys.set(id, [buy(`mb_${id}`)]);
+    }
+    await w.sync([subscription()]);
+    // The first reconcile runs days after acceptance.
+    await w.step('2026-11-05T00:00:00.000Z');
+    const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_b');
+    assert.deepEqual(coverage[0].excluded, [{ reason: 'capacity', from: '2026-11-02T00:00:00.000Z' }]);
+    assert.deepEqual(await w.engine.owedPeriods(SCOPE, 'acct_b', { now: '2026-11-10T00:00:00.000Z' }), []);
+  });
+
+  test('an unobserved revocation followed by a new chain closes the old chain when it ended', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [buy('mb_1', { end_time: '2026-11-20T00:00:00Z' })]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    // Between reconciles: revoked 11-04T06, re-granted after retention as a new chain at 11-08.
+    w.host.revokedAt.set('acct_1', '2026-11-04T06:00:00.000Z');
+    w.grant('acct_1', '2026-11-08T00:00:00.000Z');
+    await w.step('2026-11-09T00:00:00.000Z');
+    const state = await w.engine.inspect(SCOPE);
+    assert.deepEqual(state.accounts.acct_1.account.grants, [
+      { authorized_at: '2026-10-01T00:00:00.000Z', unauthorized_at: '2026-11-04T06:00:00.000Z' },
+      { authorized_at: '2026-11-08T00:00:00.000Z' },
+    ]);
+    const owed = await w.engine.owedPeriods(SCOPE, 'acct_1', { now: '2026-11-11T00:00:00.000Z' });
+    assert.ok(
+      owed.every(item => item.period_start < '2026-11-05' || item.period_start >= '2026-11-08'),
+      'the revoked interval is not owed'
+    );
+  });
+
+  test('every hook the engine needs is required', () => {
+    const w = world();
+    assert.throws(
+      () =>
+        createReportingSubscriptionEngineV1({
+          principal: w.lifecycle,
+          offerings: OFFERINGS,
+          statusRetentionDays: 30,
+          hooks: { listAuthorizedAccounts: () => ({ accounts: [] }), listAccountBuys: () => [] },
+        }),
+      /resolveRevocationInstant/
+    );
+  });
+
   test('an unfinished account roster fails closed instead of reading as revocations', async () => {
     const w = world();
     w.grant('acct_1', '2026-10-01T00:00:00.000Z');
@@ -575,6 +787,8 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
       hooks: {
         listAuthorizedAccounts: () => ({ accounts: [], nextCursor: `page-${++page}` }),
         listAccountBuys: () => [],
+        resolveRevocationInstant: (_principal, _account, input) => input.observedAt,
+        isPeriodDelivered: () => false,
       },
     });
     await assert.rejects(endless.reconcile(SCOPE), /partial roster/);

@@ -616,6 +616,8 @@ describe('ReliableReportingService', () => {
           accounts: [{ account_id: 'account-a', authorized_at: '2026-10-01T00:00:00.000Z' }],
         }),
         listAccountBuys: () => [],
+        resolveRevocationInstant: (_principal, _account, input) => input.observedAt,
+        isPeriodDelivered: () => false,
       },
     });
     const subscriptionOptions = { engine, resolvePrincipal: () => ({ tenantId: 't', principalId: 'p' }) };
@@ -652,6 +654,16 @@ describe('ReliableReportingService', () => {
         }),
       /capabilities\.principal/,
       'subscriptions without the principal section fail at construction, not on the wire'
+    );
+    const { service: plain } = serviceFixture();
+    assert.throws(
+      () =>
+        createAdcpServerFromPlatform(
+          plain.install({ capabilities: { specialisms: [], config: {}, principal: lifecycle.capabilities }, accounts }),
+          { name: 'reporting-subscriptions-section-without-task', version: '1.0.0' }
+        ),
+      /does not list sync_principal/,
+      'the principal section without the registration task is refused too'
     );
     const platform = service.install({
       capabilities: {

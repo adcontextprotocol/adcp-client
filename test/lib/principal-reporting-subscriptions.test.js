@@ -12,7 +12,7 @@ const {
   expandReportingSubscriptionPathTemplate,
   principalNotificationSubscriptionStore,
 } = require('../../dist/lib/server/index.js');
-const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
+const { validateRequest, validateResponse } = require('../../dist/lib/validation/schema-validator.js');
 const { principalOptionOffTranscript } = require('../helpers/principal-option-off-transcript.js');
 
 const SCOPE = { tenantId: 't', principalId: 'p' };
@@ -82,7 +82,7 @@ function setup({ support = {}, clock } = {}) {
       ...support,
     },
   });
-  return { lifecycle, store, emitted, time, replacements };
+  return { lifecycle, store, notifications, emitted, time, replacements };
 }
 
 function destination(id = 'archive', extra = {}) {
@@ -217,13 +217,16 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
     assert.deepEqual(history[0].inactiveIntervals, [
       { from: '2026-11-04T12:00:00.000Z', until: '2026-11-06T12:00:00.000Z' },
     ]);
-    // The readback lists inactive_intervals (adcontextprotocol/adcp#8585) to callers served a
-    // release that defines it; 3.3.0-beta.1's closed state schema does not.
-    const unpinned = await lifecycle.protocol.getPrincipal({}, CTX_UNPINNED);
-    assert.deepEqual(unpinned.result.configuration.reporting_subscriptions[0].inactive_intervals, [
+    // The readback lists inactive_intervals (adcontextprotocol/adcp#8585) only to callers served
+    // a release whose bundle defines it (3.3.0-beta.1's closed state schema does not), and never
+    // to a response without a served release; the internal state carries it.
+    const { states } = await lifecycle.listReportingSubscriptions(SCOPE);
+    assert.deepEqual(states[0].inactive_intervals, [
       { deactivated_at: '2026-11-04T12:00:00.000Z', reactivated_at: '2026-11-06T12:00:00.000Z' },
     ]);
     assert.equal(on.result.configuration.reporting_subscriptions[0].inactive_intervals, undefined);
+    const unpinned = await lifecycle.protocol.getPrincipal({}, CTX_UNPINNED);
+    assert.equal(unpinned.result.configuration.reporting_subscriptions[0].inactive_intervals, undefined);
 
     time.now = new Date('2026-11-08T00:00:00.000Z');
     const omitted = await sync(lifecycle, { reporting_subscriptions: [] });
@@ -231,8 +234,8 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
     assert.equal(retained.state, 'inactive', 'omission deactivates but keeps the subscription readable');
     assert.equal(retained.deactivated_at, '2026-11-08T00:00:00.000Z');
     assertSchemaValid('sync_principal', omitted);
-    const closed = await lifecycle.protocol.getPrincipal({}, CTX_UNPINNED);
-    assert.deepEqual(closed.result.configuration.reporting_subscriptions[0].inactive_intervals, [
+    const closed = (await lifecycle.listReportingSubscriptions(SCOPE)).states;
+    assert.deepEqual(closed[0].inactive_intervals, [
       { deactivated_at: '2026-11-04T12:00:00.000Z', reactivated_at: '2026-11-06T12:00:00.000Z' },
       { deactivated_at: '2026-11-08T00:00:00.000Z' },
     ]);
@@ -348,7 +351,7 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
         subscription({ subscription_id: 'analytics-2', operator_domains: ['two.example'] }),
       ],
     });
-    assert.match(errorOf(sameTemplate).message, /different path_template/);
+    assert.match(errorOf(sameTemplate).message, /can expand to the same path/);
   });
 
   test('a destination still named by an active subscription cannot be removed', async () => {
@@ -417,6 +420,180 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
       reporting_subscriptions: [subscription({ replace_account_configs: true })],
     });
     assert.equal(errorOf(refused).code, 'UNSUPPORTED_FEATURE');
+  });
+
+  test('a failed replace_account_configs hook is retried, and marked applied only after it succeeds', async () => {
+    let failures = 1;
+    const calls = [];
+    const { lifecycle } = setup({
+      support: {
+        replaceAccountConfigs: input => {
+          calls.push(input);
+          if (failures-- > 0) throw new Error('host temporarily unavailable');
+        },
+      },
+    });
+    await assert.rejects(
+      sync(lifecycle, {
+        reporting_destinations: [destination()],
+        reporting_subscriptions: [subscription({ replace_account_configs: true })],
+      }),
+      /temporarily unavailable/
+    );
+    let { history } = await lifecycle.listReportingSubscriptions(SCOPE);
+    assert.equal(history[0].replaceAppliedVersion, undefined);
+    assert.equal(history[0].replacePending.subscriptionVersion, 1);
+    // The identical resend is unchanged, but still retries the pending replacement.
+    const resent = await sync(lifecycle, {
+      reporting_subscriptions: [subscription({ replace_account_configs: true })],
+    });
+    assert.equal(resent.result.action, 'unchanged');
+    assert.equal(calls.length, 2);
+    ({ history } = await lifecycle.listReportingSubscriptions(SCOPE));
+    assert.equal(history[0].replaceAppliedVersion, 1);
+    assert.equal(history[0].replacePending, undefined);
+    await sync(lifecycle, { reporting_subscriptions: [subscription({ replace_account_configs: true })] });
+    assert.equal(calls.length, 2, 'applied once');
+  });
+
+  test('engine readback never advances configuration_version, so a guarded write does not conflict', async () => {
+    const { lifecycle } = setup();
+    const created = await sync(lifecycle, {
+      reporting_destinations: [destination()],
+      reporting_subscriptions: [subscription()],
+    });
+    const version = created.result.configuration_version;
+    assert.equal(
+      await lifecycle.recordReportingSubscriptionCoverage(SCOPE, [
+        {
+          subscriptionId: 'analytics-daily',
+          accountsWithExceptions: [{ account_id: 'acct_2', reasons: ['capacity'] }],
+          accountsUnauthorized: [],
+        },
+      ]),
+      true
+    );
+    const guarded = await sync(
+      lifecycle,
+      { reporting_subscriptions: [subscription({ active: false })] },
+      { expected_configuration_version: version }
+    );
+    assert.equal(guarded.result.kind, 'applied', JSON.stringify(guarded));
+    await assert.rejects(
+      lifecycle.recordReportingSubscriptionCoverage(SCOPE, [
+        {
+          subscriptionId: 'analytics-daily',
+          accountsWithExceptions: Array.from({ length: 1001 }, (_, index) => ({
+            account_id: `acct_${index}`,
+            reasons: ['capacity'],
+          })),
+          accountsUnauthorized: [],
+        },
+      ]),
+      /more than 1000/,
+      'the readback is never silently cut'
+    );
+  });
+
+  test('a destination changing pattern or transport under an active subscription needs a new version', async () => {
+    const { lifecycle } = setup();
+    await sync(lifecycle, { reporting_destinations: [destination()], reporting_subscriptions: [subscription()] });
+    const moved = destination('archive', { transport: 'gcs', location: 'gs://bucket/archive' });
+    const refused = await sync(lifecycle, { reporting_destinations: [moved] });
+    assert.equal(errorOf(refused).code, 'INVALID_REQUEST');
+    assert.match(errorOf(refused).message, /increment its subscription_version/);
+    const sameVersion = await sync(lifecycle, {
+      reporting_destinations: [moved],
+      reporting_subscriptions: [subscription()],
+    });
+    assert.match(errorOf(sameVersion).message, /increment its subscription_version/);
+    const bumped = await sync(lifecycle, {
+      reporting_destinations: [moved],
+      reporting_subscriptions: [subscription({ subscription_version: 2 })],
+    });
+    assert.equal(bumped.result.kind, 'applied', JSON.stringify(bumped));
+    const { history } = await lifecycle.listReportingSubscriptions(SCOPE);
+    assert.deepEqual(history[0].versions.at(-1).destinationMethod, { pattern: 'file_transfer', transport: 'gcs' });
+  });
+
+  test('templates that can expand to the same path are refused', async () => {
+    const { lifecycle } = setup();
+    await sync(lifecycle, { reporting_destinations: [destination()] });
+    const colliding = await sync(lifecycle, {
+      reporting_subscriptions: [
+        subscription({
+          subscription_id: 'x',
+          operator_domains: ['one.example'],
+          destination: { destination_id: 'archive', path_template: '{account_id}/{subscription_id}' },
+        }),
+        subscription({
+          subscription_id: 'y',
+          operator_domains: ['two.example'],
+          destination: { destination_id: 'archive', path_template: '{account_id}/x' },
+        }),
+      ],
+    });
+    assert.match(errorOf(colliding).message, /can expand to the same path/);
+  });
+
+  test('accepts dimension values outside the published vocabulary', async () => {
+    const { lifecycle } = setup();
+    await sync(lifecycle, { reporting_destinations: [destination()] });
+    const request = {
+      idempotency_key: 'unknown-dimension-0001',
+      configuration: {
+        reporting_subscriptions: [
+          subscription({ selector: { ...subscription().selector, dimensions: ['package', 'placement'] } }),
+        ],
+      },
+    };
+    // reporting-dimension.json is extensible: receivers MUST accept unknown values.
+    const outcome = validateRequest('sync_principal', request, '3.3.0-beta.1');
+    assert.equal(outcome.valid, true, JSON.stringify(outcome.issues));
+    const applied = await lifecycle.protocol.syncPrincipal(request, CTX);
+    assert.equal(applied.result.kind, 'applied', JSON.stringify(applied));
+  });
+
+  test('prior versions keep their configuration in the readback', async () => {
+    const { lifecycle, time } = setup();
+    await sync(lifecycle, { reporting_destinations: [destination()], reporting_subscriptions: [subscription()] });
+    time.now = new Date('2026-11-04T12:00:00.000Z');
+    await sync(lifecycle, {
+      reporting_subscriptions: [subscription({ subscription_version: 2, exclude_account_ids: ['acct_x'] })],
+    });
+    const { states } = await lifecycle.listReportingSubscriptions(SCOPE);
+    assert.equal(states[0].prior_versions[0].configuration.subscription_version, 1);
+    assert.equal(states[0].prior_versions[0].configuration.exclude_account_ids, undefined);
+    // Served at 3.3.0-beta.1, whose prior_versions items are closed, the field is omitted.
+    const served = await lifecycle.protocol.getPrincipal({}, CTX);
+    assert.equal(served.result.configuration.reporting_subscriptions[0].prior_versions[0].configuration, undefined);
+    assertSchemaValid('get_principal', served);
+  });
+
+  test('with the option off, a row written with subscriptions on serves no reporting_subscriptions', async () => {
+    const { lifecycle, store, notifications } = setup();
+    await sync(lifecycle, { reporting_destinations: [destination()], reporting_subscriptions: [subscription()] });
+    const off = createPrincipalLifecycle({
+      store,
+      notifications,
+      agentUrl: 'https://seller.example/mcp',
+      resolvePrincipal: ctx => ctx.callerMutationScope,
+      prepareReportingDestination: ({ destination: value }) => ({
+        state: 'validating',
+        configuration: structuredClone(value),
+      }),
+    });
+    const read = await off.protocol.getPrincipal({}, CTX);
+    assert.equal(read.result.configuration.reporting_subscriptions, undefined);
+    assertSchemaValid('get_principal', read);
+  });
+
+  test('the delivery_config_id clash check is required while account configurations are served', () => {
+    assert.throws(
+      () => setup({ support: { listDeliveryConfigIds: undefined } }),
+      /requires listDeliveryConfigIds unless accountConfigurations is false/
+    );
+    assert.doesNotThrow(() => setup({ support: { listDeliveryConfigIds: undefined, accountConfigurations: false } }));
   });
 
   test('a destination needing action moves the subscription to action_required and notifies', async () => {

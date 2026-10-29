@@ -63,36 +63,3 @@ export type ReportingSubscriptionCoverageWithOfferingsV1 = Omit<
   timezone_cutovers?: ReportingSubscriptionTimezoneCutoverV1[];
   gaps?: ReportingSubscriptionGapV1[];
 };
-
-/**
- * First release whose schemas define the fields above. Earlier response shapes are closed
- * (`additionalProperties: false`), so sellers serving an earlier release must omit them.
- *
- * TODO(3.3.0-beta.2): confirm the published release includes adcontextprotocol/adcp#8585.
- */
-export const REPORTING_SUBSCRIPTION_SETTLED_FIELDS_RELEASE = '3.3.0-beta.2';
-
-/**
- * Whether a response served at `servedAdcpVersion` may carry the fields settled after
- * 3.3.0-beta.1. A context without a served release (direct handler calls) gets them.
- */
-export function servesSettledReportingSubscriptionFieldsV1(
-  servedAdcpVersion: string | undefined,
-  isAtLeast: (version: string, minimum: string) => boolean
-): boolean {
-  return servedAdcpVersion === undefined || isAtLeast(servedAdcpVersion, REPORTING_SUBSCRIPTION_SETTLED_FIELDS_RELEASE);
-}
-
-/** Remove the settled fields from a `subscription_coverage[]` entry for an earlier release. */
-export function withoutSettledCoverageFieldsV1<T extends Record<string, unknown>>(entry: T): T {
-  const copy = structuredClone(entry) as Record<string, unknown>;
-  if (Array.isArray(copy.timezone_cutovers)) {
-    copy.timezone_cutovers = (copy.timezone_cutovers as Array<Record<string, unknown>>).map(
-      ({ previous_timezone: _previous, offering_id: _offering, ...rest }) => rest
-    );
-  }
-  if (Array.isArray(copy.gaps)) {
-    copy.gaps = (copy.gaps as Array<Record<string, unknown>>).map(({ offering_id: _offering, ...rest }) => rest);
-  }
-  return copy as T;
-}

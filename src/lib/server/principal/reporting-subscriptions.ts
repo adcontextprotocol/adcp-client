@@ -10,8 +10,6 @@ import { canonicalJsonSha256 } from '../../utils/jcs';
 import type { ReportingSubscription, ReportingSubscriptionState } from '../../types/core.generated';
 import { assertReportingIanaTimezoneV1, parseReportingPeriodDurationV1 } from '../../reporting/subscriptions/calendar';
 import type { ReportingSubscriptionDestinationMethodV1 } from '../../reporting/subscriptions/selection';
-import { servesSettledReportingSubscriptionFieldsV1 } from '../../reporting/subscriptions/wire';
-import { isAdcpVersionAtLeast } from '../../utils/adcp-version-config';
 import type { PrincipalReportingDestination } from './types';
 
 export type { ReportingSubscription, ReportingSubscriptionState };
@@ -36,8 +34,13 @@ export interface StoredReportingSubscriptionHistory {
   deactivatedAt?: string;
   /** Deactivations later reversed in place. */
   inactiveIntervals: Array<{ from: string; until: string }>;
-  /** Last version whose `replace_account_configs` was applied. */
+  /** Last version whose `replace_account_configs` the host hook confirmed. */
   replaceAppliedVersion?: number;
+  /**
+   * A `replace_account_configs` application committed but not yet confirmed by the host
+   * hook. It is retried on every later write until the hook succeeds.
+   */
+  replacePending?: { subscriptionVersion: number; feedPurpose: string; at: string };
 }
 
 export class ReportingSubscriptionValidationError extends Error {
@@ -74,6 +77,8 @@ export interface ApplyReportingSubscriptionsResult {
   }>;
 }
 
+/** `reporting-subscription-state.json` `inactive_intervals` maxItems. */
+const MAX_INACTIVE_INTERVALS = 64;
 const SUBSCRIPTION_ID = /^(?!\.{1,2}$)[A-Za-z0-9_.:-]{1,64}$/;
 const PATH_TEMPLATE = /^(?!\/)(?!(?:.*\/)?\.{1,2}(?:\/|$))[A-Za-z0-9_.=/{}-]+$/;
 const PLACEHOLDERS = new Set(['{account_id}', '{subscription_id}', '{offering_id}', '{period_start}']);
@@ -297,6 +302,16 @@ export function applyReportingSubscriptions(
       }
       if (subscription.subscription_version === current.subscriptionVersion) {
         if (
+          method &&
+          current.destinationMethod &&
+          (method.pattern !== current.destinationMethod.pattern ||
+            method.transport !== current.destinationMethod.transport)
+        ) {
+          throw new ReportingSubscriptionValidationError(
+            `Destination ${JSON.stringify(subscription.destination!.destination_id)} changes pattern or transport under subscription ${JSON.stringify(subscription.subscription_id)}; increment its subscription_version`
+          );
+        }
+        if (
           reportingSubscriptionSemanticFingerprint(normalized) !==
           reportingSubscriptionSemanticFingerprint(current.configuration)
         ) {
@@ -325,23 +340,34 @@ export function applyReportingSubscriptions(
       }
       delete history.deactivatedAt;
     }
-    // replace_account_configs applies once per version, or when the flag turns true.
+    // replace_account_configs applies once per version, or when the flag turns true. It is
+    // recorded as pending here and marked applied only after the host hook succeeds.
     const currentVersion = history.versions.at(-1)!;
     if (
       subscription.active !== false &&
       subscription.replace_account_configs === true &&
-      history.replaceAppliedVersion !== currentVersion.subscriptionVersion
+      history.replaceAppliedVersion !== currentVersion.subscriptionVersion &&
+      history.replacePending?.subscriptionVersion !== currentVersion.subscriptionVersion
     ) {
-      replaceAccountConfigs.push({
-        subscriptionId: subscription.subscription_id,
+      history.replacePending = {
         subscriptionVersion: currentVersion.subscriptionVersion,
         feedPurpose: subscription.selector.feed_purpose,
         at: now,
-      });
-      history.replaceAppliedVersion = currentVersion.subscriptionVersion;
-    } else if (subscription.replace_account_configs !== true && history.replaceAppliedVersion !== undefined) {
+      };
+    } else if (subscription.replace_account_configs !== true) {
       // A flag turned off and on again applies again.
       delete history.replaceAppliedVersion;
+      delete history.replacePending;
+    }
+    if (history.inactiveIntervals.length + (history.deactivatedAt !== undefined ? 1 : 0) > MAX_INACTIVE_INTERVALS) {
+      throw new ReportingSubscriptionValidationError(
+        `Reporting subscription ${JSON.stringify(subscription.subscription_id)} has reached ${MAX_INACTIVE_INTERVALS} inactive intervals, the most the readback can list`
+      );
+    }
+  }
+  for (const history of historyById.values()) {
+    if (history.replacePending) {
+      replaceAccountConfigs.push({ subscriptionId: history.subscriptionId, ...history.replacePending });
     }
   }
   // Omission deactivates; the subscription stays readable while its obligations are retained.
@@ -377,28 +403,6 @@ function pickInPlace(subscription: ReportingSubscription): Partial<ReportingSubs
  * Readback for one subscription. `accounts_with_exceptions` and `accounts_unauthorized`
  * are carried from the previous readback; the coverage engine maintains them.
  */
-/**
- * Remove readback fields a release before the settled one does not define (its
- * `reporting-subscription-state.json` is closed). Applied per response, by served release.
- */
-export function reportingSubscriptionStatesForRelease<T extends { reporting_subscriptions?: unknown }>(
-  configuration: T,
-  servedAdcpVersion: string | undefined
-): T {
-  if (
-    !Array.isArray(configuration.reporting_subscriptions) ||
-    servesSettledReportingSubscriptionFieldsV1(servedAdcpVersion, isAdcpVersionAtLeast)
-  ) {
-    return configuration;
-  }
-  return {
-    ...configuration,
-    reporting_subscriptions: (configuration.reporting_subscriptions as Array<Record<string, unknown>>).map(
-      ({ inactive_intervals: _intervals, ...state }) => state
-    ),
-  };
-}
-
 export function projectReportingSubscriptionState(
   history: StoredReportingSubscriptionHistory,
   destinations: readonly PrincipalReportingDestination[],
@@ -441,7 +445,7 @@ export function projectReportingSubscriptionState(
   const intervals = [
     ...history.inactiveIntervals.map(interval => ({ deactivated_at: interval.from, reactivated_at: interval.until })),
     ...(history.deactivatedAt !== undefined ? [{ deactivated_at: history.deactivatedAt }] : []),
-  ].slice(-64);
+  ];
   const prior = history.versions
     .slice(0, -1)
     .reverse()
@@ -449,6 +453,8 @@ export function projectReportingSubscriptionState(
       subscription_version: version.subscriptionVersion,
       accepted_at: version.acceptedAt,
       superseded_at: version.supersededAt!,
+      // adcontextprotocol/adcp#8588: each prior version carries its configuration.
+      configuration: structuredClone(version.configuration),
     }));
   return {
     subscription_id: history.subscriptionId,
@@ -501,7 +507,13 @@ function assertNoSameLevelOverlap(desired: readonly ReportingSubscription[]): vo
   }
 }
 
-/** Active subscriptions sharing a destination each need distinct `{account_id}` templates. */
+/**
+ * Active subscriptions sharing a destination each need a `{account_id}` template, and no two
+ * expansions may land on the same path. `{subscription_id}` is known per subscription, so it
+ * is substituted first; a remaining placeholder fills one non-empty segment. Two templates
+ * are refused when some values could make them equal (decided segment by segment, erring
+ * toward refusal), not merely when their text is equal.
+ */
 function assertSharedDestinationTemplates(desired: readonly ReportingSubscription[]): void {
   const byDestination = new Map<string, ReportingSubscription[]>();
   for (const subscription of desired) {
@@ -518,12 +530,51 @@ function assertSharedDestinationTemplates(desired: readonly ReportingSubscriptio
         `Active subscriptions sharing destination ${JSON.stringify(destinationId)} must each set a path_template containing {account_id}`
       );
     }
-    if (new Set(templates).size !== templates.length) {
-      throw new ReportingSubscriptionValidationError(
-        `Active subscriptions sharing destination ${JSON.stringify(destinationId)} must use different path_template values`
-      );
+    const expanded = list.map(item =>
+      item.destination!.path_template!.split('{subscription_id}').join(encodePathSegment(item.subscription_id))
+    );
+    for (let left = 0; left < expanded.length; left += 1) {
+      for (let right = left + 1; right < expanded.length; right += 1) {
+        if (templatesMayCollide(expanded[left]!, expanded[right]!)) {
+          throw new ReportingSubscriptionValidationError(
+            `Active subscriptions ${JSON.stringify(list[left]!.subscription_id)} and ${JSON.stringify(list[right]!.subscription_id)} sharing destination ${JSON.stringify(destinationId)} have path_template values that can expand to the same path`
+          );
+        }
+      }
     }
   }
+}
+
+function templatesMayCollide(left: string, right: string): boolean {
+  const a = left.split('/');
+  const b = right.split('/');
+  if (a.length !== b.length) return false;
+  return a.every((segment, index) => segmentsMayCollide(segment, b[index]!));
+}
+
+/** Whether some placeholder values make two template segments equal. Errs toward true. */
+function segmentsMayCollide(left: string, right: string): boolean {
+  const placeholder = /\{[a-z_]+\}/;
+  const hasLeft = placeholder.test(left);
+  const hasRight = placeholder.test(right);
+  if (!hasLeft && !hasRight) return left === right;
+  const literalPrefix = (value: string) => value.split(placeholder)[0]!;
+  const literalSuffix = (value: string) => value.split(placeholder).at(-1)!;
+  if (!hasLeft || !hasRight) {
+    const [literal, pattern] = hasLeft ? [right, left] : [left, right];
+    const regex = new RegExp(
+      `^${pattern
+        .split(/\{[a-z_]+\}/)
+        .map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('[^/]+')}$`
+    );
+    return regex.test(literal);
+  }
+  const prefixes = [literalPrefix(left), literalPrefix(right)];
+  const suffixes = [literalSuffix(left), literalSuffix(right)];
+  const prefixCompatible = prefixes[0]!.startsWith(prefixes[1]!) || prefixes[1]!.startsWith(prefixes[0]!);
+  const suffixCompatible = suffixes[0]!.endsWith(suffixes[1]!) || suffixes[1]!.endsWith(suffixes[0]!);
+  return prefixCompatible && suffixCompatible;
 }
 
 /** Expand a destination `path_template`; each value fills exactly one percent-encoded segment. */

@@ -356,11 +356,11 @@ import type { ReportingSubscriptionEngineV1 } from '../subscriptions/engine';
 import type { PrincipalStoreScope } from '../../server/principal/types';
 import { reportingConfigurationCapabilitiesV1 } from '../subscriptions/capabilities';
 import { isAdcpVersionAtLeast } from '../../utils/adcp-version-config';
+import type { ReportingDeliveryOfferingWithDimensionsV1 } from '../subscriptions/wire';
 import {
-  servesSettledReportingSubscriptionFieldsV1,
-  withoutSettledCoverageFieldsV1,
-  type ReportingDeliveryOfferingWithDimensionsV1,
-} from '../subscriptions/wire';
+  reportingSubscriptionCoverageForReleaseV1,
+  reportingSubscriptionReleaseFieldsV1,
+} from '../../server/reporting-subscription-release';
 
 export const REPORTING_MANAGED_DELIVERY_COMPOSITION_V1: unique symbol = Symbol.for(
   '@adcp/sdk/reporting/managed-delivery-composition'
@@ -873,9 +873,10 @@ async function withSubscriptionCoverage<TCtxMeta>(
   const accountId = (context.account as { id?: unknown } | undefined)?.id;
   if (typeof accountId !== 'string') return response;
   const principal = await subscriptions.resolvePrincipal(context);
-  const settled = servesSettledReportingSubscriptionFieldsV1(served, isAdcpVersionAtLeast);
+  // Fields settled after 3.3.0-beta.1 only when the served bundle defines them.
+  const fields = reportingSubscriptionReleaseFieldsV1(served);
   const coverage = (await subscriptions.engine.subscriptionCoverage(principal, accountId)).map(entry =>
-    settled ? entry : withoutSettledCoverageFieldsV1(entry as unknown as Record<string, unknown>)
+    reportingSubscriptionCoverageForReleaseV1(entry as unknown as Record<string, unknown>, fields)
   );
   if (coverage.length === 0) return response;
   return { ...body, subscription_coverage: coverage } as unknown as typeof response;

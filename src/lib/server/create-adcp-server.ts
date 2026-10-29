@@ -93,7 +93,7 @@ import {
   isMovingAdcpPrereleaseFamilyAlias,
   resolveAdcpVersion,
 } from '../utils/adcp-version-config';
-import { servesSettledReportingSubscriptionFieldsV1 } from '../reporting/subscriptions/wire';
+import { reportingSubscriptionReleaseFieldsV1 } from './reporting-subscription-release';
 import { ConfigurationError } from '../errors';
 import {
   getValidator,
@@ -9861,10 +9861,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         ?.offerings;
       if (
         Array.isArray(reportingOfferings) &&
-        !servesSettledReportingSubscriptionFieldsV1(release.validationVersion, isAdcpVersionAtLeast)
+        !reportingSubscriptionReleaseFieldsV1(release.validationVersion).offeringDimensions
       ) {
-        // standard_dimensions and unmapped_dimensions arrive after 3.3.0-beta.1, whose
-        // offering schema is closed (adcontextprotocol/adcp#8585).
+        // standard_dimensions and unmapped_dimensions (adcontextprotocol/adcp#8585) only when
+        // the served bundle's offering schema defines them; earlier ones are closed.
         for (const offering of reportingOfferings as Array<Record<string, unknown>>) {
           delete offering.standard_dimensions;
           delete offering.unmapped_dimensions;

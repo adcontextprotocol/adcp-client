@@ -204,6 +204,12 @@ export interface PrincipalReportingSubscriptionSupport {
   }): MaybePromise<void>;
   /** Most subscriptions per principal. Defaults to 64. */
   maxSubscriptions?: number;
+  /**
+   * Whether the seller also serves account-level `sync_accounts` configurations (the
+   * default). When true, `listDeliveryConfigIds` is required so a `subscription_id` that
+   * equals one of the caller's `delivery_config_id` values is always rejected.
+   */
+  accountConfigurations?: boolean;
 }
 
 /** Runtime surface the reporting subscription engine and hosts use. */

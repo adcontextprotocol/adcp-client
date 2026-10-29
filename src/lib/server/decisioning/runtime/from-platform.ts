@@ -3175,6 +3175,16 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         'supported_sections; pass the principal runtime capabilities created with reportingSubscriptions'
     );
   }
+  const principalSections = (principalCapability?.supported_sections as readonly string[] | undefined) ?? [];
+  if (
+    principalSections.includes('reporting_subscriptions') &&
+    !(reportingDelivery?.configuration_tasks as readonly string[] | undefined)?.includes('sync_principal')
+  ) {
+    throw new PlatformConfigError(
+      'capabilities.principal lists reporting_subscriptions, but the reporting capability does not list sync_principal ' +
+        'in configuration_tasks; create the reliable reporting service with reportingSubscriptions'
+    );
+  }
   const derivedFeatureIds = [
     ...(reportingDelivery ? ['media_buy.reporting_delivery'] : []),
     ...(advertisesSubscriptions ? ['media_buy.reporting_subscriptions'] : []),

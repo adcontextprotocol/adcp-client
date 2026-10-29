@@ -2,19 +2,33 @@
  * Seller-side reporting subscription engine (experimental `media_buy.reporting_subscriptions`,
  * AdCP 3.3).
  *
- * The host supplies only the facts it alone knows, through three hooks: which accounts a
- * principal may read (`listAuthorizedAccounts`), which buys an account holds
- * (`listAccountBuys`), and the caller's own account-level configurations, for precedence
- * (`listAccountDeliveryConfigs`). The engine maintains everything else (grant history,
- * coverage exceptions, `max_accounts` slots, timezone cutovers, lost authority) and derives:
+ * The host supplies only the facts it alone knows:
+ *
+ * - `listAuthorizedAccounts`: which accounts a principal may read now, with each account's
+ *   chain-start `authorized_at`, and `granted_at` / `timezone_changed_at` when those changed;
+ * - `listAccountBuys`: which buys an account holds, with each package's offering ids;
+ * - `resolveRevocationInstant`: when a principal's authority over an account ended;
+ * - `isPeriodDelivered`: whether an owed period was delivered, for `withheld_period_count`;
+ * - optionally `listAccountDeliveryConfigs`: the caller's own account-level configurations,
+ *   for precedence, including ended ones with their `active_until`.
+ *
+ * The engine keeps everything else: grant history, coverage exceptions opened and closed at
+ * the instant each change took effect, `max_accounts` slots, timezone cutovers, re-grant gaps
+ * and lost authority. It derives:
  *
  * - `subscription_coverage[]` for `get_reporting_status` summary and periods views;
  * - `accounts_with_exceptions[]` and `accounts_unauthorized[]` in the principal readback,
  *   with `principal.changed` (`reporting_subscription_changed`) on every change;
- * - the owed periods and obligations, computed with the same pure
- *   {@link expectedSubscriptionPeriods} rule a buyer runs, so seller and buyer agree by
- *   construction when they agree on the facts;
- * - the receipt roster and the post-loss receipt window.
+ * - the owed periods and obligations. Each reconcile freezes the periods that elapsed since
+ *   the previous one, computed with the same pure {@link expectedSubscriptionPeriods} rule a
+ *   buyer runs. Frozen periods are never recomputed, so later host changes (a withdrawn
+ *   offering, an edited product) or pruning retained exceptions never change an elapsed
+ *   owed set. Reconcile at least once per period so each period is frozen with the facts in
+ *   force when it was resolved;
+ * - the tenant-scoped receipt roster and the post-loss receipt window.
+ *
+ * State is sharded: one document per principal for `max_accounts` slots, and one per
+ * (principal, account), each updated with compare-and-set.
  */
 import type { PendingAction } from '../../types/core.generated';
 import type {
@@ -51,6 +65,8 @@ import {
 type MaybePromise<T> = T | Promise<T>;
 const DAY_MS = 86_400_000;
 const MAX_AUTHORIZED_ACCOUNT_PAGES = 10_000;
+const PRINCIPAL_KEY = 'principal';
+const ACCOUNT_KEY_PREFIX = 'account:';
 
 export type ReportingSubscriptionExclusionReasonV1 =
   | 'offering_unsupported'
@@ -83,15 +99,27 @@ export interface ReportingSubscriptionCoverageEntryV1 {
 /** Facts about one account the principal may currently read. */
 export interface ReportingSubscriptionAccountFactV1 {
   account_id: string;
-  /** `authorization.authorized_at`: when the current grant began. */
+  /**
+   * `authorization.authorized_at`: when the caller's current authorization chain began. A
+   * re-grant inside retention keeps it; a later value is a new chain.
+   */
   authorized_at: string;
+  /**
+   * When the current grant began, when it differs from `authorized_at` (a re-grant inside the
+   * chain). Required once the engine has recorded a revocation that the chain continues past.
+   */
+  granted_at?: string;
   operator?: string;
   /** The account's IANA timezone as `list_accounts` shows it. */
   timezone?: string;
+  /** When `timezone` last changed. Required when it differs from the zone the engine recorded. */
+  timezone_changed_at?: string;
   /** Seller-resolved upstream reporting timezone, for account-resolved source_timezone offerings. */
   source_timezone?: string;
   /** The seller serves this account only after this completes (`action_required`). */
   pending_action?: PendingAction;
+  /** When `pending_action` began. Defaults to the account's coverage start when first observed. */
+  pending_action_since?: string;
 }
 
 /** One of the caller's own `sync_accounts` `reporting_delivery_configs` entries, for precedence. */
@@ -100,9 +128,13 @@ export interface ReportingSubscriptionAccountConfigV1 {
   feed_purpose: 'pacing' | 'analytics' | 'billing';
   /** When it became active. */
   active_from: string;
-  /** When it ended (for example through `replace_account_configs`). Absent while active. */
+  /**
+   * When it ended (for example through `replace_account_configs`). Keep returning an ended
+   * configuration with `active_until` for `status_retention_days`, so the override closes at
+   * that instant rather than when the engine notices.
+   */
   active_until?: string;
-  /** Its schedule, so a handoff back to the subscription uses its own period end. */
+  /** Its schedule, so a handoff back to the subscription uses the configuration's own period end. */
   schedule?: {
     period_duration: string;
     alignment: 'utc' | 'account_timezone' | 'source_timezone' | 'billing_cycle';
@@ -112,7 +144,7 @@ export interface ReportingSubscriptionAccountConfigV1 {
 }
 
 export interface ReportingSubscriptionEngineHooksV1 {
-  /** The accounts this principal may read, paged. The host owns the answer; the SDK never infers it. */
+  /** The accounts this principal may read now, paged. The host owns the answer; the SDK never infers it. */
   listAuthorizedAccounts(
     principal: Readonly<PrincipalStoreScope>,
     options: { cursor?: string; signal?: AbortSignal }
@@ -127,17 +159,27 @@ export interface ReportingSubscriptionEngineHooksV1 {
     accountId: string,
     options: { signal?: AbortSignal }
   ): MaybePromise<ReportingSubscriptionBuyV1[]>;
+  /**
+   * When the principal's authority over the account ended. Called when an account leaves the
+   * authorized list, or reappears under a later chain without the revocation being observed.
+   * The answer is clamped to `[lastObservedAt, observedAt]`.
+   */
+  resolveRevocationInstant(
+    principal: Readonly<PrincipalStoreScope>,
+    accountId: string,
+    input: { lastObservedAt?: string; observedAt: string }
+  ): MaybePromise<string>;
+  /** Whether an owed period was delivered, for `withheld_period_count`. */
+  isPeriodDelivered(
+    principal: Readonly<PrincipalStoreScope>,
+    period: ExpectedSubscriptionPeriodV1
+  ): MaybePromise<boolean>;
   /** The principal's own account-level configurations on the account. Omit when the seller lists sync_principal alone. */
   listAccountDeliveryConfigs?(
     principal: Readonly<PrincipalStoreScope>,
     accountId: string,
     options: { signal?: AbortSignal }
   ): MaybePromise<ReportingSubscriptionAccountConfigV1[]>;
-  /**
-   * Whether an owed period was delivered, for `withheld_period_count`. Without it the engine
-   * counts owed periods not yet due (`period_end + delivery_sla`) at `unauthorized_at`.
-   */
-  isPeriodDelivered?(period: ExpectedSubscriptionPeriodV1): MaybePromise<boolean>;
 }
 
 interface StoredExclusion extends ReportingSubscriptionExclusionV1 {
@@ -146,68 +188,124 @@ interface StoredExclusion extends ReportingSubscriptionExclusionV1 {
   pending_action?: PendingAction;
 }
 
+/** An owed period frozen when it was resolved. */
+type FrozenPeriod = Omit<ExpectedSubscriptionPeriodV1, 'subscription_id' | 'account_id'>;
+
 interface AccountState {
   operator?: string;
   /** The account's current timezone. Earlier zones are in each cutover's previous_timezone. */
   timezone?: string;
   sourceTimezone?: string;
   grants: ReportingSubscriptionGrantV1[];
+  /** The chain-start authorized_at last reported. */
+  chainStart?: string;
+  /** Last reconcile that saw the account authorized. */
+  lastObservedAt?: string;
 }
 
 interface SubscriptionAccountState {
   exclusions: StoredExclusion[];
   gaps: ReportingSubscriptionGapV1[];
   timezoneCutovers: ReportingSubscriptionTimezoneCutoverV1[];
-  /** The subscription covered this account at some point (for accounts_unauthorized). */
+  /** The subscription served this account at some point (for accounts_unauthorized). */
   covered: boolean;
+  /** Offerings each buy resolved at the previous reconcile, to date resolution changes. */
+  resolvedBuys: Record<string, string[]>;
+  /** Owed periods resolved so far, never recomputed, and the instant through which they are complete. */
+  frozen: { through?: string; periods: FrozenPeriod[] };
+  /**
+   * Buys whose resolution changed (a product dropped or gained an offering, a package came or
+   * went, the buy disappeared): the buy as it was, and the E from which the new facts apply.
+   * Periods of that buy starting before E keep resolving from the earlier snapshot, so an edit
+   * never rewrites a period that was already owed.
+   */
+  buyRevisions?: BuyRevision[];
 }
 
-/** Durable engine state for one principal. */
+interface BuyRevision {
+  media_buy_id: string;
+  effective_at: string;
+  previous: ReportingSubscriptionBuyV1;
+}
+
+/** Durable engine state for one (principal, account). */
+export interface ReportingSubscriptionEngineAccountDocumentV1 {
+  account: AccountState;
+  subscriptions: Record<string, SubscriptionAccountState>;
+  /** The buys as of the previous reconcile, so a product or package edit is dated, not retroactive. */
+  lastBuys?: ReportingSubscriptionBuyV1[];
+}
+
+/** Durable engine state for one principal: `max_accounts` slots per subscription. */
+export interface ReportingSubscriptionEnginePrincipalDocumentV1 {
+  served: Record<string, string[]>;
+}
+
+/** Everything the engine holds for one principal, for inspection and conformance. */
 export interface ReportingSubscriptionEngineStateV1 {
-  accounts: Record<string, AccountState>;
-  subscriptions: Record<string, { accounts: Record<string, SubscriptionAccountState>; served: string[] }>;
+  principal: ReportingSubscriptionEnginePrincipalDocumentV1;
+  accounts: Record<string, ReportingSubscriptionEngineAccountDocumentV1>;
 }
 
-/** Engine persistence. Each principal's state is one atomic document. */
+/**
+ * Engine persistence: small documents keyed per principal (`principal`) and per account
+ * (`account:<id>`), each with its own compare-and-set revision.
+ */
 export interface ReportingSubscriptionEngineStoreV1 {
   readonly durability: 'process-local' | 'durable';
   get(
-    principal: Readonly<PrincipalStoreScope>
-  ): MaybePromise<{ state: ReportingSubscriptionEngineStateV1; revision: string } | null>;
+    principal: Readonly<PrincipalStoreScope>,
+    key: string
+  ): MaybePromise<{ value: Record<string, unknown>; revision: string } | null>;
   put(
     principal: Readonly<PrincipalStoreScope>,
-    state: ReportingSubscriptionEngineStateV1,
+    key: string,
+    value: Record<string, unknown>,
     expectedRevision: string | null
   ): MaybePromise<{ outcome: 'applied'; revision: string } | { outcome: 'conflict' }>;
-  listPrincipals(): MaybePromise<PrincipalStoreScope[]>;
+  /** Every key stored for the principal. */
+  listKeys(principal: Readonly<PrincipalStoreScope>): MaybePromise<string[]>;
+  /** Principals with engine state in one tenant. */
+  listPrincipals(tenantId: string): MaybePromise<PrincipalStoreScope[]>;
 }
 
 /** Process-local engine store for tests and single-process sellers. */
 export function createInMemoryReportingSubscriptionEngineStoreV1(): ReportingSubscriptionEngineStoreV1 {
   const rows = new Map<
     string,
-    { scope: PrincipalStoreScope; state: ReportingSubscriptionEngineStateV1; revision: number }
+    { scope: PrincipalStoreScope; key: string; value: Record<string, unknown>; revision: number }
   >();
-  const key = (scope: Readonly<PrincipalStoreScope>) => JSON.stringify([scope.tenantId, scope.principalId]);
+  const id = (scope: Readonly<PrincipalStoreScope>, key: string) =>
+    JSON.stringify([scope.tenantId, scope.principalId, key]);
   return {
     durability: 'process-local',
-    get(scope) {
-      const row = rows.get(key(scope));
-      return row ? { state: structuredClone(row.state), revision: String(row.revision) } : null;
+    get(scope, key) {
+      const row = rows.get(id(scope, key));
+      return row ? { value: structuredClone(row.value), revision: String(row.revision) } : null;
     },
-    put(scope, state, expectedRevision) {
-      const row = rows.get(key(scope));
+    put(scope, key, value, expectedRevision) {
+      const row = rows.get(id(scope, key));
       if ((row ? String(row.revision) : null) !== expectedRevision) return { outcome: 'conflict' };
       const revision = (row?.revision ?? 0) + 1;
-      rows.set(key(scope), {
+      rows.set(id(scope, key), {
         scope: { tenantId: scope.tenantId, principalId: scope.principalId },
-        state: structuredClone(state),
+        key,
+        value: structuredClone(value),
         revision,
       });
       return { outcome: 'applied', revision: String(revision) };
     },
-    listPrincipals() {
-      return [...rows.values()].map(row => ({ ...row.scope }));
+    listKeys(scope) {
+      return [...rows.values()]
+        .filter(row => row.scope.tenantId === scope.tenantId && row.scope.principalId === scope.principalId)
+        .map(row => row.key);
+    },
+    listPrincipals(tenantId) {
+      const seen = new Map<string, PrincipalStoreScope>();
+      for (const row of rows.values()) {
+        if (row.scope.tenantId === tenantId) seen.set(row.scope.principalId, { ...row.scope });
+      }
+      return [...seen.values()];
     },
   };
 }
@@ -215,7 +313,7 @@ export function createInMemoryReportingSubscriptionEngineStoreV1(): ReportingSub
 export interface CreateReportingSubscriptionEngineOptionsV1 {
   principal: PrincipalLifecycleRuntimeSubscriptions;
   hooks: ReportingSubscriptionEngineHooksV1;
-  /** The seller's offerings with their standard-dimension mapping. */
+  /** The seller's offerings as published, with `standard_dimensions`. Keep withdrawn ones with `withdrawn_at`. */
   offerings: readonly ReportingSubscriptionOfferingV1[];
   /** Defaults to a process-local store; production sellers pass a durable one. */
   store?: ReportingSubscriptionEngineStoreV1;
@@ -233,8 +331,9 @@ export interface ReportingSubscriptionEngineV1 {
   /** The commitments a capability document advertises for this engine. */
   readonly settings: { maxAccounts?: number; backfillOnRegrant: boolean; statusRetentionDays: number };
   /**
-   * Reconcile one principal: read its authorized accounts and buys, stamp grants and
-   * revocations, open and close exceptions, and publish the readback. Idempotent.
+   * Reconcile one principal: read its authorized accounts and buys, record grants and
+   * revocations at the instants they happened, open and close exceptions at the instant each
+   * change took effect, freeze newly elapsed owed periods, and publish the readback.
    */
   reconcile(principal: Readonly<PrincipalStoreScope>, options?: { signal?: AbortSignal }): Promise<void>;
   /** Record an authority change the host observed, at the instant it happened. */
@@ -248,14 +347,18 @@ export interface ReportingSubscriptionEngineV1 {
     }
   ): Promise<void>;
   /**
-   * `subscription_coverage[]` for `get_reporting_status`. Empty for an account the principal
-   * is not currently authorized for: caller isolation is unchanged.
+   * `subscription_coverage[]` for `get_reporting_status`: subscriptions whose current scope
+   * includes the account, plus inactive ones with retained obligations. Empty for an account
+   * the principal is not currently authorized for: caller isolation is unchanged.
    */
   subscriptionCoverage(
     principal: Readonly<PrincipalStoreScope>,
     accountId: string
   ): Promise<ReportingSubscriptionCoverageEntryV1[]>;
-  /** Every owed (buy, offering, period) of this principal's subscriptions on the account. */
+  /**
+   * Every owed (buy, offering, period) of this principal's subscriptions on the account:
+   * the frozen elapsed periods, plus any that elapsed since the last reconcile.
+   */
   owedPeriods(
     principal: Readonly<PrincipalStoreScope>,
     accountId: string,
@@ -267,8 +370,8 @@ export interface ReportingSubscriptionEngineV1 {
     accountId: string,
     options?: { now?: string; signal?: AbortSignal }
   ): Promise<ExpectedSubscriptionObligationV1[]>;
-  /** Principals whose active subscriptions cover the account: the consumers that owe receipts. */
-  receiptRoster(accountId: string): Promise<PrincipalStoreScope[]>;
+  /** Principals in the tenant whose active subscriptions cover the account: the consumers that owe receipts. */
+  receiptRoster(tenantId: string, accountId: string): Promise<PrincipalStoreScope[]>;
   /**
    * Whether `sync_reporting_receipts`/`sync_reporting_status` from this principal may still be
    * accepted for a revision it read at `readAt`: always while authorized; after a loss only
@@ -279,12 +382,14 @@ export interface ReportingSubscriptionEngineV1 {
     accountId: string,
     input: { readAt: string; now?: string }
   ): Promise<boolean>;
+  /**
+   * Accounts whose own `reporting_delivery_configs` a `replace_account_configs` application
+   * may deactivate: in scope and served, resolving an offering, and not excluded,
+   * `capacity` or `offering_unsupported`. For the principal runtime's `replaceAccountConfigs` hook.
+   */
+  replaceAccountConfigTargets(principal: Readonly<PrincipalStoreScope>, subscriptionId: string): Promise<string[]>;
   /** The engine state, for inspection and conformance. */
   inspect(principal: Readonly<PrincipalStoreScope>): Promise<ReportingSubscriptionEngineStateV1>;
-}
-
-function emptyState(): ReportingSubscriptionEngineStateV1 {
-  return { accounts: {}, subscriptions: {} };
 }
 
 function iso(value: number): string {
@@ -298,6 +403,20 @@ function lastGrant(account: AccountState | undefined): ReportingSubscriptionGran
 function isAuthorized(account: AccountState | undefined): boolean {
   const grant = lastGrant(account);
   return grant !== undefined && grant.unauthorized_at === undefined;
+}
+
+function emptyAccountDocument(): ReportingSubscriptionEngineAccountDocumentV1 {
+  return { account: { grants: [] }, subscriptions: {} };
+}
+
+function emptySubscriptionAccount(): SubscriptionAccountState {
+  return { exclusions: [], gaps: [], timezoneCutovers: [], covered: false, resolvedBuys: {}, frozen: { periods: [] } };
+}
+
+function parseInstant(value: unknown, field: string): number {
+  const parsed = typeof value === 'string' ? Date.parse(value) : Number.NaN;
+  if (!Number.isFinite(parsed)) throw new TypeError(`${field} must be an RFC 3339 date-time`);
+  return parsed;
 }
 
 /** Versions in the coverage function's input shape. */
@@ -328,13 +447,15 @@ export function createReportingSubscriptionEngineV1(
       'createReportingSubscriptionEngineV1 requires a principal runtime with reporting subscriptions'
     );
   }
-  if (
-    typeof options.hooks?.listAuthorizedAccounts !== 'function' ||
-    typeof options.hooks.listAccountBuys !== 'function'
-  ) {
-    throw new TypeError(
-      'createReportingSubscriptionEngineV1 requires listAuthorizedAccounts and listAccountBuys hooks'
-    );
+  for (const hook of [
+    'listAuthorizedAccounts',
+    'listAccountBuys',
+    'resolveRevocationInstant',
+    'isPeriodDelivered',
+  ] as const) {
+    if (typeof options.hooks?.[hook] !== 'function') {
+      throw new TypeError(`createReportingSubscriptionEngineV1 requires the ${hook} hook`);
+    }
   }
   if (!Number.isSafeInteger(options.statusRetentionDays) || options.statusRetentionDays < 1) {
     throw new TypeError('statusRetentionDays must be a positive integer');
@@ -353,29 +474,35 @@ export function createReportingSubscriptionEngineV1(
   const offeringsById = new Map(options.offerings.map(offering => [offering.offering_id, offering]));
   if (offeringsById.size !== options.offerings.length) throw new TypeError('offering_id values must be unique');
 
-  async function mutate(
+  async function mutate<T extends Record<string, unknown>>(
     principal: Readonly<PrincipalStoreScope>,
-    change: (state: ReportingSubscriptionEngineStateV1) => void | Promise<void>
-  ): Promise<ReportingSubscriptionEngineStateV1> {
+    key: string,
+    empty: () => T,
+    change: (value: T) => void | Promise<void>
+  ): Promise<T> {
     for (let attempt = 0; attempt < maxCasAttempts; attempt += 1) {
-      const current = await store.get(principal);
-      const state = current ? structuredClone(current.state) : emptyState();
-      await change(state);
-      const result = await store.put(principal, state, current?.revision ?? null);
-      if (result.outcome === 'applied') return state;
+      const current = await store.get(principal, key);
+      const value = current ? (structuredClone(current.value) as T) : empty();
+      await change(value);
+      const result = await store.put(principal, key, value, current?.revision ?? null);
+      if (result.outcome === 'applied') return value;
     }
     throw new Error('Reporting subscription engine state conflicted repeatedly');
   }
 
-  /** Calendars an account resolves for a version at `at`, across the given buys. */
-  function accountCalendars(
-    version: StoredReportingSubscriptionVersion,
-    account: AccountState,
-    buys: readonly ReportingSubscriptionBuyV1[],
-    at: number,
-    timezone = account.timezone
-  ): ReportingPeriodCalendarV1[] {
-    return [...offeringCalendars(version, account, buys, at, timezone).values()];
+  async function readAccount(
+    principal: Readonly<PrincipalStoreScope>,
+    accountId: string
+  ): Promise<ReportingSubscriptionEngineAccountDocumentV1 | undefined> {
+    const row = await store.get(principal, `${ACCOUNT_KEY_PREFIX}${accountId}`);
+    return row ? (structuredClone(row.value) as unknown as ReportingSubscriptionEngineAccountDocumentV1) : undefined;
+  }
+
+  async function accountIds(principal: Readonly<PrincipalStoreScope>): Promise<string[]> {
+    return (await store.listKeys(principal))
+      .filter(key => key.startsWith(ACCOUNT_KEY_PREFIX))
+      .map(key => key.slice(ACCOUNT_KEY_PREFIX.length))
+      .sort(compareReportingIdsByteOrderV1);
   }
 
   /** The calendar of each offering an account resolves for a version at `at`, by offering_id. */
@@ -388,21 +515,31 @@ export function createReportingSubscriptionEngineV1(
   ): Map<string, ReportingPeriodCalendarV1> {
     const calendars = new Map<string, ReportingPeriodCalendarV1>();
     for (const buy of buys) {
-      for (const pkg of buy.packages) {
-        for (const id of resolveReportingSubscriptionOfferingsV1({
-          selector: version.configuration.selector,
-          reconciliation_mode: version.configuration.reconciliation_mode,
-          ...(version.destinationMethod ? { destination_method: version.destinationMethod } : {}),
-          offerings: [...offeringsById.values()],
-          eligible_offering_ids: pkg.reporting_delivery_offering_ids,
-          at,
-        })) {
-          const calendar = calendarFor(offeringsById.get(id)!, version, account, timezone);
-          if (calendar) calendars.set(id, calendar);
-        }
+      for (const id of resolveBuy(version, buy, at)) {
+        const calendar = calendarFor(offeringsById.get(id)!, version, account, timezone);
+        if (calendar) calendars.set(id, calendar);
       }
     }
     return new Map([...calendars].sort(([left], [right]) => compareReportingIdsByteOrderV1(left, right)));
+  }
+
+  function resolvePackage(version: StoredReportingSubscriptionVersion, offeringIds: readonly string[], at: number) {
+    return resolveReportingSubscriptionOfferingsV1({
+      selector: version.configuration.selector,
+      reconciliation_mode: version.configuration.reconciliation_mode,
+      ...(version.destinationMethod ? { destination_method: version.destinationMethod } : {}),
+      offerings: [...offeringsById.values()],
+      eligible_offering_ids: offeringIds,
+      at,
+    });
+  }
+
+  function resolveBuy(version: StoredReportingSubscriptionVersion, buy: ReportingSubscriptionBuyV1, at: number) {
+    const ids = new Set<string>();
+    for (const pkg of buy.packages) {
+      for (const id of resolvePackage(version, pkg.reporting_delivery_offering_ids, at)) ids.add(id);
+    }
+    return [...ids].sort(compareReportingIdsByteOrderV1);
   }
 
   function calendarFor(
@@ -429,7 +566,7 @@ export function createReportingSubscriptionEngineV1(
             alignment: 'source_timezone',
             timezone: (schedule.period_timezone_policy === 'fixed'
               ? schedule.period_timezone
-              : (override ?? account.sourceTimezone))!,
+              : account.sourceTimezone)!,
           });
         case 'billing_cycle':
           return createReportingPeriodCalendarV1({
@@ -446,39 +583,55 @@ export function createReportingSubscriptionEngineV1(
     }
   }
 
-  /** E for a change at T: the latest end of an outgoing period that started before T. */
-  function cutoverInstant(calendars: readonly ReportingPeriodCalendarV1[], at: number): number {
-    return calendars.length === 0 ? at : Math.max(...calendars.map(calendar => calendar.ceil(at)));
+  /**
+   * E for a change at T: the latest end of an outgoing period that started before T. With
+   * several calendars this is one account-wide instant (`excluded[]` carries no
+   * `offering_id`), so an offering whose period ends earlier is cut at the latest end.
+   */
+  function cutoverInstant(calendars: Iterable<ReportingPeriodCalendarV1>, at: number): number {
+    const list = [...calendars];
+    return list.length === 0 ? at : Math.max(...list.map(calendar => calendar.ceil(at)));
   }
 
-  function primaryCalendar(calendars: readonly ReportingPeriodCalendarV1[]): ReportingPeriodCalendarV1 | undefined {
+  function primaryCalendar(calendars: Iterable<ReportingPeriodCalendarV1>): ReportingPeriodCalendarV1 | undefined {
     return [...calendars].sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0))[0];
   }
 
-  /** Open newly desired conditions and close vanished ones, both at E instants. */
+  interface DesiredExclusion extends Omit<StoredExclusion, 'from'> {
+    /** The instant the condition took effect. */
+    at: number;
+    /** Calendars whose E opens it; `from` is the raw instant when absent. */
+    openCalendars?: Iterable<ReportingPeriodCalendarV1>;
+  }
+
+  /**
+   * Open newly desired conditions and close vanished ones, both at the E of the instant the
+   * change took effect. `closeAt` supplies that instant for a closing condition (for example
+   * the overriding configuration's `active_until`); it defaults to the observation time.
+   */
   function settleExclusions(
     target: SubscriptionAccountState,
-    desired: ReadonlyArray<Omit<StoredExclusion, 'from'> & { at: number }>,
-    calendars: readonly ReportingPeriodCalendarV1[],
-    nowMs: number
+    desired: readonly DesiredExclusion[],
+    calendars: Iterable<ReportingPeriodCalendarV1>,
+    nowMs: number,
+    closeAt: (entry: StoredExclusion) => number | undefined
   ): boolean {
     let changed = false;
+    const calendarList = [...calendars];
     const open = target.exclusions.filter(entry => entry.until === undefined);
     for (const entry of open) {
       if (desired.some(item => item.key === entry.key)) continue;
-      entry.until = iso(Math.max(Date.parse(entry.from), cutoverInstant(calendars, nowMs)));
+      entry.until = iso(Math.max(Date.parse(entry.from), closeAt(entry) ?? cutoverInstant(calendarList, nowMs)));
       changed = true;
     }
     for (const item of desired) {
       if (open.some(entry => entry.key === item.key)) continue;
-      const { at, ...rest } = item;
-      target.exclusions.push({
-        ...rest,
-        from: iso(item.reason === 'offering_unsupported' ? at : cutoverInstant(calendars, at)),
-      });
+      const { at, openCalendars, ...rest } = item;
+      target.exclusions.push({ ...rest, from: iso(openCalendars ? cutoverInstant(openCalendars, at) : at) });
       changed = true;
     }
-    // Retain closed entries for status_retention_days after until.
+    // Wire retention: closed entries, gaps and cutovers are listed for status_retention_days.
+    // Elapsed owed periods are frozen, so pruning never changes them.
     const kept = target.exclusions.filter(
       entry => entry.until === undefined || Date.parse(entry.until) + retentionMs > nowMs
     );
@@ -509,281 +662,444 @@ export function createReportingSubscriptionEngineV1(
     );
   }
 
-  function applyGrant(
-    state: ReportingSubscriptionEngineStateV1,
+  /** When authority ended, from the host, clamped to what the engine observed. */
+  async function revocationInstant(
+    principal: Readonly<PrincipalStoreScope>,
     accountId: string,
-    authorized: boolean,
-    at: number,
-    fact?: Partial<ReportingSubscriptionAccountFactV1>,
-    observedAt = at
-  ) {
-    const account = (state.accounts[accountId] ??= { grants: [] });
-    if (fact?.operator !== undefined) account.operator = fact.operator;
-    if (fact?.source_timezone !== undefined) account.sourceTimezone = fact.source_timezone;
+    account: AccountState,
+    upperBound: number
+  ): Promise<number> {
+    const answer = await options.hooks.resolveRevocationInstant(principal, accountId, {
+      ...(account.lastObservedAt !== undefined ? { lastObservedAt: account.lastObservedAt } : {}),
+      observedAt: iso(upperBound),
+    });
+    const at = parseInstant(answer, 'resolveRevocationInstant result');
+    const lower = Math.max(
+      Date.parse(lastGrant(account)!.authorized_at),
+      account.lastObservedAt !== undefined ? Date.parse(account.lastObservedAt) : Number.NEGATIVE_INFINITY
+    );
+    return Math.min(Math.max(at, lower), upperBound);
+  }
+
+  /** Apply what the host reports about one account's authority, at the instants it happened. */
+  async function applyAuthority(
+    principal: Readonly<PrincipalStoreScope>,
+    accountId: string,
+    account: AccountState,
+    fact: ReportingSubscriptionAccountFactV1 | undefined,
+    nowMs: number
+  ): Promise<boolean> {
     const last = lastGrant(account);
-    if (authorized) {
-      if (last && last.unauthorized_at === undefined) return false;
-      // authorized_at is the start of the authorization chain (adcontextprotocol/adcp#8585):
-      // a re-grant inside retention leaves it unchanged, so the re-grant instant is when
-      // authority was observed again. A later authorized_at is itself the re-grant.
-      const revokedAt = last?.unauthorized_at !== undefined ? Date.parse(last.unauthorized_at) : undefined;
-      const start = revokedAt === undefined ? at : at > revokedAt ? at : Math.max(observedAt, revokedAt);
-      account.grants.push({ authorized_at: iso(start) });
+    if (!fact) {
+      if (!last || last.unauthorized_at !== undefined) return false;
+      last.unauthorized_at = iso(await revocationInstant(principal, accountId, account, nowMs));
       return true;
     }
-    if (!last || last.unauthorized_at !== undefined) return false;
-    last.unauthorized_at = iso(Math.max(at, Date.parse(last.authorized_at)));
-    return true;
+    if (fact.operator !== undefined) account.operator = fact.operator;
+    if (fact.source_timezone !== undefined) account.sourceTimezone = fact.source_timezone;
+    const chainStart = parseInstant(fact.authorized_at, `${accountId} authorized_at`);
+    let changed = false;
+    if (!last) {
+      account.grants.push({ authorized_at: iso(chainStart) });
+      changed = true;
+    } else if (last.unauthorized_at === undefined) {
+      if (account.chainStart !== undefined && chainStart > Date.parse(account.chainStart)) {
+        // A later chain start while the engine still holds the grant open: the revocation was
+        // never observed. Close the old chain when it ended and open the new one.
+        last.unauthorized_at = iso(await revocationInstant(principal, accountId, account, chainStart));
+        account.grants.push({ authorized_at: iso(chainStart) });
+        changed = true;
+      }
+    } else {
+      const revokedAt = Date.parse(last.unauthorized_at);
+      if (chainStart > revokedAt) {
+        account.grants.push({ authorized_at: iso(chainStart) });
+      } else {
+        // The chain continues past a recorded revocation; only the host knows when.
+        if (fact.granted_at === undefined) {
+          throw new TypeError(
+            `Account ${JSON.stringify(accountId)} was re-granted inside its authorization chain; the host must report granted_at`
+          );
+        }
+        const grantedAt = parseInstant(fact.granted_at, `${accountId} granted_at`);
+        account.grants.push({ authorized_at: iso(Math.min(Math.max(grantedAt, revokedAt), nowMs)) });
+      }
+      changed = true;
+    }
+    account.chainStart = iso(chainStart);
+    account.lastObservedAt = iso(nowMs);
+    return changed;
   }
 
   async function reconcile(principal: Readonly<PrincipalStoreScope>, reconcileOptions: { signal?: AbortSignal } = {}) {
     const signal = reconcileOptions.signal;
     const nowMs = now().getTime();
+    const hookOptions = signal ? { signal } : {};
     const { history } = await options.principal.listReportingSubscriptions(principal);
     const facts = await readFacts(principal, signal);
+    const known = new Set([...facts.keys(), ...(await accountIds(principal))]);
+    const documents = new Map<string, ReportingSubscriptionEngineAccountDocumentV1>();
+    for (const accountId of known)
+      documents.set(accountId, (await readAccount(principal, accountId)) ?? emptyAccountDocument());
+
+    // Host facts for accounts the principal reads now, or lost inside retention (their buys,
+    // as they stood, give the withheld periods; nothing is disclosed to the caller).
     const buysByAccount = new Map<string, ReportingSubscriptionBuyV1[]>();
     const configsByAccount = new Map<string, ReportingSubscriptionAccountConfigV1[]>();
-    for (const accountId of facts.keys()) {
+    for (const accountId of [...known].sort(compareReportingIdsByteOrderV1)) {
       signal?.throwIfAborted();
-      buysByAccount.set(accountId, await options.hooks.listAccountBuys(principal, accountId, signal ? { signal } : {}));
-      configsByAccount.set(
-        accountId,
-        (await options.hooks.listAccountDeliveryConfigs?.(principal, accountId, signal ? { signal } : {})) ?? []
-      );
-    }
-    // Accounts whose authority ended inside retention: their buys, as they stood, give the
-    // withheld periods. The host answers from its own records; nothing is disclosed to the caller.
-    const previous = await store.get(principal);
-    for (const [accountId, account] of Object.entries(previous?.state.accounts ?? {})) {
-      const grant = lastGrant(account);
-      if (facts.has(accountId) || grant === undefined) continue;
-      // Revoked in this pass (still open in the stored state), or inside retention.
-      if (grant.unauthorized_at !== undefined && Date.parse(grant.unauthorized_at) + retentionMs <= nowMs) continue;
-      buysByAccount.set(accountId, await options.hooks.listAccountBuys(principal, accountId, signal ? { signal } : {}));
-    }
-    let notify = false;
-    const state = await mutate(principal, current => {
-      notify = false;
-      // 1. Authority and account facts.
-      for (const [accountId, fact] of facts) {
-        if (applyGrant(current, accountId, true, Date.parse(fact.authorized_at), fact, nowMs)) notify = true;
-        const account = current.accounts[accountId]!;
-        if (fact.timezone !== undefined && fact.timezone !== account.timezone) {
-          if (account.timezone !== undefined) {
-            recordTimezoneChange(
-              current,
-              history,
-              accountId,
-              account,
-              fact.timezone,
-              nowMs,
-              buysByAccount.get(accountId) ?? []
-            );
-          }
-          account.timezone = fact.timezone;
-        }
+      const grant = lastGrant(documents.get(accountId)!.account);
+      const retained =
+        facts.has(accountId) ||
+        (grant !== undefined &&
+          (grant.unauthorized_at === undefined || Date.parse(grant.unauthorized_at) + retentionMs > nowMs));
+      if (!retained) continue;
+      buysByAccount.set(accountId, await options.hooks.listAccountBuys(principal, accountId, hookOptions));
+      if (facts.has(accountId)) {
+        configsByAccount.set(
+          accountId,
+          (await options.hooks.listAccountDeliveryConfigs?.(principal, accountId, hookOptions)) ?? []
+        );
       }
-      for (const [accountId, account] of Object.entries(current.accounts)) {
-        if (!facts.has(accountId) && isAuthorized(account)) {
-          applyGrant(current, accountId, false, nowMs);
-          notify = true;
-        }
-      }
-      // 2. Exceptions per subscription and account.
-      for (const entry of history) {
-        const sub = (current.subscriptions[entry.subscriptionId] ??= { accounts: {}, served: [] });
-        const version = entry.versions.at(-1)!;
-        const active = entry.deactivatedAt === undefined;
-        const configuration = version.configuration;
-        const inScope = [...facts.keys()]
-          .filter(accountId => {
-            const account = current.accounts[accountId]!;
-            return reportingSubscriptionScopeIncludesV1(
-              {
-                scope: configuration.scope,
-                ...(configuration.operator_domains ? { operator_domains: configuration.operator_domains } : {}),
-              },
-              { account_id: accountId, ...(account.operator !== undefined ? { operator: account.operator } : {}) }
-            );
-          })
-          .sort(compareReportingIdsByteOrderV1);
-        // Precedence: the caller's own account-level configuration, then its own account_ids subscription.
-        const overriddenBy = new Map<
-          string,
-          {
-            by: StoredExclusion['overridden_by'];
-            at: number;
-            until?: { at: number; calendar?: ReportingPeriodCalendarV1 };
-          }
-        >();
-        for (const accountId of inScope) {
-          const configs = (configsByAccount.get(accountId) ?? []).filter(
-            item =>
-              item.feed_purpose === configuration.selector.feed_purpose &&
-              (item.active_until === undefined || Date.parse(item.active_until) > nowMs)
-          );
-          const winner = configs.sort((left, right) =>
-            compareReportingIdsByteOrderV1(left.delivery_config_id, right.delivery_config_id)
-          )[0];
-          if (winner) {
-            overriddenBy.set(accountId, {
-              by: { delivery_config_id: winner.delivery_config_id },
-              at: Date.parse(winner.active_from),
-            });
-            continue;
-          }
-          if (configuration.scope.all_authorized_accounts) {
-            const specific = history.find(
-              other =>
-                other.subscriptionId !== entry.subscriptionId &&
-                other.deactivatedAt === undefined &&
-                other.versions.at(-1)!.configuration.selector.feed_purpose === configuration.selector.feed_purpose &&
-                other.versions.at(-1)!.configuration.scope.account_ids?.includes(accountId)
-            );
-            if (specific) {
-              overriddenBy.set(accountId, {
-                by: { subscription_id: specific.subscriptionId },
-                at: Date.parse(specific.versions.at(-1)!.acceptedAt),
+    }
+
+    // max_accounts slots (principal document): served accounts keep their slots, then byte order.
+    const precedence = new Map<
+      string,
+      Map<string, { by: StoredExclusion['overridden_by']; at: number; config?: ReportingSubscriptionAccountConfigV1 }>
+    >();
+    const inScopeBySubscription = new Map<string, string[]>();
+    const capacityBySubscription = new Map<string, Set<string>>();
+    await mutate<ReportingSubscriptionEnginePrincipalDocumentV1 & Record<string, unknown>>(
+      principal,
+      PRINCIPAL_KEY,
+      () => ({ served: {} }),
+      document => {
+        for (const entry of history) {
+          const version = entry.versions.at(-1)!;
+          const configuration = version.configuration;
+          const inScope = [...facts.keys()]
+            .filter(accountId => {
+              const fact = facts.get(accountId)!;
+              const operator = fact.operator ?? documents.get(accountId)!.account.operator;
+              return reportingSubscriptionScopeIncludesV1(
+                {
+                  scope: configuration.scope,
+                  ...(configuration.operator_domains ? { operator_domains: configuration.operator_domains } : {}),
+                },
+                { account_id: accountId, ...(operator !== undefined ? { operator } : {}) }
+              );
+            })
+            .sort(compareReportingIdsByteOrderV1);
+          inScopeBySubscription.set(entry.subscriptionId, inScope);
+          const overrides = new Map<
+            string,
+            { by: StoredExclusion['overridden_by']; at: number; config?: ReportingSubscriptionAccountConfigV1 }
+          >();
+          for (const accountId of inScope) {
+            const winner = (configsByAccount.get(accountId) ?? [])
+              .filter(
+                item =>
+                  item.feed_purpose === configuration.selector.feed_purpose &&
+                  (item.active_until === undefined || Date.parse(item.active_until) > nowMs)
+              )
+              .sort((left, right) =>
+                compareReportingIdsByteOrderV1(left.delivery_config_id, right.delivery_config_id)
+              )[0];
+            if (winner) {
+              overrides.set(accountId, {
+                by: { delivery_config_id: winner.delivery_config_id },
+                at: parseInstant(winner.active_from, `${winner.delivery_config_id} active_from`),
+                config: winner,
               });
+              continue;
+            }
+            if (configuration.scope.all_authorized_accounts) {
+              const specific = history.find(
+                other =>
+                  other.subscriptionId !== entry.subscriptionId &&
+                  other.deactivatedAt === undefined &&
+                  other.versions.at(-1)!.configuration.selector.feed_purpose === configuration.selector.feed_purpose &&
+                  other.versions.at(-1)!.configuration.scope.account_ids?.includes(accountId)
+              );
+              if (specific) {
+                overrides.set(accountId, {
+                  by: { subscription_id: specific.subscriptionId },
+                  at: Date.parse(specific.versions.at(-1)!.acceptedAt),
+                });
+              }
             }
           }
+          precedence.set(entry.subscriptionId, overrides);
+          const eligible = inScope.filter(
+            accountId => !overrides.has(accountId) && !facts.get(accountId)!.pending_action
+          );
+          const previous = document.served[entry.subscriptionId] ?? [];
+          const ordered = [
+            ...previous.filter(accountId => eligible.includes(accountId)),
+            ...eligible.filter(accountId => !previous.includes(accountId)),
+          ];
+          const served = options.maxAccounts === undefined ? ordered : ordered.slice(0, options.maxAccounts);
+          capacityBySubscription.set(entry.subscriptionId, new Set(ordered.slice(served.length)));
+          if (entry.deactivatedAt === undefined) document.served[entry.subscriptionId] = served;
         }
-        // max_accounts: previously served accounts keep their slots, then byte order.
-        const eligible = inScope.filter(
-          accountId => !overriddenBy.has(accountId) && !facts.get(accountId)!.pending_action
-        );
-        const ordered = [
-          ...sub.served.filter(accountId => eligible.includes(accountId)),
-          ...eligible.filter(accountId => !sub.served.includes(accountId)),
-        ];
-        const served = options.maxAccounts === undefined ? ordered : ordered.slice(0, options.maxAccounts);
-        const capacity = new Set(ordered.slice(served.length));
-        sub.served = active ? served : sub.served;
+      }
+    );
 
-        const allAccounts = new Set([...inScope, ...Object.keys(sub.accounts)]);
-        if (configuration.exclude_account_ids) {
-          for (const accountId of configuration.exclude_account_ids)
-            if (facts.has(accountId)) allAccounts.add(accountId);
-        }
-        for (const accountId of allAccounts) {
-          const account = current.accounts[accountId];
-          if (!account) continue;
-          const target = (sub.accounts[accountId] ??= {
-            exclusions: [],
-            gaps: [],
-            timezoneCutovers: [],
-            covered: false,
-          });
-          const buys = buysByAccount.get(accountId) ?? [];
-          const calendars = accountCalendars(version, account, buys, nowMs);
-          const desired: Array<Omit<StoredExclusion, 'from'> & { at: number }> = [];
-          const accepted = Date.parse(version.acceptedAt);
-          if (facts.has(accountId) && active) {
-            if (configuration.exclude_account_ids?.includes(accountId)) {
-              desired.push({ key: 'excluded_by_buyer', reason: 'excluded_by_buyer', at: accepted });
-            } else if (inScope.includes(accountId)) {
-              const pending = facts.get(accountId)!.pending_action;
-              const override = overriddenBy.get(accountId);
-              if (pending) {
-                desired.push({
-                  key: 'action_required',
-                  reason: 'action_required',
-                  at: nowMs,
-                  pending_action: structuredClone(pending),
-                });
-              } else if (override) {
-                desired.push({
-                  key: `overridden:${JSON.stringify(override.by)}`,
-                  reason: 'overridden',
-                  overridden_by: override.by!,
-                  at: Math.max(override.at, accepted),
-                });
-              } else if (capacity.has(accountId)) {
-                desired.push({ key: 'capacity', reason: 'capacity', at: nowMs });
-              }
-              for (const buy of buys) {
-                if (buy.confirmed_at === undefined || buy.confirmed_at === null) continue;
-                const unsupported = buy.packages
-                  .filter(
-                    pkg =>
-                      resolveReportingSubscriptionOfferingsV1({
-                        selector: configuration.selector,
-                        reconciliation_mode: configuration.reconciliation_mode,
-                        ...(version.destinationMethod ? { destination_method: version.destinationMethod } : {}),
-                        offerings: [...offeringsById.values()],
-                        eligible_offering_ids: pkg.reporting_delivery_offering_ids,
-                        at: nowMs,
-                      }).length === 0
-                  )
-                  .map(pkg => pkg.package_id)
-                  .sort(compareReportingIdsByteOrderV1);
-                if (unsupported.length === 0) continue;
-                const at = Math.max(accepted, Date.parse(buy.confirmed_at));
-                desired.push(
-                  unsupported.length === buy.packages.length
-                    ? {
-                        key: `offering_unsupported:${buy.media_buy_id}`,
-                        reason: 'offering_unsupported',
-                        media_buy_id: buy.media_buy_id,
-                        at,
-                      }
-                    : {
-                        key: `offering_unsupported:${buy.media_buy_id}:${unsupported.join(',')}`,
-                        reason: 'offering_unsupported',
-                        media_buy_id: buy.media_buy_id,
-                        package_ids: unsupported,
-                        at,
-                      }
+    let notify = false;
+    for (const accountId of [...known].sort(compareReportingIdsByteOrderV1)) {
+      signal?.throwIfAborted();
+      const buys = buysByAccount.get(accountId) ?? [];
+      const fact = facts.get(accountId);
+      const document = await mutate<ReportingSubscriptionEngineAccountDocumentV1 & Record<string, unknown>>(
+        principal,
+        `${ACCOUNT_KEY_PREFIX}${accountId}`,
+        () => emptyAccountDocument() as ReportingSubscriptionEngineAccountDocumentV1 & Record<string, unknown>,
+        async current => {
+          let changed = await applyAuthority(principal, accountId, current.account, fact, nowMs);
+          const account = current.account;
+          if (fact?.timezone !== undefined && fact.timezone !== account.timezone) {
+            if (account.timezone !== undefined) {
+              if (fact.timezone_changed_at === undefined) {
+                throw new TypeError(
+                  `Account ${JSON.stringify(accountId)} changed timezone; the host must report timezone_changed_at`
                 );
               }
+              const changedAt = Math.min(
+                parseInstant(fact.timezone_changed_at, `${accountId} timezone_changed_at`),
+                nowMs
+              );
+              recordTimezoneChange(current, history, account, fact.timezone, changedAt, buys);
             }
+            account.timezone = fact.timezone;
+            changed = true;
           }
-          if (!facts.has(accountId)) {
-            // No current authority: keep the exception history frozen; lost authority is
-            // reported in accounts_unauthorized instead.
-            continue;
+          for (const entry of history) {
+            if (settleSubscription(current, entry, accountId, fact, buys, nowMs)) changed = true;
           }
-          // Only accounts the subscription actually served can later appear in accounts_unauthorized.
-          if (inScope.includes(accountId) && !desired.some(item => item.media_buy_id === undefined)) {
-            target.covered = true;
+          if (changed) notify = true;
+        }
+      );
+      // Freeze periods that elapsed since the previous reconcile, with the facts now in force.
+      await mutate<ReportingSubscriptionEngineAccountDocumentV1 & Record<string, unknown>>(
+        principal,
+        `${ACCOUNT_KEY_PREFIX}${accountId}`,
+        () => structuredClone(document) as ReportingSubscriptionEngineAccountDocumentV1 & Record<string, unknown>,
+        current => {
+          for (const entry of history) {
+            const target = current.subscriptions[entry.subscriptionId];
+            if (target) target.buyRevisions = buyRevisionsFor(current, entry, buys, nowMs);
+            freeze(current, entry, accountId, buys, nowMs);
           }
-          // Lost-authority gaps on re-grant inside retention, without backfill.
-          if (!options.backfillOnRegrant) {
-            recordRegrantGaps(target, account, offeringCalendars(version, account, buys, nowMs));
+          current.lastBuys = structuredClone(buys);
+        }
+      );
+    }
+
+    // Readback: accounts_with_exceptions and accounts_unauthorized. An exception that
+    // opened or closed fires principal.changed even when the summary is unchanged.
+    const state = await inspect(principal);
+    const updates = [];
+    for (const entry of history) updates.push(await readbackFor(principal, entry, state, nowMs, buysByAccount));
+    await options.principal.recordReportingSubscriptionCoverage(principal, updates, { forceNotification: notify });
+
+    function settleSubscription(
+      current: ReportingSubscriptionEngineAccountDocumentV1,
+      entry: StoredReportingSubscriptionHistory,
+      accountId: string,
+      fact: ReportingSubscriptionAccountFactV1 | undefined,
+      buys: readonly ReportingSubscriptionBuyV1[],
+      nowMs: number
+    ): boolean {
+      const version = entry.versions.at(-1)!;
+      const configuration = version.configuration;
+      const active = entry.deactivatedAt === undefined;
+      const inScope = inScopeBySubscription.get(entry.subscriptionId) ?? [];
+      const excludedByBuyer = configuration.exclude_account_ids?.includes(accountId) === true;
+      if (!current.subscriptions[entry.subscriptionId] && !inScope.includes(accountId) && !excludedByBuyer)
+        return false;
+      const isNew = current.subscriptions[entry.subscriptionId] === undefined;
+      const target = (current.subscriptions[entry.subscriptionId] ??= emptySubscriptionAccount());
+      if (!fact) return false; // no current authority: lost authority is reported in accounts_unauthorized
+      const account = current.account;
+      const calendars = offeringCalendars(version, account, buys, nowMs);
+      const accepted = Date.parse(version.acceptedAt);
+      // A condition first observed for an account this subscription had not yet served began
+      // with that account's coverage, not at this reconcile.
+      const coverageStart = Math.max(accepted, Date.parse(account.chainStart ?? lastGrant(account)!.authorized_at));
+      const firstObserved = isNew || (!target.covered && target.exclusions.length === 0);
+      const desired: DesiredExclusion[] = [];
+      if (active) {
+        if (excludedByBuyer) {
+          desired.push({
+            key: 'excluded_by_buyer',
+            reason: 'excluded_by_buyer',
+            at: accepted,
+            openCalendars: calendars.values(),
+          });
+        } else if (inScope.includes(accountId)) {
+          const override = precedence.get(entry.subscriptionId)?.get(accountId);
+          if (fact.pending_action) {
+            const since =
+              fact.pending_action_since !== undefined
+                ? parseInstant(fact.pending_action_since, `${accountId} pending_action_since`)
+                : firstObserved
+                  ? coverageStart
+                  : nowMs;
+            desired.push({
+              key: 'action_required',
+              reason: 'action_required',
+              at: since,
+              openCalendars: calendars.values(),
+              pending_action: structuredClone(fact.pending_action),
+            });
+          } else if (override) {
+            desired.push({
+              key: `overridden:${JSON.stringify(override.by)}`,
+              reason: 'overridden',
+              overridden_by: override.by!,
+              at: Math.max(override.at, accepted),
+              openCalendars: calendars.values(),
+            });
+          } else if (capacityBySubscription.get(entry.subscriptionId)?.has(accountId)) {
+            desired.push({
+              key: 'capacity',
+              reason: 'capacity',
+              at: firstObserved ? coverageStart : nowMs,
+              openCalendars: calendars.values(),
+            });
           }
-          if (settleExclusions(target, desired, calendars, nowMs)) notify = true;
+          desired.push(...unsupportedBuys(version, target, account, buys, accepted, nowMs));
         }
       }
-    });
+      // Only accounts the subscription actually served can later appear in accounts_unauthorized.
+      if (inScope.includes(accountId) && !desired.some(item => item.media_buy_id === undefined)) target.covered = true;
+      if (!options.backfillOnRegrant) recordRegrantGaps(target, account, calendars);
+      return settleExclusions(target, desired, calendars.values(), nowMs, closing => {
+        if (
+          closing.reason !== 'overridden' ||
+          !closing.overridden_by ||
+          !('delivery_config_id' in closing.overridden_by)
+        ) {
+          return undefined;
+        }
+        const id = closing.overridden_by.delivery_config_id;
+        const config = configsByAccount.get(accountId)?.find(item => item.delivery_config_id === id);
+        return closingInstantFor(config, calendars, account);
+      });
+    }
+  }
 
-    // 3. Readback: accounts_with_exceptions and accounts_unauthorized. An exception that
-    // opened or closed fires principal.changed even when the summary is unchanged.
-    const updates = [];
-    for (const entry of history) updates.push(await readbackFor(entry, state, nowMs, buysByAccount));
-    await options.principal.recordReportingSubscriptionCoverage(principal, updates, { forceNotification: notify });
+  /**
+   * A buy-level `offering_unsupported` condition and the instant it took effect: when the
+   * buy resolved before (a resolution change), the withdrawal instant of what it resolved, or
+   * the observation instant for a product edit, opened at that change's E; when it never
+   * resolved, from its own coverage start.
+   */
+  function unsupportedBuys(
+    version: StoredReportingSubscriptionVersion,
+    target: SubscriptionAccountState,
+    account: AccountState,
+    buys: readonly ReportingSubscriptionBuyV1[],
+    accepted: number,
+    nowMs: number
+  ): DesiredExclusion[] {
+    const desired: DesiredExclusion[] = [];
+    const resolvedNow: Record<string, string[]> = {};
+    for (const buy of buys) {
+      if (buy.confirmed_at === undefined || buy.confirmed_at === null) continue;
+      const resolved = resolveBuy(version, buy, nowMs);
+      resolvedNow[buy.media_buy_id] = resolved;
+      const unsupported = buy.packages
+        .filter(pkg => resolvePackage(version, pkg.reporting_delivery_offering_ids, nowMs).length === 0)
+        .map(pkg => pkg.package_id)
+        .sort(compareReportingIdsByteOrderV1);
+      if (unsupported.length === 0) continue;
+      const before = target.resolvedBuys[buy.media_buy_id] ?? [];
+      let at: number;
+      let openCalendars: ReportingPeriodCalendarV1[] | undefined;
+      if (before.length > 0) {
+        const withdrawals = before
+          .map(id => offeringsById.get(id)?.withdrawn_at)
+          .filter((value): value is string => value !== undefined)
+          .map(value => Date.parse(value))
+          .filter(value => Number.isFinite(value) && value <= nowMs);
+        at = withdrawals.length > 0 ? Math.min(...withdrawals) : nowMs;
+        openCalendars = before
+          .map(id => offeringsById.get(id))
+          .filter((offering): offering is ReportingSubscriptionOfferingV1 => offering !== undefined)
+          .map(offering => calendarFor(offering, version, account, account.timezone))
+          .filter((calendar): calendar is ReportingPeriodCalendarV1 => calendar !== undefined);
+      } else {
+        at = Math.max(accepted, Date.parse(buy.confirmed_at));
+      }
+      desired.push(
+        unsupported.length === buy.packages.length
+          ? {
+              key: `offering_unsupported:${buy.media_buy_id}`,
+              reason: 'offering_unsupported',
+              media_buy_id: buy.media_buy_id,
+              at,
+              ...(openCalendars ? { openCalendars } : {}),
+            }
+          : {
+              key: `offering_unsupported:${buy.media_buy_id}:${unsupported.join(',')}`,
+              reason: 'offering_unsupported',
+              media_buy_id: buy.media_buy_id,
+              package_ids: unsupported,
+              at,
+              ...(openCalendars ? { openCalendars } : {}),
+            }
+      );
+    }
+    target.resolvedBuys = resolvedNow;
+    return desired;
+  }
+
+  /** When an override ends: the configuration's own `active_until`, on its own schedule when given. */
+  function closingInstantFor(
+    config: ReportingSubscriptionAccountConfigV1 | undefined,
+    subscriptionCalendars: ReadonlyMap<string, ReportingPeriodCalendarV1>,
+    account: AccountState
+  ): number | undefined {
+    if (!config?.active_until) return undefined;
+    const until = parseInstant(config.active_until, `${config.delivery_config_id} active_until`);
+    if (config.schedule) {
+      try {
+        const timezone =
+          config.schedule.timezone ?? (config.schedule.alignment === 'account_timezone' ? account.timezone : undefined);
+        return createReportingPeriodCalendarV1({
+          period_duration: config.schedule.period_duration,
+          alignment: config.schedule.alignment,
+          ...(timezone !== undefined ? { timezone } : {}),
+          ...(config.schedule.period_anchor !== undefined ? { period_anchor: config.schedule.period_anchor } : {}),
+        }).ceil(until);
+      } catch {
+        // Fall through to the subscription's calendars.
+      }
+    }
+    return cutoverInstant(subscriptionCalendars.values(), until);
   }
 
   function recordTimezoneChange(
-    state: ReportingSubscriptionEngineStateV1,
+    current: ReportingSubscriptionEngineAccountDocumentV1,
     history: readonly StoredReportingSubscriptionHistory[],
-    accountId: string,
     account: AccountState,
     timezone: string,
-    nowMs: number,
+    changedAt: number,
     buys: readonly ReportingSubscriptionBuyV1[]
   ) {
     for (const entry of history) {
       const version = entry.versions.at(-1)!;
       if (version.configuration.selector.period_timezone !== undefined) continue;
-      const calendars = [...offeringCalendars(version, account, buys, nowMs)].filter(
+      const calendars = [...offeringCalendars(version, account, buys, changedAt)].filter(
         ([, calendar]) => calendar.spec.alignment === 'account_timezone'
       );
       if (calendars.length === 0) continue;
-      const sub = (state.subscriptions[entry.subscriptionId] ??= { accounts: {}, served: [] });
-      const target = (sub.accounts[accountId] ??= { exclusions: [], gaps: [], timezoneCutovers: [], covered: false });
+      const target = (current.subscriptions[entry.subscriptionId] ??= emptySubscriptionAccount());
       // E per offering: the end of its last old-timezone period that started before the change.
       // One account-wide entry when the offerings agree, one per offering_id otherwise.
-      const ends = calendars.map(([offeringId, calendar]) => ({ offeringId, at: calendar.ceil(nowMs) }));
+      const ends = calendars.map(([offeringId, calendar]) => ({ offeringId, at: calendar.ceil(changedAt) }));
       const uniform = ends.every(end => end.at === ends[0]!.at);
       for (const end of uniform ? [ends[0]!] : ends) {
         target.timezoneCutovers.push({
@@ -840,17 +1156,116 @@ export function createReportingSubscriptionEngineV1(
     }
   }
 
+  /**
+   * The subscription's buy revisions including any change since the previous reconcile, dated
+   * at the E of the observation, and without revisions every period of which has left retention.
+   */
+  function buyRevisionsFor(
+    current: ReportingSubscriptionEngineAccountDocumentV1,
+    entry: StoredReportingSubscriptionHistory,
+    buys: readonly ReportingSubscriptionBuyV1[],
+    nowMs: number
+  ): BuyRevision[] {
+    const target = current.subscriptions[entry.subscriptionId];
+    const revisions = (target?.buyRevisions ?? []).filter(
+      revision => Date.parse(revision.effective_at) + retentionMs > nowMs
+    );
+    const previousBuys = current.lastBuys;
+    if (!previousBuys) return revisions;
+    const version = entry.versions.at(-1)!;
+    const after = new Map(buys.map(buy => [buy.media_buy_id, buy]));
+    for (const previous of previousBuys) {
+      const next = after.get(previous.media_buy_id);
+      const resolvedBefore = resolveBuy(version, previous, nowMs);
+      const resolvedAfter = next ? resolveBuy(version, next, nowMs) : [];
+      if (JSON.stringify(resolvedBefore) === JSON.stringify(resolvedAfter)) continue;
+      const calendars = offeringCalendars(version, current.account, [previous], nowMs).values();
+      revisions.push({
+        media_buy_id: previous.media_buy_id,
+        effective_at: iso(cutoverInstant(calendars, nowMs)),
+        previous: structuredClone(previous),
+      });
+    }
+    return revisions;
+  }
+
+  /**
+   * Owed periods from the current buys, except that a period of a revised buy starting before
+   * a revision's E resolves from the snapshot in force then, so periods owed before an edit
+   * stay owed and periods the edit adds start at its E.
+   */
+  function owedWithRevisions(
+    current: ReportingSubscriptionEngineAccountDocumentV1,
+    entry: StoredReportingSubscriptionHistory,
+    accountId: string,
+    buys: readonly ReportingSubscriptionBuyV1[],
+    revisions: readonly BuyRevision[],
+    nowMs: number
+  ): ExpectedSubscriptionPeriodV1[] {
+    const owed = computeOwed(entry, current, accountId, buys, iso(nowMs));
+    if (revisions.length === 0) return owed;
+    const byBuy = new Map<string, BuyRevision[]>();
+    for (const revision of revisions) {
+      const list = byBuy.get(revision.media_buy_id) ?? [];
+      list.push(revision);
+      byBuy.set(revision.media_buy_id, list);
+    }
+    const periods = owed.filter(period => {
+      const list = byBuy.get(period.media_buy_id);
+      return !list || Date.parse(period.period_start) >= Date.parse(list.at(-1)!.effective_at);
+    });
+    for (const list of byBuy.values()) {
+      let floor = Number.NEGATIVE_INFINITY;
+      for (const revision of list) {
+        const until = Date.parse(revision.effective_at);
+        for (const period of computeOwed(entry, current, accountId, [revision.previous], iso(nowMs))) {
+          const start = Date.parse(period.period_start);
+          if (start >= floor && start < until) periods.push(period);
+        }
+        floor = Math.max(floor, until);
+      }
+    }
+    return periods;
+  }
+
+  /** Append periods resolved since the last freeze; never recompute earlier ones. */
+  function freeze(
+    current: ReportingSubscriptionEngineAccountDocumentV1,
+    entry: StoredReportingSubscriptionHistory,
+    accountId: string,
+    buys: readonly ReportingSubscriptionBuyV1[],
+    nowMs: number
+  ): void {
+    const target = current.subscriptions[entry.subscriptionId];
+    if (!target) return;
+    const through = target.frozen.through !== undefined ? Date.parse(target.frozen.through) : Number.NEGATIVE_INFINITY;
+    if (nowMs > through) {
+      const revisions = target.buyRevisions ?? [];
+      for (const period of owedWithRevisions(current, entry, accountId, buys, revisions, nowMs)) {
+        if (Date.parse(period.period_end) <= through) continue;
+        const { subscription_id: _subscription, account_id: _account, ...frozen } = period;
+        target.frozen.periods.push(frozen);
+      }
+      target.frozen.through = iso(nowMs);
+    }
+    // Obligation retention: periods past status_retention_days leave the queryable set. They
+    // are never re-owed, because only periods ending after `through` are ever added.
+    target.frozen.periods = target.frozen.periods.filter(period => Date.parse(period.period_end) + retentionMs > nowMs);
+  }
+
   async function readbackFor(
+    principal: Readonly<PrincipalStoreScope>,
     entry: StoredReportingSubscriptionHistory,
     state: ReportingSubscriptionEngineStateV1,
     nowMs: number,
     buysByAccount: ReadonlyMap<string, ReportingSubscriptionBuyV1[]>
   ) {
-    const sub = state.subscriptions[entry.subscriptionId];
     const accountsWithExceptions: NonNullable<PrincipalReportingSubscriptionState['accounts_with_exceptions']> = [];
     const accountsUnauthorized: NonNullable<PrincipalReportingSubscriptionState['accounts_unauthorized']> = [];
-    for (const [accountId, target] of Object.entries(sub?.accounts ?? {})) {
-      const account = state.accounts[accountId];
+    for (const [accountId, document] of Object.entries(state.accounts)) {
+      const target = document.subscriptions[entry.subscriptionId];
+      if (!target) continue;
+      const account = document.account;
       if (isAuthorized(account)) {
         const reasons = [
           ...new Set(target.exclusions.filter(item => item.until === undefined).map(item => item.reason)),
@@ -864,63 +1279,36 @@ export function createReportingSubscriptionEngineV1(
       if (unauthorizedAt + retentionMs <= nowMs) continue;
       const version = entry.versions.at(-1)!;
       const buys = buysByAccount.get(accountId) ?? [];
-      const calendar = primaryCalendar(accountCalendars(version, account!, buys, unauthorizedAt));
-      const owed = await withheldPeriods(entry, state, accountId, unauthorizedAt, buys);
+      const calendar = primaryCalendar(offeringCalendars(version, account, buys, unauthorizedAt).values());
+      const withheld = target.frozen.periods
+        .filter(period => Date.parse(period.period_end) <= unauthorizedAt)
+        .map(period => ({ ...period, subscription_id: entry.subscriptionId, account_id: accountId }));
+      let count = 0;
+      for (const period of withheld) if (!(await options.hooks.isPeriodDelivered(principal, period))) count += 1;
       accountsUnauthorized.push({
         account_id: accountId,
         unauthorized_at: grant.unauthorized_at,
         ...(calendar
           ? { last_owed_period_end: iso(calendar.floor(unauthorizedAt)) }
-          : owed.lastEnd
-            ? { last_owed_period_end: owed.lastEnd }
+          : withheld.length
+            ? { last_owed_period_end: withheld.at(-1)!.period_end }
             : {}),
-        withheld_period_count: owed.count,
+        withheld_period_count: count,
       });
     }
     return { subscriptionId: entry.subscriptionId, accountsWithExceptions, accountsUnauthorized };
   }
 
-  /** Owed periods that ended at or before `unauthorizedAt` and were not delivered by then. */
-  async function withheldPeriods(
-    entry: StoredReportingSubscriptionHistory,
-    state: ReportingSubscriptionEngineStateV1,
-    accountId: string,
-    unauthorizedAt: number,
-    buys: readonly ReportingSubscriptionBuyV1[]
-  ): Promise<{ count: number; lastEnd?: string }> {
-    const periods = computeOwed(entry, state, accountId, buys, iso(unauthorizedAt));
-    let count = 0;
-    for (const period of periods) {
-      const delivered = options.hooks.isPeriodDelivered
-        ? await options.hooks.isPeriodDelivered(period)
-        : Date.parse(period.period_end) + slaMs(period.offering_id) <= unauthorizedAt;
-      if (!delivered) count += 1;
-    }
-    return { count, ...(periods.length ? { lastEnd: periods.at(-1)!.period_end } : {}) };
-  }
-
-  function slaMs(offeringId: string): number {
-    const sla = offeringsById.get(offeringId)?.schedule.delivery_sla;
-    const match = sla ? /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(sla) : null;
-    if (!match) return 0;
-    return (
-      ((Number(match[1] ?? 0) * 24 + Number(match[2] ?? 0)) * 3_600 +
-        Number(match[3] ?? 0) * 60 +
-        Number(match[4] ?? 0)) *
-      1_000
-    );
-  }
-
   function computeOwed(
     entry: StoredReportingSubscriptionHistory,
-    state: ReportingSubscriptionEngineStateV1,
+    current: ReportingSubscriptionEngineAccountDocumentV1,
     accountId: string,
     buys: readonly ReportingSubscriptionBuyV1[],
     nowIso: string
   ): ExpectedSubscriptionPeriodV1[] {
-    const account = state.accounts[accountId];
-    if (!account) return [];
-    const target = state.subscriptions[entry.subscriptionId]?.accounts[accountId];
+    const account = current.account;
+    if (account.grants.length === 0) return [];
+    const target = current.subscriptions[entry.subscriptionId];
     const cutovers = target?.timezoneCutovers ?? [];
     return expectedSubscriptionPeriods({
       subscription_id: entry.subscriptionId,
@@ -951,19 +1339,60 @@ export function createReportingSubscriptionEngineV1(
     accountId: string,
     owedOptions: { now?: string; signal?: AbortSignal } = {}
   ): Promise<ExpectedSubscriptionPeriodV1[]> {
-    const current = await store.get(principal);
-    if (!current) return [];
+    const document = await readAccount(principal, accountId);
+    if (!document) return [];
     const { history } = await options.principal.listReportingSubscriptions(principal);
-    const buys = await options.hooks.listAccountBuys(
-      principal,
-      accountId,
-      owedOptions.signal ? { signal: owedOptions.signal } : {}
+    const nowMs = owedOptions.now !== undefined ? parseInstant(owedOptions.now, 'now') : now().getTime();
+    const periods: ExpectedSubscriptionPeriodV1[] = [];
+    let buys: ReportingSubscriptionBuyV1[] | undefined;
+    for (const entry of history) {
+      const target = document.subscriptions[entry.subscriptionId];
+      if (!target) continue;
+      for (const period of target.frozen.periods) {
+        if (Date.parse(period.period_end) <= nowMs) {
+          periods.push({ ...period, subscription_id: entry.subscriptionId, account_id: accountId });
+        }
+      }
+      const through =
+        target.frozen.through !== undefined ? Date.parse(target.frozen.through) : Number.NEGATIVE_INFINITY;
+      if (nowMs > through) {
+        buys ??= await options.hooks.listAccountBuys(
+          principal,
+          accountId,
+          owedOptions.signal ? { signal: owedOptions.signal } : {}
+        );
+        const revisions = buyRevisionsFor(document, entry, buys, nowMs);
+        for (const period of owedWithRevisions(document, entry, accountId, buys, revisions, nowMs)) {
+          if (Date.parse(period.period_end) > through) periods.push(period);
+        }
+      }
+    }
+    return periods.sort(
+      (left, right) =>
+        Date.parse(left.period_start) - Date.parse(right.period_start) ||
+        compareReportingIdsByteOrderV1(left.subscription_id, right.subscription_id) ||
+        left.subscription_version - right.subscription_version ||
+        compareReportingIdsByteOrderV1(left.offering_id, right.offering_id) ||
+        compareReportingIdsByteOrderV1(left.media_buy_id, right.media_buy_id)
     );
-    const nowIso = owedOptions.now ?? now().toISOString();
-    return history.flatMap(entry => computeOwed(entry, current.state, accountId, buys, nowIso));
   }
 
-  return {
+  async function inspect(principal: Readonly<PrincipalStoreScope>): Promise<ReportingSubscriptionEngineStateV1> {
+    const principalRow = await store.get(principal, PRINCIPAL_KEY);
+    const accounts: Record<string, ReportingSubscriptionEngineAccountDocumentV1> = {};
+    for (const accountId of await accountIds(principal)) {
+      const document = await readAccount(principal, accountId);
+      if (document) accounts[accountId] = document;
+    }
+    return {
+      principal: principalRow
+        ? (structuredClone(principalRow.value) as unknown as ReportingSubscriptionEnginePrincipalDocumentV1)
+        : { served: {} },
+      accounts,
+    };
+  }
+
+  const engine: ReportingSubscriptionEngineV1 = {
     settings: Object.freeze({
       ...(options.maxAccounts !== undefined ? { maxAccounts: options.maxAccounts } : {}),
       backfillOnRegrant: options.backfillOnRegrant === true,
@@ -971,22 +1400,58 @@ export function createReportingSubscriptionEngineV1(
     }),
     reconcile: (principal, reconcileOptions) => reconcile(principal, reconcileOptions ?? {}),
     async authorizationChanged(principal, accountId, change) {
-      const at = Date.parse(change.at);
-      if (!Number.isFinite(at)) throw new TypeError('authorizationChanged requires an RFC 3339 instant');
+      const at = parseInstant(change.at, 'authorizationChanged at');
       let changed = false;
-      await mutate(principal, state => {
-        changed = applyGrant(state, accountId, change.authorized, at, change.account);
-      });
-      if (changed) await reconcile(principal, {});
+      await mutate<ReportingSubscriptionEngineAccountDocumentV1 & Record<string, unknown>>(
+        principal,
+        `${ACCOUNT_KEY_PREFIX}${accountId}`,
+        () => emptyAccountDocument() as ReportingSubscriptionEngineAccountDocumentV1 & Record<string, unknown>,
+        current => {
+          changed = false;
+          const account = current.account;
+          if (change.account?.operator !== undefined) account.operator = change.account.operator;
+          if (change.account?.source_timezone !== undefined) account.sourceTimezone = change.account.source_timezone;
+          const last = lastGrant(account);
+          if (change.authorized) {
+            if (last && last.unauthorized_at === undefined) return;
+            account.grants.push({
+              authorized_at: iso(Math.max(at, last?.unauthorized_at ? Date.parse(last.unauthorized_at) : at)),
+            });
+            account.chainStart ??= iso(at);
+            changed = true;
+          } else {
+            if (!last || last.unauthorized_at !== undefined) return;
+            last.unauthorized_at = iso(Math.max(at, Date.parse(last.authorized_at)));
+            changed = true;
+          }
+        }
+      );
+      if (changed) await engine.reconcile(principal);
     },
     async subscriptionCoverage(principal, accountId) {
-      const current = await store.get(principal);
-      if (!current || !isAuthorized(current.state.accounts[accountId])) return [];
+      const document = await readAccount(principal, accountId);
+      if (!document || !isAuthorized(document.account)) return [];
       const { history } = await options.principal.listReportingSubscriptions(principal);
       const entries: ReportingSubscriptionCoverageEntryV1[] = [];
       for (const entry of history) {
-        const target = current.state.subscriptions[entry.subscriptionId]?.accounts[accountId];
+        const target = document.subscriptions[entry.subscriptionId];
         if (!target) continue;
+        const configuration = entry.versions.at(-1)!.configuration;
+        const inScope =
+          reportingSubscriptionScopeIncludesV1(
+            {
+              scope: configuration.scope,
+              ...(configuration.exclude_account_ids ? { exclude_account_ids: configuration.exclude_account_ids } : {}),
+              ...(configuration.operator_domains ? { operator_domains: configuration.operator_domains } : {}),
+            },
+            {
+              account_id: accountId,
+              ...(document.account.operator !== undefined ? { operator: document.account.operator } : {}),
+            }
+          ) || configuration.exclude_account_ids?.includes(accountId) === true;
+        // Subscriptions whose scope includes the account, plus inactive ones with retained obligations.
+        const retainedInactive = entry.deactivatedAt !== undefined && target.frozen.periods.length > 0;
+        if (!inScope && !retainedInactive) continue;
         const open = target.exclusions.filter(item => item.until === undefined && item.media_buy_id === undefined);
         const pending = open.find(item => item.reason === 'action_required');
         entries.push({
@@ -1005,15 +1470,16 @@ export function createReportingSubscriptionEngineV1(
     async owedObligations(principal, accountId, owedOptions) {
       return groupExpectedSubscriptionPeriodsV1(await owedPeriods(principal, accountId, owedOptions));
     },
-    async receiptRoster(accountId) {
+    async receiptRoster(tenantId, accountId) {
       const roster: PrincipalStoreScope[] = [];
-      for (const principal of await store.listPrincipals()) {
-        const current = await store.get(principal);
-        if (!current || !isAuthorized(current.state.accounts[accountId])) continue;
+      for (const principal of await store.listPrincipals(tenantId)) {
+        if (principal.tenantId !== tenantId) continue;
+        const document = await readAccount(principal, accountId);
+        if (!document || !isAuthorized(document.account)) continue;
         const { history } = await options.principal.listReportingSubscriptions(principal);
         const covers = history.some(entry => {
           if (entry.deactivatedAt !== undefined) return false;
-          const target = current.state.subscriptions[entry.subscriptionId]?.accounts[accountId];
+          const target = document.subscriptions[entry.subscriptionId];
           return (
             target?.covered === true &&
             !target.exclusions.some(item => item.until === undefined && item.media_buy_id === undefined)
@@ -1021,16 +1487,11 @@ export function createReportingSubscriptionEngineV1(
         });
         if (covers) roster.push(principal);
       }
-      return roster.sort((left, right) =>
-        compareReportingIdsByteOrderV1(
-          `${left.tenantId}\u0000${left.principalId}`,
-          `${right.tenantId}\u0000${right.principalId}`
-        )
-      );
+      return roster.sort((left, right) => compareReportingIdsByteOrderV1(left.principalId, right.principalId));
     },
     async acceptsReceipt(principal, accountId, input) {
-      const current = await store.get(principal);
-      const account = current?.state.accounts[accountId];
+      const document = await readAccount(principal, accountId);
+      const account = document?.account;
       if (isAuthorized(account)) return true;
       const grant = lastGrant(account);
       if (grant?.unauthorized_at === undefined) return false;
@@ -1038,10 +1499,26 @@ export function createReportingSubscriptionEngineV1(
       const nowMs = input.now !== undefined ? Date.parse(input.now) : now().getTime();
       return Date.parse(input.readAt) < unauthorizedAt && nowMs < unauthorizedAt + retentionMs;
     },
-    async inspect(principal) {
-      return structuredClone((await store.get(principal))?.state ?? emptyState());
+    async replaceAccountConfigTargets(principal, subscriptionId) {
+      const targets: string[] = [];
+      for (const accountId of await accountIds(principal)) {
+        const document = await readAccount(principal, accountId);
+        const target = document?.subscriptions[subscriptionId];
+        if (!document || !target || !isAuthorized(document.account) || !target.covered) continue;
+        const blocked = target.exclusions.some(
+          item =>
+            item.until === undefined &&
+            item.media_buy_id === undefined &&
+            (item.reason === 'excluded_by_buyer' || item.reason === 'capacity' || item.reason === 'action_required')
+        );
+        const resolves = Object.values(target.resolvedBuys).some(ids => ids.length > 0);
+        if (!blocked && resolves) targets.push(accountId);
+      }
+      return targets;
     },
+    inspect,
   };
+  return engine;
 }
 
 function stripExclusion(entry: StoredExclusion | ReportingSubscriptionExclusionV1): ReportingSubscriptionExclusionV1 {

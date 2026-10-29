@@ -23,10 +23,13 @@ import {
 } from '../notification-subscriptions/runtime';
 import { PRINCIPAL_NOTIFICATION_STORE_OWNER } from './store';
 import {
+  reportingSubscriptionReleaseFieldsV1,
+  reportingSubscriptionStatesForReleaseV1,
+} from '../reporting-subscription-release';
+import {
   ReportingSubscriptionValidationError,
   applyReportingSubscriptions,
   projectReportingSubscriptionState,
-  reportingSubscriptionStatesForRelease,
   type ApplyReportingSubscriptionsResult,
   type StoredReportingSubscriptionHistory,
 } from './reporting-subscriptions';
@@ -101,12 +104,12 @@ export interface CreatePrincipalLifecycleOptions<TAccount = unknown> {
   acknowledgeMissingAttemptCheckpoint?: boolean;
 }
 
-export interface PrincipalLifecycleRuntime<TAccount = unknown> extends PrincipalLifecycleRuntimeSubscriptions {
+export interface PrincipalLifecycleRuntime<TAccount = unknown> extends Partial<PrincipalLifecycleRuntimeSubscriptions> {
   /**
    * The `adcp.principal` capability block this runtime serves, for
    * `capabilities.principal`. `supported_sections` follows the options it was created with.
    */
-  readonly capabilities: NonNullable<GetAdCPCapabilitiesResponse['adcp']['principal']>;
+  readonly capabilities?: NonNullable<GetAdCPCapabilitiesResponse['adcp']['principal']>;
   protocol: Pick<ProtocolHandlers<TAccount>, 'resolvePrincipalScope' | 'getPrincipal' | 'syncPrincipal'> &
     Partial<Pick<ProtocolHandlers<TAccount>, 'resolveScope' | 'syncAgentNotificationConfigs'>>;
   recognizePrincipal(input: {
@@ -144,7 +147,10 @@ export interface PrincipalLifecycleRuntime<TAccount = unknown> extends Principal
  */
 export function createPrincipalLifecycle<TAccount = unknown>(
   options: CreatePrincipalLifecycleOptions<TAccount>
-): PrincipalLifecycleRuntime<TAccount> {
+): PrincipalLifecycleRuntime<TAccount> &
+  PrincipalLifecycleRuntimeSubscriptions & {
+    readonly capabilities: NonNullable<GetAdCPCapabilitiesResponse['adcp']['principal']>;
+  } {
   if (!options?.store) throw new TypeError('createPrincipalLifecycle requires store');
   if (!options.notifications?.prepareReplacement) {
     throw new TypeError('createPrincipalLifecycle requires a notification runtime with prepareReplacement');
@@ -183,6 +189,15 @@ export function createPrincipalLifecycle<TAccount = unknown>(
   const maxNotificationsPerFlush = boundedOption(options.maxNotificationsPerFlush, 100, 'maxNotificationsPerFlush');
   const maxReportingGenerations = boundedOption(options.maxReportingGenerations, 256, 'maxReportingGenerations');
   const maxSubscriptions = boundedOption(options.reportingSubscriptions?.maxSubscriptions, 64, 'maxSubscriptions');
+  if (
+    options.reportingSubscriptions &&
+    options.reportingSubscriptions.accountConfigurations !== false &&
+    typeof options.reportingSubscriptions.listDeliveryConfigIds !== 'function'
+  ) {
+    // subscription_id and the caller's delivery_config_id values share one namespace, and
+    // sellers MUST reject a clash; that needs the caller's account-level configurations.
+    throw new TypeError('reportingSubscriptions requires listDeliveryConfigIds unless accountConfigurations is false');
+  }
 
   async function resolve(ctx: HandlerContext<TAccount>): Promise<ResolvedPrincipalScope> {
     const cached = ctx.callerMutationScope as (ResolvedPrincipalScope & Record<string, unknown>) | undefined;
@@ -195,7 +210,7 @@ export function createPrincipalLifecycle<TAccount = unknown>(
     params: GetPrincipalRequest,
     ctx: HandlerContext<TAccount>
   ): Promise<ServerPayload<GetPrincipalResponse>> {
-    return forRelease(await readPrincipal(ctx), ctx.servedAdcpVersion);
+    return forRelease(await readPrincipal(ctx), ctx.servedAdcpVersion, options.reportingSubscriptions !== undefined);
   }
 
   async function readPrincipal(ctx: HandlerContext<TAccount>): Promise<ServerPayload<GetPrincipalResponse>> {
@@ -232,7 +247,11 @@ export function createPrincipalLifecycle<TAccount = unknown>(
     ctx: HandlerContext<TAccount>
   ): Promise<ServerPayload<SyncPrincipalResponse>> {
     const resolved = await resolve(ctx);
-    return forRelease(await syncConfiguration(resolved, params), ctx.servedAdcpVersion);
+    return forRelease(
+      await syncConfiguration(resolved, params),
+      ctx.servedAdcpVersion,
+      options.reportingSubscriptions !== undefined
+    );
   }
 
   async function syncConfiguration(
@@ -318,6 +337,8 @@ export function createPrincipalLifecycle<TAccount = unknown>(
 
       if (!changed && current?.record.configurationVersion) {
         await notificationPlan?.discardCredentials();
+        // A resend retries a replace_account_configs the host hook has not yet confirmed.
+        await runPendingReplacements(scope);
         return {
           result: {
             ...currentResult(current.record),
@@ -357,9 +378,7 @@ export function createPrincipalLifecycle<TAccount = unknown>(
         return syncFailure('CONFLICT', 'The principal configuration changed; read current state and retry');
       }
       await notificationPlan?.commitCredentials();
-      for (const replacement of subscriptionPlan.result?.replaceAccountConfigs ?? []) {
-        await options.reportingSubscriptions!.replaceAccountConfigs!({ scope: structuredClone(scope), ...replacement });
-      }
+      await runPendingReplacements(scope);
       return {
         result: {
           ...currentResult(persisted.value.record),
@@ -383,6 +402,34 @@ export function createPrincipalLifecycle<TAccount = unknown>(
         return syncFailure('CONFLICT', error.message);
       }
       throw error;
+    }
+  }
+
+  /**
+   * Call the host's replace_account_configs hook for every committed but unconfirmed
+   * replacement, and mark each applied only after the hook succeeds. A failure leaves it
+   * pending, so the next write (including an identical resend) retries it.
+   */
+  async function runPendingReplacements(scope: Readonly<PrincipalStoreScope>): Promise<void> {
+    const hook = options.reportingSubscriptions?.replaceAccountConfigs;
+    if (!hook) return;
+    const current = await options.store.get(scope);
+    for (const entry of current?.record.reportingSubscriptionHistory ?? []) {
+      const pending = entry.replacePending;
+      if (!pending) continue;
+      await hook({ scope: structuredClone(scope), subscriptionId: entry.subscriptionId, ...pending });
+      for (let attempt = 0; attempt < maxCasAttempts; attempt++) {
+        const latest = await options.store.get(scope);
+        if (!latest) return;
+        const record = structuredClone(latest.record);
+        const history = record.reportingSubscriptionHistory?.find(item => item.subscriptionId === entry.subscriptionId);
+        if (!history?.replacePending || history.replacePending.subscriptionVersion !== pending.subscriptionVersion)
+          break;
+        history.replaceAppliedVersion = pending.subscriptionVersion;
+        delete history.replacePending;
+        const persisted = await options.store.replace({ scope, expectedRevision: latest.revision, record });
+        if (persisted.outcome === 'applied') break;
+      }
     }
   }
 
@@ -446,9 +493,21 @@ export function createPrincipalLifecycle<TAccount = unknown>(
       for (const state of current?.reporting_subscriptions ?? []) {
         if (state.state === 'inactive' || !state.configuration.destination) continue;
         const id = state.configuration.destination.destination_id;
-        if (!(next.reporting_destinations ?? []).some(item => item.destination_id === id)) {
+        const destination = (next.reporting_destinations ?? []).find(item => item.destination_id === id);
+        if (!destination) {
           throw new ReportingSubscriptionValidationError(
             `Active reporting subscription ${JSON.stringify(state.subscription_id)} names destination ${JSON.stringify(id)}, which this request removes`
+          );
+        }
+        // Offering resolution depends on the destination's pattern and transport, frozen
+        // per subscription version; changing them needs a new version.
+        const frozen = subscriptionHistory
+          .find(item => item.subscriptionId === state.subscription_id)
+          ?.versions.at(-1)?.destinationMethod;
+        const configured = destination.configuration as { pattern?: unknown; transport?: unknown };
+        if (frozen && (configured.pattern !== frozen.pattern || configured.transport !== frozen.transport)) {
+          throw new ReportingSubscriptionValidationError(
+            `Destination ${JSON.stringify(id)} changes pattern or transport under active subscription ${JSON.stringify(state.subscription_id)}; increment its subscription_version in the same request`
           );
         }
       }
@@ -959,12 +1018,18 @@ export function createPrincipalLifecycle<TAccount = unknown>(
         const state = nextStates.find(item => item.subscription_id === update.subscriptionId);
         if (!state) continue;
         const before = canonicalJsonSha256([state.accounts_with_exceptions ?? [], state.accounts_unauthorized ?? []]);
-        const withExceptions = [...update.accountsWithExceptions]
-          .sort((left, right) => compareBytes(left.account_id, right.account_id))
-          .slice(0, 1000);
-        const unauthorized = [...update.accountsUnauthorized]
-          .sort((left, right) => compareBytes(left.account_id, right.account_id))
-          .slice(0, 1000);
+        if (update.accountsWithExceptions.length > 1000 || update.accountsUnauthorized.length > 1000) {
+          // The readback lists at most 1000 of each; a silently cut list would misreport.
+          throw new RangeError(
+            `Reporting subscription ${JSON.stringify(update.subscriptionId)} has more than 1000 accounts to list in its readback`
+          );
+        }
+        const withExceptions = [...update.accountsWithExceptions].sort((left, right) =>
+          compareBytes(left.account_id, right.account_id)
+        );
+        const unauthorized = [...update.accountsUnauthorized].sort((left, right) =>
+          compareBytes(left.account_id, right.account_id)
+        );
         if (withExceptions.length > 0) state.accounts_with_exceptions = structuredClone(withExceptions);
         else delete state.accounts_with_exceptions;
         if (unauthorized.length > 0) state.accounts_unauthorized = structuredClone(unauthorized);
@@ -977,7 +1042,8 @@ export function createPrincipalLifecycle<TAccount = unknown>(
       const timestamp = now().toISOString();
       // Engine-maintained readback is not a caller write: the configuration version
       // still changes so readers can tell, but no account revision is involved.
-      if (changed) record.configurationVersion = issueConfigurationVersion();
+      // Engine readback is seller-driven state, not a caller mutation: configuration_version
+      // advances only on caller writes, so a guarded sync_principal never conflicts on it.
       enqueuePrincipalNotification(
         record,
         {
@@ -1078,15 +1144,25 @@ function reprojectStoredSubscriptions(record: StoredPrincipalRecord): boolean {
   return moved;
 }
 
-/** Project a principal response onto the fields the served release defines. */
-function forRelease<T>(response: T, servedAdcpVersion: string | undefined): T {
+/**
+ * Project a principal response onto the fields the served release's bundle defines. With
+ * subscription support off, a section a row still carries is not served at all.
+ */
+function forRelease<T>(response: T, servedAdcpVersion: string | undefined, subscriptionsEnabled: boolean): T {
   const result = (response as { result?: { configuration?: { reporting_subscriptions?: unknown } } }).result;
-  if (!result?.configuration?.reporting_subscriptions) return response;
+  if (!result?.configuration || result.configuration.reporting_subscriptions === undefined) return response;
+  if (!subscriptionsEnabled) {
+    const { reporting_subscriptions: _hidden, ...configuration } = result.configuration;
+    return { ...response, result: { ...result, configuration } } as T;
+  }
   return {
     ...response,
     result: {
       ...result,
-      configuration: reportingSubscriptionStatesForRelease(result.configuration, servedAdcpVersion),
+      configuration: reportingSubscriptionStatesForReleaseV1(
+        result.configuration,
+        reportingSubscriptionReleaseFieldsV1(servedAdcpVersion)
+      ),
     },
   } as T;
 }

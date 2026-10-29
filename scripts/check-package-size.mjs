@@ -306,7 +306,8 @@ const MAX_PACKED_FILE_COUNT =
   5 + // Creative build probe: one dual-format runtime/declaration module (+4) and one guide (+1).
   1840 + // SDK 17: 3.3 schemas/compliance, per-tool type entrypoints and migration/release notes.
   20 + // Reporting subscription calendar, selection, coverage, capabilities and index (five dual-format sets).
-  8; // Reporting subscription engine and principal subscription runtime (two dual-format sets).
+  8 + // Reporting subscription engine and principal subscription runtime (two dual-format sets).
+  4; // Reporting subscription release gate (one dual-format set).
 const MAX_BUNDLED_SCHEMA_BYTES = 2000 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

@@ -51,6 +51,9 @@ function createTestPrincipalLifecycle({
     issueDestinationRef: () => `dest-ref-${++ref}`,
     now: () => clock.now,
     ...lifecycleOptions,
+    ...(lifecycleOptions.reportingSubscriptions
+      ? { reportingSubscriptions: { listDeliveryConfigIds: () => [], ...lifecycleOptions.reportingSubscriptions } }
+      : {}),
   });
   return { lifecycle, store, emitted, clock };
 }
