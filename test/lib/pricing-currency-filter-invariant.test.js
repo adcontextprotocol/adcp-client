@@ -211,6 +211,50 @@ test('required choices must offer enough compatible alternatives; optional choic
   assert.match(result[0].error, /selection_group_rules\[1\]/);
 });
 
+test('group rules inherit required selection mode and mixed aggregate feasibility stays explicit', () => {
+  const grouped = mandatory([signal([cpm('EUR')], { selection_group: 'audience' })], {
+    selection_mode: 'required',
+    selection_group_rules: [{ selection_group: 'audience' }],
+  });
+  const findings = check([grouped]);
+  assert.equal(failures(findings).length, 1, 'an inherited required group cannot leak a known EUR-only obligation');
+  assert.ok(findings.some(result => result.status === 'not_applicable' && result.description.includes('aggregate')));
+});
+
+test('required selection respects same-group capacity instead of counting unavailable combinations', () => {
+  const grouped = mandatory(
+    [
+      signal([cpm('USD')], { selection_group: 'same' }),
+      signal([cpm('USD')], { selection_group: 'same' }),
+      signal([cpm('EUR')], { selection_group: 'other' }),
+    ],
+    { selection_mode: 'required', min_selected_signals: 2, max_selected_per_group: 1 }
+  );
+  assert.equal(failures(check([grouped])).length, 1);
+  grouped.signal_targeting_options[2].pricing_options = [cpm('USD')];
+  assert.equal(failures(check([grouped])).length, 0);
+});
+
+test('an omitted mandatory inline menu is explicitly unproven', () => {
+  const findings = check([product({ signal_targeting_rules: { selection_mode: 'required' } })]);
+  assert.equal(failures(findings).length, 0);
+  assert.ok(findings.some(result => result.status === 'not_applicable' && result.description.includes('inline menu')));
+});
+
+test('a group selection limit cannot widen the product selection limit', () => {
+  const grouped = mandatory(
+    Array.from({ length: 3 }, () => signal([cpm('USD')], { selection_group: 'audience' })),
+    {
+      selection_mode: 'optional',
+      max_selected_signals: 2,
+      selection_group_rules: [
+        { selection_group: 'audience', selection_mode: 'required', min_selected_signals: 3, max_selected_signals: 5 },
+      ],
+    }
+  );
+  assert.equal(failures(check([grouped])).length, 1);
+});
+
 test('missing inline menus, projected prices, errors and unrelated calls are not invented failures', () => {
   assert.deepEqual(invariant.onStep(context, step([product()], { skipped: true })), []);
   assert.deepEqual(invariant.onStep(context, step([product()], { task: 'get_signals' })), []);

@@ -28,6 +28,7 @@ const BUILTIN_ASSERTION_IDS = [
   'status.monotonic',
   'impairment.coherence',
   'discovery.pricing_currency_filter',
+  'discovery.required_metric_filters',
 ];
 
 describe('default-invariants: auto-registration', () => {
