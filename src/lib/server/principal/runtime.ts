@@ -1040,8 +1040,6 @@ export function createPrincipalLifecycle<TAccount = unknown>(
       }
       if (!changed && !recordOptions.forceNotification) return false;
       const timestamp = now().toISOString();
-      // Engine-maintained readback is not a caller write: the configuration version
-      // still changes so readers can tell, but no account revision is involved.
       // Engine readback is seller-driven state, not a caller mutation: configuration_version
       // advances only on caller writes, so a guarded sync_principal never conflicts on it.
       enqueuePrincipalNotification(

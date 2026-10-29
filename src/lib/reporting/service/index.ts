@@ -1679,6 +1679,8 @@ export {
   type ReportingSubscriptionEngineV1,
   type ReportingSubscriptionExclusionReasonV1,
   type ReportingSubscriptionExclusionV1,
+  type ReportingSubscriptionReadbackOverflowV1,
+  type ReportingSubscriptionReconcileResultV1,
 } from '../subscriptions/engine';
 export * from './conformance';
 export * from './scheduler-support';

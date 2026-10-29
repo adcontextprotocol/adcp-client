@@ -659,6 +659,43 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     );
   });
 
+  test('a subscription with more than 1000 readback accounts is isolated, not fatal', async () => {
+    const w = world({ maxAccounts: 1 });
+    for (let index = 0; index < 1002; index += 1) {
+      w.grant(`acct_${String(index).padStart(4, '0')}`, '2026-10-01T00:00:00.000Z');
+    }
+    w.grant('acct_x', '2026-10-01T00:00:00.000Z');
+    await w.sync([
+      subscription(),
+      subscription({ subscription_id: 'analytics-x', scope: { account_ids: ['acct_x'] } }),
+    ]);
+    {
+      const result = await w.engine.reconcile(SCOPE);
+      assert.deepEqual(
+        result.readback_overflow.map(item => item.subscription_id),
+        ['analytics-daily'],
+        'every account past max_accounts carries capacity, more than the readback can list'
+      );
+      assert.ok(result.readback_overflow[0].accounts_with_exceptions > 1000);
+    }
+    // Other subscriptions keep updating.
+    w.revoke('acct_x', '2026-11-03T00:00:00.000Z');
+    w.clock.now = new Date('2026-11-03T12:00:00.000Z');
+    const result = await w.engine.reconcile(SCOPE);
+    assert.deepEqual(
+      result.readback_overflow.map(item => item.subscription_id),
+      ['analytics-daily']
+    );
+    const { states } = await w.lifecycle.listReportingSubscriptions(SCOPE);
+    const x = states.find(item => item.subscription_id === 'analytics-x');
+    assert.deepEqual(
+      x.accounts_unauthorized.map(item => item.account_id),
+      ['acct_x']
+    );
+    const daily = states.find(item => item.subscription_id === 'analytics-daily');
+    assert.equal(daily.accounts_with_exceptions, undefined, 'the oversized list is never published cut');
+  });
+
   test('pruning retained exceptions after status_retention_days never re-owes elapsed periods', async () => {
     const w = world({ maxAccounts: 1 });
     for (const id of ['acct_a', 'acct_b']) {

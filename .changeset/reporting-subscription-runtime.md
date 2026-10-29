@@ -47,7 +47,7 @@ Also in this release:
 - It rejects more than 64 inactive intervals rather than truncating.
 - It rejects shared `path_template`s that can expand to the same path.
 - `prior_versions[]` carries each version's `configuration` (adcp#8588).
-- `recordReportingSubscriptionCoverage` rejects oversized lists and does not bump `configuration_version`.
+- `recordReportingSubscriptionCoverage` rejects lists over the readback's 1000-entry limit and does not bump `configuration_version`. `engine.reconcile` isolates a subscription that exceeds the limit: that subscription keeps its last published lists, the others still update, and the pass reports it in `readback_overflow` and through `onReadbackOverflow`.
 - The receipt roster is scoped by tenant.
 
 Responses served at 3.3.0-beta.1 omit the fields that release's closed schemas don't define (`standard_dimensions`, `unmapped_dimensions`, `inactive_intervals`, `previous_timezone`, per-offering `offering_id`). Each field is emitted only when the schema bundle the caller is served defines it, so a bundle that lacks it, or an unknown served version, never emits it.

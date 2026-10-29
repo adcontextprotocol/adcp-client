@@ -325,7 +325,33 @@ export interface CreateReportingSubscriptionEngineOptionsV1 {
   statusRetentionDays: number;
   now?: () => Date;
   maxCasAttempts?: number;
+  /**
+   * Called when a subscription has more accounts to list in `accounts_with_exceptions` or
+   * `accounts_unauthorized` than the readback's 1000-entry limit (for example a small
+   * `max_accounts` against a large roster, where every account past the cap carries
+   * `capacity`). That subscription keeps its previous readback lists rather than publishing a
+   * silently cut one; every other subscription and all coverage state are still updated.
+   */
+  onReadbackOverflow?: (
+    principal: Readonly<PrincipalStoreScope>,
+    overflow: readonly ReportingSubscriptionReadbackOverflowV1[]
+  ) => void | Promise<void>;
 }
+
+/** A subscription whose readback lists exceed the 1000-entry limit. */
+export interface ReportingSubscriptionReadbackOverflowV1 {
+  subscription_id: string;
+  accounts_with_exceptions: number;
+  accounts_unauthorized: number;
+}
+
+/** What a reconcile pass could not publish. */
+export interface ReportingSubscriptionReconcileResultV1 {
+  readback_overflow: ReportingSubscriptionReadbackOverflowV1[];
+}
+
+/** The readback's `maxItems` for `accounts_with_exceptions` and `accounts_unauthorized`. */
+const MAX_READBACK_ACCOUNTS = 1000;
 
 export interface ReportingSubscriptionEngineV1 {
   /** The commitments a capability document advertises for this engine. */
@@ -335,7 +361,10 @@ export interface ReportingSubscriptionEngineV1 {
    * revocations at the instants they happened, open and close exceptions at the instant each
    * change took effect, freeze newly elapsed owed periods, and publish the readback.
    */
-  reconcile(principal: Readonly<PrincipalStoreScope>, options?: { signal?: AbortSignal }): Promise<void>;
+  reconcile(
+    principal: Readonly<PrincipalStoreScope>,
+    options?: { signal?: AbortSignal }
+  ): Promise<ReportingSubscriptionReconcileResultV1>;
   /** Record an authority change the host observed, at the instant it happened. */
   authorizationChanged(
     principal: Readonly<PrincipalStoreScope>,
@@ -731,7 +760,10 @@ export function createReportingSubscriptionEngineV1(
     return changed;
   }
 
-  async function reconcile(principal: Readonly<PrincipalStoreScope>, reconcileOptions: { signal?: AbortSignal } = {}) {
+  async function reconcile(
+    principal: Readonly<PrincipalStoreScope>,
+    reconcileOptions: { signal?: AbortSignal } = {}
+  ): Promise<ReportingSubscriptionReconcileResultV1> {
     const signal = reconcileOptions.signal;
     const nowMs = now().getTime();
     const hookOptions = signal ? { signal } : {};
@@ -900,8 +932,26 @@ export function createReportingSubscriptionEngineV1(
     // opened or closed fires principal.changed even when the summary is unchanged.
     const state = await inspect(principal);
     const updates = [];
-    for (const entry of history) updates.push(await readbackFor(principal, entry, state, nowMs, buysByAccount));
+    const overflow: ReportingSubscriptionReadbackOverflowV1[] = [];
+    for (const entry of history) {
+      const update = await readbackFor(principal, entry, state, nowMs, buysByAccount);
+      if (
+        update.accountsWithExceptions.length > MAX_READBACK_ACCOUNTS ||
+        update.accountsUnauthorized.length > MAX_READBACK_ACCOUNTS
+      ) {
+        // Isolate the oversized subscription: it keeps its last published lists.
+        overflow.push({
+          subscription_id: update.subscriptionId,
+          accounts_with_exceptions: update.accountsWithExceptions.length,
+          accounts_unauthorized: update.accountsUnauthorized.length,
+        });
+        continue;
+      }
+      updates.push(update);
+    }
     await options.principal.recordReportingSubscriptionCoverage(principal, updates, { forceNotification: notify });
+    if (overflow.length > 0) await options.onReadbackOverflow?.(principal, overflow);
+    return { readback_overflow: overflow };
 
     function settleSubscription(
       current: ReportingSubscriptionEngineAccountDocumentV1,
