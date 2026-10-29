@@ -22,10 +22,17 @@
  */
 
 import { resolveAccount, resolveBrand, validateResponseSchema, type TestClient } from '../client';
+import type { TaskResult } from '../types';
+import type { DebugLogEntry } from '../../types/adcp';
 import { getValidator } from '../../validation/schema-loader';
 import { ADCP_VERSION } from '../../version';
 import { resolveCreativeFormatWireMode } from '../../v2/projection/creative-delivery';
 import { injectLegacyEnvelopeStatus } from '../../utils/envelope-status-compat';
+import { readExtractionPath, unwrapProtocolResponse } from '../../utils/response-unwrapper';
+import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
+import { redactSecrets } from '../../utils/redact-secrets';
+import { redactDiscoveryEvidence as redactDiscoveryResponse } from '../discovery-evidence';
+import { redactCredentialPatterns } from '../../utils/redact-credential-patterns';
 import { callControllerRaw } from '../test-controller';
 import { executeStoryboardTask } from './task-map';
 import {
@@ -37,6 +44,9 @@ import {
 } from './fixture-resolution';
 import type {
   FixtureResolutionAttempt,
+  RunnerExtractionRecord,
+  RunnerRequestRecord,
+  RunnerResponseRecord,
   FixtureResolutionRecord,
   Storyboard,
   StoryboardContext,
@@ -536,14 +546,42 @@ async function runRoutedControllerSeeding(
   };
 }
 
-interface DiscoveryCatalog {
-  products: Array<Record<string, unknown>>;
-  evidence: { page_count: number; product_count: number; cursors: string[] };
+export interface DiscoveryExchange {
+  request: RunnerRequestRecord;
+  response: RunnerResponseRecord;
 }
 
-type DiscoveryCatalogResult =
+export interface DiscoveryCatalog {
+  products: Array<Record<string, unknown>>;
+  firstPage: ProductPageObservation;
+  evidence: { page_count: number; product_count: number; cursors: string[]; restart_count?: number };
+  /** Per-page exchanges, in request order. */
+  exchanges: DiscoveryExchange[];
+  /** product_id → index into `exchanges`, so a failure cites ITS page. */
+  pageOfProduct: Map<string, number>;
+}
+
+export type DiscoveryCatalogResult =
   | { ok: true; catalog: DiscoveryCatalog }
-  | { ok: false; error: string; evidence?: unknown };
+  | {
+      ok: false;
+      error: string;
+      evidence?: unknown;
+      /**
+       * The actual exchange that failed, so the producer step can record
+       * truthful wire evidence instead of nothing. `response` is null only
+       * when the transport threw and no response was ever received — never
+       * a stand-in for one we did not capture.
+       */
+      exchange?: {
+        request: RunnerRequestRecord;
+        response: RunnerResponseRecord | null;
+        extraction?: RunnerExtractionRecord;
+      };
+      /** AJV detail when the page parsed but failed its response schema. */
+      unavailable?: true;
+      schemaFailure?: { detail: string; schema_id: string; schema_url: string };
+    };
 
 /** AdCP 3.2 ordered per-handle seed/discover state machine. */
 async function runDeclaredFixtureResolution(
@@ -991,6 +1029,43 @@ async function executeLegacySeedCall(
   }
 }
 
+const DISCOVERY_RETAINED_RESPONSE_PAGES = 16;
+
+function resolveDiscoverySchemaIdentity(adcpVersion: string): { schema_id: string; schema_url: string } {
+  const schemaId = `/schemas/${adcpVersion}/media-buy/get-products-response.json`;
+  return { schema_id: schemaId, schema_url: `https://adcontextprotocol.org${schemaId}` };
+}
+
+/**
+ * AJV detail for a discovery page that does not satisfy the `get_products`
+ * response schema, or `undefined` when it does.
+ */
+function describeDiscoverySchemaFailure(
+  data: unknown,
+  options: StoryboardRunOptions
+): { error: string; schemaFailure?: { detail: string; schema_id: string; schema_url: string } } | undefined {
+  try {
+    const version = options.adcpVersion ?? ADCP_VERSION;
+    const validator = getValidator('get_products', 'sync', version);
+    let detail: string;
+    if (validator) {
+      const schemaData = isPlainRecord(data) ? injectLegacyEnvelopeStatus(data, { toolName: 'get_products' }) : data;
+      if (validator(schemaData)) return undefined;
+      detail = (validator.errors ?? [])
+        .map(error => `${error.instancePath || '/'} ${error.message ?? error.keyword}`)
+        .join('; ');
+    } else {
+      const schema = validateResponseSchema('get_products', data, options.adcpVersion);
+      if (schema.passed) return undefined;
+      detail = schema.error ?? schema.details ?? 'schema validation failed';
+    }
+    return { error: detail, schemaFailure: { detail, ...resolveDiscoverySchemaIdentity(version) } };
+  } catch (err) {
+    // Missing runner schemas are a setup failure, not evidence against the seller.
+    return { error: `response schema unavailable: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
 async function discoverProductCatalog(
   client: TestClient,
   options: StoryboardRunOptions,
@@ -1004,85 +1079,350 @@ async function discoverProductCatalog(
   }
   const accountBrand = isPlainRecord(account.brand) ? account.brand : undefined;
   const brand = isPlainRecord(context.brand) ? context.brand : (accountBrand ?? resolveBrand(options));
+  const query = structuredClone({
+    buying_mode: 'wholesale',
+    brand,
+    account,
+    pagination: { max_results: 100 },
+    ...(resolveCreativeFormatWireMode(
+      options._profile?.raw_capabilities,
+      options._serverAdcpVersion ?? options.adcpVersion ?? ADCP_VERSION
+    ) === 'canonical' && { ext: { adcp: { creative_wire: 'canonical' } } }),
+  });
+  return collectWholesaleProductPages(client, options, query);
+}
+
+/** One actual page, observed before any restart can discard its products. */
+type ProductPageTaskResult = TaskResult & { debug_logs?: DebugLogEntry[] };
+
+export interface ProductPageObservation {
+  page_index: number;
+  restart_count: number;
+  request: RunnerRequestRecord;
+  response: RunnerResponseRecord | null;
+  extraction: RunnerExtractionRecord;
+  result?: ProductPageTaskResult;
+  schema_validated: boolean;
+  schemaFailure?: { detail: string; schema_id: string; schema_url: string };
+}
+
+export interface ProductPageCollectionControls {
+  /** Preserve the normal step's execution policy and actual authored arguments. */
+  dispatch?: (request: Record<string, unknown>) => Promise<ProductPageTaskResult>;
+  /** Runs for every observed exchange, including pages later abandoned on restart. */
+  onPage?: (page: ProductPageObservation) => Promise<void>;
+  retainRestartEvidence?: boolean;
+}
+
+/** Shared strict wholesale walker; callers own the initial query and logical view. */
+export async function collectWholesaleProductPages(
+  client: TestClient,
+  options: StoryboardRunOptions,
+  query: Record<string, unknown>,
+  controls: ProductPageCollectionControls = {}
+): Promise<DiscoveryCatalogResult> {
+  const dispatch: NonNullable<ProductPageCollectionControls['dispatch']> =
+    controls.dispatch ??
+    ((request: Record<string, unknown>) =>
+      executeStoryboardTask(client, 'get_products', request, { signal: options.signal }));
   const products: Array<Record<string, unknown>> = [];
   const seenProductIds = new Set<string>();
   const cursors: string[] = [];
   const seenCursors = new Set<string>();
-  let cursor: string | undefined;
+  const initialPagination = isPlainRecord(query.pagination) ? query.pagination : undefined;
+  const initialCursor = typeof initialPagination?.cursor === 'string' ? initialPagination.cursor : undefined;
+  let cursor: string | undefined = initialCursor;
+  let firstPage: ProductPageObservation | undefined;
   let pageCount = 0;
-  do {
+  let restarts = 0;
+  let feedIdentity: string | undefined;
+  let lastExchange: Extract<DiscoveryCatalogResult, { ok: false }>['exchange'];
+  const exchanges: DiscoveryExchange[] = [];
+  const pageOfProduct = new Map<string, number>();
+  while (true) {
+    options.signal?.throwIfAborted();
     if (pageCount >= 1_000) {
-      return { ok: false, error: 'fixture discovery pagination exceeded the 1,000-page safety limit' };
-    }
-    const request: Record<string, unknown> = {
-      buying_mode: 'wholesale',
-      brand,
-      account,
-      pagination: { max_results: 100, ...(cursor && { cursor }) },
-      ...(resolveCreativeFormatWireMode(
-        options._profile?.raw_capabilities,
-        options._serverAdcpVersion ?? options.adcpVersion ?? ADCP_VERSION
-      ) === 'canonical' && { ext: { adcp: { creative_wire: 'canonical' } } }),
-    };
-    let result;
-    try {
-      result = await executeStoryboardTask(client, 'get_products', request, { signal: options.signal });
-    } catch (err) {
       return {
         ok: false,
-        error: `fixture discovery transport failure: ${err instanceof Error ? err.message : String(err)}`,
+        unavailable: true,
+        evidence: { page_count: pageCount, restart_count: restarts },
+        ...(lastExchange && { exchange: lastExchange }),
+        error: 'fixture discovery pagination exceeded the runner’s 1,000-page safety limit',
+      };
+    }
+    const request: Record<string, unknown> = {
+      ...structuredClone(query),
+      ...(cursor !== undefined && { pagination: { ...initialPagination, cursor } }),
+    };
+    let result;
+    let observedResponse: RawHttpCapture | undefined;
+    const toolResponse = (captures: RawHttpCapture[]) =>
+      [...captures].reverse().find(capture => capture.requestAdcpSkill === 'get_products');
+    const pageStart = Date.now();
+    // Recorded BEFORE dispatch. A transport failure never reaches the
+    // response, but the request it sent is real and is the only evidence
+    // an implementor has to reproduce the failure.
+    const requestRecord: RunnerRequestRecord = {
+      transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+      operation: 'get_products',
+      payload: redactSecrets(request),
+    };
+    try {
+      // MCP's official SDK trace already supplies its parsed protocol response.
+      // Capturing its HTTP streams would buffer an unrelated SSE subscription.
+      if (options.protocol === 'a2a') {
+        const captured = await withRawResponseCapture(() => dispatch(request), {
+          maxBodyBytes: 65_536,
+          maxCaptures: 8,
+          maxTotalBodyBytes: 262_144,
+        });
+        result = captured.result;
+        observedResponse = toolResponse(captured.captures);
+      } else {
+        result = await dispatch(request);
+      }
+    } catch (err) {
+      const observed = toolResponse(getCapturesFromError(err) ?? []);
+      await controls.onPage?.({
+        page_index: pageCount + 1,
+        restart_count: restarts,
+        request: requestRecord,
+        response: observed
+          ? {
+              transport: requestRecord.transport,
+              payload: redactDiscoveryResponse(observed.body),
+              status: observed.status,
+              duration_ms: Date.now() - pageStart,
+            }
+          : null,
+        extraction: { path: 'none' },
+        schema_validated: false,
+      });
+      return {
+        ok: false,
+        error: `fixture discovery transport failure: ${redactCredentialPatterns(err instanceof Error ? err.message : String(err), false)}`,
+        evidence: { page_count: pageCount + 1, request: requestRecord.payload },
+        // Explicitly null: no response was received. Not a placeholder.
+        exchange: {
+          request: requestRecord,
+          response: observed
+            ? {
+                transport: requestRecord.transport,
+                payload: redactDiscoveryResponse(observed.body),
+                status: observed.status,
+                duration_ms: Date.now() - pageStart,
+              }
+            : null,
+        },
       };
     }
     pageCount++;
-    if (!result.success) {
+    // The official clients retain the received protocol response before SDK
+    // validation/projection. A connection error has no such response entry.
+    let wireResponse = result.debug_logs
+      ?.slice()
+      .reverse()
+      .find(
+        log =>
+          typeof log.message === 'string' &&
+          (log.message.startsWith('MCP: Tool get_products response received') ||
+            log.message.startsWith('A2A: Response received')) &&
+          log.response !== undefined
+      )?.response;
+    if (wireResponse === undefined && observedResponse && !observedResponse.bodyTruncated) {
+      try {
+        wireResponse = JSON.parse(observedResponse.body);
+      } catch {
+        // Raw diagnostics remain available; protocol decoding belongs to the SDK.
+      }
+    }
+    // An executor error is SDK diagnostic text, not a seller response. Retain
+    // a response only when a tool body or actual HTTP exchange was observed.
+    if (
+      (!result.success || result.data === undefined) &&
+      result._extraction_path === undefined &&
+      observedResponse === undefined &&
+      wireResponse === undefined
+    ) {
+      await controls.onPage?.({
+        page_index: pageCount,
+        restart_count: restarts,
+        request: requestRecord,
+        response: null,
+        extraction: { path: 'none' },
+        result,
+        schema_validated: false,
+      });
       return {
         ok: false,
-        error: `fixture discovery get_products rejected: ${result.error ?? result.adcp_error?.code ?? 'unknown error'}`,
-        evidence: { page_count: pageCount, request },
+        error: `fixture discovery get_products rejected: ${redactCredentialPatterns(result.error ?? result.adcp_error?.code ?? 'unknown error', false)}`,
+        evidence: { page_count: pageCount, request: requestRecord.payload },
+        exchange: { request: requestRecord, response: null },
       };
     }
-    let schemaFailure: string | undefined;
-    try {
-      const validator = getValidator('get_products', 'sync', options.adcpVersion ?? ADCP_VERSION);
-      if (validator) {
-        const responseData: unknown = result.data;
-        const schemaData = isPlainRecord(responseData)
-          ? injectLegacyEnvelopeStatus(responseData, { toolName: 'get_products' })
-          : responseData;
-        if (!validator(schemaData)) {
-          schemaFailure = (validator.errors ?? [])
-            .map(error => `${error.instancePath || '/'} ${error.message ?? error.keyword}`)
-            .join('; ');
-        }
-      } else {
-        const schema = validateResponseSchema('get_products', result.data, options.adcpVersion);
-        if (!schema.passed) schemaFailure = schema.error ?? schema.details ?? 'schema validation failed';
+    const extraction: RunnerExtractionRecord = {
+      path: result._extraction_path ?? 'none',
+      ...(observedResponse?.bodyTruncated && { note: 'Raw HTTP response capture was truncated at its body budget.' }),
+    };
+    const failedExchange = {
+      request: requestRecord,
+      extraction,
+      response: {
+        transport: requestRecord.transport,
+        payload: redactDiscoveryResponse(wireResponse ?? observedResponse?.body ?? result.data),
+        ...(observedResponse && { status: observedResponse.status }),
+        duration_ms: Date.now() - pageStart,
+      },
+    };
+    lastExchange = failedExchange;
+    // Recorded for EVERY page, success or not: a schema-invalid or rejected
+    // page is exactly the exchange a reader needs to see.
+    // The request is tiny and always retained. The RESPONSE is a second
+    // full copy of a page of products on top of the `products` array this
+    // loop already accumulates, so retaining every page of a deep catalog
+    // doubled peak memory for evidence that is read only when a capture
+    // fails. Past the budget the page records that it was not retained,
+    // rather than silently reading as an empty response.
+    const retainResponse = exchanges.length < DISCOVERY_RETAINED_RESPONSE_PAGES;
+    const pageIndex =
+      exchanges.push({
+        request: requestRecord,
+        response: retainResponse
+          ? { ...failedExchange.response, payload: redactSecrets(result.data) }
+          : {
+              transport: requestRecord.transport,
+              payload: {
+                response_not_retained: `page ${exchanges.length + 1} is past the runner's ${DISCOVERY_RETAINED_RESPONSE_PAGES}-page discovery-evidence budget; the request for this page is recorded in full`,
+              },
+              duration_ms: Date.now() - pageStart,
+            },
+      }) - 1;
+    // Graded whether or not the executor accepted the page. A seller that
+    // returns a malformed body makes the executor reject in strict mode,
+    // and classifying that as a bare protocol error hid WHICH of the two
+    // it was — the one thing a `response_schema` record exists to say.
+    let schemaData = result.success ? result.data : undefined;
+    if (!result.success && wireResponse !== undefined && result._extraction_path !== 'error') {
+      try {
+        schemaData = unwrapProtocolResponse(wireResponse, undefined, options.protocol === 'a2a' ? 'a2a' : 'mcp');
+        extraction.path = readExtractionPath(schemaData) ?? extraction.path;
+      } catch {
+        // Protocol decoding errors retain their original classification.
+        schemaData = undefined;
       }
-    } catch (err) {
-      schemaFailure = `response schema unavailable: ${err instanceof Error ? err.message : String(err)}`;
     }
-    if (schemaFailure) {
+    const nativeResult =
+      isPlainRecord(wireResponse) && isPlainRecord(wireResponse.result) ? wireResponse.result : undefined;
+    const nativeState = nativeResult && isPlainRecord(nativeResult.status) ? nativeResult.status.state : undefined;
+    const sellerRejected =
+      result._extraction_path === 'error' ||
+      (isPlainRecord(schemaData) &&
+        (schemaData.adcp_error !== undefined || schemaData.status === 'failed' || schemaData.status === 'rejected')) ||
+      nativeState === 'failed' ||
+      nativeState === 'rejected' ||
+      nativeState === 'canceled';
+    const schemaCheck =
+      sellerRejected || schemaData === undefined ? undefined : describeDiscoverySchemaFailure(schemaData, options);
+    const observation: ProductPageObservation = {
+      page_index: pageCount,
+      restart_count: restarts,
+      request: requestRecord,
+      response: failedExchange.response,
+      extraction,
+      result,
+      schema_validated: schemaCheck === undefined && !sellerRejected && result.success,
+      ...(schemaCheck?.schemaFailure && { schemaFailure: schemaCheck.schemaFailure }),
+    };
+    await controls.onPage?.(observation);
+    if (!result.success || sellerRejected) {
       return {
         ok: false,
-        error: `fixture discovery returned malformed get_products response: ${schemaFailure}`,
+        error: `fixture discovery get_products rejected: ${redactCredentialPatterns(result.error ?? result.adcp_error?.code ?? 'unknown error', false)}`,
+        evidence: { page_count: pageCount, request: requestRecord.payload },
+        exchange: failedExchange,
+        ...(schemaCheck?.schemaFailure && { schemaFailure: schemaCheck.schemaFailure }),
+      };
+    }
+    if (schemaCheck) {
+      return {
+        ok: false,
+        error: `fixture discovery get_products validation failed: ${schemaCheck.error}`,
         evidence: { page_count: pageCount },
+        exchange: failedExchange,
+        ...(schemaCheck.schemaFailure && { schemaFailure: schemaCheck.schemaFailure }),
       };
     }
     if (!isPlainRecord(result.data)) {
-      return { ok: false, error: 'fixture discovery returned a non-object get_products response' };
+      return {
+        ...{ ok: false, error: 'fixture discovery returned a non-object get_products response' },
+        exchange: failedExchange,
+      };
     }
+    if (result.data.unchanged === true) {
+      return {
+        ok: false,
+        error: 'fixture discovery received unchanged without sending a conditional feed token',
+        exchange: failedExchange,
+      };
+    }
+    const pagination = isPlainRecord(result.data.pagination) ? result.data.pagination : undefined;
+    if (pagination?.has_more === true && (typeof pagination.cursor !== 'string' || pagination.cursor.length === 0)) {
+      return {
+        ok: false,
+        error: 'fixture discovery pagination is broken: has_more=true without cursor',
+        exchange: failedExchange,
+      };
+    }
+    // Versions are opaque, scope-keyed identities. Absence is part of the
+    // identity too. A changed page belongs to a different enumeration.
+    const identity = JSON.stringify([
+      result.data.cache_scope,
+      result.data.wholesale_feed_version,
+      result.data.pricing_version,
+    ]);
+    if (feedIdentity !== undefined && identity !== feedIdentity) {
+      if (restarts >= 3) {
+        return {
+          ok: false,
+          unavailable: true,
+          error: 'fixture discovery could not enumerate a stable feed within the runner’s 3-restart budget',
+          evidence: { page_count: pageCount, restart_count: restarts },
+          exchange: failedExchange,
+        };
+      }
+      restarts++;
+      products.length = 0;
+      seenProductIds.clear();
+      cursors.length = 0;
+      seenCursors.clear();
+      if (!controls.retainRestartEvidence) exchanges.length = 0;
+      pageOfProduct.clear();
+      firstPage = undefined;
+      cursor = initialCursor;
+      feedIdentity = undefined;
+      continue;
+    }
+    feedIdentity = identity;
+    firstPage ??= observation;
     const pageProducts = result.data.products;
     if (pageProducts !== undefined && !Array.isArray(pageProducts)) {
-      return { ok: false, error: 'fixture discovery get_products.products is not an array' };
+      return {
+        ...{ ok: false, error: 'fixture discovery get_products.products is not an array' },
+        exchange: failedExchange,
+      };
     }
     for (const product of pageProducts ?? []) {
       if (!isPlainRecord(product) || typeof product.product_id !== 'string' || product.product_id.length === 0) {
-        return { ok: false, error: 'fixture discovery returned a product without a non-empty product_id' };
+        return {
+          ...{ ok: false, error: 'fixture discovery returned a product without a non-empty product_id' },
+          exchange: failedExchange,
+        };
       }
       if (seenProductIds.has(product.product_id)) {
         return {
           ok: false,
           error: `fixture discovery returned duplicate product_id "${product.product_id}"; response order cannot resolve duplicate identities`,
+          exchange: failedExchange,
         };
       }
       seenProductIds.add(product.product_id);
@@ -1094,24 +1434,28 @@ async function discoverProductCatalog(
             return {
               ok: false,
               error: `fixture discovery returned duplicate pricing option identity "${product.product_id}\u0000${option.pricing_option_id}"`,
+              exchange: failedExchange,
             };
           }
           seenPricingIds.add(option.pricing_option_id);
         }
       }
+      pageOfProduct.set(product.product_id, pageIndex);
       products.push(product);
       if (products.length > 100_000) {
-        return { ok: false, error: 'fixture discovery exceeded the 100,000-product safety limit' };
+        return {
+          ...{ ok: false, error: 'fixture discovery exceeded the 100,000-product safety limit' },
+          exchange: failedExchange,
+        };
       }
     }
-    const pagination = isPlainRecord(result.data.pagination) ? result.data.pagination : undefined;
     if (pagination?.has_more === true) {
-      const next = pagination.cursor;
-      if (typeof next !== 'string' || next.length === 0) {
-        return { ok: false, error: 'fixture discovery pagination is broken: has_more=true without cursor' };
-      }
+      const next = pagination.cursor as string;
       if (seenCursors.has(next)) {
-        return { ok: false, error: `fixture discovery pagination is broken: repeated cursor "${next}"` };
+        return {
+          ...{ ok: false, error: `fixture discovery pagination is broken: repeated cursor "${next}"` },
+          exchange: failedExchange,
+        };
       }
       seenCursors.add(next);
       cursors.push(next);
@@ -1119,10 +1463,22 @@ async function discoverProductCatalog(
     } else {
       cursor = undefined;
     }
-  } while (cursor);
+    if (!cursor) break;
+  }
   return {
     ok: true,
-    catalog: { products, evidence: { page_count: pageCount, product_count: products.length, cursors } },
+    catalog: {
+      products,
+      firstPage: firstPage!,
+      evidence: {
+        page_count: pageCount,
+        product_count: products.length,
+        cursors,
+        ...(restarts > 0 && { restart_count: restarts }),
+      },
+      exchanges,
+      pageOfProduct,
+    },
   };
 }
 

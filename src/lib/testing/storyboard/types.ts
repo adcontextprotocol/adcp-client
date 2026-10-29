@@ -89,6 +89,8 @@ export interface Storyboard {
    *     staging fixture). The runner does not verify the assertion;
    *     scenarios that need state still fail naturally if the seed is
    *     not actually present.
+   *   - `collect_product_pages_runner` — intrinsic support for explicit wholesale
+   *     all-page steps; unavailable on older runners that ignore this metadata.
    *   - `real_wire` — always available. Tag scenarios that observe
    *     production behavior with this when you want them excluded from
    *     a future `--mock-only` mode; today the tag is a no-op gate.
@@ -703,6 +705,13 @@ export interface StoryboardStep {
    * fields from the same seller response without changing the request wire.
    */
   response_projection?: 'raw';
+  /**
+   * Follow every wholesale product page before authored checks and captures.
+   * Requires `collect_product_pages_runner` in the storyboard's `requires`.
+   * Every page retains its own exchange and is schema/invariant checked; the
+   * combined logical view is explicitly separate from the wire response.
+   */
+  collect_product_pages?: true;
   /** Whether this step depends on state from a previous step */
   stateful?: boolean;
   /**
@@ -2402,6 +2411,7 @@ export interface RunnerSelectionResult {
  */
 export type RequirementName =
   | 'controller'
+  | 'collect_product_pages_runner'
   | 'seeded_state'
   | 'real_wire'
   | 'webhook_receiver'
@@ -2420,6 +2430,7 @@ export type RequirementName =
  */
 export const KNOWN_REQUIREMENTS: ReadonlySet<RequirementName> = new Set([
   'controller',
+  'collect_product_pages_runner',
   'seeded_state',
   'real_wire',
   'webhook_receiver',
@@ -2585,9 +2596,9 @@ export interface ValidationResult {
   /** Resolvable schema URL; set only for `response_schema`. */
   schema_url?: string | null;
   /** Exact request the runner sent (present on failure when available). */
-  request?: RunnerRequestRecord;
+  request?: RunnerRequestRecord | null;
   /** Exact response observed (present on failure when available). */
-  response?: RunnerResponseRecord;
+  response?: RunnerResponseRecord | null;
   /** Optional remediation hint. */
   remediation?: string;
   /**
@@ -2756,6 +2767,8 @@ export interface StoryboardStepResult {
   request?: RunnerRequestRecord;
   /** Exact response observed, including transport, status, headers. */
   response_record?: RunnerResponseRecord;
+  /** Explicit logical wholesale view with separately retained actual pages. */
+  product_page_collection?: ProductPageCollectionRecord;
   /** Which extraction path produced the parsed response (required per contract). */
   extraction: RunnerExtractionRecord;
   /**
@@ -2771,6 +2784,25 @@ export interface StoryboardStepResult {
    * hints help triage collapse from "SDK bug vs seller bug" to one line.
    */
   hints?: StoryboardStepHint[];
+}
+
+/** One physical exchange within an opted-in logical wholesale read. */
+export interface ProductPageRecord {
+  page_index: number;
+  restart_count: number;
+  request: RunnerRequestRecord;
+  response: RunnerResponseRecord | null;
+  extraction: RunnerExtractionRecord;
+  schema_validated: boolean;
+}
+
+export interface ProductPageCollectionRecord {
+  complete: boolean;
+  page_count: number;
+  restart_count: number;
+  pages: ProductPageRecord[];
+  /** Runner-derived view used only for authored checks and context capture. */
+  logical_response?: Record<string, unknown>;
 }
 
 /**

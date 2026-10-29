@@ -108,6 +108,41 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
     validateBranchSet(storyboard.id, phase);
     if (!phase.steps) continue;
     for (const step of phase.steps) {
+      if (step.collect_product_pages !== undefined) {
+        if (
+          step.collect_product_pages !== true ||
+          step.task !== 'get_products' ||
+          step.sample_request?.buying_mode !== 'wholesale'
+        ) {
+          throw new Error(
+            `[${storyboard.id}] ${step.id}: collect_product_pages requires get_products with buying_mode: wholesale`
+          );
+        }
+        if (!storyboard.requires?.includes('collect_product_pages_runner')) {
+          throw new Error(
+            `[${storyboard.id}] ${step.id}: collect_product_pages requires the collect_product_pages_runner runtime requirement`
+          );
+        }
+        const functionalAuth =
+          typeof step.auth === 'object' &&
+          step.auth.type === 'api_key' &&
+          step.auth.from_test_kit === true &&
+          step.auth.value_strategy === undefined;
+        if (step.expect_error || step.parallel_dispatch || (step.auth && !functionalAuth) || step.not_applicable_if) {
+          throw new Error(
+            `[${storyboard.id}] ${step.id}: collect_product_pages cannot be combined with error, parallel, auth-probe, or response-skip steps`
+          );
+        }
+        const pagination = step.sample_request.pagination;
+        if (
+          (pagination && typeof pagination === 'object' && 'cursor' in pagination) ||
+          step.sample_request.if_none_match !== undefined
+        ) {
+          throw new Error(
+            `[${storyboard.id}] ${step.id}: collect_product_pages starts with an unconditional first page, without a cursor`
+          );
+        }
+      }
       if (
         step.enrich_request !== undefined &&
         (step.enrich_request !== true || !step.expect_error || step.negative_path !== 'payload_well_formed')
