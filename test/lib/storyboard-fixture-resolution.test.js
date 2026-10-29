@@ -448,10 +448,47 @@ describe('discover strategy state machine', () => {
     const second = discoveryClient([product('a-product'), product('z-product')]);
     const a = await runControllerSeeding(first.client, sb, { agentTools: ['get_products'] }, {});
     const b = await runControllerSeeding(second.client, sb, { agentTools: ['get_products'] }, {});
-    assert.deepEqual(first.calls[0].params.ext, { adcp: { creative_wire: 'canonical' } });
+    assert.equal(first.calls[0].params.ext, undefined, 'unknown seller capabilities do not force a creative wire mode');
     assert.equal(a.resolutionRecords[0].seller_ids.product_id, 'a-product');
     assert.deepEqual(a.resolutionRecords, b.resolutionRecords);
   });
+
+  for (const [version, canonicalCreatives, expectedCanonical] of [
+    ['3.1.29', false, false],
+    ['3.1.29', undefined, false],
+    ['3.1.29', true, true],
+    ['3.2.7', undefined, true],
+  ]) {
+    test(`fixture discovery respects ${version} canonical creative support (${canonicalCreatives})`, async () => {
+      const sb = storyboard([{ product_id: 'handle' }], [], discoverRoot(['handle']));
+      const discovered = discoveryClient([product('seller-display')]);
+      const result = await runControllerSeeding(
+        discovered.client,
+        sb,
+        {
+          adcpVersion: version,
+          agentTools: ['get_products'],
+          _profile: {
+            tools: ['get_products'],
+            raw_capabilities: {
+              adcp: { supported_versions: [version.startsWith('3.1.') ? '3.1' : '3.2'] },
+              media_buy: {
+                features: {
+                  ...(canonicalCreatives === undefined ? {} : { canonical_creatives: canonicalCreatives }),
+                },
+              },
+            },
+          },
+        },
+        {}
+      );
+      assert.equal(result.resolutionRecords[0].status, 'resolved', JSON.stringify(result));
+      assert.deepEqual(
+        discovered.calls[0].params.ext,
+        expectedCanonical ? { adcp: { creative_wire: 'canonical' } } : undefined
+      );
+    });
+  }
 
   test('non-reusable handles do not collide; explicit reuse permits it', async () => {
     const products = [{ product_id: 'one' }, { product_id: 'two' }];

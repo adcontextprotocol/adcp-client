@@ -24,6 +24,7 @@
 import { resolveAccount, resolveBrand, validateResponseSchema, type TestClient } from '../client';
 import { getValidator } from '../../validation/schema-loader';
 import { ADCP_VERSION } from '../../version';
+import { resolveCreativeFormatWireMode } from '../../v2/projection/creative-delivery';
 import { injectLegacyEnvelopeStatus } from '../../utils/envelope-status-compat';
 import { callControllerRaw } from '../test-controller';
 import { executeStoryboardTask } from './task-map';
@@ -1018,8 +1019,10 @@ async function discoverProductCatalog(
       brand,
       account,
       pagination: { max_results: 100, ...(cursor && { cursor }) },
-      // Fixture match declarations target the canonical product shape.
-      ext: { adcp: { creative_wire: 'canonical' } },
+      ...(resolveCreativeFormatWireMode(
+        options._profile?.raw_capabilities,
+        options._serverAdcpVersion ?? options.adcpVersion ?? ADCP_VERSION
+      ) === 'canonical' && { ext: { adcp: { creative_wire: 'canonical' } } }),
     };
     let result;
     try {
