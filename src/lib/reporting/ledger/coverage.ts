@@ -1,4 +1,14 @@
-import type { ReportingLedgerConfigurationV1, ReportingLedgerSnapshotQueryV1 } from './types';
+import { createHash } from 'node:crypto';
+
+import { canonicalJsonV1 } from '../source';
+import type {
+  ReportingLedgerConfigurationV1,
+  ReportingLedgerOwedSetProgressV1,
+  ReportingLedgerOwedSetV1,
+  ReportingLedgerSnapshotQueryV1,
+  ReportingLedgerSubscriptionPrincipalV1,
+  ReportingLedgerSubscriptionV1,
+} from './types';
 import {
   frozenCalendarObligationsCoverOwnership,
   isFrozenCalendarRulesMismatch,
@@ -22,13 +32,124 @@ export function reportingLedgerScopeClosed(
   );
 }
 
+/**
+ * Whether evaluated coverage lets the scope close: every grid generation is complete and every
+ * owed-set generation's horizon has reached the scope end. `coverage_complete` stays
+ * `complete` alone, because an owed set that is still being frozen is not missing history.
+ * @experimental Storage-facing building block; see docs/guides/REPORTING-STABILITY.md.
+ */
+export function reportingLedgerCoverageClosedV1(coverage: { complete: boolean; owedSetOpen?: boolean }): boolean {
+  return coverage.complete && coverage.owedSetOpen !== true;
+}
+
+/**
+ * Whether a generation owns an owed set (a principal-level reporting subscription) rather than a
+ * contiguous period grid.
+ * @experimental Storage-facing building block; see docs/guides/REPORTING-STABILITY.md.
+ */
+export function isReportingLedgerOwedSetV1(configuration: {
+  subscription?: ReportingLedgerSubscriptionV1 | undefined;
+}): boolean {
+  return configuration.subscription?.ownership === 'owed_set';
+}
+
+/**
+ * The uniqueness discriminator a store keys generations by beside `(account_id,
+ * delivery_config_id, delivery_config_version)`: empty for an account generation, and a digest
+ * of the owning principal and the resolved offering for a subscription generation.
+ * @experimental Storage-facing building block; see docs/guides/REPORTING-STABILITY.md.
+ */
+export function reportingLedgerSubscriptionKeyV1(configuration: {
+  subscription?: ReportingLedgerSubscriptionV1 | undefined;
+}): string {
+  const subscription = configuration.subscription;
+  if (!subscription) return '';
+  return createHash('sha256')
+    .update(
+      canonicalJsonV1(['subscription-key-v1', subscription.tenantId, subscription.principalId, subscription.offeringId])
+    )
+    .digest('hex');
+}
+
+/**
+ * Whether a generation or obligation is visible to the authenticated principal: account
+ * generations always are, a subscription generation only to its owner, and nothing of a
+ * subscription without a principal.
+ * @experimental Storage-facing building block; see docs/guides/REPORTING-STABILITY.md.
+ */
+export function reportingLedgerSubscriptionVisibleV1(
+  value: { subscription?: ReportingLedgerSubscriptionV1 | undefined },
+  principal: ReportingLedgerSubscriptionPrincipalV1 | undefined
+): boolean {
+  const subscription = value.subscription;
+  if (!subscription) return true;
+  return (
+    principal !== undefined &&
+    subscription.tenantId === principal.tenantId &&
+    subscription.principalId === principal.principalId
+  );
+}
+
+/**
+ * `periodOrdinal` of an owed-set obligation: the period start in whole seconds since the epoch.
+ * @experimental Storage-facing building block; see docs/guides/REPORTING-STABILITY.md.
+ */
+export function reportingLedgerOwedSetOrdinalV1(periodStart: string): number {
+  const start = Date.parse(periodStart);
+  if (!Number.isFinite(start)) throw new TypeError('Owed-set period start must be an RFC 3339 instant');
+  return Math.floor(start / 1_000);
+}
+
+/**
+ * Monotonic merge of owed-set progress: `through` and `until` only move later, `from` only
+ * earlier, and `mediaBuyIds` is a sorted union. Stores apply it under their account fence.
+ * @experimental Storage-facing building block; see docs/guides/REPORTING-STABILITY.md.
+ */
+export function mergeReportingLedgerOwedSetV1(
+  current: ReportingLedgerOwedSetV1 | undefined,
+  progress: Omit<ReportingLedgerOwedSetProgressV1, 'configurationId' | 'account_id'>
+): ReportingLedgerOwedSetV1 {
+  const later = (left: string | undefined, right: string | undefined) =>
+    left === undefined ? right : right === undefined ? left : Date.parse(right) > Date.parse(left) ? right : left;
+  const earlier = (left: string | undefined, right: string | undefined) =>
+    left === undefined ? right : right === undefined ? left : Date.parse(right) < Date.parse(left) ? right : left;
+  for (const value of [progress.through, progress.from, progress.until]) {
+    if (value !== undefined && !Number.isFinite(Date.parse(value))) {
+      throw new TypeError('Owed-set progress instants must be RFC 3339 instants');
+    }
+  }
+  const canonical = (value: string | undefined) => (value === undefined ? undefined : new Date(value).toISOString());
+  const through = later(current?.through, canonical(progress.through));
+  const from = earlier(current?.from, canonical(progress.from));
+  const until = later(current?.until, canonical(progress.until));
+  return {
+    ...(through !== undefined ? { through } : {}),
+    ...(from !== undefined ? { from } : {}),
+    ...(until !== undefined ? { until } : {}),
+    mediaBuyIds: [...new Set([...(current?.mediaBuyIds ?? []), ...(progress.mediaBuyIds ?? [])])].sort(),
+  };
+}
+
+/**
+ * The media buys a generation answers for in scope matching. An owed-set generation answers for
+ * the union of its written obligations' frozen `media_buy_ids`, never its own (empty)
+ * install-time `mediaBuyIds`.
+ * @experimental Storage-facing building block; see docs/guides/REPORTING-STABILITY.md.
+ */
+export function reportingLedgerConfigurationMediaBuyIdsV1(configuration: ReportingLedgerConfigurationV1): string[] {
+  return isReportingLedgerOwedSetV1(configuration)
+    ? (configuration.owedSet?.mediaBuyIds ?? [])
+    : configuration.mediaBuyIds;
+}
+
 export function reportingLedgerConfigurationMatchesScope(
   query: ReportingLedgerSnapshotQueryV1,
   configuration: ReportingLedgerConfigurationV1
 ): boolean {
   return (
     (!query.feed_purposes || query.feed_purposes.includes(configuration.feedPurpose)) &&
-    (!query.media_buy_ids || configuration.mediaBuyIds.some(value => query.media_buy_ids!.includes(value)))
+    (!query.media_buy_ids ||
+      reportingLedgerConfigurationMediaBuyIdsV1(configuration).some(value => query.media_buy_ids!.includes(value)))
   );
 }
 
@@ -36,10 +157,14 @@ export function reportingLedgerSuccessor(
   configuration: ReportingLedgerConfigurationV1,
   configurations: readonly ReportingLedgerConfigurationV1[]
 ): ReportingLedgerConfigurationV1 | undefined {
+  // An owed-set generation owns exactly its written obligations: nothing succeeds it, and it
+  // never succeeds an account generation.
+  if (isReportingLedgerOwedSetV1(configuration)) return undefined;
   const installed = Date.parse(configuration.installedAt);
   return configurations
     .filter(value => {
       if (
+        isReportingLedgerOwedSetV1(value) ||
         value.account.account_id !== configuration.account.account_id ||
         value.delivery_config_id !== configuration.delivery_config_id
       ) {
@@ -67,6 +192,12 @@ export function relevantReportingLedgerConfigurations(
   const start = Date.parse(periodStart);
   const end = Date.parse(periodEnd);
   return configurations.filter(configuration => {
+    if (isReportingLedgerOwedSetV1(configuration)) {
+      // Relevant where its written obligations are, which is all it owns.
+      const owedSet = configuration.owedSet;
+      if (owedSet?.from === undefined || owedSet.until === undefined) return false;
+      return Date.parse(owedSet.from) < end && Date.parse(owedSet.until) > start;
+    }
     const installed = Date.parse(configuration.historyStart ?? configuration.installedAt);
     const successor = reportingLedgerSuccessor(configuration, configurations);
     const superseded = Math.min(
@@ -97,7 +228,7 @@ export function evaluateReportingLedgerCoverageV1(
     period?: { start: string; end: string };
   }>,
   ledgerAsOf: string
-): { complete: boolean; retainedFrom: string } {
+): { complete: boolean; retainedFrom: string; owedSetOpen?: true } {
   const period = reportingLedgerEffectivePeriod(query, ledgerAsOf);
   if (configurations.length === 0) return { complete: true, retainedFrom: period.start };
   const stored = new Map<string, Set<number>>();
@@ -107,8 +238,27 @@ export function evaluateReportingLedgerCoverageV1(
     stored.set(obligation.configurationId, ordinals);
   }
   let complete = true;
+  let owedSetOpen = false;
   let retainedFrom: string | undefined;
   for (const configuration of configurations.filter(value => reportingLedgerConfigurationMatchesScope(query, value))) {
+    if (isReportingLedgerOwedSetV1(configuration)) {
+      // The obligations present are the owed set by construction, so a gap is a period that is
+      // not owed, never a continuity failure. Completeness is the planner's horizon: until
+      // `owedSet.through` reaches the scope end, an owed period may still enter the scope.
+      const through = configuration.owedSet?.through;
+      if (through === undefined || Date.parse(through) < Date.parse(period.end)) owedSetOpen = true;
+      for (const obligation of obligations) {
+        if (obligation.configurationId !== configuration.configurationId || !obligation.period) continue;
+        if (
+          Date.parse(obligation.period.start) < Date.parse(period.end) &&
+          Date.parse(obligation.period.end) > Date.parse(period.start) &&
+          (!retainedFrom || Date.parse(obligation.period.start) < Date.parse(retainedFrom))
+        ) {
+          retainedFrom = obligation.period.start;
+        }
+      }
+      continue;
+    }
     const installedAt = Date.parse(configuration.historyStart ?? configuration.installedAt);
     const successor = reportingLedgerSuccessor(configuration, configurations);
     const ownershipEnd = Math.min(
@@ -169,7 +319,7 @@ export function evaluateReportingLedgerCoverageV1(
     }
     if (!complete) break;
   }
-  return { complete, retainedFrom: retainedFrom ?? period.start };
+  return { complete, retainedFrom: retainedFrom ?? period.start, ...(owedSetOpen ? { owedSetOpen: true } : {}) };
 }
 
 /**
@@ -180,7 +330,8 @@ export function assertReportingLedgerHistoryDoesNotOverlap(
   configuration: ReportingLedgerConfigurationV1,
   configurations: readonly ReportingLedgerConfigurationV1[]
 ): void {
-  if (configuration.historyStart === undefined) return;
+  if (configuration.historyStart === undefined || isReportingLedgerOwedSetV1(configuration)) return;
+  configurations = configurations.filter(value => !isReportingLedgerOwedSetV1(value));
   const all = [
     ...configurations.filter(value => value.configurationId !== configuration.configurationId),
     configuration,
