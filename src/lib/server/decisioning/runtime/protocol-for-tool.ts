@@ -103,6 +103,7 @@ export const TOOL_PROTOCOL_MAP: Readonly<Record<string, AdcpProtocol>> = {
   sync_accounts: 'media-buy',
   list_account_changes: 'media-buy',
   list_accounts: 'media-buy',
+  request_account: 'media-buy',
   get_account_financials: 'media-buy',
   report_usage: 'media-buy',
   provide_performance_feedback: 'media-buy',
@@ -110,6 +111,8 @@ export const TOOL_PROTOCOL_MAP: Readonly<Record<string, AdcpProtocol>> = {
   sync_reporting_status: 'media-buy',
   sync_reporting_receipts: 'media-buy',
   get_media_buys: 'media-buy',
+  report_media_buy_issue: 'media-buy',
+  get_media_buy_issue: 'media-buy',
 };
 
 /**

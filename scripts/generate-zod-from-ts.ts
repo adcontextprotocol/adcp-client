@@ -6220,6 +6220,14 @@ async function generateZodSchemas() {
       if (Array.isArray(value)) return;
       const node = value as Record<string, any>;
       delete node.discriminator;
+      // Canonical proposals and targeting state are digest-bound snapshots.
+      // Parsing must not materialize annotation defaults (AdCP 3.3 added
+      // `clock: "elapsed"` to SLA windows), or a parsed proposal changes bytes
+      // and gains fields that older releases reject. A property schema that is
+      // itself named `default` is an object, so only primitive defaults go.
+      if (node.default === null || (node.default !== undefined && typeof node.default !== 'object')) {
+        delete node.default;
+      }
       if (node.properties && node.type === undefined) node.type = 'object';
       // json-schema-to-zod does not project draft-07 if/then/else. Rewrite
       // the logically equivalent boolean schema using the supported

@@ -62,6 +62,7 @@ export const ACCOUNT_AUTHORIZATION_WIRE_KEYS = [
   'field_scopes',
   'scope_name',
   'read_only',
+  'authorized_at',
 ] as const satisfies readonly (keyof AccountAuthorization)[];
 
 type MissingAccountAuthorizationWireKey = Exclude<
@@ -1212,6 +1213,7 @@ function projectAccountAuthorization(authorization: AccountAuthorization): Accou
   }
   if (authorization.scope_name !== undefined) projected.scope_name = authorization.scope_name;
   if (authorization.read_only !== undefined) projected.read_only = authorization.read_only;
+  if (authorization.authorized_at !== undefined) projected.authorized_at = authorization.authorized_at;
   return projected;
 }
 

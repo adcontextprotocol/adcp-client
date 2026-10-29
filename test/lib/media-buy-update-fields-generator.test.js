@@ -451,7 +451,12 @@ describe('checked-in update-fields table tracks the pinned schema cache', () => 
 
   it('carries the MediaBuy-level frequency_cap binding exactly when the pinned cache ships the id schema', () => {
     if (pinShipsIdSchema) {
-      assert.deepEqual(mediaBuy.STRUCTURED_ONLY_MEDIA_BUY_ACTIONS, [FREQUENCY_CAP_ACTION]);
+      // AdCP 3.3.0-beta.1 adds the structured-only creative start-policy action.
+      assert.ok(mediaBuy.STRUCTURED_ONLY_MEDIA_BUY_ACTIONS.includes(FREQUENCY_CAP_ACTION));
+      assert.deepEqual(
+        mediaBuy.STRUCTURED_ONLY_MEDIA_BUY_ACTIONS.filter(action => action !== FREQUENCY_CAP_ACTION),
+        ['update_creative_start_policy']
+      );
       assert.deepEqual(mediaBuy.UPDATE_FIELDS_BY_ACTION[FREQUENCY_CAP_ACTION].update_fields, ['frequency_cap']);
       assert.deepEqual(mediaBuy.ACTIONS_BY_FIELD.frequency_cap, [FREQUENCY_CAP_ACTION]);
     } else {

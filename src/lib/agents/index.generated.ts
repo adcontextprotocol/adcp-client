@@ -43,6 +43,10 @@ import type {
   SyncReportingStatusResponse,
   SyncReportingReceiptsRequest,
   SyncReportingReceiptsResponse,
+  ReportMediaBuyIssueRequest,
+  ReportMediaBuyIssueResponse,
+  GetMediaBuyIssueRequest,
+  GetMediaBuyIssueResponse,
   ProvidePerformanceFeedbackRequest,
   ProvidePerformanceFeedbackResponse,
   SyncEventSourcesRequest,
@@ -141,6 +145,8 @@ import type {
   ListAccountChangesResponse,
   ListAccountsRequest,
   ListAccountsResponse,
+  RequestAccountRequest,
+  RequestAccountResponse,
   SyncAccountsRequest,
   SyncAccountsResponse,
   SyncGovernanceRequest,
@@ -341,6 +347,20 @@ export class Agent {
    */
   async syncReportingReceipts(params: MutatingRequestInput<SyncReportingReceiptsRequest>): Promise<SyncReportingReceiptsResponse> {
     return this.callTool<SyncReportingReceiptsResponse>('sync_reporting_receipts', params);
+  }
+
+  /**
+   * Official AdCP report_media_buy_issue tool schema
+   */
+  async reportMediaBuyIssue(params: MutatingRequestInput<ReportMediaBuyIssueRequest>): Promise<ReportMediaBuyIssueResponse> {
+    return this.callTool<ReportMediaBuyIssueResponse>('report_media_buy_issue', params);
+  }
+
+  /**
+   * Official AdCP get_media_buy_issue tool schema
+   */
+  async getMediaBuyIssue(params: GetMediaBuyIssueRequest): Promise<GetMediaBuyIssueResponse> {
+    return this.callTool<GetMediaBuyIssueResponse>('get_media_buy_issue', params);
   }
 
   /**
@@ -687,6 +707,13 @@ export class Agent {
   }
 
   /**
+   * Official AdCP request_account tool schema
+   */
+  async requestAccount(params: MutatingRequestInput<RequestAccountRequest>): Promise<RequestAccountResponse> {
+    return this.callTool<RequestAccountResponse>('request_account', params);
+  }
+
+  /**
    * Official AdCP sync_accounts tool schema
    */
   async syncAccounts(params: MutatingRequestInput<SyncAccountsRequest>): Promise<SyncAccountsResponse> {
@@ -848,6 +875,20 @@ export class AgentCollection {
    */
   async syncReportingReceipts(params: MutatingRequestInput<SyncReportingReceiptsRequest>): Promise<SyncReportingReceiptsResponse[]> {
     return this.callToolOnAll<SyncReportingReceiptsResponse>('sync_reporting_receipts', params);
+  }
+
+  /**
+   * Official AdCP report_media_buy_issue tool schema (across multiple agents)
+   */
+  async reportMediaBuyIssue(params: MutatingRequestInput<ReportMediaBuyIssueRequest>): Promise<ReportMediaBuyIssueResponse[]> {
+    return this.callToolOnAll<ReportMediaBuyIssueResponse>('report_media_buy_issue', params);
+  }
+
+  /**
+   * Official AdCP get_media_buy_issue tool schema (across multiple agents)
+   */
+  async getMediaBuyIssue(params: GetMediaBuyIssueRequest): Promise<GetMediaBuyIssueResponse[]> {
+    return this.callToolOnAll<GetMediaBuyIssueResponse>('get_media_buy_issue', params);
   }
 
   /**
@@ -1142,6 +1183,13 @@ export class AgentCollection {
    */
   async listAccounts(params: ListAccountsRequest): Promise<ListAccountsResponse[]> {
     return this.callToolOnAll<ListAccountsResponse>('list_accounts', params);
+  }
+
+  /**
+   * Official AdCP request_account tool schema (across multiple agents)
+   */
+  async requestAccount(params: MutatingRequestInput<RequestAccountRequest>): Promise<RequestAccountResponse[]> {
+    return this.callToolOnAll<RequestAccountResponse>('request_account', params);
   }
 
   /**

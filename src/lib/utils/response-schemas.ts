@@ -72,6 +72,8 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   create_media_buy: schemas.CreateMediaBuyResponseSchema,
   update_media_buy: schemas.UpdateMediaBuyResponseSchema,
   get_media_buys: schemas.GetMediaBuysResponseSchema,
+  report_media_buy_issue: schemas.ReportMediaBuyIssueResponseSchema,
+  get_media_buy_issue: schemas.GetMediaBuyIssueResponseSchema,
   get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema,
   // The generated Zod schema preserves source-required view fields and closed
   // reporting evidence boundaries. Keep this current-version guard adjacent to
@@ -109,6 +111,7 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   sync_governance: schemas.SyncGovernanceResponseSchema,
   sync_audiences: schemas.SyncAudiencesResponseSchema,
   report_usage: schemas.ReportUsageResponseSchema,
+  request_account: schemas.RequestAccountResponseSchema,
   get_account_financials: schemas.GetAccountFinancialsResponseSchema,
 
   // Catalogs & events
