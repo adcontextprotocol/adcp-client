@@ -103,3 +103,6 @@ export type {
   ReportingResourceReadRole,
   ReportingResourceReader,
 } from '../inspection';
+
+// Principal-level reporting subscriptions (experimental, AdCP 3.3): buyer-computable coverage.
+export * from '../subscriptions';

@@ -5,7 +5,10 @@ process.env.NODE_ENV = 'test';
 
 const {
   REPORTING_MANAGED_DELIVERY_COMPOSITION_V1,
+  ReportingConfigurationImmutableError,
   createReliableReportingService,
+  isReportingConfigurationImmutableError,
+  reportingConfigurationCapabilitiesV1,
   runReliableReportingServiceConformanceV1,
 } = require('../../dist/lib/reporting/service/index.js');
 const {
@@ -270,7 +273,16 @@ describe('ReliableReportingService', () => {
     assert.equal(store.revisions.size, 1, 'dynamic products must produce a validated revision');
 
     products.push('per_buy_awareness_buy2__product_c');
-    await assert.rejects(service.installConfiguration(configuration(), context), /immutable/i);
+    await assert.rejects(service.installConfiguration(configuration(), context), error => {
+      // Typed so successor-installing hosts need not match on message text.
+      assert.ok(error instanceof ReportingConfigurationImmutableError);
+      assert.ok(isReportingConfigurationImmutableError(error));
+      assert.equal(error.code, 'REPORTING_CONFIGURATION_IMMUTABLE');
+      assert.equal(error.accountId, 'account-a');
+      assert.equal(error.deliveryConfigVersion, configuration().delivery_config_version);
+      assert.match(error.message, /Reporting configuration generation is immutable/);
+      return true;
+    });
     const next = await service.installConfiguration(configuration({ delivery_config_version: 2 }), context);
     assert.deepEqual(
       next.constituents.map(value => value.productId),
@@ -560,6 +572,56 @@ describe('ReliableReportingService', () => {
     );
     assert.notEqual(wireExact.isError, true, JSON.stringify(wireExact.structuredContent));
     assert.equal(wireExact.structuredContent.reporting_revision.reporting_revision_id, revision.reporting_revision_id);
+  });
+
+  test('advertises media_buy.reporting_subscriptions only beside a subscriptions block', async () => {
+    const { service } = serviceFixture();
+    assert.deepEqual(reportingConfigurationCapabilitiesV1(), { configuration_task: 'sync_accounts' });
+    assert.equal(service.capabilities.configuration_task, 'sync_accounts');
+    assert.equal(service.capabilities.configuration_tasks, undefined, 'the default shape is unchanged');
+    const registration = reportingConfigurationCapabilitiesV1({ subscriptions: { maxAccounts: 500 } });
+    assert.deepEqual(registration, {
+      configuration_task: 'sync_accounts',
+      configuration_tasks: ['sync_principal', 'sync_accounts'],
+      subscriptions: { supported: true, max_accounts: 500 },
+    });
+    assert.deepEqual(
+      reportingConfigurationCapabilitiesV1({ subscriptions: {}, accountConfigurations: false }),
+      { configuration_tasks: ['sync_principal'], subscriptions: { supported: true } },
+      'configuration_task appears only when configuration_tasks lists sync_accounts'
+    );
+    assert.throws(() => reportingConfigurationCapabilitiesV1({ accountConfigurations: false }), TypeError);
+    assert.throws(() => reportingConfigurationCapabilitiesV1({ subscriptions: { maxAccounts: 0 } }), TypeError);
+
+    const platform = {
+      capabilities: { specialisms: [], config: {} },
+      accounts: {
+        resolution: 'explicit',
+        resolve: async ref => ({ id: ref?.account_id ?? 'account-a', ctx_metadata: {} }),
+        upsert: async () => [],
+      },
+      reporting: { ...service.platform, capabilities: { ...service.capabilities, ...registration } },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'reporting-subscriptions-capabilities-test',
+      version: '1.0.0',
+      // The 3.3 schema also requires adcp.principal.supported_sections to list
+      // reporting_subscriptions; the principal runtime advertises that block.
+      validation: { requests: 'strict', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: {} },
+    });
+    assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepEqual(result.structuredContent.experimental_features, [
+      'media_buy.reporting_delivery',
+      'media_buy.reporting_subscriptions',
+    ]);
+    assert.deepEqual(result.structuredContent.media_buy.reporting_delivery.configuration_tasks, [
+      'sync_principal',
+      'sync_accounts',
+    ]);
   });
 
   test('derives Core-only capabilities and installs native server handlers', async () => {
