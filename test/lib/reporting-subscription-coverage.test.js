@@ -98,9 +98,7 @@ describe('expectedSubscriptionPeriods parity table', () => {
         ajv.addSchema(schema);
       }
     }
-    const validate = ajv.getSchema(
-      `https://adcontextprotocol.org/schemas/${pinned}/core/reporting-subscription.json`
-    );
+    const validate = ajv.getSchema(`https://adcontextprotocol.org/schemas/${pinned}/core/reporting-subscription.json`);
     for (const testCase of table.cases) {
       for (const version of testCase.input.versions) {
         assert.equal(validate(version.configuration), true, `${testCase.name}: ${JSON.stringify(validate.errors)}`);
