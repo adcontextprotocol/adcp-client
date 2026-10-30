@@ -1,4 +1,5 @@
 const { ADCP_VERSION, toReleasePrecisionVersion } = require('../dist/lib/version.js');
+const { responseSchemaComposesEnvelope } = require('../dist/lib/validation/schema-loader.js');
 const { describe, it, mock } = require('node:test');
 const assert = require('node:assert');
 const {
@@ -2456,8 +2457,14 @@ describe('createAdcpServer', () => {
   });
 
   describe('response builder wiring', () => {
-    it('preserves the status-free synchronous decline_proposals response arm in strict mode', async () => {
-      const server = createAdcpServer({
+    const declineParams = {
+      idempotency_key: 'decline-key-0000001',
+      declines: [{ proposal_id: 'proposal-1' }],
+      account: { account_id: 'account-1' },
+    };
+    const declineExtras = { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-1' } } };
+    const declineServer = config =>
+      createAdcpServer({
         name: 'Test',
         version: '1.0.0',
         validation: { responses: 'strict' },
@@ -2467,26 +2474,10 @@ describe('createAdcpServer', () => {
             results: [{ proposal_id: 'proposal-1', outcome: 'declined' }],
           }),
         },
+        ...config,
       });
-      const response = await callToolRaw(
-        server,
-        'decline_proposals',
-        {
-          idempotency_key: 'decline-key-0000001',
-          declines: [{ proposal_id: 'proposal-1' }],
-          account: { account_id: 'account-1' },
-        },
-        {
-          authInfo: { credential: { kind: 'api_key', key_id: 'buyer-1' } },
-        }
-      );
-      assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
-      assert.strictEqual(response.structuredContent.status, undefined);
-      assert.deepStrictEqual(response.structuredContent.results, [{ proposal_id: 'proposal-1', outcome: 'declined' }]);
-    });
-
-    it('preserves the status-free synchronous list_products response arm in strict mode', async () => {
-      const server = createAdcpServer({
+    const listProductsServer = config =>
+      createAdcpServer({
         name: 'Test',
         version: '1.0.0',
         validation: { responses: 'strict' },
@@ -2498,7 +2489,38 @@ describe('createAdcpServer', () => {
             cache_scope: 'public',
           }),
         },
+        ...config,
       });
+
+    // The served release's published schema decides. A release that composes
+    // `core/protocol-envelope.json` (3.3 once the pinned bundle carries it)
+    // requires `status`; 3.2.x publishes these arms without it.
+    const pinComposesEnvelope = responseSchemaComposesEnvelope('list_products', ADCP_VERSION);
+
+    it('emits decline_proposals status exactly when the pinned release composes the envelope (#3481)', async () => {
+      const response = await callToolRaw(declineServer(), 'decline_proposals', declineParams, declineExtras);
+      assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      assert.strictEqual(response.structuredContent.status, pinComposesEnvelope ? 'completed' : undefined);
+      assert.deepStrictEqual(response.structuredContent.results, [{ proposal_id: 'proposal-1', outcome: 'declined' }]);
+    });
+
+    it('emits list_products status exactly when the pinned release composes the envelope (#3481)', async () => {
+      const response = await callToolRaw(listProductsServer(), 'list_products', {});
+      assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      assert.strictEqual(response.structuredContent.status, pinComposesEnvelope ? 'completed' : undefined);
+      assert.strictEqual(response.structuredContent.outcome, 'listed');
+    });
+
+    it('keeps decline_proposals status-free when serving 3.2, whose schema forbids it', async () => {
+      const server = declineServer({ adcpVersion: '3.2.1', capabilities: { supported_versions: ['3.2.1'] } });
+      const response = await callToolRaw(server, 'decline_proposals', declineParams, declineExtras);
+      assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      assert.strictEqual(response.structuredContent.status, undefined);
+      assert.deepStrictEqual(response.structuredContent.results, [{ proposal_id: 'proposal-1', outcome: 'declined' }]);
+    });
+
+    it('keeps list_products status-free when serving 3.2, whose schema has no status', async () => {
+      const server = listProductsServer({ adcpVersion: '3.2.1', capabilities: { supported_versions: ['3.2.1'] } });
       const response = await callToolRaw(server, 'list_products', {});
       assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
       assert.strictEqual(response.structuredContent.status, undefined);

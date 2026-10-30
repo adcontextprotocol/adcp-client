@@ -1,5 +1,28 @@
 # Changelog
 
+## 17.0.0-beta.7
+
+### Minor Changes
+
+- d30e129: Add opt-in `collect_product_pages` storyboard steps for complete wholesale product reads. The runner requires fresh reads without an idempotency key, preserves the other authored request fields, validates every physical page and its invariants, follows stable feed cursors with bounded restarts and safety limits, and exposes an explicitly labelled logical product view alongside actual per-page evidence. The intrinsic `collect_product_pages_runner` requirement prevents older runners from silently grading only the first page.
+
+### Patch Changes
+
+- 179017a: Fix false-positive `get_products` conformance grades for existing discovery filter requirements. Supplied pricing-currency filters now check every returned media price and observable compulsory product-scoped signal charge, while permitting account-specific FX conversion and optional foreign-currency add-ons. Custom signal pricing whose incremental charge cannot be established is reported as unproven instead of being assumed incompatible. Fixture discovery also respects the negotiated canonical creative capability rather than forcing canonical wire mode on legacy-only AdCP 3.1 sellers.
+
+  Validate supplied standard and vendor required-metric filters against every returned product, respecting implicit metrics, documented derivations and numeric container subsumption. Vendor and metric pins must match the same declared vendor metric; absent filters impose no optional-feature requirement and valid empty matches remain allowed.
+
+  These default-on checks correct previously missed protocol violations: a result that leaks a non-requested media currency or lacks a requested metric can now fail conformance. They do not add optional-feature requirements to unfiltered discovery or change production client requests.
+
+## 17.0.0-beta.6
+
+### Minor Changes
+
+- 460b1df: Stop working around the task-response envelope (#3481). `core/protocol-envelope.json` has made `status` REQUIRED on every task response since 3.1; the closed 3.2.x compact schemas only omitted it by not composing the envelope, and AdCP 3.3 (adcontextprotocol/adcp#8547) composes it into every response root.
+  - `list_products`, `decline_proposals`, `list_collections` and `list_proposals` keep `status` whenever the served release's published schema composes the envelope. A seller serving 3.2.x, whose `list_products` / `decline_proposals` arms are closed with no `status`, still omits it. The release's own schema decides (`omitsEnvelopeStatusForRelease`), so a bundle that composes the envelope changes the answer without a code change. `STATUS_FREE_SYNC_RESPONSE_TOOLS` is replaced by `COMPACT_SYNC_RESPONSE_TOOLS`, which only stops the 3.0 shim from synthesizing a status.
+  - Response validation no longer clears `additionalProperties: false` on every response root (`relaxResponseRoot()` is removed). A bundle that composes the envelope is validated exactly as published, `status` required. For a closed pre-composition root (3.2.7 and earlier), only the envelope fields that release's own `protocol-envelope.json` defines (`status`, `task_id`, `replayed`, the `adcp_version` echo, …) are accepted on the closed nodes, so body typos are still rejected. No envelope field is added to or removed from a response.
+  - The Zod generator keeps `ProtocolEnvelope.and(union)` response bodies and merges the compact submitted envelope for both the pre- and post-composition layouts, so types generate from an envelope-composing bundle (ListProductsResponse gains `status: TaskStatus`).
+
 ## 17.0.0-beta.5
 
 ### Minor Changes

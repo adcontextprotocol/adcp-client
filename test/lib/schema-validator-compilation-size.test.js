@@ -290,7 +290,7 @@ for (const ref of [
   });
 }
 
-test('paired bundled response aliases relax closed non-tool fragments without loosening shared request schemas', t => {
+test('paired bundled response aliases accept envelope fields on closed non-tool fragments without loosening shared request schemas', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-closed-reply-alias-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const base = 'https://adcontextprotocol.org/schemas/3.2.7/';
@@ -320,11 +320,12 @@ test('paired bundled response aliases relax closed non-tool fragments without lo
   });
   withExternalSchemaRoot('3.2', root, () => {
     const request = getValidator('get_products', 'request', '3.2');
-    const payload = { payload: 'ok', replayed: true, future_envelope: 'extension' };
+    const payload = { payload: 'ok', replayed: true };
     assert.equal(request({ payload: 'ok' }), true);
     assert.equal(request(payload), false);
     const runtime = getValidator('get_products', 'sync', '3.2');
     assert.equal(runtime(payload), true, JSON.stringify(runtime.errors));
+    assert.equal(runtime({ ...payload, future_envelope: 'extension' }), false, 'undeclared root fields stay rejected');
     const canonical = getCanonicalToolValidatorForVersion('get_products', 'sync', '3.2');
     assert.equal(canonical(payload), false);
     assert.equal(canonical({ payload: 'ok' }), true);

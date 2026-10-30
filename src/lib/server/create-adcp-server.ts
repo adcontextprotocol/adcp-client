@@ -236,7 +236,7 @@ const IDEMPOTENCY_CLAIM_RENEW_INTERVAL_MS = 60_000;
 import { isAccountProvisioningTask } from './account-provisioning';
 import { warnAccountReferenceDeprecation } from './account-reference-warnings';
 import { isMutatingTask, requestUsesIdempotency, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
-import { STATUS_FREE_SYNC_RESPONSE_TOOLS } from '../utils/envelope-status-compat';
+import { omitsEnvelopeStatusForRelease } from '../utils/envelope-status-compat';
 import { validateRequest, validateResponse, formatIssues, type ValidationIssue } from '../validation/schema-validator';
 import { validateSyncReportingStatusEnvelope } from '../validation/sync-reporting-status-envelope';
 import { buildAdcpValidationErrorPayload } from '../validation/schema-errors';
@@ -2953,7 +2953,6 @@ function buildIdempotencyPayload(
 
 function genericResponse(toolName: string, data: object, summary?: string): McpToolResponse {
   const structuredContent = { ...toStructuredContent(data) };
-  if (STATUS_FREE_SYNC_RESPONSE_TOOLS.has(toolName)) delete structuredContent.status;
   return {
     content: [{ type: 'text', text: summary ?? `${toolName} completed` }],
     structuredContent,
@@ -4481,8 +4480,19 @@ function injectEnvelopeStatusIntoResponse(response: McpToolResponse, toolName: s
     return;
   const sc = response.structuredContent as Record<string, unknown> | undefined;
   if (!sc || typeof sc !== 'object') return;
+  // The served release's published schema decides. 3.2.x `list_products` /
+  // `decline_proposals` have no `status` (closed arms), so a seller serving
+  // 3.2 or earlier omits it; from 3.3 the envelope is composed, `status` is
+  // required and is preserved or stamped like every other task response.
+  if (omitsEnvelopeStatusForRelease(toolName, servedVersion)) {
+    if ('status' in sc) {
+      const mirrorsStructuredContent = contentTextMirrorsStructuredContent(response, sc);
+      delete sc.status;
+      syncContentJsonText(response, sc, mirrorsStructuredContent);
+    }
+    return;
+  }
   if ('status' in sc) return;
-  if (STATUS_FREE_SYNC_RESPONSE_TOOLS.has(toolName)) return;
   // AdCP 3.1.0-beta.2+ requires envelope `status` on EVERY response, error
   // or otherwise. Map MCP's `isError` to the wire-level task state:
   //   - `isError: true`           → `'failed'`  (task explicitly failed)
