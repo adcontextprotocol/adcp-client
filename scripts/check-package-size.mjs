@@ -141,6 +141,8 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // selection, coverage, capability and engine modules plus the principal
 // subscription runtime. Measured 26,423,860 packed bytes after merging main;
 // allow about 40 KB above that for compressor variance.
+// The buyer runtime, engine store and expectations (#3504) measured 26,470,249
+// packed bytes after merging main's 3.3.0-beta.2 adoption; allow about 40 KB.
 // Writing subscription obligations into the reporting ledger (#3504) extends the
 // ledger producer, coverage, handlers and status ingest, and then the service,
 // engine and managed delivery, and adds no module file. Allow about 55 KB above

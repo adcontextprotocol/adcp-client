@@ -56,6 +56,8 @@ export const ACCOUNT_NOTIFICATION_TYPES = Object.freeze([
   'collection_card.removed',
   'collection_catalog.bulk_change',
   'proposal.created',
+  // AdCP 3.3 experimental media_buy.seller_offers: account-anchored, identifiers-only.
+  'proposal.offered',
   'reporting.delivery_ready',
   'reporting.status_changed',
   'reporting.ledger_changed',

@@ -71,6 +71,7 @@ import {
   type NegotiatedAdcpRelease,
 } from '../adapters/version';
 import {
+  getSchemaValidatorByRef,
   isExternalSchemaRootActive,
   schemaAllowsTopLevelField,
   toReleasePrecisionWire,
@@ -199,6 +200,7 @@ import {
   ConfigurationError,
   FeatureUnsupportedError,
   ProtocolFeatureUnsupportedError,
+  RequestValidationError,
   TaskTimeoutError,
   VersionUnsupportedError,
   is401Error,
@@ -1279,6 +1281,12 @@ const STANDARD_ADCP_TASK_NAMES = new Set<string>([
 ]);
 
 const PRINCIPAL_IDENTITY_INPUT_FIELDS = ['buyer_agent_url', 'agent_url', 'principal_id', 'connection_id'] as const;
+
+/** RFC 6901 pointer for a Zod issue path, `/` for the root as elsewhere in the SDK. */
+function zodPathToPointer(path: readonly PropertyKey[]): string {
+  if (path.length === 0) return '/';
+  return '/' + path.map(segment => String(segment).replace(/~/g, '~0').replace(/\//g, '~1')).join('/');
+}
 
 function assertNoPrincipalIdentityInput(taskType: string, params: unknown): void {
   if (
@@ -4545,8 +4553,7 @@ export class SingleAgentClient {
             options.adcpVersion ?? this.resolvedAdcpVersion
           ).adcpVersion;
         } else {
-          const loader = require('../validation/schema-loader') as typeof import('../validation/schema-loader');
-          artifactPayloadValidator = loader.getSchemaValidatorByRef(
+          artifactPayloadValidator = getSchemaValidatorByRef(
             'content-standards/artifact-webhook-payload.json',
             this.resolvedAdcpVersion
           );
@@ -7691,7 +7698,7 @@ export class SingleAgentClient {
     negotiated?: NegotiatedAdcpRelease
   ): { params: any; driftLogs: Record<string, unknown>[] } {
     if (serverVersion !== 'v3') {
-      throw new VersionUnsupportedError(taskType, 'version', 'v2', this.agent.agent_uri);
+      throw new VersionUnsupportedError(taskType, 'version', 'v2', this.agent.agent_uri, { dispatched: false });
     }
     const driftLogs: Record<string, unknown>[] = [];
     let adapted = params;
@@ -13341,17 +13348,23 @@ export class SingleAgentClient {
         !isAdcpVersionSupported(this.resolvedAdcpVersion, supportedVersions) &&
         this.negotiateCallRelease(capabilities, options as TaskOptions | undefined) === undefined
       ) {
-        throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
+        throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri, {
+          dispatched: false,
+        });
       }
     } else {
       const expectedMajor = parseAdcpMajorVersion(this.resolvedAdcpVersion);
       const advertisedMajors = capabilities.majorVersions;
       if (!Number.isFinite(expectedMajor) || !advertisedMajors.includes(expectedMajor)) {
-        throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
+        throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri, {
+          dispatched: false,
+        });
       }
     }
     if (capabilities.idempotency?.replayTtlSeconds === undefined) {
-      throw new VersionUnsupportedError(taskType, 'idempotency', capabilities.version, this.agent.agent_uri);
+      throw new VersionUnsupportedError(taskType, 'idempotency', capabilities.version, this.agent.agent_uri, {
+        dispatched: false,
+      });
     }
     assertValidIdempotencyReplayTtlSeconds(capabilities.idempotency.replayTtlSeconds);
   }
@@ -13465,7 +13478,14 @@ export class SingleAgentClient {
     const result = schema.safeParse(params);
     if (!result.success) {
       const issues = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
-      throw new Error(`Request validation failed for ${taskType}: ${issues}`);
+      // Typed so callers can tell a local refusal from an agent failure
+      // without matching this message, which is kept verbatim for those that do.
+      throw new RequestValidationError(
+        taskType,
+        result.error.issues.map(i => zodPathToPointer(i.path)),
+        `${taskType}: ${issues}`,
+        `Request validation failed for ${taskType}: ${issues}`
+      );
     }
   }
 
