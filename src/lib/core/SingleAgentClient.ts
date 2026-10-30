@@ -71,6 +71,7 @@ import {
   type NegotiatedAdcpRelease,
 } from '../adapters/version';
 import {
+  getSchemaValidatorByRef,
   isExternalSchemaRootActive,
   schemaAllowsTopLevelField,
   toReleasePrecisionWire,
@@ -4545,8 +4546,7 @@ export class SingleAgentClient {
             options.adcpVersion ?? this.resolvedAdcpVersion
           ).adcpVersion;
         } else {
-          const loader = require('../validation/schema-loader') as typeof import('../validation/schema-loader');
-          artifactPayloadValidator = loader.getSchemaValidatorByRef(
+          artifactPayloadValidator = getSchemaValidatorByRef(
             'content-standards/artifact-webhook-payload.json',
             this.resolvedAdcpVersion
           );

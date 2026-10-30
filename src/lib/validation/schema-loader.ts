@@ -22,6 +22,7 @@ import path from 'path';
 import { isDeepStrictEqual } from 'node:util';
 import { ADCP_VERSION } from '../version';
 import { ConfigurationError } from '../errors';
+import { bindEnvelopeSchemaLoader } from '../utils/envelope-status-compat';
 import {
   clearBundledSchemaStoreCache,
   hasBundledSchemaStore,
@@ -1554,7 +1555,7 @@ const servedReleaseRootAliases = new Map<string, ReadonlySet<string>>();
  * `get_adcp_capabilities` response.
  *
  * Keys are AdCP versions in any form the SDK accepts for a pin (`'3.2'`,
- * `'3.2.5'`, `'3.3.0-beta.1'`); values are schema-data roots in the same
+ * `'3.2.5'`, `'3.3.0-beta.2'`); values are schema-data roots in the same
  * shape as `schemaRoot` (a directory holding `bundled/`, e.g. a hosted
  * `dist/schemas/3.2.5`). Each root is checked against its key the same way
  * `withExternalSchemaRoot` checks one, and a malformed map throws before `fn`
@@ -2144,3 +2145,7 @@ function cloneJsonValue(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return value;
   return JSON.parse(JSON.stringify(value)) as unknown;
 }
+
+// Bind this module instance (CJS or ESM build) so envelope-status checks read
+// the same root registry as callers of this loader (adcp-client#3529).
+bindEnvelopeSchemaLoader({ responseSchemaComposesEnvelope, isExternalSchemaRootActive });
