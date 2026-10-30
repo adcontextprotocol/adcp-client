@@ -72,7 +72,8 @@ export interface SignalsPlatform<TCtxMeta = Record<string, unknown>> {
    * campaigns end.
    *
    * Throw `AdcpError` for buyer-fixable rejection:
-   *   - `'SIGNAL_NOT_FOUND'` — unknown `signal_agent_segment_id`
+   *   - `'REFERENCE_NOT_FOUND'` — unknown `signal_agent_segment_id` (`SIGNAL_NOT_FOUND`
+   *     is reserved for unresolvable data-provider `signal_id` references)
    *   - `'POLICY_VIOLATION'` — buyer lacks rights to activate this data
    *   - `'INVALID_REQUEST'` — missing or unrecognized destination
    */

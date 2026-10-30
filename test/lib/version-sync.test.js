@@ -25,8 +25,8 @@ test('AdCP semver pins normalize to release-precision wire values', () => {
 });
 
 test('3.3 beta pin retains stable 3.2 aliases and advertises only its exact preview', () => {
-  assert.equal(ADCP_VERSION, '3.3.0-beta.1');
-  assert.equal(toReleasePrecisionVersion(ADCP_VERSION), '3.3-beta.1');
+  assert.equal(ADCP_VERSION, '3.3.0-beta.2');
+  assert.equal(toReleasePrecisionVersion(ADCP_VERSION), '3.3-beta.2');
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.0.25'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.1.18'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.1.24'));
@@ -47,7 +47,7 @@ test('3.3 beta pin retains stable 3.2 aliases and advertises only its exact prev
   assert.ok(!COMPATIBLE_ADCP_VERSIONS.includes('3.2-beta'));
   assert.deepEqual(
     COMPATIBLE_ADCP_VERSIONS.filter(version => /-(?:beta|rc)/.test(version)),
-    ['3.3.0-beta.1', '3.3-beta.1']
+    ['3.3.0-beta.2', '3.3-beta.2']
   );
   assert.ok(!COMPATIBLE_ADCP_VERSIONS.includes('3.3-beta'));
   assert.ok(!COMPATIBLE_ADCP_VERSIONS.includes('3.3'));

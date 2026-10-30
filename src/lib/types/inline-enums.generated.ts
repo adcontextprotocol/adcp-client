@@ -159,7 +159,7 @@ export const AgenticAdvertisingOrgVerificationTokenClaims_RoleValues = ["media-b
 // ====== AgentNotificationConfig ======
 
 /** array of | AgentNotificationConfig.event_types */
-export const AgentNotificationConfig_EventTypesValues = ["creative.status_changed", "creative.assignment_changed", "indicators.changed", "creative.purged", "account.status_changed", "account.change_recorded", "product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change", "collection_card.updated", "collection_card.removed", "collection_catalog.bulk_change", "capabilities.changed", "reporting.delivery_ready", "reporting.status_changed", "reporting.ledger_changed", "principal.changed", "proposal.created", "account_request.changed"] as const;
+export const AgentNotificationConfig_EventTypesValues = ["creative.status_changed", "creative.assignment_changed", "indicators.changed", "creative.purged", "account.status_changed", "account.change_recorded", "product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change", "collection_card.updated", "collection_card.removed", "collection_catalog.bulk_change", "capabilities.changed", "reporting.delivery_ready", "reporting.status_changed", "reporting.ledger_changed", "principal.changed", "proposal.created", "account_request.changed", "proposal.offered"] as const;
 
 // ====== AgentPermissionDeniedDetails ======
 
@@ -1106,11 +1106,6 @@ export const InlineMarkup_MarkupTypeValues = ["iframe_javascript", "javascript",
 /** single | InspectedDocumentVersionMismatch.mismatch_reason */
 export const InspectedDocumentVersionMismatch_MismatchReasonValues = ["document_version_mismatch"] as const;
 
-// ====== InstallmentChange ======
-
-/** single | InstallmentChange.action */
-export const InstallmentChange_ActionValues = ["include", "omit"] as const;
-
 // ====== IntegerReportingControlTotal ======
 
 /** single | IntegerReportingControlTotal.value_type */
@@ -1223,7 +1218,7 @@ export const NativeInFeedFormatDeclaration_FormatKindValues = ["native_in_feed"]
 // ====== NotificationConfig ======
 
 /** array of | NotificationConfig.event_types */
-export const NotificationConfig_EventTypesValues = ["creative.status_changed", "creative.assignment_changed", "indicators.changed", "creative.purged", "account.status_changed", "account.change_recorded", "product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change", "collection_card.updated", "collection_card.removed", "collection_catalog.bulk_change", "reporting.delivery_ready", "reporting.status_changed", "reporting.ledger_changed", "proposal.created"] as const;
+export const NotificationConfig_EventTypesValues = ["creative.status_changed", "creative.assignment_changed", "indicators.changed", "creative.purged", "account.status_changed", "account.change_recorded", "product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change", "collection_card.updated", "collection_card.removed", "collection_catalog.bulk_change", "reporting.delivery_ready", "reporting.status_changed", "reporting.ledger_changed", "proposal.created", "proposal.offered"] as const;
 /** single | NotificationConfig.product_payload_view */
 export const NotificationConfig_ProductPayloadViewValues = ["canonical", "legacy"] as const;
 

@@ -3,7 +3,7 @@
  * envelope and the `ValidationError` thrown type.
  */
 
-import { ValidationError } from '../errors';
+import { RequestValidationError, ValidationError } from '../errors';
 import { formatDiscriminator, type ValidationIssue } from './schema-validator';
 import { jsonPointerToJsonPathLite } from '../utils/pointer-utils';
 import { boundValidationIssues, validationDiagnosticsTruncated } from './diagnostic-limits';
@@ -59,6 +59,25 @@ export function buildValidationError(
     issues,
     ...(validationDiagnosticsTruncated(issues) && { issues_truncated: true }),
   } satisfies ValidationErrorDetails;
+  return err;
+}
+
+/**
+ * Build the error a client throws when it refuses an outgoing request before
+ * sending it. Same message and `details` as {@link buildValidationError} with
+ * `side: 'request'`, plus the task, every invalid pointer, and
+ * `dispatched: false`.
+ */
+export function buildRequestValidationError(tool: string, issues: ValidationIssue[]): RequestValidationError {
+  const base = buildValidationError(tool, 'request', issues);
+  const details = base.details as ValidationErrorDetails;
+  const err = new RequestValidationError(
+    tool,
+    details.issues.map(issue => issue.pointer),
+    base.constraint,
+    base.message
+  );
+  err.details = details;
   return err;
 }
 
