@@ -54,6 +54,10 @@ type RequestBuilder = RequestEnricher;
  */
 const UNKNOWN_FORMAT_ID = Object.freeze({ agent_url: 'https://unknown.example.com/', id: 'unknown' });
 
+// These pricing-option schemas permit fixed_price to be absent for auction offers.
+// CPA requires a fixed price; revenue_share is contingent rather than bid based.
+const AUCTION_PRICING_MODELS = new Set(['cpm', 'vcpm', 'cpc', 'cpcv', 'cpv', 'cpp', 'flat_rate', 'time']);
+
 /**
  * Placeholder `caller` URL for tasks whose schema names the CALLER-AGENT's
  * URL (not the brand or the seller). `check_governance.caller` is the canonical
@@ -438,8 +442,8 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
         fixturePricingOptionId ?? pricingOption?.pricing_option_id ?? context.pricing_option_id ?? 'test-pricing',
     };
 
-    // Synthesize a bid_price for auction/cpm pricing only when the fixture
-    // didn't author one. Storyboards that test auction flows (e.g.
+    // Synthesize a bid_price for a known auction-capable model only when the
+    // fixture did not author one. Storyboards that test auction flows (e.g.
     // sales-non-guaranteed) author explicit bid_prices the seller validates
     // against floor_price; discovery-synthesized values would silently
     // override intentional bid-floor-boundary tests. The check runs against
@@ -461,11 +465,15 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
         pkg.bid_price === undefined &&
         pkg.bidding === undefined &&
         step.sample_request?.bidding === undefined &&
-        sentPricingOption?.pricing_model === 'cpm' &&
+        sentPricingOption !== undefined &&
+        AUCTION_PRICING_MODELS.has(sentPricingOption.pricing_model as string) &&
         !isFixedPricing(sentPricingOption as PricingOptionV3)
       ) {
-        const floor = Number(sentPricingOption.floor_price) || 5;
-        pkg.bid_price = Math.round(floor * 1.5 * 100) / 100;
+        const floor = sentPricingOption.floor_price === undefined ? 5 : sentPricingOption.floor_price;
+        if (typeof floor !== 'number' || !Number.isFinite(floor) || floor < 0) continue;
+        const roundedBid = Math.round(floor * 150) / 100;
+        // Preserve a zero floor and never round a sub-cent bid below its floor.
+        pkg.bid_price = Number.isFinite(roundedBid) ? Math.max(floor, roundedBid) : floor;
       }
     }
 
