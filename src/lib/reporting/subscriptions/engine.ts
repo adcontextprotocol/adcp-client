@@ -25,7 +25,7 @@
  *   offering, an edited product) or pruning retained exceptions never change an elapsed
  *   owed set. Reconcile at least once per period so each period is frozen with the facts in
  *   force when it was resolved;
- * - the tenant-scoped receipt roster and the post-loss receipt window.
+ * - the tenant-scoped receipt roster (there is no post-loss receipt window, adcp#8607).
  *
  * State is sharded: one document per principal for `max_accounts` slots, and one per
  * (principal, account), each updated with compare-and-set.
