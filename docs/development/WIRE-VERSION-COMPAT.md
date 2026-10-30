@@ -2,6 +2,8 @@
 
 The SDK supports AdCP 3. Its primary schema pin lives in `ADCP_VERSION`; maintained schema and compliance side bundles cover AdCP 3.0, 3.1 and 3.2. AdCP 2.5 reached end of life on August 1, 2026, and its compatibility layer has been removed. See [migration guidance](../migration-drop-adcp-2.md).
 
+The maintained AdCP 3.1 corpus is now the signed 3.1.31 release. It includes auction-compatible seller fixtures, capability-aware optional reporting and format coverage, strict currency/metric filters, and complete product-page collection. Upgrade explicit `--compliance-version` pins to `3.1.31` to use these fixture fixes; the primary protocol pin is unchanged.
+
 ## Discovery and negotiation
 
 `SingleAgentClient.getCapabilities()` requires `get_adcp_capabilities` or the official A2A framework lifecycle that makes that discovery call routable. An agent that lacks discovery receives `VersionUnsupportedError` before a business tool is sent.
@@ -79,16 +81,16 @@ from `@adcp/sdk/v2/projection`. These advisories remain outside the wire JSON.
 schemas/cache/
 ├── 3.3.0-beta.1/ # primary SDK pin
 ├── 3.2.7/        # maintained stable release
-├── 3.1.29/      # maintained stable release
+├── 3.1.31/      # maintained stable release
 ├── 3.0.25/      # maintained stable release
 └── latest/      # symlink to the primary pin
 ```
 
 Run `npm run sync-schemas:all` to refresh the primary and maintained bundles. Run `npm run generate-types:all` to regenerate public types, then `npm run build:lib` to build and copy supported schemas into the package. `copy-schemas-to-dist.ts` excludes retired AdCP 2 caches even when present locally. `check-publish-protocol-artifacts.mjs` checks the published schema inventory and rejects retired type exports.
 
-The v17 beta primary pin is the signed AdCP 3.3.0-beta.1 bundle; it replaces 3.3.0-beta.0, which is no longer packaged or advertised. Stable SDK 16 remains on AdCP 3.2.7. The beta retains stable AdCP 3.2.7, 3.1.29 and 3.0.25 bundles for negotiation, schema projection and compliance runs.
+The v17 beta primary pin is the signed AdCP 3.3.0-beta.1 bundle; it replaces 3.3.0-beta.0, which is no longer packaged or advertised. Stable SDK 16 remains on AdCP 3.2.7. The beta retains stable AdCP 3.2.7, 3.1.31 and 3.0.25 bundles for negotiation, schema projection and compliance runs.
 
-Compliance pins select exact fixture bytes, unlike same-minor wire schema aliases. SDK 16.5.0 packages the 3.2.7 corpus; when upgrading from SDK 16.4.0, update explicit `--compliance-version 3.2.5` flags to `3.2.7`. A development pin of `3.2.6` must likewise advance. Retain the matching historical SDK if a run requires that older corpus. The maintained 3.1.29 and 3.0.25 corpora remain packaged.
+Compliance pins select exact fixture bytes, unlike same-minor wire schema aliases. SDK 16.5.0 packages the 3.2.7 corpus; when upgrading from SDK 16.4.0, update explicit `--compliance-version 3.2.5` flags to `3.2.7`. A development pin of `3.2.6` must likewise advance. Retain the matching historical SDK if a run requires that older corpus. The maintained 3.1.31 and 3.0.25 corpora remain packaged.
 
 Build tooling also understands exact AdCP 3.3.0 `beta.N` and `rc.N` pins. Such a build retains maintained AdCP 3.0, 3.1, and 3.2 GA aliases through 3.2.7 while advertising only the selected prerelease, without a moving beta/RC-family alias. SDK 17 selects the exact 3.3.0-beta.1 preview. The stable v16 compatibility list continues to advertise only AdCP 3.2 and earlier.
 

@@ -33,6 +33,7 @@ import {
   type RawHttpCapture,
 } from '../../protocols/rawResponseCapture';
 import { terminateSessionBestEffort } from '../../protocols/session-termination';
+import { sharedLegacyJsonSchemaValidator } from '../../protocols/mcp-schema-validator';
 import {
   ssrfSafeFetch,
   decodeBodyAsJsonOrText,
@@ -1204,7 +1205,10 @@ async function runMcpSessionLifecycle(options: {
     )
   );
 
-  const client = new McpClient(SESSION_PROBE_CLIENT_INFO, { capabilities: {} });
+  const client = new McpClient(SESSION_PROBE_CLIENT_INFO, {
+    capabilities: {},
+    jsonSchemaValidator: sharedLegacyJsonSchemaValidator,
+  });
   const transport = new StreamableHTTPClientTransport(new URL(agentUrl), {
     requestInit: {
       headers,

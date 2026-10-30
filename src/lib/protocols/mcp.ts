@@ -41,6 +41,7 @@ import {
   registerMCPConnectionScopePending,
 } from './mcp-scope';
 import { terminateSessionBestEffort } from './session-termination';
+import { sharedLegacyJsonSchemaValidator } from './mcp-schema-validator';
 import {
   applyMCPCallHeaders,
   isCorrelationHeader,
@@ -891,7 +892,10 @@ async function connectMCPWithFallbackImpl(
   let failedClient: MCPClient | undefined;
 
   try {
-    const client = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
+    const client = new MCPClient(
+      { name: 'AdCP-Client', version: '1.0.0' },
+      { jsonSchemaValidator: sharedLegacyJsonSchemaValidator }
+    );
     failedClient = client;
     debugLogs.push({
       type: 'info',
@@ -943,7 +947,10 @@ async function connectMCPWithFallbackImpl(
         message: `MCP: Transient connect error (${errorClass}) detected, retrying StreamableHTTP for ${label}`,
         timestamp: new Date().toISOString(),
       });
-      const retryClient = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
+      const retryClient = new MCPClient(
+        { name: 'AdCP-Client', version: '1.0.0' },
+        { jsonSchemaValidator: sharedLegacyJsonSchemaValidator }
+      );
       try {
         const retryTransport = new StreamableHTTPClientTransport(url, transportOptions);
         await retryClient.connect(retryTransport, mcpRequestOptions);
@@ -997,7 +1004,10 @@ async function connectMCPWithFallbackImpl(
       message: `MCP: Falling back to SSE transport for ${label}`,
       timestamp: new Date().toISOString(),
     });
-    const client = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
+    const client = new MCPClient(
+      { name: 'AdCP-Client', version: '1.0.0' },
+      { jsonSchemaValidator: sharedLegacyJsonSchemaValidator }
+    );
     try {
       await client.connect(
         new SSEClientTransport(url, {
@@ -1277,10 +1287,10 @@ export async function connectMCP(options: {
     authMethod: authProvider ? 'oauth' : authToken ? 'token' : 'none',
   });
 
-  const mcpClient = new MCPClient({
-    name: 'AdCP-Client',
-    version: '1.0.0',
-  });
+  const mcpClient = new MCPClient(
+    { name: 'AdCP-Client', version: '1.0.0' },
+    { jsonSchemaValidator: sharedLegacyJsonSchemaValidator }
+  );
 
   // Build transport options
   const transportOptions: StreamableHTTPClientTransportOptions = {};

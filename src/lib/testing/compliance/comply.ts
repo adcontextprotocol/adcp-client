@@ -1527,17 +1527,25 @@ function expandScenarios(
   return expanded;
 }
 
-/** @internal Capability applicability partition used by comply() after selection. */
+/** @internal Tool partition; authored root applicability belongs to the runner. */
 export function partitionStoryboardsByRequiredTools(
   storyboards: Storyboard[],
-  discoveredTools: readonly string[]
+  discoveredTools: readonly string[],
+  options: { preserveRootCapabilityGates?: boolean } = {}
 ): { runnable: Storyboard[]; missing: NotApplicableStoryboard[] } {
   const runnable: Storyboard[] = [];
   const missing: NotApplicableStoryboard[] = [];
   for (const sb of storyboards) {
     const required = sb.required_tools ?? [];
     const hasApplicableTool = hasAnyRequiredTool(required, discoveredTools);
-    if (!hasApplicableTool) {
+    // The runner evaluates authored root predicates before runtime/tool
+    // requirements, using validated discovery for the selected agent. Keep
+    // these candidates even with no matching tool: nonclaimants need the
+    // canonical capability skip; claimants still need executable evidence.
+    // Routed topology selection keeps its existing partition until route
+    // resolution can prove applicability for candidates with no serving route.
+    const keepRootGate = options.preserveRootCapabilityGates === true && storyboardCapabilityPredicates(sb).length > 0;
+    if (!hasApplicableTool && !keepRootGate) {
       missing.push({
         storyboard_id: sb.id,
         storyboard_title: sb.title,
@@ -2557,18 +2565,18 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       ? expandScenarios(initialStoryboards, resolveOptions)
       : initialStoryboards;
 
-    // For capability-resolved runs, exclude storyboards and injected scenarios whose
-    // required_tools are absent from the agent's discovered toolset. These are
-    // not-applicable — the agent doesn't claim the specialism being tested. Running
-    // them produces cascading skips that pull the track to `partial`, which is a false
-    // signal for AAO badge grading (adcp-client#1680).
+    // Preserve the legacy tool partition for ungated capability-selected
+    // storyboards. Root-gated candidates reach the runner so actual capability
+    // evidence determines applicability before missing runtime/tool coverage.
     // Explicit storyboard IDs remain an operator override. Some targeted conformance
     // runs intentionally exercise the storyboard's own missing-tool skip semantics.
     let runnableStoryboards: Storyboard[];
     if (explicitStoryboards?.length) {
       runnableStoryboards = applicableStoryboards;
     } else {
-      const applicability = partitionStoryboardsByRequiredTools(applicableStoryboards, profile.tools);
+      const applicability = partitionStoryboardsByRequiredTools(applicableStoryboards, profile.tools, {
+        preserveRootCapabilityGates: true,
+      });
       runnableStoryboards = applicability.runnable;
       missingToolStoryboards.push(...applicability.missing);
     }
