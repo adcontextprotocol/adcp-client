@@ -31,17 +31,13 @@ const { createTestPrincipalLifecycle } = require('../helpers/principal-runtime.j
 const SCOPE = { tenantId: 't', principalId: 'p' };
 const CTX = { callerMutationScope: { tenant_id: 't', principal_id: 'p', principal_kind: 'buyer_agent' } };
 
-// The buyer codes from the shared vocabulary (adcontextprotocol/adcp#8616,
-// static/compliance/source/test-vectors/reporting-subscriptions/error-codes.json).
-const BUYER_CODES = {
-  SUBSCRIPTION_WOULD_DEACTIVATE: { recovery: 'correctable', dispatched: 'false' },
-  DESTINATION_WOULD_REVOKE: { recovery: 'correctable', dispatched: 'false' },
-  SUBSCRIPTION_ID_CLASH: { recovery: 'correctable', dispatched: 'false' },
-  SUBSCRIPTION_OPERATOR_SCOPE_REQUIRED: { recovery: 'correctable', dispatched: 'false' },
-  SUBSCRIPTION_SELECTOR_UNMATCHED: { recovery: 'correctable', dispatched: 'false' },
-  SUBSCRIPTION_CONFLICT_EXHAUSTED: { recovery: 'transient', dispatched: 'absent' },
-  SUBSCRIPTION_READBACK_MISMATCH: { recovery: 'terminal', dispatched: 'absent' },
-};
+// The canonical error vocabulary (adcontextprotocol/adcp#8616), vendored byte for byte.
+const VOCABULARY = require('../fixtures/reporting-subscriptions/canonical/error-codes.json');
+const BUYER_CODES = Object.fromEntries(
+  VOCABULARY.codes
+    .filter(entry => entry.sdk_classes.typescript === 'ReportingSubscriptionError')
+    .map(entry => [entry.code, entry])
+);
 
 function subscription(extra = {}) {
   return {
@@ -77,6 +73,26 @@ function keys() {
   let key = 0;
   return { createIdempotencyKey: () => `idempotency-key-${String(++key).padStart(4, '0')}` };
 }
+
+describe('error-codes.json', () => {
+  test('every code maps to the TS class it names, with its recovery and dispatched rule', () => {
+    const classes = { ReportingSubscriptionError, CoverageInputError, PlatformConfigError };
+    assert.equal(VOCABULARY.codes.length, 14);
+    for (const entry of VOCABULARY.codes) {
+      const Class = classes[entry.sdk_classes.typescript];
+      assert.ok(Class, `${entry.code}: unknown TS class ${entry.sdk_classes.typescript}`);
+      const error =
+        Class === PlatformConfigError
+          ? new PlatformConfigError('message. Fix it.', { code: entry.code })
+          : new Class(entry.code, 'message. Fix it.');
+      assert.equal(error.name, entry.sdk_classes.typescript, entry.code);
+      assert.equal(error.code, entry.code);
+      assert.equal(error.recovery, entry.recovery, entry.code);
+      if (entry.dispatched === 'false') assert.equal(error.dispatched, false, entry.code);
+      else assert.equal('dispatched' in error, false, entry.code);
+    }
+  });
+});
 
 describe('ReportingSubscriptionError', () => {
   test('carries the shared code, recovery and dispatched vocabulary', () => {

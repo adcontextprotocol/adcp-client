@@ -732,7 +732,8 @@
     "format": "prettier --write \"./**/*.{css,html,js,ts,tsx,json}\"",
     "format:check": "prettier --check \"./**/*.{css,html,js,ts,tsx,json}\"",
     "review:codex": "bash scripts/codex-review.sh",
-    "test:reporting-storage": "npm test --workspace=@adcp/reporting-storage"
+    "test:reporting-storage": "npm test --workspace=@adcp/reporting-storage",
+    "sync:reporting-subscription-vectors": "node scripts/sync-reporting-subscription-vectors.mjs"
   },
   "keywords": [
     "adcp",

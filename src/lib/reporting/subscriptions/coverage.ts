@@ -38,6 +38,7 @@ import type {
 import {
   assertReportingIanaTimezoneV1,
   createReportingPeriodCalendarV1,
+  parseReportingPeriodDurationV1,
   type ReportingPeriodCalendarV1,
 } from './calendar';
 import {
@@ -464,6 +465,11 @@ function normalizeVersions(
         'invalid_input'
       );
     }
+    // The selector's period_duration follows the schedule pattern (no W designator; a week is P7D). A
+    // selector no offering could ever match is an input error, not an empty owed set.
+    const selectorDuration = (record.configuration?.selector as { period_duration?: unknown } | undefined)
+      ?.period_duration;
+    if (selectorDuration !== undefined) parseReportingPeriodDurationV1(selectorDuration as string);
     if (record.configuration?.subscription_id !== subscriptionId) {
       throw new CoverageInputError(
         'COVERAGE_INPUT_INVALID',
@@ -686,7 +692,7 @@ function timezoneFor(timeline: TimezoneTimeline, offeringId: string, at: number)
 
 interface ExceptionWindow extends Window {
   mediaBuyId?: string;
-  /** Gaps may name one offering; absent applies to every offering. */
+  /** Exclusions and gaps may name one offering; absent applies to every offering. */
   offeringId?: string;
 }
 
@@ -700,6 +706,9 @@ function exceptionWindows(coverage: ExpectedSubscriptionPeriodsInputV1['coverage
       from: instant(entry.from, 'excluded.from'),
       until: entry.until === undefined ? Number.POSITIVE_INFINITY : instant(entry.until, 'excluded.until'),
       ...(entry.media_buy_id !== undefined ? { mediaBuyId: entry.media_buy_id } : {}),
+      // With different period boundaries the seller lists one entry per offering, each with that
+      // offering's cutover instants; it removes only that offering's periods.
+      ...(entry.offering_id !== undefined ? { offeringId: entry.offering_id } : {}),
     });
   }
   for (const gap of coverage?.gaps ?? []) {

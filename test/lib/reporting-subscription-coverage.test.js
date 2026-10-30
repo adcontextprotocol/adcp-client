@@ -16,8 +16,21 @@ const {
   reportingSubscriptionScopeIncludesV1,
 } = advanced;
 
-// The JSON table is the cross-SDK parity contract (adcp-client-python mirrors it).
-const table = require(path.join(__dirname, '..', 'fixtures', 'reporting-subscriptions', 'coverage-cases.json'));
+// The canonical coverage vectors (adcontextprotocol/adcp#8616), vendored byte for byte. The Python SDK runs
+// the same file. Refresh with `npm run sync:reporting-subscription-vectors -- --commit <sha>`.
+const CANONICAL = path.join(__dirname, '..', 'fixtures', 'reporting-subscriptions', 'canonical');
+const PIN = require(path.join(CANONICAL, 'PINNED.json'));
+const table = require(path.join(CANONICAL, 'vectors.json'));
+
+// Expected rows hold for IANA tzdata from table.tzdata's floor through its pinned release. On a runtime whose
+// bundled tzdata predates the floor, a case that depends on a non-UTC zone may legitimately disagree: such a
+// failure is reported as an explicit skip naming the runtime's release, never hidden. UTC-only cases and
+// expected_error cases always run strictly.
+const TZDATA_FLOOR = '2026b';
+const runtimeTzdata = process.versions.tz;
+const staleTzdata = typeof runtimeTzdata === 'string' && runtimeTzdata < TZDATA_FLOOR;
+const UTC_ZONES = new Set(['UTC', 'Etc/UTC']);
+const zoneDependent = testCase => (testCase.timezones ?? []).some(zone => !UTC_ZONES.has(zone));
 
 const instant = value => Date.parse(value);
 const iso = value => new Date(value).toISOString();
@@ -32,57 +45,105 @@ function comparable(rows) {
   }));
 }
 
-describe('expectedSubscriptionPeriods parity table', () => {
-  test('the table is non-trivial and every case is uniquely named', () => {
-    assert.ok(table.cases.length >= 75);
+describe('canonical coverage vectors (adcp#8616)', () => {
+  test('the mirror is byte-identical to the pinned upstream files', () => {
+    const fs = require('node:fs');
+    const { createHash } = require('node:crypto');
+    assert.match(PIN.sha, /^[0-9a-f]{40}$/);
+    const files = fs.readdirSync(CANONICAL).filter(file => file !== 'PINNED.json');
+    assert.deepEqual(files.sort(), Object.keys(PIN.sha256).sort(), 'every vendored file is pinned');
+    for (const [file, sha256] of Object.entries(PIN.sha256)) {
+      const actual = createHash('sha256')
+        .update(fs.readFileSync(path.join(CANONICAL, file)))
+        .digest('hex');
+      assert.equal(
+        actual,
+        sha256,
+        `${file} differs from ${PIN.repository}@${PIN.sha}; run npm run sync:reporting-subscription-vectors`
+      );
+    }
+  });
+
+  test('the vectors are non-trivial, uniquely identified and pinned to a tzdata release', () => {
+    assert.ok(table.cases.length >= 113);
+    assert.equal(new Set(table.cases.map(c => c.id)).size, table.cases.length);
     assert.equal(new Set(table.cases.map(c => c.name)).size, table.cases.length);
+    assert.match(table.tzdata.version, /^\d{4}[a-z]$/);
+    assert.ok(table.tzdata.version >= TZDATA_FLOOR);
+  });
+
+  test('every case validates against case.schema.json', () => {
+    const Ajv = require('ajv');
+    const addFormats = require('ajv-formats');
+    const ajv = new Ajv({ strict: false, allErrors: true });
+    addFormats(ajv);
+    const validate = ajv.compile(require(path.join(CANONICAL, 'case.schema.json')));
+    for (const testCase of table.cases) {
+      assert.equal(validate(testCase), true, `${testCase.id}: ${JSON.stringify(validate.errors)}`);
+    }
   });
 
   for (const testCase of table.cases) {
-    test(testCase.name, () => {
-      const input = structuredClone(testCase.input);
-      if (testCase.expected_error) {
-        assert.throws(
-          () => expectedSubscriptionPeriods(input),
-          error =>
-            error instanceof CoverageInputError &&
-            error.code === testCase.expected_error.code &&
-            error.detail === testCase.expected_error.detail &&
-            error.recovery === 'correctable' &&
-            !('dispatched' in error)
-        );
-        return;
-      }
-      const actual = expectedSubscriptionPeriods(input);
-      assert.deepEqual(comparable(actual), comparable(testCase.expected), testCase.rule);
-      const offerings = new Map(input.offerings.map(offering => [offering.offering_id, offering]));
-      for (const row of actual) {
-        assert.equal(row.subscription_id, input.subscription_id);
-        assert.equal(row.account_id, input.account.account_id);
-        assert.equal(row.report_definition_id, offerings.get(row.offering_id).report_definition_id);
-        assert.equal(row.period_start, iso(instant(row.period_start)), 'emits canonical toISOString form');
-      }
-      assert.ok(testCase.expected_obligations, 'every case states its obligations');
-      if (testCase.expected_obligations) {
-        const grouped = groupExpectedSubscriptionPeriodsV1(actual).map(group => ({
-          subscription_version: group.subscription_version,
-          offering_id: group.offering_id,
-          period_start: instant(group.period_start),
-          period_end: instant(group.period_end),
-          media_buy_ids: group.media_buy_ids,
-        }));
-        assert.deepEqual(
-          grouped,
-          testCase.expected_obligations.map(group => ({
-            ...group,
-            period_start: instant(group.period_start),
-            period_end: instant(group.period_end),
-          }))
-        );
+    test(testCase.id, t => {
+      try {
+        runCase(testCase);
+      } catch (error) {
+        if (staleTzdata && !testCase.expected_error && zoneDependent(testCase)) {
+          t.skip(
+            `runtime tzdata ${runtimeTzdata} predates ${TZDATA_FLOOR}; ${testCase.timezones.join(', ')} may differ from ${table.tzdata.version}`
+          );
+          return;
+        }
+        throw error;
       }
     });
   }
+});
 
+function runCase(testCase) {
+  const input = structuredClone(testCase.input);
+  if (testCase.expected_error) {
+    assert.throws(
+      () => expectedSubscriptionPeriods(input),
+      error =>
+        error instanceof CoverageInputError &&
+        error.code === testCase.expected_error.code &&
+        error.detail === testCase.expected_error.detail &&
+        error.recovery === 'correctable' &&
+        !('dispatched' in error)
+    );
+    return;
+  }
+  const actual = expectedSubscriptionPeriods(input);
+  assert.deepEqual(comparable(actual), comparable(testCase.expected), testCase.rule);
+  const offerings = new Map(input.offerings.map(offering => [offering.offering_id, offering]));
+  for (const row of actual) {
+    assert.equal(row.subscription_id, input.subscription_id);
+    assert.equal(row.account_id, input.account.account_id);
+    assert.equal(row.report_definition_id, offerings.get(row.offering_id).report_definition_id);
+    assert.equal(row.period_start, iso(instant(row.period_start)), 'emits canonical toISOString form');
+  }
+  assert.ok(testCase.expected_obligations, 'every case states its obligations');
+  if (testCase.expected_obligations) {
+    const grouped = groupExpectedSubscriptionPeriodsV1(actual).map(group => ({
+      subscription_version: group.subscription_version,
+      offering_id: group.offering_id,
+      period_start: instant(group.period_start),
+      period_end: instant(group.period_end),
+      media_buy_ids: group.media_buy_ids,
+    }));
+    assert.deepEqual(
+      grouped,
+      testCase.expected_obligations.map(group => ({
+        ...group,
+        period_start: instant(group.period_start),
+        period_end: instant(group.period_end),
+      }))
+    );
+  }
+}
+
+describe('expectedSubscriptionPeriods over the vectors', () => {
   test('every subscription in the table is schema-valid', () => {
     // The subscription schema is unchanged by adcontextprotocol/adcp#8585 apart from
     // descriptions, so the cached 3.3.0-beta.1 copy validates the table's configurations.
@@ -107,7 +168,7 @@ describe('expectedSubscriptionPeriods parity table', () => {
     const validate = ajv.getSchema(
       'https://adcontextprotocol.org/schemas/3.3.0-beta.1/core/reporting-subscription.json'
     );
-    for (const testCase of table.cases) {
+    for (const testCase of table.cases.filter(c => c.expected_error?.wire_valid !== false)) {
       for (const version of testCase.input.versions) {
         assert.equal(validate(version.configuration), true, `${testCase.name}: ${JSON.stringify(validate.errors)}`);
       }

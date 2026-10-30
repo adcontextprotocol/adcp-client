@@ -85,6 +85,8 @@ export type ReportingSubscriptionExclusionReasonV1 =
  */
 export interface ReportingSubscriptionExclusionV1 {
   media_buy_id?: string;
+  /** The offering whose periods it removes; absent for every offering. */
+  offering_id?: string;
   reason: ReportingSubscriptionExclusionReasonV1;
   from: string;
   until?: string;

@@ -47,6 +47,7 @@ export type { ReportingConfigurationCapabilitiesInputV1, ReportingConfigurationC
 export type {
   ReportingDeliveryOfferingWithDimensionsV1,
   ReportingSubscriptionCoverageWithOfferingsV1,
+  ReportingSubscriptionExclusionEntryV1,
   ReportingSubscriptionGapV1,
   ReportingSubscriptionInactiveIntervalV1,
   ReportingSubscriptionStateWithIntervalsV1,

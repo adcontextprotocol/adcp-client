@@ -145,7 +145,10 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // ledger producer, coverage, handlers and status ingest, and then the service,
 // engine and managed delivery, and adds no module file. Allow about 55 KB above
 // the runtime's budget for them. Other budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 26_520_000;
+// The reporting-subscription DX slices (#3504: the advanced subpath, wind-down grant, typed errors with
+// their TSDoc, and the canonical-vector fixes) plus main through #3510 measured 26,520,756 packed bytes;
+// allow about 40 KB above that for compressor variance. Other budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 26_560_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 144 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
