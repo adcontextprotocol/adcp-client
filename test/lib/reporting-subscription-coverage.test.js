@@ -443,6 +443,17 @@ describe('createReportingPeriodCalendarV1 (period_generation)', () => {
       () => createReportingPeriodCalendarV1({ period_duration: 'P1M', alignment: 'billing_cycle', timezone: 'UTC' }),
       /period_anchor/
     );
+    // adcp#8622: a sub-daily billing cycle is invalid; it is refused, never aligned to local midnight.
+    assert.throws(
+      () =>
+        createReportingPeriodCalendarV1({
+          period_duration: 'PT6H',
+          alignment: 'billing_cycle',
+          timezone: 'UTC',
+          period_anchor: '2026-11-01T09:00:00Z',
+        }),
+      { code: 'COVERAGE_INPUT_INVALID', detail: 'invalid_period_duration' }
+    );
   });
 });
 

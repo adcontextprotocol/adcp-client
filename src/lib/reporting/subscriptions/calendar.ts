@@ -263,6 +263,16 @@ export function createReportingPeriodCalendarV1(spec: ReportingPeriodCalendarSpe
       'invalid_period_duration'
     );
   }
+  if (spec.alignment === 'billing_cycle' && !hasDate) {
+    // A billing cycle is anchored on period_anchor; a sub-daily one would have to honour the
+    // anchor's time of day, which the local sub-daily calendar cannot. adcontextprotocol/adcp#8622
+    // makes a sub-daily billing_cycle invalid, so refuse it rather than align to local midnight.
+    throw new CoverageInputError(
+      'COVERAGE_INPUT_INVALID',
+      `Reporting period_duration ${JSON.stringify(spec.period_duration)} is sub-daily, which billing_cycle alignment does not allow (adcp#8622). Use a period of at least one day.`,
+      'invalid_period_duration'
+    );
+  }
   if (spec.alignment !== 'utc' && !hasDate) {
     return createSubDailyLocalCalendar(spec, duration.seconds * 1_000);
   }
