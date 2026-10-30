@@ -490,6 +490,31 @@ describe('discover strategy state machine', () => {
     });
   }
 
+  for (const configuredVersion of [undefined, '3.2.7']) {
+    test(`fixture schema validation honors negotiated 3.1 over configured ${configuredVersion}`, async () => {
+      const sb = storyboard([{ product_id: 'handle' }], [], discoverRoot(['handle']));
+      const legacy = product('native-legacy');
+      legacy.format_ids = [{ id: 'legacy-display' }];
+      const discovered = discoveryClient([legacy]);
+      const result = await runControllerSeeding(
+        discovered.client,
+        sb,
+        {
+          ...(configuredVersion && { adcpVersion: configuredVersion }),
+          _serverAdcpVersion: '3.1.29',
+          agentTools: ['get_products'],
+          _profile: {
+            tools: ['get_products'],
+            raw_capabilities: { media_buy: { features: { canonical_creatives: false } } },
+          },
+        },
+        {}
+      );
+      assert.equal(result.resolutionRecords[0].status, 'resolved', JSON.stringify(result));
+      assert.equal(discovered.calls[0].params.ext, undefined);
+    });
+  }
+
   test('non-reusable handles do not collide; explicit reuse permits it', async () => {
     const products = [{ product_id: 'one' }, { product_id: 'two' }];
     const noReuse = storyboard(products, [], discoverRoot(['one', 'two']));
