@@ -9,7 +9,8 @@
  * them to compile small referenced functions instead of multi-megabyte code.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import uriResolver from 'ajv/dist/runtime/uri';
 
 type JsonObject = Record<string, unknown>;
 
@@ -68,7 +69,15 @@ function cloneData(value: unknown): unknown {
  * `$defs` refs. The archive reader expands those private refs before exposing
  * a schema, preserving the original document and AJV diagnostic paths.
  */
-export function compactBundledSchema(root: JsonObject, options: { maxInlineSchemaBytes?: number } = {}): JsonObject {
+export function compactBundledSchema(
+  root: JsonObject,
+  options: {
+    maxInlineSchemaBytes?: number;
+    referencePrefix?: string;
+    referenceRoots?: readonly JsonObject[];
+    canFactor?: (schema: JsonObject) => boolean;
+  } = {}
+): JsonObject {
   const referenceCounts = new Map<JsonObject, number>();
   const visited = new Set<JsonObject>();
 
@@ -90,6 +99,13 @@ export function compactBundledSchema(root: JsonObject, options: { maxInlineSchem
   if (options.maxInlineSchemaBytes !== undefined) {
     const rootUrl = new URL(typeof root.$id === 'string' ? root.$id : '', 'https://adcp.invalid/');
     rootUrl.hash = '';
+    const resourcesByUri = new Map<string, JsonObject[]>();
+    for (const resource of options.referenceRoots ?? []) {
+      const uri = resource.$id as string;
+      const matches = resourcesByUri.get(uri) ?? [];
+      matches.push(resource);
+      resourcesByUri.set(uri, matches);
+    }
     for (const schema of visited) {
       // Keep the branch boundary in its union function so AJV retains
       // /oneOf/N and /anyOf/N in diagnostics. Descendants can still be
@@ -102,22 +118,35 @@ export function compactBundledSchema(root: JsonObject, options: { maxInlineSchem
       }
       if (typeof schema.$ref !== 'string') continue;
       let fragment: string;
+      let resources = [root];
       try {
-        const target = new URL(schema.$ref, rootUrl);
-        fragment = decodeURIComponent(target.hash.slice(1));
-        target.hash = '';
-        if (target.href !== rootUrl.href || !fragment.startsWith('/')) continue;
+        if (options.referenceRoots) {
+          fragment = uriResolver.parse(schema.$ref).fragment ?? '';
+          resources = resourcesByUri.get(schema.$ref.split('#')[0]!) ?? [];
+          if (!fragment.startsWith('/')) continue;
+        } else {
+          const target = new URL(schema.$ref, rootUrl);
+          fragment = decodeURIComponent(target.hash.slice(1));
+          target.hash = '';
+          if (target.href !== rootUrl.href || !fragment.startsWith('/')) continue;
+        }
       } catch {
         continue; // AJV remains responsible for malformed reference diagnostics.
       }
-      let value: unknown = root;
-      for (const segment of fragment.slice(1).split('/')) {
+      // Remote documents may contain several $id resources. Index those roots
+      // so pointer protection does not multiply every ref by every resource.
+      for (const resource of resources) {
+        let value: unknown = resource;
+        for (const segment of fragment.slice(1).split('/')) {
+          if (isObject(value)) pointerAddressedNodes.add(value);
+          if (!isObject(value) && !Array.isArray(value)) break;
+          const decoded = options.referenceRoots ? decodeURIComponent(segment) : segment;
+          const key = decoded.replace(/~1/g, '/').replace(/~0/g, '~');
+          if (!Object.hasOwn(value, key)) break;
+          value = (value as Record<string, unknown>)[key];
+        }
         if (isObject(value)) pointerAddressedNodes.add(value);
-        if (!isObject(value) && !Array.isArray(value)) break;
-        const key = segment.replace(/~1/g, '/').replace(/~0/g, '~');
-        value = (value as Record<string, unknown>)[key];
       }
-      if (isObject(value)) pointerAddressedNodes.add(value);
     }
   }
 
@@ -202,7 +231,13 @@ export function compactBundledSchema(root: JsonObject, options: { maxInlineSchem
 
   const signatureGroups = new Map<string, JsonObject[]>();
   for (const schema of visited) {
-    if (schema === root || pointerAddressedNodes.has(schema) || unionAlternatives.has(schema)) continue;
+    if (
+      schema === root ||
+      pointerAddressedNodes.has(schema) ||
+      unionAlternatives.has(schema) ||
+      (options.canFactor && !options.canFactor(schema))
+    )
+      continue;
     const signature = schemaSignature(schema);
     const group = signatureGroups.get(signature) ?? [];
     group.push(schema);
@@ -234,41 +269,43 @@ export function compactBundledSchema(root: JsonObject, options: { maxInlineSchem
     if (!isObject(schema)) return schema;
 
     const sharedName = sharedNames.get(schema);
-    if (sharedName && schema !== expanding) return { $ref: `#/$defs/${sharedName}` };
+    const referencePrefix = options.referencePrefix ?? '#/$defs/';
+    if (sharedName && schema !== expanding) return { $ref: `${referencePrefix}${sharedName}` };
     if (ancestors.has(schema)) {
       if (!sharedName) throw new Error('Dereferenced schema contains an unaddressable cycle');
-      return { $ref: `#/$defs/${sharedName}` };
+      return { $ref: `${referencePrefix}${sharedName}` };
     }
 
-    const nextAncestors = new Set(ancestors);
-    nextAncestors.add(schema);
-    const encoded: JsonObject = {};
+    ancestors.add(schema);
+    const encoded: JsonObject = Object.create(null);
 
     for (const [keyword, value] of Object.entries(schema)) {
       if (SCHEMA_MAP_KEYWORDS.has(keyword) && isObject(value)) {
         encoded[keyword] = Object.fromEntries(
-          Object.entries(value).map(([key, child]) => [key, encodeSchema(child, undefined, nextAncestors)])
+          Object.entries(value).map(([key, child]) => [key, encodeSchema(child, undefined, ancestors)])
         );
       } else if (SCHEMA_ARRAY_KEYWORDS.has(keyword) && Array.isArray(value)) {
-        encoded[keyword] = value.map(child => encodeSchema(child, undefined, nextAncestors));
+        encoded[keyword] = value.map(child => encodeSchema(child, undefined, ancestors));
       } else if (SCHEMA_VALUE_KEYWORDS.has(keyword)) {
-        encoded[keyword] = encodeSchema(value, undefined, nextAncestors);
+        encoded[keyword] = encodeSchema(value, undefined, ancestors);
       } else if (keyword === 'items') {
         encoded[keyword] = Array.isArray(value)
-          ? value.map(child => encodeSchema(child, undefined, nextAncestors))
-          : encodeSchema(value, undefined, nextAncestors);
+          ? value.map(child => encodeSchema(child, undefined, ancestors))
+          : encodeSchema(value, undefined, ancestors);
       } else if (keyword === 'dependencies' && isObject(value)) {
         encoded[keyword] = Object.fromEntries(
           Object.entries(value).map(([key, child]) => [
             key,
-            Array.isArray(child) ? cloneData(child) : encodeSchema(child, undefined, nextAncestors),
+            Array.isArray(child) ? cloneData(child) : encodeSchema(child, undefined, ancestors),
           ])
         );
       } else {
         encoded[keyword] = cloneData(value);
       }
     }
-    return encoded;
+    ancestors.delete(schema);
+    // Preserve literal __proto__ keys when compacting remote documents.
+    return { ...encoded };
   };
 
   const compacted = encodeSchema(root, root) as JsonObject;
@@ -298,4 +335,145 @@ export function compactSchemaForValidation(schema: JsonObject): JsonObject {
   // Factor large one-off nodes too; deduplicating only repeated schemas
   // can still leave a megabyte-sized root validator after dereferencing.
   return compactBundledSchema(copied, { maxInlineSchemaBytes: 1024 });
+}
+
+/**
+ * Factor a remote schema without treating its $ids as removable annotations.
+ * Absolute references preserve their original scope when a node is hoisted.
+ * Anchors stay in their resource; dynamic scopes and unusual URIs use the
+ * original document so the official compiler retains its normal behavior.
+ */
+export function compactMcpSchemaForValidation(schema: JsonObject): JsonObject {
+  if (schema[COMPACT_DEFINITIONS_KEY] !== undefined || (schema.$defs !== undefined && !isObject(schema.$defs)))
+    return schema;
+
+  const copied = cloneData(schema) as JsonObject;
+  const resourceUri = `https://mcp-schema.invalid/${randomUUID()}`;
+  const resources: JsonObject[] = [];
+  const schemaNodes = new Set<JsonObject>();
+  const references: string[] = [];
+  const relocatable = new Map<JsonObject, boolean>();
+  const dynamicKeywords = ['$dynamicRef', '$dynamicAnchor', '$recursiveRef', '$recursiveAnchor'];
+  const scopeKeywords = ['$id', '$schema', '$anchor', ...dynamicKeywords];
+  const literalKeywords = new Set(['default', 'enum', 'const']);
+  let supported = true;
+
+  const resolveUri = (base: string, reference: string): string => {
+    // Match Ajv's RFC URI resolver and normalizeId behavior. WHATWG URL differs
+    // for percent-encoded dot segments and must not merge distinct resources.
+    const resolved = uriResolver.resolve(base, reference.replace(/#\/?$/, ''));
+    if (uriResolver.parse(resolved).error) supported = false;
+    return resolved.replace(/#\/?$/, '');
+  };
+
+  const containsScope = (value: unknown): boolean => {
+    if (!isObject(value)) return false;
+    return Object.entries(value).some(
+      ([keyword, child]) => scopeKeywords.includes(keyword) || keyword === '$ref' || containsScope(child)
+    );
+  };
+
+  const normalize = (node: unknown, inheritedUri: string, root = false): boolean => {
+    if (!isObject(node)) return true;
+    schemaNodes.add(node);
+    // Ajv treats an inline $async marker differently from a referenced schema.
+    // Keep that compile-time distinction intact, even under a synchronous root.
+    if (Object.hasOwn(node, '$async')) supported = false;
+    // Ajv scans object-valued extension keywords for IDs more broadly than
+    // schema-position traversal. Preserve such graphs without relocating them.
+    for (const [keyword, value] of Object.entries(node)) {
+      // Ajv's reference-registration walk does not descend prefixItems arrays.
+      // Moving scoped items into $defs could otherwise register a new target.
+      if (keyword === 'prefixItems' && Array.isArray(value) && value.some(containsScope)) supported = false;
+      if (
+        keyword === 'dependentSchemas' &&
+        isObject(value) &&
+        scopeKeywords.some(key => typeof value[key] === 'string' || typeof value[key] === 'boolean')
+      )
+        supported = false;
+      if (
+        !SCHEMA_MAP_KEYWORDS.has(keyword) &&
+        !SCHEMA_ARRAY_KEYWORDS.has(keyword) &&
+        !SCHEMA_VALUE_KEYWORDS.has(keyword) &&
+        keyword !== 'items' &&
+        keyword !== 'dependencies' &&
+        !literalKeywords.has(keyword) &&
+        containsScope(value)
+      )
+        supported = false;
+    }
+    let uri = inheritedUri;
+    if (Object.hasOwn(node, '$id') || root) {
+      if (node.$id !== undefined && typeof node.$id !== 'string') {
+        supported = false;
+        return false;
+      }
+      if (!root && node.$id === '') supported = false;
+      uri = resolveUri(inheritedUri, (node.$id as string | undefined) ?? resourceUri);
+      if (uriResolver.parse(uri).fragment) supported = false;
+      node.$id = uri;
+      resources.push(node);
+    }
+    if (Object.hasOwn(node, '$ref')) {
+      if (typeof node.$ref !== 'string') supported = false;
+      else {
+        node.$ref = resolveUri(uri, node.$ref);
+        references.push(node.$ref as string);
+      }
+    }
+    if (dynamicKeywords.some(keyword => Object.hasOwn(node, keyword))) supported = false;
+
+    let independent = !scopeKeywords.some(keyword => Object.hasOwn(node, keyword));
+    forEachChildSchema(node, child => {
+      if (!normalize(child, uri)) independent = false;
+    });
+    // A resource carries its own base URI and anchors when moved as a whole.
+    if (typeof node.$id === 'string') independent = true;
+    relocatable.set(node, independent);
+    return independent;
+  };
+
+  try {
+    normalize(copied, resourceUri, true);
+    const resourcesByUri = new Map<string, JsonObject[]>();
+    for (const resource of resources) {
+      const uri = resource.$id as string;
+      const matches = resourcesByUri.get(uri) ?? [];
+      if (matches.length > 0) return schema; // Keep duplicate-ID compilation failures intact.
+      matches.push(resource);
+      resourcesByUri.set(uri, matches);
+    }
+    for (const reference of references) {
+      const fragment = uriResolver.parse(reference).fragment ?? '';
+      const matches = resourcesByUri.get(reference.split('#')[0]!);
+      if (!matches) return schema; // External resources remain the compiler's responsibility.
+      if (!fragment.startsWith('/')) continue;
+      for (const resource of matches) {
+        let value: unknown = resource;
+        for (const segment of fragment.slice(1).split('/')) {
+          const key = decodeURIComponent(segment).replace(/~1/g, '/').replace(/~0/g, '~');
+          if (
+            (!isObject(value) && !Array.isArray(value)) ||
+            !Object.hasOwn(value, key) ||
+            (value === copied && key === '$id' && !Object.hasOwn(schema, '$id'))
+          )
+            return schema;
+          value = (value as Record<string, unknown>)[key];
+        }
+        // A ref into annotation data can make that data executable as a schema.
+        // Do not rewrite a graph whose executable nodes were not all visited.
+        if (typeof value !== 'boolean' && (!isObject(value) || !schemaNodes.has(value))) return schema;
+      }
+    }
+  } catch {
+    return schema; // Leave unsupported URI resolution to the official engine.
+  }
+  if (!supported) return schema;
+  const compacted = compactBundledSchema(copied, {
+    maxInlineSchemaBytes: 1024,
+    referencePrefix: `${copied.$id as string}#/$defs/`,
+    referenceRoots: resources,
+    canFactor: node => relocatable.get(node) === true,
+  });
+  return compacted[COMPACT_DEFINITIONS_KEY] === undefined ? schema : compacted;
 }
