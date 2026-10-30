@@ -1549,197 +1549,6 @@ function postProcessCanonicalFormatMarkerIntersections(content: string): string 
 }
 
 /**
- * Keep `CompactTaskSubmittedSchema` (and the `RequestProposalsAsyncSubmitted` /
- * `RefineProposalsAsyncSubmitted` aliases of it) a ZodObject.
- *
- * The canonical schema is `allOf: [version-envelope, protocol-envelope]` plus
- * its own `properties`, so ts-to-zod emits `Envelope.merge(Envelope).and(z.object(...))`
- * — a ZodIntersection with no `.shape`/`.extend()`/`.pick()`/`.omit()`, unlike the
- * plain object this public export was in 3.2.3. `.merge()` lets the right side win
- * on overlap, so it matches the intersection only while every top-level key the
- * compact object shares with either envelope is a strict narrowing of the envelope's
- * declaration (`status: TaskStatus` → `'submitted'`, optional `task_id` → required
- * non-empty, `message` + `maxLength`) and all three objects keep the same
- * unknown-key policy. This pass therefore pins the actual overlap SET and each
- * overlapping declaration, and fails generation on any drift — including a new
- * overlapping field — rather than silently dropping an envelope constraint.
- */
-const COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP: Readonly<Record<string, { envelope: string; compact: string }>> = {
-  status: { envelope: 'TaskStatusSchema', compact: 'z.literal("submitted")' },
-  task_id: { envelope: 'z.string().optional()', compact: 'z.string().min(1)' },
-  message: { envelope: 'z.string().optional()', compact: 'z.string().max(2000).optional()' },
-  context: { envelope: 'ContextObjectSchema.optional()', compact: 'ContextObjectSchema.optional()' },
-};
-
-function postProcessCompactTaskSubmittedEnvelope(content: string, protocolSource?: any): string {
-  const fail = (reason: string): never => {
-    throw new Error(
-      `postProcessCompactTaskSubmittedEnvelope: ${reason}; merging would no longer match the canonical ` +
-        'allOf intersection. Review the envelope projection before changing this pass.'
-    );
-  };
-  const blockOf = (name: string): { start: number; end: number; text: string } => {
-    const start = content.indexOf(`export const ${name} = `);
-    const end = content.indexOf('\n\nexport const ', start + 1);
-    if (start === -1 || end === -1)
-      throw new Error(`postProcessCompactTaskSubmittedEnvelope: unable to locate ${name}.`);
-    return { start, end, text: content.slice(start, end) };
-  };
-  // Top-level keys (name -> initializer source) of the first `z.object({...})` in a schema
-  // declaration, plus whether it is directly `.passthrough()`. AST-based so nested objects'
-  // keys (e.g. inside `payload` or `errors`) are never mistaken for top-level fields.
-  const topLevelObject = (name: string, text: string): { keys: Map<string, string>; passthrough: boolean } => {
-    const source = ts.createSourceFile(`${name}.ts`, text, ts.ScriptTarget.Latest, true);
-    let found: ts.CallExpression | undefined;
-    const visit = (node: ts.Node): void => {
-      if (found) return;
-      if (ts.isCallExpression(node) && node.expression.getText(source) === 'z.object') {
-        found = node;
-        return;
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(source);
-    const literal = found?.arguments[0];
-    if (!found || !literal || !ts.isObjectLiteralExpression(literal))
-      fail(`${name} no longer starts with z.object({...})`);
-    const keys = new Map<string, string>();
-    for (const property of (literal as ts.ObjectLiteralExpression).properties) {
-      if (
-        !ts.isPropertyAssignment(property) ||
-        !(ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
-      ) {
-        fail(`${name} has a non-plain top-level property (${property.getText(source)})`);
-      }
-      const assignment = property as ts.PropertyAssignment;
-      keys.set((assignment.name as ts.Identifier | ts.StringLiteral).text, assignment.initializer.getText(source));
-    }
-    const access = found!.parent;
-    const passthrough =
-      ts.isPropertyAccessExpression(access) &&
-      access.name.text === 'passthrough' &&
-      ts.isCallExpression(access.parent) &&
-      access.parent.expression === access;
-    return { keys, passthrough };
-  };
-
-  const mergeRefinementExtension = (parents: readonly { keys: Map<string, string> }[]): string => {
-    // 3.3 adds an optional finalize estimate to the refinement submitted arm.
-    // It is disjoint from the shared envelope, so merging preserves both
-    // constraints while retaining the public ZodObject helpers.
-    const refinement = blockOf('RefineProposalsAsyncSubmittedSchema');
-    const refinementFrom = 'CompactTaskSubmittedSchema.and(z.object({';
-    if (refinement.text.includes(refinementFrom)) {
-      const extra = topLevelObject('RefineProposalsAsyncSubmittedSchema', refinement.text);
-      if (
-        !extra.passthrough ||
-        [...extra.keys.keys()].join(',') !== 'expected_confirmation_at' ||
-        parents.some(parent => parent.keys.has('expected_confirmation_at'))
-      )
-        fail('refinement submitted extension changed');
-      content =
-        content.slice(0, refinement.start) +
-        refinement.text.replace(refinementFrom, 'CompactTaskSubmittedSchema.merge(z.object({') +
-        content.slice(refinement.end);
-    }
-    return content;
-  };
-  const version = topLevelObject('AdCPVersionEnvelopeSchema', blockOf('AdCPVersionEnvelopeSchema').text);
-  const compact = blockOf('CompactTaskSubmittedSchema');
-  const composedFrom = 'export const CompactTaskSubmittedSchema = ProtocolEnvelopeSchema.and(z.object({';
-  if (compact.text.startsWith(composedFrom)) {
-    // New envelope composition moves the submitted task-id requirement into
-    // the protocol envelope's conditional. Keep that source-owned condition
-    // explicit on the submitted object; the TS round-trip loses if/then.
-    const protocolBlock = blockOf('ProtocolEnvelopeSchema').text;
-    const protocolPrefix =
-      'export const ProtocolEnvelopeSchema = AdCPVersionEnvelopeSchema.merge(z.object({}).passthrough()).merge(z.object({';
-    if (!protocolBlock.startsWith(protocolPrefix)) fail('unsupported composed protocol envelope');
-    const protocol = topLevelObject(
-      'ProtocolEnvelopeSchema',
-      protocolBlock.replace('.merge(z.object({}).passthrough())', '')
-    );
-    const own = topLevelObject('CompactTaskSubmittedSchema', compact.text);
-    if (!protocol.passthrough || !version.passthrough || !own.passthrough) fail('composed unknown-key policy changed');
-    const overlap = [...own.keys.keys()].filter(key => protocol.keys.has(key) || version.keys.has(key)).sort();
-    if (overlap.join(',') !== 'context,status') fail('composed top-level overlap changed');
-    for (const key of overlap) {
-      const reviewed = COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP[key];
-      if (
-        version.keys.has(key) ||
-        protocol.keys.get(key) !== reviewed.envelope ||
-        own.keys.get(key) !== reviewed.compact
-      ) {
-        fail(`composed overlapping field ${key} changed`);
-      }
-    }
-    if (protocol.keys.get('task_id') !== 'TaskIDSchema.optional()' || own.keys.has('task_id'))
-      fail('composed task_id changed');
-    const source =
-      protocolSource ??
-      JSON.parse(readFileSync(path.join(__dirname, '../schemas/cache/latest/core/protocol-envelope.json'), 'utf8'));
-    const conditions = source.allOf?.filter((member: any) => member.if || member.then || member.else);
-    const condition = { ...conditions?.[0] };
-    delete condition.description;
-    if (
-      conditions?.length !== 1 ||
-      !isDeepStrictEqual(condition, {
-        if: { properties: { status: { const: 'submitted' } }, required: ['status'] },
-        then: { required: ['task_id'] },
-      })
-    ) {
-      fail('composed submitted task_id condition changed');
-    }
-    const replacement = compact.text
-      .replace(composedFrom, composedFrom.replace('.and(', '.merge('))
-      .replace(/;$/, '.extend({ task_id: TaskIDSchema });');
-    content = content.slice(0, compact.start) + replacement + content.slice(compact.end);
-    return mergeRefinementExtension([version, protocol, own]);
-  }
-  const protocol = topLevelObject('ProtocolEnvelopeSchema', blockOf('ProtocolEnvelopeSchema').text);
-  const own = topLevelObject('CompactTaskSubmittedSchema', compact.text);
-  const from = 'AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).and(z.object({';
-  if (!compact.text.includes(from)) {
-    throw new Error('postProcessCompactTaskSubmittedEnvelope: expected the generated envelope intersection.');
-  }
-
-  for (const [name, shape] of [
-    ['AdCPVersionEnvelopeSchema', version],
-    ['ProtocolEnvelopeSchema', protocol],
-    ['CompactTaskSubmittedSchema', own],
-  ] as const) {
-    if (!shape.passthrough) fail(`${name} is no longer a passthrough object (unknown-key policy differs)`);
-  }
-
-  // The overlap SET must equal the reviewed set: a new shared key (e.g. a future envelope field the
-  // compact object also declares) would be silently overridden by `.merge()`.
-  const overlap = new Map<string, { envelope: string; compact: string }>();
-  for (const [key, compactInit] of own.keys) {
-    const envelopeInits = [version.keys.get(key), protocol.keys.get(key)].filter((v): v is string => v !== undefined);
-    if (envelopeInits.length > 1) fail(`${key} is declared by both envelopes`);
-    if (envelopeInits.length === 1) overlap.set(key, { envelope: envelopeInits[0], compact: compactInit });
-  }
-  const actual = [...overlap.keys()].sort().join(',');
-  const expected = Object.keys(COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP).sort().join(',');
-  if (actual !== expected) {
-    fail(`top-level overlap with the envelopes changed (expected {${expected}}, found {${actual}})`);
-  }
-  for (const [key, declared] of overlap) {
-    const reviewed = COMPACT_TASK_SUBMITTED_KNOWN_OVERLAP[key];
-    if (declared.envelope !== reviewed.envelope || declared.compact !== reviewed.compact) {
-      fail(
-        `overlapping field ${key} changed (envelope \`${declared.envelope}\` / compact \`${declared.compact}\`, ` +
-          `reviewed \`${reviewed.envelope}\` / \`${reviewed.compact}\`)`
-      );
-    }
-  }
-
-  const to = 'AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).merge(z.object({';
-  content = content.slice(0, compact.start) + compact.text.replace(from, to) + content.slice(compact.end);
-  return mergeRefinementExtension([version, protocol, own]);
-}
-
-/**
  * Guard against lossy per-format `slots` projections.
  *
  * Canonical formats are compiled from their normalized standalone schemas, so
@@ -4900,6 +4709,15 @@ function stripNeverUnionIntersections(content: string): string {
 }
 
 type ObjectShape = Map<string, string>;
+type UnknownKeyPolicy = 'passthrough' | 'strict' | 'strip';
+/** Unknown-key policy of each parsed shape; `.merge()` takes the right operand's. */
+const objectShapePolicies = new WeakMap<ObjectShape, UnknownKeyPolicy>();
+
+function unknownKeyPolicyOfTail(tail: string): UnknownKeyPolicy {
+  const methods = tail.match(/\.(passthrough|strict|strip)\(\)/g) ?? [];
+  const last = methods[methods.length - 1];
+  return last === '.passthrough()' ? 'passthrough' : last === '.strict()' ? 'strict' : 'strip';
+}
 
 function normalizeSchemaExpression(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
@@ -5098,22 +4916,100 @@ function mergeShapes(left: ObjectShape, right: ObjectShape): ObjectShape {
   for (const [key, value] of right) {
     merged.set(key, value);
   }
+  const policy = objectShapePolicies.get(right);
+  if (policy) objectShapePolicies.set(merged, policy);
   return merged;
 }
 
-function canSafelyMerge(left: ObjectShape, right: ObjectShape): boolean {
+/**
+ * True when `A.merge(B)` validates exactly what `A.and(B)` validates. `.merge()`
+ * keeps B's declaration for a shared key, so every shared key's B declaration
+ * must accept a subset of what A's accepts (see `declarationNarrows`).
+ */
+function canSafelyMerge(
+  left: ObjectShape,
+  right: ObjectShape,
+  schemaExpressions?: ReadonlyMap<string, string>
+): boolean {
+  // `.merge()` keeps only the right operand's unknown-key policy, while an
+  // intersection applies both. Only equal non-strict policies are provably
+  // the same; anything involving `.strict()` keeps the intersection.
+  const leftPolicy = objectShapePolicies.get(left);
+  const rightPolicy = objectShapePolicies.get(right);
+  if (leftPolicy === 'strict' || rightPolicy === 'strict') return false;
+  if (leftPolicy && rightPolicy && leftPolicy !== rightPolicy) return false;
   for (const [key, rightValue] of right) {
     const leftValue = left.get(key);
-    if (
-      leftValue !== undefined &&
-      leftValue !== rightValue &&
-      leftValue !== `${rightValue}.optional()` &&
-      leftValue !== `${rightValue}.nullish()`
-    ) {
-      return false;
-    }
+    if (leftValue === undefined || leftValue === rightValue) continue;
+    if (leftValue === `${rightValue}.optional()` || leftValue === `${rightValue}.nullish()`) continue;
+    if (schemaExpressions && declarationNarrows(leftValue, rightValue, schemaExpressions)) continue;
+    return false;
   }
   return true;
+}
+
+/**
+ * Whether the property declaration `narrow` accepts only values `broad` also
+ * accepts, judged from the generated Zod source alone. Recognizes three
+ * structural cases, so it follows the schema as composed rather than any one
+ * schema's layout:
+ *   - optionality: a required declaration narrows the same declaration made optional;
+ *   - literals: `z.literal(v)` narrows a union of literals that includes `v`;
+ *   - string refinements: `z.string()` plus refinements narrows `z.string()` with
+ *     a subset of those refinements.
+ * Named schemas are resolved to their expressions. Anything else is not
+ * provably a narrowing and keeps the intersection.
+ */
+function declarationNarrows(broad: string, narrow: string, schemaExpressions: ReadonlyMap<string, string>): boolean {
+  const split = (value: string): { base: string; optional: boolean } => {
+    const trimmed = normalizeSchemaExpression(value);
+    if (trimmed.endsWith('.optional()')) return { base: trimmed.slice(0, -'.optional()'.length), optional: true };
+    return { base: trimmed, optional: false };
+  };
+  const resolve = (value: string, seen = new Set<string>()): string => {
+    const named = value.match(/^(\w+Schema)$/)?.[1];
+    if (!named || seen.has(named)) return value;
+    const expression = schemaExpressions.get(named);
+    if (expression === undefined) return value;
+    seen.add(named);
+    return resolve(normalizeSchemaExpression(expression), seen);
+  };
+  const b = split(broad);
+  const n = split(narrow);
+  if (n.optional && !b.optional) return false;
+  const broadBase = resolve(b.base);
+  const narrowBase = resolve(n.base);
+  if (broadBase === narrowBase) return true;
+
+  const literal = /^z\.literal\(("(?:[^"\\]|\\.)*")\)$/;
+  const narrowLiteral = narrowBase.match(literal)?.[1];
+  if (narrowLiteral !== undefined) {
+    if (broadBase.match(literal)?.[1] === narrowLiteral) return true;
+    const arms = unionArmsForExpression(broadBase);
+    if (arms?.some(arm => resolve(normalizeSchemaExpression(arm)).match(literal)?.[1] === narrowLiteral)) return true;
+    return false;
+  }
+
+  const refinements = (value: string): string[] | undefined => {
+    if (!value.startsWith('z.string()')) return undefined;
+    const calls: string[] = [];
+    let i = 'z.string()'.length;
+    while (i < value.length) {
+      const method = value.slice(i).match(/^\.(min|max|length|regex|email|url|uuid|datetime)\(/);
+      if (!method) return undefined;
+      const call = scanBalanced(value, i + method[0].length - 1);
+      if (!call) return undefined;
+      calls.push(value.slice(i, call.end));
+      i = call.end;
+    }
+    return calls;
+  };
+  const broadRefinements = refinements(broadBase);
+  const narrowRefinements = refinements(narrowBase);
+  if (broadRefinements && narrowRefinements) {
+    return broadRefinements.every(call => narrowRefinements.includes(call));
+  }
+  return false;
 }
 
 type SchemaExportExpression = {
@@ -5229,7 +5125,12 @@ function schemaShapeForExpression(
 
   const inlineBody = extractObjectLiteralBody(trimmed);
   if (inlineBody !== undefined) {
-    return parseObjectShape(inlineBody);
+    const shape = parseObjectShape(inlineBody);
+    if (shape) {
+      const call = scanBalanced(trimmed, 'z.object'.length);
+      objectShapePolicies.set(shape, unknownKeyPolicyOfTail(call ? trimmed.slice(call.end) : ''));
+    }
+    return shape;
   }
 
   const named = trimmed.match(/^(\w+Schema)$/)?.[1];
@@ -5248,6 +5149,61 @@ function schemaShapeForExpression(
   }
 
   return undefined;
+}
+
+/**
+ * Split `A.merge(B).merge(C)` into `[A, B, C]` when the expression is nothing
+ * but a merge chain; undefined otherwise. The merged shape is then each part's
+ * shape with later parts overriding earlier ones, as `.merge()` does.
+ */
+function splitTopLevelMergeChain(expression: string): string[] | undefined {
+  const parts: string[] = [];
+  let depth = 0;
+  let partStart = 0;
+  for (let i = 0; i < expression.length; i++) {
+    const literalEnd = skipQuotedOrRegexLiteral(expression, i);
+    if (literalEnd !== undefined) {
+      i = literalEnd - 1;
+      continue;
+    }
+    const ch = expression[i];
+    if (ch === '(' || ch === '{' || ch === '[') depth++;
+    else if (ch === ')' || ch === '}' || ch === ']') depth--;
+    else if (depth === 0 && expression.startsWith('.merge(', i)) {
+      const arg = scanBalanced(expression, i + '.merge'.length);
+      if (!arg) return undefined;
+      if (!parts.length) parts.push(expression.slice(partStart, i).trim());
+      parts.push(arg.body.trim());
+      i = arg.end - 1;
+      partStart = arg.end;
+      if (expression.slice(arg.end).trim() && !expression.slice(arg.end).trimStart().startsWith('.merge('))
+        return undefined;
+    }
+  }
+  return parts.length ? parts : undefined;
+}
+
+/**
+ * Shape of the left operand of an intersection being rewritten. Unlike
+ * `schemaShapeForExpression`, this also reads a merge chain such as
+ * `AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema)`, the form the
+ * generator emits for a schema that composes several envelopes. Named schemas
+ * inside it still resolve only to plain objects, or to shapes this pass derived.
+ */
+function baseShapeForExpression(
+  expression: string,
+  schemaExpressions: Map<string, string>,
+  cache: Map<string, ObjectShape | undefined>
+): ObjectShape | undefined {
+  const parts = splitTopLevelMergeChain(expression.trim());
+  if (!parts) return schemaShapeForExpression(expression, schemaExpressions, cache);
+  let shape: ObjectShape | undefined;
+  for (const part of parts) {
+    const partShape = schemaShapeForExpression(part, schemaExpressions, cache);
+    if (!partShape) return undefined;
+    shape = shape ? mergeShapes(shape, partShape) : partShape;
+  }
+  return shape;
 }
 
 function splitTopLevelList(body: string): string[] | undefined {
@@ -5567,9 +5523,36 @@ function postProcessUnionIntersectionOperands(content: string): string {
   return result;
 }
 
-function postProcessObjectIntersections(content: string): string {
+/**
+ * Rewrite `A.and(B)` to `A.merge(B)` wherever both operands are object shapes
+ * and the merge validates exactly what the intersection does (`canSafelyMerge`),
+ * so public object schemas keep `.shape`, `.extend()`, `.pick()` and `.omit()`.
+ *
+ * With `propagate`, iterate to a fixpoint: when the pass turns a schema's whole
+ * intersection into a merge chain it records the merged shape, so a schema that
+ * composes that one (a submitted body composing the protocol envelope, which
+ * composes the version envelope) is rewritten on the next iteration. Only use
+ * it once later passes no longer add refinements to object schemas, because
+ * Zod refuses `.merge()` on a refined object.
+ */
+function postProcessObjectIntersections(content: string, options: { propagate?: boolean } = {}): string {
+  const derivedShapes = new Map<string, ObjectShape>();
+  // Without propagation, derived shapes are neither recorded nor consulted.
+  const recorded = options.propagate ? derivedShapes : new Map<string, ObjectShape>();
+  let rewritten = content;
+  while (true) {
+    const next = rewriteNamedObjectAndsToFixpoint(
+      rewriteTopLevelObjectAndsInExports(rewritten, recorded),
+      derivedShapes
+    );
+    if (!options.propagate || next === rewritten) return next;
+    rewritten = next;
+  }
+}
+
+function rewriteTopLevelObjectAndsInExports(content: string, derivedShapes: Map<string, ObjectShape>): string {
   const schemaExpressions = extractSchemaExports(content);
-  const shapeCache = new Map<string, ObjectShape | undefined>();
+  const shapeCache = new Map<string, ObjectShape | undefined>(derivedShapes);
   let result = '';
   let lastIndex = 0;
 
@@ -5577,17 +5560,28 @@ function postProcessObjectIntersections(content: string): string {
     const expression = schemaExpressions.get(name);
     if (!expression) continue;
 
-    const rewritten = rewriteTopLevelObjectAnds(expression, schemaExpressions, shapeCache);
+    const rewritten = rewriteTopLevelObjectAnds(expression, schemaExpressions, shapeCache, shape =>
+      derivedShapes.set(name, shape)
+    );
+    // A schema that is already a plain merge chain (merged by an earlier pass)
+    // also has a known shape. `derivedShapes` is only consulted when propagating.
+    if (rewritten === expression && !derivedShapes.has(name)) {
+      const shape = baseShapeForExpression(expression, schemaExpressions, shapeCache);
+      if (shape && splitTopLevelMergeChain(expression.trim())) derivedShapes.set(name, shape);
+    }
 
     result += content.slice(lastIndex, expressionStart) + rewritten;
     lastIndex = expressionEnd;
   }
 
   result += content.slice(lastIndex);
+  return result;
+}
 
-  let rewritten = result;
+function rewriteNamedObjectAndsToFixpoint(content: string, derivedShapes: ReadonlyMap<string, ObjectShape>): string {
+  let rewritten = content;
   while (true) {
-    const next = rewriteNamedObjectAnds(rewritten);
+    const next = rewriteNamedObjectAnds(rewritten, derivedShapes);
     if (next === rewritten) return rewritten;
     rewritten = next;
   }
@@ -5808,7 +5802,7 @@ function rewriteObjectUnionIntersection(
       const mergedArms: string[] = [];
       for (const arm of arms) {
         const armShape = schemaShapeForExpression(arm, schemaExpressions, shapeCache);
-        if (!armShape || !canSafelyMerge(baseShape, armShape)) return expression;
+        if (!armShape || !canSafelyMerge(baseShape, armShape, schemaExpressions)) return expression;
         mergedArms.push(`${base}.merge(${arm})`);
       }
 
@@ -5822,7 +5816,8 @@ function rewriteObjectUnionIntersection(
 function rewriteTopLevelObjectAnds(
   expression: string,
   schemaExpressions: Map<string, string>,
-  shapeCache: Map<string, ObjectShape | undefined>
+  shapeCache: Map<string, ObjectShape | undefined>,
+  onFullyMerged?: (shape: ObjectShape) => void
 ): string {
   let result = '';
   let depth = 0;
@@ -5843,14 +5838,14 @@ function rewriteTopLevelObjectAnds(
       if (!result) {
         const base = expression.slice(baseStart, i);
         result = base;
-        currentShape = schemaShapeForExpression(base, schemaExpressions, shapeCache);
+        currentShape = baseShapeForExpression(base, schemaExpressions, shapeCache);
       }
 
       const arg = scanBalanced(expression, i + '.and'.length);
       if (!arg) break;
 
       const argShape = schemaShapeForExpression(arg.body, schemaExpressions, shapeCache);
-      if (currentShape && argShape && canSafelyMerge(currentShape, argShape)) {
+      if (currentShape && argShape && canSafelyMerge(currentShape, argShape, schemaExpressions)) {
         result += `.merge(${arg.body})`;
         currentShape = mergeShapes(currentShape, argShape);
       } else {
@@ -5865,13 +5860,15 @@ function rewriteTopLevelObjectAnds(
   }
 
   if (!result) return expression;
-  result += expression.slice(baseStart);
+  const tail = expression.slice(baseStart);
+  if (currentShape && !tail.trim()) onFullyMerged?.(currentShape);
+  result += tail;
   return result;
 }
 
-function rewriteNamedObjectAnds(content: string): string {
+function rewriteNamedObjectAnds(content: string, derivedShapes?: ReadonlyMap<string, ObjectShape>): string {
   const schemaExpressions = extractSchemaExports(content);
-  const shapeCache = new Map<string, ObjectShape | undefined>();
+  const shapeCache = new Map<string, ObjectShape | undefined>(derivedShapes ?? []);
   const namedAndRegex = /\b(\w+Schema)\.and\(/g;
   let result = '';
   let lastIndex = 0;
@@ -5887,7 +5884,7 @@ function rewriteNamedObjectAnds(content: string): string {
     const rightShape = schemaShapeForExpression(arg.body, schemaExpressions, shapeCache);
 
     result += content.slice(lastIndex, match.index);
-    if (leftShape && rightShape && canSafelyMerge(leftShape, rightShape)) {
+    if (leftShape && rightShape && canSafelyMerge(leftShape, rightShape, schemaExpressions)) {
       result += `${schemaName}.merge(${arg.body})`;
     } else {
       result += content.slice(match.index, arg.end);
@@ -6614,9 +6611,11 @@ async function generateZodSchemas() {
     zodSchemas = postProcessPricingOptionConstraints(zodSchemas);
     zodSchemas = postProcessJsonSchemaUriFormats(zodSchemas);
     zodSchemas = postProcessPrimitiveEnumExclusions(zodSchemas);
-    // Inspect the final canonical primitive constraints before checking that
-    // the compact object's fields safely narrow the shared envelopes.
-    zodSchemas = postProcessCompactTaskSubmittedEnvelope(zodSchemas);
+    // Composed schemas (a submitted body composing the protocol envelope, which
+    // composes the version envelope) only become object shapes once their parts
+    // are merged. Rerun the object-intersection rewrite with propagation now
+    // that no later pass adds refinements to object schemas.
+    zodSchemas = postProcessObjectIntersections(zodSchemas, { propagate: true });
 
     // Compatibility aliases can make jsts emit repeated format/placement
     // intersections. Collapse them before annotation so adopter OpenAPI
@@ -6705,7 +6704,6 @@ export const __test__ = {
   postProcessRepeatedProductIntersections,
   postProcessUnionIntersectionOperands,
   postProcessCanonicalFormatSlots,
-  postProcessCompactTaskSubmittedEnvelope,
   postProcessCreativeBriefRequiredDisclosures,
   reportingStatusViewRequiredFields,
   reportingStatusClosedStructures,

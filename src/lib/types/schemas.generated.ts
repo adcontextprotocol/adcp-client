@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-10-30T14:21:41.412Z
+// Generated at: 2026-10-30T18:40:13.992Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3649,7 +3649,7 @@ export const AttestationEvaluationSchema = /* @__PURE__ */ (() => (z.object({}).
 export const TargetingGeoMetrosSchema = /* @__PURE__ */ (() => (nonemptyArray(GeoMetroSchema)))();
 
 export const DemographicTargetingIntentSchema = /* @__PURE__ */ (() => (z.object({
-    age: DemographicAgeRangeSchema.and(z.object({
+    age: DemographicAgeRangeSchema.merge(z.object({
         accepted_bases: nonemptyArray(AgeDeterminationBasisSchema).optional(),
         accepted_verification_methods: nonemptyArray(AgeVerificationMethodSchema).optional()
     }).passthrough()).optional(),
@@ -3761,7 +3761,7 @@ export const ImpairmentSchema = /* @__PURE__ */ (() => (z.object({
     remediation: z.string().max(500).optional()
 }).passthrough()))();
 
-export const MediaBuyFrequencyCapSchema = /* @__PURE__ */ (() => (FrequencyCapSchema.and(z.object({}).passthrough())))();
+export const MediaBuyFrequencyCapSchema = /* @__PURE__ */ (() => (FrequencyCapSchema.merge(z.object({}).passthrough())))();
 
 export const BusinessEntity1Schema = /* @__PURE__ */ (() => (BusinessEntitySchema))();
 
@@ -4652,7 +4652,7 @@ export const ProductExecutionRequirementSchema = /* @__PURE__ */ (() => (z.union
 
 export const ExecutionReadinessStatus1Schema = /* @__PURE__ */ (() => (ExecutionReadinessStatusSchema))();
 
-export const GetProductsRejectedSchema = /* @__PURE__ */ (() => (AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).and(z.object({
+export const GetProductsRejectedSchema = /* @__PURE__ */ (() => (AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).merge(z.object({
     status: z.literal("rejected"),
     reason: z.string().min(1).max(2000),
     suggestions: nonemptyArray(z.string()).max(20).optional(),
@@ -5269,7 +5269,7 @@ export const CanonicalCollectionReferenceSchema = /* @__PURE__ */ (() => (z.obje
     collection_id: z.string().min(1).max(255)
 }).passthrough()))();
 
-export const CanonicalMediaBuyActionSchema = /* @__PURE__ */ (() => (z.union([CanonicalMediaBuyActionFieldsSchema, CanonicalMediaBuyActionFieldsSchema.and(z.object({}).passthrough())])))();
+export const CanonicalMediaBuyActionSchema = /* @__PURE__ */ (() => (z.union([CanonicalMediaBuyActionFieldsSchema, CanonicalMediaBuyActionFieldsSchema.merge(z.object({}).passthrough())])))();
 
 export const CreateMediaBuyAsyncSubmittedSchema = /* @__PURE__ */ (() => (CreateMediaBuySubmittedSchema))();
 
@@ -8057,7 +8057,7 @@ export const ProposalCreatedWebhookSchema = /* @__PURE__ */ (() => (z.object({
 
 export const ProposalOfferedWebhookSchema = /* @__PURE__ */ (() => (z.object({
     offer_reason: z.union([z.literal("installment_postponed"), z.literal("installment_cancelled"), z.literal("preemption"), z.literal("under_delivery"), z.literal("seller_request")]).optional()
-}).passthrough().and(z.object({
+}).passthrough().merge(z.object({
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     notification_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
     notification_type: z.literal("proposal.offered"),
@@ -11582,12 +11582,12 @@ export const UnchangedReportingReceiptSchema = /* @__PURE__ */ (() => (z.object(
 
 export const RecordedReportingAdjustmentReceiptSchema = /* @__PURE__ */ (() => (z.object({
     result: z.literal("recorded"),
-    adjustment_receipt: ReportingAdjustmentReceiptSchema.and(z.object({}).passthrough())
+    adjustment_receipt: ReportingAdjustmentReceiptSchema.merge(z.object({}).passthrough())
 }).passthrough()))();
 
 export const UnchangedReportingAdjustmentReceiptSchema = /* @__PURE__ */ (() => (z.object({
     result: z.literal("unchanged"),
-    adjustment_receipt: ReportingAdjustmentReceiptSchema.and(z.object({}).passthrough())
+    adjustment_receipt: ReportingAdjustmentReceiptSchema.merge(z.object({}).passthrough())
 }).passthrough()))();
 
 export const FailedReportingReceiptSchema = /* @__PURE__ */ (() => (z.object({
@@ -16109,7 +16109,7 @@ export const AcquireRightsAcquiredSchema = /* @__PURE__ */ (() => (z.object({
     }).passthrough().optional(),
     approval_webhook: PushNotificationConfigSchema.optional(),
     usage_reporting_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    rights_constraint: RightsConstraintSchema.and(z.object({}).passthrough()),
+    rights_constraint: RightsConstraintSchema.merge(z.object({}).passthrough()),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough()))();
@@ -16190,7 +16190,7 @@ export const UpdateRightsSuccessSchema = /* @__PURE__ */ (() => (z.object({
     rights_id: z.string(),
     terms: RightsTermsSchema,
     generation_credentials: z.array(GenerationCredentialSchema),
-    rights_constraint: RightsConstraintSchema.and(z.object({}).passthrough()),
+    rights_constraint: RightsConstraintSchema.merge(z.object({}).passthrough()),
     paused: z.boolean().optional(),
     implementation_date: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional().nullable(),
     context: ContextObjectSchema.optional(),
@@ -16794,7 +16794,7 @@ export const RegistryEventSchema = /* @__PURE__ */ (() => (z.object({
     }).passthrough(), z.object({
         event_type: z.literal("collection.removed"),
         entity_type: z.literal("collection").optional(),
-        payload: CollectionPayloadSchema.and(z.object({
+        payload: CollectionPayloadSchema.merge(z.object({
             status: z.literal("removed")
         }).passthrough()).optional()
     }).passthrough(), z.object({
@@ -18100,7 +18100,7 @@ export const RequestProposalsRequestSchema = /* @__PURE__ */ (() => (z.object({
     brand: BrandKeySchema.optional(),
     brief: z.string().min(1),
     criteria: ProductDiscoveryCriteriaSchema.optional(),
-    opportunity: OpportunityContextSchema.and(z.object({
+    opportunity: OpportunityContextSchema.merge(z.object({
         status: z.literal("open").optional()
     }).passthrough()).optional(),
     include_collections: z.boolean().optional()
@@ -19374,7 +19374,7 @@ export const ExplicitPackagesWithFixedAllocationSchema: z.ZodType = /* @__PURE__
     budget_allocation: z.object({
         mode: z.literal("fixed")
     }).passthrough().optional(),
-    packages: z.array(PackageRequestSchema.and(z.object({}).passthrough()))
+    packages: z.array(PackageRequestSchema.merge(z.object({}).passthrough()))
 }).passthrough()))();
 
 export const ReportingDeliveryConfigurationSchema = /* @__PURE__ */ (() => (z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
@@ -22650,7 +22650,7 @@ export const CreateMediaBuyRequestSchema: z.ZodObject<{ [K in keyof CreateMediaB
     plan_id: z.string().optional(),
     account: AccountReferenceSchema,
     proposal_id: z.string().optional(),
-    opportunity: OpportunityContextSchema.and(z.object({
+    opportunity: OpportunityContextSchema.merge(z.object({
         status: z.literal("closed").optional()
     }).passthrough()).optional(),
     total_budget: z.object({
