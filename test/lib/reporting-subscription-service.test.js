@@ -278,7 +278,9 @@ describe('reliable reporting service with subscription obligations', () => {
       { account: { account_id: ACCOUNT }, reporting_revision_id: forA.revisions[0].reporting_revision_id },
       { account: { id: ACCOUNT, ctx_metadata: {} }, principalScope: A }
     );
-    assert.deepEqual(own.reporting_rows, [{ media_buy_id: 'mb-a', impressions: 1, spend: '1.00' }]);
+    assert.deepEqual(own.reporting_rows, [
+      { account_id: ACCOUNT, media_buy_id: 'mb-a', impressions: 1, spend: '1.00' },
+    ]);
   });
 
   test('one subscription that cannot be planned does not stop the others', async () => {

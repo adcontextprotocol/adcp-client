@@ -466,6 +466,15 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           value => `${value.configurationId}\0${value.periodOrdinal}`
         )
       );
+      // A managed binding must exist before a generation's first obligation: bind every generation
+      // about to receive one. A generation that has never been widened has no obligation yet.
+      if (plan.bindGeneration) {
+        for (const configuration of generations.values()) {
+          if (configuration.owedSet?.from !== undefined) continue;
+          if (!prepared.some(value => value.configuration.configurationId === configuration.configurationId)) continue;
+          await plan.bindGeneration(structuredClone(configuration));
+        }
+      }
       // Widen each generation's scope summary before its obligations land, so a read never sees
       // an obligation its generation does not answer for. Completeness (`through`) moves only
       // after every obligation is durable.
@@ -724,7 +733,10 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
             signal: executionSignal,
           });
           assertPublicationProgress(adjustments.at(-1) ?? previous.at(-1), manifest);
-          const rows = await readManifestRows(options.source, obligation, manifest, executionSignal, settlementGrace);
+          const rows = withSubscriptionAccountId(
+            obligation,
+            await readManifestRows(options.source, obligation, manifest, executionSignal, settlementGrace)
+          );
           validateManifestFinalityForObligation(obligation, manifest);
           if (previous.some(value => value.finality === 'official')) {
             const official = previous.find(value => value.finality === 'official')!;
@@ -1165,6 +1177,27 @@ function planOwedSetObligation(
     createdAt,
     subscription: structuredClone(configuration.subscription!),
   };
+}
+
+/**
+ * `core/reporting-subscription.json`: every delivered row of a subscription carries `account_id`,
+ * because one destination may receive several accounts. It is stamped before the revision is
+ * bound, so the committed digest covers it; a row naming another account is refused. Account
+ * obligations' rows are returned unchanged.
+ */
+function withSubscriptionAccountId(
+  obligation: ReportingLedgerObligationV1,
+  rows: Record<string, unknown>[]
+): Record<string, unknown>[] {
+  if (!obligation.subscription) return rows;
+  const accountId = obligation.account.account_id;
+  return rows.map(row => {
+    if (row.account_id === undefined) return { account_id: accountId, ...row };
+    if (row.account_id !== accountId) {
+      throw new ReportingSourceConfigurationError('Reporting source row names a different account_id');
+    }
+    return row;
+  });
 }
 
 function boundedId(value: unknown, field: string): void {

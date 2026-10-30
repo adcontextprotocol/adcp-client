@@ -44,6 +44,19 @@ interface ReportingAccountActivityBaseV1 {
   accountId: string;
   reporting_obligation_id: string;
   occurredAt: string;
+  /**
+   * The principal owning a subscription obligation (experimental, AdCP 3.3). Its notification
+   * reaches only that principal's subscribers on the account. Absent for account obligations.
+   */
+  ownerPrincipalId?: string;
+}
+
+/** Scope a subscription obligation's activity to its owning principal. */
+function withOwner<T extends ReportingAccountActivityBaseV1>(
+  activity: T,
+  obligation: Readonly<Pick<ReportingLedgerObligationV1, 'subscription'>>
+): T {
+  return obligation.subscription ? { ...activity, ownerPrincipalId: obligation.subscription.principalId } : activity;
 }
 
 /**
@@ -943,7 +956,10 @@ export function createPostgresReportingNotificationActivityRuntime(
       if (input.transition.reporting_obligation_id !== input.obligation.reporting_obligation_id) {
         throw new Error('Reporting transition and authoritative obligation identities disagree');
       }
-      const activity = buildActivity(namespace, tenantId, input.transition, input.obligation);
+      const activity = withOwner(
+        buildActivity(namespace, tenantId, input.transition, input.obligation),
+        input.obligation
+      );
       const notificationRequired = input.transition.previousHealth !== input.transition.health;
       await persistActivity(transaction, {
         eventId: input.transition.transitionId,
@@ -961,7 +977,7 @@ export function createPostgresReportingNotificationActivityRuntime(
         throw new Error('Reporting ledger record and authoritative obligation identities disagree');
       }
       const occurredAt = await databaseNow(transaction);
-      const activity = buildLedgerChangedActivity(namespace, tenantId, occurredAt, input);
+      const activity = withOwner(buildLedgerChangedActivity(namespace, tenantId, occurredAt, input), input.obligation);
       await persistActivity(transaction, {
         eventId,
         obligation: input.obligation,
@@ -982,7 +998,7 @@ export function createPostgresReportingNotificationActivityRuntime(
         throw new Error('Reporting delivery-ready activity requires a successful materialization');
       }
       const occurredAt = await databaseNow(transaction);
-      const activity = buildDeliveryReadyActivity(namespace, tenantId, occurredAt, input);
+      const activity = withOwner(buildDeliveryReadyActivity(namespace, tenantId, occurredAt, input), input.obligation);
       await persistActivity(transaction, {
         eventId,
         obligation: input.obligation,
@@ -1148,6 +1164,7 @@ export function createPostgresReportingNotificationActivityRuntime(
             anchor: 'account',
             tenantId: claim.tenantId,
             accountId: claim.accountId,
+            ...(claim.activity.ownerPrincipalId ? { principalId: claim.activity.ownerPrincipalId } : {}),
             payload: notificationPayload(claim.activity),
             // Commit the recipient set under this lease before anything leaves
             // the process. Each recipient is revisable until its own durable

@@ -288,7 +288,15 @@ export interface CreateReliableReportingServiceOptionsV1<TCtxMeta = Record<strin
 }
 
 export interface ReliableReportingSubscriptionsOptionsV1<TCtxMeta = Record<string, unknown>> {
-  engine: Pick<ReportingSubscriptionEngineV1, 'subscriptionCoverage' | 'settings' | 'frozenOwedSets'>;
+  engine: Pick<ReportingSubscriptionEngineV1, 'subscriptionCoverage' | 'settings' | 'frozenOwedSets'> &
+    Partial<Pick<ReportingSubscriptionEngineV1, 'isAuthorized'>>;
+  /**
+   * The principal runtime. A composition that delivers managed subscription obligations (the
+   * production service in `@adcp/reporting-storage/service`) resolves each subscription's
+   * destination through it.
+   */
+  principal?: Pick<PrincipalLifecycleRuntimeSubscriptions, 'listReportingSubscriptions'> &
+    Pick<PrincipalLifecycleRuntime, 'resolveReportingDestination'>;
   /**
    * The same authenticated mapping the principal runtime uses. Never derive it from request content.
    * It also scopes `get_reporting_status`, `get_media_buy_delivery` and `sync_reporting_status`: a
@@ -327,10 +335,31 @@ export interface ReliableReportingSubscriptionsOptionsV1<TCtxMeta = Record<strin
     error: unknown,
     context: { principal: PrincipalStoreScope; accountId?: string; subscriptionId?: string }
   ): void | Promise<void>;
+  /**
+   * Binds a managed subscription generation to its destination before its first obligation is
+   * written. Supplied by a composition that owns managed delivery, such as
+   * `createPostgresReliableReportingProductionService`; a subscription that resolves a managed
+   * offering without it fails to plan. A rejection writes nothing, and the next cycle tries again.
+   */
+  bindManagedGeneration?(input: ReliableReportingSubscriptionBindingInputV1): Promise<void>;
   /** Standard dimensions the seller maps its report definitions onto (`subscriptions.dimensions`). */
   dimensions?: readonly string[];
   /** Keep serving `sync_accounts` `reporting_delivery_configs`. Defaults to true. */
   accountConfigurations?: boolean;
+}
+
+/** One managed subscription generation to bind to its destination. */
+export interface ReliableReportingSubscriptionBindingInputV1 {
+  /** The owning principal. */
+  principal: PrincipalStoreScope;
+  /** The installed generation, with its `subscription` block. */
+  configuration: ReportingLedgerConfigurationV1;
+  /** The subscription version's configuration, naming `destination.destination_id` and `path_template`. */
+  subscription: ReportingSubscriptionFrozenOwedSetV1['versions'][number]['configuration'];
+  /** The destination's pattern and transport, frozen when the version was accepted. */
+  destinationMethod?: NonNullable<ReportingSubscriptionFrozenOwedSetV1['versions'][number]['destination_method']>;
+  /** The resolved managed offering. */
+  offering: ReportingDeliveryOffering;
 }
 
 /** What {@link ReliableReportingSubscriptionsOptionsV1.resolveSubscriptionConfiguration} is asked about. */
@@ -412,7 +441,8 @@ export type ReliableReportingMaintenanceFactoryV1 = (
  * @experimental Storage-facing building block: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 import type { ReportingSubscriptionEngineV1, ReportingSubscriptionFrozenOwedSetV1 } from '../subscriptions/engine';
-import type { PrincipalStoreScope } from '../../server/principal/types';
+import type { PrincipalLifecycleRuntimeSubscriptions, PrincipalStoreScope } from '../../server/principal/types';
+import type { PrincipalLifecycleRuntime } from '../../server/principal/runtime';
 import { reportingConfigurationCapabilitiesV1 } from '../subscriptions/capabilities';
 import { isAdcpVersionAtLeast } from '../../utils/adcp-version-config';
 import type { ReportingDeliveryOfferingWithDimensionsV1 } from '../subscriptions/wire';
@@ -713,7 +743,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     getReportingStatus: subscriptionOptions
       ? async (request, context) => {
           const response = await getReportingStatus(request, context as never);
-          return withSubscriptionCoverage(response, context as never, subscriptionOptions);
+          return withReportingSubscriptionCoverageV1(response, context as never, subscriptionOptions);
         }
       : (request, context) => getReportingStatus(request, context as never),
     getMediaBuyDelivery: (request, context) => getMediaBuyDelivery(request, context as never),
@@ -946,6 +976,23 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       principal,
       subscriptionId: set.subscription_id,
       configurations: [...generations.values()].map(value => value.input),
+      bindGeneration: async configuration => {
+        const generation = [...generations.values()].find(
+          value =>
+            value.input.delivery_config_version === configuration.delivery_config_version &&
+            value.input.offeringId === configuration.offeringId
+        );
+        if (!generation?.managedOffering) return;
+        await subscriptions.bindManagedGeneration!({
+          principal,
+          configuration,
+          subscription: structuredClone(generation.version.configuration),
+          ...(generation.version.destination_method
+            ? { destinationMethod: structuredClone(generation.version.destination_method) }
+            : {}),
+          offering: structuredClone(generation.managedOffering),
+        });
+      },
       obligations,
       owedThrough: new Date(owedThroughMs).toISOString(),
       now: now.toISOString(),
@@ -963,6 +1010,9 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   ): Promise<{
     input: ReportingSubscriptionConfigurationInputV1;
     pool: ReportingLedgerConfigurationV1['constituents'];
+    /** The resolved offering when it is managed, so the generation needs a managed binding. */
+    managedOffering?: ReportingDeliveryOffering;
+    version: ReportingSubscriptionFrozenOwedSetV1['versions'][number];
   }> {
     const deliveryOffering = deliveryOfferings.find(value => value.offering_id === offeringId);
     const sourceOffering = offerings.get(offeringId);
@@ -971,8 +1021,18 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         `Subscription resolved offering ${JSON.stringify(offeringId)}, which this service does not serve`
       );
     }
-    if (deliveryOffering.method !== undefined || deliveryOffering.reconciliation_mode !== 'delivery_only') {
-      throw new TypeError('Managed delivery of subscription obligations is not supported yet');
+    // A managed offering (one with a delivery method) is delivered to the subscription's
+    // destination, which only a composition that owns managed delivery can bind. Selection
+    // matches the method to the version's destination, so the destination is always present.
+    const managed = deliveryOffering.method !== undefined;
+    if (managed && typeof subscriptions.bindManagedGeneration !== 'function') {
+      throw new TypeError(
+        'A managed subscription offering needs a composition that binds managed delivery, such as ' +
+          'createPostgresReliableReportingProductionService from @adcp/reporting-storage/service'
+      );
+    }
+    if (!managed && deliveryOffering.reconciliation_mode !== 'delivery_only') {
+      throw new TypeError('A consumer-receipt subscription offering must be managed');
     }
     const subscription = version.configuration;
     const policy = await subscriptions.resolveSubscriptionConfiguration({
@@ -1024,6 +1084,8 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         },
       },
       pool: constituents,
+      ...(managed ? { managedOffering: structuredClone(deliveryOffering) } : {}),
+      version,
     };
   }
 
@@ -1161,9 +1223,13 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
 
 /**
  * Add `subscription_coverage[]` to a completed summary or periods response. The revision
- * view never carries it, and an account the caller cannot read has no entries.
+ * view never carries it, and an account the caller cannot read has no entries. Exported for
+ * compositions that serve `get_reporting_status` from their own handler, such as the production
+ * service in `@adcp/reporting-storage/service`.
+ *
+ * @experimental Storage-facing building block: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
-async function withSubscriptionCoverage<TCtxMeta>(
+export async function withReportingSubscriptionCoverageV1<TCtxMeta>(
   response: Awaited<ReturnType<ReliableReportingPlatform<TCtxMeta>['getReportingStatus']>>,
   context: RequestContext<Account<TCtxMeta>>,
   subscriptions: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>

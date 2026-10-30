@@ -656,6 +656,12 @@ export interface ReportingLedgerNotificationActivityPortV1<TTransaction = unknow
 export interface ReportingLedgerSubscriberV1 {
   subscriberId: string;
   account_id: string;
+  /**
+   * The principal this subscriber notifies (experimental, AdCP 3.3). A transition of a
+   * subscription obligation reaches only subscribers of its owning principal; account obligations
+   * reach every subscriber of the account, as before.
+   */
+  principal?: ReportingLedgerSubscriptionPrincipalV1;
   notify(transition: Readonly<ReportingLedgerStatusTransitionV1>): void | Promise<void>;
 }
 
@@ -762,6 +768,12 @@ export interface ReportingManagedDeliveryBindingV1 {
   verification_profile: NonNullable<ReportingMaterialization['verification']>['verification_profile'];
   reconciliation_mode: 'delivery_only' | 'consumer_receipt';
   resource_retention_days: number;
+  /**
+   * A subscription's `destination.path_template` (experimental, AdCP 3.3), frozen with the
+   * binding. Each delivery expands it per obligation into a relative path under the destination.
+   * Absent on account bindings, whose fingerprint it therefore never changes.
+   */
+  path_template?: string;
   created_at: string;
   semantic_fingerprint: string;
 }
@@ -1409,6 +1421,12 @@ export interface ReportingSubscriptionLedgerPlanV1 {
    */
   owedThrough: string;
   now?: string;
+  /**
+   * Called for each generation about to receive its first obligations, after it is installed and
+   * before any obligation is written: a managed binding must exist before the first obligation.
+   * A rejection writes nothing for the plan, and the hook runs again on the next plan.
+   */
+  bindGeneration?(configuration: ReportingLedgerConfigurationV1): Promise<void>;
 }
 
 export interface ReportingProducerV1 {
