@@ -25,7 +25,7 @@
  *   offering, an edited product) or pruning retained exceptions never change an elapsed
  *   owed set. Reconcile at least once per period so each period is frozen with the facts in
  *   force when it was resolved;
- * - the tenant-scoped receipt roster and the post-loss receipt window.
+ * - the tenant-scoped receipt roster (there is no post-loss receipt window, adcp#8607).
  *
  * State is sharded: one document per principal for `max_accounts` slots, and one per
  * (principal, account), each updated with compare-and-set.
@@ -408,16 +408,6 @@ export interface ReportingSubscriptionEngineV1 {
   ): Promise<ExpectedSubscriptionObligationV1[]>;
   /** Principals in the tenant whose active subscriptions cover the account: the consumers that owe receipts. */
   receiptRoster(tenantId: string, accountId: string): Promise<PrincipalStoreScope[]>;
-  /**
-   * Whether `sync_reporting_receipts`/`sync_reporting_status` from this principal may still be
-   * accepted for a revision it read at `readAt`: always while authorized; after a loss only
-   * for revisions read before `unauthorized_at`, for `status_retention_days`.
-   */
-  acceptsReceipt(
-    principal: Readonly<PrincipalStoreScope>,
-    accountId: string,
-    input: { readAt: string; now?: string }
-  ): Promise<boolean>;
   /**
    * Accounts whose own `reporting_delivery_configs` a `replace_account_configs` application
    * may deactivate: in scope and served, resolving an offering, and not excluded,
@@ -1579,16 +1569,6 @@ export function createReportingSubscriptionEngineV1(
         if (covers) roster.push(principal);
       }
       return roster.sort((left, right) => compareReportingIdsByteOrderV1(left.principalId, right.principalId));
-    },
-    async acceptsReceipt(principal, accountId, input) {
-      const document = await readAccount(principal, accountId);
-      const account = document?.account;
-      if (isAuthorized(account)) return true;
-      const grant = lastGrant(account);
-      if (grant?.unauthorized_at === undefined) return false;
-      const unauthorizedAt = Date.parse(grant.unauthorized_at);
-      const nowMs = input.now !== undefined ? Date.parse(input.now) : now().getTime();
-      return Date.parse(input.readAt) < unauthorizedAt && nowMs < unauthorizedAt + retentionMs;
     },
     async replaceAccountConfigTargets(principal, subscriptionId) {
       const targets: string[] = [];

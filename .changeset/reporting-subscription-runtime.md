@@ -22,7 +22,7 @@ Versioning follows the spec: a version changes only for semantic changes; each v
 - `offering_unsupported` (buy- and package-level), `excluded_by_buyer`, `capacity`, `overridden` and `action_required` exceptions opened and closed at cutover instants
 - timezone cutovers, and re-grant gaps unless `backfill_on_regrant`
 
-It publishes `accounts_with_exceptions` and `accounts_unauthorized`, with `last_owed_period_end` and `withheld_period_count`. It serves `subscription_coverage[]`, `owedPeriods`/`owedObligations` (computed with the same `expectedSubscriptionPeriods` rule buyers run), the receipt roster, and the post-loss receipt window (`acceptsReceipt`).
+It publishes `accounts_with_exceptions` and `accounts_unauthorized`, with `last_owed_period_end` and `withheld_period_count`. It serves `subscription_coverage[]`, `owedPeriods`/`owedObligations` (computed with the same `expectedSubscriptionPeriods` rule buyers run), and the receipt roster. There is no post-loss receipt window: once authority is lost the account is unknown to every task (adcontextprotocol/adcp#8607).
 
 **Service and capabilities.** `createReliableReportingService({ reportingSubscriptions: { engine, resolvePrincipal } })` advertises `configuration_tasks` and the `subscriptions` block and adds `subscription_coverage[]` to summary and periods views. `createAdcpServerFromPlatform` passes `capabilities.principal` through as `adcp.principal`, adds `protocol.principal` and `media_buy.reporting_subscriptions` to `experimental_features`, and refuses to construct when subscriptions are advertised without the `reporting_subscriptions` section. Callers pinned below 3.3 see neither the 3.3 registration fields nor that section. `createAdcpServer` accepts `capabilities.principal`.
 

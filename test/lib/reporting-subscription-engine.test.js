@@ -347,8 +347,8 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
       assert.equal(lost[0].last_owed_period_end, '2026-11-05T00:00:00.000Z');
       assert.equal(lost[0].withheld_period_count, 1, 'the 11-04 period (due 11-05T06) was not yet due at revocation');
       assert.deepEqual(await w.engine.subscriptionCoverage(SCOPE, 'acct_1'), [], 'caller isolation is unchanged');
-      assert.equal(await w.engine.acceptsReceipt(SCOPE, 'acct_1', { readAt: '2026-11-05T01:00:00.000Z' }), true);
-      assert.equal(await w.engine.acceptsReceipt(SCOPE, 'acct_1', { readAt: '2026-11-05T06:00:00.000Z' }), false);
+      // adcp#8607: revocation means no access, so there is no post-loss receipt window.
+      assert.equal('acceptsReceipt' in w.engine, false);
       assert.ok(w.emitted.some(event => event.payload.reason === 'reporting_subscription_changed'));
 
       // The host keeps reporting the chain's authorized_at and reports when it re-granted.

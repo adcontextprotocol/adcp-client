@@ -167,7 +167,7 @@ describe('reporting subscriptions on PostgreSQL', { skip: !DATABASE_URL && 'DATA
       owed.map(row => row.period_start),
       ['2026-11-03T00:00:00.000Z', '2026-11-04T00:00:00.000Z']
     );
-    assert.equal(await second.engine.acceptsReceipt(scope, 'acct_1', { readAt: '2026-11-05T01:00:00.000Z' }), true);
+    // adcp#8607: no post-loss receipt window; the account is unknown to every task after the loss.
     // One document per principal and per account, listed per tenant.
     assert.deepEqual((await second.engineStore.listKeys(scope)).sort(), ['account:acct_1', 'principal']);
     assert.ok((await second.engineStore.listPrincipals('t')).some(item => item.principalId === scope.principalId));
