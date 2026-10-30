@@ -73,14 +73,14 @@ for (const rootId of [undefined, 'https://seller.example/output.json', 'relative
       properties: {
         other: payload,
         resource: {
-          $id: 'resources/payload.json',
+          $id: 'https://seller.example/resources/payload.json',
           description: padding,
           type: 'object',
           $defs: { value: { type: 'string', minLength: 2 } },
           properties: {
             a: { $ref: '#/$defs/value' },
-            b: { $ref: 'value.json' },
-            declaration: { $id: 'value.json', type: 'integer', minimum: 1 },
+            b: { $ref: 'https://seller.example/resources/value.json' },
+            declaration: { $id: 'https://seller.example/resources/value.json', type: 'integer', minimum: 1 },
           },
           required: ['a', 'b'],
         },
@@ -96,7 +96,8 @@ for (const rootId of [undefined, 'https://seller.example/output.json', 'relative
       { ...good, resource: { a: 'ok', b: 'no' } },
     ]);
     const compacted = compactMcpSchemaForValidation(schema);
-    assert.ok(compacted['x-adcp-compact-definitions']);
+    if (rootId === 'relative-output.json') assert.equal(compacted, schema);
+    else assert.ok(compacted['x-adcp-compact-definitions']);
     assert.equal(
       typeof compacted.properties.resource.properties.a.$ref,
       'string',
@@ -145,12 +146,12 @@ test('URI normalization preserves percent-encoded dot segments as distinct resou
     description: padding,
     type: 'object',
     $defs: {
-      encoded: { $id: 'a/%2e%2e/value.json', type: 'integer' },
-      plain: { $id: 'value.json', type: 'string' },
+      encoded: { $id: 'https://seller.example/base/a/%2E%2E/value.json', type: 'integer' },
+      plain: { $id: 'https://seller.example/base/value.json', type: 'string' },
     },
     properties: {
-      encoded: { $ref: 'a/%2e%2e/value.json' },
-      plain: { $ref: 'value.json' },
+      encoded: { $ref: 'https://seller.example/base/a/%2e%2e/value.json' },
+      plain: { $ref: 'https://seller.example/base/value.json' },
       payload,
     },
     required: ['encoded', 'plain'],
@@ -269,6 +270,30 @@ test('synthetic rebasing cannot resolve missing references from anonymous or rel
 test('valid RFC URIs outside WHATWG URL constraints still compile', () => {
   const schema = { $id: 'https://seller.example:99999/output', type: 'object', properties: { a: payload } };
   compare(schema, [{ a: { value: 1 } }, { a: { value: 'no' } }]);
+});
+
+test('relative and dot-segment IDs preserve both successful and failed original compiles', () => {
+  for (const $id of ['../a.json', 'x/../a.json', 'relative.json']) {
+    const schema = {
+      properties: { payload, r: { $id, $defs: { v: { type: 'string' } }, properties: { x: { $ref: '#/$defs/v' } } } },
+    };
+    assert.equal(compactMcpSchemaForValidation(schema), schema);
+    for (const [Provider, cache] of [
+      [LegacyProvider, sharedLegacyJsonSchemaValidator],
+      [ModernProvider, sharedModernJsonSchemaValidator],
+    ]) {
+      let original;
+      try {
+        original = new Provider().getValidator(schema);
+      } catch {
+        assert.throws(() => cache.getValidator(schema));
+        continue;
+      }
+      const actual = cache.getValidator(schema);
+      for (const value of [{ r: { x: 'ok' } }, { r: { x: 2 } }])
+        assert.equal(actual(value).valid, original(value).valid);
+    }
+  }
 });
 
 test('scopes nested in extension arrays retain the original graph', () => {
