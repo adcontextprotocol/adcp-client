@@ -373,7 +373,14 @@ export function applyReportingSubscriptions(
   // Omission deactivates; the subscription stays readable while its obligations are retained.
   for (const history of historyById.values()) {
     if (touched.has(history.subscriptionId)) continue;
-    if (history.deactivatedAt === undefined) history.deactivatedAt = now;
+    if (history.deactivatedAt !== undefined) continue;
+    // The open interval this opens is listed too; bound it exactly as `active: false` does.
+    if (history.inactiveIntervals.length + 1 > MAX_INACTIVE_INTERVALS) {
+      throw new ReportingSubscriptionValidationError(
+        `Reporting subscription ${JSON.stringify(history.subscriptionId)} has reached ${MAX_INACTIVE_INTERVALS} inactive intervals, the most the readback can list`
+      );
+    }
+    history.deactivatedAt = now;
   }
 
   const states: ReportingSubscriptionState[] = [];
