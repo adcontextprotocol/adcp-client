@@ -874,6 +874,61 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     assert.deepEqual(await w.engine.inspect(SCOPE), before, 'no account was marked unauthorized');
   });
 
+  test('last_owed_period_end is the latest frozen period end, whatever the storage order', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [buy('mb_1')]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    await w.step('2026-11-05T01:00:00.000Z');
+    // Frozen periods are appended across reconciles and offerings, so storage order is not end
+    // order. Read them back reversed to prove the readback never trusts the last entry.
+    const get = w.engineStore.get.bind(w.engineStore);
+    w.engineStore.get = async (scope, key) => {
+      const row = await get(scope, key);
+      for (const target of Object.values(row?.value?.subscriptions ?? {})) target.frozen?.periods?.reverse();
+      return row;
+    };
+    // Revoked, and its buys are no longer visible, so no calendar resolves at the revocation.
+    w.revoke('acct_1', '2026-11-05T05:00:00.000Z');
+    w.host.buys.set('acct_1', []);
+    const revoked = await w.step('2026-11-05T05:00:00.000Z');
+    const [lost] = revoked.result.configuration.reporting_subscriptions[0].accounts_unauthorized;
+    assert.equal(lost.last_owed_period_end, '2026-11-05T00:00:00.000Z');
+  });
+
+  test('a changed pending action refreshes the open action_required entry and notifies', async () => {
+    const w = world();
+    const action = extra => ({
+      waiting_on: 'buyer',
+      kind: 'accept_terms',
+      message: 'Accept reporting terms',
+      url: 'https://seller.example/terms',
+      ...extra,
+    });
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z', { pending_action: action() });
+    w.host.buys.set('acct_1', [buy('mb_1')]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    const [before] = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+    const opened = before.excluded.find(entry => entry.reason === 'action_required');
+    const notified = w.emitted.length;
+    // The seller moves the required step to a new page with a new message.
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z', {
+      pending_action: action({ message: 'Accept the revised terms', url: 'https://seller.example/terms/v2' }),
+    });
+    await w.step('2026-11-03T00:00:00.000Z');
+    const [after] = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+    assert.equal(after.status, 'action_required');
+    assert.equal(after.pending_action.url, 'https://seller.example/terms/v2');
+    assert.equal(after.pending_action.message, 'Accept the revised terms');
+    const refreshed = after.excluded.find(entry => entry.reason === 'action_required');
+    assert.equal(refreshed.from, opened.from, 'the open entry keeps its from');
+    assert.equal(refreshed.until, undefined);
+    assert.ok(w.emitted.length > notified, 'the change fires principal.changed');
+    assert.equal(w.emitted.at(-1).payload.reason, 'reporting_subscription_changed');
+  });
+
   test('a pending account action is an account-level action_required exception', async () => {
     const w = world();
     w.grant('acct_1', '2026-10-01T00:00:00.000Z', {
