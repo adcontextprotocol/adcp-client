@@ -494,7 +494,8 @@ describe('discover strategy state machine', () => {
     test(`fixture schema validation honors negotiated 3.1 over configured ${configuredVersion}`, async () => {
       const sb = storyboard([{ product_id: 'handle' }], [], discoverRoot(['handle']));
       const legacy = product('native-legacy');
-      legacy.format_ids = [{ id: 'legacy-display' }];
+      // Unknown 3.1 extensions remain legal; 3.2+ gives this field a nonempty-array contract.
+      legacy.execution_requirements = [];
       const discovered = discoveryClient([legacy]);
       const result = await runControllerSeeding(
         discovered.client,
