@@ -89,7 +89,13 @@ export interface ReportingSubscriptionExclusionV1 {
 export interface ReportingSubscriptionCoverageEntryV1 {
   subscription_id: string;
   subscription_version: number;
-  status: 'active' | 'excluded' | 'action_required';
+  /**
+   * `inactive` (adcp#8613) for a deactivated subscription; it takes precedence. Callers served
+   * a release without that value see the account-level state instead.
+   */
+  status: 'active' | 'excluded' | 'action_required' | 'inactive';
+  /** Present when and only when `status` is `inactive`. */
+  deactivated_at?: string;
   pending_action?: PendingAction;
   excluded: ReportingSubscriptionExclusionV1[];
   timezone_cutovers?: ReportingSubscriptionTimezoneCutoverV1[];
@@ -376,9 +382,10 @@ export interface ReportingSubscriptionEngineV1 {
     }
   ): Promise<void>;
   /**
-   * `subscription_coverage[]` for `get_reporting_status`: subscriptions whose current scope
-   * includes the account, plus inactive ones with retained obligations. Empty for an account
-   * the principal is not currently authorized for: caller isolation is unchanged.
+   * `subscription_coverage[]` for `get_reporting_status`: active subscriptions whose current
+   * scope includes the account, and deactivated ones (`status: "inactive"`, `deactivated_at`)
+   * only while they still have retained obligations for the account (adcp#8613). Empty for an
+   * account the principal is not currently authorized for: caller isolation is unchanged.
    */
   subscriptionCoverage(
     principal: Readonly<PrincipalStoreScope>,
@@ -1303,6 +1310,28 @@ export function createReportingSubscriptionEngineV1(
     return periods;
   }
 
+  /**
+   * Whether a deactivated subscription still has retained obligations on the account: an owed
+   * period, frozen or still running, that ends less than `status_retention_days` ago. Only
+   * periods that started before the deactivation are owed, so the set is finite.
+   */
+  async function hasRetainedObligations(
+    principal: Readonly<PrincipalStoreScope>,
+    document: ReportingSubscriptionEngineAccountDocumentV1,
+    entry: StoredReportingSubscriptionHistory,
+    accountId: string,
+    nowMs: number
+  ): Promise<boolean> {
+    const target = document.subscriptions[entry.subscriptionId]!;
+    const retained = (periodEnd: string) => Date.parse(periodEnd) + retentionMs > nowMs;
+    if (target.frozen.periods.some(period => retained(period.period_end))) return true;
+    if (!target.covered) return false;
+    // Periods not frozen yet, including one still running at the deactivation instant.
+    const horizon = Math.max(nowMs, Date.parse(entry.deactivatedAt!) + 400 * DAY_MS);
+    const buys = await options.hooks.listAccountBuys(principal, accountId, {});
+    return computeOwed(entry, document, accountId, buys, iso(horizon)).some(period => retained(period.period_end));
+  }
+
   /** Append periods resolved since the last freeze; never recompute earlier ones. */
   function freeze(
     current: ReportingSubscriptionEngineAccountDocumentV1,
@@ -1524,15 +1553,27 @@ export function createReportingSubscriptionEngineV1(
               ...(document.account.operator !== undefined ? { operator: document.account.operator } : {}),
             }
           ) || configuration.exclude_account_ids?.includes(accountId) === true;
-        // Subscriptions whose scope includes the account, plus inactive ones with retained obligations.
-        const retainedInactive = entry.deactivatedAt !== undefined && target.frozen.periods.length > 0;
-        if (!inScope && !retainedInactive) continue;
+        const deactivatedAt = entry.deactivatedAt;
+        if (deactivatedAt !== undefined) {
+          // adcp#8613: listed only while it still has retained obligations for the account.
+          if (!(await hasRetainedObligations(principal, document, entry, accountId, now().getTime()))) continue;
+        } else if (!inScope) {
+          continue;
+        }
         const open = target.exclusions.filter(item => item.until === undefined && item.media_buy_id === undefined);
         const pending = open.find(item => item.reason === 'action_required');
         entries.push({
           subscription_id: entry.subscriptionId,
           subscription_version: entry.versions.at(-1)!.subscriptionVersion,
-          status: pending ? 'action_required' : open.length > 0 ? 'excluded' : 'active',
+          status:
+            deactivatedAt !== undefined
+              ? 'inactive'
+              : pending
+                ? 'action_required'
+                : open.length > 0
+                  ? 'excluded'
+                  : 'active',
+          ...(deactivatedAt !== undefined ? { deactivated_at: deactivatedAt } : {}),
           ...(pending?.pending_action ? { pending_action: structuredClone(pending.pending_action) } : {}),
           excluded: target.exclusions.map(stripExclusion),
           ...(target.timezoneCutovers.length ? { timezone_cutovers: structuredClone(target.timezoneCutovers) } : {}),

@@ -537,6 +537,44 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     );
   });
 
+  test('a deactivated subscription reads inactive while it has retained obligations, then drops out', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [buy('mb_1')]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    await w.step('2026-11-04T00:00:00.000Z');
+    w.clock.now = new Date('2026-11-04T12:00:00.000Z');
+    await w.sync([subscription({ active: false })]);
+    await w.step('2026-11-05T00:00:00.000Z');
+    // adcp#8613: never active once deactivated; deactivated_at is published with it.
+    const [entry] = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+    assert.equal(entry.status, 'inactive');
+    assert.equal(entry.deactivated_at, '2026-11-04T12:00:00.000Z');
+    const {
+      reportingSubscriptionCoverageForReleaseV1,
+      reportingSubscriptionReleaseFieldsV1,
+    } = require('../../dist/lib/server/reporting-subscription-release.js');
+    const beta1 = reportingSubscriptionCoverageForReleaseV1(
+      entry,
+      reportingSubscriptionReleaseFieldsV1('3.3.0-beta.1')
+    );
+    assert.equal(beta1.status, 'active', 'a release without the inactive value sees the account-level state');
+    assert.equal('deactivated_at' in beta1, false);
+    assert.equal(
+      reportingSubscriptionCoverageForReleaseV1(entry, {
+        ...reportingSubscriptionReleaseFieldsV1(undefined),
+        inactiveCoverageStatus: true,
+      }).status,
+      'inactive'
+    );
+    // The 11-04 period started before the deactivation and is retained for 30 days after it ends.
+    w.clock.now = new Date('2026-12-04T23:00:00.000Z');
+    assert.equal((await w.engine.subscriptionCoverage(SCOPE, 'acct_1')).length, 1);
+    w.clock.now = new Date('2026-12-05T00:00:01.000Z');
+    assert.deepEqual(await w.engine.subscriptionCoverage(SCOPE, 'acct_1'), [], 'omitted once nothing is retained');
+  });
+
   test('an account timezone change publishes previous_timezone and the buyer agrees', async () => {
     const w = world();
     w.grant('acct_1', '2026-10-01T00:00:00.000Z');

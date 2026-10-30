@@ -21,6 +21,8 @@ export interface ReportingSubscriptionReleaseFieldsV1 {
   cutoverPreviousTimezone: boolean;
   /** `reporting-subscription-coverage.json` `offering_id` on cutovers and gaps. */
   perOfferingEntries: boolean;
+  /** `reporting-subscription-coverage.json` `status: "inactive"` with `deactivated_at` (adcp#8613). */
+  inactiveCoverageStatus: boolean;
 }
 
 const NONE: ReportingSubscriptionReleaseFieldsV1 = Object.freeze({
@@ -29,6 +31,7 @@ const NONE: ReportingSubscriptionReleaseFieldsV1 = Object.freeze({
   priorVersionConfiguration: false,
   cutoverPreviousTimezone: false,
   perOfferingEntries: false,
+  inactiveCoverageStatus: false,
 });
 
 const cache = new Map<string, ReportingSubscriptionReleaseFieldsV1>();
@@ -65,6 +68,9 @@ export function reportingSubscriptionReleaseFieldsV1(
     perOfferingEntries:
       'offering_id' in itemProperties(coverage, 'timezone_cutovers') &&
       'offering_id' in itemProperties(coverage, 'gaps'),
+    inactiveCoverageStatus:
+      'deactivated_at' in properties(coverage) &&
+      ((properties(coverage).status as { enum?: unknown[] } | undefined)?.enum ?? []).includes('inactive'),
   });
   if (cache.size > 64) cache.clear();
   cache.set(servedAdcpVersion, result);
@@ -77,6 +83,18 @@ export function reportingSubscriptionCoverageForReleaseV1<T extends Record<strin
   fields: ReportingSubscriptionReleaseFieldsV1
 ): T {
   const copy = structuredClone(entry) as Record<string, unknown>;
+  if (copy.status === 'inactive' && !fields.inactiveCoverageStatus) {
+    // Earlier releases have no inactive value: report the account-level state as before.
+    const open = ((copy.excluded as Array<Record<string, unknown>> | undefined) ?? []).filter(
+      item => item.until === undefined && item.media_buy_id === undefined
+    );
+    copy.status = open.some(item => item.reason === 'action_required')
+      ? 'action_required'
+      : open.length > 0
+        ? 'excluded'
+        : 'active';
+    delete copy.deactivated_at;
+  }
   if (Array.isArray(copy.timezone_cutovers)) {
     copy.timezone_cutovers = (copy.timezone_cutovers as Array<Record<string, unknown>>).map(cutover => {
       const next = { ...cutover };
