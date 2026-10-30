@@ -84,16 +84,51 @@ export function omitsEnvelopeStatusForRelease(toolName: string, servedVersion: s
   const key = `${toolName}\0${servedVersion}`;
   const cached = omitsStatusCache.get(key);
   if (cached !== undefined) return cached;
-  const loader = require('../validation/schema-loader') as typeof import('../validation/schema-loader');
-  const omits = loader.responseSchemaComposesEnvelope(toolName, servedVersion) === false;
+  const loader = envelopeSchemaLoader();
+  const composes = loader.responseSchemaComposesEnvelope(toolName, servedVersion);
+  const omits = composes === false;
   // Bundles are immutable for a process except when a test or runner registers an
-  // external root, which changes what the same version string resolves to.
-  if (omitsStatusCache.size < 256 && !loader.isExternalSchemaRootActive(servedVersion))
+  // external root, which changes what the same version string resolves to. An
+  // unresolved version is not cached either: a root registered for it later
+  // must be consulted.
+  if (omitsStatusCache.size < 256 && composes !== undefined && !loader.isExternalSchemaRootActive(servedVersion))
     omitsStatusCache.set(key, omits);
   return omits;
 }
 
 const omitsStatusCache = new Map<string, boolean>();
+
+type EnvelopeSchemaLoader = Pick<
+  typeof import('../validation/schema-loader'),
+  'responseSchemaComposesEnvelope' | 'isExternalSchemaRootActive'
+>;
+
+let boundEnvelopeSchemaLoader: EnvelopeSchemaLoader | undefined;
+
+/**
+ * Called by `schema-loader` when it loads, so this module consults the loader
+ * instance of its own module format. The schema loader is not imported here
+ * directly, which keeps it (and AJV) out of this module's eager graph. A lazy
+ * `require()` alone resolved the CommonJS build even from the ESM build, whose
+ * registry does not see roots registered through the ESM loader
+ * (`registerExternalSchemaRoot`, `withExternalSchemaRoot`), so an unpackaged
+ * release looked unknown and kept `status` (adcp-client#3529).
+ *
+ * @internal
+ */
+export function bindEnvelopeSchemaLoader(loader: EnvelopeSchemaLoader): void {
+  if (boundEnvelopeSchemaLoader !== loader) omitsStatusCache.clear();
+  boundEnvelopeSchemaLoader = loader;
+}
+
+function envelopeSchemaLoader(): EnvelopeSchemaLoader {
+  // Nothing registered a root through a loader that was never loaded, so
+  // falling back to a fresh load sees the same bundles.
+  return (
+    boundEnvelopeSchemaLoader ??
+    (require('../validation/schema-loader') as typeof import('../validation/schema-loader'))
+  );
+}
 
 /**
  * Detect whether a response payload should be treated as 3.0.x for the

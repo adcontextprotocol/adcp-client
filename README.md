@@ -30,12 +30,12 @@ AdCP operations are **distributed and asynchronous by default**. An agent might:
 
 ```bash
 npm install @adcp/sdk              # 16.x, AdCP 3.2
-npm install @adcp/sdk@beta         # 17.x beta, AdCP 3.3.0-beta.1 (development/staging)
+npm install @adcp/sdk@beta         # 17.x beta, AdCP 3.3.0-beta.2 (development/staging)
 npm install @adcp/sdk@adcp-3.1     # 13.x, maintained AdCP 3.1 line
 npm install @adcp/sdk@adcp-3.0     # 7.11.x, AdCP 3.0
 ```
 
-SDK 17 beta adopts the signed AdCP `3.3.0-beta.1` bundle and includes the breaking
+SDK 17 beta adopts the signed AdCP `3.3.0-beta.2` bundle and includes the breaking
 HTML-markup `display_tag` mapping. See the [beta release notes](./docs/releases/17.0.0-beta.0.md)
 and [16 → 17 migration guide](./docs/migration-16-to-17.md). Keep production on SDK 16.
 

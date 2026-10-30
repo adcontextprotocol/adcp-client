@@ -131,7 +131,7 @@ export interface TestOptions {
   /**
    * Schema roots for releases the agent may echo in its
    * `get_adcp_capabilities` response, keyed by AdCP version (`'3.2'`,
-   * `'3.2.5'`, `'3.3.0-beta.1'`). Values are schema-data roots in the same
+   * `'3.2.5'`, `'3.3.0-beta.2'`). Values are schema-data roots in the same
    * shape as `schemaRoot`.
    *
    * A 3.0 pin sends only `adcp_major_version`, so an agent may serve and echo
