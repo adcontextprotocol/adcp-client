@@ -24,7 +24,7 @@ export interface PrincipalLifecycleClient {
   syncPrincipal(
     params: MutatingRequestInput<SyncPrincipalRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: TaskOptions & { allowDeactivation?: boolean; allowRevocation?: boolean }
   ): Promise<TaskResult<SyncPrincipalResponse>>;
 }
 
@@ -475,7 +475,13 @@ export async function guardedSyncPrincipalLifecycle(
     const writtenBefore = written;
     written = true;
     try {
-      taskResult = await client.syncPrincipal(request, options.inputHandler, taskOptions(options));
+      // The lifecycle replaces whole sections by contract and checks what it replaces itself, so the
+      // client's raw-write guard does not run again here.
+      taskResult = await client.syncPrincipal(request, options.inputHandler, {
+        ...taskOptions(options),
+        allowDeactivation: true,
+        allowRevocation: true,
+      });
     } catch (error) {
       const refusedLocally = !writtenBefore && isPreDispatchError(error);
       throw new PrincipalLifecycleError('sync_principal transport failed; replay attemptedRequest exactly.', {

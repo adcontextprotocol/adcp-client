@@ -93,6 +93,36 @@ Every `PrincipalLifecycleError` is an `ADCPError` with a stable `code` and a
 seller. When the write was applied and a later step failed, the applied result
 is on `appliedResponse`. The older `applied` property is a deprecated alias.
 
+**Subscribing to reports: use `client.reporting`, not raw `syncPrincipal`.** Each
+`sync_principal` section is the complete desired state, so a raw write that sends one
+subscription deactivates every other one, and one that omits a destination revokes it for
+every account. The facade is patch-shaped:
+
+```ts
+const result = await client.reporting.subscribe({
+  subscription_id: 'analytics-daily',
+  scope: { all_authorized_accounts: true },
+  operator_domains: ['wppmedia.fr'],
+  selector: { feed_purpose: 'analytics', period_duration: 'P1D', required_finality: 'official' },
+  reconciliation_mode: 'delivery_only',
+});
+result.action; // 'created' | 'updated' | 'unchanged' | 'reactivated'
+await client.reporting.unsubscribe('pacing-hourly'); // the only deactivation path
+await client.reporting.listSubscriptions();
+await client.reporting.preview(input); // a seller dry run plus local offering resolution
+await client.reporting.replaceSubscriptions(list, { deactivateOmitted: true }); // expert
+```
+
+`subscription_version` is optional: the SDK keeps it when only `active` or
+`replace_account_configs` change and bumps it on a semantic change. Before sending it refuses an
+implicit scope, an unregistered destination, a `path_template` without `{account_id}` on a
+multi-account scope, a `subscription_id` that clashes with a `delivery_config_id`
+(`SUBSCRIPTION_ID_CLASH`), an all-accounts subscription into a destination without
+`operator_domains` (`SUBSCRIPTION_OPERATOR_SCOPE_REQUIRED`), and a selector no advertised offering
+matches (`SUBSCRIPTION_SELECTOR_UNMATCHED`, with the nearest offerings). A raw
+`client.syncPrincipal` that would deactivate or revoke by omission is refused before sending unless
+you pass `allowDeactivation` / `allowRevocation`.
+
 `syncReportingSubscriptionsV1` throws `ReportingSubscriptionError` for its own
 refusals: `SUBSCRIPTION_WOULD_DEACTIVATE` (with `wouldDeactivate` and
 `dispatched: false`), `SUBSCRIPTION_CONFLICT_EXHAUSTED`

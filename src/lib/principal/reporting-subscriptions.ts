@@ -119,7 +119,8 @@ export async function syncReportingSubscriptionsV1(
  * The first path at which `stored` lacks or changes a value the buyer sent. Fields the seller
  * adds (defaults it fills) are ignored; arrays must match element for element.
  */
-function differingPath(sent: unknown, stored: unknown, path: string): string | undefined {
+/** @internal */
+export function differingPath(sent: unknown, stored: unknown, path: string): string | undefined {
   if (Array.isArray(sent)) {
     if (!Array.isArray(stored) || stored.length !== sent.length) return path;
     for (let index = 0; index < sent.length; index += 1) {
