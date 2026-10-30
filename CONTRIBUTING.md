@@ -85,6 +85,7 @@ That `"."` entry is supported by **npm only** — pnpm rejects it, and Yarn beha
 
 ### Testing
 
+- Run `npm run test:performance` for isolated resource regression checks, or `npm run perf:compare` to reproduce the old MCP schema-compilation spikes alongside the fix. See [performance regression checks](docs/development/PERFORMANCE-REGRESSIONS.md) for stress workloads, metrics, CI budgets, and adding scenarios.
 - **Unit tests** for all library functions
 - **Integration tests** for protocol implementations
 - **End-to-end tests** for the complete workflow

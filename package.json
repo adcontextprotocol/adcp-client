@@ -619,6 +619,8 @@
     "test:node:fast:shard": "node scripts/run-node-tests.mjs --group fast --shard-env",
     "test:node:slow": "node scripts/run-node-tests.mjs --group slow",
     "test:file": "node scripts/run-node-tests.mjs",
+    "test:performance": "node scripts/performance/run.mjs",
+    "perf:compare": "node scripts/performance/run.mjs --compare",
     "pretest:lib": "npm run build:lib",
     "test:lib": "npm run test:lib:fast && npm run test:lib:slow",
     "test:lib:fast": "node scripts/run-node-tests.mjs --scope lib --group fast",
