@@ -421,6 +421,12 @@ export function compactMcpSchemaForValidation(schema: JsonObject): JsonObject {
         return false;
       }
       if (!root && node.$id === '') supported = false;
+      if (typeof node.$id === 'string') {
+        const declared = node.$id.replace(/#\/?$/, '');
+        // Relative/noncanonical IDs have different registration and evaluation
+        // bases in Ajv. Keep those graphs intact instead of emulating them.
+        if (!uriResolver.parse(declared).scheme || resolveUri('', declared) !== declared) supported = false;
+      }
       // Ajv registers an anonymous/relative root literally, and nested IDs
       // without resolving them when the inherited original base is empty.
       // Preserve that identity separately from the synthetic absolute base.
@@ -442,6 +448,7 @@ export function compactMcpSchemaForValidation(schema: JsonObject): JsonObject {
       if (typeof node.$ref !== 'string') supported = false;
       else {
         const reference = node.$ref;
+        if (!reference.startsWith('#') && !uriResolver.parse(reference).scheme) supported = false;
         node.$ref = resolveUri(uri, reference);
         references.push({ original: resolveUri(originalBase, reference), rewritten: node.$ref as string });
       }
