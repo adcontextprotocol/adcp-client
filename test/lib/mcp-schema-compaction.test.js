@@ -246,7 +246,7 @@ test('duplicate and empty IDs and scopes under extension keywords retain compile
     assert.throws(() => cache.getValidator(schemas[0]), /resolves to more than one schema/);
   }
   compare(schemas[1], [{ a: 'ok' }, { a: 42 }]);
-  compare(schemas[5], [{ a: { value: 1 } }, { a: { value: 'no' } }]);
+  compare(schemas.at(-1), [{ a: { value: 1 } }, { a: { value: 'no' } }]);
   const invalid = { description: padding, $ref: 42 };
   assert.equal(compactMcpSchemaForValidation(invalid), invalid);
 });
