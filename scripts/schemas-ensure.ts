@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Idempotent guard for the schema cache. Tests load schemas from
- * `schemas/cache/{current,3.2.7,3.1.29,3.0.25}/` (gitignored, populated by
+ * `schemas/cache/{current,3.2.7,3.1.31,3.0.25}/` (gitignored, populated by
  * `npm run sync-schemas:all`). Fresh clones, branch switches that wipe
  * the cache, and `git clean -fdx` all leave a dev environment that
  * silently fails test suites with "AdCP schema data for version '3.2'
@@ -25,7 +25,7 @@ import { cacheMatchesCodegenProvenance } from './sync-schemas';
 const REPO_ROOT = path.join(__dirname, '..');
 const CACHE_ROOT = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_ROOT = path.join(REPO_ROOT, 'compliance/cache');
-const MAINTAINED_SCHEMA_VERSIONS = ['3.0.25', '3.1.29', '3.2.7'];
+const MAINTAINED_SCHEMA_VERSIONS = ['3.0.25', '3.1.31', '3.2.7'];
 
 function currentAdcpVersion(): string {
   return readFileSync(path.join(REPO_ROOT, 'ADCP_VERSION'), 'utf8').trim();
