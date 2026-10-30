@@ -9163,6 +9163,7 @@ async function executeStep(
   let productPageCollection: ProductPageCollectionRecord | undefined;
   let collectedPageValidations: ValidationResult[] = [];
   let actualCollectedResponse: unknown;
+  let collectedRequestRecord: RunnerRequestRecord | undefined;
 
   // Parallel-dispatch fan-out: when the storyboard step declares
   // `parallel_dispatch`, the runner fires N concurrent dispatches against
@@ -9430,6 +9431,7 @@ async function executeStep(
         pages,
         ...(logical && { logical_response: redactSecrets(logical) as Record<string, unknown> }),
       };
+      collectedRequestRecord = collection.ok ? collection.catalog.firstPage.request : collection.exchange?.request;
       const observedResponse = collection.ok ? collection.catalog.firstPage.response : collection.exchange?.response;
       responseRecord = observedResponse ?? undefined;
       actualCollectedResponse = collection.ok
@@ -9583,7 +9585,7 @@ async function executeStep(
   const requestRecord: RunnerRequestRecord = {
     transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
     operation: effectiveStep.task,
-    payload: redactSecrets(request),
+    payload: collectedRequestRecord?.payload ?? redactSecrets(request),
     ...(effectiveRequestUrl ? { url: redactOAuthUrlForOutput(effectiveRequestUrl) } : {}),
   };
   const inputSchemaStripNotices = collectInputSchemaFieldStripNotices(
