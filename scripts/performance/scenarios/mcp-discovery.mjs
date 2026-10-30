@@ -122,7 +122,7 @@ async function runDiscovery({ mode, options, measurePhase }) {
         warmCpuMsPerListing: Math.max(100, cold.cpuMs * 0.5),
         warmEventLoopMaxMs: 1500,
         retainedHeapGrowthBytes: 64 * 1024 ** 2,
-        peakRssBytes: 1536 * 1024 ** 2,
+        peakRssBytes: 512 * 1024 ** 2,
       },
     };
   } finally {
