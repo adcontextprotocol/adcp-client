@@ -94,8 +94,8 @@ seller. When the write was applied and a later step failed, the applied result
 is on `appliedResponse`. The older `applied` property is a deprecated alias.
 
 `syncReportingSubscriptionsV1` throws `ReportingSubscriptionError` for its own
-refusals: `SUBSCRIPTION_WOULD_DEACTIVATE` (with `wouldDeactivate`, and
-`dispatched: false` when nothing was sent), `SUBSCRIPTION_CONFLICT_EXHAUSTED`
+refusals: `SUBSCRIPTION_WOULD_DEACTIVATE` (with `wouldDeactivate` and
+`dispatched: false`), `SUBSCRIPTION_CONFLICT_EXHAUSTED`
 and `SUBSCRIPTION_READBACK_MISMATCH` (with `readback`). The codes and recovery
 classes are the shared vocabulary the Python SDK uses.
 

@@ -81,11 +81,7 @@ function keys() {
 describe('ReportingSubscriptionError', () => {
   test('carries the shared code, recovery and dispatched vocabulary', () => {
     for (const [code, expected] of Object.entries(BUYER_CODES)) {
-      const error = new ReportingSubscriptionError(
-        code,
-        'message. Fix it.',
-        expected.dispatched === 'false' ? { dispatched: false } : {}
-      );
+      const error = new ReportingSubscriptionError(code, 'message. Fix it.');
       assert.ok(error instanceof ADCPError && isADCPError(error), code);
       assert.equal(error.name, 'ReportingSubscriptionError');
       assert.equal(error.code, code);
@@ -115,7 +111,7 @@ describe('ReportingSubscriptionError', () => {
     assert.equal(writes, 0);
   });
 
-  test('an omission found on the re-read after a conflict is not marked pre-dispatch', async () => {
+  test('an omission found on the re-read after a conflict is still pre-dispatch: the conflicted write applied nothing', async () => {
     const { lifecycle } = createTestPrincipalLifecycle({ reportingSubscriptions: {} });
     const client = principalClient(lifecycle);
     const options = keys();
@@ -149,7 +145,7 @@ describe('ReportingSubscriptionError', () => {
       error => {
         assert.equal(error.code, 'SUBSCRIPTION_WOULD_DEACTIVATE');
         assert.deepEqual(error.wouldDeactivate, ['concurrent']);
-        assert.equal('dispatched' in error, false, 'the conflicted write was sent');
+        assert.equal(error.dispatched, false, 'the refused write was never sent');
         return true;
       }
     );

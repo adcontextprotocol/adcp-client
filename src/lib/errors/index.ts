@@ -1294,6 +1294,15 @@ export type ReportingSubscriptionErrorCode =
   | 'SUBSCRIPTION_CONFLICT_EXHAUSTED'
   | 'SUBSCRIPTION_READBACK_MISMATCH';
 
+/** Codes the SDK raises only before sending anything, so they always carry `dispatched: false`. */
+const REPORTING_SUBSCRIPTION_PRE_DISPATCH: ReadonlySet<ReportingSubscriptionErrorCode> = new Set([
+  'SUBSCRIPTION_WOULD_DEACTIVATE',
+  'DESTINATION_WOULD_REVOKE',
+  'SUBSCRIPTION_ID_CLASH',
+  'SUBSCRIPTION_OPERATOR_SCOPE_REQUIRED',
+  'SUBSCRIPTION_SELECTOR_UNMATCHED',
+]);
+
 const REPORTING_SUBSCRIPTION_RECOVERY: Readonly<Record<ReportingSubscriptionErrorCode, AdcpErrorRecovery>> = {
   SUBSCRIPTION_WOULD_DEACTIVATE: 'correctable',
   DESTINATION_WOULD_REVOKE: 'correctable',
@@ -1306,16 +1315,17 @@ const REPORTING_SUBSCRIPTION_RECOVERY: Readonly<Record<ReportingSubscriptionErro
 
 /** Options for {@link ReportingSubscriptionError}. */
 export interface ReportingSubscriptionErrorOptions {
-  /**
-   * Pass `false` only when no bytes of the `sync_principal` write left the process, so the seller
-   * cannot have acted on it. Omit it otherwise. See {@link isPreDispatchError}.
-   */
-  dispatched?: false;
   cause?: unknown;
   /** `SUBSCRIPTION_WOULD_DEACTIVATE`: the `subscription_id` values the write would deactivate. */
   wouldDeactivate?: readonly string[];
   /** `DESTINATION_WOULD_REVOKE`: the `destination_id` values the write would revoke. */
   wouldRevoke?: readonly string[];
+  /** `SUBSCRIPTION_ID_CLASH`: the clashing `delivery_config_id`. */
+  deliveryConfigId?: string;
+  /** `SUBSCRIPTION_ID_CLASH`: the account that uses it. */
+  accountId?: string;
+  /** `SUBSCRIPTION_SELECTOR_UNMATCHED`: offerings that fail on the fewest attributes, each with the attributes it fails. */
+  nearest?: readonly unknown[];
   /** `SUBSCRIPTION_READBACK_MISMATCH`: the seller's readback of the subscription. */
   readback?: unknown;
   /** The applied `sync_principal` result, when the write was applied and a later check failed. */
@@ -1328,9 +1338,11 @@ export interface ReportingSubscriptionErrorOptions {
  * A buyer-side reporting-subscription refusal or failure, with a stable `code` and `recovery`.
  * The message's last sentence says how to fix it; it is display text, never parse it.
  *
- * `dispatched` is `false` when the SDK refused before sending the `sync_principal` write, so
- * nothing changed at the seller ({@link isPreDispatchError}). It is absent when the write may have
- * reached the seller.
+ * `dispatched` is `false` for the codes the SDK raises only before sending a `sync_principal`
+ * write (`SUBSCRIPTION_WOULD_DEACTIVATE`, `DESTINATION_WOULD_REVOKE`, `SUBSCRIPTION_ID_CLASH`,
+ * `SUBSCRIPTION_OPERATOR_SCOPE_REQUIRED`, `SUBSCRIPTION_SELECTOR_UNMATCHED`), so the refused write
+ * changed nothing at the seller ({@link isPreDispatchError}). It is absent for the others, where the
+ * write may have reached the seller.
  *
  * Wire errors a seller returns (`INVALID_REQUEST`, `UNSUPPORTED_FEATURE`, `CONFLICT`) are not
  * redefined here.
@@ -1344,6 +1356,9 @@ export class ReportingSubscriptionError extends ADCPError {
   declare readonly dispatched?: false;
   declare readonly wouldDeactivate?: readonly string[];
   declare readonly wouldRevoke?: readonly string[];
+  declare readonly deliveryConfigId?: string;
+  declare readonly accountId?: string;
+  declare readonly nearest?: readonly unknown[];
   declare readonly readback?: unknown;
   declare readonly appliedResponse?: unknown;
   declare readonly current?: unknown;
@@ -1352,8 +1367,13 @@ export class ReportingSubscriptionError extends ADCPError {
     super(message);
     this.code = code;
     this.recovery = REPORTING_SUBSCRIPTION_RECOVERY[code];
-    if (options.dispatched === false) Object.defineProperty(this, 'dispatched', { value: false, enumerable: true });
+    if (REPORTING_SUBSCRIPTION_PRE_DISPATCH.has(code)) {
+      Object.defineProperty(this, 'dispatched', { value: false, enumerable: true });
+    }
     if (options.cause !== undefined) Object.defineProperty(this, 'cause', { value: options.cause, configurable: true });
+    if (options.deliveryConfigId !== undefined) this.deliveryConfigId = options.deliveryConfigId;
+    if (options.accountId !== undefined) this.accountId = options.accountId;
+    if (options.nearest !== undefined) this.nearest = Object.freeze([...options.nearest]);
     if (options.wouldDeactivate !== undefined) this.wouldDeactivate = Object.freeze([...options.wouldDeactivate]);
     if (options.wouldRevoke !== undefined) this.wouldRevoke = Object.freeze([...options.wouldRevoke]);
     if (options.readback !== undefined) this.readback = options.readback;
@@ -1363,6 +1383,9 @@ export class ReportingSubscriptionError extends ADCPError {
       code,
       ...(this.wouldDeactivate ? { would_deactivate: this.wouldDeactivate } : {}),
       ...(this.wouldRevoke ? { would_revoke: this.wouldRevoke } : {}),
+      ...(this.deliveryConfigId !== undefined ? { delivery_config_id: this.deliveryConfigId } : {}),
+      ...(this.accountId !== undefined ? { account_id: this.accountId } : {}),
+      ...(this.nearest ? { nearest: this.nearest } : {}),
     };
   }
 }

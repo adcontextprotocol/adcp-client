@@ -31,8 +31,7 @@ export interface SyncReportingSubscriptionsOptionsV1 extends PrincipalLifecycleO
 /**
  * Replace the caller's complete reporting subscription set.
  *
- * Throws {@link ReportingSubscriptionError}: `SUBSCRIPTION_WOULD_DEACTIVATE` (with `dispatched: false`
- * when nothing was sent), `SUBSCRIPTION_CONFLICT_EXHAUSTED`, or `SUBSCRIPTION_READBACK_MISMATCH`.
+ * Throws {@link ReportingSubscriptionError}: `SUBSCRIPTION_WOULD_DEACTIVATE` (with `dispatched: false`), `SUBSCRIPTION_CONFLICT_EXHAUSTED`, or `SUBSCRIPTION_READBACK_MISMATCH`.
  * Other lifecycle failures throw `PrincipalLifecycleError`.
  * Uses the same guarded
  * replacement as `syncPrincipalLifecycle` (expected_configuration_version, fresh idempotency
@@ -58,7 +57,7 @@ export async function syncReportingSubscriptionsV1(
       client,
       { reporting_subscriptions: structuredClone([...subscriptions]) } as never,
       lifecycleOptions,
-      (prior, { written }) => {
+      prior => {
         if (allowDeactivation || prior.kind !== 'current') return;
         const current = (prior.configuration as { reporting_subscriptions?: ReportingSubscriptionState[] })
           .reporting_subscriptions;
@@ -69,7 +68,8 @@ export async function syncReportingSubscriptionsV1(
           throw new ReportingSubscriptionError(
             'SUBSCRIPTION_WOULD_DEACTIVATE',
             `The write would deactivate active subscriptions it omits (${omitted.map(id => JSON.stringify(id)).join(', ')}), because reporting_subscriptions is the complete set. Include them, send them with active: false, or pass allowDeactivation: true.`,
-            { wouldDeactivate: omitted, ...(written ? {} : { dispatched: false as const }) }
+            // A refused write is never sent. An earlier attempt that met CONFLICT applied nothing.
+            { wouldDeactivate: omitted }
           );
         }
       }
