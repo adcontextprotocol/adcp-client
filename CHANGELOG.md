@@ -1,5 +1,19 @@
 # Changelog
 
+## 15.9.9
+
+### Patch Changes
+
+- f5ea0bc: Add opt-in `collect_product_pages` storyboard steps for complete wholesale product reads. The runner requires fresh reads without an idempotency key, preserves the other authored request fields, validates every physical page and its invariants, follows stable feed cursors with bounded restarts and safety limits, and exposes an explicitly labelled logical product view alongside actual per-page evidence. The intrinsic `collect_product_pages_runner` requirement prevents older runners from silently grading only the first page.
+- 88083f4: Fix false-positive `get_products` conformance grades for existing discovery filter requirements. Supplied pricing-currency filters now check every returned media price and observable compulsory product-scoped signal charge, while permitting account-specific FX conversion and optional foreign-currency add-ons. Custom signal pricing whose incremental charge cannot be established is reported as unproven instead of being assumed incompatible. Fixture discovery also respects the negotiated canonical creative capability rather than forcing canonical wire mode on legacy-only AdCP 3.1 sellers.
+
+  Validate supplied standard and vendor required-metric filters against every returned product, respecting implicit metrics, documented derivations and numeric container subsumption. Vendor and metric pins must match the same declared vendor metric; absent filters impose no optional-feature requirement and valid empty matches remain allowed.
+
+  These default-on checks correct previously missed protocol violations: a result that leaks a non-requested media currency or lacks a requested metric can now fail conformance. They do not add optional-feature requirements to unfiltered discovery or change production client requests.
+
+- 08934ee: Prepare missing storyboard package bids for every auction-capable pricing model, including CPC offers in later packages, while preserving authored bids and bidding policies. Keep fixed and contingent pricing free of synthetic bids, preserve zero floors, and prevent rounding below sub-cent floors.
+- 02d7991: Refresh the maintained AdCP 3.1 schema and compliance bundle to signed release 3.1.31. This ships auction-compatible seller fixtures, capability-aware optional metric and format coverage, currency filtering that supports account conversion, and complete paginated product checks. The primary AdCP protocol pin remains unchanged.
+
 ## 15.9.8
 
 ### Patch Changes
