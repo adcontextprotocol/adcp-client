@@ -44,7 +44,7 @@ function storyboard({ collect = true, request = {}, validations, contextOutputs,
               account: { brand: { domain: 'buyer.example' }, operator: 'operator.example', sandbox: true },
               filters: { pricing_currencies: ['USD'] },
               pagination: { max_results: 2 },
-              idempotency_key: 'caller-product-read-key',
+              ...(!collect && { idempotency_key: 'caller-product-read-key' }),
               context: { correlation_id: 'same-authored-context' },
               ...request,
             },
@@ -96,7 +96,7 @@ test('collection follows every page with the actual authored query and separates
     assert.deepEqual(request.filters, { pricing_currencies: ['USD'] });
     assert.deepEqual(request.fields, fields);
     assert.deepEqual(request.context, { correlation_id: 'same-authored-context' });
-    assert.equal(request.idempotency_key, 'caller-product-read-key');
+    assert.equal(Object.hasOwn(request, 'idempotency_key'), false);
     assert.deepEqual(request.ext, { seller: { fixture: 'preserved' } });
     assert.equal(request.pagination.max_results, 2);
   }
@@ -137,6 +137,7 @@ test('ordinary get_products remains a single physical page', async () => {
   assert.equal(calls.length, 1);
   assert.equal(result.overall_passed, false, 'the target really is beyond the first page');
   assert.equal(step.product_page_collection, undefined);
+  assert.equal(calls[0].idempotency_key, 'caller-product-read-key', 'ordinary reads retain their authored key');
 });
 
 test('standalone collected steps expose the same logical captures and physical receipts', async () => {
@@ -407,6 +408,7 @@ test('official MCP client collects and records the actual second-page exchange',
   const { AgentClient } = require('../../dist/lib/index.js');
   const server = new McpServer({ name: 'paginated-seller', version: '1' });
   const seen = [];
+  const keyedReads = new Map();
   server.registerTool('get_adcp_capabilities', { inputSchema: z.object({}).passthrough() }, async () => {
     const data = {
       status: 'completed',
@@ -417,6 +419,29 @@ test('official MCP client collects and records the actual second-page exchange',
   });
   server.registerTool('get_products', { inputSchema: z.object({}).passthrough() }, async request => {
     seen.push(structuredClone(request));
+    if (request.idempotency_key) {
+      const body = JSON.stringify(request);
+      const prior = keyedReads.get(request.idempotency_key);
+      if (prior && prior !== body) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                status: 'failed',
+                adcp_error: {
+                  code: 'IDEMPOTENCY_CONFLICT',
+                  message: 'Key reused with different read body',
+                  recovery: 'correctable',
+                },
+              }),
+            },
+          ],
+        };
+      }
+      keyedReads.set(request.idempotency_key, body);
+    }
     const data = request.pagination?.cursor ? page(['target']) : page(['first'], 'official-next');
     for (const item of data.products) {
       delete item.format_ids;
@@ -439,6 +464,16 @@ test('official MCP client collects and records the actual second-page exchange',
     validation: { requests: 'off', responses: 'off' },
   });
   const source = storyboard();
+  const replayRequest = { ...source.phases[0].steps[0].sample_request, idempotency_key: 'documented-read-replay-key' };
+  const initial = await buyer.getProducts(replayRequest);
+  assert.equal(initial.success, true);
+  const conflict = await buyer.getProducts({
+    ...replayRequest,
+    pagination: { max_results: 2, cursor: 'official-next' },
+  });
+  assert.equal(conflict.success, false, 'the seller correctly protects keyed reads with different bodies');
+  assert.match(JSON.stringify(conflict), /IDEMPOTENCY_CONFLICT/);
+  seen.length = 0;
   const result = await runStoryboard('https://seller.example/mcp', source, {
     protocol: 'mcp',
     agentTools: ['get_products'],
@@ -456,6 +491,10 @@ test('official MCP client collects and records the actual second-page exchange',
     [undefined, 'official-next']
   );
   assert.deepEqual(seen[1].account, source.phases[0].steps[0].sample_request.account);
+  assert.ok(
+    seen.every(request => !Object.hasOwn(request, 'idempotency_key')),
+    'official SDK does not inject read keys'
+  );
   assert.deepEqual(
     step.context.all_products.map(product => product.product_id),
     ['first', 'target']
@@ -619,4 +658,50 @@ test('a negotiated3.1 collection rejects a later-page metric accepted only by th
   assert.equal(failed.schema_id, '/schemas/3.1.29/media-buy/get-products-response.json');
   assert.equal(failed.request.payload.pagination.cursor, 'next');
   assert.deepEqual(failed.response.payload.products[0].metric_optimization.supported_metrics, ['viewable_rate']);
+});
+
+test('authored read keys are refused before any seller dispatch', async () => {
+  const source = storyboard({ request: { idempotency_key: 'authored-wholesale-read-key' } });
+  assert.throws(() => validateStoryboardShape(source), /fresh reads without idempotency_key/);
+});
+
+for (const standalone of [false, true]) {
+  test(`runtime read keys are refused before dispatch (${standalone ? 'standalone' : 'full'})`, async () => {
+    let dispatched = false;
+    const { result, step } = await run(
+      () => {
+        dispatched = true;
+        return page(['target']);
+      },
+      {
+        standalone,
+        runnerOptions: { request: { buying_mode: 'wholesale', idempotency_key: 'runtime-wholesale-read-key' } },
+      }
+    );
+    assert.equal(dispatched, false);
+    assert.equal(standalone ? step.passed : result.overall_passed, false);
+    assert.match(step.error, /fresh unkeyed reads/);
+    assert.ok(
+      step.validations.some(validation => validation.check === 'product_page_collection' && !validation.passed)
+    );
+  });
+}
+
+test('the exported collector refuses a keyed query before its custom dispatcher runs', async () => {
+  const { collectWholesaleProductPages } = require('../../dist/lib/testing/storyboard/seeding');
+  let dispatched = false;
+  const result = await collectWholesaleProductPages(
+    {},
+    {},
+    { buying_mode: 'wholesale', idempotency_key: 'direct-wholesale-read-key' },
+    {
+      dispatch: async () => {
+        dispatched = true;
+        return { success: true, data: page(['target']) };
+      },
+    }
+  );
+  assert.equal(dispatched, false);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /fresh reads without idempotency_key/);
 });

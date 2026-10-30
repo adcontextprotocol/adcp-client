@@ -133,6 +133,11 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
             `[${storyboard.id}] ${step.id}: collect_product_pages cannot be combined with error, parallel, auth-probe, or response-skip steps`
           );
         }
+        if (Object.hasOwn(step.sample_request, 'idempotency_key')) {
+          throw new Error(
+            `[${storyboard.id}] ${step.id}: collect_product_pages requires fresh reads without idempotency_key`
+          );
+        }
         const pagination = step.sample_request.pagination;
         if (
           (pagination && typeof pagination === 'object' && 'cursor' in pagination) ||
