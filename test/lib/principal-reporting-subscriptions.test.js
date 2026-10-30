@@ -449,6 +449,40 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
     assert.equal(errorOf(refused).code, 'UNSUPPORTED_FEATURE');
   });
 
+  test('resending replace_account_configs: true never reapplies the destructive hook', async () => {
+    const { lifecycle, replacements, time } = setup();
+    const other = subscription({
+      subscription_id: 'pacing-daily',
+      selector: {
+        feed_purpose: 'pacing',
+        period_duration: 'P1D',
+        required_finality: 'official',
+        dimensions: ['package'],
+      },
+      destination: { destination_id: 'archive', path_template: 'pacing/{account_id}/{period_start}' },
+    });
+    const full = (extra = {}, more = []) => ({
+      reporting_destinations: [destination()],
+      reporting_subscriptions: [subscription({ replace_account_configs: true, ...extra }), ...more],
+    });
+    await sync(lifecycle, full());
+    assert.equal(replacements.length, 1);
+    await sync(lifecycle, full(), { dry_run: true });
+    await sync(lifecycle, full());
+    for (const write of [full({}, [other]), full({ active: false }, [other]), full({}, [other])]) {
+      time.now = new Date(time.now.getTime() + 3_600_000);
+      {
+        const r = await sync(lifecycle, write);
+        assert.equal(r.result.kind, 'applied', JSON.stringify(r.result));
+      }
+    }
+    assert.equal(replacements.length, 1, 'resends, dry runs, other subscriptions and an active toggle reuse version 1');
+    // The spec's other trigger: the flag changing to true (an omitted flag is its default, false).
+    assert.equal((await sync(lifecycle, { reporting_subscriptions: [subscription(), other] })).result.kind, 'applied');
+    assert.equal((await sync(lifecycle, full({}, [other]))).result.kind, 'applied');
+    assert.equal(replacements.length, 2, 'a flag change to true applies again');
+  });
+
   test('a failed replace_account_configs hook is retried, and marked applied only after it succeeds', async () => {
     let failures = 1;
     const calls = [];
