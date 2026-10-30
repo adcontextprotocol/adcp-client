@@ -18,6 +18,7 @@ import type { RequestContext } from '../../server/decisioning/context';
 import type { DecisioningPlatform } from '../../server/decisioning/platform';
 import type { ReliableReportingPlatform } from '../../server/decisioning/specialisms/reporting';
 import { scanArgsForCredentials } from '../../server/credential-policy';
+import { PlatformConfigError } from '../../server/decisioning/runtime/validate-platform';
 import { canonicalize } from '../../utils/jcs';
 import type { ReportingDeliveryCapabilities, ReportingDeliveryOffering } from '../../types/tools.generated';
 import { ReportingDeliveryOfferingSchema } from '../../types/schemas.generated';
@@ -549,26 +550,39 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       typeof subscriptionOptions.engine?.subscriptionCoverage !== 'function' ||
       typeof subscriptionOptions.engine.frozenOwedSets !== 'function'
     ) {
-      throw new TypeError('reportingSubscriptions requires a reporting subscription engine');
+      throw new PlatformConfigError(
+        'reportingSubscriptions requires a reporting subscription engine. Pass engine: createReportingSubscriptionEngineV1(...) from @adcp/sdk/reporting/advanced.',
+        { configField: 'reportingSubscriptions.engine' }
+      );
     }
     if (typeof subscriptionOptions.resolvePrincipal !== 'function') {
-      throw new TypeError('reportingSubscriptions requires resolvePrincipal');
+      throw new PlatformConfigError(
+        "reportingSubscriptions requires resolvePrincipal. Pass the principal runtime's authenticated mapping.",
+        { configField: 'reportingSubscriptions.resolvePrincipal' }
+      );
     }
     // A seller that advertises subscriptions owes their obligations: the service writes them into
     // the ledger every cycle, so it must know whose to write.
     if (typeof subscriptionOptions.listSubscriptionPrincipals !== 'function') {
-      throw new TypeError('reportingSubscriptions requires listSubscriptionPrincipals');
+      throw new PlatformConfigError(
+        'reportingSubscriptions requires listSubscriptionPrincipals. Return engine.listPrincipals(tenantId) across your tenants.',
+        { configField: 'reportingSubscriptions.listSubscriptionPrincipals' }
+      );
     }
     if (typeof subscriptionOptions.resolveSubscriptionConfiguration !== 'function') {
-      throw new TypeError('reportingSubscriptions requires resolveSubscriptionConfiguration');
+      throw new PlatformConfigError(
+        'reportingSubscriptions requires resolveSubscriptionConfiguration. Return the metrics, dimensions and source settings for each subscription generation.',
+        { configField: 'reportingSubscriptions.resolveSubscriptionConfiguration' }
+      );
     }
     // Sellers advertising subscriptions MUST publish standard_dimensions on every offering
     // (adcontextprotocol/adcp#8585), so buyers resolve match from the wire as the engine does.
     for (const offering of deliveryOfferings as ReportingDeliveryOfferingWithDimensionsV1[]) {
       if (!Array.isArray(offering.standard_dimensions)) {
-        throw new TypeError(
+        throw new PlatformConfigError(
           `Reporting offering ${JSON.stringify(offering.offering_id)} must publish standard_dimensions when ` +
-            'reporting subscriptions are advertised'
+            'reporting subscriptions are advertised. Publish standard_dimensions (empty for totals-only) on the offering.',
+          { code: 'SUBSCRIPTIONS_REQUIRE_STANDARD_DIMENSIONS', configField: 'adapters' }
         );
       }
     }
@@ -589,7 +603,10 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       })
     : ({ configuration_task: 'sync_accounts' } as ReturnType<typeof reportingConfigurationCapabilitiesV1>);
   if (subscriptionOptions && subscriptionOptions.engine.settings.statusRetentionDays !== options.statusRetentionDays) {
-    throw new TypeError('The reporting subscription engine must use the statusRetentionDays this service advertises');
+    throw new PlatformConfigError(
+      'The reporting subscription engine must use the statusRetentionDays this service advertises. Pass the same statusRetentionDays to both.',
+      { configField: 'statusRetentionDays' }
+    );
   }
   const servesAccountConfigurations = registration.configuration_task === 'sync_accounts';
 

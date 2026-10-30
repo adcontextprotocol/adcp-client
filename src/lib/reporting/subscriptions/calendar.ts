@@ -21,6 +21,7 @@
  *
  * @packageDocumentation
  */
+import { CoverageInputError } from '../../errors';
 
 const DAY_MS = 86_400_000;
 /** Nominal lengths used only to estimate an ordinal before exact correction. */
@@ -103,9 +104,19 @@ const DURATION = /^P(?=.*[1-9])(?=\d|T)(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)D)?(?:T(?=\
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function parseReportingPeriodDurationV1(value: string): ReportingIsoDurationPartsV1 {
-  if (typeof value !== 'string' || value.length > 64) throw new TypeError('Invalid reporting period_duration');
+  if (typeof value !== 'string' || value.length > 64)
+    throw new CoverageInputError(
+      'COVERAGE_INPUT_INVALID',
+      'Invalid reporting period_duration',
+      'invalid_period_duration'
+    );
   const match = DURATION.exec(value);
-  if (!match) throw new TypeError(`Invalid reporting period_duration ${JSON.stringify(value)}`);
+  if (!match)
+    throw new CoverageInputError(
+      'COVERAGE_INPUT_INVALID',
+      `Invalid reporting period_duration ${JSON.stringify(value)}`,
+      'invalid_period_duration'
+    );
   const [, years, months, days, hours, minutes, seconds] = match;
   const parts = {
     years: Number(years ?? 0),
@@ -114,7 +125,11 @@ export function parseReportingPeriodDurationV1(value: string): ReportingIsoDurat
     seconds: Number(hours ?? 0) * 3_600 + Number(minutes ?? 0) * 60 + Number(seconds ?? 0),
   };
   if (!Object.values(parts).every(Number.isSafeInteger)) {
-    throw new RangeError(`Reporting period_duration ${JSON.stringify(value)} is out of range`);
+    throw new CoverageInputError(
+      'COVERAGE_INPUT_INVALID',
+      `Reporting period_duration ${JSON.stringify(value)} is out of range`,
+      'invalid_period_duration'
+    );
   }
   return parts;
 }
@@ -151,12 +166,20 @@ function formatterFor(timeZone: string): Intl.DateTimeFormat {
  */
 export function assertReportingIanaTimezoneV1(value: unknown, field = 'timezone'): asserts value is string {
   if (typeof value !== 'string' || value.length === 0 || value.length > 255 || /^[+-]/.test(value)) {
-    throw new TypeError(`${field} must be an IANA timezone name`);
+    throw new CoverageInputError(
+      'COVERAGE_INPUT_INVALID',
+      `${field} must be an IANA timezone name`,
+      'invalid_timezone'
+    );
   }
   try {
     formatterFor(value);
   } catch {
-    throw new TypeError(`${field} ${JSON.stringify(value)} is not a recognized IANA timezone`);
+    throw new CoverageInputError(
+      'COVERAGE_INPUT_INVALID',
+      `${field} ${JSON.stringify(value)} is not a recognized IANA timezone`,
+      'invalid_timezone'
+    );
   }
 }
 
@@ -165,7 +188,11 @@ function wallTime(instant: number, timeZone: string): number {
   const parts = formatterFor(timeZone).formatToParts(instant);
   const field = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find(part => part.type === type)?.value);
   if (parts.find(part => part.type === 'era')?.value !== 'AD') {
-    throw new RangeError('Reporting period boundary is outside the supported civil year range');
+    throw new CoverageInputError(
+      'COVERAGE_INPUT_INVALID',
+      'Reporting period boundary is outside the supported civil year range',
+      'invalid_instant'
+    );
   }
   const wall = new Date(0);
   wall.setUTCFullYear(field('year'), field('month') - 1, field('day'));
@@ -209,10 +236,11 @@ function parseInstant(value: string, field: string): number {
     typeof value !== 'string' ||
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i.test(value)
   ) {
-    throw new TypeError(`${field} must be an RFC 3339 date-time`);
+    throw new CoverageInputError('COVERAGE_INPUT_INVALID', `${field} must be an RFC 3339 date-time`, 'invalid_instant');
   }
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) throw new TypeError(`${field} must be an RFC 3339 date-time`);
+  if (!Number.isFinite(parsed))
+    throw new CoverageInputError('COVERAGE_INPUT_INVALID', `${field} must be an RFC 3339 date-time`, 'invalid_instant');
   return parsed;
 }
 
@@ -229,8 +257,10 @@ export function createReportingPeriodCalendarV1(spec: ReportingPeriodCalendarSpe
   if (spec.alignment !== 'utc' && hasDate && hasTime) {
     // adcontextprotocol/adcp#8588: under a local alignment a duration cannot mix date and
     // time components.
-    throw new TypeError(
-      `Reporting period_duration ${JSON.stringify(spec.period_duration)} mixes date and time components under ${spec.alignment} alignment`
+    throw new CoverageInputError(
+      'COVERAGE_INPUT_INVALID',
+      `Reporting period_duration ${JSON.stringify(spec.period_duration)} mixes date and time components under ${spec.alignment} alignment`,
+      'invalid_period_duration'
     );
   }
   if (spec.alignment !== 'utc' && !hasDate) {
@@ -253,7 +283,12 @@ export function createReportingPeriodCalendarV1(spec: ReportingPeriodCalendarSpe
       break;
     case 'billing_cycle': {
       assertReportingIanaTimezoneV1(spec.timezone, 'billing_cycle period_timezone');
-      if (spec.period_anchor === undefined) throw new TypeError('billing_cycle alignment requires period_anchor');
+      if (spec.period_anchor === undefined)
+        throw new CoverageInputError(
+          'COVERAGE_INPUT_INVALID',
+          'billing_cycle alignment requires period_anchor',
+          'invalid_input'
+        );
       timeZone = spec.timezone;
       const anchor = parseInstant(spec.period_anchor, 'period_anchor');
       originWall = wallTime(anchor, timeZone);
@@ -262,8 +297,10 @@ export function createReportingPeriodCalendarV1(spec: ReportingPeriodCalendarSpe
       break;
     }
     default:
-      throw new TypeError(
-        `Unknown reporting period alignment ${JSON.stringify((spec as { alignment?: unknown }).alignment)}`
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INVALID',
+        `Unknown reporting period alignment ${JSON.stringify((spec as { alignment?: unknown }).alignment)}`,
+        'invalid_input'
       );
   }
   const origin = new Date(originWall);
@@ -278,7 +315,12 @@ export function createReportingPeriodCalendarV1(spec: ReportingPeriodCalendarSpe
   const cache = new Map<number, number>();
 
   function boundary(ordinal: number): number {
-    if (!Number.isSafeInteger(ordinal)) throw new RangeError('Reporting period ordinal must be a safe integer');
+    if (!Number.isSafeInteger(ordinal))
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INVALID',
+        'Reporting period ordinal must be a safe integer',
+        'invalid_input'
+      );
     // Interval zero is the anchor instant itself, even when it falls in a DST fold whose
     // wall time would otherwise resolve to the earlier offset.
     if (ordinal === 0 && anchorInstant !== undefined) return anchorInstant;
@@ -298,7 +340,11 @@ export function createReportingPeriodCalendarV1(spec: ReportingPeriodCalendarSpe
     }
     const value = instantForWall(wall, timeZone) + ordinal * exactMs;
     if (!Number.isFinite(value) || value < MIN_INSTANT || value > MAX_INSTANT) {
-      throw new RangeError('Reporting period boundary is outside the RFC 3339 instant range');
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INVALID',
+        'Reporting period boundary is outside the RFC 3339 instant range',
+        'invalid_instant'
+      );
     }
     if (cache.size > 4_096) cache.clear();
     cache.set(ordinal, value);
@@ -308,7 +354,8 @@ export function createReportingPeriodCalendarV1(spec: ReportingPeriodCalendarSpe
   const originInstant = boundary(0);
 
   function ceilOrdinal(instant: number): number {
-    if (!Number.isFinite(instant)) throw new RangeError('Reporting instant must be finite');
+    if (!Number.isFinite(instant))
+      throw new CoverageInputError('COVERAGE_INPUT_INVALID', 'Reporting instant must be finite', 'invalid_instant');
     let ordinal = Math.ceil((instant - originInstant) / nominal);
     let steps = 0;
     while (boundary(ordinal) < instant) {
@@ -364,8 +411,10 @@ function createSubDailyLocalCalendar(spec: ReportingPeriodCalendarSpecV1, stepMs
     assertReportingIanaTimezoneV1(spec.timezone, `${spec.alignment} timezone`);
   }
   if (!(stepMs > 0) || DAY_MS % stepMs !== 0) {
-    throw new TypeError(
-      `Sub-daily period_duration ${JSON.stringify(spec.period_duration)} must divide 24 hours under ${spec.alignment} alignment`
+    throw new CoverageInputError(
+      'COVERAGE_INPUT_INVALID',
+      `Sub-daily period_duration ${JSON.stringify(spec.period_duration)} must divide 24 hours under ${spec.alignment} alignment`,
+      'invalid_period_duration'
     );
   }
   const timeZone = spec.timezone;
@@ -379,7 +428,11 @@ function createSubDailyLocalCalendar(spec: ReportingPeriodCalendarSpecV1, stepMs
     for (let slot = 0; slot < slots; slot += 1) {
       for (const value of instantsForWall(day * DAY_MS + slot * stepMs, timeZone)) {
         if (value < MIN_INSTANT || value > MAX_INSTANT) {
-          throw new RangeError('Reporting period boundary is outside the RFC 3339 instant range');
+          throw new CoverageInputError(
+            'COVERAGE_INPUT_INVALID',
+            'Reporting period boundary is outside the RFC 3339 instant range',
+            'invalid_instant'
+          );
         }
         values.push(value);
       }
@@ -391,7 +444,8 @@ function createSubDailyLocalCalendar(spec: ReportingPeriodCalendarSpecV1, stepMs
   }
   const localDay = (instant: number) => Math.floor(wallTime(instant, timeZone) / DAY_MS);
   function ceil(instant: number): number {
-    if (!Number.isFinite(instant)) throw new RangeError('Reporting instant must be finite');
+    if (!Number.isFinite(instant))
+      throw new CoverageInputError('COVERAGE_INPUT_INVALID', 'Reporting instant must be finite', 'invalid_instant');
     for (let day = localDay(instant) - 1; day <= localDay(instant) + 2; day += 1) {
       const found = boundariesOfDay(day).find(value => value >= instant);
       if (found !== undefined) return found;
@@ -402,7 +456,8 @@ function createSubDailyLocalCalendar(spec: ReportingPeriodCalendarSpecV1, stepMs
     return ceil(instant + 1);
   }
   function floor(instant: number): number {
-    if (!Number.isFinite(instant)) throw new RangeError('Reporting instant must be finite');
+    if (!Number.isFinite(instant))
+      throw new CoverageInputError('COVERAGE_INPUT_INVALID', 'Reporting instant must be finite', 'invalid_instant');
     for (let day = localDay(instant) + 1; day >= localDay(instant) - 2; day -= 1) {
       const found = [...boundariesOfDay(day)].reverse().find(value => value <= instant);
       if (found !== undefined) return found;

@@ -768,6 +768,9 @@ export {
   AgentRateLimitedError,
   ActionNotAllowedError,
   PreparedFixturesDeniedError,
+  ReportingSubscriptionError,
+  CoverageInputError,
+  ReportingSubscriptionEngineError,
   adcpErrorToTypedError,
   getClientPreflightAdcpError,
   isADCPError,
@@ -789,6 +792,12 @@ export type {
   ActionNotAllowedAttemptedAction,
   ActionNotAllowedAvailableAction,
   ActionNotAllowedRecovery,
+  AdcpErrorRecovery,
+  ReportingSubscriptionErrorCode,
+  ReportingSubscriptionErrorOptions,
+  CoverageInputErrorCode,
+  CoverageInputErrorDetail,
+  ReportingSubscriptionEngineErrorCode,
 } from './errors';
 
 // ====== MEDIA BUY ACTIONS (AdCP 3.1 / RFC #4480) ======

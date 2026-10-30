@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, test } = require('node:test');
 const path = require('node:path');
 const advanced = require('@adcp/sdk/reporting/advanced');
+const { CoverageInputError } = advanced;
 const consumer = require('@adcp/sdk/reporting/consumer');
 const ledger = require('@adcp/sdk/reporting/ledger');
 const service = require('@adcp/sdk/reporting/service');
@@ -43,7 +44,12 @@ describe('expectedSubscriptionPeriods parity table', () => {
       if (testCase.expected_error) {
         assert.throws(
           () => expectedSubscriptionPeriods(input),
-          error => error.name === testCase.expected_error
+          error =>
+            error instanceof CoverageInputError &&
+            error.code === testCase.expected_error.code &&
+            error.detail === testCase.expected_error.detail &&
+            error.recovery === 'correctable' &&
+            !('dispatched' in error)
         );
         return;
       }
@@ -178,20 +184,33 @@ describe('expectedSubscriptionPeriods invariants', () => {
   test('fails closed above max_periods', () => {
     const input = structuredClone(baseline);
     input.max_periods = 2;
-    assert.throws(() => expectedSubscriptionPeriods(input), RangeError);
+    assert.throws(() => expectedSubscriptionPeriods(input), {
+      name: 'CoverageInputError',
+      code: 'COVERAGE_BUDGET_EXCEEDED',
+      recovery: 'correctable',
+    });
   });
 
   test('rejects malformed instants and mismatched version records', () => {
-    assert.throws(() => expectedSubscriptionPeriods({ ...structuredClone(baseline), now: '2026-12-01' }), TypeError);
+    assert.throws(() => expectedSubscriptionPeriods({ ...structuredClone(baseline), now: '2026-12-01' }), {
+      code: 'COVERAGE_INPUT_INVALID',
+      detail: 'invalid_instant',
+    });
     const input = structuredClone(baseline);
     input.versions[0].configuration.subscription_version = 9;
-    assert.throws(() => expectedSubscriptionPeriods(input), TypeError);
+    assert.throws(() => expectedSubscriptionPeriods(input), {
+      code: 'COVERAGE_INPUT_INVALID',
+      detail: 'invalid_input',
+    });
     const inactive = structuredClone(baseline);
     inactive.versions[0].configuration.active = false;
     assert.throws(() => expectedSubscriptionPeriods(inactive), /deactivated_at/);
     const destination = structuredClone(baseline);
     destination.versions[0].configuration.destination = { destination_id: 'd' };
-    assert.throws(() => expectedSubscriptionPeriods(destination), /destination_method/);
+    assert.throws(() => expectedSubscriptionPeriods(destination), {
+      code: 'COVERAGE_INPUT_INCOMPLETE',
+      detail: 'missing_destination_method',
+    });
   });
 });
 
@@ -343,11 +362,14 @@ describe('createReportingPeriodCalendarV1 (period_generation)', () => {
   });
 
   test('refuses schedules the protocol does not define', () => {
-    assert.throws(() => createReportingPeriodCalendarV1({ period_duration: 'P0D', alignment: 'utc' }), TypeError);
+    assert.throws(() => createReportingPeriodCalendarV1({ period_duration: 'P0D', alignment: 'utc' }), {
+      code: 'COVERAGE_INPUT_INVALID',
+      detail: 'invalid_period_duration',
+    });
     assert.throws(
       () =>
         createReportingPeriodCalendarV1({ period_duration: 'P1D', alignment: 'account_timezone', timezone: '+05:00' }),
-      TypeError
+      { code: 'COVERAGE_INPUT_INVALID', detail: 'invalid_timezone' }
     );
     assert.throws(
       () =>
@@ -356,7 +378,7 @@ describe('createReportingPeriodCalendarV1 (period_generation)', () => {
           alignment: 'account_timezone',
           timezone: 'Mars/Base',
         }),
-      TypeError
+      { code: 'COVERAGE_INPUT_INVALID', detail: 'invalid_timezone' }
     );
     assert.throws(
       () => createReportingPeriodCalendarV1({ period_duration: 'P1M', alignment: 'billing_cycle', timezone: 'UTC' }),

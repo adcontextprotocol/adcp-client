@@ -28,6 +28,7 @@
  *
  * @packageDocumentation
  */
+import { CoverageInputError } from '../../errors';
 import type { ReportingSubscription } from '../../types/core.generated';
 import type {
   ReportingSubscriptionCoverageWithOfferingsV1,
@@ -270,9 +271,9 @@ export function expectedSubscriptionPeriods(input: ExpectedSubscriptionPeriodsIn
   const now = instant(input.now, 'now');
   const maxPeriods = input.max_periods ?? DEFAULT_MAX_PERIODS;
   if (!Number.isSafeInteger(maxPeriods) || maxPeriods < 1)
-    throw new TypeError('max_periods must be a positive integer');
+    throw new CoverageInputError('COVERAGE_INPUT_INVALID', 'max_periods must be a positive integer', 'invalid_input');
   if (typeof input.subscription_id !== 'string' || input.subscription_id.length === 0) {
-    throw new TypeError('subscription_id is required');
+    throw new CoverageInputError('COVERAGE_INPUT_INVALID', 'subscription_id is required', 'invalid_input');
   }
   const versions = normalizeVersions(input.versions, input.subscription_id, inactiveWindows(input.inactive_intervals));
   const chains = authorityChains(input.account.grants, input.status_retention_days);
@@ -280,7 +281,8 @@ export function expectedSubscriptionPeriods(input: ExpectedSubscriptionPeriodsIn
   const removals = exceptionWindows(input.coverage);
   const offeringsById = new Map<string, ReportingSubscriptionOfferingV1>();
   for (const offering of input.offerings) {
-    if (offeringsById.has(offering.offering_id)) throw new TypeError('offering_id values must be unique');
+    if (offeringsById.has(offering.offering_id))
+      throw new CoverageInputError('COVERAGE_INPUT_INVALID', 'offering_id values must be unique', 'invalid_input');
     offeringsById.set(offering.offering_id, offering);
   }
   const calendars = new Map<string, ReportingPeriodCalendarV1>();
@@ -288,12 +290,17 @@ export function expectedSubscriptionPeriods(input: ExpectedSubscriptionPeriodsIn
   const seenBuys = new Set<string>();
   const maxIterations = input.max_iterations ?? DEFAULT_MAX_ITERATIONS;
   if (!Number.isSafeInteger(maxIterations) || maxIterations < 1) {
-    throw new TypeError('max_iterations must be a positive integer');
+    throw new CoverageInputError(
+      'COVERAGE_INPUT_INVALID',
+      'max_iterations must be a positive integer',
+      'invalid_input'
+    );
   }
   let iterations = 0;
 
   for (const buy of input.buys) {
-    if (seenBuys.has(buy.media_buy_id)) throw new TypeError('media_buy_id values must be unique');
+    if (seenBuys.has(buy.media_buy_id))
+      throw new CoverageInputError('COVERAGE_INPUT_INVALID', 'media_buy_id values must be unique', 'invalid_input');
     seenBuys.add(buy.media_buy_id);
     if (buy.confirmed_at === undefined || buy.confirmed_at === null) continue;
     const confirmedAt = instant(buy.confirmed_at, `${buy.media_buy_id}.confirmed_at`);
@@ -315,7 +322,10 @@ export function expectedSubscriptionPeriods(input: ExpectedSubscriptionPeriodsIn
         let start = Math.max(firstOwedBoundary(calendar, handoff, confirmedAt), calendar.floor(earliestStart));
         while (start < regime.until && start < latestStop) {
           if (++iterations > maxIterations) {
-            throw new RangeError(`Expected subscription periods exceed the iteration budget (${maxIterations})`);
+            throw new CoverageInputError(
+              'COVERAGE_BUDGET_EXCEEDED',
+              `Expected subscription periods exceed the iteration budget (${maxIterations})`
+            );
           }
           // next() is strictly later, so a zero-length period (a skipped civil date) is never owed.
           const end = calendar.next(start);
@@ -348,7 +358,10 @@ export function expectedSubscriptionPeriods(input: ExpectedSubscriptionPeriodsIn
             period_end: new Date(end).toISOString(),
           });
           if (result.length > maxPeriods) {
-            throw new RangeError(`Expected subscription periods exceed max_periods (${maxPeriods})`);
+            throw new CoverageInputError(
+              'COVERAGE_BUDGET_EXCEEDED',
+              `Expected subscription periods exceed max_periods (${maxPeriods})`
+            );
           }
           start = end;
         }
@@ -437,23 +450,40 @@ function normalizeVersions(
   subscriptionId: string,
   globalInactive: readonly Window[]
 ): NormalizedVersion[] {
-  if (!Array.isArray(records) || records.length === 0) throw new TypeError('versions must list at least one version');
+  if (!Array.isArray(records) || records.length === 0)
+    throw new CoverageInputError('COVERAGE_INPUT_INVALID', 'versions must list at least one version', 'invalid_input');
   const versions: NormalizedVersion[] = [];
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index]!;
     const next = records[index + 1];
     const label = `version ${record.subscription_version}`;
     if (!Number.isSafeInteger(record.subscription_version) || record.subscription_version < 1) {
-      throw new TypeError('subscription_version must be a positive integer');
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INVALID',
+        'subscription_version must be a positive integer',
+        'invalid_input'
+      );
     }
     if (record.configuration?.subscription_id !== subscriptionId) {
-      throw new TypeError(`${label} configuration names a different subscription_id`);
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INVALID',
+        `${label} configuration names a different subscription_id`,
+        'invalid_input'
+      );
     }
     if (record.configuration.subscription_version !== record.subscription_version) {
-      throw new TypeError(`${label} configuration carries a different subscription_version`);
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INVALID',
+        `${label} configuration carries a different subscription_version`,
+        'invalid_input'
+      );
     }
     if (record.configuration.destination !== undefined && record.destination_method === undefined) {
-      throw new TypeError(`${label} names a destination; destination_method is required`);
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INCOMPLETE',
+        `${label} names a destination; destination_method is required`,
+        'missing_destination_method'
+      );
     }
     const acceptedAt = instant(record.accepted_at, `${label} accepted_at`);
     const previous = versions.at(-1);
@@ -461,7 +491,11 @@ function normalizeVersions(
       previous &&
       (record.subscription_version <= previous.record.subscription_version || acceptedAt < previous.acceptedAt)
     ) {
-      throw new TypeError('versions must be in ascending subscription_version and accepted_at order');
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INVALID',
+        'versions must be in ascending subscription_version and accepted_at order',
+        'invalid_input'
+      );
     }
     const supersededAt =
       record.superseded_at !== undefined
@@ -470,7 +504,11 @@ function normalizeVersions(
           ? instant(next.accepted_at, `version ${next.subscription_version} accepted_at`)
           : Number.POSITIVE_INFINITY;
     if (next !== undefined && supersededAt !== instant(next.accepted_at, 'accepted_at')) {
-      throw new TypeError(`${label} superseded_at must equal the next version's accepted_at`);
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INVALID',
+        `${label} superseded_at must equal the next version's accepted_at`,
+        'invalid_input'
+      );
     }
     const inactive: Window[] = [];
     if (record.deactivated_at !== undefined) {
@@ -483,7 +521,11 @@ function normalizeVersions(
       next === undefined &&
       !globalInactive.some(window => !Number.isFinite(window.until))
     ) {
-      throw new TypeError(`${label} is inactive; deactivated_at or an open inactive_intervals entry is required`);
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INVALID',
+        `${label} is inactive; deactivated_at or an open inactive_intervals entry is required`,
+        'invalid_input'
+      );
     }
     versions.push({ record, acceptedAt, endsAt: supersededAt, inactive: [...inactive, ...globalInactive] });
   }
@@ -492,14 +534,20 @@ function normalizeVersions(
 
 /** The readback's `inactive_intervals` as half-open windows. */
 function inactiveWindows(intervals: readonly ReportingSubscriptionInactiveIntervalV1[] | undefined): Window[] {
-  if (intervals !== undefined && !Array.isArray(intervals)) throw new TypeError('inactive_intervals must be an array');
+  if (intervals !== undefined && !Array.isArray(intervals))
+    throw new CoverageInputError('COVERAGE_INPUT_INVALID', 'inactive_intervals must be an array', 'invalid_input');
   return (intervals ?? []).map(interval => {
     const from = instant(interval.deactivated_at, 'inactive_intervals.deactivated_at');
     const until =
       interval.reactivated_at === undefined
         ? Number.POSITIVE_INFINITY
         : instant(interval.reactivated_at, 'inactive_intervals.reactivated_at');
-    if (!(until > from)) throw new TypeError('inactive_intervals reactivated_at must be after deactivated_at');
+    if (!(until > from))
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INVALID',
+        'inactive_intervals reactivated_at must be after deactivated_at',
+        'invalid_input'
+      );
     return { from, until };
   });
 }
@@ -508,7 +556,8 @@ function authorityChains(
   grants: readonly ReportingSubscriptionGrantV1[],
   retentionDays: number | undefined
 ): AuthorityChain[] {
-  if (!Array.isArray(grants)) throw new TypeError('account.grants must be an array');
+  if (!Array.isArray(grants))
+    throw new CoverageInputError('COVERAGE_INPUT_INVALID', 'account.grants must be an array', 'invalid_input');
   const chains: AuthorityChain[] = [];
   let previousEnd: number | undefined;
   for (let index = 0; index < grants.length; index += 1) {
@@ -517,9 +566,10 @@ function authorityChains(
     const unauthorizedAt =
       grant.unauthorized_at === undefined ? undefined : instant(grant.unauthorized_at, 'grants.unauthorized_at');
     if (unauthorizedAt !== undefined && unauthorizedAt < authorizedAt) {
-      throw new TypeError('A grant cannot end before it began');
+      throw new CoverageInputError('COVERAGE_INPUT_INVALID', 'A grant cannot end before it began', 'invalid_input');
     }
-    if (previousEnd === undefined && index > 0) throw new TypeError('Only the last grant may be unrevoked');
+    if (previousEnd === undefined && index > 0)
+      throw new CoverageInputError('COVERAGE_INPUT_INVALID', 'Only the last grant may be unrevoked', 'invalid_input');
     const current = chains.at(-1);
     if (current !== undefined && previousEnd !== undefined) {
       if (authorizedAt <= previousEnd) {
@@ -529,7 +579,11 @@ function authorityChains(
         current.interruptions.push({ revokedAt: previousEnd });
         delete current.end;
       } else if (retentionDays === undefined || !Number.isSafeInteger(retentionDays) || retentionDays < 1) {
-        throw new TypeError('status_retention_days is required to evaluate a re-grant');
+        throw new CoverageInputError(
+          'COVERAGE_INPUT_INCOMPLETE',
+          'status_retention_days is required to evaluate a re-grant',
+          'missing_status_retention_days'
+        );
       } else if (authorizedAt < previousEnd + retentionDays * DAY_MS) {
         current.interruptions.push({ revokedAt: previousEnd, regrantedAt: authorizedAt });
         delete current.end;
@@ -617,7 +671,11 @@ function timezoneFor(timeline: TimezoneTimeline, offeringId: string, at: number)
   if (applicable.length === 0) return timeline.current;
   if (at < applicable[0]!.at) {
     if (applicable[0]!.previous === undefined) {
-      throw new TypeError('timezone_cutovers entries require previous_timezone');
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INCOMPLETE',
+        'timezone_cutovers entries require previous_timezone',
+        'missing_previous_timezone'
+      );
     }
     return applicable[0]!.previous;
   }
@@ -821,8 +879,10 @@ function calendarSpec(
     case 'account_timezone': {
       const timezone = override ?? accountTimezone;
       if (timezone === undefined) {
-        throw new TypeError(
-          `Offering ${offering.offering_id} is account_timezone aligned; account.timezone is required`
+        throw new CoverageInputError(
+          'COVERAGE_INPUT_INCOMPLETE',
+          `Offering ${offering.offering_id} is account_timezone aligned; account.timezone is required`,
+          'missing_account_timezone'
         );
       }
       return { ...base, timezone };
@@ -831,8 +891,10 @@ function calendarSpec(
       // A period_timezone override only ever matches the offering's own published zone.
       const timezone = schedule.period_timezone_policy === 'fixed' ? schedule.period_timezone : sourceTimezone;
       if (timezone === undefined) {
-        throw new TypeError(
-          `Offering ${offering.offering_id} resolves its source timezone per account; account.source_timezone is required`
+        throw new CoverageInputError(
+          'COVERAGE_INPUT_INCOMPLETE',
+          `Offering ${offering.offering_id} resolves its source timezone per account; account.source_timezone is required`,
+          'missing_source_timezone'
         );
       }
       return { ...base, timezone };
@@ -840,7 +902,11 @@ function calendarSpec(
     case 'billing_cycle':
       return { ...base, timezone: schedule.period_timezone!, period_anchor: schedule.period_anchor! };
     default:
-      throw new TypeError(`Offering ${offering.offering_id} has an unknown alignment`);
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INVALID',
+        `Offering ${offering.offering_id} has an unknown alignment`,
+        'invalid_input'
+      );
   }
 }
 
@@ -873,9 +939,10 @@ function instant(value: unknown, field: string): number {
     typeof value !== 'string' ||
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i.test(value)
   ) {
-    throw new TypeError(`${field} must be an RFC 3339 date-time`);
+    throw new CoverageInputError('COVERAGE_INPUT_INVALID', `${field} must be an RFC 3339 date-time`, 'invalid_instant');
   }
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) throw new TypeError(`${field} must be an RFC 3339 date-time`);
+  if (!Number.isFinite(parsed))
+    throw new CoverageInputError('COVERAGE_INPUT_INVALID', `${field} must be an RFC 3339 date-time`, 'invalid_instant');
   return parsed;
 }

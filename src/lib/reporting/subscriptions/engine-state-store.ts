@@ -9,6 +9,8 @@
  * the principal row and is never pruned, so `prior_versions` can always be answered for
  * retained obligations.
  */
+import { ReportingSubscriptionEngineError } from '../../errors';
+import { PlatformConfigError } from '../../server/decisioning/runtime/validate-platform';
 import { createHash } from 'node:crypto';
 import { InMemoryStateStore, type AdcpStateStore } from '../../server/state-store';
 import type { PrincipalStoreScope } from '../../server/principal/types';
@@ -50,10 +52,16 @@ export function createReportingSubscriptionEngineStateStoreV1(
   options: CreateReportingSubscriptionEngineStateStoreOptionsV1
 ): ReportingSubscriptionEngineStoreV1 {
   if (!options?.store?.getWithVersion || !options.store.putIfMatch) {
-    throw new TypeError('The reporting subscription engine store requires getWithVersion and putIfMatch');
+    throw new PlatformConfigError(
+      'The reporting subscription engine store requires getWithVersion and putIfMatch. Use a state store that implements both, such as PostgresStateStore.',
+      { configField: 'store' }
+    );
   }
   if (options.durability === 'durable' && options.store instanceof InMemoryStateStore) {
-    throw new TypeError('InMemoryStateStore cannot be declared durable');
+    throw new PlatformConfigError(
+      'InMemoryStateStore cannot be declared durable. Use durable storage, such as PostgresStateStore, or drop durability: "durable".',
+      { code: 'REPORTING_STORAGE_NOT_DURABLE', configField: 'durability' }
+    );
   }
   const collection = options.collection ?? DEFAULT_REPORTING_SUBSCRIPTION_ENGINE_COLLECTION;
   const store = options.store;
@@ -73,12 +81,17 @@ export function createReportingSubscriptionEngineStateStoreV1(
         if (Object.entries(filter).every(([field, value]) => document[field] === value)) documents.push(document);
       }
       if (result.nextCursor === undefined) return documents;
-      if (result.nextCursor === cursor)
-        throw new Error('Reporting subscription engine store returned a repeating cursor');
+      if (result.nextCursor === cursor) {
+        throw new ReportingSubscriptionEngineError(
+          'SUBSCRIPTION_STATE_CORRUPT',
+          'Reporting subscription engine store returned a repeating cursor. Fix the state store list implementation.'
+        );
+      }
       cursor = result.nextCursor;
     }
-    throw new Error(
-      `Reporting subscription engine store did not finish within ${MAX_PAGES} pages; refusing a partial list`
+    throw new ReportingSubscriptionEngineError(
+      'SUBSCRIPTION_STATE_CORRUPT',
+      `Reporting subscription engine store did not finish within ${MAX_PAGES} pages; refusing a partial list. Check the state store list implementation.`
     );
   }
 
@@ -96,14 +109,20 @@ export function createReportingSubscriptionEngineStateStoreV1(
         !document.value ||
         typeof document.value !== 'object'
       ) {
-        throw new Error('Reporting subscription engine document is malformed or belongs to another principal');
+        throw new ReportingSubscriptionEngineError(
+          'SUBSCRIPTION_STATE_CORRUPT',
+          'Reporting subscription engine document is malformed or belongs to another principal. Inspect the engine collection for tampering or a shared collection name.'
+        );
       }
       return { value: structuredClone(document.value), revision: String(row.version) };
     },
     async put(scope, key, value, expectedRevision) {
       const expected = expectedRevision === null ? null : Number(expectedRevision);
       if (expected !== null && (!Number.isSafeInteger(expected) || expected < 1)) {
-        throw new Error('Reporting subscription engine store returned an invalid revision');
+        throw new ReportingSubscriptionEngineError(
+          'SUBSCRIPTION_STATE_CORRUPT',
+          'Reporting subscription engine store returned an invalid revision. The state store must return positive integer versions.'
+        );
       }
       const document: EngineDocument = {
         schemaVersion: 2,

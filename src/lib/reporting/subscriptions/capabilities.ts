@@ -7,6 +7,7 @@
  * or is absent. Advertising `subscriptions` requires `sync_principal` in
  * `configuration_tasks`, and vice versa (`core/reporting-delivery-capabilities.json`).
  */
+import { PlatformConfigError } from '../../server/decisioning/runtime/validate-platform';
 import type { ReportingDeliveryCapabilities } from '../../types/tools.generated';
 
 /** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
@@ -48,13 +49,21 @@ export function reportingConfigurationCapabilitiesV1(
   const accountConfigurations = input.accountConfigurations ?? true;
   if (input.subscriptions === undefined) {
     if (!accountConfigurations) {
-      throw new TypeError('Reporting registration requires sync_accounts, sync_principal subscriptions, or both');
+      throw new PlatformConfigError(
+        'Reporting registration requires sync_accounts, sync_principal subscriptions, or both. Enable subscriptions or keep accountConfigurations.',
+        { configField: 'accountConfigurations' }
+      );
     }
     return { configuration_task: 'sync_accounts' };
   }
   const { maxAccounts, backfillOnRegrant, dimensions } = input.subscriptions;
   if (maxAccounts !== undefined && (!Number.isSafeInteger(maxAccounts) || maxAccounts < 1)) {
-    throw new TypeError('subscriptions.maxAccounts must be a positive integer');
+    throw new PlatformConfigError(
+      'subscriptions.maxAccounts must be a positive integer. Set a positive integer or omit it.',
+      {
+        configField: 'subscriptions.maxAccounts',
+      }
+    );
   }
   if (dimensions !== undefined) {
     if (
@@ -62,7 +71,10 @@ export function reportingConfigurationCapabilitiesV1(
       new Set(dimensions).size !== dimensions.length ||
       dimensions.some(value => typeof value !== 'string' || !/^[a-z][a-z0-9_]*$/.test(value))
     ) {
-      throw new TypeError('subscriptions.dimensions must be unique reporting-dimension values');
+      throw new PlatformConfigError(
+        'subscriptions.dimensions must be unique reporting-dimension values. List each standard dimension once, in snake_case.',
+        { configField: 'subscriptions.dimensions' }
+      );
     }
   }
   return {

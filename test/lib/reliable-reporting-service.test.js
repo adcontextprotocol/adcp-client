@@ -594,8 +594,15 @@ describe('ReliableReportingService', () => {
       { configuration_tasks: ['sync_principal'], subscriptions: { supported: true } },
       'configuration_task appears only when configuration_tasks lists sync_accounts'
     );
-    assert.throws(() => reportingConfigurationCapabilitiesV1({ accountConfigurations: false }), TypeError);
-    assert.throws(() => reportingConfigurationCapabilitiesV1({ subscriptions: { maxAccounts: 0 } }), TypeError);
+    assert.throws(() => reportingConfigurationCapabilitiesV1({ accountConfigurations: false }), {
+      name: 'PlatformConfigError',
+      code: 'PLATFORM_CONFIG_INVALID',
+      configField: 'accountConfigurations',
+    });
+    assert.throws(() => reportingConfigurationCapabilitiesV1({ subscriptions: { maxAccounts: 0 } }), {
+      name: 'PlatformConfigError',
+      configField: 'subscriptions.maxAccounts',
+    });
   });
 
   test('advertises reporting subscriptions end to end, valid under strict 3.3 validation', async () => {

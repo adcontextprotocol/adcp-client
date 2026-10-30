@@ -30,6 +30,8 @@
  * State is sharded: one document per principal for `max_accounts` slots, and one per
  * (principal, account), each updated with compare-and-set.
  */
+import { ReportingSubscriptionEngineError } from '../../errors';
+import { PlatformConfigError } from '../../server/decisioning/runtime/validate-platform';
 import type { PendingAction } from '../../types/core.generated';
 import type {
   PrincipalLifecycleRuntimeSubscriptions,
@@ -549,7 +551,12 @@ function emptySubscriptionAccount(): SubscriptionAccountState {
 
 function parseInstant(value: unknown, field: string): number {
   const parsed = typeof value === 'string' ? Date.parse(value) : Number.NaN;
-  if (!Number.isFinite(parsed)) throw new TypeError(`${field} must be an RFC 3339 date-time`);
+  if (!Number.isFinite(parsed)) {
+    throw new ReportingSubscriptionEngineError(
+      'SUBSCRIPTION_HOST_FACT_INVALID',
+      `${field} must be an RFC 3339 date-time. Return an RFC 3339 timestamp from the hook.`
+    );
+  }
   return parsed;
 }
 
@@ -578,8 +585,9 @@ export function createReportingSubscriptionEngineV1(
   options: CreateReportingSubscriptionEngineOptionsV1
 ): ReportingSubscriptionEngineV1 {
   if (!options?.principal?.listReportingSubscriptions) {
-    throw new TypeError(
-      'createReportingSubscriptionEngineV1 requires a principal runtime with reporting subscriptions'
+    throw new PlatformConfigError(
+      'createReportingSubscriptionEngineV1 requires a principal runtime with reporting subscriptions. Pass a runtime from createPrincipalLifecycle({ reportingSubscriptions }) as principal.',
+      { configField: 'principal' }
     );
   }
   for (const hook of [
@@ -589,25 +597,39 @@ export function createReportingSubscriptionEngineV1(
     'isPeriodDelivered',
   ] as const) {
     if (typeof options.hooks?.[hook] !== 'function') {
-      throw new TypeError(`createReportingSubscriptionEngineV1 requires the ${hook} hook`);
+      throw new PlatformConfigError(
+        `createReportingSubscriptionEngineV1 requires the ${hook} hook. Supply hooks.${hook}.`,
+        { configField: `hooks.${hook}` }
+      );
     }
   }
   if (!Number.isSafeInteger(options.statusRetentionDays) || options.statusRetentionDays < 1) {
-    throw new TypeError('statusRetentionDays must be a positive integer');
+    throw new PlatformConfigError('statusRetentionDays must be a positive integer. Set it to the service value.', {
+      configField: 'statusRetentionDays',
+    });
   }
   if (options.maxAccounts !== undefined && (!Number.isSafeInteger(options.maxAccounts) || options.maxAccounts < 1)) {
-    throw new TypeError('maxAccounts must be a positive integer');
+    throw new PlatformConfigError('maxAccounts must be a positive integer. Set a positive integer or omit it.', {
+      configField: 'maxAccounts',
+    });
   }
   const production = process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'development';
   const store = options.store ?? createInMemoryReportingSubscriptionEngineStoreV1();
   if (production && store.durability !== 'durable') {
-    throw new TypeError('Production reporting subscription engines require a durable store');
+    throw new PlatformConfigError(
+      'Production reporting subscription engines require a durable store. Pass store: createReportingSubscriptionEngineStateStoreV1({ store, durability: "durable" }) over durable storage, or run with NODE_ENV=test or development.',
+      { code: 'REPORTING_STORAGE_NOT_DURABLE', configField: 'store' }
+    );
   }
   const now = options.now ?? (() => new Date());
   const maxCasAttempts = options.maxCasAttempts ?? 8;
   const retentionMs = options.statusRetentionDays * DAY_MS;
   const offeringsById = new Map(options.offerings.map(offering => [offering.offering_id, offering]));
-  if (offeringsById.size !== options.offerings.length) throw new TypeError('offering_id values must be unique');
+  if (offeringsById.size !== options.offerings.length) {
+    throw new PlatformConfigError('offering_id values must be unique. Remove the duplicate offering.', {
+      configField: 'offerings',
+    });
+  }
 
   async function mutate<T extends Record<string, unknown>>(
     principal: Readonly<PrincipalStoreScope>,
@@ -622,7 +644,10 @@ export function createReportingSubscriptionEngineV1(
       const result = await store.put(principal, key, value, current?.revision ?? null);
       if (result.outcome === 'applied') return value;
     }
-    throw new Error('Reporting subscription engine state conflicted repeatedly');
+    throw new ReportingSubscriptionEngineError(
+      'SUBSCRIPTION_STATE_CONFLICT',
+      `Reporting subscription engine state conflicted on ${maxCasAttempts} attempts. Another reconcile of this principal is running; retry.`
+    );
   }
 
   async function readAccount(
@@ -793,11 +818,17 @@ export function createReportingSubscriptionEngineV1(
         if (reportingSubscriptionCoverageGrantedV1(account)) accounts.set(account.account_id, account);
       }
       if (result.nextCursor === undefined) return accounts;
-      if (result.nextCursor === cursor) throw new Error('listAuthorizedAccounts returned a repeating cursor');
+      if (result.nextCursor === cursor) {
+        throw new ReportingSubscriptionEngineError(
+          'SUBSCRIPTION_ROSTER_INCOMPLETE',
+          'listAuthorizedAccounts returned a repeating cursor. Return a new cursor per page, or none on the last page.'
+        );
+      }
       cursor = result.nextCursor;
     }
-    throw new Error(
-      `listAuthorizedAccounts did not finish within ${MAX_AUTHORIZED_ACCOUNT_PAGES} pages; refusing a partial roster`
+    throw new ReportingSubscriptionEngineError(
+      'SUBSCRIPTION_ROSTER_INCOMPLETE',
+      `listAuthorizedAccounts did not finish within ${MAX_AUTHORIZED_ACCOUNT_PAGES} pages; refusing a partial roster. Return larger pages.`
     );
   }
 
@@ -856,8 +887,9 @@ export function createReportingSubscriptionEngineV1(
       } else {
         // The chain continues past a recorded revocation; only the host knows when.
         if (fact.granted_at === undefined) {
-          throw new TypeError(
-            `Account ${JSON.stringify(accountId)} was re-granted inside its authorization chain; the host must report granted_at`
+          throw new ReportingSubscriptionEngineError(
+            'SUBSCRIPTION_HOST_FACT_INVALID',
+            `Account ${JSON.stringify(accountId)} was re-granted inside its authorization chain. Report granted_at on the account fact.`
           );
         }
         const grantedAt = parseInstant(fact.granted_at, `${accountId} granted_at`);
@@ -1003,8 +1035,9 @@ export function createReportingSubscriptionEngineV1(
           if (fact?.timezone !== undefined && fact.timezone !== account.timezone) {
             if (account.timezone !== undefined) {
               if (fact.timezone_changed_at === undefined) {
-                throw new TypeError(
-                  `Account ${JSON.stringify(accountId)} changed timezone; the host must report timezone_changed_at`
+                throw new ReportingSubscriptionEngineError(
+                  'SUBSCRIPTION_HOST_FACT_INVALID',
+                  `Account ${JSON.stringify(accountId)} changed timezone. Report timezone_changed_at on the account fact.`
                 );
               }
               const changedAt = Math.min(

@@ -1,5 +1,5 @@
 {
-  "$comment": "Cross-SDK parity table for expectedSubscriptionPeriods (AdCP 3.3 media_buy.reporting_subscriptions), conforming to adcontextprotocol/adcp#8585, #8588 (sub-daily local periods) and #8593 (the start bound is the later of accepted_at and authorized_at; a buy is owed every period ending after its confirmed_at). Each case gives expected_obligations (the rows grouped by version, offering and period, with byte-sorted media_buy_ids) and, where the input needs data no AdCP response carries, non_wire_inputs. Each case gives the input and the exact owed periods (or expected_error). Compare instants, not strings: the TypeScript SDK emits toISOString() form. Expected rows are hand-derived from the spec rule. subscription_id, account_id and report_definition_id are omitted from expected rows; they are input.subscription_id, input.account.account_id and the offering's report_definition_id. Rows are ordered by period_start, subscription_version, offering_id and media_buy_id (byte order).",
+  "$comment": "Cross-SDK parity table for expectedSubscriptionPeriods (AdCP 3.3 media_buy.reporting_subscriptions), conforming to adcontextprotocol/adcp#8585, #8588 (sub-daily local periods) and #8593 (the start bound is the later of accepted_at and authorized_at; a buy is owed every period ending after its confirmed_at). Each case gives expected_obligations (the rows grouped by version, offering and period, with byte-sorted media_buy_ids) and, where the input needs data no AdCP response carries, non_wire_inputs. Each case gives the input and the exact owed periods, or expected_error: the code and detail of the CoverageInputError, from the shared vocabulary in the spec repository's error-codes.json. Compare instants, not strings: the TypeScript SDK emits toISOString() form. Expected rows are hand-derived from the spec rule. subscription_id, account_id and report_definition_id are omitted from expected rows; they are input.subscription_id, input.account.account_id and the offering's report_definition_id. Rows are ordered by period_start, subscription_version, offering_id and media_buy_id (byte order).",
   "cases": [
     {
       "name": "baseline",
@@ -11493,7 +11493,10 @@
         ],
         "now": "2026-12-01T00:00:00Z"
       },
-      "expected_error": "TypeError"
+      "expected_error": {
+        "code": "COVERAGE_INPUT_INVALID",
+        "detail": "invalid_timezone"
+      }
     },
     {
       "name": "account_timezone offering requires the account timezone",
@@ -11572,7 +11575,10 @@
         ],
         "now": "2026-12-01T00:00:00Z"
       },
-      "expected_error": "TypeError"
+      "expected_error": {
+        "code": "COVERAGE_INPUT_INCOMPLETE",
+        "detail": "missing_account_timezone"
+      }
     },
     {
       "name": "a timezone cutover without previous_timezone is refused",
@@ -11660,7 +11666,10 @@
           ]
         }
       },
-      "expected_error": "TypeError"
+      "expected_error": {
+        "code": "COVERAGE_INPUT_INCOMPLETE",
+        "detail": "missing_previous_timezone"
+      }
     },
     {
       "name": "an offering without standard_dimensions cannot be resolved",
@@ -11739,7 +11748,10 @@
         ],
         "now": "2026-12-01T00:00:00Z"
       },
-      "expected_error": "TypeError"
+      "expected_error": {
+        "code": "COVERAGE_INPUT_INCOMPLETE",
+        "detail": "missing_standard_dimensions"
+      }
     },
     {
       "name": "re-grant requires status_retention_days",
@@ -11823,7 +11835,10 @@
         ],
         "now": "2026-12-01T00:00:00Z"
       },
-      "expected_error": "TypeError"
+      "expected_error": {
+        "code": "COVERAGE_INPUT_INCOMPLETE",
+        "detail": "missing_status_retention_days"
+      }
     }
   ]
 }
