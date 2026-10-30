@@ -1776,7 +1776,8 @@ export async function collectWholesaleProductPages(
         !sellerRejected &&
         result.success && {
           strict_schema_validated:
-            getValidator('get_products', 'sync', options.adcpVersion ?? ADCP_VERSION) !== undefined,
+            getValidator('get_products', 'sync', options._serverAdcpVersion ?? options.adcpVersion ?? ADCP_VERSION) !==
+            undefined,
         }),
       ...(schemaCheck?.schemaFailure && { schemaFailure: schemaCheck.schemaFailure }),
     };

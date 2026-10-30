@@ -9387,7 +9387,7 @@ async function executeStep(
             phaseId,
             context,
             observation,
-            options.adcpVersion ?? ADCP_VERSION
+            options._serverAdcpVersion ?? options.adcpVersion ?? ADCP_VERSION
           );
           await runState.onCollectedProductPage?.(physical, observation.page_index);
           pagesPassed &&= physical.passed;

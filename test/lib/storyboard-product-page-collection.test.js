@@ -75,6 +75,7 @@ async function run(pages, args = {}) {
         return response?.success === false ? response : { success: true, data: response };
       },
     },
+    ...args.runnerOptions,
   };
   const result = args.standalone
     ? await runStoryboardStep('https://seller.example/mcp', source, 'discover', options)
@@ -584,4 +585,38 @@ test('restarts discard advisories from abandoned products and the triggering cha
   assert.deepEqual(step.product_page_collection.pages[0].response.payload.errors, [old]);
   assert.deepEqual(step.product_page_collection.pages[1].response.payload.errors, [changed]);
   assert.equal(step.response.errors, undefined);
+});
+
+for (const standalone of [false, true]) {
+  test(`negotiated AdCP3.1 controls physical schema checks and receipts without a caller version (${standalone ? 'standalone' : 'full'})`, async () => {
+    const { result, step } = await run([page(['first'], 'next'), page(['target'])], {
+      standalone,
+      runnerOptions: { _serverAdcpVersion: '3.1.29' },
+    });
+    assert.equal(standalone ? step.passed : result.overall_passed, true, JSON.stringify(step));
+    const physical = step.validations.filter(validation => validation.check === 'response_schema');
+    assert.equal(physical.length, 2);
+    assert.ok(
+      physical.every(validation => validation.schema_id === '/schemas/3.1.29/media-buy/get-products-response.json')
+    );
+    assert.ok(physical.every(validation => validation.strict?.valid === true));
+    assert.equal(step.product_page_collection.logical_response.products[1].format_ids[0].id, 'fmt-1');
+  });
+}
+
+test('a negotiated3.1 collection rejects a later-page metric accepted only by the3.2 schema', async () => {
+  const later = product('target');
+  later.metric_optimization = { supported_metrics: ['viewable_rate'] };
+  const modern = await run([page(['first'], 'next'), page([later])]);
+  assert.equal(modern.result.overall_passed, true, 'the newer schema permits this optimization metric');
+  const { result, step } = await run([page(['first'], 'next'), page([later])], {
+    runnerOptions: { _serverAdcpVersion: '3.1.29' },
+  });
+  assert.equal(result.overall_passed, false);
+  assert.equal(step.product_page_collection.complete, false);
+  const failed = step.validations.find(validation => validation.check === 'response_schema' && !validation.passed);
+  assert.ok(failed, JSON.stringify(step.validations));
+  assert.equal(failed.schema_id, '/schemas/3.1.29/media-buy/get-products-response.json');
+  assert.equal(failed.request.payload.pagination.cursor, 'next');
+  assert.deepEqual(failed.response.payload.products[0].metric_optimization.supported_metrics, ['viewable_rate']);
 });
