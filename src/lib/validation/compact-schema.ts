@@ -399,12 +399,9 @@ export function compactMcpSchemaForValidation(schema: JsonObject): JsonObject {
       // Ajv's reference-registration walk does not descend prefixItems arrays.
       // Moving scoped items into $defs could otherwise register a new target.
       if (keyword === 'prefixItems' && Array.isArray(value) && value.some(containsScope)) supported = false;
-      if (
-        keyword === 'dependentSchemas' &&
-        isObject(value) &&
-        scopeKeywords.some(key => typeof value[key] === 'string' || typeof value[key] === 'boolean')
-      )
-        supported = false;
+      // Ajv traverses this map as an extension object, where property names
+      // such as "default" can suppress registration of embedded resources.
+      if (keyword === 'dependentSchemas' && containsScope(value)) supported = false;
       if (
         !SCHEMA_MAP_KEYWORDS.has(keyword) &&
         !SCHEMA_ARRAY_KEYWORDS.has(keyword) &&
