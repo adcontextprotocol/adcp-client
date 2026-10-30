@@ -75,6 +75,7 @@ import { type ReliableReportingSubscriptionsOptionsV1, withReportingSubscription
 import {
   createManagedReportingSubscriptions,
   isManagedSubscriptionOptions,
+  type SubscriptionGrants,
   type SubscriptionOptions,
   type SubscriptionPlanningFailure,
 } from './managed';
@@ -390,6 +391,13 @@ export interface ReliableReportingServiceV1<TCtxMeta = Record<string, unknown>> 
    * @experimental Storage-facing building block: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
    */
   readonly subscriptionWiring?: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>;
+  /**
+   * With the managed `subscriptions` block: push grant changes into the grant journal
+   * (`grants.changed`).
+   *
+   * @experimental Reporting subscriptions (AdCP 3.3).
+   */
+  readonly grants?: SubscriptionGrants;
   installConfiguration(
     configuration: ReliableReportingConfigurationInputV1,
     context: ReliableReportingInstallContextV1<TCtxMeta>
@@ -1059,6 +1067,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     producer,
     platform: reportingPlatform,
     ...(subscriptionOptions ? { subscriptionWiring: subscriptionOptions } : {}),
+    ...(managed ? { grants: managed.grants } : {}),
     get running() {
       return schedulerPromise !== undefined;
     },
@@ -1079,6 +1088,25 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     install<TPlatform extends DecisioningPlatform<any, TCtxMeta>>(platform: TPlatform) {
       if (managed) {
         managed.bindPlatform(platform);
+        // The grant journal is the one source of authorized_at: serve it on list_accounts and
+        // sync_accounts to callers holding subscriptions, so buyers read what coverage uses.
+        const accounts = platform.accounts as unknown as Record<string, unknown>;
+        const list = accounts.list as ((...args: unknown[]) => Promise<{ items?: unknown[] }>) | undefined;
+        if (typeof list === 'function') {
+          accounts.list = async (request: unknown, ctx: unknown) => {
+            const page = await list.call(platform.accounts, request, ctx);
+            return page && Array.isArray(page.items)
+              ? { ...page, items: await managed.projectAccounts(page.items, ctx) }
+              : page;
+          };
+        }
+        const upsert = accounts.upsert as ((...args: unknown[]) => Promise<unknown>) | undefined;
+        if (typeof upsert === 'function') {
+          accounts.upsert = async (...args: unknown[]) => {
+            const rows = await upsert.apply(platform.accounts, args);
+            return Array.isArray(rows) ? managed.projectAccounts(rows, args[args.length - 1]) : rows;
+          };
+        }
         // The service owns the principal section it installed: advertise it unless the host did.
         const capabilities = platform.capabilities as unknown as Record<string, unknown> | undefined;
         if (capabilities && capabilities.principal === undefined) {
@@ -1989,6 +2017,11 @@ function deepFreeze<T>(value: T): T {
 }
 
 export { ReportingConfigurationImmutableError, isReportingConfigurationImmutableError } from '../ledger';
-export type { SubscriptionAccountsPage, SubscriptionOptions, SubscriptionPlanningFailure } from './managed';
+export type {
+  SubscriptionAccountsPage,
+  SubscriptionGrants,
+  SubscriptionOptions,
+  SubscriptionPlanningFailure,
+} from './managed';
 export * from './conformance';
 export * from './scheduler-support';

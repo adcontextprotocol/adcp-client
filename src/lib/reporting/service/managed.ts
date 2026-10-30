@@ -172,6 +172,39 @@ export interface ManagedReportingSubscriptions<TCtxMeta> {
   /** The boundary sweep `runCycle` runs before planning. */
   sweep(signal?: AbortSignal): Promise<SubscriptionPlanningFailure[]>;
   report(failure: SubscriptionPlanningFailure): Promise<void>;
+  /** Push grant changes into the grant journal: `service.grants`. */
+  readonly grants: SubscriptionGrants;
+  /**
+   * Serve the journal's `authorized_at` on accounts a caller is shown (`list_accounts`,
+   * `sync_accounts`). Only callers holding subscriptions are touched; never fails the read.
+   */
+  projectAccounts<T>(items: T[], ctx: unknown): Promise<T[]>;
+}
+
+/**
+ * Push grant changes into the grant journal, for sellers whose entitlement service emits events:
+ * a pushed change is dated exactly, where a listing can only observe it. Later listings must
+ * agree with what was pushed.
+ *
+ * @experimental Reporting subscriptions (AdCP 3.3).
+ */
+export interface SubscriptionGrants {
+  /**
+   * Record that a principal's grant on an account changed at `at`. `authorized: false` is a
+   * revocation: no access at all from `at`. `allowedTasks` is the new grant's task list (absent
+   * restricts no task); a grant without `get_reporting_status` ends coverage like a revocation, and
+   * `windDownGrant()`'s tasks keep it. A re-grant inside `status_retention_days` continues the
+   * chain, so the `authorized_at` served on `list_accounts` does not move.
+   */
+  changed(input: {
+    principal: PrincipalRef;
+    accountId: string;
+    at: string;
+    authorized: boolean;
+    allowedTasks?: readonly string[];
+    timezone?: string;
+    operator?: string;
+  }): Promise<void>;
 }
 
 export function createManagedReportingSubscriptions<TCtxMeta>(
@@ -262,6 +295,24 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
     } catch (error) {
       throw rosterUnavailable(principal, error instanceof Error ? error.message : String(error));
     }
+    // The grant journal is the one source of authorized_at: observe every listed grant first.
+    const served = await engine.observeGrants(
+      principal,
+      (page?.items ?? []).flatMap(raw => {
+        const account = raw as Record<string, unknown>;
+        const accountId = typeof account.id === 'string' ? account.id : (account.account_id as string | undefined);
+        const authorization = account.authorization as { allowed_tasks?: string[]; authorized_at?: string } | undefined;
+        return accountId
+          ? [
+              {
+                account_id: accountId,
+                ...(authorization?.authorized_at ? { authorized_at: authorization.authorized_at } : {}),
+                ...(authorization?.allowed_tasks ? { allowed_tasks: authorization.allowed_tasks } : {}),
+              },
+            ]
+          : [];
+      })
+    );
     const accounts: ReportingSubscriptionAccountFactV1[] = [];
     for (const raw of page?.items ?? []) {
       const account = raw as Record<string, unknown>;
@@ -270,7 +321,7 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
       const authorization = account.authorization as { allowed_tasks?: string[]; authorized_at?: string } | undefined;
       accounts.push({
         account_id: accountId,
-        authorized_at: authorization?.authorized_at ?? now().toISOString(),
+        authorized_at: served.get(accountId) ?? authorization?.authorized_at ?? now().toISOString(),
         ...(typeof account.timezone === 'string' ? { timezone: account.timezone } : {}),
         ...(typeof account.operator === 'string' ? { operator: account.operator } : {}),
         ...(authorization?.allowed_tasks ? { allowed_tasks: [...authorization.allowed_tasks] } : {}),
@@ -552,5 +603,59 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
       return failures;
     },
     report,
+    grants: {
+      async changed(input) {
+        const principal = { tenantId: input.principal.tenantId, principalId: input.principal.principalId };
+        await rememberPrincipal(principal);
+        await engine.authorizationChanged(principal, input.accountId, {
+          authorized: input.authorized,
+          at: input.at,
+          account: {
+            ...(input.allowedTasks ? { allowed_tasks: [...input.allowedTasks] } : {}),
+            ...(input.timezone ? { timezone: input.timezone } : {}),
+            ...(input.operator ? { operator: input.operator } : {}),
+          },
+        });
+      },
+    },
+    async projectAccounts(items, ctx) {
+      const context = ctx as { reportingServiceContext?: boolean } | undefined;
+      if (!Array.isArray(items) || items.length === 0 || context?.reportingServiceContext) return items;
+      try {
+        const principal = await resolvePrincipal(ctx as RequestContext<Account<TCtxMeta>>);
+        const { states } = await principals.listReportingSubscriptions(principal);
+        if (states.length === 0) return items;
+        const observations = items.flatMap(raw => {
+          const account = raw as Record<string, unknown>;
+          const accountId = typeof account.id === 'string' ? account.id : (account.account_id as string | undefined);
+          const authorization = account.authorization as
+            | { allowed_tasks?: string[]; authorized_at?: string }
+            | undefined;
+          return accountId && authorization
+            ? [
+                {
+                  account_id: accountId,
+                  ...(authorization.authorized_at ? { authorized_at: authorization.authorized_at } : {}),
+                  ...(authorization.allowed_tasks ? { allowed_tasks: authorization.allowed_tasks } : {}),
+                },
+              ]
+            : [];
+        });
+        const served = await engine.observeGrants(principal, observations);
+        return items.map(raw => {
+          const account = raw as Record<string, unknown>;
+          const accountId = typeof account.id === 'string' ? account.id : (account.account_id as string | undefined);
+          const start = accountId ? served.get(accountId) : undefined;
+          if (start === undefined) return raw;
+          return {
+            ...account,
+            authorization: { ...(account.authorization as Record<string, unknown>), authorized_at: start },
+          } as typeof raw;
+        });
+      } catch {
+        // The projection never fails the read.
+        return items;
+      }
+    },
   };
 }

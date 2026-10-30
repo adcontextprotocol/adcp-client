@@ -264,6 +264,23 @@ a live upstream credential; a roster the service cannot read is a `PlatformConfi
 `SUBSCRIPTION_ROSTER_UNAVAILABLE`. Reconcile and planning failures never reject a cycle:
 `runCycle` returns them in `subscriptionPlanningFailures`, and `planningErrorHandler` hears each.
 
+**`authorized_at` comes from one journal.** With the managed block the service keeps the grant
+journal and is the only source of `authorization.authorized_at`. It serves the journal's value on
+`list_accounts` and `sync_accounts` to callers holding subscriptions, so the value a buyer reads is
+the value coverage uses. A host value is adopted the first time a chain is observed; an omitted one
+is stamped. A value that moves an open chain earlier is refused and logged as
+`authorized_at_regressed`. A re-grant inside `status_retention_days` continues the chain; a later
+one starts a new one. Never compute the chain yourself. Sellers whose entitlement service emits
+events push them for an exact instant:
+
+```ts
+await service.grants!.changed({ principal, accountId: 'acc_1', at, authorized: false });
+await service.grants!.changed({ principal, accountId: 'acc_1', at, authorized: true, allowedTasks });
+```
+
+Later listings must agree with what was pushed. `resolveRevocationInstant` is optional on the
+engine: without it a revocation is dated when it was observed.
+
 The advanced block below, with your own `engine`, is rung 3.
 
 With `subscriptions` (formerly `reportingSubscriptions`, kept as a deprecated

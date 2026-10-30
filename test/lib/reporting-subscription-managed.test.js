@@ -79,6 +79,8 @@ function world({ list = true, managed = {} } = {}) {
   const { currency: _currency, ...sourceSettings } = request.sourceSettings;
   const store = new MemoryLedgerStore();
   const reads = { list: 0, buys: 0 };
+  // The host's grant as list_accounts shows it; authorizedAt undefined omits authorized_at.
+  const host = { authorizedAt: day(-30), allowedTasks: ['get_reporting_status', 'get_media_buys'] };
   const service = createReliableReportingService({
     store,
     adapters: {
@@ -134,8 +136,8 @@ function world({ list = true, managed = {} } = {}) {
                     ...account,
                     timezone: 'UTC',
                     authorization: {
-                      allowed_tasks: ['get_reporting_status', 'get_media_buys'],
-                      authorized_at: day(-30),
+                      allowed_tasks: host.allowedTasks,
+                      ...(host.authorizedAt !== undefined ? { authorized_at: host.authorizedAt } : {}),
                     },
                   },
                 ],
@@ -187,7 +189,7 @@ function world({ list = true, managed = {} } = {}) {
         ],
       },
     });
-  return { clock, lifecycle, service, platform, server, store, reads, call, subscribe, day };
+  return { clock, lifecycle, service, platform, server, store, reads, host, call, subscribe, day };
 }
 
 describe('managed reporting subscriptions', () => {
@@ -244,5 +246,52 @@ describe('managed reporting subscriptions', () => {
       () => createReliableReportingService({ ...base, subscriptions: { principals: lifecycle } }),
       error => error.name === 'PlatformConfigError' || error instanceof TypeError
     );
+  });
+
+  test('list_accounts serves the grant journal authorized_at, stamped once and never regressed', async () => {
+    const w = world();
+    w.host.authorizedAt = undefined;
+    await w.subscribe();
+    const authorizedAt = async () =>
+      (await w.call('buyer-a', 'list_accounts', {})).structuredContent.accounts.find(
+        item => item.account_id === ACCOUNT
+      ).authorization.authorized_at;
+    const first = await authorizedAt();
+    assert.ok(first, 'an omitted authorized_at is stamped by the journal');
+    assert.equal(await authorizedAt(), first, 'and served unchanged afterwards');
+    // A host value that moves the open chain earlier is refused and logged.
+    const warnings = [];
+    const warn = console.warn;
+    console.warn = message => warnings.push(String(message));
+    try {
+      w.host.authorizedAt = w.day(-90);
+      assert.equal(await authorizedAt(), first);
+    } finally {
+      console.warn = warn;
+    }
+    assert.ok(warnings.some(message => message.includes('authorized_at_regressed')));
+  });
+
+  test('grants.changed revokes at the pushed instant and a re-grant inside retention keeps the chain', async () => {
+    const w = world();
+    await w.subscribe();
+    const authorizedAt = async () =>
+      (await w.call('buyer-a', 'list_accounts', {})).structuredContent.accounts[0].authorization.authorized_at;
+    const chain = await authorizedAt();
+    const principal = { tenantId: TENANT, principalId: 'principal-a' };
+    w.host.allowedTasks = ['get_media_buys']; // the listing agrees with the push: no reporting access
+    await w.service.grants.changed({ principal, accountId: ACCOUNT, at: w.day(5), authorized: false });
+    const engine = w.service.subscriptionWiring.engine;
+    assert.equal(await engine.isAuthorized(principal, ACCOUNT), false);
+    w.host.allowedTasks = ['get_reporting_status', 'get_media_buys'];
+    await w.service.grants.changed({
+      principal,
+      accountId: ACCOUNT,
+      at: new Date().toISOString(),
+      authorized: true,
+      allowedTasks: w.host.allowedTasks,
+    });
+    assert.equal(await engine.isAuthorized(principal, ACCOUNT), true);
+    assert.equal(await authorizedAt(), chain, 'a re-grant inside status_retention_days continues the chain');
   });
 });

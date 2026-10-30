@@ -891,7 +891,20 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
           statusRetentionDays: 30,
           hooks: { listAuthorizedAccounts: () => ({ accounts: [] }), listAccountBuys: () => [] },
         }),
-      /resolveRevocationInstant/
+      /isPeriodDelivered/
+    );
+    // resolveRevocationInstant is optional: a revocation is then dated when it was observed.
+    assert.doesNotThrow(() =>
+      createReportingSubscriptionEngineV1({
+        principal: w.lifecycle,
+        offerings: OFFERINGS,
+        statusRetentionDays: 30,
+        hooks: {
+          listAuthorizedAccounts: () => ({ accounts: [] }),
+          listAccountBuys: () => [],
+          isPeriodDelivered: () => false,
+        },
+      })
     );
   });
 
