@@ -6052,7 +6052,8 @@ async function executeStoryboardPass(
       //
       // Uses resolveTaskName so that $test_kit.* steps are checked
       // against the resolved concrete task name, not the template
-      // string (which would never be in agentTools).
+      // string (which would never be in agentTools). Explicit
+      // requires_tool gates take precedence in single-agent runs too.
       //
       // Per-phase cascade scoping (#1161): consults `phase.depends_on`
       // (default: all prior phases) plus the current phase's own
@@ -6063,14 +6064,16 @@ async function executeStoryboardPass(
         const resolvedTask = resolveTaskName(step, selectedOptions);
         const missingTool =
           selectedOptions.agentTools &&
-          (routingContext && step.requires_tool && !selectedOptions.agentTools.includes(step.requires_tool)
+          (step.requires_tool && !selectedOptions.agentTools.includes(step.requires_tool)
             ? step.requires_tool
             : resolvedTask && !isRunnerOwnedTask(resolvedTask) && !selectedOptions.agentTools.includes(resolvedTask)
               ? resolvedTask
               : undefined);
         if (missingTool) {
           const missingReason =
-            routingContext && missingTool === 'comply_test_controller' ? 'missing_test_controller' : 'missing_tool';
+            missingTool === 'comply_test_controller' && (routingContext || step.requires_tool === missingTool)
+              ? 'missing_test_controller'
+              : 'missing_tool';
           const toolDetail = `Agent did not advertise tool "${missingTool}"; agent tools: [${selectedOptions.agentTools!.join(', ')}].`;
           const missingToolResult: StoryboardStepResult = {
             storyboard_id: storyboard.id,
