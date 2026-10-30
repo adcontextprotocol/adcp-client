@@ -42,6 +42,7 @@ import {
 import type { CanonicalFormatDeclaration } from './legacy-metadata';
 import type { UndeclaredFormatOptionSelector } from './legacy-routes';
 import { canonicalize as canonicalizeJson } from '../../utils/jcs';
+import { warnOnce } from '../../utils/deprecation';
 import { lookupUniqueV1FormatById, lookupV1Format, type V1FormatDefinition } from './catalog';
 import { canonicalizeAgentUrl } from '../../discovery/resolve-agent-properties';
 import { isLikelyPrivateUrl } from '../../net/address-guards';
@@ -683,7 +684,24 @@ export interface SyncCreativeFormatProjection {
   legacyFormatConverter?: LegacyFormatConverter;
   /** Seller-provided legacy slot contracts, matched by exact format owner and id. */
   legacyFormatDefinitions?: readonly V1FormatDefinition[];
-  /** Opt in only for sellers that accept player-sized refs without width/height. */
+  /**
+   * @deprecated Will be removed in 18.0.0; setting it logs a one-time
+   * deprecation warning. Not needed: on the legacy wire the SDK
+   * reconciles a creative's per-package refs by constraint satisfaction, so a
+   * package that leaves the player size unstated accepts the size another
+   * package states, and the shared ref omits size when no package states one.
+   *
+   * Until removal it is still accepted with its beta.5 meaning, for the one
+   * case the declarations cannot settle: VAST packages that state *different*
+   * player sizes. Setting it asserts the seller accepts a ref without
+   * width/height, and the shared ref then omits the conflicting size.
+   * Canonical delivery ignores it.
+   *
+   * Whether a stated VAST size is a hard requirement or a player hint is a
+   * fact about the seller's format, so it belongs in the seller's format
+   * definition or the AdCP format params, not in host policy. See
+   * https://github.com/adcontextprotocol/adcp/issues/8583.
+   */
   playerSizedRefs?: 'omit_unstated_size';
 }
 
@@ -700,6 +718,14 @@ export class CreativeFormatProjectionError extends Error {
         ref?: V1FormatId;
         refs?: readonly V1FormatId[];
         reason?: string;
+      }>;
+      /**
+       * Legacy wire only: constraints no single shared `format_id` could
+       * satisfy across the assigned packages, with the packages stating each value.
+       */
+      conflicts?: ReadonlyArray<{
+        constraint: 'format_id' | 'size' | 'duration';
+        values: ReadonlyArray<{ value: string; package_ids: readonly string[] }>;
       }>;
     }
   ) {
@@ -2247,6 +2273,360 @@ function matchesDurationRange(
   );
 }
 
+/** One package's independent legacy resolution, kept for cross-package reconciliation. */
+type ResolvedLegacyAssignment = {
+  packageId: string;
+  ref: V1FormatId;
+  value: Record<string, unknown>;
+  /** Params of the package declarations that produced `ref`. */
+  declarationParams: readonly unknown[];
+};
+
+/** A legacy format_id constraint that assigned packages state incompatibly. */
+type LegacyFormatRefConflict = {
+  constraint: 'format_id' | 'size' | 'duration';
+  values: Array<{ value: string; package_ids: string[] }>;
+};
+
+function groupConflict(
+  constraint: LegacyFormatRefConflict['constraint'],
+  groups: Map<string, Set<string>>
+): LegacyFormatRefConflict | undefined {
+  if (groups.size <= 1) return undefined;
+  return {
+    constraint,
+    values: [...groups].map(([value, packageIds]) => ({ value, package_ids: [...packageIds] })),
+  };
+}
+
+function addToGroup(groups: Map<string, Set<string>>, value: string, packageId: string): void {
+  const group = groups.get(value) ?? new Set<string>();
+  group.add(packageId);
+  groups.set(value, group);
+}
+
+function describeLegacyFormatRefConflict(conflict: LegacyFormatRefConflict): string {
+  const label =
+    conflict.constraint === 'format_id'
+      ? 'format identity (agent_url, id)'
+      : conflict.constraint === 'size'
+        ? 'size (width, height)'
+        : 'duration (duration_ms)';
+  const values = conflict.values
+    .map(entry => `${entry.value} for ${entry.package_ids.map(id => JSON.stringify(id)).join(', ')}`)
+    .join(' vs ');
+  return `${label} conflicts: ${values}`;
+}
+
+/** The shared size read from the resolved refs; an axis no ref states is omitted. */
+type SharedSize = { width?: number; height?: number };
+
+/** What one declaration, or a package's own resolved ref, accepts for one constraint. */
+type Acceptor<T> = { accepts(value: T): boolean; label: string };
+
+/** Relative tolerance for `aspect_ratio`, so 940x529 satisfies 16:9. */
+const ASPECT_RATIO_TOLERANCE = 0.01;
+
+const SIZE_PARAM_KEYS = new Set([
+  'width',
+  'height',
+  'sizes',
+  'min_width',
+  'max_width',
+  'min_height',
+  'max_height',
+  'aspect_ratio',
+  'orientation',
+]);
+
+/** Keys that constrain a size by name; any outside SIZE_PARAM_KEYS fail closed. */
+const SIZE_FAMILY_KEY = /(^|_)(width|height|sizes?|aspect_ratio|orientation)$/;
+
+function sizeLabel(width: number | undefined, height: number | undefined): string {
+  if (width !== undefined && height !== undefined) return `${width}x${height}`;
+  return width !== undefined ? `width ${width}` : `height ${height}`;
+}
+
+function unionLabel(labels: readonly string[]): string {
+  const unique = [...new Set(labels)];
+  return unique.length === 1 ? unique[0]! : `one of ${unique.join(', ')}`;
+}
+
+/**
+ * Size predicate for one declaration's params or one `sizes` entry: exact
+ * width/height, min/max bounds, orientation, aspect ratio and `sizes` lists
+ * (any entry). A check on an axis the shared ref omits passes, because the
+ * omitted dimension is what the package resolved to on its own. A size key or
+ * value this does not understand rejects every size (fail closed). Returns
+ * `undefined` when the params place no size constraint.
+ */
+function sizeParamsAcceptor(params: Record<string, unknown>): Acceptor<SharedSize> | undefined {
+  const checks: Array<(size: SharedSize) => boolean> = [];
+  const labels: string[] = [];
+  let understood = true;
+  const dimension = (key: string): number | undefined => {
+    if (params[key] === undefined) return undefined;
+    const value = positiveConstraint(params[key]);
+    if (value === undefined) {
+      understood = false;
+      labels.push(`${key} ${JSON.stringify(params[key])}`);
+    }
+    return value;
+  };
+  const width = dimension('width');
+  const height = dimension('height');
+  if (width !== undefined || height !== undefined) {
+    checks.push(
+      size =>
+        (width === undefined || size.width === undefined || size.width === width) &&
+        (height === undefined || size.height === undefined || size.height === height)
+    );
+    labels.push(sizeLabel(width, height));
+  }
+  for (const [key, axis, minimum] of [
+    ['min_width', 'width', true],
+    ['max_width', 'width', false],
+    ['min_height', 'height', true],
+    ['max_height', 'height', false],
+  ] as const) {
+    const bound = dimension(key);
+    if (bound === undefined) continue;
+    checks.push(size => {
+      const value = size[axis];
+      return value === undefined || (minimum ? value >= bound : value <= bound);
+    });
+    labels.push(`${key} ${bound}`);
+  }
+  const bothAxes =
+    (test: (width: number, height: number) => boolean) =>
+    (size: SharedSize): boolean =>
+      size.width === undefined || size.height === undefined || test(size.width, size.height);
+  if (params.orientation !== undefined) {
+    const orientation = params.orientation;
+    const test =
+      orientation === 'horizontal' || orientation === 'landscape'
+        ? (w: number, h: number) => w > h
+        : orientation === 'vertical' || orientation === 'portrait'
+          ? (w: number, h: number) => h > w
+          : orientation === 'square'
+            ? (w: number, h: number) => w === h
+            : undefined;
+    if (test) checks.push(bothAxes(test));
+    else understood = false;
+    labels.push(`orientation ${JSON.stringify(orientation)}`);
+  }
+  if (params.aspect_ratio !== undefined) {
+    const match =
+      typeof params.aspect_ratio === 'string'
+        ? /^([0-9]+(?:\.[0-9]+)?):([0-9]+(?:\.[0-9]+)?)$/.exec(params.aspect_ratio)
+        : null;
+    const ratio = match ? Number(match[1]) / Number(match[2]) : Number.NaN;
+    if (Number.isFinite(ratio) && ratio > 0) {
+      checks.push(bothAxes((w, h) => Math.abs(w / h / ratio - 1) <= ASPECT_RATIO_TOLERANCE));
+    } else understood = false;
+    labels.push(`aspect_ratio ${JSON.stringify(params.aspect_ratio)}`);
+  }
+  if (params.sizes !== undefined) {
+    const entries = Array.isArray(params.sizes)
+      ? params.sizes.map(entry => {
+          const entryParams = record(entry);
+          // An entry that is not an object or places no constraint is not understood.
+          return entryParams ? sizeParamsAcceptor(entryParams) : undefined;
+        })
+      : [];
+    if (entries.length > 0 && entries.every(entry => entry !== undefined)) {
+      checks.push(size => entries.some(entry => entry!.accepts(size)));
+      labels.push(unionLabel(entries.map(entry => entry!.label)));
+    } else {
+      understood = false;
+      labels.push(`sizes ${JSON.stringify(params.sizes)}`);
+    }
+  }
+  for (const key of Object.keys(params)) {
+    if (SIZE_FAMILY_KEY.test(key) && !SIZE_PARAM_KEYS.has(key)) {
+      understood = false;
+      labels.push(`${key} ${JSON.stringify(params[key])}`);
+    }
+  }
+  const label = labels.join(', ');
+  if (!understood) return { accepts: () => false, label: `${label} (not understood)` };
+  return checks.length > 0 ? { accepts: size => checks.every(check => check(size)), label } : undefined;
+}
+
+/** Duration predicate for one declaration: an exact duration, else a range; `undefined` when open. */
+function durationParamsAcceptor(params: Record<string, unknown>): Acceptor<number> | undefined {
+  // `duration_ms_exact` takes precedence over `duration_ms_range` (AdCP schema).
+  for (const key of ['duration_ms_exact', 'duration_ms']) {
+    if (params[key] === undefined) continue;
+    const exact = positiveConstraint(params[key]);
+    return exact === undefined
+      ? { accepts: () => false, label: `${key} ${JSON.stringify(params[key])} (not understood)` }
+      : { accepts: value => value === exact, label: String(exact) };
+  }
+  const range = params.duration_ms_range;
+  if (range === undefined) return undefined;
+  const label = `duration_ms_range ${JSON.stringify(range)}`;
+  const bound = (value: unknown): value is number | null =>
+    value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+  const [low, high]: [number | null, number | null] =
+    Array.isArray(range) && range.length === 2 && range.every(bound) ? [range[0]!, range[1]!] : [null, null];
+  if ((low === null && high === null) || (low !== null && high !== null && low > high)) {
+    return { accepts: () => false, label: `${label} (not understood)` };
+  }
+  return { accepts: value => (low === null || value >= low) && (high === null || value <= high), label };
+}
+
+/**
+ * Union a package's declarations: it accepts what any declaration accepts,
+ * and is open when any declaration is. `required` (the catalog entry for the
+ * id) applies on top.
+ */
+function packageAcceptor<T>(
+  declarations: ReadonlyArray<Acceptor<T> | undefined>,
+  required?: Acceptor<T>
+): Acceptor<T> | undefined {
+  const declared =
+    declarations.length === 0 || declarations.some(declaration => declaration === undefined)
+      ? undefined
+      : {
+          accepts: (value: T) => declarations.some(declaration => declaration!.accepts(value)),
+          label: unionLabel(declarations.map(declaration => declaration!.label)),
+        };
+  if (!declared || !required) return declared ?? required;
+  return {
+    accepts: value => declared.accepts(value) && required.accepts(value),
+    label: `${declared.label}, ${required.label}`,
+  };
+}
+
+/** Size a package accepts: its resolved ref's stated axes, else its declarations and catalog entry. */
+function packageSizeAcceptor(entry: ResolvedLegacyAssignment): Acceptor<SharedSize> | undefined {
+  const { width, height } = entry.ref;
+  // A package always accepts its own resolved ref, whatever its declarations add.
+  if (width !== undefined || height !== undefined) {
+    return {
+      accepts: size =>
+        (width === undefined || size.width === width) && (height === undefined || size.height === height),
+      label: sizeLabel(width, height),
+    };
+  }
+  const catalog = record(canonicalDeclarationFromBareId(entry.ref.id, { agentUrl: entry.ref.agent_url })?.params);
+  return packageAcceptor(
+    entry.declarationParams.map(params => sizeParamsAcceptor(record(params) ?? {})),
+    catalog ? sizeParamsAcceptor(catalog) : undefined
+  );
+}
+
+/** Duration a package accepts: its resolved ref's duration, else its declarations. */
+function packageDurationAcceptor(entry: ResolvedLegacyAssignment): Acceptor<number> | undefined {
+  const stated = entry.ref.duration_ms;
+  if (stated !== undefined) return { accepts: value => value === stated, label: String(stated) };
+  return packageAcceptor(entry.declarationParams.map(params => durationParamsAcceptor(record(params) ?? {})));
+}
+
+/** Name every package that restricts the constraint, grouped by what it accepts. */
+function acceptorConflict<T>(
+  constraint: 'size' | 'duration',
+  resolved: readonly ResolvedLegacyAssignment[],
+  acceptors: ReadonlyArray<Acceptor<T> | undefined>
+): LegacyFormatRefConflict {
+  const groups = new Map<string, Set<string>>();
+  resolved.forEach((entry, index) => {
+    const acceptor = acceptors[index];
+    if (acceptor) addToGroup(groups, acceptor.label, entry.packageId);
+  });
+  return {
+    constraint,
+    values: [...groups].map(([value, packageIds]) => ({ value, package_ids: [...packageIds] })),
+  };
+}
+
+/**
+ * Legacy wire only. A legacy sync_creatives record carries one `format_id` for
+ * a creative however many packages it is assigned to, so after each package
+ * resolves independently the SDK must pick one ref they all accept. On the
+ * canonical wire each package checks the creative against its own
+ * `format_kind` + `params`, so there is no shared identity and this never
+ * runs. (`unknown` wire mode sends the legacy projection, so it runs there too.)
+ *
+ * Reconcile by constraint satisfaction, not identity: every ref must name the
+ * same format (agent_url + id). The shared ref takes width/height and
+ * duration_ms from the resolved refs only, per axis; refs stating different
+ * values conflict. Values that only declarations state count for conflict
+ * detection but never flow into the shared ref, because the shared ref must
+ * match what each package resolves to on its own: a package whose ref is
+ * silent was resolved to a ref without that value, and the shared ref adds
+ * only what another package's ref already states. Copying declaration values
+ * into the ref would widen what the SDK sends beyond any per-package resolution.
+ *
+ * When some ref states a value, every package must accept it. A package
+ * accepts its own ref's value; where its ref is silent, it accepts what any
+ * of its declarations accepts (exact width/height, `sizes` entries, min/max
+ * bounds, orientation, aspect ratio, exact duration, `duration_ms_range`),
+ * intersected with the catalog entry for the id. A declaration with none of
+ * these leaves the constraint open; one it does not understand accepts
+ * nothing. So a package declaring 640x360 and 940x529, or `max_width: 640`,
+ * refuses a 940x529 or 300x250 another package states, naming each package's
+ * allowed values.
+ *
+ * When no ref states a value, the shared ref omits it, which is exactly what
+ * each package resolved to alone, so declarations that disagree only among
+ * themselves do not refuse. That keeps the result independent of unrelated
+ * open packages and consistent with identical refs.
+ */
+function reconcileLegacyAssignmentRefs(
+  resolved: readonly ResolvedLegacyAssignment[]
+): { value: Record<string, unknown> } | { conflicts: LegacyFormatRefConflict[] } {
+  const first = resolved[0]!;
+  if (resolved.every(entry => candidateKey({ ref: entry.ref }) === candidateKey({ ref: first.ref }))) {
+    return { value: first.value };
+  }
+  const identities = new Map<string, Set<string>>();
+  for (const entry of resolved) addToGroup(identities, `${entry.ref.id} at ${entry.ref.agent_url}`, entry.packageId);
+  const identityConflict = resolved.some(entry => !sameLegacyIdentity(entry.ref, first.ref))
+    ? groupConflict('format_id', identities)
+    : undefined;
+  if (identityConflict) return { conflicts: [identityConflict] };
+
+  const conflicts: LegacyFormatRefConflict[] = [];
+  const widths = new Set(resolved.flatMap(entry => entry.ref.width ?? []));
+  const heights = new Set(resolved.flatMap(entry => entry.ref.height ?? []));
+  const size: SharedSize = { width: [...widths][0], height: [...heights][0] };
+  if (widths.size > 0 || heights.size > 0) {
+    const acceptors = resolved.map(packageSizeAcceptor);
+    if (widths.size > 1 || heights.size > 1 || acceptors.some(acceptor => acceptor && !acceptor.accepts(size))) {
+      conflicts.push(acceptorConflict('size', resolved, acceptors));
+    }
+  }
+  const durations = new Set(resolved.flatMap(entry => entry.ref.duration_ms ?? []));
+  const durationMs = [...durations][0];
+  if (durationMs !== undefined) {
+    const acceptors = resolved.map(packageDurationAcceptor);
+    if (durations.size > 1 || acceptors.some(acceptor => acceptor && !acceptor.accepts(durationMs))) {
+      conflicts.push(acceptorConflict('duration', resolved, acceptors));
+    }
+  }
+  if (conflicts.length > 0) return { conflicts };
+
+  const source =
+    resolved.find(entry => entry.ref.width !== undefined || entry.ref.height !== undefined) ??
+    resolved.find(entry => entry.ref.duration_ms !== undefined) ??
+    first;
+  const ref: V1FormatId = {
+    agent_url: source.ref.agent_url,
+    id: source.ref.id,
+    ...(size.width !== undefined && { width: size.width }),
+    ...(size.height !== undefined && { height: size.height }),
+    ...(durationMs !== undefined && { duration_ms: durationMs }),
+  };
+  // Prefer a package that resolved to exactly this ref, so its projected record is used unchanged.
+  const exact = resolved.find(entry => candidateKey({ ref: entry.ref }) === candidateKey({ ref }));
+  if (exact) return { value: exact.value };
+  const value = { ...source.value, format_id: ref };
+  transferLegacyCreativeMetadata(source.value, value);
+  return { value };
+}
+
 /** Resolve assignments independently before selecting the one creative wire identity. */
 function projectAssignedCreative(
   creative: Record<string, unknown>,
@@ -2258,7 +2638,7 @@ function projectAssignedCreative(
   options: Pick<SyncCreativeFormatProjection, 'playerSizedRefs'> | undefined
 ): Record<string, unknown> {
   const packageRefs: NonNullable<CreativeFormatProjectionError['details']>['package_refs'][number][] = [];
-  const projected: Record<string, unknown>[] = [];
+  const resolved: ResolvedLegacyAssignment[] = [];
   const parameterKeys = new Set<string>();
   let compatibleParameters = true;
   const playerSized = creative.format_kind === 'video_vast' || creative.format_kind === 'audio_vast';
@@ -2382,9 +2762,11 @@ function projectAssignedCreative(
           String(creative.creative_id),
           'the projected legacy reference does not match the selected package format options'
         );
-      for (const paramsValue of allowed.length > 0
-        ? allowed.map(candidate => candidate.selectorParams)
-        : assignedDeclarationParameters(creative, selector)) {
+      const declarationParams =
+        allowed.length > 0
+          ? allowed.map(candidate => candidate.selectorParams)
+          : assignedDeclarationParameters(creative, selector);
+      for (const paramsValue of declarationParams) {
         const nonSize = { ...record(paramsValue) };
         delete nonSize.width;
         delete nonSize.height;
@@ -2413,7 +2795,7 @@ function projectAssignedCreative(
           compatibleParameters = false;
         }
       }
-      projected.push(value);
+      resolved.push({ packageId, ref, value, declarationParams });
       packageRefs.push({ package_id: packageId, ref });
     } catch (error) {
       if (!(error instanceof CreativeFormatProjectionError)) throw error;
@@ -2437,10 +2819,18 @@ function projectAssignedCreative(
       });
     }
   }
-  const refs = packageRefs.flatMap(entry => (entry.ref && !entry.reason ? [entry.ref] : []));
-  if (refs.length === packageIds.size) {
+  let conflicts: LegacyFormatRefConflict[] = [];
+  let attemptedPlayerSizedOverride = false;
+  if (resolved.length === packageIds.size) {
+    const reconciled = reconcileLegacyAssignmentRefs(resolved);
+    if ('value' in reconciled) return reconciled.value;
+    conflicts = reconciled.conflicts;
+    // Deprecated `playerSizedRefs` host override, kept with its beta.5 meaning
+    // for the one case declarations cannot settle: packages that state
+    // different player sizes. The host asserts the seller accepts a VAST ref
+    // without width/height, so the shared ref omits the conflicting size.
+    const refs = resolved.map(entry => entry.ref);
     const first = refs[0]!;
-    if (refs.every(ref => candidateKey({ ref }) === candidateKey({ ref: first }))) return projected[0]!;
     const statesSize = (value: Record<string, unknown> | undefined): boolean =>
       value !== undefined &&
       [
@@ -2456,9 +2846,9 @@ function projectAssignedCreative(
       ].some(key => Object.hasOwn(value, key));
     const originalRef = record(creative.format_id);
     const rangeMatches = matchesDurationRange(params, first.duration_ms, true);
+    attemptedPlayerSizedOverride = options?.playerSizedRefs === 'omit_unstated_size' && playerSized;
     if (
-      options?.playerSizedRefs === 'omit_unstated_size' &&
-      playerSized &&
+      attemptedPlayerSizedOverride &&
       compatibleParameters &&
       parameterKeys.size === 1 &&
       rangeMatches &&
@@ -2481,8 +2871,8 @@ function projectAssignedCreative(
         id: first.id,
         ...(first.duration_ms !== undefined && { duration_ms: first.duration_ms }),
       };
-      const value = { ...projected[0]!, format_id: shared };
-      transferLegacyCreativeMetadata(projected[0]!, value);
+      const value = { ...resolved[0]!.value, format_id: shared };
+      transferLegacyCreativeMetadata(resolved[0]!.value, value);
       return value;
     }
   }
@@ -2492,15 +2882,19 @@ function projectAssignedCreative(
         `${JSON.stringify(entry.package_id)}: ${JSON.stringify(entry.ref ?? entry.refs ?? [])}${entry.reason ? ` (${entry.reason})` : ''}`
     )
     .join('; ');
+  const conflictReason =
+    conflicts.length > 0
+      ? `; no single legacy format_id satisfies every package: ${conflicts.map(describeLegacyFormatRefConflict).join('; ')}`
+      : '';
   const constraintReason =
-    !compatibleParameters || parameterKeys.size > 1
+    attemptedPlayerSizedOverride && (!compatibleParameters || parameterKeys.size > 1)
       ? '; package declarations disagree on non-size format parameters'
       : '';
   throw new CreativeFormatProjectionError(
     'sync_creatives',
     typeof creative.creative_id === 'string' ? creative.creative_id : '(unknown)',
-    `assigned packages do not share a compatible legacy format reference (${packages})${constraintReason}; split the assignments or inspect details.package_refs`,
-    { package_refs: packageRefs }
+    `assigned packages do not share a compatible legacy format reference (${packages})${conflictReason}${constraintReason}; inspect details.package_refs`,
+    { package_refs: packageRefs, ...(conflicts.length > 0 && { conflicts }) }
   );
 }
 
@@ -2540,6 +2934,15 @@ export function projectSyncCreativesForDelivery<T>(
   legacyFormatDefinitions?: readonly V1FormatDefinition[],
   options?: Pick<SyncCreativeFormatProjection, 'playerSizedRefs'>
 ): ProjectedSyncCreativeRequest<T, 'canonical'> | ProjectedSyncCreativeRequest<T, 'legacy'> {
+  if (options?.playerSizedRefs !== undefined) {
+    warnOnce(
+      'creativeFormatProjection.playerSizedRefs',
+      'creativeFormatProjection.playerSizedRefs is deprecated and will be removed in 18.0.0. Legacy sync_creatives ' +
+        'projection now reconciles package refs by constraint satisfaction, so it is only consulted when packages ' +
+        'state different VAST player sizes. Whether a stated size is a requirement or a player hint belongs in the ' +
+        "seller's format declaration (https://github.com/adcontextprotocol/adcp/issues/8583)."
+    );
+  }
   const requestRecord = record(request);
   if (!requestRecord || !Array.isArray(requestRecord.creatives)) {
     return request as ProjectedSyncCreativeRequest<T, 'canonical'>;
@@ -2562,6 +2965,9 @@ export function projectSyncCreativesForDelivery<T>(
         : selectorContainers.filter(
             container => typeof container.package_id === 'string' && assignedPackageIds.has(container.package_id)
           );
+    // Legacy wire only: one format_id must satisfy every assigned package. The
+    // canonical wire checks each package's format_kind + params on its own.
+    // `unknown` peers receive the legacy projection, so they reconcile too.
     if (wireMode !== 'canonical' && assignedPackageIds.size > 1) {
       const projected = projectAssignedCreative(
         creative,
