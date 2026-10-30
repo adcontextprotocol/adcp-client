@@ -28,6 +28,7 @@ const {
 const { validateOutgoingRequest } = require('../../dist/lib/validation/index.js');
 const { TaskExecutor } = require('../../dist/lib/core/TaskExecutor.js');
 const { MemoryStorage } = require('../../dist/lib/storage/MemoryStorage.js');
+const { ADCP_VERSION } = require('../../dist/lib/version.js');
 
 const SENTINEL = 'sentinel-submitted-value-7f3a';
 
@@ -251,7 +252,9 @@ describe('dispatched: false on local refusals', () => {
 
   test('the release and feature gates', async t => {
     const calls = captureDispatch(t);
-    const client = makeClient(caps(['3.3-beta.0']), { adcpVersion: '3.3.0-beta.1' });
+    // The SDK's own 3.3 preview pin against a seller that advertises only an older
+    // preview: exact preview negotiation refuses the 3.3-only tool before dispatch.
+    const client = makeClient(caps(['3.3-beta.0']), { adcpVersion: ADCP_VERSION });
     client.ensureEndpointDiscovered = async () => client.agent;
     const err = await client.listCollections().then(
       () => assert.fail('expected a feature error'),
