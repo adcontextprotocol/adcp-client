@@ -707,12 +707,8 @@ describe('ReliableReportingService', () => {
       'notification_configs',
       'reporting_subscriptions',
     ]);
-    // standard_dimensions is defined after 3.3.0-beta.1, whose offering schema is closed.
-    const { offerings: advertised, ...rest } = structuredClone(service.capabilities);
-    assert.deepEqual(result.structuredContent.media_buy.reporting_delivery, {
-      ...rest,
-      offerings: advertised.map(({ standard_dimensions: _dimensions, ...offering }) => offering),
-    });
+    // standard_dimensions is defined from 3.3.0-beta.2 (adcp#8585), so the offerings are served whole.
+    assert.deepEqual(result.structuredContent.media_buy.reporting_delivery, structuredClone(service.capabilities));
 
     // Callers pinned to 3.2 see neither the 3.3 registration fields nor the 3.3 section.
     const legacy = createAdcpServerFromPlatform(platform, {
