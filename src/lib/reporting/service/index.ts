@@ -72,6 +72,12 @@ import type { PrincipalRef } from '../../server/principal/types';
 import { reportingConfigurationCapabilitiesV1 } from '../subscriptions/capabilities';
 import type { ReportingDeliveryOfferingWithDimensionsV1 } from '../subscriptions/wire';
 import { type ReliableReportingSubscriptionsOptionsV1, withReportingSubscriptionCoverageV1 } from './subscriptions';
+import {
+  createManagedReportingSubscriptions,
+  isManagedSubscriptionOptions,
+  type SubscriptionOptions,
+  type SubscriptionPlanningFailure,
+} from './managed';
 
 const ADAPTER_SCOPE_KEY = '_adcp_reporting_adapter';
 
@@ -292,7 +298,7 @@ export interface CreateReliableReportingServiceOptionsV1<TCtxMeta = Record<strin
    * `@adcp/sdk/reporting/advanced`, where this option's type is also published. Without it
    * capabilities and responses are unchanged.
    */
-  subscriptions?: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>;
+  subscriptions?: SubscriptionOptions<TCtxMeta> | ReliableReportingSubscriptionsOptionsV1<TCtxMeta>;
   /**
    * @deprecated Renamed `subscriptions`, the service's one reporting-subscription block. Passing both
    * is a configuration error. This alias is removed in a later beta.
@@ -376,6 +382,14 @@ export interface ReliableReportingServiceV1<TCtxMeta = Record<string, unknown>> 
   readonly producer: ReportingProducerV1;
   readonly platform: ReliableReportingPlatform<TCtxMeta>;
   readonly running: boolean;
+  /**
+   * The resolved reporting-subscription wiring (the engine and its hooks), whether the
+   * `subscriptions` block was managed or advanced. For compositions such as the production service
+   * in `@adcp/reporting-storage/service`; applications should not use it.
+   *
+   * @experimental Storage-facing building block: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+   */
+  readonly subscriptionWiring?: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>;
   installConfiguration(
     configuration: ReliableReportingConfigurationInputV1,
     context: ReliableReportingInstallContextV1<TCtxMeta>
@@ -402,6 +416,11 @@ export interface ReliableReportingServiceV1<TCtxMeta = Record<string, unknown>> 
     revisionsCommitted: number;
     notReady: number;
     failed: number;
+    /**
+     * With the managed `subscriptions` block: the reconcile and planning failures of this cycle,
+     * one per principal or subscription. A failure never rejects the cycle.
+     */
+    subscriptionPlanningFailures?: SubscriptionPlanningFailure[];
   }>;
   /**
    * Run one ledger-maintenance pass now and return each task's outcome. For
@@ -555,7 +574,18 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       { configField: 'subscriptions' }
     );
   }
-  const subscriptionOptions = options.subscriptions ?? options.reportingSubscriptions;
+  const subscriptionBlock = options.subscriptions ?? options.reportingSubscriptions;
+  // The managed block: the service builds the engine, installs the principal section and
+  // derives the host inputs. The advanced block (with an engine) is used as given.
+  const managed =
+    subscriptionBlock !== undefined && isManagedSubscriptionOptions(subscriptionBlock)
+      ? createManagedReportingSubscriptions(subscriptionBlock, {
+          offerings: deliveryOfferings,
+          statusRetentionDays: options.statusRetentionDays,
+        })
+      : undefined;
+  const subscriptionOptions: ReliableReportingSubscriptionsOptionsV1<TCtxMeta> | undefined =
+    managed?.advanced ?? (subscriptionBlock as ReliableReportingSubscriptionsOptionsV1<TCtxMeta> | undefined);
   if (subscriptionOptions !== undefined) {
     if (
       typeof subscriptionOptions.engine?.subscriptionCoverage !== 'function' ||
@@ -1028,6 +1058,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     capabilities,
     producer,
     platform: reportingPlatform,
+    ...(subscriptionOptions ? { subscriptionWiring: subscriptionOptions } : {}),
     get running() {
       return schedulerPromise !== undefined;
     },
@@ -1046,6 +1077,14 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     install<TPlatform extends DecisioningPlatform<any, TCtxMeta>>(platform: TPlatform) {
+      if (managed) {
+        managed.bindPlatform(platform);
+        // The service owns the principal section it installed: advertise it unless the host did.
+        const capabilities = platform.capabilities as unknown as Record<string, unknown> | undefined;
+        if (capabilities && capabilities.principal === undefined) {
+          capabilities.principal = (subscriptionBlock as SubscriptionOptions<TCtxMeta>).principals.capabilities;
+        }
+      }
       if (servesAccountConfigurations && typeof platform.accounts.upsert !== 'function') {
         throw new TypeError(
           'Reliable reporting requires accounts.upsert so the advertised sync_accounts configuration task is installed'
@@ -1069,6 +1108,9 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       const accountId = cycleAccountId(cycle);
       const planningNow = cycle.now ?? new Date();
       cycle.signal?.throwIfAborted();
+      // The boundary sweep: reconcile every subscribed principal before planning, so each elapsed
+      // period is frozen by the cycle that follows its end.
+      const sweepFailures = managed ? await managed.sweep(cycle.signal) : [];
       // Subscription obligations first: the engine's frozen owed sets, never grid-filled.
       const subscriptionPlanning = subscriptionOptions
         ? await planSubscriptionCycle(subscriptionOptions, accountId, planningNow, cycle.signal)
@@ -1109,7 +1151,21 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
           );
         }
       }
-      return { planned: planned.length + (subscriptionPlanning?.planned ?? 0), ...result };
+      return {
+        planned: planned.length + (subscriptionPlanning?.planned ?? 0),
+        ...result,
+        ...(managed
+          ? {
+              subscriptionPlanningFailures: [
+                ...sweepFailures,
+                ...(subscriptionPlanning?.failures ?? []).map(failure => ({
+                  ...failure.context,
+                  error: failure.error,
+                })),
+              ],
+            }
+          : {}),
+      };
     },
 
     async runMaintenance(maintenanceOptions) {
@@ -1933,5 +1989,6 @@ function deepFreeze<T>(value: T): T {
 }
 
 export { ReportingConfigurationImmutableError, isReportingConfigurationImmutableError } from '../ledger';
+export type { SubscriptionAccountsPage, SubscriptionOptions, SubscriptionPlanningFailure } from './managed';
 export * from './conformance';
 export * from './scheduler-support';

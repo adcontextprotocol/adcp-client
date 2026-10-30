@@ -217,6 +217,11 @@ export interface PrincipalReportingSubscriptionSupport {
    * equals one of the caller's `delivery_config_id` values is always rejected.
    */
   accountConfigurations?: boolean;
+  /**
+   * Called after a write that submitted `reporting_subscriptions` commits. The managed
+   * subscriptions block reconciles the principal here. A rejection never fails the write.
+   */
+  onApplied?(scope: Readonly<PrincipalRef>): void | Promise<void>;
 }
 
 /** Runtime surface the reporting subscription engine and hosts use. */
