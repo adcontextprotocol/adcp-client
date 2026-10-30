@@ -12,6 +12,11 @@ const scenarios = [
     negativeMode: 'uncached',
   },
   {
+    name: 'mcp-output-validation',
+    file: new URL('./scenarios/mcp-output-validation.mjs', import.meta.url).href,
+    negativeMode: 'unfactored',
+  },
+  {
     name: 'schema-cache-churn',
     file: new URL('./scenarios/schema-cache-churn.mjs', import.meta.url).href,
     negativeMode: 'leaky',
@@ -92,16 +97,16 @@ for (const scenario of scenarios.filter(scenario => selected.includes(scenario.n
 const number = value => (Number.isFinite(value) ? value.toFixed(1) : '—');
 const rows = report.cases.map(result => {
   const m = result.metrics ?? {};
-  return `| ${result.scenario} | ${result.mode} | ${number(m.warmCompilations)} | ${number(m.warmCpuMsPerListing)} | ${number(m.warmEventLoopMaxMs)} | ${number(result.memory?.peakRssBytes / 1024 ** 2)} | ${number(m.liveSchemas)} | ${result.accepted ? 'PASS' : 'FAIL'} |`;
+  return `| ${result.scenario} | ${result.mode} | ${number(m.warmCompilations)} | ${number(m.warmCpuMsPerListing)} | ${number(m.warmEventLoopMaxMs)} | ${number(result.memory?.peakRssBytes / 1024 ** 2)} | ${number(m.largestFunctionBytes / 1024)} | ${number(m.liveSchemas)} | ${result.accepted ? 'PASS' : 'FAIL'} |`;
 });
 const summary = [
   '### SDK performance regression checks',
   '',
-  '| Workload | Mode | Warm compiles | CPU/list (ms) | Max warm stall (ms) | Process peak RSS (MiB) | Live schemas | Check |',
-  '| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |',
+  '| Workload | Mode | Warm compiles | CPU/list (ms) | Max warm stall (ms) | Process peak RSS (MiB) | Largest function (KiB) | Live schemas | Check |',
+  '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |',
   ...rows,
   '',
-  'Uncached/leaky modes are negative controls: PASS means the guards detected the regression.',
+  'Uncached/unfactored/leaky modes are negative controls: PASS means the guards detected the regression.',
   'RSS is the OS process high-water mark, including setup and cold compilation; it captures peaks during main-thread stalls.',
   '',
 ].join('\n');
