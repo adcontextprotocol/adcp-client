@@ -1,4 +1,7 @@
 const { describe, test } = require('node:test');
+const PINNED = require('node:fs')
+  .readFileSync(require('node:path').join(__dirname, '..', '..', 'ADCP_VERSION'), 'utf8')
+  .trim();
 const assert = require('node:assert/strict');
 
 process.env.NODE_ENV = 'test';
@@ -159,10 +162,10 @@ function world({ maxAccounts, backfillOnRegrant = false } = {}) {
       }
       buyer.grants.set(account.account_id, grants);
     }
-    // Served at 3.3.0-beta.1 the readback omits fields that release does not define and is
-    // schema-valid; read without a served release, it carries them all.
-    const served = await lifecycle.protocol.getPrincipal({}, { ...CTX, servedAdcpVersion: '3.3.0-beta.1' });
-    const outcome = validateResponse('get_principal', served, '3.3.0-beta.1');
+    // Served at the pinned release the readback carries only fields that release defines and
+    // is schema-valid.
+    const served = await lifecycle.protocol.getPrincipal({}, { ...CTX, servedAdcpVersion: PINNED });
+    const outcome = validateResponse('get_principal', served, PINNED);
     assert.equal(outcome.valid, true, JSON.stringify(outcome.issues));
     const read = await lifecycle.protocol.getPrincipal({}, CTX);
     for (const state of (await lifecycle.listReportingSubscriptions(SCOPE)).states) {
@@ -181,7 +184,7 @@ function world({ maxAccounts, backfillOnRegrant = false } = {}) {
   }
   /** What the buyer expects, from its observations only. */
   async function buyerExpected(accountId, now, subscriptionId = 'analytics-daily') {
-    // The complete readback (served at 3.3.0-beta.1 the wire omits inactive_intervals).
+    // The complete readback, from the internal state.
     const { states } = await lifecycle.listReportingSubscriptions(SCOPE);
     const state = states.find(item => item.subscription_id === subscriptionId);
     const versions = [...(state.prior_versions ?? [])].reverse().map(prior => ({
@@ -503,7 +506,7 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     const outcome = validateResponse(
       'get_reporting_status',
       { status: 'completed', view: 'summary', subscription_coverage: coverage },
-      '3.3.0-beta.1'
+      PINNED
     );
     assert.equal(
       outcome.issues?.some(issue => /subscription_coverage/.test(issue.pointer ?? issue.path ?? '')) ?? false,
@@ -557,7 +560,7 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     } = require('../../dist/lib/server/reporting-subscription-release.js');
     const beta1 = reportingSubscriptionCoverageForReleaseV1(
       entry,
-      reportingSubscriptionReleaseFieldsV1('3.3.0-beta.1')
+      reportingSubscriptionReleaseFieldsV1('3.3.0-beta.2')
     );
     assert.equal(beta1.status, 'active', 'a release without the inactive value sees the account-level state');
     assert.equal('deactivated_at' in beta1, false);

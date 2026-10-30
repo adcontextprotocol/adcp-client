@@ -265,7 +265,7 @@ npm run generate-zod-schemas  # Generate runtime validation
 
 ### Wire-version compat (v3 SDK ↔ legacy sellers)
 
-The SDK speaks one AdCP major (`ADCP_VERSION` in `src/lib/version.ts`, currently `3.3.0-beta.1`) on its public surface and adapts to legacy sellers underneath. AdCP 2 support has been removed following its August 1, 2026 end of life. Maintained AdCP 3 compatibility and the policy for future major-version support are documented in [`docs/development/WIRE-VERSION-COMPAT.md`](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/development/WIRE-VERSION-COMPAT.md). Touch that doc whenever you add to `src/lib/adapters/legacy/`, `src/lib/types/v*-*/`, or `schemas/cache/<version>/`.
+The SDK speaks one AdCP major (`ADCP_VERSION` in `src/lib/version.ts`, currently `3.3.0-beta.2`) on its public surface and adapts to legacy sellers underneath. AdCP 2 support has been removed following its August 1, 2026 end of life. Maintained AdCP 3 compatibility and the policy for future major-version support are documented in [`docs/development/WIRE-VERSION-COMPAT.md`](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/development/WIRE-VERSION-COMPAT.md). Touch that doc whenever you add to `src/lib/adapters/legacy/`, `src/lib/types/v*-*/`, or `schemas/cache/<version>/`.
 
 ## Testing Strategies
 
