@@ -699,6 +699,19 @@ jobs:
           rm -rf dist packages/reporting-storage/dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
+      - name: Run performance regression checks
+        run: npm run test:performance -- --output .context/performance.json
+
+      - name: Upload performance metrics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sdk-performance-${{ github.run_id }}
+          path: .context/performance.json
+          if-no-files-found: ignore
+          retention-days: 14
+          overwrite: true
+
       - name: Run slow unit tests
         run: node scripts/run-test-with-summary.js --title "Unit Tests Slow" -- npm run test:node:slow
         env:

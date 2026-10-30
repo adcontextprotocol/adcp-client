@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { sharedLegacyJsonSchemaValidator } from '../../protocols/mcp-schema-validator';
 import { createAgentTransportFetch } from '../../net';
 import { terminateSessionBestEffort } from '../../protocols/session-termination';
 import { getSchemaValidatorByRef } from '../../validation/schema-loader';
@@ -355,7 +356,10 @@ export async function verifyPropertyListReference(
     };
     // Deliberately construct from scratch. No owner client, account, headers,
     // cookies, OAuth provider, signing key, or client certificate is inherited.
-    client = new Client({ name: 'adcp-property-list-reference-probe', version: '1.0.0' }, { capabilities: {} });
+    client = new Client(
+      { name: 'adcp-property-list-reference-probe', version: '1.0.0' },
+      { capabilities: {}, jsonSchemaValidator: sharedLegacyJsonSchemaValidator }
+    );
     transport = new StreamableHTTPClientTransport(endpoint, {
       requestInit: { headers: { Authorization: `Bearer ${token}` }, credentials: 'omit', redirect: 'error', signal },
       fetch: isolatedFetch,
