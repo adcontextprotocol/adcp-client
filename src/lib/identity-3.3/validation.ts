@@ -1,7 +1,11 @@
 /** Per-call draft overlays. Never mutates the released schema or changes ADCP_VERSION. */
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
-import { getValidator, getToolSchemaDocument, relaxResponseRoot } from '../validation/schema-loader';
+import {
+  getValidator,
+  getToolSchemaDocument,
+  acceptEnvelopeOnClosedResponseRootForVersion,
+} from '../validation/schema-loader';
 import { compactSchemaForValidation } from '../validation/compact-schema';
 import type { ValidationOutcome } from '../validation/schema-validator';
 import schemas from './schemas.draft';
@@ -26,10 +30,9 @@ export function validateIdentity33Payload(
     // validator now keeps modular refs instead of inlining every schema.
     const document = (getToolSchemaDocument(tool, direction === 'request' ? 'request' : 'sync', version)?.schema ??
       stable.schema) as Record<string, unknown>;
-    const schema = structuredClone(direction === 'response' ? relaxResponseRoot(document) : document) as Record<
-      string,
-      unknown
-    >;
+    const schema = structuredClone(
+      direction === 'response' ? acceptEnvelopeOnClosedResponseRootForVersion(document, version) : document
+    ) as Record<string, unknown>;
     const relationship = schemas.find(s => s.$id === '/schemas/core/principal-relationship.json')!;
     const onboarding = schemas.find(s => s.$id === '/schemas/core/agent-onboarding.json')!;
     function walk(node: unknown, name = ''): void {

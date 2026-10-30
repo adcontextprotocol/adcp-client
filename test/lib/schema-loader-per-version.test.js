@@ -390,7 +390,7 @@ describe('schema-loader per-version state', () => {
     assert.ok(document.schema._bundled, 'public schema documents retain their bundled annotations');
   });
 
-  test('canonical bundled response ids preserve response-root relaxation', () => {
+  test('canonical bundled response ids preserve response-root envelope fields', () => {
     const version = '8.8.0';
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-schema-loader-canonical-id-'));
     const bundledDir = path.join(tempRoot, 'bundled', 'media-buy');
@@ -427,9 +427,14 @@ describe('schema-loader per-version state', () => {
         const response = getValidator('list_products', 'sync', version);
         assert.ok(response, 'response validator must compile');
         assert.strictEqual(
-          response({ outcome: 'listed', envelope_extension: true }),
+          response({ outcome: 'listed', replayed: true }),
           true,
-          `response root must remain extensible when modular and bundled schemas share ${responseId}: ${JSON.stringify(response.errors)}`
+          `response root must accept envelope fields when modular and bundled schemas share ${responseId}: ${JSON.stringify(response.errors)}`
+        );
+        assert.strictEqual(
+          response({ outcome: 'listed', envelope_extension: true }),
+          false,
+          'only the release envelope fields are accepted: any other root field stays rejected'
         );
       });
     } finally {

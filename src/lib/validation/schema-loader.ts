@@ -718,42 +718,150 @@ function openExtensibleReportingDimensions<T>(schema: T): T {
 }
 
 /**
- * Clear `additionalProperties: false` at the response root so envelope
- * fields (`replayed`, `context`, `ext`, and future envelope additions)
- * can ride alongside the tool-specific body — per security.mdx the
- * envelope is always extensible. Upstream bundled schemas pin
- * `additionalProperties: false` at the root on a handful of mutating
- * tools (the property-list family), which rejects envelope fields like
- * `replayed` that aren't declared in the tool-specific body.
+ * Envelope fields a task response carries next to its body on MCP and REST
+ * (`core/protocol-envelope.json` plus the `adcp_version` echo). Types are
+ * deliberately shallow: this table only lets a closed pre-composition root
+ * accept the field, and the body fields keep their published schemas.
+ */
+const ENVELOPE_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>>> = {
+  context_id: { type: 'string' },
+  context: { type: 'object' },
+  task_id: { type: 'string' },
+  message: { type: 'string' },
+  timestamp: { type: 'string', format: 'date-time' },
+  replayed: { type: 'boolean' },
+  adcp_error: { type: 'object' },
+  push_notification_config: { type: 'object' },
+  governance_context: { type: 'string' },
+  adcp_version: { type: 'string' },
+  adcp_major_version: { type: 'integer' },
+};
+
+interface ReleaseEnvelopeFields {
+  /** Envelope field name -> schema, as this release's bundle defines them. */
+  fields: ReadonlyMap<string, Record<string, unknown>>;
+}
+
+const releaseEnvelopeFields = new Map<string, ReleaseEnvelopeFields>();
+
+/**
+ * Envelope fields the bundle at `root` defines, read from that release's own
+ * `core/protocol-envelope.json` (and its `enums/task-status.json` for the
+ * `status` values), so a closed root is only widened by what its release
+ * published. `adcp_version` / `adcp_major_version` are always included: they
+ * are the version echo, accepted on every response.
+ */
+function envelopeFieldsForRelease(root: string): ReleaseEnvelopeFields {
+  const cached = releaseEnvelopeFields.get(root);
+  if (cached) return cached;
+  const fields = new Map<string, Record<string, unknown>>();
+  const envelopeFile = path.join(root, 'core', 'protocol-envelope.json');
+  const declared = existsSync(envelopeFile)
+    ? Object.keys((loadJson(envelopeFile).properties ?? {}) as Record<string, unknown>)
+    : [...Object.keys(ENVELOPE_FIELD_SCHEMAS), 'status'];
+  for (const name of new Set([...declared, 'adcp_version', 'adcp_major_version'])) {
+    // `payload` is the conceptual grouping of the body on the abstract
+    // envelope; flat MCP/REST responses never carry it.
+    if (name === 'payload') continue;
+    if (name === 'status') {
+      const statusFile = path.join(root, 'enums', 'task-status.json');
+      const values = existsSync(statusFile) ? (loadJson(statusFile).enum as unknown) : undefined;
+      fields.set('status', Array.isArray(values) ? { type: 'string', enum: values } : { type: 'string' });
+    } else if (ENVELOPE_FIELD_SCHEMAS[name]) {
+      fields.set(name, ENVELOPE_FIELD_SCHEMAS[name]);
+    }
+  }
+  const entry = { fields };
+  releaseEnvelopeFields.set(root, entry);
+  return entry;
+}
+
+/** True when the response root composes `core/protocol-envelope.json` through `allOf`. */
+function composesProtocolEnvelope(schema: LoadedSchema): boolean {
+  const members = schema.allOf;
+  if (!Array.isArray(members)) return false;
+  return members.some(member => {
+    if (!member || typeof member !== 'object') return false;
+    const node = member as Record<string, unknown>;
+    return (
+      (typeof node.$ref === 'string' && node.$ref.endsWith('protocol-envelope.json')) ||
+      (typeof node.$id === 'string' && node.$id.endsWith('protocol-envelope.json')) ||
+      node.title === 'Protocol Envelope'
+    );
+  });
+}
+
+/**
+ * Let a closed response root accept the envelope fields its release defines.
  *
- * Scope is deliberately narrow: only the top-level composition chain and
- * its `oneOf` / `anyOf` / `allOf` branches. Composition wrappers may be
- * nested (for example, `buy_products` is an `allOf` alias around the shared
- * commitment response's `oneOf`), so recurse through combinators without
- * descending into `properties`. Nested bodies therefore stay strict and
- * response-side drift detection still catches typos inside `Product`,
- * `Package`, `MediaBuy`, etc. Applied only to response variants; request
- * schemas stay strict so outgoing drift fails at the edge.
+ * Releases that compose `protocol-envelope` into every response root (3.3
+ * and the 3.2.x backport) publish closed roots that already declare those
+ * fields, so their schemas are returned untouched and validated exactly as
+ * published. Earlier releases (3.2.7 and before) shipped some roots closed
+ * (`additionalProperties: false`) without composing the envelope, so a
+ * conforming response carrying `status`, `task_id`, `replayed` or the
+ * `adcp_version` echo would fail on the field alone. For those bundles only,
+ * each closed node of the root composition (root and its
+ * `oneOf` / `anyOf` / `allOf` branches) gains the envelope fields that
+ * release's `protocol-envelope.json` defines and that the node does not
+ * already declare. Body fields stay closed, so a typo in the body is still
+ * rejected, and no envelope field is ever added, removed or filled in on the
+ * response itself. A field a node declares locally is left as authored.
+ * Applied only to response variants.
  */
 /** @internal Shared by opt-in overlays that retain response-envelope compatibility. */
-export function relaxResponseRoot(schema: LoadedSchema): LoadedSchema {
-  const relaxCompositionNode = (node: Record<string, unknown>): Record<string, unknown> => {
+export function acceptEnvelopeOnClosedResponseRoot(schema: LoadedSchema, root: string): LoadedSchema {
+  if (composesProtocolEnvelope(schema)) return schema;
+  const { fields } = envelopeFieldsForRelease(root);
+  const widen = (node: Record<string, unknown>): Record<string, unknown> => {
     const clone = { ...node };
     if (clone.additionalProperties === false) {
-      clone.additionalProperties = true;
+      const declared = (clone.properties ?? {}) as Record<string, unknown>;
+      const missing = [...fields].filter(([name]) => !(name in declared));
+      if (missing.length > 0) clone.properties = { ...Object.fromEntries(missing), ...declared };
     }
     for (const key of ['oneOf', 'anyOf', 'allOf'] as const) {
       const branches = clone[key];
       if (Array.isArray(branches)) {
         clone[key] = branches.map(branch =>
-          branch && typeof branch === 'object' ? relaxCompositionNode(branch as Record<string, unknown>) : branch
+          branch && typeof branch === 'object' ? widen(branch as Record<string, unknown>) : branch
         );
       }
     }
     return clone;
   };
 
-  return relaxCompositionNode(schema) as LoadedSchema;
+  return widen(schema) as LoadedSchema;
+}
+
+/**
+ * Whether the release's published synchronous response schema for `toolName`
+ * composes `core/protocol-envelope.json`, and so carries (and requires) the
+ * task-envelope `status`. Releases that predate the composition publish some
+ * compact arms closed with no `status` (3.2.x `list_products`, whose
+ * `decline_proposals` success arm even says `not: required status`).
+ *
+ * Returns `undefined` when the release has no such schema, so callers keep
+ * their default instead of guessing from a version number.
+ *
+ * @internal
+ */
+export function responseSchemaComposesEnvelope(toolName: string, version: string = ADCP_VERSION): boolean | undefined {
+  let document: ResolvedToolSchemaDocument | undefined;
+  try {
+    document = getToolSchemaDocument(toolName, 'sync', version);
+  } catch {
+    return undefined;
+  }
+  return document ? composesProtocolEnvelope(document.schema as LoadedSchema) : undefined;
+}
+
+/** @internal Same widening for a caller that holds only the requested version. */
+export function acceptEnvelopeOnClosedResponseRootForVersion(
+  schema: LoadedSchema,
+  version: string = ADCP_VERSION
+): LoadedSchema {
+  return acceptEnvelopeOnClosedResponseRoot(schema, ensureInit(version).root);
 }
 
 function getAjvRegisteredIds(ajv: Ajv): Set<string> {
@@ -902,17 +1010,17 @@ function ensureInit(version: string): LoaderState {
  * Walk every directory except `bundled/` (pre-resolved schemas with refs
  * already inlined). Files that `buildFileIndex` registered as tools use the
  * selected tool document, not a modular document that happens to share its
- * canonical `$id`. Responses also receive `relaxResponseRoot`, matching
- * `getValidator`.
+ * canonical `$id`. Responses also receive `acceptEnvelopeOnClosedResponseRoot`,
+ * matching `getValidator`.
  * These checks are stricter than a filename-suffix match:
  * building-block fragments like `core/pagination-response.json` end in
  * `-response.json` but aren't tools, so suffix-matching would wrongly treat
- * them as relaxable response roots.
+ * them as response roots.
  */
 function ensureCoreLoaded(s: LoaderState): void {
   if (s.coreLoaded) return;
   // Tool response files are pre-registered with the same response-root
-  // relaxation `getValidator` would apply. This matters for the async response
+  // envelope handling `getValidator` would apply. This matters for the async response
   // union: `core/async-response-data.json` can `$ref` both async variants and
   // sync responses, so callers must not have to prewarm response validators
   // before compiling a request that references the union.
@@ -952,7 +1060,7 @@ function ensureCoreLoaded(s: LoaderState): void {
           ? stripNestedIds(selectedSchema)
           : selectedSchema;
       const isResponseTool = selected?.response ?? responseToolFiles.has(file);
-      const schemaToRegister = isResponseTool ? relaxResponseRoot(prepared) : prepared;
+      const schemaToRegister = isResponseTool ? acceptEnvelopeOnClosedResponseRoot(prepared, s.root) : prepared;
       if (typeof schemaToRegister.$id === 'string' && !registeredIds.has(schemaToRegister.$id)) {
         s.ajv.addSchema(schemaToRegister);
         registeredIds.add(schemaToRegister.$id);
@@ -985,7 +1093,7 @@ export function getValidator(
   const indexedFile = s.fileIndex.get(cacheKey);
   if (!indexedFile) return undefined;
   // Prefer a context-safe authored ref graph; retain paired bundled response
-  // compositions when envelope relaxation cannot safely traverse shared refs.
+  // compositions when the envelope step cannot safely traverse shared refs.
   const file = runtimeToolSchemaFile(s, indexedFile, direction);
 
   // Flat-tree schemas `$ref` into separately published documents and need
@@ -1010,8 +1118,8 @@ export function getValidator(
   // every other `$id` in the tree was just metadata anyway.
   const prepared = fromBundled ? stripNestedIds(rawSchema) : rawSchema;
   // Relax the authored composition before factoring can move a closed arm
-  // behind a private ref. Canonical validators deliberately skip relaxation.
-  const envelope = direction === 'request' ? prepared : relaxResponseRoot(prepared);
+  // behind a private ref. Canonical validators deliberately skip it.
+  const envelope = direction === 'request' ? prepared : acceptEnvelopeOnClosedResponseRoot(prepared, s.root);
   const schema = fromBundled ? compactSchemaForValidation(envelope) : envelope;
   const ajv = fromBundled ? s.bundledAjv : s.ajv;
   const existing = typeof schema.$id === 'string' ? ajv.getSchema(schema.$id) : undefined;
@@ -1051,7 +1159,7 @@ function authoredToolSchemaFile(state: LoaderState, indexedFile: string): string
   return existsSync(authoredFile) ? authoredFile : indexedFile;
 }
 
-/** Keep composition-only response relaxation local to the selected tool. */
+/** Keep composition-only response envelope handling local to the selected tool. */
 function runtimeToolSchemaFile(state: LoaderState, indexedFile: string, direction: Direction): string {
   const authoredFile = authoredToolSchemaFile(state, indexedFile);
   if (direction === 'request' || authoredFile === indexedFile) return authoredFile;
@@ -1065,7 +1173,7 @@ function runtimeToolSchemaFile(state: LoaderState, indexedFile: string, directio
   };
   // A modular response may alias a closed non-tool fragment. Relaxing that
   // shared fragment globally would also loosen nested request validation.
-  // Its paired bundled tree provides a context-local composition to relax.
+  // Its paired bundled tree provides a context-local composition to widen.
   return hasCompositionReference(loadJson(authoredFile)) ? indexedFile : authoredFile;
 }
 
@@ -1079,7 +1187,7 @@ function compactSchemaForValidation(schema: LoadedSchema): LoadedSchema {
 /**
  * Return an unmodified tool JSON Schema from the same version-aware bundle
  * resolver used by runtime validation. Unlike `getValidator().schema`, response
- * documents are not relaxed for extensible envelopes, so callers can publish
+ * documents never receive envelope widening, so callers can publish
  * the protocol-authored schema verbatim from an on-demand discovery tool.
  */
 export function getToolSchemaDocument(
@@ -1239,9 +1347,9 @@ function compileSchemaReference(
   if (!existsSync(file)) return undefined;
 
   // Use an isolated AJV instance for arbitrary schema refs. Tool response
-  // validators deliberately relax some roots for SDK back-compat; webhook
+  // validators widen closed pre-composition roots for SDK back-compat; webhook
   // payload schemas need strict raw JSON Schema behavior without polluting the
-  // shared tool-validator registry with unrelaxed response schemas.
+  // shared tool-validator registry with widened response schemas.
   const ajv = new Ajv({
     inlineRefs: false,
     strict: false,
@@ -1292,7 +1400,7 @@ function compileSchemaReference(
 }
 
 /**
- * Compile a tool schema without the response-root relaxation used by the SDK's
+ * Compile a tool schema without the per-release envelope widening used by the SDK's
  * live-wire validator. Kept in the loader so the public schema facade does not
  * need access to loader file-system state.
  */

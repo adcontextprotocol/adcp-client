@@ -309,6 +309,7 @@ const MAX_PACKED_FILE_COUNT =
   13 + // Property-list identifier, server, and certification modules (three dual-format sets) and adoption guide.
   4 + // Property-list reference probe (one dual-format runtime/declaration module set).
   5 + // Creative build probe: one dual-format runtime/declaration module (+4) and one guide (+1).
+  8 + // Discovery currency and required-metric invariants (two dual-format runtime/declaration sets).
   1840 + // SDK 17: 3.3 schemas/compliance, per-tool type entrypoints and migration/release notes.
   20 + // Reporting subscription calendar, selection, coverage, capabilities and index (five dual-format sets).
   8 + // Reporting subscription engine and principal subscription runtime (two dual-format sets).
