@@ -85,22 +85,26 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
     assert.ok(missingProperties.has('account_id'));
   });
 
-  it('does not apply live-wire response-root relaxation to canonical validators', () => {
+  it('applies the same envelope contract to canonical and live-wire validators', () => {
     const canonical = getCanonicalToolValidator('control_media_buy', 'sync', {
       adcpVersion: '3.2.1',
     });
     const { getValidator } = require('../../dist/lib/validation/schema-loader.js');
     const runtime = getValidator('control_media_buy', 'sync', '3.2.1');
-    const envelopeExtended = {
+    const published = {
       status: 'completed',
       media_buy_id: 'media-buy-1',
       revision: 1,
       replayed: true,
-      future_envelope_field: true,
     };
 
-    assert.strictEqual(runtime(envelopeExtended), true, JSON.stringify(runtime.errors));
-    assert.strictEqual(canonical(envelopeExtended), false);
+    assert.strictEqual(runtime(published), true, JSON.stringify(runtime.errors));
+    assert.strictEqual(canonical(published), true, JSON.stringify(canonical.errors));
+    // Neither validator ignores an undeclared root field: the live-wire schema is no longer
+    // relaxed, so an unknown field is rejected exactly as the published schema rejects it.
+    const extended = { ...published, future_envelope_field: true };
+    assert.strictEqual(runtime(extended), false);
+    assert.strictEqual(canonical(extended), false);
     assert.ok(canonical.errors.some(error => error.keyword === 'additionalProperties'));
   });
 
