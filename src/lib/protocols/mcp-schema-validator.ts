@@ -12,7 +12,7 @@ export class CachedJsonSchemaValidator implements jsonSchemaValidator {
   private cachedBytes = 0;
 
   constructor(
-    private readonly createProvider: () => jsonSchemaValidator,
+    private readonly createProvider: (schema: JsonSchemaType) => jsonSchemaValidator,
     private readonly maxEntries = MAX_CACHED_SCHEMAS,
     private readonly maxBytes = MAX_CACHED_SCHEMA_BYTES
   ) {
@@ -40,7 +40,15 @@ export class CachedJsonSchemaValidator implements jsonSchemaValidator {
     // The official provider retains its normal dialect and format behavior.
     // Compile the hashed snapshot: callers can mutate schemas returned by
     // listTools(), and Ajv retains references to some schema values (e.g. enums).
-    const validator = this.createProvider().getValidator<T>(JSON.parse(serialized));
+    let snapshot = JSON.parse(serialized) as JsonSchemaType;
+    // Small schemas need no factoring. Load the compactor only when discovery
+    // supplies a large document, keeping ordinary client imports lightweight.
+    if (Buffer.byteLength(serialized) >= 64 * 1024) {
+      const { compactMcpSchemaForValidation } =
+        require('../validation/compact-schema') as typeof import('../validation/compact-schema');
+      snapshot = compactMcpSchemaForValidation(snapshot as Record<string, unknown>) as JsonSchemaType;
+    }
+    const validator = this.createProvider(snapshot).getValidator<T>(snapshot);
     const bytes = Buffer.byteLength(serialized);
     // Oversized schemas still validate normally, but do not displace the cache
     // or stay pinned after the client's validator is released. This budget
@@ -59,5 +67,35 @@ export class CachedJsonSchemaValidator implements jsonSchemaValidator {
 }
 
 // Keep the v1 draft-07 default separate from v2's dialect-aware validation.
-export const sharedLegacyJsonSchemaValidator = new CachedJsonSchemaValidator(() => new LegacyAjvJsonSchemaValidator());
-export const sharedModernJsonSchemaValidator = new CachedJsonSchemaValidator(() => new ModernAjvJsonSchemaValidator());
+function createAjv(dialect: 'draft-7' | '2019-09' | '2020-12') {
+  // Use the official providers' documented custom-Ajv extension. Preserve their
+  // validation and format options, changing only reference code generation.
+  const { default: Ajv } = (
+    dialect === '2020-12' ? require('ajv/dist/2020') : dialect === '2019-09' ? require('ajv/dist/2019') : require('ajv')
+  ) as typeof import('ajv');
+  const { default: addFormats } = require('ajv-formats') as typeof import('ajv-formats');
+  const ajv = new Ajv({
+    strict: false,
+    validateFormats: true,
+    validateSchema: false,
+    allErrors: true,
+    inlineRefs: false,
+  });
+  addFormats(ajv);
+  return ajv;
+}
+
+export const sharedLegacyJsonSchemaValidator = new CachedJsonSchemaValidator(
+  () => new LegacyAjvJsonSchemaValidator(createAjv('draft-7'))
+);
+export const sharedModernJsonSchemaValidator = new CachedJsonSchemaValidator(schema => {
+  const declared = typeof schema.$schema === 'string' ? schema.$schema.replace(/#$/, '') : undefined;
+  if (declared === undefined || /^https?:\/\/json-schema\.org\/draft\/2020-12\/schema$/.test(declared))
+    return new ModernAjvJsonSchemaValidator(createAjv('2020-12'));
+  if (/^https?:\/\/json-schema\.org\/draft\/2019-09\/schema$/.test(declared))
+    return new ModernAjvJsonSchemaValidator(createAjv('2019-09'));
+  if (/^https?:\/\/json-schema\.org\/draft-0[67]\/schema$/.test(declared))
+    return new ModernAjvJsonSchemaValidator(createAjv('draft-7'));
+  // Let the official provider reject unknown dialects with its normal error.
+  return new ModernAjvJsonSchemaValidator();
+});
