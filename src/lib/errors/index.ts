@@ -242,10 +242,67 @@ export class ValidationError extends ADCPError {
   constructor(
     public readonly field: string,
     public readonly value: unknown,
-    public readonly constraint: string
+    public readonly constraint: string,
+    /** Replaces the default `Validation failed for field …` message when given. */
+    message?: string
   ) {
-    super(`Validation failed for field '${field}': ${constraint}`);
+    super(message ?? `Validation failed for field '${field}': ${constraint}`);
     this.details = { field, value, constraint };
+  }
+}
+
+/**
+ * Whether the SDK refused this request locally, before sending any of it.
+ *
+ * Such errors carry `dispatched: false`: no bytes of the task's request left
+ * this process, so the agent cannot have acted on it, and the failure says
+ * nothing about the agent's health. The SDK sets the marker only on refusals it
+ * decides by itself: request schema validation, the release and feature gates,
+ * and the version refusals that follow already-known capabilities.
+ *
+ * Failures that involve contacting the agent are never marked, even when the
+ * task itself was not sent: endpoint discovery, OAuth token fetches, and the
+ * `get_adcp_capabilities` fetch (including its v2 rejection). A refused
+ * connection, a 5xx or a 429 there is an agent failure. Refusing to resume a
+ * deferred task is not marked either, because the original task was sent.
+ *
+ * This checks the property, not the class, so it also works when the error
+ * crosses a bundle boundary where `instanceof` fails.
+ */
+export function isPreDispatchError(error: unknown): error is { readonly dispatched: false } {
+  return typeof error === 'object' && error !== null && (error as { dispatched?: unknown }).dispatched === false;
+}
+
+/**
+ * Error thrown when the client rejects a request against the request schema
+ * before sending it. `dispatched` is always `false`.
+ *
+ * Carries the task name and the invalid field paths as JSON Pointers (`/` for
+ * the root), never the submitted values. The message is the validator's
+ * existing text, so callers that match on it keep working. To classify the
+ * error without `instanceof`, check `code === 'VALIDATION_ERROR'` and
+ * `dispatched === false`.
+ *
+ * Extends {@link ValidationError} (exported from the package root as
+ * `ADCPValidationError`), so existing `instanceof` checks still match. `field`
+ * is the first invalid path and `value` is always `undefined`.
+ */
+export class RequestValidationError extends ValidationError {
+  /** The request was refused before it was sent. */
+  readonly dispatched = false as const;
+
+  /** JSON Pointers to the invalid fields, without their values. */
+  readonly fields: readonly string[];
+
+  constructor(
+    /** The task whose request was refused, e.g. `sync_creatives`. */
+    public readonly task: string,
+    fields: readonly string[],
+    constraint: string,
+    message?: string
+  ) {
+    super(fields[0] ?? '/', undefined, constraint, message);
+    this.fields = Object.freeze([...new Set(fields)]);
   }
 }
 
@@ -653,6 +710,11 @@ export function mapSdkErrorCodeToProtocolErrorCode(code: string): string | undef
  */
 export class FeatureUnsupportedError extends ADCPError {
   readonly code: string = 'FEATURE_UNSUPPORTED';
+  /**
+   * Every construction site is a local gate that runs before the task is sent.
+   * A future site that throws after a send must not use this class as is.
+   */
+  readonly dispatched = false as const;
 
   constructor(
     public readonly unsupportedFeatures: string[],
@@ -944,6 +1006,14 @@ function buildModeMismatchRecovery(details: ActionNotAllowedErrorDetails): Actio
  */
 export type VersionUnsupportedReason = 'version' | 'idempotency' | 'synthetic';
 
+export interface VersionUnsupportedErrorOptions {
+  /**
+   * Pass `false` only where no bytes of the task's request left the process.
+   * See {@link isPreDispatchError}.
+   */
+  dispatched?: false;
+}
+
 /**
  * Error thrown when a mutating call would dispatch to a seller whose
  * capabilities cannot be corroborated as v3. Provides an explicit
@@ -955,18 +1025,29 @@ export type VersionUnsupportedReason = 'version' | 'idempotency' | 'synthetic';
  */
 export class VersionUnsupportedError extends ADCPError {
   readonly code = 'VERSION_UNSUPPORTED';
+  /**
+   * `false` when the SDK refused the task locally from already-known
+   * capabilities and sent nothing for it. Absent when the refusal came from a
+   * capabilities response the agent just returned, or when it refuses to resume
+   * a task that was already sent. See {@link isPreDispatchError}.
+   */
+  declare readonly dispatched?: false;
 
   constructor(
     public readonly taskType: string,
     public readonly reason: VersionUnsupportedReason,
     public readonly actualVersion: 'v2' | 'v3',
-    public readonly agentUrl?: string
+    public readonly agentUrl?: string,
+    options: VersionUnsupportedErrorOptions = {}
   ) {
     super(
       (taskType === 'get_adcp_capabilities'
         ? 'Cannot discover supported AdCP capabilities: '
         : `Refusing to dispatch task '${taskType}': `) + VersionUnsupportedError.explain(reason, actualVersion)
     );
+    if (options.dispatched === false) {
+      Object.defineProperty(this, 'dispatched', { value: false, enumerable: true });
+    }
   }
 
   private static explain(reason: VersionUnsupportedReason, actualVersion: 'v2' | 'v3'): string {
