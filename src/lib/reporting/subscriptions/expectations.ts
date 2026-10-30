@@ -13,6 +13,8 @@ import type { ReportingSubscriptionDestinationMethodV1 } from './selection';
  * current `configuration`, and `prior_versions[].configuration` from sellers on
  * 3.3.0-beta.2 or later (adcp#8588). Pass the readback's `inactive_intervals` to
  * `expectedSubscriptionPeriods` unchanged.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function reportingSubscriptionVersionRecordsV1(input: {
   state: ReportingSubscriptionState;
@@ -64,7 +66,11 @@ export function reportingSubscriptionVersionRecordsV1(input: {
   });
 }
 
-/** Per-offering pins an obligation must match beyond what coverage determines. */
+/**
+ * Per-offering pins an obligation must match beyond what coverage determines.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type SubscriptionExpectationTemplateV1 = Omit<
   ExpectedReportingPeriod,
   | 'deliveryConfigId'
@@ -89,6 +95,8 @@ export type SubscriptionExpectationTemplateV1 = Omit<
  * reporting profile and schema pins of the offering, the destination, verification profile,
  * finality and reconciliation mode, and the coverage the obligation must report (its package
  * sets, and `partial` where packages carry an `offering_unsupported` exception).
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function subscriptionExpectedReportingPeriodsV1(
   obligations: readonly ExpectedSubscriptionObligationV1[],

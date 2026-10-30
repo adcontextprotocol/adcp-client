@@ -7,8 +7,8 @@ const { createTestPrincipalLifecycle } = require('../helpers/principal-runtime.j
 const {
   createInMemoryReportingSubscriptionEngineStoreV1,
   createReportingSubscriptionEngineV1,
-} = require('../../dist/lib/reporting/service/index.js');
-const { expectedSubscriptionPeriods } = require('../../dist/lib/reporting/consumer/index.js');
+} = require('../../dist/lib/reporting/advanced/index.js');
+const { expectedSubscriptionPeriods } = require('../../dist/lib/reporting/advanced/index.js');
 const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
 
 const SCOPE = { tenantId: 't', principalId: 'p' };

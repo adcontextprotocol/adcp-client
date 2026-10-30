@@ -14,10 +14,12 @@ import { InMemoryStateStore, type AdcpStateStore } from '../../server/state-stor
 import type { PrincipalStoreScope } from '../../server/principal/types';
 import type { ReportingSubscriptionEngineStoreV1 } from './engine';
 
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export const DEFAULT_REPORTING_SUBSCRIPTION_ENGINE_COLLECTION = 'adcp_reporting_subscription_engine';
 const MAX_PAGES = 10_000;
 const PAGE_SIZE = 500;
 
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export interface CreateReportingSubscriptionEngineStateStoreOptionsV1 {
   store: AdcpStateStore;
   collection?: string;
@@ -39,7 +41,11 @@ function documentId(scope: Readonly<PrincipalStoreScope>, key: string): string {
     .digest('hex')}`;
 }
 
-/** {@link ReportingSubscriptionEngineStoreV1} over any `AdcpStateStore` with `getWithVersion` and `putIfMatch`. */
+/**
+ * {@link ReportingSubscriptionEngineStoreV1} over any `AdcpStateStore` with `getWithVersion` and `putIfMatch`.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function createReportingSubscriptionEngineStateStoreV1(
   options: CreateReportingSubscriptionEngineStateStoreOptionsV1
 ): ReportingSubscriptionEngineStoreV1 {

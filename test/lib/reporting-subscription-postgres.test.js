@@ -19,14 +19,14 @@ describe('reporting subscriptions on PostgreSQL', { skip: !DATABASE_URL && 'DATA
   let pool;
   let lib;
   let server;
-  let service;
+  let advanced;
 
   before(async () => {
     const { Pool } = require('pg');
     pool = new Pool({ connectionString: DATABASE_URL });
     lib = require('../../dist/lib/index.js');
     server = require('../../dist/lib/server/index.js');
-    service = require('../../dist/lib/reporting/service/index.js');
+    advanced = require('../../dist/lib/reporting/advanced/index.js');
     await pool.query(lib.ADCP_STATE_MIGRATION);
     await pool.query('DELETE FROM adcp_state WHERE collection = ANY($1)', [[PRINCIPALS, ENGINE]]);
   });
@@ -73,12 +73,12 @@ describe('reporting subscriptions on PostgreSQL', { skip: !DATABASE_URL && 'DATA
       now: () => clock.now,
       reportingSubscriptions: { listDeliveryConfigIds: () => [] },
     });
-    const engineStore = service.createReportingSubscriptionEngineStateStoreV1({
+    const engineStore = advanced.createReportingSubscriptionEngineStateStoreV1({
       store: backing,
       collection: ENGINE,
       durability: 'durable',
     });
-    const engine = service.createReportingSubscriptionEngineV1({
+    const engine = advanced.createReportingSubscriptionEngineV1({
       principal: lifecycle,
       store: engineStore,
       offerings: [

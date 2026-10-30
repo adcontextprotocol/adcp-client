@@ -12,7 +12,6 @@
 import {
   REPORTING_MANAGED_DELIVERY_COMPOSITION_V1,
   createReliableReportingService,
-  withReportingSubscriptionCoverageV1,
   rotateReportingRoster,
   reportingDeploymentWideAccountIds,
   warnReportingSchedulerFailure,
@@ -23,6 +22,7 @@ import {
   type ReliableReportingSchedulerOptionsV1,
   type ReliableReportingServiceV1,
 } from '@adcp/sdk/reporting/service';
+import { withReportingSubscriptionCoverageV1 } from '@adcp/sdk/reporting/advanced';
 import {
   composeNotificationDeliveryAttemptCheckpoints,
   composeWebhookAttemptResultObservers,

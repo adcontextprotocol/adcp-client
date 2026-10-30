@@ -234,9 +234,21 @@ capability truthfulness.
 
 With `reportingSubscriptions`, every `runCycle` first writes the subscription
 engine's frozen owed sets into the ledger, then plans account configurations as
-before, and the worker executes both:
+before, and the worker executes both.
+
+The coverage engine, its stores, the coverage function, the calendar, offering
+selection, the capability builder and the type of this option are low-level
+building blocks. They import from `@adcp/sdk/reporting/advanced`, where every
+export is `@experimental`; `@adcp/sdk/reporting/service`, `/consumer`, `/ledger`
+and the package root no longer re-export them.
 
 ```ts
+import { createReliableReportingService } from '@adcp/sdk/reporting/service';
+import {
+  createReportingSubscriptionEngineV1,
+  createReportingSubscriptionEngineStateStoreV1,
+} from '@adcp/sdk/reporting/advanced';
+
 const service = createReliableReportingService({
   // ...store, adapters, resolveSource, resolveCurrency, resolveCoverage as above
   reportingSubscriptions: {

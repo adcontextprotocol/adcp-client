@@ -10,12 +10,12 @@ const { describe, test } = require('node:test');
 
 process.env.NODE_ENV = 'test';
 
+const { createReliableReportingService } = require('../../dist/lib/reporting/service/index.js');
 const {
   createInMemoryReportingSubscriptionEngineStoreV1,
-  createReliableReportingService,
   createReportingSubscriptionEngineV1,
   reportingSubscriptionCoverageGrantedV1,
-} = require('../../dist/lib/reporting/service/index.js');
+} = require('../../dist/lib/reporting/advanced/index.js');
 const {
   createSyncReportingReceiptsHandler,
   reportingSubscriptionReceiptAdmissibleV1,

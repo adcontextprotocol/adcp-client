@@ -38,10 +38,13 @@ try {
     `
     const assert = require('node:assert/strict');
     const buyer = require('@adcp/sdk/reporting/consumer');
-    for (const name of ['reconcileReporting', 'reconcileReportingCoreV1', 'detectReportingContentMismatch', 'isReportingCoverageEvidence', 'createPostgresReportingConsumerRuntimeV1', 'createReliableReportingConsumerV1', 'expectedSubscriptionPeriods']) {
+    for (const name of ['reconcileReporting', 'reconcileReportingCoreV1', 'detectReportingContentMismatch', 'isReportingCoverageEvidence', 'createPostgresReportingConsumerRuntimeV1', 'createReliableReportingConsumerV1']) {
       assert.equal(typeof buyer[name], 'function', name);
     }
     assert.equal(buyer.createReliableReportingServiceV1, undefined);
+    // Reporting-subscription coverage is a low-level building block on the advanced subpath only.
+    assert.equal(buyer.expectedSubscriptionPeriods, undefined);
+    assert.equal(typeof require('@adcp/sdk/reporting/advanced').expectedSubscriptionPeriods, 'function');
   `
   );
   writeFileSync(
@@ -49,10 +52,13 @@ try {
     `
     import assert from 'node:assert/strict';
     import * as buyer from '@adcp/sdk/reporting/consumer';
-    for (const name of ['reconcileReporting', 'reconcileReportingCoreV1', 'detectReportingContentMismatch', 'isReportingCoverageEvidence', 'createPostgresReportingConsumerRuntimeV1', 'createReliableReportingConsumerV1', 'expectedSubscriptionPeriods']) {
+    for (const name of ['reconcileReporting', 'reconcileReportingCoreV1', 'detectReportingContentMismatch', 'isReportingCoverageEvidence', 'createPostgresReportingConsumerRuntimeV1', 'createReliableReportingConsumerV1']) {
       assert.equal(typeof buyer[name], 'function', name);
     }
     assert.equal(buyer.createReliableReportingServiceV1, undefined);
+    assert.equal(buyer.expectedSubscriptionPeriods, undefined);
+    const advanced = await import('@adcp/sdk/reporting/advanced');
+    assert.equal(typeof advanced.expectedSubscriptionPeriods, 'function');
   `
   );
   for (const file of ['consumer.cjs', 'consumer.mjs']) {

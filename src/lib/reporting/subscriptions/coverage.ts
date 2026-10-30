@@ -51,7 +51,11 @@ const DAY_MS = 86_400_000;
 const DEFAULT_MAX_PERIODS = 100_000;
 const DEFAULT_MAX_ITERATIONS = 2_000_000;
 
-/** One accepted `subscription_version`, as the buyer recorded it. */
+/**
+ * One accepted `subscription_version`, as the buyer recorded it.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingSubscriptionVersionRecordV1 {
   subscription_version: number;
   /** The version's `accepted_at` from the `sync_principal`/`get_principal` readback. */
@@ -72,7 +76,11 @@ export interface ReportingSubscriptionVersionRecordV1 {
   destination_method?: ReportingSubscriptionDestinationMethodV1;
 }
 
-/** Flight values a buy carried before an update replaced them. */
+/**
+ * Flight values a buy carried before an update replaced them.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingSubscriptionPriorFlightV1 {
   /** When these values stopped applying. Periods resolved at or after it use later values. */
   replaced_at: string;
@@ -82,7 +90,11 @@ export interface ReportingSubscriptionPriorFlightV1 {
   completed_at?: string;
 }
 
-/** A media buy the caller can see through `get_media_buys`. */
+/**
+ * A media buy the caller can see through `get_media_buys`.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingSubscriptionBuyV1 {
   media_buy_id: string;
   /** Null or absent: not confirmed, so not covered. */
@@ -102,7 +114,11 @@ export interface ReportingSubscriptionBuyV1 {
   prior_flights?: readonly ReportingSubscriptionPriorFlightV1[];
 }
 
-/** One grant of reporting authority over the account to the caller. */
+/**
+ * One grant of reporting authority over the account to the caller.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingSubscriptionGrantV1 {
   /**
    * When this grant began. The wire's `authorization.authorized_at` is the start of the
@@ -117,6 +133,7 @@ export interface ReportingSubscriptionGrantV1 {
   unauthorized_at?: string;
 }
 
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export interface ReportingSubscriptionCoverageAccountV1 {
   account_id: string;
   /** The account's `operator` domain, needed when a version names `operator_domains`. */
@@ -141,6 +158,7 @@ export interface ReportingSubscriptionCoverageAccountV1 {
   grants: readonly ReportingSubscriptionGrantV1[];
 }
 
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export interface ExpectedSubscriptionPeriodsInputV1 {
   subscription_id: string;
   /** Every version whose obligations matter, oldest first. */
@@ -169,7 +187,11 @@ export interface ExpectedSubscriptionPeriodsInputV1 {
   max_iterations?: number;
 }
 
-/** One owed period for one (buy, offering) pair. */
+/**
+ * One owed period for one (buy, offering) pair.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ExpectedSubscriptionPeriodV1 {
   subscription_id: string;
   /** The version that owes it, the obligation's `delivery_config_version`. */
@@ -183,7 +205,11 @@ export interface ExpectedSubscriptionPeriodV1 {
   period_end: string;
 }
 
-/** Owed periods grouped the way the seller's obligations carry them. */
+/**
+ * Owed periods grouped the way the seller's obligations carry them.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ExpectedSubscriptionObligationV1 {
   subscription_id: string;
   subscription_version: number;
@@ -237,6 +263,8 @@ interface AuthorityChain {
  *
  * Throws `TypeError` for malformed input and `RangeError` when the result would exceed
  * `max_periods`.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function expectedSubscriptionPeriods(input: ExpectedSubscriptionPeriodsInputV1): ExpectedSubscriptionPeriodV1[] {
   const now = instant(input.now, 'now');
@@ -343,7 +371,11 @@ function firstOwedBoundary(calendar: ReportingPeriodCalendarV1, handoff: number,
   return Math.max(calendar.ceil(handoff), calendar.floor(confirmedAt));
 }
 
-/** Group owed periods into the obligations that must carry them, with frozen `media_buy_ids`. */
+/**
+ * Group owed periods into the obligations that must carry them, with frozen `media_buy_ids`.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function groupExpectedSubscriptionPeriodsV1(
   periods: readonly ExpectedSubscriptionPeriodV1[]
 ): ExpectedSubscriptionObligationV1[] {
