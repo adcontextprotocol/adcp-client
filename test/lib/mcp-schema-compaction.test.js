@@ -65,6 +65,40 @@ test('large remote schemas retain local refs, ref siblings, and literal annotati
   assert.ok(Object.keys(compacted.$defs).length > 1);
 });
 
+test('large factored schemas preserve official format validation in both MCP eras', () => {
+  const schema = {
+    type: 'object',
+    properties: {
+      payload: {
+        description: padding,
+        type: 'object',
+        'x-seller-note': 'unknown annotations remain allowed',
+        properties: {
+          email: { type: 'string', format: 'email' },
+          uri: { type: 'string', format: 'uri' },
+          when: { type: 'string', format: 'date-time' },
+        },
+        required: ['email', 'uri', 'when'],
+      },
+    },
+    required: ['payload'],
+  };
+  assert.ok(compactMcpSchemaForValidation(schema)['x-adcp-compact-definitions'], 'exercise the custom compiler path');
+  const good = { email: 'buyer@example.com', uri: 'https://seller.example/catalog', when: '2026-10-30T12:34:56Z' };
+  const invalid = [
+    { ...good, email: 'invalid' },
+    { ...good, uri: 'not a URI' },
+    { ...good, when: '2026-10-30' },
+    { ...good, when: '2026-02-30T12:34:56Z' },
+    { ...good, email: 42 },
+  ].map(payload => ({ payload }));
+  for (const modern of [false, true]) {
+    const { bounded } = compare(schema, [{ payload: good }, ...invalid], { modern });
+    assert.equal(bounded({ payload: good }).valid, true);
+    for (const value of invalid) assert.equal(bounded(value).valid, false, JSON.stringify(value));
+  }
+});
+
 for (const rootId of [undefined, 'https://seller.example/output.json', 'relative-output.json']) {
   test(`remote factoring preserves nested resource scopes and pointer targets (${rootId ?? 'anonymous'})`, () => {
     const schema = {
