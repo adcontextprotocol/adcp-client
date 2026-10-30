@@ -147,6 +147,9 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // ledger producer, coverage, handlers and status ingest, and then the service,
 // engine and managed delivery, and adds no module file. Allow about 55 KB above
 // the runtime's budget for them. Other budgets stay fixed.
+// AdCP 3.3 reporting subscription coverage (#3504) adds the calendar,
+// selection, coverage and capability modules and the parity table. Measured
+// 26,370,041 packed bytes; allow about 40 KB above that for compressor variance.
 // AdCP 3.3.0-beta.2 (#3541) and the creative-delivery legacy-ref
 // reconciliation (#3510) landed together. CI measured 26,363,856 packed bytes
 // after #3510 and 26,369,089 after #3541 on main, about 9 KB over the beta.1
