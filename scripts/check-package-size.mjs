@@ -315,7 +315,8 @@ const MAX_PACKED_FILE_COUNT =
   4 + // Reporting subscription hand-modeled wire types until 3.3.0-beta.2 (one dual-format set).
   8 + // Reporting subscription engine and principal subscription runtime (two dual-format sets).
   4 + // Reporting subscription release gate (one dual-format set).
-  12; // Reporting subscription engine store, buyer expectations and client helper (three dual-format sets).
+  12 + // Reporting subscription engine store, buyer expectations and client helper (three dual-format sets).
+  2; // Reporting subscriptions example storyboard and reference seller.
 const MAX_BUNDLED_SCHEMA_BYTES = 2000 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
