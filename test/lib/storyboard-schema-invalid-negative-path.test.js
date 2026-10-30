@@ -61,6 +61,19 @@ function options(error, inspectTaskOptions = () => {}) {
   };
 }
 
+function throwingOptions(error) {
+  const client = {
+    async getProducts() {
+      throw error;
+    },
+  };
+  return {
+    protocol: 'mcp',
+    _client: client,
+    _profile: { name: 'Local validation stub', tools: ['get_products'], raw_capabilities: {} },
+  };
+}
+
 describe('storyboard schema-invalid negative paths', () => {
   test('dispatches malformed requests and grades response-derived checks against the seller response', async () => {
     const originalCallTool = ProtocolClient.callTool;
@@ -229,6 +242,57 @@ describe('storyboard schema-invalid negative paths', () => {
       synthetic: true,
     });
     assert.deepEqual(result.validations, []);
+  });
+
+  test('classifies a thrown local refusal by its dispatched marker, not its message', async () => {
+    const refusal = Object.assign(new Error('Client refused get_products: buying_mode is invalid'), {
+      code: 'VALIDATION_ERROR',
+      dispatched: false,
+    });
+    const result = await runStoryboardStep(
+      'https://stub.example/mcp',
+      storyboard('schema_invalid'),
+      'reject_invalid_request',
+      throwingOptions(refusal)
+    );
+
+    assert.equal(result.passed, true);
+    assert.equal(result.skipped, true);
+    assert.equal(result.skip_reason, 'not_applicable');
+    assert.match(result.skip.detail, /Seller was not reached/);
+    assert.deepEqual(result.response, {
+      errors: [{ code: 'INVALID_REQUEST', message: refusal.message }],
+      synthetic: true,
+    });
+    assert.deepEqual(result.validations, []);
+  });
+
+  test('still classifies an unmarked thrown local refusal by its message', async () => {
+    const result = await runStoryboardStep(
+      'https://stub.example/mcp',
+      storyboard('schema_invalid'),
+      'reject_invalid_request',
+      throwingOptions(new Error('Request validation failed for get_products: buying_mode: Invalid option'))
+    );
+
+    assert.equal(result.skipped, true);
+    assert.match(result.skip.detail, /Seller was not reached/);
+  });
+
+  test('does not treat other pre-dispatch failures as a schema refusal', async () => {
+    const versionRefusal = Object.assign(new Error('Refusing to dispatch task get_products'), {
+      code: 'VERSION_UNSUPPORTED',
+      dispatched: false,
+    });
+    const result = await runStoryboardStep(
+      'https://stub.example/mcp',
+      storyboard('schema_invalid'),
+      'reject_invalid_request',
+      throwingOptions(versionRefusal)
+    );
+
+    assert.equal(result.skipped, undefined);
+    assert.notEqual(result.response?.synthetic, true);
   });
 
   test('does not normalize a post-transport response-schema rejection', async () => {

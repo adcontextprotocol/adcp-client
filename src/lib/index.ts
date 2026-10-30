@@ -743,6 +743,7 @@ export {
   UnsupportedTaskError,
   ProtocolError,
   ValidationError as ADCPValidationError, // Rename to avoid conflict
+  RequestValidationError,
   MissingInputHandlerError,
   InvalidContextError,
   ConfigurationError,
@@ -771,6 +772,7 @@ export {
   getClientPreflightAdcpError,
   isADCPError,
   isErrorOfType,
+  isPreDispatchError,
   extractErrorInfo,
   is401Error,
   mapSdkErrorCodeToProtocolErrorCode,
@@ -781,6 +783,7 @@ export type {
   ClientPreflightAdcpErrorRecovery,
   FeatureUnsupportedErrorOptions,
   ProtocolFeatureUnsupportedErrorOptions,
+  VersionUnsupportedErrorOptions,
   ActionNotAllowedErrorDetails,
   ActionNotAllowedReasonValue,
   ActionNotAllowedAttemptedAction,
