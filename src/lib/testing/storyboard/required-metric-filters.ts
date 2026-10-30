@@ -55,7 +55,13 @@ function vendorMetricMatches(actual: unknown, required: RecordValue): boolean {
   );
 }
 
-/** Optional discovery filters have binding semantics when a buyer supplies them. */
+/**
+ * Optional discovery filters have binding semantics when a buyer supplies them.
+ * Normative basis: ProductFilters.required_metrics and required_vendor_metrics
+ * require every returned product to satisfy the supplied metric predicates.
+ * https://adcontextprotocol.org/schemas/3.1.29/core/product-filters.json#/properties/required_metrics
+ * https://adcontextprotocol.org/schemas/3.1.29/core/product-filters.json#/properties/required_vendor_metrics
+ */
 export const requiredMetricFiltersAssertion: AssertionSpec = {
   id: 'discovery.required_metric_filters',
   default: true,

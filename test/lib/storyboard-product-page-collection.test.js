@@ -167,6 +167,11 @@ for (const [name, second] of [
     assert.ok(step.validations.some(validation => !validation.passed));
     assert.equal(step.product_page_collection.pages.length, 2);
     assert.equal(step.product_page_collection.pages[1].request.payload.pagination.cursor, 'next');
+    assert.equal(
+      step.request.payload.pagination.cursor,
+      'next',
+      'the top-level receipt cites the failing page request'
+    );
   });
 }
 

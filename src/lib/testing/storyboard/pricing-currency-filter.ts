@@ -80,6 +80,12 @@ function selectionCapacity(
  * Validate the observable currency contract on the effective discovery result.
  * This does not compare against fixture rate-card IDs or source currencies:
  * account-specific FX may legally change both media and compulsory signal prices.
+ * Normative basis: ProductFilters.pricing_currencies requires every returned
+ * product-level pricing option to use a requested currency. Product eligibility
+ * (one matching alternative) and pruning returned media options are distinct;
+ * optional signal add-ons retain their separate alternative-pricing semantics.
+ * https://adcontextprotocol.org/schemas/3.1.29/core/product-filters.json#/properties/pricing_currencies
+ * https://docs.adcontextprotocol.org/docs/media-buy/task-reference/get_products#currency-filtering
  */
 export const pricingCurrencyFilterAssertion: AssertionSpec = {
   id: 'discovery.pricing_currency_filter',
