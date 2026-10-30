@@ -50,13 +50,50 @@ export interface LegacyEnvelopeStatusOptions {
 
 const MEDIA_BUY_STATUS_RESPONSE_TOOLS = new Set(['create_media_buy', 'update_media_buy']);
 
-/** 3.2 synchronous response arms that intentionally forbid task-envelope status. */
-export const STATUS_FREE_SYNC_RESPONSE_TOOLS: ReadonlySet<string> = new Set([
+/**
+ * Compact synchronous responses that the 3.0 shim must never give a `status`.
+ *
+ * 3.0 emitters never served these tools. On 3.2.x the schema forbids `status`;
+ * from the release that composes `core/protocol-envelope.json` into every task
+ * response it is REQUIRED, and a missing one is the seller's defect, not
+ * something to fill in. `list_collections` and `list_proposals` are 3.3-only.
+ */
+export const COMPACT_SYNC_RESPONSE_TOOLS: ReadonlySet<string> = new Set([
   'list_products',
   'decline_proposals',
   'list_collections',
   'list_proposals',
 ]);
+
+/** Tools whose 3.2.x arms are closed with no `status`; 3.3 composes the envelope into them. */
+const STATUS_FREE_BEFORE_ENVELOPE_TOOLS: ReadonlySet<string> = new Set(['list_products', 'decline_proposals']);
+
+/**
+ * True when the served release's published schema for `toolName` has no
+ * `status`, so a seller serving that release must not emit it: 3.2.x
+ * `list_products` / `decline_proposals`. False for every other tool, and for a
+ * release whose schema composes the protocol envelope (3.3 and the 3.2.x
+ * backport), where `status` is required and preserved.
+ *
+ * The release's own schema decides, not a version number, so a bundle that
+ * adds the envelope later changes the answer without a code change. An unknown
+ * version or a release with no such schema keeps `status`.
+ */
+export function omitsEnvelopeStatusForRelease(toolName: string, servedVersion: string | undefined): boolean {
+  if (!STATUS_FREE_BEFORE_ENVELOPE_TOOLS.has(toolName) || servedVersion === undefined) return false;
+  const key = `${toolName}\0${servedVersion}`;
+  const cached = omitsStatusCache.get(key);
+  if (cached !== undefined) return cached;
+  const loader = require('../validation/schema-loader') as typeof import('../validation/schema-loader');
+  const omits = loader.responseSchemaComposesEnvelope(toolName, servedVersion) === false;
+  // Bundles are immutable for a process except when a test or runner registers an
+  // external root, which changes what the same version string resolves to.
+  if (omitsStatusCache.size < 256 && !loader.isExternalSchemaRootActive(servedVersion))
+    omitsStatusCache.set(key, omits);
+  return omits;
+}
+
+const omitsStatusCache = new Map<string, boolean>();
 
 /**
  * Detect whether a response payload should be treated as 3.0.x for the
@@ -120,7 +157,9 @@ export function injectLegacyEnvelopeStatus<T extends Record<string, unknown>>(
   if (!response || typeof response !== 'object' || Array.isArray(response)) {
     return response;
   }
-  if (options?.toolName && STATUS_FREE_SYNC_RESPONSE_TOOLS.has(options.toolName)) return response;
+  // 3.0 emitters never served these tools. On 3.2 the schema forbids `status`;
+  // on 3.3 a missing one is the seller's defect and must reach the validator.
+  if (options?.toolName && COMPACT_SYNC_RESPONSE_TOOLS.has(options.toolName)) return response;
 
   if (
     options?.toolName &&
