@@ -409,16 +409,6 @@ export interface ReportingSubscriptionEngineV1 {
   /** Principals in the tenant whose active subscriptions cover the account: the consumers that owe receipts. */
   receiptRoster(tenantId: string, accountId: string): Promise<PrincipalStoreScope[]>;
   /**
-   * Whether `sync_reporting_receipts`/`sync_reporting_status` from this principal may still be
-   * accepted for a revision it read at `readAt`: always while authorized; after a loss only
-   * for revisions read before `unauthorized_at`, for `status_retention_days`.
-   */
-  acceptsReceipt(
-    principal: Readonly<PrincipalStoreScope>,
-    accountId: string,
-    input: { readAt: string; now?: string }
-  ): Promise<boolean>;
-  /**
    * Accounts whose own `reporting_delivery_configs` a `replace_account_configs` application
    * may deactivate: in scope and served, resolving an offering, and not excluded,
    * `capacity` or `offering_unsupported`. For the principal runtime's `replaceAccountConfigs` hook.
@@ -1579,16 +1569,6 @@ export function createReportingSubscriptionEngineV1(
         if (covers) roster.push(principal);
       }
       return roster.sort((left, right) => compareReportingIdsByteOrderV1(left.principalId, right.principalId));
-    },
-    async acceptsReceipt(principal, accountId, input) {
-      const document = await readAccount(principal, accountId);
-      const account = document?.account;
-      if (isAuthorized(account)) return true;
-      const grant = lastGrant(account);
-      if (grant?.unauthorized_at === undefined) return false;
-      const unauthorizedAt = Date.parse(grant.unauthorized_at);
-      const nowMs = input.now !== undefined ? Date.parse(input.now) : now().getTime();
-      return Date.parse(input.readAt) < unauthorizedAt && nowMs < unauthorizedAt + retentionMs;
     },
     async replaceAccountConfigTargets(principal, subscriptionId) {
       const targets: string[] = [];
