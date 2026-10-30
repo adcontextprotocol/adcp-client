@@ -25,9 +25,7 @@
         },
         "schedule": {
           "period_duration": "P1D",
-          "alignment": "source_timezone",
-          "period_timezone_policy": "fixed",
-          "period_timezone": "UTC",
+          "alignment": "utc",
           "delivery_sla": "PT0S"
         },
         "supported_finality": ["snapshot"],
@@ -53,8 +51,7 @@
       "recoveryWindowMilliseconds": 86400000,
       "periodDuration": "P1D",
       "deliverySlaDuration": "PT0S",
-      "alignment": "source_timezone",
-      "periodTimezone": "UTC"
+      "alignment": "utc"
     },
     "account": {
       "account_id": "account-a"
@@ -104,16 +101,9 @@
       }
     ],
     "mediaBuyIds": ["media-buy-account-a"],
-    "calendarRules": {
-      "canonicalTimezone": "UTC",
-      "tzdbVersion": "2026b",
-      "icuVersion": "78.3",
-      "firstOwnedOrdinal": 59,
-      "firstOwnedBoundary": "2026-10-30T00:00:00.000Z"
-    },
     "configurationId": "rcfg_e786259e3d4f159969ff5c4a39e71c7a",
     "installedAt": "<wall-clock>",
-    "semanticFingerprint": "sha256:a4ae0ea0df85dba8217b5651403245a51011fed9ab4165bad6ee9c00c564a3e5"
+    "semanticFingerprint": "sha256:462d031a7e11c7171ec7d3dd7e4235a7d8366431376e0c0e577d8eca7d2762fb"
   },
   "cycle": {
     "planned": 3,
@@ -140,8 +130,7 @@
         "recoveryWindowMilliseconds": 86400000,
         "periodDuration": "P1D",
         "deliverySlaDuration": "PT0S",
-        "alignment": "source_timezone",
-        "periodTimezone": "UTC"
+        "alignment": "utc"
       },
       "account": {
         "account_id": "account-a"
@@ -191,16 +180,9 @@
         }
       ],
       "mediaBuyIds": ["media-buy-account-a"],
-      "calendarRules": {
-        "canonicalTimezone": "UTC",
-        "tzdbVersion": "2026b",
-        "icuVersion": "78.3",
-        "firstOwnedOrdinal": 59,
-        "firstOwnedBoundary": "2026-10-30T00:00:00.000Z"
-      },
       "configurationId": "rcfg_e786259e3d4f159969ff5c4a39e71c7a",
       "installedAt": "<wall-clock>",
-      "semanticFingerprint": "sha256:a4ae0ea0df85dba8217b5651403245a51011fed9ab4165bad6ee9c00c564a3e5"
+      "semanticFingerprint": "sha256:462d031a7e11c7171ec7d3dd7e4235a7d8366431376e0c0e577d8eca7d2762fb"
     }
   ],
   "obligations": [
@@ -233,8 +215,7 @@
         "recoveryWindowMilliseconds": 86400000,
         "periodDuration": "P1D",
         "deliverySlaDuration": "PT0S",
-        "alignment": "source_timezone",
-        "periodTimezone": "UTC"
+        "alignment": "utc"
       },
       "scopeResolvedAt": "2026-09-02T00:00:00.000Z",
       "coverage": {
@@ -326,8 +307,7 @@
         "recoveryWindowMilliseconds": 86400000,
         "periodDuration": "P1D",
         "deliverySlaDuration": "PT0S",
-        "alignment": "source_timezone",
-        "periodTimezone": "UTC"
+        "alignment": "utc"
       },
       "scopeResolvedAt": "2026-09-03T00:00:00.000Z",
       "coverage": {
@@ -419,8 +399,7 @@
         "recoveryWindowMilliseconds": 86400000,
         "periodDuration": "P1D",
         "deliverySlaDuration": "PT0S",
-        "alignment": "source_timezone",
-        "periodTimezone": "UTC"
+        "alignment": "utc"
       },
       "scopeResolvedAt": "2026-09-04T00:00:00.000Z",
       "coverage": {
@@ -596,8 +575,7 @@
         "expected_at": "2026-09-02T00:00:00.000Z",
         "schedule": {
           "period_duration": "P1D",
-          "alignment": "source_timezone",
-          "period_timezone": "UTC",
+          "alignment": "utc",
           "delivery_sla": "PT0S"
         },
         "required_finality": "snapshot",
@@ -642,8 +620,7 @@
         "expected_at": "2026-09-03T00:00:00.000Z",
         "schedule": {
           "period_duration": "P1D",
-          "alignment": "source_timezone",
-          "period_timezone": "UTC",
+          "alignment": "utc",
           "delivery_sla": "PT0S"
         },
         "required_finality": "snapshot",
@@ -688,8 +665,7 @@
         "expected_at": "2026-09-04T00:00:00.000Z",
         "schedule": {
           "period_duration": "P1D",
-          "alignment": "source_timezone",
-          "period_timezone": "UTC",
+          "alignment": "utc",
           "delivery_sla": "PT0S"
         },
         "required_finality": "snapshot",

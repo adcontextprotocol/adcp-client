@@ -33,13 +33,9 @@ function deliveryOffering() {
       grain: source.grain,
       primary_keys: ['media_buy_id'],
     },
-    schedule: {
-      period_duration: 'P1D',
-      alignment: 'source_timezone',
-      period_timezone_policy: 'fixed',
-      period_timezone: 'UTC',
-      delivery_sla: 'PT0S',
-    },
+    // UTC alignment keeps the transcript independent of the runtime's timezone database
+    // and of the install day, which a source-calendar generation freezes into its identity.
+    schedule: { period_duration: 'P1D', alignment: 'utc', delivery_sla: 'PT0S' },
     supported_finality: ['snapshot'],
     reconciliation_mode: 'delivery_only',
   };
