@@ -139,14 +139,13 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // and declaration budgets are unchanged and still pass.
 // AdCP 3.3 reporting subscriptions (#3504) add the subscription calendar,
 // selection, coverage, capability and engine modules plus the principal
-// subscription runtime. Measured 26,382,521 packed bytes; allow about 40 KB
-// above that for compressor variance.
+// subscription runtime. Measured 26,423,860 packed bytes after merging main;
+// allow about 40 KB above that for compressor variance.
 // Writing subscription obligations into the reporting ledger (#3504) extends the
-// ledger producer, coverage, handlers and status ingest, and then the service
-// and engine, and adds no module file. Measured 26,440,194 packed bytes with
-// both; allow about 40 KB above that for compressor variance. Other budgets stay
-// fixed.
-const MAX_PACKED_TARBALL_BYTES = 26_480_000;
+// ledger producer, coverage, handlers and status ingest, and then the service,
+// engine and managed delivery, and adds no module file. Allow about 55 KB above
+// the runtime's budget for them. Other budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 26_520_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 144 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview

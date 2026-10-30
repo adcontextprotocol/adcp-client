@@ -241,6 +241,33 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
     ]);
   });
 
+  test('omission refuses to open a 65th inactive interval, as active: false does', async () => {
+    const { lifecycle, time } = setup();
+    await sync(lifecycle, { reporting_destinations: [destination()], reporting_subscriptions: [subscription()] });
+    let at = Date.parse('2026-11-02T00:00:00.000Z');
+    for (let index = 0; index < 64; index += 1) {
+      time.now = new Date((at += 3_600_000));
+      assert.equal(
+        (await sync(lifecycle, { reporting_subscriptions: [subscription({ active: false })] })).result.kind,
+        'applied'
+      );
+      time.now = new Date((at += 3_600_000));
+      assert.equal((await sync(lifecycle, { reporting_subscriptions: [subscription()] })).result.kind, 'applied');
+    }
+    assert.equal((await lifecycle.listReportingSubscriptions(SCOPE)).history[0].inactiveIntervals.length, 64);
+    time.now = new Date((at += 3_600_000));
+    const explicit = errorOf(await sync(lifecycle, { reporting_subscriptions: [subscription({ active: false })] }));
+    const omitted = errorOf(await sync(lifecycle, { reporting_subscriptions: [] }));
+    assert.match(omitted.message, /64 inactive intervals/);
+    assert.deepEqual(
+      { code: omitted.code, message: omitted.message },
+      { code: explicit.code, message: explicit.message },
+      'the same error on both paths'
+    );
+    const [state] = (await lifecycle.listReportingSubscriptions(SCOPE)).states;
+    assert.equal(state.state, 'active', 'nothing was written');
+  });
+
   test('validates the cross-field rules of reporting-subscription.json', async () => {
     const { lifecycle } = setup();
     await sync(lifecycle, { reporting_destinations: [destination(), destination('shared')] });
