@@ -23,10 +23,12 @@ export async function run({ mode, options, measurePhase }) {
     { status: 'completed', formats: [{}] },
   ];
   let largestFunctionBytes = 0;
+  let compilations = 0;
   let validations = 0;
   const maxFunctionBytes = 512 * 1024;
   const originalCompile = AjvCore.prototype.compile;
   AjvCore.prototype.compile = function (schema) {
+    compilations++;
     const validate = originalCompile.call(this, schema);
     largestFunctionBytes = Math.max(largestFunctionBytes, maxCompiledFunctionBytes(validate));
     return validate;
@@ -49,6 +51,10 @@ export async function run({ mode, options, measurePhase }) {
         validators.push(provider.getValidator(schema));
       }
     });
+    assert.ok(
+      compilations >= names.length && largestFunctionBytes > 0,
+      'Every tool must have observable compiled functions before validation runs'
+    );
     const warm = await measurePhase('2000 repeated valid and invalid output checks', async () => {
       // Reject giant functions before executing them: V8's native compilation
       // can consume many GiB even with a small --max-old-space-size heap cap.

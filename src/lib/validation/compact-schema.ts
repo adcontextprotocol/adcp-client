@@ -10,7 +10,10 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
-import uriResolver from 'ajv/dist/runtime/uri';
+
+// Use the installed compiler's resolver, including in the ESM build: this CJS
+// runtime entry exports { default }, which native ESM imports wrap differently.
+const { default: uriResolver } = require('ajv/dist/runtime/uri') as typeof import('ajv/dist/runtime/uri');
 
 type JsonObject = Record<string, unknown>;
 
@@ -97,7 +100,10 @@ export function compactBundledSchema(
   const pointerAddressedNodes = new Set<JsonObject>();
   const unionAlternatives = new Set<JsonObject>();
   if (options.maxInlineSchemaBytes !== undefined) {
-    const rootUrl = new URL(typeof root.$id === 'string' ? root.$id : '', 'https://adcp.invalid/');
+    const rootUrl = new URL(
+      options.referenceRoots ? 'https://adcp.invalid/' : typeof root.$id === 'string' ? root.$id : '',
+      'https://adcp.invalid/'
+    );
     rootUrl.hash = '';
     const resourcesByUri = new Map<string, JsonObject[]>();
     for (const resource of options.referenceRoots ?? []) {
@@ -351,12 +357,14 @@ export function compactMcpSchemaForValidation(schema: JsonObject): JsonObject {
   const resourceUri = `https://mcp-schema.invalid/${randomUUID()}`;
   const resources: JsonObject[] = [];
   const schemaNodes = new Set<JsonObject>();
-  const references: string[] = [];
+  const references: { original: string; rewritten: string }[] = [];
+  const originalResources = new Map<string, JsonObject[]>();
   const relocatable = new Map<JsonObject, boolean>();
   const dynamicKeywords = ['$dynamicRef', '$dynamicAnchor', '$recursiveRef', '$recursiveAnchor'];
   const scopeKeywords = ['$id', '$schema', '$anchor', ...dynamicKeywords];
   const literalKeywords = new Set(['default', 'enum', 'const']);
   let supported = true;
+  const scopeData = new WeakMap<object, boolean>();
 
   const resolveUri = (base: string, reference: string): string => {
     // Match Ajv's RFC URI resolver and normalizeId behavior. WHATWG URL differs
@@ -367,13 +375,19 @@ export function compactMcpSchemaForValidation(schema: JsonObject): JsonObject {
   };
 
   const containsScope = (value: unknown): boolean => {
-    if (!isObject(value)) return false;
-    return Object.entries(value).some(
-      ([keyword, child]) => scopeKeywords.includes(keyword) || keyword === '$ref' || containsScope(child)
-    );
+    if (value === null || typeof value !== 'object') return false;
+    const cached = scopeData.get(value);
+    if (cached !== undefined) return cached;
+    const found = Array.isArray(value)
+      ? value.some(containsScope)
+      : Object.entries(value).some(
+          ([keyword, child]) => scopeKeywords.includes(keyword) || keyword === '$ref' || containsScope(child)
+        );
+    scopeData.set(value, found);
+    return found;
   };
 
-  const normalize = (node: unknown, inheritedUri: string, root = false): boolean => {
+  const normalize = (node: unknown, inheritedUri: string, originalBase: string, root = false): boolean => {
     if (!isObject(node)) return true;
     schemaNodes.add(node);
     // Ajv treats an inline $async marker differently from a referenced schema.
@@ -398,6 +412,7 @@ export function compactMcpSchemaForValidation(schema: JsonObject): JsonObject {
         keyword !== 'items' &&
         keyword !== 'dependencies' &&
         !literalKeywords.has(keyword) &&
+        isObject(value) &&
         containsScope(value)
       )
         supported = false;
@@ -409,6 +424,18 @@ export function compactMcpSchemaForValidation(schema: JsonObject): JsonObject {
         return false;
       }
       if (!root && node.$id === '') supported = false;
+      // Ajv registers an anonymous/relative root literally, and nested IDs
+      // without resolving them when the inherited original base is empty.
+      // Preserve that identity separately from the synthetic absolute base.
+      const declared = (node.$id as string | undefined) ?? '';
+      originalBase = (root || !originalBase ? declared : uriResolver.resolve(originalBase, declared)).replace(
+        /#\/?$/,
+        ''
+      );
+      const originals = originalResources.get(originalBase) ?? [];
+      if (originals.length > 0) supported = false;
+      originals.push(node);
+      originalResources.set(originalBase, originals);
       uri = resolveUri(inheritedUri, (node.$id as string | undefined) ?? resourceUri);
       if (uriResolver.parse(uri).fragment) supported = false;
       node.$id = uri;
@@ -417,15 +444,16 @@ export function compactMcpSchemaForValidation(schema: JsonObject): JsonObject {
     if (Object.hasOwn(node, '$ref')) {
       if (typeof node.$ref !== 'string') supported = false;
       else {
-        node.$ref = resolveUri(uri, node.$ref);
-        references.push(node.$ref as string);
+        const reference = node.$ref;
+        node.$ref = resolveUri(uri, reference);
+        references.push({ original: resolveUri(originalBase, reference), rewritten: node.$ref as string });
       }
     }
     if (dynamicKeywords.some(keyword => Object.hasOwn(node, keyword))) supported = false;
 
     let independent = !scopeKeywords.some(keyword => Object.hasOwn(node, keyword));
     forEachChildSchema(node, child => {
-      if (!normalize(child, uri)) independent = false;
+      if (!normalize(child, uri, originalBase)) independent = false;
     });
     // A resource carries its own base URI and anchors when moved as a whole.
     if (typeof node.$id === 'string') independent = true;
@@ -434,7 +462,7 @@ export function compactMcpSchemaForValidation(schema: JsonObject): JsonObject {
   };
 
   try {
-    normalize(copied, resourceUri, true);
+    normalize(copied, resourceUri, '', true);
     const resourcesByUri = new Map<string, JsonObject[]>();
     for (const resource of resources) {
       const uri = resource.$id as string;
@@ -443,10 +471,18 @@ export function compactMcpSchemaForValidation(schema: JsonObject): JsonObject {
       matches.push(resource);
       resourcesByUri.set(uri, matches);
     }
-    for (const reference of references) {
-      const fragment = uriResolver.parse(reference).fragment ?? '';
-      const matches = resourcesByUri.get(reference.split('#')[0]!);
+    for (const { original, rewritten } of references) {
+      const fragment = uriResolver.parse(rewritten).fragment ?? '';
+      const matches = resourcesByUri.get(rewritten.split('#')[0]!);
       if (!matches) return schema; // External resources remain the compiler's responsibility.
+      const originals = originalResources.get(original.split('#')[0]!);
+      if (
+        !originals ||
+        originals.length !== matches.length ||
+        originals.some((node, index) => node !== matches[index]) ||
+        (uriResolver.parse(original).fragment ?? '') !== fragment
+      )
+        return schema; // Rebasing must not create or redirect a previously missing reference.
       if (!fragment.startsWith('/')) continue;
       for (const resource of matches) {
         let value: unknown = resource;

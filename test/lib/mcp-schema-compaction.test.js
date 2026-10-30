@@ -246,9 +246,52 @@ test('duplicate and empty IDs and scopes under extension keywords retain compile
     assert.throws(() => cache.getValidator(schemas[0]), /resolves to more than one schema/);
   }
   compare(schemas[1], [{ a: 'ok' }, { a: 42 }]);
-  compare(schemas.at(-1), [{ a: { value: 1 } }, { a: { value: 'no' } }]);
+  assert.throws(() => new LegacyProvider().getValidator(schemas.at(-1)), /async schema in sync schema/);
+  assert.throws(() => sharedLegacyJsonSchemaValidator.getValidator(schemas.at(-1)), /async schema in sync schema/);
   const invalid = { description: padding, $ref: 42 };
   assert.equal(compactMcpSchemaForValidation(invalid), invalid);
+});
+
+test('synthetic rebasing cannot resolve missing references from anonymous or relative roots', () => {
+  for (const schema of [
+    { properties: { declaration: { $id: 'abs.json', ...payload } }, $ref: '/abs.json' },
+    { $id: './a.json', description: padding, $ref: './a.json' },
+    { $id: 'dir/root.json', properties: { declaration: { $id: 'other.json', ...payload } }, $ref: '/dir/other.json' },
+    { properties: { declaration: { $id: 'https://seller.example/x', ...payload } }, $ref: '//seller.example/x' },
+  ]) {
+    assert.equal(compactMcpSchemaForValidation(schema), schema);
+    for (const cache of [sharedLegacyJsonSchemaValidator, sharedModernJsonSchemaValidator]) {
+      assert.throws(() => cache.getValidator(schema), /resolve reference/);
+    }
+  }
+});
+
+test('valid RFC URIs outside WHATWG URL constraints still compile', () => {
+  const schema = { $id: 'https://seller.example:99999/output', type: 'object', properties: { a: payload } };
+  compare(schema, [{ a: { value: 1 } }, { a: { value: 'no' } }]);
+});
+
+test('scopes nested in extension arrays retain the original graph', () => {
+  const schema = { properties: { a: { ...payload, 'x-meta': { allOf: [{ $id: 'hidden.json' }] } } } };
+  assert.equal(compactMcpSchemaForValidation(schema), schema);
+});
+
+test('modern dialect aliases match the official provider', () => {
+  for (const $schema of [
+    'http://json-schema.org/draft-07/schema#',
+    'http://json-schema.org/draft-06/schema#',
+    'http://json-schema.org/draft/2019-09/schema',
+    'http://json-schema.org/draft/2020-12/schema',
+  ]) {
+    const schema = {
+      $schema,
+      type: 'object',
+      properties: { payload, value: { type: 'array', prefixItems: [{ type: 'string' }] } },
+    };
+    compare(schema, [{ payload: { value: 1 }, value: ['ok'] }, { value: [42] }, { payload: { value: 0 } }], {
+      modern: true,
+    });
+  }
 });
 
 test('percent-encoded pointer segments preserve addressed property paths', () => {
@@ -273,15 +316,17 @@ test('real AdCP output schemas compile as bounded functions in both MCP eras', t
   });
   for (const cache of [sharedLegacyJsonSchemaValidator, sharedModernJsonSchemaValidator]) {
     for (const tool of ['get_products', 'list_creative_formats']) {
-      const schema = structuredClone(getToolSchemaDocument(tool, 'sync', '3.2.7').schema);
-      delete schema.$id;
-      const validate = cache.getValidator(schema);
-      const response = {
-        status: 'completed',
-        ...(tool === 'get_products' ? { products: [], cache_scope: 'public' } : { formats: [] }),
-      };
-      assert.equal(validate(response).valid, true);
-      assert.equal(validate({}).valid, false);
+      for (const anonymous of [true, false]) {
+        const schema = structuredClone(getToolSchemaDocument(tool, 'sync', '3.2.7').schema);
+        if (anonymous) delete schema.$id;
+        const validate = cache.getValidator(schema);
+        const response = {
+          status: 'completed',
+          ...(tool === 'get_products' ? { products: [], cache_scope: 'public' } : { formats: [] }),
+        };
+        assert.equal(validate(response).valid, true);
+        assert.equal(validate({}).valid, false);
+      }
     }
   }
   for (const dialect of [
@@ -302,4 +347,14 @@ test('real AdCP output schemas compile as bounded functions in both MCP eras', t
     assert.equal(validate({ payload: { value: 1 }, extra: true }).valid, false);
   }
   assert.ok(largest > 0 && largest < 512 * 1024, `largest generated function: ${largest} bytes`);
+});
+
+test('ESM clients and compactor load large schemas in a built package', async () => {
+  const { sharedModernJsonSchemaValidator: cache } = await import('../../dist/lib/protocols/mcp-schema-validator.mjs');
+  const { compactMcpSchemaForValidation: compact } = await import('../../dist/lib/validation/compact-schema.mjs');
+  const schema = { type: 'object', properties: { payload } };
+  assert.ok(compact(schema)['x-adcp-compact-definitions']);
+  const validate = cache.getValidator(schema);
+  assert.equal(validate({ payload: { value: 1 } }).valid, true);
+  assert.equal(validate({ payload: { value: 'no' } }).valid, false);
 });
