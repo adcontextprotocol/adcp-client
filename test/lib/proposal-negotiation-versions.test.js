@@ -15,8 +15,8 @@ const { ADCP_VERSION } = require('../../dist/lib/version.js');
 const verify = (req, payload, options = {}) =>
   verifyRefineProposalsResponse(req, payload, { adcpVersion: BUNDLE_VERSION, ...options });
 
-const VERSION = '3.3-beta.1';
-const BUNDLE_VERSION = '3.3.0-beta.1';
+const VERSION = '3.3-beta.2';
+const BUNDLE_VERSION = '3.3.0-beta.2';
 const refinement = { proposal_id: 'source-1', action: 'revise', ask: 'Improve the terms' };
 const request = (refinements = [refinement]) => buildRefineProposalsRequest({ adcp_version: VERSION, refinements });
 function proposal(overrides = {}) {
@@ -375,11 +375,11 @@ test('the public buyer refines and finalizes over the official MCP transport on 
       invalidName = true;
       await assert.rejects(
         () => buyer.refineProposals({ refinements: [refinement] }),
-        /response echo 3\.2 conflicts with served version metadata 3\.3-beta\.1/
+        /response echo 3\.2 conflicts with served version metadata 3\.3-beta\.2/
       );
       await assert.rejects(
         () => coordinator.refineProposals({ refinements: [{ ...refinement, proposal_id: 'hostile-source' }] }),
-        /response echo 3\.2 conflicts with served version metadata 3\.3-beta\.1/
+        /response echo 3\.2 conflicts with served version metadata 3\.3-beta\.2/
       );
       // Isolate the coordinator's own verification: a completed task can
       // reach projection through polling/callbacks rather than this helper.
@@ -396,7 +396,7 @@ test('the public buyer refines and finalizes over the official MCP transport on 
             coordinator.refineProposals({
               refinements: [{ ...refinement, proposal_id: 'projection-hostile-source' }],
             }),
-          /response echo 3\.2 conflicts with served version metadata 3\.3-beta\.1/
+          /response echo 3\.2 conflicts with served version metadata 3\.3-beta\.2/
         );
       } finally {
         buyer.refineProposals = publicRefine;
@@ -450,7 +450,7 @@ test('the public buyer refines and finalizes over the official MCP transport on 
         const identityBuyer = AgentClient.fromMCPClient(mcp, { adcpVersion: '3.3', experimentalIdentity33: true });
         await assert.rejects(
           () => identityBuyer.refineProposals({ refinements: [refinement] }),
-          /AdCP 3\.3 resolved to "3\.3\.0-beta\.1/
+          /AdCP 3\.3 resolved to "3\.3\.0-beta\.2/
         );
       });
     } finally {
@@ -601,7 +601,7 @@ test('identity-only 3.3 aliases cannot replace a genuine proposal schema bundle'
   const payload = { ...response(), adcp_version: '3.3' };
   const aliased = withIdentity33SchemaScope(() => verifyRefineProposalsResponse(req, payload, { adcpVersion: '3.3' }));
   assert.equal(aliased.ok, false);
-  assert.match(aliased.issues[0].message, /AdCP 3\.3 resolved to "3\.3\.0-beta\.1/);
+  assert.match(aliased.issues[0].message, /AdCP 3\.3 resolved to "3\.3\.0-beta\.2/);
   assert.match(aliased.issues[0].message, /actual matching schema bundle/);
   await withCandidateSchema(() =>
     withIdentity33SchemaScope(() => {

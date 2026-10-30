@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.3.0-beta.1/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.3.0-beta.2/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.3.0-beta.1.
+ * Manifest-derived constants for AdCP 3.3.0-beta.2.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.3.0-beta.1/manifest.json` (adcp_version: 3.3.0-beta.1, generated_at:
- * 2026-10-29T02:57:09.556Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.3.0-beta.2/manifest.json` (adcp_version: 3.3.0-beta.2, generated_at:
+ * 2026-10-30T03:19:48.498Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -47,6 +47,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     description: "A natural-key reference matches more than one of the caller's accounts. error.details MAY list candidates[] (account_id, name), conforming to error-details/account-ambiguous.json, limited to accounts the caller is already granted.",
     recovery: "correctable",
     suggestion: "pass the account_id of the intended account from error.details.candidates or list_accounts"
+  },
+  "ACCOUNT_CHANGE_REQUIRES_NEW_ACCOUNT": {
+    description: "The seller would accept a requested account change only as a separate account, for example because the new market needs its own contract, legal entity, invoicing entity, or currency, and the caller did not allow that. Returned for a request_account change request whose allow_separate_account is absent or false, and for a sync_accounts settings update, which has no such option. The named account is unchanged. error.details.reason MAY say what the separate account needs. Distinct from a plain refusal: the change is acceptable on a new account.",
+    recovery: "correctable",
+    suggestion: "open a separate account for the change (request_account, or a sync_accounts provisioning entry), or resend the change with allow_separate_account: true; the named account is unchanged"
   },
   "ACCOUNT_IDENTITY_CONFLICT": {
     description: "**Deprecated in 3.3**, planned for removal in 4.0: an attribute update never changes identity, so it cannot collide. Sellers that still support the deprecated operator_identity rekey return it during 3.x. The complete operator_identity requested through sync_accounts would rekey the account onto a natural key already owned by another account. The seller MUST reject the change atomically, MUST NOT merge the accounts, and MUST preserve both accounts and every account-scoped resource unchanged. Distinct from CONFLICT, which reports a transient stale revision or concurrent write.",
@@ -532,11 +537,6 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     description: "The caller's scope is read-only; the invoked task would mutate state and was rejected. Distinct from `SCOPE_INSUFFICIENT` (task not in scope at all) — the task is in some scopes this seller supports, just not this caller's.",
     recovery: "correctable",
     suggestion: "use a non-mutating alternative, or surface to the operator to request a scope that permits mutation"
-  },
-  "REFERENCE_DEFINITION_CHANGED": {
-    description: "A third-party-published definition pinned in a proposal's commercial_terms.definition_pins[] (a publisher-catalog format option, publisher-catalog placement, adagents.json collection, or data-provider signal) no longer resolves to the pinned content_digest. Returned by accept_proposal, which re-verifies every pin before mutating any state, so no MediaBuy is created or amended. terms_digest can still verify because it covers the pin, not the definition the pin names. Error details SHOULD conform to error-details/reference-definition-changed.json: error.field names the failing pin (for example commercial_terms.definition_pins[2]) and details.current_content_digest carries the digest the definition resolves to now; one error is returned per drifted pin. Distinct from REFERENCE_NOT_FOUND (an identifier that does not exist or is inaccessible) and PROPOSAL_EXPIRED (the hold lapsed). The same drift found while finalizing is reported as an unable outcome with reason_code definition_changed and drifted_pins[] rather than as an error. A definition withdrawn from a successfully fetched document is drift and omits current_content_digest; a document that cannot be fetched or parsed is not drift and returns SERVICE_UNAVAILABLE instead. Because nothing was mutated, sellers SHOULD set error.mutation_outcome to not_applied.",
-    recovery: "correctable",
-    suggestion: "refine the proposal so the seller re-resolves the pinned definitions and issues fresh pins, review the changed definition, then finalize and accept the new proposal"
   },
   "REFERENCE_NOT_FOUND": {
     description: "Generic fallback for a referenced identifier, grant, session, or other resource that does not exist or is not accessible by the caller. Use when no resource-specific not-found code applies (e.g., property lists, content standards, rights grants, SI offerings, proposals, catalogs, event sources, collection lists, brands, individual properties). Typed parameters that lack a dedicated standard code MUST also use REFERENCE_NOT_FOUND rather than minting a custom *_NOT_FOUND code. See 'Uniform response for inaccessible references' in error-handling.mdx for the full MUST list. Summary of the uniform-response MUST: sellers MUST return the same response for 'exists but the caller lacks access' as for 'does not exist' across every observable channel — error.code/message/field/details (message MUST be generic; error.field MUST be identical across both cases on typed parameters); HTTP status, A2A task.status.state, and MCP isError; response headers (ETag, Cache-Control, per-type rate-limit buckets, CDN tags); side effects (webhook/audit writes, background-job enqueues, per-type quota counters, DB-shard routing); and observability (logs, APM spans, third-party error telemetry like Sentry/Datadog). Sellers MUST perform the same resolution-and-authorization work on both paths (resolve-then-authorize; on true-miss still run an authorization decision of equivalent shape against an empty principal set so authorizer latency is not a side channel). Cache population MUST NOT be gated on authorization. Polymorphism is evaluated against the tool-schema's declared parameter shape before any lookup, and a tool's declared shape MUST be identical across all callers.",

@@ -585,7 +585,7 @@
     "compliance/cache/3.0.25/**/*",
     "compliance/cache/3.1.31/**/*",
     "compliance/cache/3.2.7/**/*",
-    "compliance/cache/3.3.0-beta.1/**/*",
+    "compliance/cache/3.3.0-beta.2/**/*",
     "ADCP_VERSION",
     "docs/README.md",
     "docs/TYPE-SUMMARY.md",
@@ -850,7 +850,7 @@
     "launch-editor": "^2.14.2",
     "markdown-it": "^14.3.3"
   },
-  "adcp_version": "3.3.0-beta.1",
+  "adcp_version": "3.3.0-beta.2",
   "sideEffects": [
     "**/default-invariants.*"
   ]

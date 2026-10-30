@@ -15,16 +15,19 @@ const {
 const { validateRequest, validateResponse } = require('../../dist/lib/validation/schema-validator.js');
 const { principalOptionOffTranscript } = require('../helpers/principal-option-off-transcript.js');
 
+const PINNED = require('node:fs')
+  .readFileSync(require('node:path').join(__dirname, '..', '..', 'ADCP_VERSION'), 'utf8')
+  .trim();
 const SCOPE = { tenantId: 't', principalId: 'p' };
 // Served at the release the SDK pins, so every response is valid against its schemas.
 const CTX = {
   callerMutationScope: { tenant_id: 't', principal_id: 'p', principal_kind: 'buyer_agent' },
-  servedAdcpVersion: '3.3.0-beta.1',
+  servedAdcpVersion: PINNED,
 };
 const CTX_UNPINNED = { callerMutationScope: CTX.callerMutationScope };
 
 function assertSchemaValid(toolName, response) {
-  const outcome = validateResponse(toolName, response, '3.3.0-beta.1');
+  const outcome = validateResponse(toolName, response, PINNED);
   assert.equal(outcome.valid, true, JSON.stringify(outcome.issues));
 }
 
@@ -182,9 +185,11 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
     const next = v2.result.configuration.reporting_subscriptions[0];
     assert.equal(next.subscription_version, 2);
     assert.equal(next.accepted_at, '2026-11-04T12:00:00.000Z');
-    assert.deepEqual(next.prior_versions, [
-      { subscription_version: 1, accepted_at: '2026-11-01T12:00:00.000Z', superseded_at: '2026-11-04T12:00:00.000Z' },
-    ]);
+    assert.deepEqual(
+      next.prior_versions.map(({ configuration: _configuration, ...prior }) => prior),
+      [{ subscription_version: 1, accepted_at: '2026-11-01T12:00:00.000Z', superseded_at: '2026-11-04T12:00:00.000Z' }]
+    );
+    assert.equal(next.prior_versions[0].configuration.subscription_version, 1, 'adcp#8588, served from 3.3.0-beta.2');
 
     // Versions cannot regress.
     const regress = await sync(lifecycle, { reporting_subscriptions: [subscription()] });
@@ -217,14 +222,18 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
     assert.deepEqual(history[0].inactiveIntervals, [
       { from: '2026-11-04T12:00:00.000Z', until: '2026-11-06T12:00:00.000Z' },
     ]);
-    // The readback lists inactive_intervals (adcontextprotocol/adcp#8585) only to callers served
-    // a release whose bundle defines it (3.3.0-beta.1's closed state schema does not), and never
-    // to a response without a served release; the internal state carries it.
+    // The readback lists inactive_intervals (adcontextprotocol/adcp#8585) to callers served a
+    // release whose bundle defines it (3.3.0-beta.2 on), and never to a response without a
+    // served release; the internal state carries it.
     const { states } = await lifecycle.listReportingSubscriptions(SCOPE);
     assert.deepEqual(states[0].inactive_intervals, [
       { deactivated_at: '2026-11-04T12:00:00.000Z', reactivated_at: '2026-11-06T12:00:00.000Z' },
     ]);
-    assert.equal(on.result.configuration.reporting_subscriptions[0].inactive_intervals, undefined);
+    assert.deepEqual(
+      on.result.configuration.reporting_subscriptions[0].inactive_intervals,
+      states[0].inactive_intervals
+    );
+    assertSchemaValid('sync_principal', on);
     const unpinned = await lifecycle.protocol.getPrincipal({}, CTX_UNPINNED);
     assert.equal(unpinned.result.configuration.reporting_subscriptions[0].inactive_intervals, undefined);
 
@@ -609,7 +618,7 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
       },
     };
     // reporting-dimension.json is extensible: receivers MUST accept unknown values.
-    const outcome = validateRequest('sync_principal', request, '3.3.0-beta.1');
+    const outcome = validateRequest('sync_principal', request, PINNED);
     assert.equal(outcome.valid, true, JSON.stringify(outcome.issues));
     const applied = await lifecycle.protocol.syncPrincipal(request, CTX);
     assert.equal(applied.result.kind, 'applied', JSON.stringify(applied));
@@ -625,9 +634,15 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
     const { states } = await lifecycle.listReportingSubscriptions(SCOPE);
     assert.equal(states[0].prior_versions[0].configuration.subscription_version, 1);
     assert.equal(states[0].prior_versions[0].configuration.exclude_account_ids, undefined);
-    // Served at 3.3.0-beta.1, whose prior_versions items are closed, the field is omitted.
+    // Served at a release that defines it (adcp#8588, 3.3.0-beta.2 on), the field is emitted;
+    // without a served release it is not.
     const served = await lifecycle.protocol.getPrincipal({}, CTX);
-    assert.equal(served.result.configuration.reporting_subscriptions[0].prior_versions[0].configuration, undefined);
+    assert.equal(
+      served.result.configuration.reporting_subscriptions[0].prior_versions[0].configuration.subscription_version,
+      1
+    );
+    const unpinned = await lifecycle.protocol.getPrincipal({}, CTX_UNPINNED);
+    assert.equal(unpinned.result.configuration.reporting_subscriptions[0].prior_versions[0].configuration, undefined);
     assertSchemaValid('get_principal', served);
   });
 
