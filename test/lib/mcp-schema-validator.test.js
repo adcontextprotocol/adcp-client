@@ -107,11 +107,46 @@ for (const Provider of [LegacyProvider, ModernProvider]) {
     broken.$defs = { missing: { type: 'string' } };
     assert.equal(cache.getValidator(broken)('fixed').valid, true);
   });
+
+  test(`${era} byte pressure evicts the oldest compiler before the entry limit is reached`, () => {
+    const schema = index => ({ type: 'string', $comment: `${'é'.repeat(512)}${index}` });
+    const bytes = Buffer.byteLength(JSON.stringify(schema(0)));
+    const cache = new CachedJsonSchemaValidator(() => new Provider(), 256, bytes * 2);
+    const first = cache.getValidator(schema(0));
+    const second = cache.getValidator(schema(1));
+    assert.equal(cache.getValidator(schema(0)), first);
+    cache.getValidator(schema(2));
+    assert.equal(cache.getValidator(schema(0)), first);
+    assert.notEqual(cache.getValidator(schema(1)), second, 'UTF-8 bytes, not string length, must drive eviction');
+    assert.equal(second('still usable after eviction').valid, true);
+  });
+
+  test(`${era} oversized schemas validate without being cached or evicting normal entries`, () => {
+    let compilations = 0;
+    const cache = new CachedJsonSchemaValidator(
+      () => {
+        compilations++;
+        return new Provider();
+      },
+      256,
+      1024
+    );
+    const normal = cache.getValidator({ type: 'string' });
+    const oversized = { type: 'number', $comment: 'é'.repeat(1024) };
+    const first = cache.getValidator(oversized);
+    const second = cache.getValidator(structuredClone(oversized));
+    assert.notEqual(first, second);
+    assert.equal(first(42).valid, true);
+    assert.equal(second('invalid').valid, false);
+    assert.equal(cache.getValidator({ type: 'string' }), normal);
+    assert.equal(compilations, 3);
+  });
 }
 
 test('schema cache capacity must remain bounded', () => {
   for (const capacity of [0, -1, NaN, Infinity, 1.5]) {
     assert.throws(() => new CachedJsonSchemaValidator(() => new LegacyProvider(), capacity), RangeError);
+    assert.throws(() => new CachedJsonSchemaValidator(() => new LegacyProvider(), 256, capacity), RangeError);
   }
 });
 

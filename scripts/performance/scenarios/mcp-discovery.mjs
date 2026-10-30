@@ -109,7 +109,7 @@ async function runDiscovery({ mode, options, measurePhase }) {
       samples,
       metrics: {
         coldCompilations,
-        coldCompilationMismatch: Math.abs(coldCompilations - tools.length),
+        coldCompilationMismatch: Math.abs(coldCompilations - new Set(source.map(tool => tool.sha256)).size),
         warmCompilations: compilations - coldCompilations,
         warmCpuMsPerListing: warm.cpuMs / warmListings,
         warmEventLoopMaxMs: warm.eventLoopMaxMs,

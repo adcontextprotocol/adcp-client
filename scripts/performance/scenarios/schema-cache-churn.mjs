@@ -13,7 +13,13 @@ export async function run({ mode, options, measurePhase }) {
   const schema = structuredClone(document.schema);
   delete schema.$id;
   const serialized = JSON.stringify(schema);
-  const capacity = 8;
+  // Exercise the production entry cap, with a scaled byte budget so this
+  // workload stays cheap while requiring eviction by bytes rather than count.
+  const capacity = 256;
+  const retainedSchemas = 8;
+  const revision = index => ({ ...schema, $comment: `schema refresh ${String(index).padStart(4, '0')}` });
+  const schemaBytes = Buffer.byteLength(JSON.stringify(revision(0)));
+  const byteBudget = schemaBytes * retainedSchemas;
   const references = [];
   // Negative control for the tempting partial fix: the outer LRU is bounded,
   // but its shared Ajv still retains every evicted schema internally.
@@ -25,20 +31,21 @@ export async function run({ mode, options, measurePhase }) {
         return (shared ?? new AjvJsonSchemaValidator()).getValidator(input);
       },
     }),
-    capacity
+    capacity,
+    byteBudget
   );
   const batch = start => {
-    for (let i = start; i < start + capacity * 3; i++) {
+    for (let i = start; i < start + retainedSchemas * 3; i++) {
       // Change only an annotation, modeling sellers refreshing schemas while
       // keeping every protocol validation constraint intact.
-      cache.getValidator({ ...schema, $comment: `schema refresh ${i}` });
+      cache.getValidator(revision(i));
     }
   };
   const first = await measurePhase('three cache turnovers', () => batch(0));
-  const second = await measurePhase('three more cache turnovers', () => batch(capacity * 3));
+  const second = await measurePhase('three more cache turnovers', () => batch(retainedSchemas * 3));
   const liveSchemas = references.filter(reference => reference.deref() !== undefined).length;
   // Keep the LRU alive through the collection/count, including optimized runs.
-  assert.ok(cache.getValidator({ ...schema, $comment: `schema refresh ${capacity * 6 - 1}` }));
+  assert.ok(cache.getValidator(revision(retainedSchemas * 6 - 1)));
   return {
     source: [
       {
@@ -48,9 +55,9 @@ export async function run({ mode, options, measurePhase }) {
         sha256: createHash('sha256').update(serialized).digest('hex'),
       },
     ],
-    workload: { capacity, uniqueSchemas: capacity * 6 },
+    workload: { capacity, byteBudget, schemaBytes, uniqueSchemas: retainedSchemas * 6 },
     phases: [first, second],
     metrics: { liveSchemas, retainedHeapGrowthBytes: second.afterGc.heapUsed - first.afterGc.heapUsed },
-    maximums: { liveSchemas: capacity, retainedHeapGrowthBytes: 16 * 1024 ** 2 },
+    maximums: { liveSchemas: retainedSchemas, retainedHeapGrowthBytes: 16 * 1024 ** 2 },
   };
 }

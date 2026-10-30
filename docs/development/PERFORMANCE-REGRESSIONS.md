@@ -1,6 +1,6 @@
 # Performance regression checks
 
-The performance harness reproduces MCP output-schema recompilation from [#3530](https://github.com/adcontextprotocol/adcp-client/issues/3530) using the actual bundled AdCP 3.2.7 schemas. It also checks for compiler retention after LRU eviction. No external agent, credentials, or network access beyond loopback is needed.
+The performance harness reproduces MCP output-schema recompilation from [#3530](https://github.com/adcontextprotocol/adcp-client/issues/3530) using the actual bundled AdCP 3.2.x schemas (requested as 3.2.7; the resolved release and hashes are recorded). It also checks for compiler retention after LRU eviction. No external agent, credentials, or network access beyond loopback is needed.
 
 After installing dependencies and building the library:
 
@@ -42,7 +42,9 @@ The default workload lists two large tools twice across three distinct agent end
 - **Transient memory:** a 1.5 GiB process peak RSS budget catches large spikes. The OS high-water mark includes setup and cold compilation and captures peaks even while JavaScript timers cannot run. Per-listing snapshots alone could miss those spikes.
 - **Retained memory:** full collections bracket each phase, with a 64 MiB retained-heap growth allowance for repeated discovery.
 
-The churn workload compiles 48 revisions of a smaller real response schema into an eight-entry LRU. Revisions change only `$comment`. After full collection, weak references verify that at most eight compiled schema documents remain reachable. This catches both an unbounded outer map and an Ajv instance silently retaining evicted schemas. A separate 16 MiB retained-heap growth budget supplements the reachability check.
+Each shared cache is bounded by both 256 entries and 64 MiB of serialized schema bytes. Oversized schemas validate without being cached. The byte allowance bounds retained input documents; parsed objects and generated validator code contribute additional memory.
+
+The churn workload compiles 48 revisions of a smaller real response schema with the production 256-entry limit and a scaled byte budget holding eight revisions. Revisions change only `$comment`. After full collection, weak references verify that at most eight compiled schema documents remain reachable, proving eviction by bytes even below the entry cap. This catches an unbounded outer map, missing byte eviction, and an Ajv instance silently retaining evicted schemas. A separate 16 MiB retained-heap growth budget supplements the reachability check.
 
 Timing and memory budgets are deliberately coarse, while compilation and reachability guards are strict. A changed protocol bundle or dependency may require investigating a budget failure; review the report before changing a limit. Do not replace strict operation-count checks with timing thresholds.
 
