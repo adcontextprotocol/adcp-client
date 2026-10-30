@@ -24,6 +24,7 @@
 import { resolveAccount, resolveBrand, validateResponseSchema, type TestClient } from '../client';
 import { getValidator } from '../../validation/schema-loader';
 import { ADCP_VERSION } from '../../version';
+import { resolveCreativeFormatWireMode } from '../../v2/projection/creative-delivery';
 import { injectLegacyEnvelopeStatus } from '../../utils/envelope-status-compat';
 import { readExtractionPath, unwrapProtocolResponse } from '../../utils/response-unwrapper';
 import { callControllerRaw } from '../test-controller';
@@ -1478,7 +1479,7 @@ function describeDiscoverySchemaFailure(
   options: StoryboardRunOptions
 ): { error: string; schemaFailure?: { detail: string; schema_id: string; schema_url: string } } | undefined {
   try {
-    const version = options.adcpVersion ?? ADCP_VERSION;
+    const version = options._serverAdcpVersion ?? options.adcpVersion ?? ADCP_VERSION;
     const validator = getValidator('get_products', 'sync', version);
     let detail: string;
     if (validator) {
@@ -1488,7 +1489,7 @@ function describeDiscoverySchemaFailure(
         .map(error => `${error.instancePath || '/'} ${error.message ?? error.keyword}`)
         .join('; ');
     } else {
-      const schema = validateResponseSchema('get_products', data, options.adcpVersion);
+      const schema = validateResponseSchema('get_products', data, version);
       if (schema.passed) return undefined;
       detail = schema.error ?? schema.details ?? 'schema validation failed';
     }
@@ -1524,7 +1525,10 @@ async function discoverProductCatalog(
     buying_mode: 'wholesale',
     brand,
     account,
-    ext: { adcp: { creative_wire: 'canonical' } },
+    ...(resolveCreativeFormatWireMode(
+      options._profile?.raw_capabilities,
+      options._serverAdcpVersion ?? options.adcpVersion ?? ADCP_VERSION
+    ) === 'canonical' && { ext: { adcp: { creative_wire: 'canonical' } } }),
   });
   let lastExchange: Extract<DiscoveryCatalogResult, { ok: false }>['exchange'];
   const exchanges: DiscoveryExchange[] = [];
