@@ -84,12 +84,12 @@ describe('expectedSubscriptionPeriods parity table', () => {
   }
 
   test('every subscription in the table is schema-valid', () => {
-    // The subscription schema is unchanged by adcontextprotocol/adcp#8585 apart from
-    // descriptions, so the cached 3.3.0-beta.1 copy validates the table's configurations.
+    // Validate against the bundle the SDK pins (ADCP_VERSION).
     const Ajv = require('ajv');
     const addFormats = require('ajv-formats');
     const fs = require('node:fs');
-    const root = path.join(__dirname, '..', '..', 'schemas', 'cache', '3.3.0-beta.1');
+    const pinned = fs.readFileSync(path.join(__dirname, '..', '..', 'ADCP_VERSION'), 'utf8').trim();
+    const root = path.join(__dirname, '..', '..', 'schemas', 'cache', pinned);
     const ajv = new Ajv({ strict: false, allErrors: true });
     addFormats(ajv);
     for (const dir of ['core', 'enums']) {
@@ -105,7 +105,7 @@ describe('expectedSubscriptionPeriods parity table', () => {
       }
     }
     const validate = ajv.getSchema(
-      'https://adcontextprotocol.org/schemas/3.3.0-beta.1/core/reporting-subscription.json'
+      `https://adcontextprotocol.org/schemas/${pinned}/core/reporting-subscription.json`
     );
     for (const testCase of table.cases) {
       for (const version of testCase.input.versions) {

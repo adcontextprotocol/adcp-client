@@ -465,7 +465,7 @@
   ],
   "summary": {
     "status": "completed",
-    "adcp_version": "3.3-beta.1",
+    "adcp_version": "3.3-beta.2",
     "adcp_major_version": 3,
     "view": "summary",
     "ledger_snapshot_id": "snapshot-0",
@@ -518,7 +518,7 @@
   },
   "periods": {
     "status": "completed",
-    "adcp_version": "3.3-beta.1",
+    "adcp_version": "3.3-beta.2",
     "adcp_major_version": 3,
     "view": "periods",
     "ledger_snapshot_id": "snapshot-1",
@@ -941,7 +941,7 @@
     }
   },
   "consumerStatus": {
-    "adcp_version": "3.3-beta.1",
+    "adcp_version": "3.3-beta.2",
     "adcp_major_version": 3,
     "status": "completed",
     "results": [
