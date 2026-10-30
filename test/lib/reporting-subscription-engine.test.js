@@ -400,6 +400,52 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     assert.equal((await w.engine.receiptRoster('t', 'acct_c')).length, 0);
   });
 
+  test('capacity across calendars with different boundaries is written per offering', async () => {
+    const w = world({ maxAccounts: 1 });
+    const both = [...ALL_IDS, ACCOUNT_TZ_OFFERING.offering_id];
+    for (const id of ['acct_a', 'acct_b']) {
+      w.grant(id, '2026-10-01T00:00:00.000Z');
+      w.host.buys.set(id, [
+        buy(`mb_${id}`, { packages: [{ package_id: `mb_${id}_pkg`, reporting_delivery_offering_ids: both }] }),
+      ]);
+    }
+    // match all resolves the UTC offerings and the account-timezone one: two different calendars.
+    await w.sync([subscription({ selector: { ...subscription().selector, match: 'all' } })]);
+    await w.step('2026-11-02T12:00:00.000Z');
+    const [coverage] = await w.engine.subscriptionCoverage(SCOPE, 'acct_b');
+    const capacity = coverage.excluded.filter(entry => entry.reason === 'capacity');
+    assert.ok(capacity.length > 1, JSON.stringify(coverage.excluded));
+    assert.ok(capacity.every(entry => typeof entry.offering_id === 'string'));
+    const byOffering = Object.fromEntries(capacity.map(entry => [entry.offering_id, entry.from]));
+    assert.notEqual(byOffering.off_z_pkg_acct_tz, byOffering.off_a_pkg, 'each entry carries its own cutover');
+    // The buyer computes the same owed set from the per-offering entries.
+    await w.assertAgree('acct_b', '2026-11-12T00:00:00.000Z');
+
+    // A release without excluded[].offering_id gets one entry cut at the latest of their instants.
+    const {
+      reportingSubscriptionCoverageForReleaseV1,
+    } = require('../../dist/lib/server/reporting-subscription-release.js');
+    const old = reportingSubscriptionCoverageForReleaseV1(coverage, {
+      offeringDimensions: true,
+      inactiveIntervals: true,
+      priorVersionConfiguration: true,
+      cutoverPreviousTimezone: true,
+      perOfferingEntries: true,
+      perOfferingExclusions: false,
+      inactiveCoverageStatus: false,
+    });
+    const folded = old.excluded.filter(entry => entry.reason === 'capacity');
+    assert.equal(folded.length, 1);
+    assert.equal(folded[0].offering_id, undefined);
+    assert.equal(
+      folded[0].from,
+      capacity
+        .map(entry => entry.from)
+        .sort()
+        .at(-1)
+    );
+  });
+
   test("precedence: the caller's account-level configuration overrides the subscription", async () => {
     const w = world();
     w.grant('acct_1', '2026-10-01T00:00:00.000Z');

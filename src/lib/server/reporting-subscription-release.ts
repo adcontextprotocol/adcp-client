@@ -8,6 +8,7 @@
  * without a served release (a direct handler call outside protocol dispatch) gets none of
  * them; read the internal state APIs for the complete record.
  */
+import { canonicalize } from '../utils/jcs';
 import { getSchemaDocumentByRef } from '../validation/schema-loader';
 
 export interface ReportingSubscriptionReleaseFieldsV1 {
@@ -21,6 +22,8 @@ export interface ReportingSubscriptionReleaseFieldsV1 {
   cutoverPreviousTimezone: boolean;
   /** `reporting-subscription-coverage.json` `offering_id` on cutovers and gaps. */
   perOfferingEntries: boolean;
+  /** `reporting-subscription-coverage.json` `excluded[].offering_id`. */
+  perOfferingExclusions: boolean;
   /** `reporting-subscription-coverage.json` `status: "inactive"` with `deactivated_at` (adcp#8613). */
   inactiveCoverageStatus: boolean;
 }
@@ -31,6 +34,7 @@ const NONE: ReportingSubscriptionReleaseFieldsV1 = Object.freeze({
   priorVersionConfiguration: false,
   cutoverPreviousTimezone: false,
   perOfferingEntries: false,
+  perOfferingExclusions: false,
   inactiveCoverageStatus: false,
 });
 
@@ -68,6 +72,7 @@ export function reportingSubscriptionReleaseFieldsV1(
     perOfferingEntries:
       'offering_id' in itemProperties(coverage, 'timezone_cutovers') &&
       'offering_id' in itemProperties(coverage, 'gaps'),
+    perOfferingExclusions: 'offering_id' in itemProperties(coverage, 'excluded'),
     inactiveCoverageStatus:
       'deactivated_at' in properties(coverage) &&
       ((properties(coverage).status as { enum?: unknown[] } | undefined)?.enum ?? []).includes('inactive'),
@@ -103,6 +108,9 @@ export function reportingSubscriptionCoverageForReleaseV1<T extends Record<strin
       return next;
     });
   }
+  if (Array.isArray(copy.excluded) && !fields.perOfferingExclusions) {
+    copy.excluded = collapsePerOfferingExclusions(copy.excluded as Array<Record<string, unknown>>);
+  }
   if (Array.isArray(copy.gaps) && !fields.perOfferingEntries) {
     copy.gaps = (copy.gaps as Array<Record<string, unknown>>).map(({ offering_id: _offering, ...gap }) => gap);
   }
@@ -128,4 +136,34 @@ export function reportingSubscriptionStatesForReleaseV1<T extends { reporting_su
       return next;
     }),
   };
+}
+
+/**
+ * For a release whose `excluded[]` has no `offering_id`: fold the per-offering entries of one
+ * condition back into a single account-wide (or buy-wide) entry cut at the latest of their
+ * instants, which is what the engine wrote before it emitted per-offering entries. It removes no
+ * period a per-offering entry keeps owed on the latest calendar.
+ */
+function collapsePerOfferingExclusions(entries: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  const groups = new Map<string, Record<string, unknown>>();
+  for (const entry of entries) {
+    if (entry.offering_id === undefined) {
+      out.push(entry);
+      continue;
+    }
+    const { offering_id: _offering, from, until, ...condition } = entry;
+    const key = canonicalize(condition);
+    const group = groups.get(key);
+    if (!group) {
+      const first = { ...condition, from, ...(until !== undefined ? { until } : {}) };
+      groups.set(key, first);
+      out.push(first);
+      continue;
+    }
+    if (Date.parse(from as string) > Date.parse(group.from as string)) group.from = from;
+    if (until === undefined || group.until === undefined) delete group.until;
+    else if (Date.parse(until as string) > Date.parse(group.until as string)) group.until = until;
+  }
+  return out;
 }

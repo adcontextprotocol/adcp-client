@@ -776,6 +776,31 @@ export function createReportingSubscriptionEngineV1(
     at: number;
     /** Calendars whose E opens it; `from` is the raw instant when absent. */
     openCalendars?: Iterable<ReportingPeriodCalendarV1>;
+    /**
+     * The same calendars keyed by offering. When they have different period boundaries the
+     * condition is written as one entry per offering (`excluded[].offering_id`), each with that
+     * offering's cutover instants, instead of one account-wide entry cut at the latest end.
+     */
+    openByOffering?: ReadonlyMap<string, ReportingPeriodCalendarV1>;
+  }
+
+  /**
+   * Split conditions whose calendars have different boundaries into per-offering entries. One
+   * calendar, or several with the same schedule, keep a single entry.
+   */
+  function perOfferingExclusions(desired: readonly DesiredExclusion[]): DesiredExclusion[] {
+    return desired.flatMap(item => {
+      const byOffering = item.openByOffering;
+      if (!byOffering || item.offering_id !== undefined) return [item];
+      if (new Set([...byOffering.values()].map(calendar => calendar.key)).size <= 1) return [item];
+      const { openByOffering: _byOffering, ...rest } = item;
+      return [...byOffering].map(([offeringId, calendar]) => ({
+        ...rest,
+        key: `${item.key}@${offeringId}`,
+        offering_id: offeringId,
+        openCalendars: [calendar],
+      }));
+    });
   }
 
   /**
@@ -785,17 +810,21 @@ export function createReportingSubscriptionEngineV1(
    */
   function settleExclusions(
     target: SubscriptionAccountState,
-    desired: readonly DesiredExclusion[],
-    calendars: Iterable<ReportingPeriodCalendarV1>,
+    wanted: readonly DesiredExclusion[],
+    calendars: ReadonlyMap<string, ReportingPeriodCalendarV1>,
     nowMs: number,
     closeAt: (entry: StoredExclusion) => number | undefined
   ): boolean {
     let changed = false;
-    const calendarList = [...calendars];
+    const desired = perOfferingExclusions(wanted);
+    const calendarList = [...calendars.values()];
     const open = target.exclusions.filter(entry => entry.until === undefined);
     for (const entry of open) {
       if (desired.some(item => item.key === entry.key)) continue;
-      entry.until = iso(Math.max(Date.parse(entry.from), closeAt(entry) ?? cutoverInstant(calendarList, nowMs)));
+      // A per-offering entry closes at its own offering's E when that offering still resolves.
+      const own = entry.offering_id !== undefined ? calendars.get(entry.offering_id) : undefined;
+      const closing = closeAt(entry) ?? cutoverInstant(own ? [own] : calendarList, nowMs);
+      entry.until = iso(Math.max(Date.parse(entry.from), closing));
       changed = true;
     }
     for (const item of desired) {
@@ -810,7 +839,7 @@ export function createReportingSubscriptionEngineV1(
         }
         continue;
       }
-      const { at, openCalendars, ...rest } = item;
+      const { at, openCalendars, openByOffering: _byOffering, ...rest } = item;
       target.exclusions.push({ ...rest, from: iso(openCalendars ? cutoverInstant(openCalendars, at) : at) });
       changed = true;
     }
@@ -1153,6 +1182,7 @@ export function createReportingSubscriptionEngineV1(
             reason: 'excluded_by_buyer',
             at: accepted,
             openCalendars: calendars.values(),
+            openByOffering: calendars,
           });
         } else if (inScope.includes(accountId)) {
           const override = precedence.get(entry.subscriptionId)?.get(accountId);
@@ -1168,6 +1198,7 @@ export function createReportingSubscriptionEngineV1(
               reason: 'action_required',
               at: since,
               openCalendars: calendars.values(),
+              openByOffering: calendars,
               pending_action: structuredClone(fact.pending_action),
             });
           } else if (override) {
@@ -1177,6 +1208,7 @@ export function createReportingSubscriptionEngineV1(
               overridden_by: override.by!,
               at: Math.max(override.at, accepted),
               openCalendars: calendars.values(),
+              openByOffering: calendars,
             });
           } else if (capacityBySubscription.get(entry.subscriptionId)?.has(accountId)) {
             desired.push({
@@ -1184,6 +1216,7 @@ export function createReportingSubscriptionEngineV1(
               reason: 'capacity',
               at: firstObserved ? coverageStart : nowMs,
               openCalendars: calendars.values(),
+              openByOffering: calendars,
             });
           }
           desired.push(...unsupportedBuys(version, target, account, buys, accepted, nowMs));
@@ -1192,7 +1225,7 @@ export function createReportingSubscriptionEngineV1(
       // Only accounts the subscription actually served can later appear in accounts_unauthorized.
       if (inScope.includes(accountId) && !desired.some(item => item.media_buy_id === undefined)) target.covered = true;
       if (!options.backfillOnRegrant) recordRegrantGaps(target, account, calendars);
-      return settleExclusions(target, desired, calendars.values(), nowMs, closing => {
+      return settleExclusions(target, desired, calendars, nowMs, closing => {
         if (
           closing.reason !== 'overridden' ||
           !closing.overridden_by ||
@@ -1235,6 +1268,7 @@ export function createReportingSubscriptionEngineV1(
       const before = target.resolvedBuys[buy.media_buy_id] ?? [];
       let at: number;
       let openCalendars: ReportingPeriodCalendarV1[] | undefined;
+      let openByOffering: Map<string, ReportingPeriodCalendarV1> | undefined;
       if (before.length > 0) {
         const withdrawals = before
           .map(id => offeringsById.get(id)?.withdrawn_at)
@@ -1242,11 +1276,13 @@ export function createReportingSubscriptionEngineV1(
           .map(value => Date.parse(value))
           .filter(value => Number.isFinite(value) && value <= nowMs);
         at = withdrawals.length > 0 ? Math.min(...withdrawals) : nowMs;
-        openCalendars = before
-          .map(id => offeringsById.get(id))
-          .filter((offering): offering is ReportingSubscriptionOfferingV1 => offering !== undefined)
-          .map(offering => calendarFor(offering, version, account, account.timezone))
-          .filter((calendar): calendar is ReportingPeriodCalendarV1 => calendar !== undefined);
+        openByOffering = new Map();
+        for (const id of before) {
+          const offering = offeringsById.get(id);
+          const calendar = offering ? calendarFor(offering, version, account, account.timezone) : undefined;
+          if (calendar) openByOffering.set(id, calendar);
+        }
+        openCalendars = [...openByOffering.values()];
       } else {
         at = Math.max(accepted, Date.parse(buy.confirmed_at));
       }
@@ -1258,6 +1294,7 @@ export function createReportingSubscriptionEngineV1(
               media_buy_id: buy.media_buy_id,
               at,
               ...(openCalendars ? { openCalendars } : {}),
+              ...(openByOffering ? { openByOffering } : {}),
             }
           : {
               key: `offering_unsupported:${buy.media_buy_id}:${unsupported.join(',')}`,
@@ -1266,6 +1303,7 @@ export function createReportingSubscriptionEngineV1(
               package_ids: unsupported,
               at,
               ...(openCalendars ? { openCalendars } : {}),
+              ...(openByOffering ? { openByOffering } : {}),
             }
       );
     }
