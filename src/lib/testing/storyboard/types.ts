@@ -797,6 +797,7 @@ export interface StoryboardStep {
   /**
    * Follow every wholesale product page before authored checks and captures.
    * Requires `collect_product_pages_runner` in the storyboard's `requires`.
+   * Reads must omit idempotency_key; each page/restart is a fresh request.
    * Every page retains its own exchange and is schema/invariant checked; the
    * combined logical view is explicitly separate from the wire response.
    */

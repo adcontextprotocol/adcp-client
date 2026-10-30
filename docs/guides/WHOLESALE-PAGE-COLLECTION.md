@@ -24,12 +24,22 @@ phases:
 ```
 
 The first request is unconditional and must omit a continuation cursor. The
-runner preserves account, filters, fields, context, idempotency key, extensions,
+runner preserves account, filters, fields, context, extensions,
 and the authored page size on each continuation. It follows every cursor,
 validates every response, rejects duplicate identities and broken cursors, and
 restarts when the feed identity changes. It permits at most three restarts,
 1,000 physical requests, 100,000 products, and 100,000 advisory errors. Exhausting a budget fails the
 logical read and never publishes a successful partial snapshot.
+
+Collection requires fresh reads without `idempotency_key`. An authored key or
+runtime-injected key is rejected before dispatch; the runner never silently
+rewrites or removes a key. Each cursor page and restarted read has a different
+request body, so reusing a key could conflict with a seller's optional read
+replay protection. The SDK does not automatically add a key to these wholesale
+reads. Ordinary one-page steps keep their existing key behavior.
+
+Per-page validation still requires the response schema's required Product
+fields. Forwarding `fields` does not relax schema validation for projections.
 
 Authored field checks and context captures use
 `product_page_collection.logical_response`. Its products and advisory errors

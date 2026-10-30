@@ -1554,13 +1554,19 @@ export interface ProductPageCollectionControls {
   retainRestartEvidence?: boolean;
 }
 
-/** Shared strict wholesale walker; callers own the initial query and logical view. */
+/** Shared strict unkeyed wholesale walker; callers own the initial query and logical view. */
 export async function collectWholesaleProductPages(
   client: TestClient,
   options: StoryboardRunOptions,
   query: Record<string, unknown>,
   controls: ProductPageCollectionControls = {}
 ): Promise<DiscoveryCatalogResult> {
+  if (Object.hasOwn(query, 'idempotency_key')) {
+    return {
+      ok: false,
+      error: 'fixture discovery requires fresh reads without idempotency_key; pagination changes the request body',
+    };
+  }
   const dispatch =
     controls.dispatch ??
     ((request: Record<string, unknown>) =>

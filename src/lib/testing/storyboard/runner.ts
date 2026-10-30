@@ -9114,11 +9114,12 @@ async function executeStep(
     step.collect_product_pages &&
     (useRawProbe ||
       request.buying_mode !== 'wholesale' ||
+      Object.hasOwn(request, 'idempotency_key') ||
       (request.pagination !== null && typeof request.pagination === 'object' && 'cursor' in request.pagination) ||
       ['if_none_match', 'if_wholesale_feed_version', 'if_pricing_version'].some(field => request[field] !== undefined))
   ) {
     const detail =
-      'collect_product_pages requires an unconditional wholesale first page through the official SDK client';
+      'collect_product_pages requires fresh unkeyed reads and an unconditional wholesale first page through the official SDK client';
     return {
       step_id: step.id,
       phase_id: phaseId,
@@ -9135,7 +9136,7 @@ async function executeStep(
           passed: false,
           description: detail,
           json_pointer: null,
-          expected: 'unconditional wholesale query',
+          expected: 'unkeyed unconditional wholesale query',
           actual: redactSecrets(request),
           schema_id: null,
           schema_url: null,
