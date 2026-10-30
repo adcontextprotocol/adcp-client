@@ -77,6 +77,7 @@ import type {
   CoBrandingRequirement,
   CollectionCadence,
   CollectionKind,
+  CollectionMechanism,
   CollectionRelationship,
   CollectionStatus,
   CommittedMediaBuy,
@@ -107,7 +108,6 @@ import type {
   DaypartTarget,
   DaypartTimeGranularity,
   DaypartTimezoneMode,
-  DefinitionPinReferenceKind,
   DelegationAuthority,
   DeliveryMetricAggregate,
   DeliveryMetrics,
@@ -206,6 +206,7 @@ import type {
   MultiSize,
   None,
   NotificationType,
+  OfferReason,
   OfferingAvailabilityStatus,
   OptimizationGoal,
   OutcomeTargetCostStrength,
@@ -236,6 +237,7 @@ import type {
   PropertyType,
   ProposalDeclineReason,
   ProposalDisposition,
+  ProposalInitiator,
   ProposalRefinementReason,
   ProposalStatus,
   ProtocolEnvelope,
@@ -316,7 +318,7 @@ import type {
   WebhookSigningProfile,
 } from './core.generated';
 
-export type { AccountCurrencyMode, AccountReference, AccountRequestResolution, AccountRequestState, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AgentOnboardingMode, AgentOnboardingRequirementKind, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceEvidenceRelationship, AudienceMatchRateBasis, AudienceResolutionMethod, AudienceSizePrecision, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailabilityStatus, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BudgetChangeConstraints, BusinessEntity, C2PAWatermarkAction, CTVAdExperience, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatCoordinatedPlacements, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatOption, CanonicalFormatResponsiveCreative, CanonicalFormatSellerRenderedStatefulDisplay, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTAudio, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CanonicalOptimizationGoal, CanonicalProposal, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionRelationship, CollectionStatus, CommittedMediaBuy, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeActivationMethod, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeEventReasonCode, CreativeIdentifierType, CreativeMergeRejectionReason, CreativeMotionLevel, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DOOHMotionType, DayOfWeek, DaypartTarget, DaypartTimeGranularity, DaypartTimezoneMode, DefinitionPinReferenceKind, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryProjectionBasis, DeliveryProjectionEndState, DeliveryRecipientCloud, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EffectiveTimingConstraints, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExecutionReadinessStatus, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, FlightChangeConstraints, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, Format, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapControlMode, FrequencyCapMutableField, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, InvoiceKind, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LaterProposalReason, LiftDimension, LogoSlot, MacroDialectFamily, MacroMappingStatus, MacroProcessingActor, MacroProcessingOperation, MacroResolutionReason, MacroValueContext, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyAvailableAction, MediaBuyChangeTermConstraints, MediaBuyDeliveryWebhookResult, MediaBuyFrequencyCapControlMode, MediaBuyHealth, MediaBuyLineageReason, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferingAvailabilityStatus, OptimizationGoal, OutcomeTargetCostStrength, OutcomeType, Pacing, PackageCountConstraints, PackageUpdate, PaymentTerms, PendingActionKind, PendingActionParty, PerformanceBaseline, PerformanceStandardMetric, PixelTrackingEvent, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, PrincipalKind, PrincipalRelationshipStatus, ProductAllowedAction, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalDisposition, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachAggregation, ReachUnit, ReportingCustody, ReportingDeliveryMethod, ReportingDestinationSetupState, ReportingDimension, ReportingFinality, ReportingFrequency, ReportingHealth, RepresentationSelectionStrategy, RequestProposalsResponse, RequestSigningErrorCode, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SellerPolicyDeclineReason, SignalAvailabilityType, SignalDefinitionEnrichment, SignalDeliveryStatus, SignalSource, SignalStatus, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, SpotStatus, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TrackerExecutionActor, TrackerFiringPath, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTMediaDeliveryMethod, VASTTrackingEvent, VASTVersion, ValidationMode, VendorRelationship, VideoPlacementType, ViewThresholdBasis, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod, WebhookSigningProfile } from './core.generated';
+export type { AccountCurrencyMode, AccountReference, AccountRequestResolution, AccountRequestState, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AgentOnboardingMode, AgentOnboardingRequirementKind, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceEvidenceRelationship, AudienceMatchRateBasis, AudienceResolutionMethod, AudienceSizePrecision, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailabilityStatus, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BudgetChangeConstraints, BusinessEntity, C2PAWatermarkAction, CTVAdExperience, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatCoordinatedPlacements, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatOption, CanonicalFormatResponsiveCreative, CanonicalFormatSellerRenderedStatefulDisplay, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTAudio, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CanonicalOptimizationGoal, CanonicalProposal, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionMechanism, CollectionRelationship, CollectionStatus, CommittedMediaBuy, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeActivationMethod, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeEventReasonCode, CreativeIdentifierType, CreativeMergeRejectionReason, CreativeMotionLevel, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DOOHMotionType, DayOfWeek, DaypartTarget, DaypartTimeGranularity, DaypartTimezoneMode, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryProjectionBasis, DeliveryProjectionEndState, DeliveryRecipientCloud, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EffectiveTimingConstraints, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExecutionReadinessStatus, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, FlightChangeConstraints, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, Format, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapControlMode, FrequencyCapMutableField, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, InvoiceKind, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LaterProposalReason, LiftDimension, LogoSlot, MacroDialectFamily, MacroMappingStatus, MacroProcessingActor, MacroProcessingOperation, MacroResolutionReason, MacroValueContext, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyAvailableAction, MediaBuyChangeTermConstraints, MediaBuyDeliveryWebhookResult, MediaBuyFrequencyCapControlMode, MediaBuyHealth, MediaBuyLineageReason, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferReason, OfferingAvailabilityStatus, OptimizationGoal, OutcomeTargetCostStrength, OutcomeType, Pacing, PackageCountConstraints, PackageUpdate, PaymentTerms, PendingActionKind, PendingActionParty, PerformanceBaseline, PerformanceStandardMetric, PixelTrackingEvent, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, PrincipalKind, PrincipalRelationshipStatus, ProductAllowedAction, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalDisposition, ProposalInitiator, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachAggregation, ReachUnit, ReportingCustody, ReportingDeliveryMethod, ReportingDestinationSetupState, ReportingDimension, ReportingFinality, ReportingFrequency, ReportingHealth, RepresentationSelectionStrategy, RequestProposalsResponse, RequestSigningErrorCode, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SellerPolicyDeclineReason, SignalAvailabilityType, SignalDefinitionEnrichment, SignalDeliveryStatus, SignalSource, SignalStatus, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, SpotStatus, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TrackerExecutionActor, TrackerFiringPath, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTMediaDeliveryMethod, VASTTrackingEvent, VASTVersion, ValidationMode, VendorRelationship, VideoPlacementType, ViewThresholdBasis, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod, WebhookSigningProfile } from './core.generated';
 
 // Tool Parameter and Response Types
 // Generated from official AdCP schemas
@@ -7645,7 +7647,7 @@ export type AudienceActivationMethod =
   | CleanRoom
   | PlatformDistribution;
 /**
- * Experimental (media_buy.collection_cards). Full collection object returned in a product or proposal response for a collection that a returned product's collections selector references, by list_collections, or in a collection_card.updated webhook (experimental, media_buy.collection_catalog). For the same key, account and moment, a seller returns the same copy on every one of those surfaces. publisher_domain is required because collection_id is unique only within its publisher. Keyed by (publisher_domain, collection_id). This is a convenience copy from the selling agent: the publisher's adagents.json remains the root of authorization and the source for definition pins, and a response copy is never authorization evidence. The response copy wins over adagents.json only on images, sample_content, url, description, season, cadence and distribution[].followers; every other field, including status, talent, content_rating, genre, kind, special and the rest of distribution, stays anchored to adagents.json, as does which agent may sell the collection. An entry whose (publisher_domain, collection_id) is not declared in that publisher's adagents.json, or that comes from a selling agent adagents.json does not authorize for the collection, is unverified display data: it does not establish that the collection exists or is sellable, buyers MUST NOT present it as the publisher's declaration, and its distribution MUST NOT feed carriage verification.
+ * Experimental (media_buy.collection_cards). Full collection object returned in a product or proposal response for a collection that a returned product's collections selector references, by list_collections, or in a collection_card.updated webhook (experimental, media_buy.collection_catalog). For the same key, account and moment, a seller returns the same copy on every one of those surfaces. publisher_domain is required because collection_id is unique only within its publisher. Keyed by (publisher_domain, collection_id). This is a convenience copy from the selling agent: the publisher's adagents.json remains the root of authorization, and a response copy is never authorization evidence. The response copy wins over adagents.json only on images, sample_content, url, description, season, cadence and distribution[].followers; every other field, including status, talent, content_rating, genre, kind, special and the rest of distribution, stays anchored to adagents.json, as does which agent may sell the collection. An entry whose (publisher_domain, collection_id) is not declared in that publisher's adagents.json, or that comes from a selling agent adagents.json does not authorize for the collection, is unverified display data: it does not establish that the collection exists or is sellable, buyers MUST NOT present it as the publisher's declaration, and its distribution MUST NOT feed carriage verification.
  */
 export type ResponseCollection = Collection & {
 };
@@ -11375,7 +11377,7 @@ export type CanonicalProduct = {
    */
   collection_targeting_allowed?: boolean;
   /**
-   * Specific installments this product includes — the episodes, issues, airings, rotation periods, or creator slots being sold. Each entry names its parent through the canonical collection_ref tuple; unlike the legacy get_products installment there is no publisher-domain-free shorthand. Every referenced collection MUST be one the product's collections selectors name, so collections is required alongside. Absence is meaningful within a projection that requested this field, and is not 'no installments known': a product that carries collections and omits installments is run-of-collection — inventory across those collections, whatever publishes during the flight. Absence from a list_products response whose fields projection did not request installments carries no meaning at all, which is why a buyer that depends on the run-of-collection reading MUST request the field explicitly. Buyers MUST reject a product whose installment collection_ref is not one its own collections selectors name; the seller's collections are what the referenced adagents.json authorizes. A purchase names the exact installments it buys in commercial_terms.purchases[].installments (experimental, media_buy.installment_selection); a purchase that omits that field buys the product as offered.
+   * Specific installments this product includes — the episodes, issues, airings, rotation periods, or creator slots being sold. Each entry names its parent through the canonical collection_ref tuple; unlike the legacy get_products installment there is no publisher-domain-free shorthand. Every referenced collection MUST be one the product's collections selectors name, so collections is required alongside. Absence is meaningful within a projection that requested this field, and is not 'no installments known': a product that carries collections and omits installments is run-of-collection — inventory across those collections, whatever publishes during the flight. Absence from a list_products response whose fields projection did not request installments carries no meaning at all, which is why a buyer that depends on the run-of-collection reading MUST request the field explicitly. Buyers MUST reject a product whose installment collection_ref is not one its own collections selectors name; the seller's collections are what the referenced adagents.json authorizes.
    *
    * @minItems 1
    * @maxItems 500
@@ -12048,13 +12050,6 @@ export interface ListProposalsRequest {
 }
 
 // list_proposals response
-/**
- * Experimental (media_buy.installment_selection). Sellers MUST NOT emit it to a caller negotiating below AdCP 3.3, and a buyer that does not implement the feature MUST reject a proposal carrying it rather than ignore it, because presence and absence mean opposite things. Exact installments this purchase buys, as closed canonical (collection_ref, installment_id) references into the allocated product's installments. Present, it is the complete bought set for this purchase, and the seller reserves exactly those installments when the proposal's effective hold policy places a hold at all (a terms-only finalize reserves nothing, here as everywhere). Dropping or swapping a slot through refine_proposals changes this array and therefore the terms_digest over commercial_terms, so accept_proposal's proposal_terms_digest check binds the exact slot identifiers bought — it does not bind what the seller later publishes under those identifiers, which installment valid_until and re-reads govern. Absent, the purchase buys the product as offered — run-of-collection when the product names no installments, and the product's complete installment set when it does; absence never means 'no installments'. Every entry MUST name an installment the allocated product's installments carry, and sellers MUST NOT add the field to a purchase whose product declares none. Entries are ordered by the JCS bytes of the reference, so equal bought sets always serialize to equal digests.
- *
- * @minItems 1
- * @maxItems 500
- */
-export type ProductPurchaseInstallments = CanonicalInstallmentReference[];
 export type ProductPurchaseImpressions = number;
 /**
  * Buyer evidence-admissibility policy carried into the accepted purchase snapshot.
@@ -12181,96 +12176,6 @@ export type CanonicalReportingCommitment =
       effective_at?: string;
     };
 /**
- * Seller-authored integrity pin over one third-party-published definition that a proposal's commercial_terms reference: a publisher-catalog format option, publisher-catalog placement, adagents.json collection, or data-provider signal. content_digest is the lowercase-hex SHA-256 of the RFC 8785 (JCS) serialization of the kind's closed projection of the published entry, defined normatively in docs/media-buy/specification.mdx#definition-pins. Pins live inside commercial_terms, so terms_digest covers the pin but not the definition it names: a published definition can change while terms_digest still verifies, and re-verifying the pin is what detects it. Request inputs never carry pins.
- */
-export type DefinitionPin = {
-  ref_kind: DefinitionPinReferenceKind;
-  /**
-   * Closed canonical identity of the pinned definition. Only the identity members below are permitted, so the same definition always has one reference value and pins are unique by (ref_kind, reference).
-   */
-  reference: {};
-  /**
-   * Lowercase-hex SHA-256 of the UTF-8 RFC 8785 serialization of the projected published entry. No algorithm prefix.
-   */
-  content_digest: string;
-  /**
-   * Opaque version label of the source document the seller resolved when it computed content_digest, such as the document's catalog_etag. Informational and never dereferenced: verification compares content_digest, never source_version. It MUST NOT contain URLs, credentials, or fetch detail.
-   */
-  source_version?: string;
-} & (
-  | {
-      ref_kind: 'publisher_format_option';
-      reference?: {
-        publisher_domain: string;
-        format_option_id: string;
-      };
-    }
-  | {
-      ref_kind: 'publisher_placement';
-      reference?: {
-        publisher_domain: string;
-        placement_id: string;
-      };
-    }
-  | {
-      ref_kind: 'publisher_collection';
-      reference?: {
-        publisher_domain: string;
-        collection_id: string;
-      };
-    }
-  | {
-      ref_kind: 'data_provider_signal';
-      reference?: {
-        data_provider_domain: string;
-        signal_id: string;
-      };
-    }
-) & {
-    ref_kind: DefinitionPinReferenceKind;
-    /**
-     * Closed canonical identity of the pinned definition. Only the identity members below are permitted, so the same definition always has one reference value and pins are unique by (ref_kind, reference).
-     */
-    reference: {};
-    /**
-     * Lowercase-hex SHA-256 of the UTF-8 RFC 8785 serialization of the projected published entry. No algorithm prefix.
-     */
-    content_digest: string;
-    /**
-     * Opaque version label of the source document the seller resolved when it computed content_digest, such as the document's catalog_etag. Informational and never dereferenced: verification compares content_digest, never source_version. It MUST NOT contain URLs, credentials, or fetch detail.
-     */
-    source_version?: string;
-  } & (
-    | {
-        ref_kind: 'publisher_format_option';
-        reference?: {
-          publisher_domain: string;
-          format_option_id: string;
-        };
-      }
-    | {
-        ref_kind: 'publisher_placement';
-        reference?: {
-          publisher_domain: string;
-          placement_id: string;
-        };
-      }
-    | {
-        ref_kind: 'publisher_collection';
-        reference?: {
-          publisher_domain: string;
-          collection_id: string;
-        };
-      }
-    | {
-        ref_kind: 'data_provider_signal';
-        reference?: {
-          data_provider_domain: string;
-          signal_id: string;
-        };
-      }
-  );
-/**
  * One page of proposals for the requested account with their seller-tracked dispositions, plus the current state of every opportunity those proposals belong to. Each snapshot is returned byte-for-byte as issued, so terms_digest still verifies; lifecycle state lives beside it, never inside it. Experimental (media_buy.open_opportunities).
  */
 export interface ListProposalsResponse {
@@ -12288,6 +12193,7 @@ export interface ListProposalsResponse {
      */
     origin: 'request' | 'refinement' | 'later' | 'seller_offer';
     later_reason?: LaterProposalReason;
+    offer_reason?: OfferReason;
   }[];
   /**
    * Current state of each opportunity referenced by a returned proposal or named in opportunity_ids. One entry per opportunity_id; unknown or inaccessible opportunity IDs are omitted, not errors.
@@ -12409,12 +12315,6 @@ export interface CommercialTerms {
    * @minItems 1
    */
   change_terms?: [MediaBuyChangeTerm, ...MediaBuyChangeTerm[]];
-  /**
-   * Seller-authored integrity pins over the third-party-published definitions these terms reference (publisher-catalog format options, publisher-catalog placements, adagents.json collections, data-provider signals). Present on new_media_buy and media_buy_update proposals whenever any purchase carries a covered reference, for callers negotiating AdCP 3.3 or later; omitted otherwise and on media_buy_cancellation proposals, which commit no new reference. Part of commercial_terms and therefore covered by terms_digest, which does not detect later changes to the published definitions themselves. Entries are unique by (ref_kind, reference) and ordered by ref_kind then by the JCS bytes of reference, so equal terms always serialize to equal digests. Requests never author pins: request_proposals, refine_proposals, accept_proposal, and buy_products inputs carrying definition_pins are rejected with INVALID_REQUEST (check_governance carries the seller-authored proposal and is exempt). Cancellation proposals commit no new reference and carry none. Verified against the current published entries at finalize and before accept_proposal mutates state; accepted terms retain them as the historical record.
-   *
-   * @minItems 1
-   */
-  definition_pins?: [DefinitionPin, ...DefinitionPin[]];
 }
 /**
  * One resolved canonical product selection in a compact proposal or accepted commercial snapshot. Request-side buy_products selections use product-purchase-input.json. This strict snapshot shape contains effective non-null targeting and resolved inherited terms. Creative content and creative assignments are intentionally absent.
@@ -12429,7 +12329,6 @@ export interface ProductPurchase {
    * @minItems 1
    */
   format_option_refs?: [FormatOptionReference, ...FormatOptionReference[]];
-  installments?: ProductPurchaseInstallments;
   /**
    * Previously synchronized account catalog IDs promoted by this selection. Callers manage catalog bodies through sync_catalogs rather than inlining them here.
    *
@@ -12484,12 +12383,6 @@ export interface ProductPurchase {
    * @minItems 1
    */
   performance_standards?: [CanonicalPerformanceStandard, ...CanonicalPerformanceStandard[]];
-  /**
-   * Experimental (`media_buy.purchase_rights`). Usage and amplification rights granted with this purchase, priced inside it; the media seller grants or warrants them. Bound by terms_digest. Exclusivity is per purchase. Sellers MUST list media_buy.purchase_rights in experimental_features.
-   *
-   * @minItems 1
-   */
-  rights?: [RightsScope, ...RightsScope[]];
 }
 /**
  * Published or negotiated billing-measurement and makegood terms for this purchase. Direct buyers may omit this to inherit the product default; accepted proposal snapshots preserve the resolved terms.
@@ -12506,24 +12399,6 @@ export interface ProductPurchaseMeasurementTerms {
      * @minItems 1
      */
     available_remedies: [MakegoodRemedy, ...MakegoodRemedy[]];
-  };
-}
-/**
- * Uses, grant window, and exclusivity of a rights grant. Shared by rights-terms and media-buy purchases.
- */
-export interface RightsScope {
-  /**
-   * @minItems 1
-   */
-  uses: [RightUse, ...RightUse[]];
-  start_date?: string;
-  end_date?: string;
-  /**
-   * Exclusivity terms if applicable
-   */
-  exclusivity?: {
-    scope?: string;
-    countries?: string[];
   };
 }
 /**
@@ -12691,7 +12566,7 @@ export interface ListCollectionsRequest {
 
 // list_collections response
 /**
- * Experimental (media_buy.collection_catalog), added in AdCP 3.3. One page of the selling agent's collection cards, or confirmation that the selected catalog has not changed. Entries are core/response-collection.json copies under the authority rules defined there and for include_collections: adagents.json stays the root of authorization and the source for definition pins, a copy wins only on images, sample_content, url, description, season, cadence and distribution[].followers, and a copy of an undeclared collection or from an agent adagents.json does not authorize is unverified display data that never feeds carriage verification. For the same key, account and moment, the copy MUST equal the one a product or proposal read with include_collections returns. The response carries no products, pricing, availability or account terms.
+ * Experimental (media_buy.collection_catalog), added in AdCP 3.3. One page of the selling agent's collection cards, or confirmation that the selected catalog has not changed. Entries are core/response-collection.json copies under the authority rules defined there and for include_collections: adagents.json stays the root of authorization, a copy wins only on images, sample_content, url, description, season, cadence and distribution[].followers, and a copy of an undeclared collection or from an agent adagents.json does not authorize is unverified display data that never feeds carriage verification. For the same key, account and moment, the copy MUST equal the one a product or proposal read with include_collections returns. The response carries no products, pricing, availability or account terms.
  */
 export type ListCollectionsResponse = {
   /**
@@ -13164,7 +13039,7 @@ export interface ProductDiscoveryTargetingResolution3 {
 
 // refine_proposals parameters
 /**
- * Fork an immutable proposal, finalize a draft into a held committed snapshot, or extend a committed hold into a new committed snapshot. Revising with structured criteria, typed boundaries, product changes, installment changes, requested alternatives, and/or a semantic ask creates one or more new drafts; finalizing and extending a hold change no terms. Refining an accepted proposal creates a draft amendment or cancellation proposal against its MediaBuy; the source remains accepted and unchanged. A revised product mix must support the resulting root frequency cap; because omitted criteria inherit, clearing the cap is explicit through remove_media_buy_frequency_cap.
+ * Fork an immutable proposal, finalize a draft into a held committed snapshot, or extend a committed hold into a new committed snapshot. Revising with structured criteria, typed boundaries, product changes, requested alternatives, and/or a semantic ask creates one or more new drafts; finalizing and extending a hold change no terms. Refining an accepted proposal creates a draft amendment or cancellation proposal against its MediaBuy; the source remains accepted and unchanged. A revised product mix must support the resulting root frequency cap; because omitted criteria inherit, clearing the cap is explicit through remove_media_buy_frequency_cap.
  */
 export type ProposalRefinement = {
   proposal_id: string;
@@ -13201,7 +13076,6 @@ export type ProposalRefinement = {
     };
   };
   product_changes?: ProductChangeMap;
-  installment_changes?: InstallmentChangeSet;
   /**
    * Request drafts with distinct commercial terms by count. Every returned alternative MUST carry distinct commercial_terms and therefore a unique terms_digest; diversity preferences remain in ask.
    */
@@ -13244,13 +13118,6 @@ export type ProposalBudgetConstraint = {
   max?: number;
   currency: string;
 };
-/**
- * Experimental (media_buy.installment_selection). Installment-level membership actions checked against commercial_terms.purchases[].installments in every returned draft, so a buyer can drop a slot or swap one for another without restating the whole plan. Each entry names the purchase by product_id and the installment by its canonical tuple. An entry names a product that the source proposal purchases or that product_changes includes in the same refinement, so adding a product and naming its slots is one round trip; any other product_id, a product_changes omit of the same product, and a repeated or contradictory (product_id, installment_ref) pair are each rejected at task level with INVALID_REQUEST. The seller validates product_id membership BEFORE resolving any installment_ref, so an unauthorized caller never causes reference resolution; an installment the named product does not declare is then rejected with REFERENCE_NOT_FOUND. A swap is not atomic: the seller may satisfy the omit, fail the include, and return partial, so a buyer that needs all-or-nothing says so in ask. Entries the seller understood but could not satisfy make the result partial or unable with reason_code constraint_unsatisfiable and are echoed in unsatisfied_installment_changes. A purchase whose installments the source proposal left absent starts from the product's complete installment set, so a single omit entry materializes the remaining slots. Buyers MUST NOT send this field unless the seller declares media_buy.installment_selection.
- *
- * @minItems 1
- * @maxItems 500
- */
-export type InstallmentChangeSet = InstallmentChange[];
 /**
  * Create draft revisions, finalize draft proposals into held committed snapshots, or extend committed holds into new committed snapshots. Each result receives a new proposal_id and every source remains unchanged.
  */
@@ -13299,17 +13166,6 @@ export interface RefineProposalsRequest {
 export interface ProductChangeMap {
   [k: string]: ('include' | 'omit') | undefined;
 }
-export interface InstallmentChange {
-  /**
-   * Product whose purchase in commercial_terms.purchases carries the installment.
-   */
-  product_id: string;
-  installment_ref: CanonicalInstallmentReference;
-  /**
-   * Required, because a drop that silently defaulted to include is the expensive failure. include requires the installment to be present in that purchase's installments in every returned draft; omit requires its absence. Swapping a slot is one omit plus one include in the same refinement.
-   */
-  action: 'include' | 'omit';
-}
 
 // refine_proposals response
 /**
@@ -13344,17 +13200,6 @@ export type RefineProposalsResponse =
               parent_proposal_id: string;
               proposal_status: 'draft';
             })[];
-            /**
-             * Pins from the source proposal's commercial_terms.definition_pins[] whose published definition no longer resolves to the pinned content_digest, in the pins' canonical order. Required on, and valid only with, reason_code definition_changed.
-             */
-            drifted_pins?: {
-              pin: DefinitionPin;
-              /**
-               * Lowercase-hex SHA-256 the definition resolves to now. Omitted only when the entry was withdrawn from a successfully fetched, validated document.
-               * @pattern ^[a-f0-9]{64}$
-               */
-              current_content_digest?: string;
-            }[];
             suggestions?: string[];
             targeting_resolution?: ProductDiscoveryTargetingResolution;
           }
@@ -13390,21 +13235,6 @@ export type RefineProposalsResponse =
              * Requested product actions not satisfied by every returned draft. This is a subset of the request product_changes map and is valid only on partial or unable results.
              */
             unsatisfied_product_changes?: ProductChangeMap;
-            /**
-             * Experimental (media_buy.installment_selection). Requested installment actions not satisfied by every returned draft, each entry repeated exactly as the request carried it. This is a subset of the request installment_changes list and is valid only on partial or unable results, whose reason_code is constraint_unsatisfiable.
-             */
-            unsatisfied_installment_changes?: InstallmentChangeSet;
-            /**
-             * Pins from the source proposal's commercial_terms.definition_pins[] whose published definition no longer resolves to the pinned content_digest, in the pins' canonical order. Required on, and valid only with, reason_code definition_changed.
-             */
-            drifted_pins?: {
-              pin: DefinitionPin;
-              /**
-               * Lowercase-hex SHA-256 the definition resolves to now. Omitted only when the entry was withdrawn from a successfully fetched, validated document.
-               * @pattern ^[a-f0-9]{64}$
-               */
-              current_content_digest?: string;
-            }[];
             suggestions?: string[];
             targeting_resolution?: ProductDiscoveryTargetingResolution1;
           }
@@ -13430,21 +13260,6 @@ export type RefineProposalsResponse =
              * Requested product actions not satisfied by every returned draft. This is a subset of the request product_changes map and is valid only on partial or unable results.
              */
             unsatisfied_product_changes?: ProductChangeMap;
-            /**
-             * Experimental (media_buy.installment_selection). Requested installment actions not satisfied by every returned draft, each entry repeated exactly as the request carried it. This is a subset of the request installment_changes list and is valid only on partial or unable results, whose reason_code is constraint_unsatisfiable.
-             */
-            unsatisfied_installment_changes?: InstallmentChangeSet;
-            /**
-             * Pins from the source proposal's commercial_terms.definition_pins[] whose published definition no longer resolves to the pinned content_digest, in the pins' canonical order. Required on, and valid only with, reason_code definition_changed.
-             */
-            drifted_pins?: {
-              pin: DefinitionPin;
-              /**
-               * Lowercase-hex SHA-256 the definition resolves to now. Omitted only when the entry was withdrawn from a successfully fetched, validated document.
-               * @pattern ^[a-f0-9]{64}$
-               */
-              current_content_digest?: string;
-            }[];
             suggestions?: string[];
             targeting_resolution?: ProductDiscoveryTargetingResolution2;
           }
@@ -13495,17 +13310,6 @@ export type RefineProposalsResponse =
            */
           expires_at: string;
         };
-        /**
-         * Pins from the source proposal's commercial_terms.definition_pins[] whose published definition no longer resolves to the pinned content_digest, in the pins' canonical order. Required on, and valid only with, reason_code definition_changed.
-         */
-        drifted_pins?: {
-          pin: DefinitionPin;
-          /**
-           * Lowercase-hex SHA-256 the definition resolves to now. Omitted only when the entry was withdrawn from a successfully fetched, validated document.
-           * @pattern ^[a-f0-9]{64}$
-           */
-          current_content_digest?: string;
-        }[];
         suggestions?: string[];
         targeting_resolution?: ProductDiscoveryTargetingResolution3;
       }[];
@@ -13555,17 +13359,6 @@ export type RefineProposalsResponse =
               parent_proposal_id: string;
               proposal_status: 'draft';
             })[];
-            /**
-             * Pins from the source proposal's commercial_terms.definition_pins[] whose published definition no longer resolves to the pinned content_digest, in the pins' canonical order. Required on, and valid only with, reason_code definition_changed.
-             */
-            drifted_pins?: {
-              pin: DefinitionPin;
-              /**
-               * Lowercase-hex SHA-256 the definition resolves to now. Omitted only when the entry was withdrawn from a successfully fetched, validated document.
-               * @pattern ^[a-f0-9]{64}$
-               */
-              current_content_digest?: string;
-            }[];
             suggestions?: string[];
             targeting_resolution?: ProductDiscoveryTargetingResolution4;
           }
@@ -13601,21 +13394,6 @@ export type RefineProposalsResponse =
              * Requested product actions not satisfied by every returned draft. This is a subset of the request product_changes map and is valid only on partial or unable results.
              */
             unsatisfied_product_changes?: ProductChangeMap;
-            /**
-             * Experimental (media_buy.installment_selection). Requested installment actions not satisfied by every returned draft, each entry repeated exactly as the request carried it. This is a subset of the request installment_changes list and is valid only on partial or unable results, whose reason_code is constraint_unsatisfiable.
-             */
-            unsatisfied_installment_changes?: InstallmentChangeSet;
-            /**
-             * Pins from the source proposal's commercial_terms.definition_pins[] whose published definition no longer resolves to the pinned content_digest, in the pins' canonical order. Required on, and valid only with, reason_code definition_changed.
-             */
-            drifted_pins?: {
-              pin: DefinitionPin;
-              /**
-               * Lowercase-hex SHA-256 the definition resolves to now. Omitted only when the entry was withdrawn from a successfully fetched, validated document.
-               * @pattern ^[a-f0-9]{64}$
-               */
-              current_content_digest?: string;
-            }[];
             suggestions?: string[];
             targeting_resolution?: ProductDiscoveryTargetingResolution5;
           }
@@ -13641,21 +13419,6 @@ export type RefineProposalsResponse =
              * Requested product actions not satisfied by every returned draft. This is a subset of the request product_changes map and is valid only on partial or unable results.
              */
             unsatisfied_product_changes?: ProductChangeMap;
-            /**
-             * Experimental (media_buy.installment_selection). Requested installment actions not satisfied by every returned draft, each entry repeated exactly as the request carried it. This is a subset of the request installment_changes list and is valid only on partial or unable results, whose reason_code is constraint_unsatisfiable.
-             */
-            unsatisfied_installment_changes?: InstallmentChangeSet;
-            /**
-             * Pins from the source proposal's commercial_terms.definition_pins[] whose published definition no longer resolves to the pinned content_digest, in the pins' canonical order. Required on, and valid only with, reason_code definition_changed.
-             */
-            drifted_pins?: {
-              pin: DefinitionPin;
-              /**
-               * Lowercase-hex SHA-256 the definition resolves to now. Omitted only when the entry was withdrawn from a successfully fetched, validated document.
-               * @pattern ^[a-f0-9]{64}$
-               */
-              current_content_digest?: string;
-            }[];
             suggestions?: string[];
             targeting_resolution?: ProductDiscoveryTargetingResolution6;
           }
@@ -13715,17 +13478,6 @@ export type RefineProposalsResponse =
            */
           expires_at: string;
         };
-        /**
-         * Pins from the source proposal's commercial_terms.definition_pins[] whose published definition no longer resolves to the pinned content_digest, in the pins' canonical order. Required on, and valid only with, reason_code definition_changed.
-         */
-        drifted_pins?: {
-          pin: DefinitionPin;
-          /**
-           * Lowercase-hex SHA-256 the definition resolves to now. Omitted only when the entry was withdrawn from a successfully fetched, validated document.
-           * @pattern ^[a-f0-9]{64}$
-           */
-          current_content_digest?: string;
-        }[];
         suggestions?: string[];
         targeting_resolution?: ProductDiscoveryTargetingResolution7;
       }[];
@@ -15698,6 +15450,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -15722,10 +15475,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -15787,6 +15541,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -15811,10 +15566,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -15876,6 +15632,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -15900,10 +15657,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -15965,6 +15723,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -15989,10 +15748,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -16054,6 +15814,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -16078,10 +15839,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -16143,6 +15905,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -16167,10 +15930,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -16232,6 +15996,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -16256,10 +16021,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -16321,6 +16087,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -16345,10 +16112,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -16410,6 +16178,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -16434,10 +16203,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -16499,6 +16269,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -16523,10 +16294,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -16588,6 +16360,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -16612,10 +16385,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -16677,6 +16451,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -16701,10 +16476,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -16766,6 +16542,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -16790,10 +16567,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -16855,6 +16633,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -16879,10 +16658,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -16944,6 +16724,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -16968,10 +16749,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -17033,6 +16815,7 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     ),
     ...(
       | 'creative.status_changed'
@@ -17057,10 +16840,11 @@ export type NotificationConfig = {
       | 'reporting.status_changed'
       | 'reporting.ledger_changed'
       | 'proposal.created'
+      | 'proposal.offered'
     )[]
   ];
   /**
-   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is the default for 3.x get_products consumers. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event.
+   * Product webhook representation selected by this subscriber. Use canonical with lifecycle_tools.list_products; legacy is for 3.x get_products consumers. When absent, sellers emit the legacy representation. Sellers emit exactly canonical_product/canonical_pricing_options or product/pricing_options accordingly. Valid only when event_types includes a product.* event. The default is stated here rather than as a schema default so serializers that materialize defaults do not add the field to configs without a product.* event. Sellers echoing configs on sync_accounts or list_accounts MUST NOT add product_payload_view to a config whose event_types includes no product.* event.
    */
   product_payload_view?: 'canonical' | 'legacy';
   /**
@@ -21374,6 +21158,35 @@ export interface VendorMetricValue {
   };
 }
 /**
+ * Experimental (media_buy.measurement_provenance). Provenance for one `vendor_metric_values[]` row of the same `delivery-metrics.json` object, joined on `(vendor, metric_id, qualifier)`: which collection mechanisms built the value and whether the vendor deduplicated across them (not `measurement_source`, which names the provider). It is a sibling array rather than a field on the row because `vendor-metric-value.json` is a closed row envelope (DR-0019, DR-0036). The join key is the row's own key: `vendor` and `metric_id` match the row's, and `qualifier` MUST be present exactly when the row's qualifier is, with the identical value. An entry that matches no row is ignored. At most one entry per key; a seller MUST NOT emit two. It does not partition rows and is not a `qualifier` key, so it stays out of the `(vendor, metric_id, qualifier)` reconciliation join. When no entry matches a row, provenance is unspecified, never an implicit source; see the vendor's `methodology_url`. Open per DR-0009; vendor-specific detail belongs in the row's `breakdown`.
+ */
+export interface VendorMetricProvenance {
+  vendor: BrandReference;
+  metric_id: VendorMetricID;
+  qualifier?: Qualifier;
+  /**
+   * Mechanisms whose events enter the row's value; not every mechanism the vendor operates, and not cross-check mechanisms. `mechanisms` is the union across the row's aggregation scope. A set: order carries no meaning and values MUST NOT repeat.
+   *
+   * @minItems 1
+   */
+  mechanisms: [CollectionMechanism, ...CollectionMechanism[]];
+  /**
+   * Whether the vendor deduplicated across all feeds behind the listed `mechanisms` (if only some, omit and describe in the methodology). `false` means a simple union, so overlap may be double-counted; senders MUST serialize an explicit `false`. Absent means unspecified, never `false`. SHOULD be omitted for a single feed. Says nothing about dedup level (household, person, device).
+   */
+  deduplicated?: boolean;
+  ext?: ExtensionObject;
+}
+/**
+ * The row's `qualifier`, repeated verbatim when the row carries one, so provenance joins on `(vendor, metric_id, qualifier)`. Omit when the row has none.
+ */
+export interface Qualifier {
+  viewability_standard?: ViewabilityStandard;
+  completion_source?: CompletionSource;
+  attribution_methodology?: AttributionMethodology;
+  attribution_window?: Duration;
+  lift_dimension?: LiftDimension;
+}
+/**
  * Optional seller projection of where this package's delivery will end up at flight end. Forward-looking counterpart to the backward-looking `pacing_index`, and the numeric counterpart to the categorical `pacing_risk` indicator on `get_media_buys`. Experimental: sellers that emit it MUST list `media_buy.delivery_projection` in `experimental_features`. An advisory forecast, not a delivery record: it carries no contractual meaning on its own, and any commercial use is governed by the parties' terms. Defined on top-level `by_package[]` rows of GET responses; it is not part of the `windows[].by_package` or exact `reporting_revision_id` contracts, and this field does not define webhook use. Sellers that do not project omit it; absence carries no meaning.
  */
 export interface DeliveryProjection {
@@ -22062,7 +21875,7 @@ export type ReportingReceipt = {
   received_at?: string;
 };
 /**
- * Exceptions to one principal-level reporting subscription's coverage of one account (experimental, media_buy.reporting_subscriptions), returned in get_reporting_status. Coverage itself is computable by the buyer without asking, by the rule in reporting-subscription.json: each visible confirmed buy and resolved offering is owed the complete periods of that offering's published schedule that start on or after the first boundary at or after the latest of the version's accepted_at, the buy's confirmed_at, and the account's authorized_at, and that overlap the buy's flight. The seller reports only exceptions. Each removes the periods whose start falls in the half-open interval [from, until) of cutover instants; none adds one. Readable only while the caller is authorized for the account; loss of authority is reported in the caller's own get_principal subscription state.
+ * Exceptions to one principal-level reporting subscription's coverage of one account (experimental, media_buy.reporting_subscriptions), returned in get_reporting_status. Coverage itself is computable by the buyer without asking, by the rule in reporting-subscription.json: each visible confirmed buy and resolved offering is owed the complete periods of that offering's published schedule that start on or after the first boundary at or after the later of the version's accepted_at and the account's authorized_at, that end after the buy's confirmed_at, and that overlap the buy's flight. The seller reports only exceptions. Each removes the periods whose start falls in the half-open interval [from, until) of cutover instants; none adds one. Readable only while the caller is authorized for the account; loss of authority is reported in the caller's own get_principal subscription state.
  */
 export type ReportingSubscriptionCoverage = {
 } & {
@@ -22074,14 +21887,22 @@ export type ReportingSubscriptionCoverage = {
   status: 'active' | 'excluded' | 'action_required';
   pending_action?: PendingAction;
   /**
-   * Exceptions that remove periods. An entry without media_buy_id applies to the whole account. Opening or closing one fires principal.changed with reason reporting_subscription_changed. Retained for status_retention_days after until.
+   * Exceptions that remove periods. An entry without media_buy_id applies to the whole account. Opening or closing one fires principal.changed with reason reporting_subscription_changed. Retained for status_retention_days after until. When the account's covered offerings have different period boundaries, the seller lists one entry per offering_id, each with that offering's cutover instants, as for gaps and timezone_cutovers.
    */
   excluded: {
   }[];
   /**
-   * Account timezone changes affecting account_timezone-aligned periods, retained for status_retention_days. A cutover: periods under the old timezone are owed when they start before the change, so they end by effective_at; periods under the new timezone are owed when they start at or after effective_at. Any stretch from effective_at to the first new-timezone boundary is owed under neither.
+   * Account timezone changes affecting account_timezone-aligned periods, retained for status_retention_days. A cutover: periods under the old timezone are owed when they start before the change, so they end by effective_at; periods under the new timezone are owed when they start at or after effective_at. Any stretch from effective_at to the first new-timezone boundary is owed under neither. Period boundaries differ between offerings, so when the account's covered offerings have different boundaries the seller lists one entry per offering_id; an entry without offering_id applies to every offering on the account.
    */
   timezone_cutovers?: {
+    /**
+     * The offering whose account_timezone periods this cutover applies to, when covered offerings have different boundaries. Absent: every account_timezone offering on the account.
+     */
+    offering_id?: string;
+    /**
+     * The IANA timezone in effect before the change. Sellers MUST include it: the account's current timezone already shows the new zone, so a buyer cannot otherwise recover the old schedule.
+     */
+    previous_timezone?: string;
     /**
      * End of the last old-timezone period that started before the change.
      */
@@ -22092,9 +21913,13 @@ export type ReportingSubscriptionCoverage = {
     timezone: string;
   }[];
   /**
-   * Intervals between a loss of authority and re-grant that the seller did not backfill (backfill_on_regrant false or absent). Periods starting in [from, until) are not owed. With backfill_on_regrant true no gap is recorded. A re-grant after the accounts_unauthorized entry expired is a fresh coverage start from authorized_at, with no gap. Retained for status_retention_days after until.
+   * Intervals between a loss of authority and re-grant that the seller did not backfill (backfill_on_regrant false or absent). Periods starting in [from, until) are not owed. With backfill_on_regrant true no gap is recorded. A re-grant after the accounts_unauthorized entry expired is a fresh coverage start from authorized_at, with no gap. Retained for status_retention_days after until. Period boundaries differ between offerings, so when the account's covered offerings have different boundaries the seller lists one entry per offering_id, each with that offering's boundaries; an entry without offering_id applies to every offering on the account.
    */
   gaps?: {
+    /**
+     * The offering whose boundaries from and until use, when covered offerings have different boundaries. Absent: the gap applies to every offering on the account.
+     */
+    offering_id?: string;
     /**
      * Last period boundary at or before unauthorized_at.
      */
@@ -36263,6 +36088,20 @@ export type ReportingDeliveryOffering = {
    */
   report_definition_id: string;
   /**
+   * Experimental (media_buy.reporting_subscriptions). The offering's breakdown mapped onto the standard reporting dimension vocabulary, so a buyer can resolve a subscription selector's match from the wire. Empty for an offering that reports totals only. Sellers advertising media_buy.reporting_subscriptions MUST include it on every offering.
+   *
+   * @maxItems 16
+   */
+  standard_dimensions?:
+    ReportingDimension[];
+  /**
+   * Experimental (media_buy.reporting_subscriptions). Native report-definition dimensions with no standard mapping. Present when any exist. They count as distinct under match exact and never count toward finest.
+   *
+   * @maxItems 16
+   */
+  unmapped_dimensions?:
+    string[];
+  /**
    * Retrievable immutable reporting-report-definition.json document on the authenticated seller/provider or AdCP-registry origin.
    */
   report_definition_uri: string;
@@ -36338,6 +36177,20 @@ export type ReportingDeliveryOffering = {
    * Immutable semantic definition for metric, grain, attribution, action-report-time, timezone/calendar, source/API mapping, and restatement/finality policy. Configurations and revisions MUST echo this exact value.
    */
   report_definition_id: string;
+  /**
+   * Experimental (media_buy.reporting_subscriptions). The offering's breakdown mapped onto the standard reporting dimension vocabulary, so a buyer can resolve a subscription selector's match from the wire. Empty for an offering that reports totals only. Sellers advertising media_buy.reporting_subscriptions MUST include it on every offering.
+   *
+   * @maxItems 16
+   */
+  standard_dimensions?:
+    ReportingDimension[];
+  /**
+   * Experimental (media_buy.reporting_subscriptions). Native report-definition dimensions with no standard mapping. Present when any exist. They count as distinct under match exact and never count toward finest.
+   *
+   * @maxItems 16
+   */
+  unmapped_dimensions?:
+    string[];
   /**
    * Retrievable immutable reporting-report-definition.json document on the authenticated seller/provider or AdCP-registry origin.
    */
@@ -36938,7 +36791,7 @@ export interface GetAdCPCapabilitiesResponse {
      */
     proposal_refinement?: {
       /**
-       * Typed revision dimensions the seller can parse and validate. An empty list authoritatively means ask-only refinement with no typed dimensions. total_budget, cpm, impressions, and flight cover the same-named constraints keys; product_changes covers product_changes; installment_changes (experimental, media_buy.installment_selection) covers installment_changes; alternatives covers alternatives.count; criteria covers structured discovery criteria. Free-text ask interpretation is competence, not a capability declared here.
+       * Typed revision dimensions the seller can parse and validate. An empty list authoritatively means ask-only refinement with no typed dimensions. total_budget, cpm, impressions, and flight cover the same-named constraints keys; product_changes covers product_changes; alternatives covers alternatives.count; criteria covers structured discovery criteria. Free-text ask interpretation is competence, not a capability declared here.
        */
       supported_dimensions: (
         | 'total_budget'
@@ -36946,7 +36799,6 @@ export interface GetAdCPCapabilitiesResponse {
         | 'impressions'
         | 'flight'
         | 'product_changes'
-        | 'installment_changes'
         | 'alternatives'
         | 'criteria'
       )[];
@@ -37475,7 +37327,7 @@ export interface GetAdCPCapabilitiesResponse {
        *
        * **Non-exhaustive routing hint.** Unlike the sibling `primary_channels` and `primary_countries` allowlists, this list is NOT exhaustive and a buyer MUST NOT treat a publisher's absence from it as evidence that the seller is unauthorized for that publisher, whether or not it is marked complete. Each publisher's own adagents.json remains the authority; resolve it for the publisher named on a product rather than denying anything this list omits. When the list is truncated, the seller MUST set `publisher_domains_complete: false`.
        *
-       * **Counterparty-asserted, therefore bounded.** Authorization flows from each publisher's `/.well-known/adagents.json`, which any domain owner publishes unilaterally and without the named agent's consent. A seller that mirrors "every publisher whose adagents.json names me" is reflecting third-party-controlled content into a document whose size gates signing-key discovery. Sellers MUST NOT mirror this list unbounded: select the publishers you actually represent, keep the served array within the per-field byte budget in security.mdx §Response Size Bounds, truncate rather than exceed it, and never serve a truncated list as complete. The structural bounds (at most 100 unique entries, each at most 253 characters) are graded by the conformance storyboard in 3.x and become schema constraints in 4.0, so a 3.2 document already above them stays schema-valid and is reported rather than rejected. They are a coarse ceiling, deliberately looser than the byte budget: the count binds a legitimate list, the byte budget binds an adversarial one, and 100 maximum-length entries exceed the budget.
+       * **Counterparty-asserted, therefore bounded.** Authorization flows from each publisher's `/.well-known/adagents.json`, which any domain owner publishes unilaterally and without the named agent's consent. A seller that mirrors "every publisher whose adagents.json names me" is reflecting third-party-controlled content into a document whose size gates signing-key discovery under the deprecated RFC 9421 profile. Sellers MUST NOT mirror this list unbounded: select the publishers you actually represent, keep the served array within the per-field byte budget in security.mdx §Response Size Bounds, truncate rather than exceed it, and never serve a truncated list as complete. The structural bounds (at most 100 unique entries, each at most 253 characters) are graded by the conformance storyboard in 3.x and become schema constraints in 4.0, so a 3.2 document already above them stays schema-valid and is reported rather than rejected. They are a coarse ceiling, deliberately looser than the byte budget: the count binds a legitimate list, the byte budget binds an adversarial one, and 100 maximum-length entries exceed the budget.
        */
       publisher_domains: string[];
       /**
@@ -37515,7 +37367,7 @@ export interface GetAdCPCapabilitiesResponse {
      *
      * **Non-exhaustive routing hint.** This list is NOT exhaustive and a buyer MUST NOT treat a provider's absence from it as evidence that the agent may not resell that provider, whether or not it is marked complete. Each provider's own adagents.json remains the authority. When the list is truncated, the agent MUST set `data_provider_domains_complete: false`.
      *
-     * **Counterparty-asserted, therefore bounded.** Authorization flows from each data provider's `/.well-known/adagents.json`, which any domain owner publishes unilaterally and without the named agent's consent — the same trust direction as `media_buy.portfolio.publisher_domains`, and the same inflation vector into a document whose size gates signing-key discovery. Agents MUST NOT mirror this list unbounded: keep the served array within the per-field byte budget in security.mdx §Response Size Bounds, truncate rather than exceed it, and never serve a truncated list as complete. The structural bounds (at most 100 unique entries, each at most 253 characters) are graded by the conformance storyboard in 3.x and become schema constraints in 4.0, so a 3.2 document already above them stays schema-valid and is reported rather than rejected. They are a coarse ceiling, deliberately looser than the byte budget: the count binds a legitimate list, the byte budget binds an adversarial one, and 100 maximum-length entries exceed the budget.
+     * **Counterparty-asserted, therefore bounded.** Authorization flows from each data provider's `/.well-known/adagents.json`, which any domain owner publishes unilaterally and without the named agent's consent — the same trust direction as `media_buy.portfolio.publisher_domains`, and the same inflation vector into a document whose size gates signing-key discovery under the deprecated RFC 9421 profile. Agents MUST NOT mirror this list unbounded: keep the served array within the per-field byte budget in security.mdx §Response Size Bounds, truncate rather than exceed it, and never serve a truncated list as complete. The structural bounds (at most 100 unique entries, each at most 253 characters) are graded by the conformance storyboard in 3.x and become schema constraints in 4.0, so a 3.2 document already above them stays schema-valid and is reported rather than rejected. They are a coarse ceiling, deliberately looser than the byte budget: the count binds a legitimate list, the byte budget binds an adversarial one, and 100 maximum-length entries exceed the budget.
      */
     data_provider_domains?: string[];
     /**
@@ -39246,11 +39098,11 @@ export type ReportingSubscription = {
     dimensions?:
       ReportingDimension[];
     /**
-     * exact selects the offering whose dimension set equals dimensions; native dimensions that do not map to the vocabulary count as distinct, so package by device does not equal package. finest selects the single offering with the most mapped dimensions among those including every selector dimension. Ties under exact and finest go to the lowest offering_id in byte order. all selects every offering including every selector dimension, each with its own obligations. Defaults to exact when dimensions is present and finest when it is absent. Billing subscriptions SHOULD use exact.
+     * exact selects the offering whose dimension set equals dimensions; native dimensions that do not map to the vocabulary count as distinct, so package by device does not equal package. finest selects the single offering with the most mapped dimensions among those including every selector dimension. Ties under exact and finest go to the lowest offering_id in byte order. all selects every offering including every selector dimension, each with its own obligations. Defaults to exact when dimensions is present and finest when it is absent. With match exact and no dimensions, every candidate qualifies and the lowest offering_id wins. Matching reads each offering's standard_dimensions and unmapped_dimensions. Billing subscriptions SHOULD use exact.
      */
     match?: 'exact' | 'finest' | 'all';
     /**
-     * IANA timezone override for period boundaries. Only valid when scope.account_ids names exactly one account. Only offerings that can produce periods in that zone match.
+     * IANA timezone override for period boundaries. Only valid when scope.account_ids names exactly one account. An account_timezone offering matches and uses this zone in place of the account's. A utc offering matches only when this is a UTC alias (UTC or Etc/UTC). A source_timezone or fixed billing_cycle offering matches only when its published period_timezone equals this one. A billing_cycle offering whose anchor the buyer configures never matches a subscription, which has no way to supply the anchor.
      */
     period_timezone?: string;
   };
@@ -39491,7 +39343,7 @@ export type AgentReportingDestinationState = {
   setup?: {
     action: 'grant_access' | 'accept_share' | 'prove_control' | 'contact_support';
     /**
-     * HTTPS page for completing provider-native setup. Printable ASCII without whitespace, '?', '#', '%', '"', '<', or '>'. It MUST NOT carry a credential, userinfo authority, or signed component and MUST be rendered as an untrusted link, never executed as agent instructions.
+     * HTTPS page for completing provider-native setup. The schema checks the scheme only; a query string, fragment, and percent-encoding are valid. The URL MUST NOT carry a credential, userinfo authority, or signed component: receivers MUST reject one that does, and MUST render the link as untrusted, never executing it as agent instructions.
      */
     setup_url?: string;
     /**
@@ -39519,11 +39371,11 @@ export type ReportingSubscriptionState = {
    */
   state: 'active' | 'inactive' | 'action_required';
   /**
-   * When the seller accepted the current subscription_version. Immutable for that version. Coverage starts at the first boundary at or after the latest of this instant, the buy's confirmed_at, and the account's authorized_at.
+   * When the seller accepted the current subscription_version. Immutable for that version. Coverage starts at the first boundary at or after the later of this instant and the account's authorized_at; a buy is owed from the period in which it is confirmed.
    */
   accepted_at: string;
   /**
-   * Earlier versions, newest first, retained while any obligation of that version is retained, so a buyer can recompute their expected periods after local-state loss.
+   * Earlier versions, newest first, retained while any obligation of that version is retained, so a buyer can recompute their expected periods after local-state loss. Each entry carries the configuration that version had.
    */
   prior_versions?: {
     subscription_version: number;
@@ -39532,11 +39384,27 @@ export type ReportingSubscriptionState = {
      * The next version's accepted_at, the cutover instant: this version owes its periods that start before it, in full.
      */
     superseded_at: string;
+    configuration?: ReportingSubscription;
   }[];
   /**
    * When active false was applied. Present when and only when state is inactive.
    */
   deactivated_at?: string;
+  /**
+   * Intervals during which the subscription was inactive, oldest first, retained while any obligation they affect is retained, so a buyer can recompute expected periods after local-state loss. Reactivation is a fresh start: nothing that starts during an interval is owed, and coverage resumes at the first boundary at or after reactivated_at. The current interval, while the subscription is inactive, has no reactivated_at.
+   *
+   * @maxItems 64
+   */
+  inactive_intervals?: {
+    /**
+     * When active false was applied.
+     */
+    deactivated_at: string;
+    /**
+     * When active true was applied again. Absent for the current interval while the subscription is inactive.
+     */
+    reactivated_at?: string;
+  }[];
   /**
    * Destination generation currently bound. Present when and only when the configuration names a destination.
    */
@@ -40439,7 +40307,7 @@ export type AccountRequest = {
   requested: RequestedAccount;
   pending_action?: PendingAction;
   /**
-   * Present when state is resolved. The account to use on every account-scoped task. Never changes for the life of the account.
+   * Present when state is resolved: the account this request resolved to. Never changes for the life of the account. For an open request, it is the account to reference from now on. On a change request that resolves as updated, it equals requested.account_id. On a change request that resolves as created or matched, it is a different account from requested.account_id; the named account is unchanged and stays usable, and whether to use the resolved account for new buys is the buyer's choice. Existing account-scoped calls are not redirected to it.
    */
   account_id?: string;
   account?: Account;
@@ -40552,7 +40420,7 @@ export interface AccountAuthorization {
    */
   scope_name?: StandardScope | CustomScope;
   /**
-   * When the current grant to this caller began. Reporting subscriptions cover the account from the first period boundary at or after it. Sellers advertising media_buy.reporting_subscriptions MUST populate it.
+   * When the caller's current authorization chain for this account began. A re-grant before the previous unauthorized_at plus status_retention_days continues the chain and leaves authorized_at unchanged; a later re-grant starts a new chain and sets it to the re-grant time. Reporting subscriptions cover the account from the first period boundary at or after it. Sellers advertising media_buy.reporting_subscriptions MUST populate it.
    */
   authorized_at?: string;
   /**
@@ -40629,6 +40497,10 @@ export interface RequestAccountRequest {
    * @format int
    */
   revision?: number;
+  /**
+   * Change requests only (with account_id and change fields): whether the seller may answer by opening a separate account that carries the requested change, leaving this account unchanged (resolution: created). When false or absent, a seller that would accept the change only as a separate account rejects the request with ACCOUNT_CHANGE_REQUIRES_NEW_ACCOUNT instead. It never permits changing or retiring the named account, and it is ignored when opening an account.
+   */
+  allow_separate_account?: boolean;
   brand?: BrandKey;
   /**
    * Domain of the entity operating on the brand's behalf. When the brand operates directly, the brand's domain. The seller verifies it against the brand's authorized_operators and, where grants are supported, the operator's grant to the calling agent. Required unless account_id is sent.
@@ -40957,7 +40829,7 @@ export interface SyncAccountsSuccess {
      */
     account_id?: string;
     /**
-     * Experimental (account.requests). Identifier of the seller's account request behind this row, present while the row is pending_approval and the seller has not issued an account_id. Read it with list_accounts (include_requests) or wait for account_request.changed. It is not an account_id and is never accepted as an AccountRef.
+     * Experimental (account.requests). Identifier of the seller's account request behind a pending_approval row. On a provisioning row, it stands in for the account_id the seller has not issued. On a settings-update row whose change the seller is reviewing, it names the request for that change, and a seller that supports account.requests MUST include it; the request resolves as updated or matched, or is rejected, as a request_account change request without allow_separate_account does. It never resolves as created; a seller that would accept the change only as a separate account rejects it with ACCOUNT_CHANGE_REQUIRES_NEW_ACCOUNT. Read it with list_accounts (request_ids) or wait for account_request.changed. It is not an account_id and is never accepted as an AccountRef.
      * @minLength 1
      * @maxLength 128
      */
@@ -42068,7 +41940,7 @@ export type CreateMediaBuyCompletion = {
 };
 
 /**
- * Request payload for the comply_test_controller tool. Triggers seller-side state transitions for compliance testing. Sandbox only — sellers MUST NOT expose this tool in production. Naturally idempotent: each known `scenario` is either a lookup (`list_scenarios`) or a state-forcing operation whose target state is carried in the payload (`force_*_status`, `simulate_*`), so replays converge to the same observable state without needing an idempotency_key. The one exception is definition_pin_probe mutate_definition with mutation material, which advances the published definition so every call yields a digest distinct from all earlier digests of that definition. The compliance harness drives this tool deterministically and does not rely on the seller's at-most-once replay cache.
+ * Request payload for the comply_test_controller tool. Triggers seller-side state transitions for compliance testing. Sandbox only — sellers MUST NOT expose this tool in production. Naturally idempotent: each known `scenario` is either a lookup (`list_scenarios`) or a state-forcing operation whose target state is carried in the payload (`force_*_status`, `simulate_*`), so replays converge to the same observable state without needing an idempotency_key. The compliance harness drives this tool deterministically and does not rely on the seller's at-most-once replay cache.
  */
 export interface ComplyTestControllerRequest {
   /**
@@ -42109,7 +41981,7 @@ export interface ComplyTestControllerRequest {
      */
     action?: 'hold' | 'confirm';
     /**
-     * Product to seed or prepare for deterministic compact lifecycle testing. Used by seed_product, seed_pricing_option, compact_product_lifecycle_probe prepare, compact_direct_buy_lifecycle_probe prepare, and definition_pin_probe prepare.
+     * Product to seed or prepare for deterministic compact lifecycle testing. Used by seed_product, seed_pricing_option, compact_product_lifecycle_probe prepare, and compact_direct_buy_lifecycle_probe prepare.
      */
     product_id?: string;
     /**
@@ -42120,7 +41992,7 @@ export interface ComplyTestControllerRequest {
      */
     opportunity_id?: string;
     /**
-     * Committed proposal whose hold the compact_product_lifecycle_probe expires, the draft or committed proposal whose pinned definition definition_pin_probe mutate_definition changes, or the holdable draft proposal whose next finalize force_hold_unavailable fails with hold_unavailable.
+     * Committed proposal whose hold the compact_product_lifecycle_probe expires, the holdable draft proposal whose next finalize force_hold_unavailable fails with hold_unavailable.
      * @minLength 1
      */
     proposal_id?: string;
@@ -42141,7 +42013,7 @@ export interface ComplyTestControllerRequest {
      */
     fixture?: {};
     /**
-     * Scenario-specific probe operation. definition_pin_probe uses prepare to make one seeded product reference a controller-published publisher-catalog definition so its proposals carry definition pins, and mutate_definition to change that published definition behind an existing proposal's pin without touching the proposal: mutation material changes a digest-covered field and mutation cosmetic changes only a projection-excluded field such as name. catalog_item_availability_probe uses seed_inaccessible_item, query_eligibility, advance_time, and recreate_catalog. compact_product_lifecycle_probe uses prepare to make one seeded product's compact proposal, acceptance, operational-control, and MediaBuy readback path deterministic and expire_proposal to advance strictly beyond a committed proposal's stored expires_at and process the hold lapse. compact_direct_buy_lifecycle_probe uses prepare to make one seeded product's list, direct-purchase, operational-control, and readback path deterministic. reporting_core_lifecycle_probe uses prepare, advance_time, publish_zero_row, publish_nonempty, restate_snapshot, restate_after_received, omit_obligation, advance_past_status_deadline, and advance_past_escalation to exercise obligation availability, health deadlines, explicit reporting, provisional restatement, stale-received grace, buyer-side missing-obligation detection, counted consumer-status silence, and consumer-mismatch escalation. advance_past_status_deadline moves the clock strictly past expected_at plus the advertised automated_recovery_window_seconds without recording any consumer status, so obligation_counts.consumer_status_pending is gradable; advance_past_escalation moves it strictly past the open CONSUMER_STATUS_MISMATCH issue opened_at plus the advertised consumer_mismatch_escalation_seconds and returns both that boundary and any still-future stale_received_grace_deadline, so the escalation precedence rule is gradable. restate_snapshot publishes a new snapshot revision that immediately supersedes the current snapshot for the same logical slice and is invalid when the current revision is official. restate_after_received does the same restatement but only against the revision named in received_reporting_revision_id, so the stale-received grace projection can be graded live; it returns the grace deadline and advance_to positions the virtual clock inside or past it. Reliable Reporting tier probes use prepare plus publish_official_adjustment, probe_scheduler_dst, suppress_readiness, advance_within_retention, revoke_access, or publish_adjustment to seed deterministic Core-integrity, Managed Delivery, and Reconciled Billing lifecycle evidence.
+     * Scenario-specific probe operation. catalog_item_availability_probe uses seed_inaccessible_item, query_eligibility, advance_time, and recreate_catalog. compact_product_lifecycle_probe uses prepare to make one seeded product's compact proposal, acceptance, operational-control, and MediaBuy readback path deterministic and expire_proposal to advance strictly beyond a committed proposal's stored expires_at and process the hold lapse. compact_direct_buy_lifecycle_probe uses prepare to make one seeded product's list, direct-purchase, operational-control, and readback path deterministic. reporting_core_lifecycle_probe uses prepare, advance_time, publish_zero_row, publish_nonempty, restate_snapshot, restate_after_received, omit_obligation, advance_past_status_deadline, and advance_past_escalation to exercise obligation availability, health deadlines, explicit reporting, provisional restatement, stale-received grace, buyer-side missing-obligation detection, counted consumer-status silence, and consumer-mismatch escalation. advance_past_status_deadline moves the clock strictly past expected_at plus the advertised automated_recovery_window_seconds without recording any consumer status, so obligation_counts.consumer_status_pending is gradable; advance_past_escalation moves it strictly past the open CONSUMER_STATUS_MISMATCH issue opened_at plus the advertised consumer_mismatch_escalation_seconds and returns both that boundary and any still-future stale_received_grace_deadline, so the escalation precedence rule is gradable. restate_snapshot publishes a new snapshot revision that immediately supersedes the current snapshot for the same logical slice and is invalid when the current revision is official. restate_after_received does the same restatement but only against the revision named in received_reporting_revision_id, so the stale-received grace projection can be graded live; it returns the grace deadline and advance_to positions the virtual clock inside or past it. Reliable Reporting tier probes use prepare plus publish_official_adjustment, probe_scheduler_dst, suppress_readiness, advance_within_retention, revoke_access, or publish_adjustment to seed deterministic Core-integrity, Managed Delivery, and Reconciled Billing lifecycle evidence.
      */
     operation?:
       | 'seed_inaccessible_item'
@@ -42162,13 +42034,7 @@ export interface ComplyTestControllerRequest {
       | 'suppress_readiness'
       | 'advance_within_retention'
       | 'revoke_access'
-      | 'publish_adjustment'
-      | 'mutate_definition';
-    ref_kind?: DefinitionPinReferenceKind;
-    /**
-     * Required by definition_pin_probe mutate_definition. material changes a field inside the kind's pin projection (for example a member of a format option's params) so the definition's content_digest changes. cosmetic changes only a field the projection excludes (for example display_name) so the content_digest is unchanged and the pin still verifies.
-     */
-    mutation?: 'material' | 'cosmetic';
+      | 'publish_adjustment';
     /**
      * Clock-derived health boundary selected by reporting_core_lifecycle_probe advance_time. The controller chooses the corresponding deterministic target time; callers do not supply timestamps.
      */
@@ -42383,7 +42249,7 @@ export interface ComplyTestControllerRequest {
         | {
             vendor: BrandReference;
             metric_id: VendorMetricID;
-            qualifier?: Qualifier;
+            qualifier?: Qualifier1;
           }[]
         | undefined;
     };
@@ -42546,7 +42412,7 @@ export interface DoohMetrics {
 /**
  * Qualifier for the exact committed vendor-metric row whose measurement is deferred.
  */
-export interface Qualifier {
+export interface Qualifier1 {
   viewability_standard?: ViewabilityStandard;
   completion_source?: CompletionSource;
   attribution_methodology?: AttributionMethodology;
@@ -42659,7 +42525,7 @@ export interface StateTransitionSuccess {
   ext?: ExtensionObject;
 }
 /**
- * A simulate_delivery, simulate_budget_spend, simulate_later_proposal, catalog_item_availability_probe, compact_product_lifecycle_probe, compact_direct_buy_lifecycle_probe, definition_pin_probe, reporting_core_lifecycle_probe, or Reliable Reporting tier-probe operation succeeded. For delivery: simulated contains the metrics injected by this call (impressions/clicks/plays/reported_spend/conversions plus optional DOOH, reach, frequency, reach-window, and viewability values) and cumulative contains running totals or latest non-additive metric state. For budget: simulated contains spend_percentage/computed_spend/budget. For a later proposal: simulated contains proposal_id, opportunity_id, and later_reason of the created snapshot. For catalog availability: simulated reports seeded foreign identity, actual eligibility gates, processed expiry time, or delete/recreate generation rotation according to params.operation. For compact product lifecycle: simulated reports deterministic preparation through MediaBuy control/readback or strict post-deadline proposal expiry. For compact direct-buy lifecycle: simulated reports deterministic preparation. For reporting Core: simulated reports the fixed virtual time plus stable account, configuration, obligation, and revision identifiers created or advanced by the operation; prepare also reports the complete resolved configuration, period, expected_at, and recovery_deadline, restate_snapshot reports the new revision plus supersedes_reporting_revision_id, and restate_after_received additionally reports received_reporting_revision_id, restated_at, and stale_received_grace_deadline; advance_past_status_deadline reports expected_at, automated_recovery_window_seconds, and the crossed consumer_status_deadline; and advance_past_escalation reports issue_id, issue_opened_at, consumer_mismatch_escalation_seconds, consumer_mismatch_escalation_deadline, expected_recommended_action, and any still-future stale_received_grace_deadline. Reliable Reporting tier probes return the exact seeded ledger IDs, checkpoints, notification order, resource lifecycle evidence, and receipt bodies required by their storyboards. For definition pins: prepare reports prepared and the product_id, and mutate_definition reports ref_kind, the pinned reference, previous_content_digest, and current_content_digest, which are equal for a cosmetic mutation and different for a material one.
+ * A simulate_delivery, simulate_budget_spend, simulate_later_proposal, catalog_item_availability_probe, compact_product_lifecycle_probe, compact_direct_buy_lifecycle_probe, reporting_core_lifecycle_probe, or Reliable Reporting tier-probe operation succeeded. For delivery: simulated contains the metrics injected by this call (impressions/clicks/plays/reported_spend/conversions plus optional DOOH, reach, frequency, reach-window, and viewability values) and cumulative contains running totals or latest non-additive metric state. For budget: simulated contains spend_percentage/computed_spend/budget. For a later proposal: simulated contains proposal_id, opportunity_id, and later_reason of the created snapshot. For catalog availability: simulated reports seeded foreign identity, actual eligibility gates, processed expiry time, or delete/recreate generation rotation according to params.operation. For compact product lifecycle: simulated reports deterministic preparation through MediaBuy control/readback or strict post-deadline proposal expiry. For compact direct-buy lifecycle: simulated reports deterministic preparation. For reporting Core: simulated reports the fixed virtual time plus stable account, configuration, obligation, and revision identifiers created or advanced by the operation; prepare also reports the complete resolved configuration, period, expected_at, and recovery_deadline, restate_snapshot reports the new revision plus supersedes_reporting_revision_id, and restate_after_received additionally reports received_reporting_revision_id, restated_at, and stale_received_grace_deadline; advance_past_status_deadline reports expected_at, automated_recovery_window_seconds, and the crossed consumer_status_deadline; and advance_past_escalation reports issue_id, issue_opened_at, consumer_mismatch_escalation_seconds, consumer_mismatch_escalation_deadline, expected_recommended_action, and any still-future stale_received_grace_deadline. Reliable Reporting tier probes return the exact seeded ledger IDs, checkpoints, notification order, resource lifecycle evidence, and receipt bodies required by their storyboards.
  */
 export interface SimulationSuccess {
   success: true;
