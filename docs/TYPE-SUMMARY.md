@@ -774,6 +774,7 @@ _Request:_
   account_id: string
   request_id: string
   revision: integer
+  allow_separate_account: boolean
   brand: Brand Key
   operator: string
   operator_unit: Operator Unit

@@ -176,19 +176,18 @@ Buyers subscribe via the resource-update channel to track activation progress.
 
 Common codes for signals:
 
-| Code                   | When                                                                                          |
-| ---------------------- | --------------------------------------------------------------------------------------------- |
-| `'SIGNAL_NOT_FOUND'`   | unknown `signal_agent_segment_id`                                                             |
-| `'POLICY_VIOLATION'`   | buyer lacks rights to activate this data                                                      |
-| `'INVALID_REQUEST'`    | missing destinations, unrecognized destination shape, missing pricing_option_id when required |
-| `'AUDIENCE_TOO_SMALL'` | activated audience falls below match-rate floor                                               |
-| `'RATE_LIMITED'`       | upstream identity-graph throttled                                                             |
+| Code                    | When                                                                                               |
+| ----------------------- | -------------------------------------------------------------------------------------------------- |
+| `'REFERENCE_NOT_FOUND'` | unknown `signal_agent_segment_id` (`SIGNAL_NOT_FOUND` is for data-provider `signal_id` references) |
+| `'POLICY_VIOLATION'`    | buyer lacks rights to activate this data                                                           |
+| `'INVALID_REQUEST'`     | missing destinations, unrecognized destination shape, missing pricing_option_id when required      |
+| `'AUDIENCE_TOO_SMALL'`  | activated audience falls below match-rate floor                                                    |
+| `'RATE_LIMITED'`        | upstream identity-graph throttled                                                                  |
 
 ```ts
 activateSignal: async req => {
   if (!signalCatalog.has(req.signal_agent_segment_id)) {
-    throw new AdcpError('SIGNAL_NOT_FOUND', {
-      recovery: 'terminal',
+    throw new AdcpError('REFERENCE_NOT_FOUND', {
       message: `Unknown signal: ${req.signal_agent_segment_id}`,
       field: 'signal_agent_segment_id',
     });

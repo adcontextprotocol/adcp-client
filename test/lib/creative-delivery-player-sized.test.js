@@ -607,3 +607,491 @@ test('AdCP 3.1 player-sized delivery over the official in-process MCP transport'
     await server.close();
   }
 });
+
+// #3506: on the legacy wire one creative carries one format_id across every
+// assigned package, so the SDK reconciles the per-package refs by constraint
+// satisfaction. A package that leaves width/height or duration unstated accepts
+// the value another package states; only two different stated values conflict.
+describe('legacy format_id reconciliation by constraint satisfaction (#3506)', () => {
+  function vastPackage(package_id, constraints = {}, params = { ...constraints }) {
+    const ref = { agent_url: OWNER, id: 'video_vast', ...constraints };
+    return {
+      package_id,
+      product_id: `product-${package_id}`,
+      format_ids: [ref],
+      format_options: [
+        {
+          format_kind: 'video_vast',
+          format_option_id: `video_vast-${JSON.stringify(constraints)}`,
+          params,
+          v1_format_ref: [ref],
+        },
+      ],
+    };
+  }
+  function unsizedCreative() {
+    return {
+      creative_id: 'c30',
+      name: 'VAST creative',
+      format_kind: 'video_vast',
+      assets: { vast_tag: { asset_type: 'vast', delivery_type: 'url', url: 'https://ads.example/tag.xml' } },
+    };
+  }
+  function twelvePackages() {
+    return [
+      ...Array.from({ length: 9 }, (_, index) => vastPackage(`sized-${index}`, { width: 940, height: 529 })),
+      ...Array.from({ length: 3 }, (_, index) => vastPackage(`unsized-${index}`)),
+    ];
+  }
+  function assign(selectors, value = unsizedCreative()) {
+    return request(
+      value,
+      selectors.map(selector => selector.package_id)
+    );
+  }
+
+  test('issue repro: nine 940x529 packages and three unsized packages share the sized ref', () => {
+    const selectors = twelvePackages();
+    const input = assign(selectors);
+    const before = structuredClone({ input, selectors });
+    const expected = { agent_url: OWNER, id: 'video_vast', width: 940, height: 529 };
+    for (const ordered of [selectors, [...selectors].reverse()]) {
+      const output = project(input, ordered);
+      assert.equal(output.creatives.length, 1);
+      assert.deepEqual(output.creatives[0].format_id, expected);
+      assert.deepEqual(output.assignments, input.assignments);
+    }
+    assert.deepEqual({ input, selectors }, before);
+  });
+
+  test('the deprecated playerSizedRefs opt-in also uses the size the declarations state', () => {
+    // Beta.5 omitted the size here; the sized ref satisfies every package, so it wins.
+    const selectors = twelvePackages();
+    assert.deepEqual(project(assign(selectors), selectors, OPT_IN).creatives[0].format_id, {
+      agent_url: OWNER,
+      id: 'video_vast',
+      width: 940,
+      height: 529,
+    });
+  });
+
+  test('an already-legacy unsized creative takes the size one package states', () => {
+    const selectors = twelvePackages();
+    const value = unsizedCreative();
+    delete value.format_kind;
+    value.format_id = { agent_url: OWNER, id: 'video_vast' };
+    assert.deepEqual(project(assign(selectors, value), selectors).creatives[0].format_id, {
+      agent_url: OWNER,
+      id: 'video_vast',
+      width: 940,
+      height: 529,
+    });
+  });
+
+  test('two packages stating different sizes of one format are refused, naming the size conflict', () => {
+    const selectors = [
+      vastPackage('A', { width: 940, height: 529 }),
+      vastPackage('B', { width: 640, height: 360 }),
+      vastPackage('C'),
+    ];
+    const error = refusal(assign(selectors), selectors);
+    assert.deepEqual(error.details.conflicts, [
+      {
+        constraint: 'size',
+        values: [
+          { value: '940x529', package_ids: ['A'] },
+          { value: '640x360', package_ids: ['B'] },
+        ],
+      },
+    ]);
+    assert.match(error.message, /size \(width, height\) conflicts: 940x529 for "A" vs 640x360 for "B"/);
+    assert.deepEqual(
+      error.details.package_refs.map(entry => entry.package_id),
+      ['A', 'B', 'C']
+    );
+  });
+
+  test('a size stated only in a package declaration still conflicts with another stated size', () => {
+    const selectors = [
+      vastPackage('A', { width: 940, height: 529 }),
+      vastPackage('B', {}, { width: 640, height: 360 }),
+    ];
+    const error = refusal(assign(selectors), selectors);
+    assert.equal(error.details.conflicts[0].constraint, 'size');
+    assert.deepEqual(error.details.conflicts[0].values.at(-1), { value: '640x360', package_ids: ['B'] });
+  });
+
+  test('a declaration listing several sizes accepts only a listed size', () => {
+    const listed = {
+      sizes: [
+        { width: 640, height: 360 },
+        { width: 1280, height: 720 },
+      ],
+    };
+    const accepting = [vastPackage('A', { width: 640, height: 360 }), vastPackage('B', {}, listed)];
+    assert.equal(project(assign(accepting), accepting).creatives[0].format_id.width, 640);
+    const refusing = [vastPackage('A', { width: 940, height: 529 }), vastPackage('B', {}, listed)];
+    const error = refusal(assign(refusing), refusing);
+    assert.deepEqual(error.details.conflicts, [
+      {
+        constraint: 'size',
+        values: [
+          { value: '940x529', package_ids: ['A'] },
+          { value: 'one of 640x360, 1280x720', package_ids: ['B'] },
+        ],
+      },
+    ]);
+  });
+
+  test('every package unsized: the shared ref omits size', () => {
+    const identical = [vastPackage('A'), vastPackage('B'), vastPackage('C')];
+    assert.deepEqual(project(assign(identical), identical).creatives[0].format_id, {
+      agent_url: OWNER,
+      id: 'video_vast',
+    });
+    // Refs that differ only because one states a duration still leave size unstated.
+    const timed = [vastPackage('A', { duration_ms: 30000 }), vastPackage('B'), vastPackage('C')];
+    const ref = project(assign(timed), timed).creatives[0].format_id;
+    assert.deepEqual(ref, { agent_url: OWNER, id: 'video_vast', duration_ms: 30000 });
+    assert.equal(Object.hasOwn(ref, 'width') || Object.hasOwn(ref, 'height'), false);
+  });
+
+  test('duration follows the same rule as size', () => {
+    const combined = [
+      vastPackage('A', { width: 940, height: 529 }),
+      vastPackage('B', { duration_ms: 30000 }),
+      vastPackage('C'),
+    ];
+    assert.deepEqual(project(assign(combined), combined).creatives[0].format_id, {
+      agent_url: OWNER,
+      id: 'video_vast',
+      width: 940,
+      height: 529,
+      duration_ms: 30000,
+    });
+    const conflicting = [
+      vastPackage('A', { width: 940, height: 529, duration_ms: 15000 }),
+      vastPackage('B', { duration_ms: 30000 }),
+    ];
+    const error = refusal(assign(conflicting), conflicting);
+    assert.deepEqual(error.details.conflicts, [
+      {
+        constraint: 'duration',
+        values: [
+          { value: '15000', package_ids: ['A'] },
+          { value: '30000', package_ids: ['B'] },
+        ],
+      },
+    ]);
+    assert.match(error.message, /duration \(duration_ms\) conflicts: 15000 for "A" vs 30000 for "B"/);
+  });
+
+  test('a declared duration range must accept the duration another package states', () => {
+    const accepting = [
+      vastPackage('A', { duration_ms: 30000 }),
+      vastPackage('B', {}, { duration_ms_range: [15000, 30000] }),
+    ];
+    assert.equal(project(assign(accepting), accepting).creatives[0].format_id.duration_ms, 30000);
+    const refusing = [
+      vastPackage('A', { duration_ms: 30000 }),
+      vastPackage('B', {}, { duration_ms_range: [1000, 5000] }),
+    ];
+    const error = refusal(assign(refusing), refusing);
+    assert.deepEqual(error.details.conflicts, [
+      {
+        constraint: 'duration',
+        values: [
+          { value: '30000', package_ids: ['A'] },
+          { value: 'duration_ms_range [1000,5000]', package_ids: ['B'] },
+        ],
+      },
+    ]);
+  });
+
+  // A package whose resolved ref is silent but whose declarations state
+  // several values accepts exactly those values, not anything. Here package A
+  // declares two canonical options with no legacy route, and a creative
+  // resolver maps it to the unsized video_vast ref.
+  function multiDeclarationPackage(package_id, params) {
+    return {
+      package_id,
+      product_id: `product-${package_id}`,
+      format_options: params.map((value, index) => ({
+        format_kind: 'video_vast',
+        format_option_id: `${package_id}-option-${index}`,
+        params: value,
+      })),
+    };
+  }
+  const silentRefForA = context =>
+    context.source === 'creative' && context.selector.package_id === 'A'
+      ? { agent_url: OWNER, id: 'video_vast' }
+      : undefined;
+
+  test('a package declaring several sizes accepts only one of them', () => {
+    const declared = [
+      { width: 640, height: 360 },
+      { width: 940, height: 529 },
+    ];
+    const refusing = [multiDeclarationPackage('A', declared), vastPackage('B', { width: 300, height: 250 })];
+    let error;
+    try {
+      project(assign(refusing), refusing, undefined, 'legacy', silentRefForA);
+    } catch (cause) {
+      error = cause;
+    }
+    assert.ok(error instanceof CreativeFormatProjectionError);
+    assert.deepEqual(error.details.conflicts, [
+      {
+        constraint: 'size',
+        values: [
+          { value: 'one of 640x360, 940x529', package_ids: ['A'] },
+          { value: '300x250', package_ids: ['B'] },
+        ],
+      },
+    ]);
+    assert.match(error.message, /size \(width, height\) conflicts: one of 640x360, 940x529 for "A" vs 300x250 for "B"/);
+    const accepting = [multiDeclarationPackage('A', declared), vastPackage('B', { width: 940, height: 529 })];
+    assert.deepEqual(project(assign(accepting), accepting, undefined, 'legacy', silentRefForA).creatives[0].format_id, {
+      agent_url: OWNER,
+      id: 'video_vast',
+      width: 940,
+      height: 529,
+    });
+  });
+
+  test('a package declaring several durations accepts only one of them', () => {
+    const declared = [{ duration_ms_exact: 15000 }, { duration_ms_exact: 30000 }];
+    const refusing = [multiDeclarationPackage('A', declared), vastPackage('B', { duration_ms: 45000 })];
+    let error;
+    try {
+      project(assign(refusing), refusing, undefined, 'legacy', silentRefForA);
+    } catch (cause) {
+      error = cause;
+    }
+    assert.ok(error instanceof CreativeFormatProjectionError);
+    assert.deepEqual(error.details.conflicts, [
+      {
+        constraint: 'duration',
+        values: [
+          { value: 'one of 15000, 30000', package_ids: ['A'] },
+          { value: '45000', package_ids: ['B'] },
+        ],
+      },
+    ]);
+    const accepting = [multiDeclarationPackage('A', declared), vastPackage('B', { duration_ms: 30000 })];
+    assert.deepEqual(project(assign(accepting), accepting, undefined, 'legacy', silentRefForA).creatives[0].format_id, {
+      agent_url: OWNER,
+      id: 'video_vast',
+      duration_ms: 30000,
+    });
+  });
+
+  test('declaration-only values never flow into the shared ref', () => {
+    // Both refs are silent on size; A's declarations state sizes. The refs
+    // differ only in duration, so the shared ref keeps size unstated.
+    const selectors = [vastPackage('A', {}, { width: 940, height: 529 }), vastPackage('B', { duration_ms: 30000 })];
+    assert.deepEqual(project(assign(selectors), selectors).creatives[0].format_id, {
+      agent_url: OWNER,
+      id: 'video_vast',
+      duration_ms: 30000,
+    });
+    // When no ref states a size, declarations that disagree only among
+    // themselves do not refuse: the shared ref omits size, which is what each
+    // package resolved to alone (the same result identical refs give).
+    const disjoint = [
+      vastPackage('A', {}, { width: 940, height: 529 }),
+      vastPackage('B', { duration_ms: 30000 }, { width: 640, height: 360, duration_ms: 30000 }),
+    ];
+    assert.deepEqual(project(assign(disjoint), disjoint).creatives[0].format_id, {
+      agent_url: OWNER,
+      id: 'video_vast',
+      duration_ms: 30000,
+    });
+  });
+
+  function bothOrders(selectors, check) {
+    for (const ordered of [selectors, [...selectors].reverse()]) check(ordered);
+  }
+  function conflictsFor(selectors, options) {
+    return refusal(assign(selectors), selectors, options).details.conflicts;
+  }
+
+  for (const [params, label] of [
+    [{ max_width: 640, max_height: 360 }, 'max_width 640, max_height 360'],
+    [{ min_width: 1280 }, 'min_width 1280'],
+    [{ orientation: 'vertical' }, 'orientation "vertical"'],
+    [{ aspect_ratio: '9:16' }, 'aspect_ratio "9:16"'],
+  ]) {
+    test(`a silent-ref package declaring ${label} refuses another package's 940x529, in either order`, () => {
+      bothOrders([vastPackage('A', { width: 940, height: 529 }), vastPackage('B', {}, params)], selectors => {
+        const conflicts = conflictsFor(selectors);
+        assert.equal(conflicts.length, 1);
+        assert.equal(conflicts[0].constraint, 'size');
+        assert.deepEqual(
+          [...conflicts[0].values].sort((a, b) => a.value.localeCompare(b.value)),
+          [
+            { value: '940x529', package_ids: ['A'] },
+            { value: label, package_ids: ['B'] },
+          ].sort((a, b) => a.value.localeCompare(b.value))
+        );
+      });
+    });
+  }
+
+  test('the deprecated opt-in still refuses a size outside a declared bound, as beta.5 did', () => {
+    bothOrders([vastPackage('A', { width: 940, height: 529 }), vastPackage('B', {}, { max_width: 640 })], selectors => {
+      assert.equal(conflictsFor(selectors, OPT_IN)[0].constraint, 'size');
+    });
+  });
+
+  for (const params of [
+    { max_width: 1280 },
+    { min_width: 640, max_height: 720 },
+    { orientation: 'horizontal' },
+    { aspect_ratio: '16:9' },
+    { width: 940 },
+    { sizes: [{ width: 640, height: 360 }, { min_width: 900 }] },
+  ]) {
+    test(`a silent-ref package declaring ${JSON.stringify(params)} accepts 940x529, in either order`, () => {
+      bothOrders([vastPackage('A', { width: 940, height: 529 }), vastPackage('B', {}, params)], selectors => {
+        assert.deepEqual(project(assign(selectors), selectors).creatives[0].format_id, {
+          agent_url: OWNER,
+          id: 'video_vast',
+          width: 940,
+          height: 529,
+        });
+      });
+    });
+  }
+
+  for (const params of [
+    { orientation: 'diagonal' },
+    { aspect_ratio: 'wide' },
+    { max_width: -1 },
+    { min_aspect_ratio: '1:1' },
+    { sizes: [{ width: 940, height: 529 }, {}] },
+  ]) {
+    test(`a size constraint the SDK does not understand fails closed: ${JSON.stringify(params)}`, () => {
+      const selectors = [vastPackage('A', { width: 940, height: 529 }), vastPackage('B', {}, params)];
+      const conflicts = conflictsFor(selectors);
+      assert.equal(conflicts[0].constraint, 'size');
+      assert.match(conflicts[0].values.find(entry => entry.package_ids.includes('B')).value, /not understood/);
+    });
+  }
+
+  test('a package never refuses its own resolved ref, even when its declarations state more', () => {
+    // A's ref states only width; its declaration adds a height.
+    const selectors = [
+      vastPackage('A', { width: 940 }, { width: 940, height: 529 }),
+      vastPackage('B', { duration_ms: 30000 }),
+    ];
+    bothOrders(selectors, ordered => {
+      assert.deepEqual(project(assign(ordered), ordered).creatives[0].format_id, {
+        agent_url: OWNER,
+        id: 'video_vast',
+        width: 940,
+        duration_ms: 30000,
+      });
+    });
+  });
+
+  test('declaration-only disagreement does not depend on unrelated open packages', () => {
+    const sizes = [
+      vastPackage('A', {}, { width: 940, height: 529 }),
+      vastPackage('B', {}, { width: 640, height: 360 }),
+    ];
+    assert.deepEqual(project(assign(sizes), sizes).creatives[0].format_id, { agent_url: OWNER, id: 'video_vast' });
+    bothOrders([...sizes, vastPackage('C', { duration_ms: 30000 })], selectors => {
+      assert.deepEqual(project(assign(selectors), selectors).creatives[0].format_id, {
+        agent_url: OWNER,
+        id: 'video_vast',
+        duration_ms: 30000,
+      });
+    });
+    for (const declared of [{ duration_ms_exact: 15000 }, { duration_ms_range: [5000, 15000] }]) {
+      const durations = [vastPackage('A', {}, declared), vastPackage('B', {}, { duration_ms_exact: 30000 })];
+      assert.deepEqual(project(assign(durations), durations).creatives[0].format_id, {
+        agent_url: OWNER,
+        id: 'video_vast',
+      });
+      bothOrders([...durations, vastPackage('C', { width: 940, height: 529 })], selectors => {
+        assert.deepEqual(project(assign(selectors), selectors).creatives[0].format_id, {
+          agent_url: OWNER,
+          id: 'video_vast',
+          width: 940,
+          height: 529,
+        });
+      });
+    }
+  });
+
+  test('duration ranges may leave one side unbounded', () => {
+    const selectors = [
+      vastPackage('A', { duration_ms: 30000 }),
+      vastPackage('B', {}, { duration_ms_range: [null, 60000] }),
+    ];
+    assert.equal(project(assign(selectors), selectors).creatives[0].format_id.duration_ms, 30000);
+    selectors[1].format_options[0].params.duration_ms_range = [45000, null];
+    assert.equal(conflictsFor(selectors)[0].constraint, 'duration');
+  });
+
+  test('unknown wire mode sends the legacy projection, so it reconciles the same way', () => {
+    const selectors = twelvePackages();
+    assert.deepEqual(project(assign(selectors), selectors, undefined, 'unknown').creatives[0].format_id, {
+      agent_url: OWNER,
+      id: 'video_vast',
+      width: 940,
+      height: 529,
+    });
+  });
+
+  test('setting the deprecated playerSizedRefs warns once at runtime', () => {
+    const { resetWarnings } = require('../../dist/lib/utils/deprecation.js');
+    const original = console.warn;
+    const warnings = [];
+    console.warn = message => warnings.push(String(message));
+    try {
+      resetWarnings();
+      const selectors = twelvePackages();
+      project(assign(selectors), selectors);
+      assert.equal(warnings.length, 0);
+      project(assign(selectors), selectors, OPT_IN);
+      project(assign(selectors), selectors, OPT_IN, 'canonical');
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0], /playerSizedRefs is deprecated and will be removed in 18\.0\.0/);
+      assert.match(warnings[0], /adcp\/issues\/8583/);
+    } finally {
+      console.warn = original;
+      resetWarnings();
+    }
+  });
+
+  test('different format identities are refused, naming the format_id conflict', () => {
+    const selectors = [vastPackage('A', { width: 940, height: 529 }), vastPackage('B')];
+    selectors[1].format_ids[0].id = 'seller_vast';
+    selectors[1].format_options[0].v1_format_ref[0].id = 'seller_vast';
+    const error = refusal(assign(selectors), selectors);
+    assert.equal(error.details.conflicts[0].constraint, 'format_id');
+    assert.match(error.message, /format identity \(agent_url, id\) conflicts/);
+  });
+
+  test('canonical wire is untouched by legacy reconciliation', () => {
+    const selectors = twelvePackages();
+    const input = assign(selectors);
+    const before = structuredClone(input);
+    for (const policy of [undefined, OPT_IN]) {
+      const output = project(input, selectors, policy, 'canonical');
+      assert.equal(output, input);
+      assert.deepEqual(output, before);
+      assert.equal(output.creatives[0].format_id, undefined);
+      assert.equal(output.creatives[0].format_kind, 'video_vast');
+    }
+    // Conflicting legacy sizes are not a canonical-wire concern either.
+    const conflicting = [vastPackage('A', { width: 940, height: 529 }), vastPackage('B', { width: 640, height: 360 })];
+    assert.equal(
+      project(assign(conflicting), conflicting, undefined, 'canonical').creatives[0].format_kind,
+      'video_vast'
+    );
+  });
+});
