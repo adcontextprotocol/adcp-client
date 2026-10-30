@@ -139,9 +139,9 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // and declaration budgets are unchanged and still pass.
 // AdCP 3.3 reporting subscriptions (#3504) add the subscription calendar,
 // selection, coverage, capability and engine modules plus the principal
-// subscription runtime. Measured 26,382,521 packed bytes; allow about 40 KB
-// above that for compressor variance.
-const MAX_PACKED_TARBALL_BYTES = 26_420_000;
+// subscription runtime. Measured 26,423,860 packed bytes after merging main;
+// allow about 40 KB above that for compressor variance.
+const MAX_PACKED_TARBALL_BYTES = 26_465_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 144 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
