@@ -61,9 +61,9 @@ test('the official MCP client reaches both 3.3 discovery tools without provision
   assert.ok(!stableCapabilities.structuredContent.media_buy?.lifecycle_tools?.includes('list_proposals'));
   const betaCapabilities = await seller.dispatchTestRequest({
     method: 'tools/call',
-    params: { name: 'get_adcp_capabilities', arguments: { adcp_version: '3.3-beta.1' } },
+    params: { name: 'get_adcp_capabilities', arguments: { adcp_version: '3.3-beta.2' } },
   });
-  assert.ok(betaCapabilities.structuredContent.adcp.supported_versions.includes('3.3-beta.1'));
+  assert.ok(betaCapabilities.structuredContent.adcp.supported_versions.includes('3.3-beta.2'));
   assert.ok(betaCapabilities.structuredContent.adcp.supported_versions.includes('3.2'));
   for (const feature of [
     'media_buy.collection_catalog',
@@ -213,18 +213,18 @@ test('a preview buyer discovers a stable seller without sending an unsupported p
   assert.equal(requests[0].adcp_version, '3.2');
 });
 
-test('a buyer pinned to the 3.3.0-beta.1 bundle negotiates 3.3-beta.1 and sends typed request_account changes', async t => {
+test('a buyer pinned to the 3.3.0-beta.2 bundle negotiates 3.3-beta.2 and sends typed request_account changes', async t => {
   const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
   const { z } = require('zod');
-  assert.equal(ADCP_VERSION, '3.3.0-beta.1');
+  assert.equal(ADCP_VERSION, '3.3.0-beta.2');
   const requests = [];
-  const seller = new McpServer({ name: 'AdCP 3.3 beta.1 seller', version: '1.0.0' });
+  const seller = new McpServer({ name: 'AdCP 3.3 beta.2 seller', version: '1.0.0' });
   seller.registerTool('get_adcp_capabilities', { inputSchema: { adcp_version: z.string().optional() } }, async () => ({
     content: [],
     structuredContent: {
       status: 'completed',
-      adcp_version: '3.3-beta.1',
-      adcp: { major_versions: [3], supported_versions: ['3.2', '3.3-beta.1'], idempotency: { supported: false } },
+      adcp_version: '3.3-beta.2',
+      adcp: { major_versions: [3], supported_versions: ['3.2', '3.3-beta.2'], idempotency: { supported: false } },
       supported_protocols: ['media_buy'],
       experimental_features: ['account.requests'],
       account: { supported_billing: ['operator'] },
@@ -248,7 +248,7 @@ test('a buyer pinned to the 3.3.0-beta.1 bundle negotiates 3.3-beta.1 and sends 
         content: [],
         structuredContent: {
           status: 'completed',
-          adcp_version: '3.3-beta.1',
+          adcp_version: '3.3-beta.2',
           request: {
             request_id: 'areq_change_1',
             state: 'in_review',
@@ -262,7 +262,7 @@ test('a buyer pinned to the 3.3.0-beta.1 bundle negotiates 3.3-beta.1 and sends 
     }
   );
   const [buyerTransport, sellerTransport] = InMemoryTransport.createLinkedPair();
-  const mcp = new Client({ name: 'SDK 17 beta.1 buyer', version: '1.0.0' });
+  const mcp = new Client({ name: 'SDK 17 beta.2 buyer', version: '1.0.0' });
   await seller.connect(sellerTransport);
   await mcp.connect(buyerTransport);
   t.after(async () => {
@@ -274,16 +274,16 @@ test('a buyer pinned to the 3.3.0-beta.1 bundle negotiates 3.3-beta.1 and sends 
   assert.equal(result.success, true, result.error);
   assert.equal(result.data.request.state, 'in_review');
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].adcp_version, '3.3-beta.1');
+  assert.equal(requests[0].adcp_version, '3.3-beta.2');
   assert.match(requests[0].idempotency_key, /^[A-Za-z0-9_.:-]{16,255}$/);
   assert.equal(requests[0].account_id, 'acct_renault_fr');
 });
 
-test('createAdcpServer serves raw request_account and media-buy issue handlers on the 3.3-beta.1 route', async t => {
+test('createAdcpServer serves raw request_account and media-buy issue handlers on the 3.3-beta.2 route', async t => {
   const received = [];
   const seller = createAdcpServer({
     stateStore: new InMemoryStateStore(),
-    name: 'AdCP 3.3 beta.1 account requests',
+    name: 'AdCP 3.3 beta.2 account requests',
     version: '1.0.0',
     adcpVersion: ADCP_VERSION,
     validation: { requests: 'strict', responses: 'strict' },
@@ -308,7 +308,7 @@ test('createAdcpServer serves raw request_account and media-buy issue handlers o
   t.after(() => seller.close());
   const listed = await seller.dispatchTestRequest({
     method: 'tools/list',
-    params: { _meta: { adcp_version: '3.3-beta.1' } },
+    params: { _meta: { adcp_version: '3.3-beta.2' } },
   });
   assert.ok(listed.tools.some(tool => tool.name === 'request_account'));
   const stable = await seller.dispatchTestRequest({ method: 'tools/list', params: { _meta: { adcp_version: '3.2' } } });
@@ -319,7 +319,7 @@ test('createAdcpServer serves raw request_account and media-buy issue handlers o
       params: {
         name: 'request_account',
         arguments: {
-          adcp_version: '3.3-beta.1',
+          adcp_version: '3.3-beta.2',
           idempotency_key: 'request-account-change-0001',
           account_id: 'acct_1',
           revision: 2,
@@ -333,4 +333,77 @@ test('createAdcpServer serves raw request_account and media-buy issue handlers o
   assert.equal(response.structuredContent.request.resolution, 'updated');
   assert.equal(received.length, 1);
   assert.equal(received[0].account_id, 'acct_1');
+});
+
+test('beta.2: a change request may opt in to a separate account and resolve as created', async t => {
+  const received = [];
+  const seller = createAdcpServer({
+    stateStore: new InMemoryStateStore(),
+    name: 'AdCP 3.3 beta.2 separate account',
+    version: '1.0.0',
+    adcpVersion: ADCP_VERSION,
+    validation: { requests: 'strict', responses: 'strict' },
+    resolveAccount: async ref => (ref.account_id === 'acct_1' ? { id: ref.account_id } : null),
+    accounts: {
+      requestAccount: async params => {
+        received.push(params);
+        return {
+          request: {
+            request_id: 'areq_2',
+            state: 'resolved',
+            // A different account_id than requested.account_id: a separate account.
+            account_id: 'acct_2',
+            resolution: 'created',
+            requested: { account_id: params.account_id, payment_terms: params.payment_terms },
+            created_at: '2026-10-30T00:00:00Z',
+            updated_at: '2026-10-30T00:00:00Z',
+          },
+        };
+      },
+    },
+  });
+  t.after(() => seller.close());
+  const response = await seller.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'request_account',
+        arguments: {
+          adcp_version: '3.3-beta.2',
+          idempotency_key: 'request-account-change-0002',
+          account_id: 'acct_1',
+          revision: 2,
+          payment_terms: 'net_30',
+          allow_separate_account: true,
+        },
+      },
+    },
+    { authInfo: { token: 'test-buyer', clientId: 'buyer', scopes: [] } }
+  );
+  assert.equal(response.isError, undefined, JSON.stringify(response));
+  assert.equal(response.structuredContent.request.resolution, 'created');
+  assert.equal(response.structuredContent.request.account_id, 'acct_2');
+  assert.equal(received[0].allow_separate_account, true);
+});
+
+test('beta.2: ACCOUNT_CHANGE_REQUIRES_NEW_ACCOUNT is a correctable standard error code', () => {
+  const { STANDARD_ERROR_CODES } = require('../../dist/lib/index.js');
+  assert.equal(STANDARD_ERROR_CODES.ACCOUNT_CHANGE_REQUIRES_NEW_ACCOUNT.recovery, 'correctable');
+  assert.equal(STANDARD_ERROR_CODES.REFERENCE_DEFINITION_CHANGED, undefined, 'withdrawn by adcp#8537');
+});
+
+test('beta.2: a seller still on 3.3-beta.1 negotiates a stable release, not the preview', () => {
+  const { negotiateAdcpRelease } = require('../../dist/lib/adapters/version/index.js');
+  const caps = supportedVersions => ({
+    version: 'v3',
+    majorVersions: [3],
+    supportedVersions,
+    protocols: ['media_buy'],
+    features: {},
+    extensions: [],
+  });
+  assert.equal(negotiateAdcpRelease(ADCP_VERSION, caps(['3.2', '3.3-beta.2'])).version, ADCP_VERSION);
+  const older = negotiateAdcpRelease(ADCP_VERSION, caps(['3.2', '3.3-beta.1']));
+  assert.equal(older.version, '3.2');
+  assert.equal(older.downgraded, true);
 });
