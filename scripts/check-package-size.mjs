@@ -185,7 +185,12 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // internal module/declaration sets (+8 files).
 // Operation resolution over A2A and the grader's A2A vector module add two
 // internal dual-format runtime/declaration module sets (+8 files).
+// Signed AdCP 3.1.31 adds canonical custom/experimental and product-filter
+// storyboards in both protocols/ and domains/ (+6 files). Compared with the
+// signed 3.1.30 inventory: no removals or duplicate version roots; the complete
+// package measures 6,588 files. Every byte budget stays fixed.
 const MAX_PACKED_FILE_COUNT =
+  6 +
   6_135 +
   34 +
   4 +

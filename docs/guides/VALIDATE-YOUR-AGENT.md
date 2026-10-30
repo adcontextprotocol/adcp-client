@@ -69,7 +69,7 @@ npx @adcp/sdk@15.9 storyboard run http://localhost:3001/mcp sales-guaranteed --a
 npx @adcp/sdk@15.9 storyboard run http://localhost:3001/mcp --tracks core,products --auth $TOKEN
 
 # Pin a specific compliance cache/spec line
-npx @adcp/sdk@15.9 storyboard run http://localhost:3001/mcp --compliance-version 3.1.29 --auth $TOKEN
+npx @adcp/sdk@15.9 storyboard run http://localhost:3001/mcp --compliance-version 3.1.31 --auth $TOKEN
 
 # Ad-hoc YAML (new storyboards under development)
 npx @adcp/sdk@15.9 storyboard run http://localhost:3001/mcp --file ./my-wip.yaml --auth $TOKEN

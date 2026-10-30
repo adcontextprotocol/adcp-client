@@ -4,11 +4,13 @@ How `@adcp/sdk` keeps a buyer pinned to one AdCP major version while talking to 
 
 > **Audience: SDK contributors.** Adopters consuming the SDK don't need any of this — they call `agent.getProducts(...)` and the wire shape they get against a v2.5 seller is the same v3 surface they get against a v3 seller. This playbook is for the people maintaining that property.
 
+The maintained AdCP 3.1 corpus is now the signed 3.1.31 release. It includes auction-compatible seller fixtures, capability-aware optional reporting and format coverage, strict currency/metric filters, and complete product-page collection. Upgrade explicit `--compliance-version` pins to `3.1.31` to use these fixture fixes; the primary protocol pin is unchanged.
+
 ## The shape of the problem
 
 The SDK speaks one primary AdCP version on its public surface — `ADCP_VERSION`
-in `src/lib/version.ts`. The current SDK pin is `3.2.5`; maintained side
-bundles cover `3.1.29`, `3.0.25`, and v2.5. Every buyer-facing type, helper,
+in `src/lib/version.ts`. The current SDK pin is `3.2.8`; maintained side
+bundles cover `3.1.31`, `3.0.25`, and v2.5. Every buyer-facing type, helper,
 and example assumes the primary pin.
 
 In the field, sellers don't all upgrade in lockstep. There are still v2.5 sellers (Wonderstruck, others) and there will be v4 sellers before every v3 seller has finished migrating. The SDK has to:
@@ -27,8 +29,8 @@ There is exactly one active legacy compat layer at a time today: `legacy/v2-5/`.
 
 ```
 schemas/cache/
-├── 3.2.5/       # current SDK pin
-├── 3.1.29/       # maintained stable side bundle
+├── 3.2.8/       # current SDK pin
+├── 3.1.31/       # maintained stable side bundle
 ├── 3.0.25/       # maintained stable side bundle
 ├── latest/       # symlink to the primary pin
 └── v2.5/         # legacy bundle, pulled from 2.5-maintenance HEAD
