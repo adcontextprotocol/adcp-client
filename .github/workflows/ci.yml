@@ -708,6 +708,7 @@ jobs:
         with:
           name: sdk-performance-${{ github.run_id }}
           path: .context/performance.json
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
           overwrite: true
