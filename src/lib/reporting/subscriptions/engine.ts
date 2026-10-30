@@ -120,6 +120,27 @@ export interface ReportingSubscriptionAccountFactV1 {
   pending_action?: PendingAction;
   /** When `pending_action` began. Defaults to the account's coverage start when first observed. */
   pending_action_since?: string;
+  /**
+   * The grant's `authorization.allowed_tasks`, as `list_accounts` shows it, when the seller
+   * advertises it. Coverage requires `get_reporting_status`; absent means the grant restricts no
+   * task. See {@link reportingSubscriptionCoverageGrantedV1}.
+   */
+  allowed_tasks?: readonly string[];
+}
+
+/**
+ * Whether a grant authorizes reporting subscription coverage (`core/reporting-subscription.json`
+ * `x-adcp-validation.coverage`): "the caller is authorized for it: its authorization object, when
+ * advertised, lists get_reporting_status in allowed_tasks". A grant that restricts no task counts
+ * as all tasks. A reduced reconciliation grant (for example `get_reporting_status`,
+ * `sync_reporting_receipts` and `sync_reporting_status`) keeps coverage; dropping
+ * `get_reporting_status` from the grant ends it at that instant, as a loss of authority with an
+ * `accounts_unauthorized` entry. The one place this rule lives.
+ */
+export function reportingSubscriptionCoverageGrantedV1(grant: {
+  allowed_tasks?: readonly string[] | undefined;
+}): boolean {
+  return grant.allowed_tasks === undefined || grant.allowed_tasks.includes('get_reporting_status');
 }
 
 /** One of the caller's own `sync_accounts` `reporting_delivery_configs` entries, for precedence. */
@@ -716,7 +737,11 @@ export function createReportingSubscriptionEngineV1(
         ...(cursor !== undefined ? { cursor } : {}),
         ...(signal ? { signal } : {}),
       });
-      for (const account of result.accounts) accounts.set(account.account_id, account);
+      // A grant without get_reporting_status does not authorize subscription coverage; the
+      // account then reads exactly as if it had left the list.
+      for (const account of result.accounts) {
+        if (reportingSubscriptionCoverageGrantedV1(account)) accounts.set(account.account_id, account);
+      }
       if (result.nextCursor === undefined) return accounts;
       if (result.nextCursor === cursor) throw new Error('listAuthorizedAccounts returned a repeating cursor');
       cursor = result.nextCursor;
@@ -1484,7 +1509,12 @@ export function createReportingSubscriptionEngineV1(
       statusRetentionDays: options.statusRetentionDays,
     }),
     reconcile: (principal, reconcileOptions) => reconcile(principal, reconcileOptions ?? {}),
-    async authorizationChanged(principal, accountId, change) {
+    async authorizationChanged(principal, accountId, reported) {
+      // A grant that leaves out get_reporting_status is no authority for coverage.
+      const change =
+        reported.authorized && reported.account && !reportingSubscriptionCoverageGrantedV1(reported.account)
+          ? { ...reported, authorized: false }
+          : reported;
       const at = parseInstant(change.at, 'authorizationChanged at');
       let changed = false;
       await mutate<ReportingSubscriptionEngineAccountDocumentV1 & Record<string, unknown>>(

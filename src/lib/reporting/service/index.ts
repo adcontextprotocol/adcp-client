@@ -2051,8 +2051,10 @@ export {
   type ReportingSubscriptionEngineV1,
   type ReportingSubscriptionExclusionReasonV1,
   type ReportingSubscriptionExclusionV1,
+  type ReportingSubscriptionFrozenOwedSetV1,
   type ReportingSubscriptionReadbackOverflowV1,
   type ReportingSubscriptionReconcileResultV1,
+  reportingSubscriptionCoverageGrantedV1,
 } from '../subscriptions/engine';
 export {
   DEFAULT_REPORTING_SUBSCRIPTION_ENGINE_COLLECTION,

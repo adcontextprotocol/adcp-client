@@ -635,7 +635,11 @@ export async function createReportingManagedDeliveryRuntime<
       : {}),
   });
   const syncReportingReceipts = reconciledBilling
-    ? createSyncReportingReceiptsHandler(options.store, options.resolveConsumerId!)
+    ? options.resolveSubscriptionPrincipal
+      ? createSyncReportingReceiptsHandler<TContext>(options.store, options.resolveConsumerId!, undefined, {
+          resolveSubscriptionPrincipal: options.resolveSubscriptionPrincipal,
+        })
+      : createSyncReportingReceiptsHandler(options.store, options.resolveConsumerId!)
     : undefined;
   const reportingDeliveryCapabilities: ReportingDeliveryCapabilities = {
     supported: true,

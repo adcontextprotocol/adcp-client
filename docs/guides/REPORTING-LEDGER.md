@@ -325,6 +325,29 @@ runtime as `reportingSubscriptions.principal`. The engine must have
 - Status subscribers with a `principal`, and notification activity, carry a
   subscription obligation's transitions only to its owner.
 
+**Receipts, statuses and grants.** A subscription obligation accepts
+`sync_reporting_receipts` and `sync_reporting_status` only from its owning
+principal (`reportingSubscriptionReceiptAdmissibleV1`, the one rule). Account
+obligations stay open to every consumer of the account. This applies on top of
+the host's own account resolution and `allowed_tasks` checks.
+
+Access means access: there is no post-revocation window. Once authority for an
+account ends, the account is unknown to every task, receipts and statuses
+included. A seller that wants a buyer to finish reconciling keeps a reduced
+grant instead of revoking, for example `allowed_tasks` limited to
+`get_reporting_status`, `sync_reporting_receipts` and `sync_reporting_status`.
+
+The engine counts an account as covered only while its grant lists
+`get_reporting_status` (`reportingSubscriptionCoverageGrantedV1`; a grant with
+no task restriction counts as all tasks). Report the grant's
+`authorization.allowed_tasks` on each `listAuthorizedAccounts` fact, or on
+`authorizationChanged`. Dropping `get_reporting_status` ends coverage at that
+instant, as a loss of authority with an `accounts_unauthorized` entry.
+
+The obligated-consumer roster stays host-owned, because it is keyed by consumer
+id. Include a subscription obligation's owner in it while the owner's grant
+lists the receipt task.
+
 ## Advanced: assemble the primitives directly
 
 ```ts

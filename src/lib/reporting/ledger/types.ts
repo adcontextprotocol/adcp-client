@@ -234,6 +234,18 @@ export interface ReportingLedgerSubscriptionPrincipalV1 {
   principalId: string;
 }
 
+/**
+ * Who may file a receipt or status against an obligation (experimental, AdCP 3.3): the
+ * authenticated principal. Subscription obligations accept only their owner; account obligations
+ * accept any consumer of the account, as before. It applies on top of the host's ordinary account
+ * resolution and `allowed_tasks` checks, never instead of them.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export interface ReportingSubscriptionReceiptAdmissionV1 {
+  principal: ReportingLedgerSubscriptionPrincipalV1;
+}
+
 export interface ReportingLedgerObligationV1 {
   reporting_obligation_id: string;
   configurationId: string;

@@ -12,6 +12,7 @@ import {
   isReportingReceiptEvidence,
   isReportingRowStoreError,
   REPORTING_LEDGER_AUTHORITY,
+  reportingSubscriptionReceiptAdmissibleV1,
 } from '@adcp/sdk/reporting/ledger';
 import type { ReportingPgPool } from '../postgres';
 import type {
@@ -22,6 +23,7 @@ import type {
   ReportingLedgerTransactionV1,
   ReportingManagedDeliveryBindingV1,
   ReportingLedgerStore,
+  ReportingLedgerSubscriptionV1,
   ReportingReceiptBatchEntryV1,
   ReportingReceiptBatchInputV1,
 } from '@adcp/sdk/reporting/ledger';
@@ -469,6 +471,8 @@ export interface PostgresReportingManagedDeliveryStoreOptions {
 export class PostgresReportingManagedDeliveryStore
   implements ReportingManagedDeliveryStore, ReportingObjectWriteStoreV1, ReportingObjectWriteAuthorityStoreV1
 {
+  /** Enforces `ReportingReceiptBatchInputV1.admission` (experimental, AdCP 3.3). */
+  readonly receiptAdmission = true as const;
   private readonly evidenceRetentionDays: number | undefined;
   private readonly statusRetentionDays: number | undefined;
   private readonly pendingRecoveryWindowSeconds: number | undefined;
@@ -2849,6 +2853,17 @@ export class PostgresReportingManagedDeliveryStore
     )?.reporting_receipt_id;
     const evidence = await this.loadReceiptEvidence(client, batch.account_id, entry);
     if (!evidence) return failed(entry.receipt.reporting_receipt_id);
+    // A subscription obligation accepts only its owner. A refusal reads exactly like an unknown
+    // reference.
+    if (
+      batch.admission &&
+      !reportingSubscriptionReceiptAdmissibleV1({
+        obligation: evidence.subscription ? { subscription: evidence.subscription } : {},
+        admission: batch.admission,
+      })
+    ) {
+      return failed(entry.receipt.reporting_receipt_id);
+    }
     const matches =
       entry.kind === 'revision'
         ? receiptEvidenceMatches(entry.receipt, evidence.materialization!)
@@ -2927,11 +2942,19 @@ export class PostgresReportingManagedDeliveryStore
     subjectId: string;
     materialization?: ReportingMaterialization;
     adjustment?: ReportingLedgerAdjustmentV1;
+    /** The owning subscription of the obligation, when it is a subscription obligation. */
+    subscription?: ReportingLedgerSubscriptionV1;
   } | null> {
     if (entry.kind === 'revision') {
       const receipt = entry.receipt;
-      const result = await client.query<QueryRow & { materialization: ReportingMaterialization }>(
-        `SELECT materialization.data AS materialization
+      const result = await client.query<
+        QueryRow & {
+          materialization: ReportingMaterialization;
+          subscription: ReportingLedgerSubscriptionV1 | null;
+        }
+      >(
+        `SELECT materialization.data AS materialization,
+                obligation.data->'subscription' AS subscription
            FROM adcp_reporting_materializations materialization
            JOIN adcp_reporting_managed_bindings binding ON binding.configuration_id = materialization.configuration_id
            JOIN adcp_reporting_destination_authorizations authz
@@ -2958,13 +2981,24 @@ export class PostgresReportingManagedDeliveryStore
           receipt.reporting_obligation_id,
         ]
       );
-      return result.rows[0]
-        ? { subjectId: receipt.reporting_revision_id, materialization: result.rows[0].materialization }
+      const row = result.rows[0];
+      return row
+        ? {
+            subjectId: receipt.reporting_revision_id,
+            materialization: row.materialization,
+            ...(row.subscription ? { subscription: row.subscription } : {}),
+          }
         : null;
     }
     const receipt = entry.receipt;
-    const result = await client.query<QueryRow & { adjustment: ReportingLedgerAdjustmentV1 }>(
-      `SELECT adjustment.data AS adjustment
+    const result = await client.query<
+      QueryRow & {
+        adjustment: ReportingLedgerAdjustmentV1;
+        subscription: ReportingLedgerSubscriptionV1 | null;
+      }
+    >(
+      `SELECT adjustment.data AS adjustment,
+              obligation.data->'subscription' AS subscription
          FROM adcp_reporting_adjustments adjustment
          JOIN adcp_reporting_revisions revision ON revision.revision_id = adjustment.adjusts_revision_id
          JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = adjustment.obligation_id
@@ -2981,8 +3015,13 @@ export class PostgresReportingManagedDeliveryStore
           AND binding.data->>'reconciliation_mode' = 'consumer_receipt'`,
       [accountId, receipt.reporting_adjustment_id, receipt.adjusts_reporting_revision_id]
     );
-    return result.rows[0]
-      ? { subjectId: receipt.reporting_adjustment_id, adjustment: result.rows[0].adjustment }
+    const row = result.rows[0];
+    return row
+      ? {
+          subjectId: receipt.reporting_adjustment_id,
+          adjustment: row.adjustment,
+          ...(row.subscription ? { subscription: row.subscription } : {}),
+        }
       : null;
   }
 
