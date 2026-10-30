@@ -139,9 +139,9 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // and declaration budgets are unchanged and still pass.
 // AdCP 3.3 reporting subscriptions (#3504) add the subscription calendar,
 // selection, coverage, capability and engine modules plus the principal
-// subscription runtime. Measured 26,382,521 packed bytes; allow about 40 KB
-// above that for compressor variance.
-const MAX_PACKED_TARBALL_BYTES = 26_420_000;
+// subscription runtime. Measured 26,423,860 packed bytes after merging main;
+// allow about 40 KB above that for compressor variance.
+const MAX_PACKED_TARBALL_BYTES = 26_465_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 144 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -304,6 +304,7 @@ const MAX_PACKED_FILE_COUNT =
   13 + // Property-list identifier, server, and certification modules (three dual-format sets) and adoption guide.
   4 + // Property-list reference probe (one dual-format runtime/declaration module set).
   5 + // Creative build probe: one dual-format runtime/declaration module (+4) and one guide (+1).
+  8 + // Discovery currency and required-metric invariants (two dual-format runtime/declaration sets).
   1840 + // SDK 17: 3.3 schemas/compliance, per-tool type entrypoints and migration/release notes.
   20 + // Reporting subscription calendar, selection, coverage, capabilities and index (five dual-format sets).
   8 + // Reporting subscription engine and principal subscription runtime (two dual-format sets).

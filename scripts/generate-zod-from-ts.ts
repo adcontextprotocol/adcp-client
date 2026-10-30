@@ -4879,8 +4879,12 @@ function stripNeverUnionIntersections(content: string): string {
         i++;
       }
 
-      // Only strip if the union contains z.never() (discriminated constraints)
-      if (andContent.includes('z.never()')) {
+      // Only strip if the union contains z.never() (discriminated constraints).
+      // A named base (`ProtocolEnvelopeSchema.and(z.union([...]))`, the shape
+      // the composed task-response envelope produces) is not a redundant
+      // constraint: the union carries the whole response body, so keep it.
+      const namedBase = /[A-Za-z0-9_]Schema$/.test(result);
+      if (andContent.includes('z.never()') && !namedBase) {
         // Strip entire .and(z.union([...]))
       } else {
         // Keep it — not a discriminated union constraint

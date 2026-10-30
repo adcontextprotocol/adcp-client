@@ -705,14 +705,14 @@ describe('schema-driven validation', () => {
     // Belt-and-braces guard: when a flat-tree tool compile fires
     // `ensureCoreLoaded` FIRST, every non-tool fragment across the whole
     // schema tree gets pre-registered raw. That pre-registration must not
-    // accidentally short-circuit the later `relaxResponseRoot` compile for
+    // accidentally short-circuit the later envelope-aware compile for
     // a bundled tool whose response has root-level `additionalProperties:
     // false`. Path-normalization drift between `fileIndex.values()` (the
     // tool-file skip list) and `walkJsonFiles` (the registration walker)
     // would cause this silent strict-mode flip — `create_property_list`
     // below would start rejecting `replayed` at the root instead of
     // passing it through as envelope.
-    test('flat-tree compile before bundled compile still preserves relaxResponseRoot', () => {
+    test('flat-tree compile before bundled compile still accepts envelope fields at the root', () => {
       _resetValidationLoader();
       // Compile a flat-tree-only tool first; this fires `ensureCoreLoaded`
       // and walks every non-bundled directory.
@@ -728,7 +728,7 @@ describe('schema-driven validation', () => {
       assert.deepStrictEqual(
         rootAdditional,
         [],
-        `relaxResponseRoot must still apply after ensureCoreLoaded pre-registers fragments: ${JSON.stringify(rootAdditional)}`
+        `envelope fields must still be accepted at the root after ensureCoreLoaded pre-registers fragments: ${JSON.stringify(rootAdditional)}`
       );
     });
   });

@@ -120,8 +120,8 @@ export function getToolResponseSchema(
 /**
  * Compile the exact protocol-authored JSON Schema for offline conformance and
  * CI validation. Unlike the SDK's live-wire response validation, this does not
- * apply `relaxResponseRoot`, so extensible envelope fields can be rejected when
- * the selected normative schema does not declare them.
+ * widen closed roots for envelope fields, so a release whose normative schema
+ * does not declare an envelope field rejects it.
  *
  * This validator is not intended for validating live wire responses, whose
  * transport envelope can carry extension fields. It uses `allErrors: true`, so
