@@ -3,6 +3,7 @@ import { lookup as dnsLookup } from 'dns/promises';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { sharedLegacyJsonSchemaValidator } from '../../../protocols/mcp-schema-validator';
 import { isAlwaysBlocked, isPrivateIp } from '../probes';
 import type { SignedHttpRequest } from './builder';
 
@@ -327,7 +328,10 @@ export async function initializeMcpSession(
     },
     fetch: lifecycleFetch,
   });
-  const client = new Client({ name: 'adcp-signing-grader', version: '1.0.0' });
+  const client = new Client(
+    { name: 'adcp-signing-grader', version: '1.0.0' },
+    { jsonSchemaValidator: sharedLegacyJsonSchemaValidator }
+  );
   try {
     await client.connect(transport);
     return {
