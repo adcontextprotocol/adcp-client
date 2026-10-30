@@ -30,6 +30,7 @@
  * State is sharded: one document per principal for `max_accounts` slots, and one per
  * (principal, account), each updated with compare-and-set.
  */
+import { canonicalize } from '../../utils/jcs';
 import { ReportingSubscriptionEngineError } from '../../errors';
 import { PlatformConfigError } from '../../server/decisioning/runtime/validate-platform';
 import type { PendingAction } from '../../types/core.generated';
@@ -531,6 +532,16 @@ export interface ReportingSubscriptionFrozenOwedSetV1 {
   }>;
 }
 
+/**
+ * The latest `period_end` among periods. Frozen periods are not stored in end order: they are
+ * appended across reconciles, and offerings with different calendars interleave.
+ */
+function latestPeriodEnd(periods: ReadonlyArray<{ period_end: string }>): string {
+  let latest = periods[0]!;
+  for (const period of periods) if (Date.parse(period.period_end) > Date.parse(latest.period_end)) latest = period;
+  return latest.period_end;
+}
+
 function iso(value: number): string {
   return new Date(value).toISOString();
 }
@@ -788,7 +799,17 @@ export function createReportingSubscriptionEngineV1(
       changed = true;
     }
     for (const item of desired) {
-      if (open.some(entry => entry.key === item.key)) continue;
+      const current = open.find(entry => entry.key === item.key);
+      if (current) {
+        // An open condition keeps its from. When the host's pending action changed (a new url,
+        // message or reason), the entry carries the current one, and the change notifies.
+        if (canonicalize(current.pending_action ?? null) !== canonicalize(item.pending_action ?? null)) {
+          if (item.pending_action === undefined) delete current.pending_action;
+          else current.pending_action = structuredClone(item.pending_action);
+          changed = true;
+        }
+        continue;
+      }
       const { at, openCalendars, ...rest } = item;
       target.exclusions.push({ ...rest, from: iso(openCalendars ? cutoverInstant(openCalendars, at) : at) });
       changed = true;
@@ -1509,7 +1530,7 @@ export function createReportingSubscriptionEngineV1(
         ...(calendar
           ? { last_owed_period_end: iso(calendar.floor(unauthorizedAt)) }
           : withheld.length
-            ? { last_owed_period_end: withheld.at(-1)!.period_end }
+            ? { last_owed_period_end: latestPeriodEnd(withheld) }
             : {}),
         withheld_period_count: count,
       });

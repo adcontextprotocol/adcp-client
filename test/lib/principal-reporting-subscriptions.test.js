@@ -486,10 +486,41 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
       }
     }
     assert.equal(replacements.length, 1, 'resends, dry runs, other subscriptions and an active toggle reuse version 1');
-    // The spec's other trigger: the flag changing to true (an omitted flag is its default, false).
+    // An omitted flag is not a change: buyers don't re-assert a one-shot action on every write.
     assert.equal((await sync(lifecycle, { reporting_subscriptions: [subscription(), other] })).result.kind, 'applied');
     assert.equal((await sync(lifecycle, full({}, [other]))).result.kind, 'applied');
-    assert.equal(replacements.length, 2, 'a flag change to true applies again');
+    assert.equal(replacements.length, 1, 'an omission then true does not reapply');
+    // The spec's other trigger: the flag explicitly turning false, then true again.
+    const off = { reporting_subscriptions: [subscription({ replace_account_configs: false }), other] };
+    assert.equal((await sync(lifecycle, off)).result.kind, 'applied');
+    assert.equal((await sync(lifecycle, full({}, [other]))).result.kind, 'applied');
+    assert.equal(replacements.length, 2, 'an explicit false then true applies again');
+  });
+
+  test('an omitted flag after a failed replace_account_configs hook keeps the pending retry', async () => {
+    let failures = 1;
+    const calls = [];
+    const { lifecycle } = setup({
+      support: {
+        replaceAccountConfigs: input => {
+          calls.push(input);
+          if (failures-- > 0) throw new Error('host temporarily unavailable');
+        },
+      },
+    });
+    await assert.rejects(
+      sync(lifecycle, {
+        reporting_destinations: [destination()],
+        reporting_subscriptions: [subscription({ replace_account_configs: true })],
+      }),
+      /temporarily unavailable/
+    );
+    // The next write omits the one-shot flag: the committed application is still owed.
+    await sync(lifecycle, { reporting_subscriptions: [subscription()] });
+    assert.equal(calls.length, 2, 'the next write retries the pending replacement');
+    const { history } = await lifecycle.listReportingSubscriptions(SCOPE);
+    assert.equal(history[0].replacePending, undefined);
+    assert.equal(history[0].replaceAppliedVersion, 1);
   });
 
   test('a failed replace_account_configs hook is retried, and marked applied only after it succeeds', async () => {

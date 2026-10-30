@@ -354,8 +354,10 @@ export function applyReportingSubscriptions(
         feedPurpose: subscription.selector.feed_purpose,
         at: now,
       };
-    } else if (subscription.replace_account_configs !== true) {
-      // A flag turned off and on again applies again.
+    } else if (subscription.replace_account_configs === false) {
+      // Only an explicit false turns the flag off, so a later true applies again. An omitted flag
+      // leaves both untouched: buyers don't re-assert a one-shot action on every write, and a
+      // committed application whose hook failed must keep being retried.
       delete history.replaceAppliedVersion;
       delete history.replacePending;
     }
