@@ -148,6 +148,22 @@ test('test timing history is restored read-only in shards and saved only after s
   assert.equal(workflow.permissions.contents, 'read');
 });
 
+test('performance guards are required and their hidden report is uploaded even after failure', () => {
+  const lane = jobs['unit-tests-slow'];
+  const performanceIndex = lane.steps.findIndex(step => step.name === 'Run performance regression checks');
+  const performance = lane.steps[performanceIndex];
+  assert.ok(performanceIndex > lane.steps.findIndex(step => step.name === 'Verify and extract library output'));
+  assert.ok(performanceIndex < lane.steps.findIndex(step => step.name === 'Run slow unit tests'));
+  assert.equal(performance.run, 'npm run test:performance -- --output .context/performance.json');
+  assert.equal(performance.if, undefined);
+  assert.equal(performance['continue-on-error'], undefined);
+  assert.ok(jobs['unit-tests'].needs.includes('unit-tests-slow'));
+  const upload = lane.steps.find(step => step.name === 'Upload performance metrics');
+  assert.equal(upload.if, 'always()');
+  assert.equal(upload.with.path, '.context/performance.json', 'only the report is uploaded, not the scratch directory');
+  assert.equal(upload.with['include-hidden-files'], true, 'upload-artifact otherwise excludes .context');
+});
+
 test('all package validation gates remain required after leaving the producer', () => {
   const steps = jobs['library-checks'].steps;
   for (const command of [

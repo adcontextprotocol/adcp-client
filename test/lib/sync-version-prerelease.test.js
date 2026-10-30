@@ -9,7 +9,7 @@ for (const prerelease of ['3.3.0-beta.0', '3.3.0-beta.2', '3.3.0-rc.1']) {
     const versions = buildCompatibleVersions(prerelease);
     assert.ok(versions.includes(prerelease));
     assert.ok(versions.includes(prerelease.replace('3.3.0-', '3.3-')));
-    for (const stable of ['3.0.25', '3.1.29', '3.2.1', '3.2.6', '3.2.7', '3.2']) {
+    for (const stable of ['3.0.25', '3.1.29', '3.1.30', '3.1.31', '3.2.1', '3.2.6', '3.2.7', '3.2']) {
       assert.ok(versions.includes(stable), stable);
     }
     assert.equal(versions.includes('3.2.0'), false);

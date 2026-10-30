@@ -29,7 +29,7 @@ function maxFunctionBytes(validate) {
   return largest;
 }
 const MAX_FUNCTION_BYTES = 1024 * 1024;
-for (const version of [...new Set(['3.0.25', '3.1.29', '3.2.7', require('../../dist/lib/version').ADCP_VERSION])]) {
+for (const version of [...new Set(['3.0.25', '3.1.31', '3.2.7', require('../../dist/lib/version').ADCP_VERSION])]) {
   test(`${version}: primary tool validators compile as bounded referenced functions`, () => {
     for (const [tool, direction] of [
       ['get_products', 'request'],

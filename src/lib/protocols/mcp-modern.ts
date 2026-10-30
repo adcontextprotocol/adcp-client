@@ -30,6 +30,7 @@ import {
   registerMCPConnectionScopePending,
 } from './mcp-scope';
 import { terminateSessionBestEffort } from './session-termination';
+import { sharedModernJsonSchemaValidator } from './mcp-schema-validator';
 import {
   applyMCPCallHeaders,
   isCorrelationHeader,
@@ -417,6 +418,7 @@ async function createNegotiatedClient(
   const client = new Client(
     { name: 'AdCP-Client', version: '1.0.0' },
     {
+      jsonSchemaValidator: sharedModernJsonSchemaValidator,
       versionNegotiation: {
         mode: 'auto',
         ...(clientRequestTimeoutMs !== undefined && { probe: { timeoutMs: clientRequestTimeoutMs } }),
