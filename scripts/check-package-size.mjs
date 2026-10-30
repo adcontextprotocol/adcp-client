@@ -147,6 +147,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // ledger producer, coverage, handlers and status ingest, and then the service,
 // engine and managed delivery, and adds no module file. Allow about 55 KB above
 // the runtime's budget for them. Other budgets stay fixed.
+// AdCP 3.3.0-beta.2 (#3541) and the creative-delivery legacy-ref
+// reconciliation (#3510) landed together. CI measured 26,363,856 packed bytes
+// after #3510 and 26,369,089 after #3541 on main, about 9 KB over the beta.1
+// cap. Allow about 50 KB of compressor variance; the unpacked, file-count,
+// bundled-schema and declaration budgets are unchanged and still pass.
 // The reporting-subscription DX slices (#3504: the advanced subpath, wind-down grant, typed errors with
 // their TSDoc, and the canonical-vector fixes) plus main through #3510 measured 26,520,756 packed bytes;
 // allow about 40 KB above that for compressor variance. Other budgets stay fixed.
