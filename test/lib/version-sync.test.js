@@ -32,6 +32,7 @@ test('3.3 beta pin retains stable 3.2 aliases and advertises only its exact prev
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.1.24'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.1.28'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.1.29'));
+  assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.1.31'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2.1'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2.2'));
   assert.ok(COMPATIBLE_ADCP_VERSIONS.includes('3.2.3'));

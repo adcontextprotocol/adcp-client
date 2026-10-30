@@ -1,5 +1,24 @@
 # Changelog
 
+## 17.0.0-beta.9
+
+### Patch Changes
+
+- 5a8a707: Retain storyboards with authored root capability predicates when capability-driven
+  single-agent selection finds none of their required tools. The runner evaluates those predicates
+  using the selected agent's validated discovery before tool and runtime requirements,
+  so unrelated protocols receive the existing applicability skip and claimants retain
+  missing required evidence. Keep legacy ungated selection, explicit-ID execution,
+  routed-topology selection, routing failures and version-scoped bundle grading unchanged.
+- 5954e88: Keep standalone legacy fixture steps untested when their required controller is unavailable, instead of sending unseeded product IDs or failing contribution assertions whose setup never ran. Preserve independent capability discovery, intrinsic tool and contract skips, explicit external-state opt-out, and the separate prepared-state and declarative fixture-resolution paths.
+- 5801442: Refresh the maintained AdCP 3.1 schema and compliance bundle to signed release 3.1.31. This ships auction-compatible seller fixtures, capability-aware optional metric and format coverage, currency filtering that supports account conversion, and complete paginated product checks. The primary AdCP protocol pin remains unchanged.
+
+## 17.0.0-beta.8
+
+### Patch Changes
+
+- 0a109a9: Prepare missing storyboard package bids for every auction-capable pricing model, including CPC offers in later packages, while preserving authored bids and bidding policies. Keep fixed and contingent pricing free of synthetic bids, preserve zero floors, and prevent rounding below sub-cent floors.
+
 ## 17.0.0-beta.7
 
 ### Minor Changes

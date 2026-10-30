@@ -204,8 +204,12 @@ describe(
         const result = await runStoryboardStep(fixture.url, sb, 'create_media_buy', {
           protocol: 'a2a',
           allow_http: true,
+          // This adapter provisions the fixture product and async responder
+          // directly; no controller preflight is needed for this wire check.
+          skip_controller_seeding: true,
           invariants: DISABLE_DEFAULT_INVARIANTS,
         });
+        assert.notStrictEqual(result.skipped, true, 'externally prepared fixture must execute');
         // Step pass overall (the upstream YAML's MCP-level checks +
         // the new A2A wire-shape check both succeed against the
         // conformant adapter).
@@ -345,9 +349,12 @@ describe(
         const result = await runStoryboardStep(baseUrl, sb, 'create_media_buy', {
           protocol: 'a2a',
           allow_http: true,
+          // The hand-written responder supplies the fixture behavior directly.
+          skip_controller_seeding: true,
           invariants: DISABLE_DEFAULT_INVARIANTS,
           validation: { responses: 'strict' },
         });
+        assert.notStrictEqual(result.skipped, true, 'regressed fixture must execute and expose its wire failure');
         const a2aCheck = result.validations.find(v => v.check === 'a2a_submitted_artifact');
         assert.ok(a2aCheck, 'a2a_submitted_artifact ran');
         assert.strictEqual(a2aCheck.passed, false, 'pre-#899 shape must fail the wire-shape guard');

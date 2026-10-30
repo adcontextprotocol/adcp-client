@@ -241,6 +241,7 @@ const MAX_UNPACKED_PACKAGE_BYTES = 144 * 1024 * 1024;
 // Operation resolution over A2A and the grader's A2A vector module add two
 // internal dual-format runtime/declaration module sets (+8 files).
 const MAX_PACKED_FILE_COUNT =
+  4 + // Shared MCP schema validator (CJS, ESM, and both declaration formats).
   6_135 +
   34 +
   4 +
