@@ -5,7 +5,7 @@
 import { CoverageInputError } from '../../errors';
 import type { ReportingSubscription, ReportingSubscriptionState } from '../../types/core.generated';
 import type { ExpectedReportingCoverage, ExpectedReportingPeriod } from '../reconciliation';
-import type { ExpectedSubscriptionObligationV1, ReportingSubscriptionVersionRecordV1 } from './coverage';
+import type { OwedSubscriptionObligationV1, ReportingSubscriptionVersionRecordV1 } from './coverage';
 import type { ReportingSubscriptionDestinationMethodV1 } from './selection';
 
 /**
@@ -13,7 +13,7 @@ import type { ReportingSubscriptionDestinationMethodV1 } from './selection';
  * configuration comes from the buyer's own records when given, else from the readback: the
  * current `configuration`, and `prior_versions[].configuration` from sellers on
  * 3.3.0-beta.2 or later (adcp#8588). Pass the readback's `inactive_intervals` to
- * `expectedSubscriptionPeriods` unchanged.
+ * `owedSubscriptionPeriodsV1` unchanged.
  *
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
@@ -93,7 +93,7 @@ export type SubscriptionExpectationTemplateV1 = Omit<
 };
 
 /**
- * Turn owed obligations (from `groupExpectedSubscriptionPeriodsV1`) into the consumer
+ * Turn owed obligations (from `groupOwedSubscriptionPeriodsV1`) into the consumer
  * runtime's expected periods. `template` supplies the pins coverage cannot know: the
  * reporting profile and schema pins of the offering, the destination, verification profile,
  * finality and reconciliation mode, and the coverage the obligation must report (its package
@@ -101,9 +101,9 @@ export type SubscriptionExpectationTemplateV1 = Omit<
  *
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
-export function subscriptionExpectedReportingPeriodsV1(
-  obligations: readonly ExpectedSubscriptionObligationV1[],
-  template: (obligation: ExpectedSubscriptionObligationV1) => SubscriptionExpectationTemplateV1
+export function toExpectedReportingPeriodsV1(
+  obligations: readonly OwedSubscriptionObligationV1[],
+  template: (obligation: OwedSubscriptionObligationV1) => SubscriptionExpectationTemplateV1
 ): ExpectedReportingPeriod[] {
   return obligations.map(obligation => {
     const pins = template(obligation);
@@ -125,3 +125,9 @@ export function subscriptionExpectedReportingPeriodsV1(
     } as ExpectedReportingPeriod;
   });
 }
+
+/**
+ * @deprecated Renamed {@link toExpectedReportingPeriodsV1}. It keeps "expected" because it feeds the
+ * consumer runtime's `ExpectedReportingPeriod`. This alias is removed in a later beta.
+ */
+export const subscriptionExpectedReportingPeriodsV1 = toExpectedReportingPeriodsV1;

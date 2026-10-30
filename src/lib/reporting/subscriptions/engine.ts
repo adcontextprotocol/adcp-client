@@ -20,7 +20,7 @@
  * - `accounts_with_exceptions[]` and `accounts_unauthorized[]` in the principal readback,
  *   with `principal.changed` (`reporting_subscription_changed`) on every change;
  * - the owed periods and obligations. Each reconcile freezes the periods that elapsed since
- *   the previous one, computed with the same pure {@link expectedSubscriptionPeriods} rule a
+ *   the previous one, computed with the same pure {@link owedSubscriptionPeriodsV1} rule a
  *   buyer runs. Frozen periods are never recomputed, so later host changes (a withdrawn
  *   offering, an edited product) or pruning retained exceptions never change an elapsed
  *   owed set. Reconcile at least once per period so each period is frozen with the facts in
@@ -36,7 +36,7 @@ import type { PendingAction } from '../../types/core.generated';
 import type {
   PrincipalLifecycleRuntimeSubscriptions,
   PrincipalReportingSubscriptionState,
-  PrincipalStoreScope,
+  PrincipalRef,
 } from '../../server/principal/types';
 import type {
   StoredReportingSubscriptionHistory,
@@ -49,10 +49,10 @@ import type {
   ReportingSubscriptionTimezoneCutoverV1,
 } from './wire';
 import {
-  expectedSubscriptionPeriods,
-  groupExpectedSubscriptionPeriodsV1,
-  type ExpectedSubscriptionObligationV1,
-  type ExpectedSubscriptionPeriodV1,
+  owedSubscriptionPeriodsV1,
+  groupOwedSubscriptionPeriodsV1,
+  type OwedSubscriptionObligationV1,
+  type OwedSubscriptionPeriodV1,
   type ReportingSubscriptionBuyV1,
   type ReportingSubscriptionGrantV1,
   type ReportingSubscriptionVersionRecordV1,
@@ -197,7 +197,7 @@ export interface ReportingSubscriptionAccountConfigV1 {
 export interface ReportingSubscriptionEngineHooksV1 {
   /** The accounts this principal may read now, paged. The host owns the answer; the SDK never infers it. */
   listAuthorizedAccounts(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     options: { cursor?: string; signal?: AbortSignal }
   ): MaybePromise<{ accounts: ReportingSubscriptionAccountFactV1[]; nextCursor?: string }>;
   /**
@@ -206,7 +206,7 @@ export interface ReportingSubscriptionEngineHooksV1 {
    * update changed them.
    */
   listAccountBuys(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     accountId: string,
     options: { signal?: AbortSignal }
   ): MaybePromise<ReportingSubscriptionBuyV1[]>;
@@ -216,18 +216,15 @@ export interface ReportingSubscriptionEngineHooksV1 {
    * The answer is clamped to `[lastObservedAt, observedAt]`.
    */
   resolveRevocationInstant(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     accountId: string,
     input: { lastObservedAt?: string; observedAt: string }
   ): MaybePromise<string>;
   /** Whether an owed period was delivered, for `withheld_period_count`. */
-  isPeriodDelivered(
-    principal: Readonly<PrincipalStoreScope>,
-    period: ExpectedSubscriptionPeriodV1
-  ): MaybePromise<boolean>;
+  isPeriodDelivered(principal: Readonly<PrincipalRef>, period: OwedSubscriptionPeriodV1): MaybePromise<boolean>;
   /** The principal's own account-level configurations on the account. Omit when the seller lists sync_principal alone. */
   listAccountDeliveryConfigs?(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     accountId: string,
     options: { signal?: AbortSignal }
   ): MaybePromise<ReportingSubscriptionAccountConfigV1[]>;
@@ -240,7 +237,7 @@ interface StoredExclusion extends ReportingSubscriptionExclusionV1 {
 }
 
 /** An owed period frozen when it was resolved. */
-type FrozenPeriod = Omit<ExpectedSubscriptionPeriodV1, 'subscription_id' | 'account_id'>;
+type FrozenPeriod = Omit<OwedSubscriptionPeriodV1, 'subscription_id' | 'account_id'>;
 
 interface AccountState {
   operator?: string;
@@ -319,19 +316,19 @@ export interface ReportingSubscriptionEngineStateV1 {
 export interface ReportingSubscriptionEngineStoreV1 {
   readonly durability: 'process-local' | 'durable';
   get(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     key: string
   ): MaybePromise<{ value: Record<string, unknown>; revision: string } | null>;
   put(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     key: string,
     value: Record<string, unknown>,
     expectedRevision: string | null
   ): MaybePromise<{ outcome: 'applied'; revision: string } | { outcome: 'conflict' }>;
   /** Every key stored for the principal. */
-  listKeys(principal: Readonly<PrincipalStoreScope>): MaybePromise<string[]>;
+  listKeys(principal: Readonly<PrincipalRef>): MaybePromise<string[]>;
   /** Principals with engine state in one tenant. */
-  listPrincipals(tenantId: string): MaybePromise<PrincipalStoreScope[]>;
+  listPrincipals(tenantId: string): MaybePromise<PrincipalRef[]>;
 }
 
 /**
@@ -342,10 +339,9 @@ export interface ReportingSubscriptionEngineStoreV1 {
 export function createInMemoryReportingSubscriptionEngineStoreV1(): ReportingSubscriptionEngineStoreV1 {
   const rows = new Map<
     string,
-    { scope: PrincipalStoreScope; key: string; value: Record<string, unknown>; revision: number }
+    { scope: PrincipalRef; key: string; value: Record<string, unknown>; revision: number }
   >();
-  const id = (scope: Readonly<PrincipalStoreScope>, key: string) =>
-    JSON.stringify([scope.tenantId, scope.principalId, key]);
+  const id = (scope: Readonly<PrincipalRef>, key: string) => JSON.stringify([scope.tenantId, scope.principalId, key]);
   return {
     durability: 'process-local',
     get(scope, key) {
@@ -370,7 +366,7 @@ export function createInMemoryReportingSubscriptionEngineStoreV1(): ReportingSub
         .map(row => row.key);
     },
     listPrincipals(tenantId) {
-      const seen = new Map<string, PrincipalStoreScope>();
+      const seen = new Map<string, PrincipalRef>();
       for (const row of rows.values()) {
         if (row.scope.tenantId === tenantId) seen.set(row.scope.principalId, { ...row.scope });
       }
@@ -403,7 +399,7 @@ export interface CreateReportingSubscriptionEngineOptionsV1 {
    * silently cut one; every other subscription and all coverage state are still updated.
    */
   onReadbackOverflow?: (
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     overflow: readonly ReportingSubscriptionReadbackOverflowV1[]
   ) => void | Promise<void>;
 }
@@ -441,12 +437,12 @@ export interface ReportingSubscriptionEngineV1 {
    * change took effect, freeze newly elapsed owed periods, and publish the readback.
    */
   reconcile(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     options?: { signal?: AbortSignal }
   ): Promise<ReportingSubscriptionReconcileResultV1>;
   /** Record an authority change the host observed, at the instant it happened. */
   authorizationChanged(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     accountId: string,
     change: {
       authorized: boolean;
@@ -461,7 +457,7 @@ export interface ReportingSubscriptionEngineV1 {
    * account the principal is not currently authorized for: caller isolation is unchanged.
    */
   subscriptionCoverage(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     accountId: string
   ): Promise<ReportingSubscriptionCoverageEntryV1[]>;
   /**
@@ -469,16 +465,16 @@ export interface ReportingSubscriptionEngineV1 {
    * the frozen elapsed periods, plus any that elapsed since the last reconcile.
    */
   owedPeriods(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     accountId: string,
     options?: { now?: string; signal?: AbortSignal }
-  ): Promise<ExpectedSubscriptionPeriodV1[]>;
+  ): Promise<OwedSubscriptionPeriodV1[]>;
   /** The owed periods grouped into obligations with frozen `media_buy_ids`. */
   owedObligations(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     accountId: string,
     options?: { now?: string; signal?: AbortSignal }
-  ): Promise<ExpectedSubscriptionObligationV1[]>;
+  ): Promise<OwedSubscriptionObligationV1[]>;
   /**
    * The frozen owed set of each of this principal's subscriptions on each account the engine holds
    * (or on one account), for writing into the reporting ledger: obligations whose periods ended at
@@ -487,26 +483,31 @@ export interface ReportingSubscriptionEngineV1 {
    * already pruned it.
    */
   frozenOwedSets(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     options?: { accountId?: string }
   ): Promise<ReportingSubscriptionFrozenOwedSetV1[]>;
-  /** Principals with engine state in one tenant, from the engine store. */
-  listPrincipals(tenantId: string): Promise<PrincipalStoreScope[]>;
+  /**
+   * Principals with engine state in one tenant, from the engine store: what the service's
+   * `listSubscriptionPrincipals` returns across your tenants.
+   */
+  listSubscriptionPrincipals(tenantId: string): Promise<PrincipalRef[]>;
+  /** @deprecated Renamed {@link ReportingSubscriptionEngineV1.listSubscriptionPrincipals}. This alias is removed in a later beta. */
+  listPrincipals(tenantId: string): Promise<PrincipalRef[]>;
   /**
    * Whether the principal is authorized for the account now: its latest grant has no
    * `unauthorized_at`. Every managed delivery of a subscription obligation re-checks it.
    */
-  isAuthorized(principal: Readonly<PrincipalStoreScope>, accountId: string): Promise<boolean>;
+  isAuthorized(principal: Readonly<PrincipalRef>, accountId: string): Promise<boolean>;
   /** Principals in the tenant whose active subscriptions cover the account: the consumers that owe receipts. */
-  receiptRoster(tenantId: string, accountId: string): Promise<PrincipalStoreScope[]>;
+  receiptRoster(tenantId: string, accountId: string): Promise<PrincipalRef[]>;
   /**
    * Accounts whose own `reporting_delivery_configs` a `replace_account_configs` application
    * may deactivate: in scope and served, resolving an offering, and not excluded,
    * `capacity` or `offering_unsupported`. For the principal runtime's `replaceAccountConfigs` hook.
    */
-  replaceAccountConfigTargets(principal: Readonly<PrincipalStoreScope>, subscriptionId: string): Promise<string[]>;
+  replaceAccountConfigTargets(principal: Readonly<PrincipalRef>, subscriptionId: string): Promise<string[]>;
   /** The engine state, for inspection and conformance. */
-  inspect(principal: Readonly<PrincipalStoreScope>): Promise<ReportingSubscriptionEngineStateV1>;
+  inspect(principal: Readonly<PrincipalRef>): Promise<ReportingSubscriptionEngineStateV1>;
 }
 
 /**
@@ -520,7 +521,7 @@ export interface ReportingSubscriptionFrozenOwedSetV1 {
   /** The frozen horizon: every owed period ending at or before it is resolved and never recomputed. */
   through: string;
   /** Frozen obligations, grouped as the ledger carries them, with byte-sorted `media_buy_ids`. */
-  obligations: ExpectedSubscriptionObligationV1[];
+  obligations: OwedSubscriptionObligationV1[];
   /** Every retained version's configuration, oldest first, for the generation each obligation names. */
   versions: Array<{
     subscription_version: number;
@@ -634,7 +635,7 @@ export function createReportingSubscriptionEngineV1(
   }
 
   async function mutate<T extends Record<string, unknown>>(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     key: string,
     empty: () => T,
     change: (value: T) => void | Promise<void>
@@ -653,14 +654,14 @@ export function createReportingSubscriptionEngineV1(
   }
 
   async function readAccount(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     accountId: string
   ): Promise<ReportingSubscriptionEngineAccountDocumentV1 | undefined> {
     const row = await store.get(principal, `${ACCOUNT_KEY_PREFIX}${accountId}`);
     return row ? (structuredClone(row.value) as unknown as ReportingSubscriptionEngineAccountDocumentV1) : undefined;
   }
 
-  async function accountIds(principal: Readonly<PrincipalStoreScope>): Promise<string[]> {
+  async function accountIds(principal: Readonly<PrincipalRef>): Promise<string[]> {
     return (await store.listKeys(principal))
       .filter(key => key.startsWith(ACCOUNT_KEY_PREFIX))
       .map(key => key.slice(ACCOUNT_KEY_PREFIX.length))
@@ -804,7 +805,7 @@ export function createReportingSubscriptionEngineV1(
     return changed;
   }
 
-  async function readFacts(principal: Readonly<PrincipalStoreScope>, signal?: AbortSignal) {
+  async function readFacts(principal: Readonly<PrincipalRef>, signal?: AbortSignal) {
     const accounts = new Map<string, ReportingSubscriptionAccountFactV1>();
     let cursor: string | undefined;
     // A partial roster would read as revocations, so every incomplete walk fails closed.
@@ -836,7 +837,7 @@ export function createReportingSubscriptionEngineV1(
 
   /** When authority ended, from the host, clamped to what the engine observed. */
   async function revocationInstant(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     accountId: string,
     account: AccountState,
     upperBound: number
@@ -855,7 +856,7 @@ export function createReportingSubscriptionEngineV1(
 
   /** Apply what the host reports about one account's authority, at the instants it happened. */
   async function applyAuthority(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     accountId: string,
     account: AccountState,
     fact: ReportingSubscriptionAccountFactV1 | undefined,
@@ -905,7 +906,7 @@ export function createReportingSubscriptionEngineV1(
   }
 
   async function reconcile(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     reconcileOptions: { signal?: AbortSignal } = {}
   ): Promise<ReportingSubscriptionReconcileResultV1> {
     const signal = reconcileOptions.signal;
@@ -1094,7 +1095,7 @@ export function createReportingSubscriptionEngineV1(
       }
       updates.push(update);
     }
-    await options.principal.recordReportingSubscriptionCoverage(principal, updates, { forceNotification: notify });
+    await options.principal.recordSubscriptionReadback(principal, updates, { forceNotification: notify });
     if (overflow.length > 0) await options.onReadbackOverflow?.(principal, overflow);
     return { readback_overflow: overflow };
 
@@ -1396,7 +1397,7 @@ export function createReportingSubscriptionEngineV1(
     buys: readonly ReportingSubscriptionBuyV1[],
     revisions: readonly BuyRevision[],
     nowMs: number
-  ): ExpectedSubscriptionPeriodV1[] {
+  ): OwedSubscriptionPeriodV1[] {
     const owed = computeOwed(entry, current, accountId, buys, iso(nowMs));
     if (revisions.length === 0) return owed;
     const byBuy = new Map<string, BuyRevision[]>();
@@ -1429,7 +1430,7 @@ export function createReportingSubscriptionEngineV1(
    * periods that started before the deactivation are owed, so the set is finite.
    */
   async function hasRetainedObligations(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     document: ReportingSubscriptionEngineAccountDocumentV1,
     entry: StoredReportingSubscriptionHistory,
     accountId: string,
@@ -1471,7 +1472,7 @@ export function createReportingSubscriptionEngineV1(
   }
 
   async function readbackFor(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     entry: StoredReportingSubscriptionHistory,
     state: ReportingSubscriptionEngineStateV1,
     nowMs: number,
@@ -1522,12 +1523,12 @@ export function createReportingSubscriptionEngineV1(
     accountId: string,
     buys: readonly ReportingSubscriptionBuyV1[],
     nowIso: string
-  ): ExpectedSubscriptionPeriodV1[] {
+  ): OwedSubscriptionPeriodV1[] {
     const account = current.account;
     if (account.grants.length === 0) return [];
     const target = current.subscriptions[entry.subscriptionId];
     const cutovers = target?.timezoneCutovers ?? [];
-    return expectedSubscriptionPeriods({
+    return owedSubscriptionPeriodsV1({
       subscription_id: entry.subscriptionId,
       versions: versionRecords(entry),
       account: {
@@ -1552,15 +1553,15 @@ export function createReportingSubscriptionEngineV1(
   }
 
   async function owedPeriods(
-    principal: Readonly<PrincipalStoreScope>,
+    principal: Readonly<PrincipalRef>,
     accountId: string,
     owedOptions: { now?: string; signal?: AbortSignal } = {}
-  ): Promise<ExpectedSubscriptionPeriodV1[]> {
+  ): Promise<OwedSubscriptionPeriodV1[]> {
     const document = await readAccount(principal, accountId);
     if (!document) return [];
     const { history } = await options.principal.listReportingSubscriptions(principal);
     const nowMs = owedOptions.now !== undefined ? parseInstant(owedOptions.now, 'now') : now().getTime();
-    const periods: ExpectedSubscriptionPeriodV1[] = [];
+    const periods: OwedSubscriptionPeriodV1[] = [];
     let buys: ReportingSubscriptionBuyV1[] | undefined;
     for (const entry of history) {
       const target = document.subscriptions[entry.subscriptionId];
@@ -1594,7 +1595,7 @@ export function createReportingSubscriptionEngineV1(
     );
   }
 
-  async function inspect(principal: Readonly<PrincipalStoreScope>): Promise<ReportingSubscriptionEngineStateV1> {
+  async function inspect(principal: Readonly<PrincipalRef>): Promise<ReportingSubscriptionEngineStateV1> {
     const principalRow = await store.get(principal, PRINCIPAL_KEY);
     const accounts: Record<string, ReportingSubscriptionEngineAccountDocumentV1> = {};
     for (const accountId of await accountIds(principal)) {
@@ -1702,7 +1703,7 @@ export function createReportingSubscriptionEngineV1(
     },
     owedPeriods,
     async owedObligations(principal, accountId, owedOptions) {
-      return groupExpectedSubscriptionPeriodsV1(await owedPeriods(principal, accountId, owedOptions));
+      return groupOwedSubscriptionPeriodsV1(await owedPeriods(principal, accountId, owedOptions));
     },
     async frozenOwedSets(principal, frozenOptions = {}) {
       const { history } = await options.principal.listReportingSubscriptions(principal);
@@ -1722,7 +1723,7 @@ export function createReportingSubscriptionEngineV1(
             account_id: accountId,
             subscription_id: entry.subscriptionId,
             through: target.frozen.through,
-            obligations: groupExpectedSubscriptionPeriodsV1(periods),
+            obligations: groupOwedSubscriptionPeriodsV1(periods),
             versions: entry.versions.map(version => ({
               subscription_version: version.subscriptionVersion,
               configuration: structuredClone(version.configuration),
@@ -1736,11 +1737,14 @@ export function createReportingSubscriptionEngineV1(
     async isAuthorized(principal, accountId) {
       return isAuthorized((await readAccount(principal, accountId))?.account);
     },
+    async listSubscriptionPrincipals(tenantId) {
+      return (await store.listPrincipals(tenantId)).filter(principal => principal.tenantId === tenantId);
+    },
     async listPrincipals(tenantId) {
       return (await store.listPrincipals(tenantId)).filter(principal => principal.tenantId === tenantId);
     },
     async receiptRoster(tenantId, accountId) {
-      const roster: PrincipalStoreScope[] = [];
+      const roster: PrincipalRef[] = [];
       for (const principal of await store.listPrincipals(tenantId)) {
         if (principal.tenantId !== tenantId) continue;
         const document = await readAccount(principal, accountId);

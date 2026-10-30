@@ -232,7 +232,8 @@ capability truthfulness.
 
 ### Principal-level reporting subscriptions (experimental, AdCP 3.3)
 
-With `reportingSubscriptions`, every `runCycle` first writes the subscription
+With `subscriptions` (formerly `reportingSubscriptions`, kept as a deprecated
+alias), every `runCycle` first writes the subscription
 engine's frozen owed sets into the ledger, then plans account configurations as
 before, and the worker executes both.
 
@@ -251,11 +252,11 @@ import {
 
 const service = createReliableReportingService({
   // ...store, adapters, resolveSource, resolveCurrency, resolveCoverage as above
-  reportingSubscriptions: {
+  subscriptions: {
     engine, // createReportingSubscriptionEngineV1(...)
     resolvePrincipal: ctx => principalScopeFrom(ctx), // the principal runtime's mapping
     listSubscriptionPrincipals: async () =>
-      (await Promise.all(tenantIds.map(tenantId => engine.listPrincipals(tenantId)))).flat(),
+      (await Promise.all(tenantIds.map(tenantId => engine.listSubscriptionPrincipals(tenantId)))).flat(),
     // Seller policy for one (subscription version, resolved offering): the facts a
     // sync_accounts mapping also supplies to installConfiguration.
     resolveSubscriptionConfiguration: ({ subscription, offering }) => ({
@@ -308,7 +309,7 @@ and replaces the three-column generation constraint with a unique index on
 **Managed delivery of subscriptions.** A subscription with a `destination`
 resolves only managed offerings. Serve it with
 `createPostgresReliableReportingProductionService` and pass the principal
-runtime as `reportingSubscriptions.principal`. The engine must have
+runtime as `subscriptions.principal`. The engine must have
 `isAuthorized`. Then:
 
 - Before a managed generation's first obligation is written, the service binds

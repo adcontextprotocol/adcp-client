@@ -10,10 +10,10 @@ const {
 } = require('../../dist/lib/reporting/advanced/index.js');
 const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/consumer/index.js');
 const {
-  expectedSubscriptionPeriods,
-  groupExpectedSubscriptionPeriodsV1,
+  owedSubscriptionPeriodsV1,
+  groupOwedSubscriptionPeriodsV1,
   reportingSubscriptionVersionRecordsV1,
-  subscriptionExpectedReportingPeriodsV1,
+  toExpectedReportingPeriodsV1,
 } = require('../../dist/lib/reporting/advanced/index.js');
 const { syncReportingSubscriptionsV1 } = require('../../dist/lib/index.js');
 const { createTestPrincipalLifecycle } = require('../helpers/principal-runtime.js');
@@ -202,7 +202,7 @@ describe('buyer helpers', () => {
     // The buyer's rebuilt input yields the seller's owed set.
     const engine = engineFor(lifecycle, clock);
     await engine.reconcile(SCOPE);
-    const buyer = expectedSubscriptionPeriods({
+    const buyer = owedSubscriptionPeriodsV1({
       subscription_id: 'analytics-daily',
       versions,
       account: { account_id: ACCOUNT_ID, grants: [{ authorized_at: '2026-10-01T00:00:00.000Z' }] },
@@ -263,7 +263,7 @@ describe('buyer helpers', () => {
     );
     assert.deepEqual(versions[1].configuration.exclude_account_ids, ['x']);
     // The records drive cutovers: each period belongs to the version in force when it started.
-    const owed = expectedSubscriptionPeriods({
+    const owed = owedSubscriptionPeriodsV1({
       subscription_id: 'analytics-daily',
       versions,
       account: { account_id: ACCOUNT_ID, grants: [{ authorized_at: '2026-10-01T00:00:00Z' }] },
@@ -283,9 +283,9 @@ describe('buyer helpers', () => {
     );
   });
 
-  test('subscriptionExpectedReportingPeriodsV1 maps owed obligations onto expected periods', () => {
-    const obligations = groupExpectedSubscriptionPeriodsV1(
-      expectedSubscriptionPeriods({
+  test('toExpectedReportingPeriodsV1 maps owed obligations onto expected periods', () => {
+    const obligations = groupOwedSubscriptionPeriodsV1(
+      owedSubscriptionPeriodsV1({
         subscription_id: 'analytics-daily',
         versions: [{ subscription_version: 1, accepted_at: '2026-11-01T12:00:00Z', configuration: subscription() }],
         account: { account_id: ACCOUNT_ID, grants: [{ authorized_at: '2026-10-01T00:00:00Z' }] },
@@ -294,7 +294,7 @@ describe('buyer helpers', () => {
         now: '2026-11-10T00:00:00Z',
       })
     );
-    const expected = subscriptionExpectedReportingPeriodsV1(obligations, template);
+    const expected = toExpectedReportingPeriodsV1(obligations, template);
     assert.equal(expected.length, 3);
     assert.deepEqual(
       {
@@ -322,7 +322,7 @@ describe('buyer helpers', () => {
     // No default coverage: one could never match an obligation reporting packages or partial coverage.
     assert.throws(() => {
       const { coverage: _coverage, ...noCoverage } = template(obligations[0]);
-      subscriptionExpectedReportingPeriodsV1(obligations, () => noCoverage);
+      toExpectedReportingPeriodsV1(obligations, () => noCoverage);
     }, /must supply coverage/);
   });
 
@@ -557,8 +557,8 @@ describe('consumer runtime with subscription expectations', () => {
           subscriptionExpectations: ({ subscriptionCoverage, now, ledgerAsOf }) => {
             seen.push(subscriptionCoverage);
             nows.push([now.toISOString(), ledgerAsOf]);
-            const obligations = groupExpectedSubscriptionPeriodsV1(
-              expectedSubscriptionPeriods({
+            const obligations = groupOwedSubscriptionPeriodsV1(
+              owedSubscriptionPeriodsV1({
                 subscription_id: 'analytics-daily',
                 versions: [
                   { subscription_version: 1, accepted_at: '2026-11-01T12:00:00Z', configuration: subscription() },
@@ -570,7 +570,7 @@ describe('consumer runtime with subscription expectations', () => {
                 now: now.toISOString(),
               })
             );
-            return subscriptionExpectedReportingPeriodsV1(obligations, template);
+            return toExpectedReportingPeriodsV1(obligations, template);
           },
         },
       ],

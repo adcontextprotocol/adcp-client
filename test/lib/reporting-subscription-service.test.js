@@ -172,10 +172,10 @@ async function world({ failPolicyFor } = {}) {
     resolveCurrency: () => 'USD',
     // The host authorizes the account's buys; each obligation freezes the subset it owes.
     resolveCoverage: () => ({ constituents: ['mb-a', 'mb-a2', 'mb-b'].map(constituent) }),
-    reportingSubscriptions: {
+    subscriptions: {
       engine,
       resolvePrincipal: context => context.principalScope,
-      listSubscriptionPrincipals: () => engine.listPrincipals(TENANT),
+      listSubscriptionPrincipals: () => engine.listSubscriptionPrincipals(TENANT),
       resolveSubscriptionConfiguration: ({ principal }) => {
         if (failPolicyFor === principal.principalId) throw new Error(`no policy for ${principal.principalId}`);
         return {
@@ -208,10 +208,12 @@ describe('reliable reporting service with subscription obligations', () => {
     clock.now = new Date(day(8));
     await engine.reconcile(A);
     await engine.reconcile(B);
-    assert.deepEqual((await engine.listPrincipals(TENANT)).map(value => value.principalId).sort(), [
+    assert.deepEqual((await engine.listSubscriptionPrincipals(TENANT)).map(value => value.principalId).sort(), [
       'principal-a',
       'principal-b',
     ]);
+    // listPrincipals is the deprecated name of listSubscriptionPrincipals.
+    assert.deepEqual(await engine.listPrincipals(TENANT), await engine.listSubscriptionPrincipals(TENANT));
 
     const cycle = await service.runCycle({ accountId: ACCOUNT, now: new Date(day(8)) });
     assert.equal(cycle.planned, 5, JSON.stringify(cycle));
@@ -339,9 +341,19 @@ describe('reliable reporting service with subscription obligations', () => {
       () =>
         createReliableReportingService({
           ...base,
-          reportingSubscriptions: { engine, resolvePrincipal: () => A, listSubscriptionPrincipals: () => [] },
+          subscriptions: { engine, resolvePrincipal: () => A, listSubscriptionPrincipals: () => [] },
         }),
       /resolveSubscriptionConfiguration/
+    );
+    // The deprecated reportingSubscriptions key still works (above); passing both is refused.
+    assert.throws(
+      () =>
+        createReliableReportingService({
+          ...base,
+          subscriptions: { engine, resolvePrincipal: () => A },
+          reportingSubscriptions: { engine, resolvePrincipal: () => A },
+        }),
+      { name: 'PlatformConfigError', configField: 'subscriptions' }
     );
   });
 });

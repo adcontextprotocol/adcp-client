@@ -7,7 +7,7 @@ import type {
   ReportingLedgerOwedSetProgressV1,
   ReportingLedgerOwedSetV1,
   ReportingLedgerSnapshotQueryV1,
-  ReportingLedgerSubscriptionPrincipalV1,
+  PrincipalRef,
   ReportingLedgerSubscriptionV1,
 } from './types';
 import {
@@ -80,7 +80,7 @@ export function reportingLedgerSubscriptionKeyV1(configuration: {
  */
 export function reportingLedgerSubscriptionVisibleV1(
   value: { subscription?: ReportingLedgerSubscriptionV1 | undefined },
-  principal: ReportingLedgerSubscriptionPrincipalV1 | undefined
+  principal: PrincipalRef | undefined
 ): boolean {
   const subscription = value.subscription;
   if (!subscription) return true;

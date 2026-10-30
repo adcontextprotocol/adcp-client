@@ -23,6 +23,7 @@ export type {
   PrincipalReportingDestinationInput,
   PrincipalStateStore,
   PrincipalStoreReplaceResult,
+  PrincipalRef,
   PrincipalStoreScope,
   ReportingDestinationPreparation,
   ResolvedReportingDestination,

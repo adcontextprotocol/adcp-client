@@ -13,3 +13,4 @@ export {
   type SyncReportingSubscriptionsOptionsV1,
   type SyncReportingSubscriptionsResultV1,
 } from './reporting-subscriptions';
+export type { PrincipalRef } from '../server/principal/types';

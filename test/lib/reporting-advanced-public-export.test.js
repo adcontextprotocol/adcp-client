@@ -18,10 +18,11 @@ const LOW_LEVEL = [
   'createReportingSubscriptionEngineStateStoreV1',
   'DEFAULT_REPORTING_SUBSCRIPTION_ENGINE_COLLECTION',
   'reportingSubscriptionCoverageGrantedV1',
+  'owedSubscriptionPeriodsV1',
   'expectedSubscriptionPeriods',
-  'groupExpectedSubscriptionPeriodsV1',
+  'groupOwedSubscriptionPeriodsV1',
   'reportingSubscriptionVersionRecordsV1',
-  'subscriptionExpectedReportingPeriodsV1',
+  'toExpectedReportingPeriodsV1',
   'createReportingPeriodCalendarV1',
   'parseReportingPeriodDurationV1',
   'assertReportingIanaTimezoneV1',
@@ -58,6 +59,13 @@ describe('@adcp/sdk/reporting/advanced', () => {
   test('exports every low-level building block', () => {
     const advanced = require('@adcp/sdk/reporting/advanced');
     for (const name of LOW_LEVEL) assert.notEqual(advanced[name], undefined, name);
+  });
+
+  test('the pre-rename names are deprecated aliases of the "owed" names', () => {
+    const advanced = require('@adcp/sdk/reporting/advanced');
+    assert.equal(advanced.expectedSubscriptionPeriods, advanced.owedSubscriptionPeriodsV1);
+    assert.equal(advanced.groupExpectedSubscriptionPeriodsV1, advanced.groupOwedSubscriptionPeriodsV1);
+    assert.equal(advanced.subscriptionExpectedReportingPeriodsV1, advanced.toExpectedReportingPeriodsV1);
   });
 
   test('the service, consumer and ledger subpaths and the package root do not re-export them', () => {

@@ -51,7 +51,7 @@ import type {
   PrincipalReportingDestinationInput,
   ResolvedReportingDestination,
   PrincipalStateStore,
-  PrincipalStoreScope,
+  PrincipalRef,
   ResolvedPrincipalScope,
   StoredPrincipalRecord,
   StoredReportingDestinationGeneration,
@@ -78,7 +78,7 @@ export interface CreatePrincipalLifecycleOptions<TAccount = unknown> {
    * `UNSUPPORTED_FEATURE` and every response is unchanged.
    */
   reportingSubscriptions?: PrincipalReportingSubscriptionSupport;
-  issuePrincipalId?: (scope: Readonly<PrincipalStoreScope>) => string;
+  issuePrincipalId?: (scope: Readonly<PrincipalRef>) => string;
   issueConfigurationVersion?: () => string;
   issueDestinationRef?: () => string;
   now?: () => Date;
@@ -112,27 +112,23 @@ export interface PrincipalLifecycleRuntime<TAccount = unknown> extends Partial<P
   readonly capabilities?: NonNullable<GetAdCPCapabilitiesResponse['adcp']['principal']>;
   protocol: Pick<ProtocolHandlers<TAccount>, 'resolvePrincipalScope' | 'getPrincipal' | 'syncPrincipal'> &
     Partial<Pick<ProtocolHandlers<TAccount>, 'resolveScope' | 'syncAgentNotificationConfigs'>>;
-  recognizePrincipal(input: {
-    scope: PrincipalStoreScope;
-    principalId: string;
-    principalKind: PrincipalKind;
-  }): Promise<void>;
+  recognizePrincipal(input: { scope: PrincipalRef; principalId: string; principalKind: PrincipalKind }): Promise<void>;
   transitionDestination(
-    scope: Readonly<PrincipalStoreScope>,
+    scope: Readonly<PrincipalRef>,
     transition: Readonly<PrincipalDestinationTransition>,
     options?: { deferNotification?: boolean }
   ): Promise<PrincipalConfiguration>;
-  flushPrincipalNotifications(scope: Readonly<PrincipalStoreScope>): Promise<void>;
+  flushPrincipalNotifications(scope: Readonly<PrincipalRef>): Promise<void>;
   recoverPrincipalNotifications(options?: {
     limit?: number;
     cursor?: string;
   }): Promise<PrincipalNotificationRecoveryResult>;
   resolveReportingDestination(
-    scope: Readonly<PrincipalStoreScope>,
+    scope: Readonly<PrincipalRef>,
     destinationRef: string
   ): Promise<ResolvedReportingDestination | null>;
   reconcileDeclarations(
-    scope: Readonly<PrincipalStoreScope>,
+    scope: Readonly<PrincipalRef>,
     options?: { deferNotification?: boolean }
   ): Promise<PrincipalConfiguration>;
 }
@@ -410,7 +406,7 @@ export function createPrincipalLifecycle<TAccount = unknown>(
    * replacement, and mark each applied only after the hook succeeds. A failure leaves it
    * pending, so the next write (including an identical resend) retries it.
    */
-  async function runPendingReplacements(scope: Readonly<PrincipalStoreScope>): Promise<void> {
+  async function runPendingReplacements(scope: Readonly<PrincipalRef>): Promise<void> {
     const hook = options.reportingSubscriptions?.replaceAccountConfigs;
     if (!hook) return;
     const current = await options.store.get(scope);
@@ -434,7 +430,7 @@ export function createPrincipalLifecycle<TAccount = unknown>(
   }
 
   async function buildConfiguration(
-    scope: Readonly<PrincipalStoreScope>,
+    scope: Readonly<PrincipalRef>,
     current: PrincipalConfiguration | undefined,
     input: PrincipalConfigurationInput,
     notifications: PreparedNotificationReplacement | undefined,
@@ -528,7 +524,7 @@ export function createPrincipalLifecycle<TAccount = unknown>(
   }
 
   async function prepareReportingDestinations(
-    scope: Readonly<PrincipalStoreScope>,
+    scope: Readonly<PrincipalRef>,
     current: readonly PrincipalReportingDestination[],
     retired: NonNullable<PrincipalConfiguration['retired_destinations']>,
     desired: readonly PrincipalReportingDestinationInput[],
@@ -711,7 +707,7 @@ export function createPrincipalLifecycle<TAccount = unknown>(
   }
 
   async function recognizePrincipal(input: {
-    scope: PrincipalStoreScope;
+    scope: PrincipalRef;
     principalId: string;
     principalKind: PrincipalKind;
   }): Promise<void> {
@@ -731,7 +727,7 @@ export function createPrincipalLifecycle<TAccount = unknown>(
   }
 
   async function transitionDestination(
-    scope: Readonly<PrincipalStoreScope>,
+    scope: Readonly<PrincipalRef>,
     transition: Readonly<PrincipalDestinationTransition>,
     transitionOptions: { deferNotification?: boolean } = {}
   ): Promise<PrincipalConfiguration> {
@@ -823,7 +819,7 @@ export function createPrincipalLifecycle<TAccount = unknown>(
     throw new Error('Principal destination transition conflicted repeatedly');
   }
 
-  async function flushPrincipalNotifications(scope: Readonly<PrincipalStoreScope>): Promise<void> {
+  async function flushPrincipalNotifications(scope: Readonly<PrincipalRef>): Promise<void> {
     assertStoreScope(scope);
     let casConflicts = 0;
     for (let processed = 0; processed < maxNotificationsPerFlush; processed++) {
@@ -910,7 +906,7 @@ export function createPrincipalLifecycle<TAccount = unknown>(
   }
 
   async function resolveReportingDestination(
-    scope: Readonly<PrincipalStoreScope>,
+    scope: Readonly<PrincipalRef>,
     destinationRef: string
   ): Promise<ResolvedReportingDestination | null> {
     assertStoreScope(scope);
@@ -929,7 +925,7 @@ export function createPrincipalLifecycle<TAccount = unknown>(
   }
 
   async function reconcileDeclarations(
-    scope: Readonly<PrincipalStoreScope>,
+    scope: Readonly<PrincipalRef>,
     reconcileOptions: { deferNotification?: boolean } = {}
   ): Promise<PrincipalConfiguration> {
     assertStoreScope(scope);
@@ -987,7 +983,7 @@ export function createPrincipalLifecycle<TAccount = unknown>(
     throw new Error('Principal declaration reconciliation conflicted repeatedly');
   }
 
-  async function listReportingSubscriptions(scope: Readonly<PrincipalStoreScope>) {
+  async function listReportingSubscriptions(scope: Readonly<PrincipalRef>) {
     assertStoreScope(scope);
     const current = await options.store.get(scope);
     return {
@@ -996,14 +992,14 @@ export function createPrincipalLifecycle<TAccount = unknown>(
     };
   }
 
-  async function reportingSubscriptionIds(scope: Readonly<PrincipalStoreScope>): Promise<string[]> {
+  async function reportingSubscriptionIds(scope: Readonly<PrincipalRef>): Promise<string[]> {
     const { history } = await listReportingSubscriptions(scope);
     return history.map(entry => entry.subscriptionId);
   }
 
-  async function recordReportingSubscriptionCoverage(
-    scope: Readonly<PrincipalStoreScope>,
-    updates: Parameters<PrincipalLifecycleRuntimeSubscriptions['recordReportingSubscriptionCoverage']>[1],
+  async function recordSubscriptionReadback(
+    scope: Readonly<PrincipalRef>,
+    updates: Parameters<PrincipalLifecycleRuntimeSubscriptions['recordSubscriptionReadback']>[1],
     recordOptions: { deferNotification?: boolean; forceNotification?: boolean } = {}
   ): Promise<boolean> {
     assertStoreScope(scope);
@@ -1104,7 +1100,8 @@ export function createPrincipalLifecycle<TAccount = unknown>(
     reconcileDeclarations,
     listReportingSubscriptions,
     reportingSubscriptionIds,
-    recordReportingSubscriptionCoverage,
+    recordSubscriptionReadback,
+    recordReportingSubscriptionCoverage: recordSubscriptionReadback,
   };
 }
 
@@ -1165,11 +1162,11 @@ function forRelease<T>(response: T, servedAdcpVersion: string | undefined, subsc
   } as T;
 }
 
-function storeScope(resolved: Readonly<ResolvedPrincipalScope>): PrincipalStoreScope {
+function storeScope(resolved: Readonly<ResolvedPrincipalScope>): PrincipalRef {
   return { tenantId: resolved.tenant_id, principalId: resolved.principal_id };
 }
 
-function notificationScope(scope: Readonly<PrincipalStoreScope>) {
+function notificationScope(scope: Readonly<PrincipalRef>) {
   return { kind: 'caller' as const, tenantId: scope.tenantId, principalId: scope.principalId };
 }
 
@@ -1198,7 +1195,7 @@ class UnsupportedPrincipalFeatureError extends Error {}
 class PrincipalStateConflictError extends Error {}
 
 function emptyRecord(
-  scope: Readonly<PrincipalStoreScope>,
+  scope: Readonly<PrincipalRef>,
   principalId: string,
   principalKind: PrincipalKind
 ): StoredPrincipalRecord {
@@ -1225,7 +1222,7 @@ function assertResolvedPrincipal(value: unknown): asserts value is ResolvedPrinc
   if (scope.principal_record_id !== undefined) assertOpaqueId(scope.principal_record_id, 'principal record id');
 }
 
-function assertStoreScope(scope: Readonly<PrincipalStoreScope>): void {
+function assertStoreScope(scope: Readonly<PrincipalRef>): void {
   assertOpaqueId(scope.tenantId, 'tenant id');
   assertOpaqueId(scope.principalId, 'stable principal scope');
 }
@@ -1325,10 +1322,7 @@ function enforceWebhookDeclarationCompatibility(configuration: Readonly<Principa
   }
 }
 
-function principalNotificationRecipients(
-  record: Readonly<StoredPrincipalRecord>,
-  scope: Readonly<PrincipalStoreScope>
-) {
+function principalNotificationRecipients(record: Readonly<StoredPrincipalRecord>, scope: Readonly<PrincipalRef>) {
   return record.notificationSubscriptions
     .filter(
       subscription =>

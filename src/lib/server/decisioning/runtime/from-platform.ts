@@ -3182,7 +3182,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   ) {
     throw new PlatformConfigError(
       'capabilities.principal lists reporting_subscriptions, but the reporting capability does not list sync_principal ' +
-        'in configuration_tasks; create the reliable reporting service with reportingSubscriptions'
+        'in configuration_tasks; create the reliable reporting service with subscriptions'
     );
   }
   const derivedFeatureIds = [

@@ -8,6 +8,9 @@ import type {
   ReportingRevision,
 } from '../../types';
 import type { AdcpToolMap, HandlerContext } from '../../server/create-adcp-server';
+import type { PrincipalRef } from '../../server/principal/types';
+
+export type { PrincipalRef };
 import type { ErrorRecovery } from '../../types/error-codes';
 import type { ReportingScheduleAlignment } from '../../types/core.generated';
 import type {
@@ -224,15 +227,12 @@ export interface ReportingLedgerOwedSetProgressV1 {
 }
 
 /**
- * The authenticated principal a subscription-aware read is scoped to. Never derived from request
- * content.
+ * @deprecated Use {@link PrincipalRef}, the same shape: the authenticated principal a
+ * subscription-aware read is scoped to, never derived from request content.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
-export interface ReportingLedgerSubscriptionPrincipalV1 {
-  tenantId: string;
-  principalId: string;
-}
+export type ReportingLedgerSubscriptionPrincipalV1 = PrincipalRef;
 
 /**
  * Who may file a receipt or status against an obligation (experimental, AdCP 3.3): the
@@ -243,7 +243,7 @@ export interface ReportingLedgerSubscriptionPrincipalV1 {
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReportingSubscriptionReceiptAdmissionV1 {
-  principal: ReportingLedgerSubscriptionPrincipalV1;
+  principal: PrincipalRef;
 }
 
 export interface ReportingLedgerObligationV1 {

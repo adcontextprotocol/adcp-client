@@ -284,7 +284,7 @@ describe('PostgreSQL managed subscription delivery', { skip: !DATABASE_URL && 'P
       }),
       resolveCurrency: () => 'USD',
       resolveCoverage: () => ({ constituents: ['mb-principal-a', 'mb-principal-b'].map(constituent) }),
-      reportingSubscriptions: {
+      subscriptions: {
         engine,
         principal: lifecycle,
         resolvePrincipal: context => context.principalScope,

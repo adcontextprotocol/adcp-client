@@ -8,7 +8,7 @@ const {
   createInMemoryReportingSubscriptionEngineStoreV1,
   createReportingSubscriptionEngineV1,
 } = require('../../dist/lib/reporting/advanced/index.js');
-const { expectedSubscriptionPeriods } = require('../../dist/lib/reporting/advanced/index.js');
+const { owedSubscriptionPeriodsV1 } = require('../../dist/lib/reporting/advanced/index.js');
 const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
 
 const SCOPE = { tenantId: 't', principalId: 'p' };
@@ -199,7 +199,7 @@ function world({ maxAccounts, backfillOnRegrant = false } = {}) {
     const coverage = (await engine.subscriptionCoverage(SCOPE, accountId)).find(
       item => item.subscription_id === subscriptionId
     );
-    return expectedSubscriptionPeriods({
+    return owedSubscriptionPeriodsV1({
       subscription_id: subscriptionId,
       versions,
       ...(state.inactive_intervals ? { inactive_intervals: state.inactive_intervals } : {}),

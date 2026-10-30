@@ -173,7 +173,7 @@ async function world() {
     resolveCurrency: () => 'USD',
     resolveCoverage: () => ({ constituents: ['mb-principal-a', 'mb-principal-b'].map(constituent) }),
     resolveConsumerId: context => context.authInfo.clientId,
-    reportingSubscriptions: {
+    subscriptions: {
       engine,
       resolvePrincipal: principalOf,
       listSubscriptionPrincipals: () => [A, B],
