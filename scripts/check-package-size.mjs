@@ -137,7 +137,10 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // 26,314,876 packed bytes, 144,462,916 unpacked bytes and 8,411 files. Allow
 // about 45 KB of compressor variance; the unpacked, file-count, bundled-schema
 // and declaration budgets are unchanged and still pass.
-const MAX_PACKED_TARBALL_BYTES = 26_360_000;
+// AdCP 3.3 reporting subscription coverage (#3504) adds the calendar,
+// selection, coverage and capability modules and the parity table. Measured
+// 26,370,041 packed bytes; allow about 40 KB above that for compressor variance.
+const MAX_PACKED_TARBALL_BYTES = 26_410_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 144 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
