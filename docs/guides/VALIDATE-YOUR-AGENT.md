@@ -32,7 +32,7 @@ If all five pass and your skill's specialism-specific checks below pass, you're 
 
 **Working on the agent locally?** Before you reach for the remote-agent commands above, see [`VALIDATE-LOCALLY.md`](./VALIDATE-LOCALLY.md) — the same storyboards, zero tunnel setup, ten lines of code. Point `--local-agent <module>` at your handlers or call `runAgainstLocalAgent` directly from a test file.
 
-**Why `@15.9` in every `npx` command?** This selects the stable SDK 15.9 maintenance line, which bundles the current AdCP 3.2 and maintained 3.1 compliance corpora. Select the exact maintained 3.1 cache with `--compliance-version 3.1.29`. For reproducible CI, pin an exact published SDK version and verify its `ADCP_VERSION` and packaged compliance versions. The older `adcp-3.2` npm tag selects SDK 14 and does not supply the refreshed caches shown here.
+**Why `@15.9` in every `npx` command?** This selects the stable SDK 15.9 maintenance line, which bundles the current AdCP 3.2 and maintained 3.1 compliance corpora. Select the exact maintained 3.1 cache with `--compliance-version 3.1.31`. For reproducible CI, pin an exact published SDK version and verify its `ADCP_VERSION` and packaged compliance versions. The older `adcp-3.2` npm tag selects SDK 14 and does not supply the refreshed caches shown here.
 
 ---
 
@@ -69,7 +69,7 @@ npx @adcp/sdk@15.9 storyboard run http://localhost:3001/mcp sales-guaranteed --a
 npx @adcp/sdk@15.9 storyboard run http://localhost:3001/mcp --tracks core,products --auth $TOKEN
 
 # Pin a specific compliance cache/spec line
-npx @adcp/sdk@15.9 storyboard run http://localhost:3001/mcp --compliance-version 3.1.29 --auth $TOKEN
+npx @adcp/sdk@15.9 storyboard run http://localhost:3001/mcp --compliance-version 3.1.31 --auth $TOKEN
 
 # Ad-hoc YAML (new storyboards under development)
 npx @adcp/sdk@15.9 storyboard run http://localhost:3001/mcp --file ./my-wip.yaml --auth $TOKEN

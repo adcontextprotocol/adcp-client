@@ -245,6 +245,7 @@ const MAX_UNPACKED_PACKAGE_BYTES = 144 * 1024 * 1024;
 // Operation resolution over A2A and the grader's A2A vector module add two
 // internal dual-format runtime/declaration module sets (+8 files).
 const MAX_PACKED_FILE_COUNT =
+  4 + // Shared MCP schema validator (CJS, ESM, and both declaration formats).
   6_135 +
   34 +
   4 +
@@ -311,6 +312,7 @@ const MAX_PACKED_FILE_COUNT =
   8 + // Discovery currency and required-metric invariants (two dual-format runtime/declaration sets).
   1840 + // SDK 17: 3.3 schemas/compliance, per-tool type entrypoints and migration/release notes.
   20 + // Reporting subscription calendar, selection, coverage, capabilities and index (five dual-format sets).
+  4 + // Reporting subscription hand-modeled wire types until 3.3.0-beta.2 (one dual-format set).
   8 + // Reporting subscription engine and principal subscription runtime (two dual-format sets).
   4 + // Reporting subscription release gate (one dual-format set).
   12; // Reporting subscription engine store, buyer expectations and client helper (three dual-format sets).
