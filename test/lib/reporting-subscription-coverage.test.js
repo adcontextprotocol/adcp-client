@@ -165,9 +165,7 @@ describe('owedSubscriptionPeriodsV1 over the vectors', () => {
         ajv.addSchema(schema);
       }
     }
-    const validate = ajv.getSchema(
-      `https://adcontextprotocol.org/schemas/${pinned}/core/reporting-subscription.json`
-    );
+    const validate = ajv.getSchema(`https://adcontextprotocol.org/schemas/${pinned}/core/reporting-subscription.json`);
     for (const testCase of table.cases.filter(c => c.expected_error?.wire_valid !== false)) {
       for (const version of testCase.input.versions) {
         assert.equal(validate(version.configuration), true, `${testCase.name}: ${JSON.stringify(validate.errors)}`);
