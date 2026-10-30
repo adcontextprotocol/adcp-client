@@ -63,6 +63,7 @@ const {
   routedStoryboardResultGroup,
 } = require('../dist/lib/testing/storyboard/junit.js');
 const { ADCP_VERSION, LIBRARY_VERSION } = require('../dist/lib/version.js');
+const { sharedLegacyJsonSchemaValidator } = require('../dist/lib/protocols/mcp-schema-validator.js');
 const { isAdcpVersionSupported } = require('../dist/lib/utils/adcp-version-config.js');
 const { appendBuiltInVersionUnsupportedHint } = require('./adcp-version-unsupported-hint.js');
 const { sandboxRunOptions } = require('./adcp-storyboard-sandbox.js');
@@ -1402,7 +1403,10 @@ async function ensureOAuthTokensForAlias(alias, url, { quiet = false, allowHttp 
   const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 
   const oauthProvider = createCLIOAuthProvider(tempAgent, { quiet, allowHttp });
-  const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
+  const mcpClient = new MCPClient(
+    { name: 'adcp-cli', version: '1.0.0' },
+    { jsonSchemaValidator: sharedLegacyJsonSchemaValidator }
+  );
   const transport = new StreamableHTTPClientTransport(new URL(url), { authProvider: oauthProvider });
 
   // Persist back to disk if the MCP SDK silently refreshed tokens during
@@ -2074,8 +2078,8 @@ RUN OPTIONS (full assessment):
   --tracks TRACKS     Comma-separated tracks to include in the report
   --storyboards IDS   Comma-separated storyboard/bundle IDs to run
   --compliance-version VERSION
-                      Select a compliance cache version, e.g. 3.0.12 or
-                      3.1.0-beta.3. The runner uses this cache for
+                      Select a compliance cache version, e.g. 3.1.31 or
+                      3.3.0-beta.1. The runner uses this cache for
                       storyboard resolution and wire-version defaults. When
                       --test-kit points into a compliance cache, its version is
                       selected automatically; an explicit mismatch is rejected.
@@ -6496,7 +6500,10 @@ credential material — never sync or commit.
       const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 
       const oauthProvider = createCLIOAuthProvider(tempAgent, { allowHttp: args.includes('--allow-http') });
-      const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
+      const mcpClient = new MCPClient(
+        { name: 'adcp-cli', version: '1.0.0' },
+        { jsonSchemaValidator: sharedLegacyJsonSchemaValidator }
+      );
       const createTransport = () => new StreamableHTTPClientTransport(new URL(url), { authProvider: oauthProvider });
 
       let transport = createTransport();
@@ -7004,7 +7011,10 @@ credential material — never sync or commit.
           quiet: jsonOutput,
           allowHttp: args.includes('--allow-http'),
         });
-        const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
+        const mcpClient = new MCPClient(
+          { name: 'adcp-cli', version: '1.0.0' },
+          { jsonSchemaValidator: sharedLegacyJsonSchemaValidator }
+        );
         const createTransport = () =>
           new StreamableHTTPClientTransport(new URL(agentUrl), { authProvider: oauthProvider });
 
@@ -7140,10 +7150,10 @@ credential material — never sync or commit.
       });
 
       // Create MCP client
-      const mcpClient = new MCPClient({
-        name: 'adcp-cli',
-        version: '1.0.0',
-      });
+      const mcpClient = new MCPClient(
+        { name: 'adcp-cli', version: '1.0.0' },
+        { jsonSchemaValidator: sharedLegacyJsonSchemaValidator }
+      );
 
       const createTransport = () =>
         new StreamableHTTPClientTransport(new URL(agentUrl), {
@@ -7511,7 +7521,10 @@ credential material — never sync or commit.
         quiet: jsonOutput,
         allowHttp: args.includes('--allow-http'),
       });
-      const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
+      const mcpClient = new MCPClient(
+        { name: 'adcp-cli', version: '1.0.0' },
+        { jsonSchemaValidator: sharedLegacyJsonSchemaValidator }
+      );
       const createTransport = () =>
         new StreamableHTTPClientTransport(new URL(agentUrl), { authProvider: oauthProvider });
 

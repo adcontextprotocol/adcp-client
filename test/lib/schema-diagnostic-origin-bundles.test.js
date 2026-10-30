@@ -7,7 +7,7 @@ const {
   resolveValidatorDiagnosticPath,
 } = require('../../dist/lib/validation/schema-loader');
 
-for (const version of new Set(['3.0.25', '3.1.29', '3.2.7', ADCP_VERSION])) {
+for (const version of new Set(['3.0.25', '3.1.31', '3.2.7', ADCP_VERSION])) {
   test(`${version}: every shipped request/sync root with its own errors retains diagnostic origins`, () => {
     let checked = 0;
     for (const key of listValidatorKeys(version)) {
