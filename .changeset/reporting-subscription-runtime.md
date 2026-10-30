@@ -50,4 +50,6 @@ Also in this release:
 - `recordReportingSubscriptionCoverage` rejects lists over the readback's 1000-entry limit and does not bump `configuration_version`. `engine.reconcile` isolates a subscription that exceeds the limit: that subscription keeps its last published lists, the others still update, and the pass reports it in `readback_overflow` and through `onReadbackOverflow`.
 - The receipt roster is scoped by tenant.
 
+A deactivated subscription reads `status: "inactive"` with `deactivated_at` in `subscription_coverage[]`, and is listed only while it still has retained obligations for the account (adcontextprotocol/adcp#8613, decided for beta.3). Callers served a release whose schema lacks that value see the account-level status as before, without `deactivated_at`.
+
 Responses served at 3.3.0-beta.1 omit the fields that release's closed schemas don't define (`standard_dimensions`, `unmapped_dimensions`, `inactive_intervals`, `previous_timezone`, per-offering `offering_id`). Each field is emitted only when the schema bundle the caller is served defines it, so a bundle that lacks it, or an unknown served version, never emits it.
