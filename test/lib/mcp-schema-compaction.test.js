@@ -276,6 +276,19 @@ test('scopes nested in extension arrays retain the original graph', () => {
   assert.equal(compactMcpSchemaForValidation(schema), schema);
 });
 
+test('dependentSchemas scope registration cannot create a previously missing target', () => {
+  const schema = {
+    description: padding,
+    dependentSchemas: { default: { $id: 'inner.json', ...payload } },
+    $ref: 'inner.json',
+  };
+  assert.equal(compactMcpSchemaForValidation(schema), schema);
+  for (const Provider of [LegacyProvider, ModernProvider])
+    assert.throws(() => new Provider().getValidator(schema), /resolve reference/);
+  for (const cache of [sharedLegacyJsonSchemaValidator, sharedModernJsonSchemaValidator])
+    assert.throws(() => cache.getValidator(schema), /resolve reference/);
+});
+
 test('modern dialect aliases match the official provider', () => {
   for (const $schema of [
     'http://json-schema.org/draft-07/schema#',
