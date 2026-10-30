@@ -22,6 +22,8 @@
  */
 
 import { resolveAccount, resolveBrand, validateResponseSchema, type TestClient } from '../client';
+import type { TaskResult } from '../types';
+import type { DebugLogEntry } from '../../types/adcp';
 import { getValidator } from '../../validation/schema-loader';
 import { ADCP_VERSION } from '../../version';
 import { resolveCreativeFormatWireMode } from '../../v2/projection/creative-delivery';
@@ -573,13 +575,15 @@ async function runRoutedControllerSeeding(
  * came off the wire — so the failing result has to carry the exchange that
  * produced it rather than an explicit "no contact" null.
  */
-interface DiscoveryExchange {
+export interface DiscoveryExchange {
   request: RunnerRequestRecord;
   response: RunnerResponseRecord;
 }
 
-interface DiscoveryCatalog {
+export interface DiscoveryCatalog {
   products: Array<Record<string, unknown>>;
+  firstPage: ProductPageObservation;
+  errors: unknown[];
   evidence: { page_count: number; product_count: number; cursors: string[]; restart_count?: number };
   /** Per-page exchanges, in request order. */
   exchanges: DiscoveryExchange[];
@@ -599,7 +603,7 @@ function discoveryExchangeFor(catalog: DiscoveryCatalog, productId: string | und
   return catalog.exchanges[index ?? catalog.exchanges.length - 1];
 }
 
-type DiscoveryCatalogResult =
+export type DiscoveryCatalogResult =
   | { ok: true; catalog: DiscoveryCatalog }
   | {
       ok: false;
@@ -1513,23 +1517,72 @@ async function discoverProductCatalog(
   }
   const accountBrand = isPlainRecord(account.brand) ? account.brand : undefined;
   const brand = isPlainRecord(context.brand) ? context.brand : (accountBrand ?? resolveBrand(options));
-  const products: Array<Record<string, unknown>> = [];
-  const seenProductIds = new Set<string>();
-  const cursors: string[] = [];
-  const seenCursors = new Set<string>();
-  let cursor: string | undefined;
-  let pageCount = 0;
-  let restarts = 0;
-  let feedIdentity: string | undefined;
   const query = structuredClone({
     buying_mode: 'wholesale',
     brand,
     account,
+    pagination: { max_results: 100 },
     ...(resolveCreativeFormatWireMode(
       options._profile?.raw_capabilities,
       options._serverAdcpVersion ?? options.adcpVersion ?? ADCP_VERSION
     ) === 'canonical' && { ext: { adcp: { creative_wire: 'canonical' } } }),
   });
+  return collectWholesaleProductPages(client, options, query);
+}
+
+/** One actual page, observed before any restart can discard its products. */
+type ProductPageTaskResult = TaskResult & { debug_logs?: DebugLogEntry[] };
+
+export interface ProductPageObservation {
+  page_index: number;
+  restart_count: number;
+  request: RunnerRequestRecord;
+  response: RunnerResponseRecord | null;
+  extraction: RunnerExtractionRecord;
+  result?: ProductPageTaskResult;
+  schema_validated: boolean;
+  /** A cached JSON-schema validator, rather than the legacy fallback, checked this page. */
+  strict_schema_validated?: boolean;
+  schemaFailure?: { detail: string; schema_id: string; schema_url: string };
+}
+
+export interface ProductPageCollectionControls {
+  /** Preserve the normal step's execution policy and actual authored arguments. */
+  dispatch?: (request: Record<string, unknown>) => Promise<ProductPageTaskResult>;
+  /** Runs for every observed exchange, including pages later abandoned on restart. */
+  onPage?: (page: ProductPageObservation) => Promise<void>;
+  retainRestartEvidence?: boolean;
+}
+
+/** Shared strict unkeyed wholesale walker; callers own the initial query and logical view. */
+export async function collectWholesaleProductPages(
+  client: TestClient,
+  options: StoryboardRunOptions,
+  query: Record<string, unknown>,
+  controls: ProductPageCollectionControls = {}
+): Promise<DiscoveryCatalogResult> {
+  if (Object.hasOwn(query, 'idempotency_key')) {
+    return {
+      ok: false,
+      error: 'fixture discovery requires fresh reads without idempotency_key; pagination changes the request body',
+    };
+  }
+  const dispatch =
+    controls.dispatch ??
+    ((request: Record<string, unknown>) =>
+      executeStoryboardTask(client, 'get_products', request, { signal: options.signal }));
+  const products: Array<Record<string, unknown>> = [];
+  const errors: unknown[] = [];
+  const seenProductIds = new Set<string>();
+  const cursors: string[] = [];
+  const seenCursors = new Set<string>();
+  const initialPagination = isPlainRecord(query.pagination) ? query.pagination : undefined;
+  const initialCursor = typeof initialPagination?.cursor === 'string' ? initialPagination.cursor : undefined;
+  let cursor: string | undefined = initialCursor;
+  let firstPage: ProductPageObservation | undefined;
+  let pageCount = 0;
+  let restarts = 0;
+  let feedIdentity: string | undefined;
   let lastExchange: Extract<DiscoveryCatalogResult, { ok: false }>['exchange'];
   const exchanges: DiscoveryExchange[] = [];
   const pageOfProduct = new Map<string, number>();
@@ -1546,7 +1599,7 @@ async function discoverProductCatalog(
     }
     const request: Record<string, unknown> = {
       ...structuredClone(query),
-      pagination: { max_results: 100, ...(cursor && { cursor }) },
+      ...(cursor !== undefined && { pagination: { ...initialPagination, cursor } }),
     };
     let result;
     let observedResponse: RawHttpCapture | undefined;
@@ -1565,17 +1618,33 @@ async function discoverProductCatalog(
       // MCP's official SDK trace already supplies its parsed protocol response.
       // Capturing its HTTP streams would buffer an unrelated SSE subscription.
       if (options.protocol === 'a2a') {
-        const captured = await withRawResponseCapture(
-          () => executeStoryboardTask(client, 'get_products', request, { signal: options.signal }),
-          { maxBodyBytes: 65_536, maxCaptures: 8, maxTotalBodyBytes: 262_144 }
-        );
+        const captured = await withRawResponseCapture(() => dispatch(request), {
+          maxBodyBytes: 65_536,
+          maxCaptures: 8,
+          maxTotalBodyBytes: 262_144,
+        });
         result = captured.result;
         observedResponse = toolResponse(captured.captures);
       } else {
-        result = await executeStoryboardTask(client, 'get_products', request, { signal: options.signal });
+        result = await dispatch(request);
       }
     } catch (err) {
       const observed = toolResponse(getCapturesFromError(err) ?? []);
+      await controls.onPage?.({
+        page_index: pageCount + 1,
+        restart_count: restarts,
+        request: requestRecord,
+        response: observed
+          ? {
+              transport: requestRecord.transport,
+              payload: redactDiscoveryResponse(observed.body),
+              status: observed.status,
+              duration_ms: Date.now() - pageStart,
+            }
+          : null,
+        extraction: { path: 'none' },
+        schema_validated: false,
+      });
       return {
         ok: false,
         error: `fixture discovery transport failure: ${redactCredentialPatterns(err instanceof Error ? err.message : String(err), false)}`,
@@ -1622,6 +1691,15 @@ async function discoverProductCatalog(
       observedResponse === undefined &&
       wireResponse === undefined
     ) {
+      await controls.onPage?.({
+        page_index: pageCount,
+        restart_count: restarts,
+        request: requestRecord,
+        response: null,
+        extraction: { path: 'none' },
+        result,
+        schema_validated: false,
+      });
       return {
         ok: false,
         error: `fixture discovery get_products rejected: ${redactCredentialPatterns(result.error ?? result.adcp_error?.code ?? 'unknown error', false)}`,
@@ -1692,7 +1770,25 @@ async function discoverProductCatalog(
       nativeState === 'canceled';
     const schemaCheck =
       sellerRejected || schemaData === undefined ? undefined : describeDiscoverySchemaFailure(schemaData, options);
-    if (!result.success) {
+    const observation: ProductPageObservation = {
+      page_index: pageCount,
+      restart_count: restarts,
+      request: requestRecord,
+      response: failedExchange.response,
+      extraction,
+      result,
+      schema_validated: schemaCheck === undefined && !sellerRejected && result.success,
+      ...(!schemaCheck &&
+        !sellerRejected &&
+        result.success && {
+          strict_schema_validated:
+            getValidator('get_products', 'sync', options._serverAdcpVersion ?? options.adcpVersion ?? ADCP_VERSION) !==
+            undefined,
+        }),
+      ...(schemaCheck?.schemaFailure && { schemaFailure: schemaCheck.schemaFailure }),
+    };
+    await controls.onPage?.(observation);
+    if (!result.success || sellerRejected) {
       return {
         ok: false,
         error: `fixture discovery get_products rejected: ${redactCredentialPatterns(result.error ?? result.adcp_error?.code ?? 'unknown error', false)}`,
@@ -1750,16 +1846,29 @@ async function discoverProductCatalog(
       }
       restarts++;
       products.length = 0;
+      errors.length = 0;
       seenProductIds.clear();
       cursors.length = 0;
       seenCursors.clear();
-      exchanges.length = 0;
+      if (!controls.retainRestartEvidence) exchanges.length = 0;
       pageOfProduct.clear();
-      cursor = undefined;
+      firstPage = undefined;
+      cursor = initialCursor;
       feedIdentity = undefined;
       continue;
     }
     feedIdentity = identity;
+    firstPage ??= observation;
+    if (Array.isArray(result.data.errors)) {
+      if (errors.length + result.data.errors.length > 100_000) {
+        return {
+          ok: false,
+          error: 'fixture discovery exceeded the 100,000-advisory safety limit',
+          exchange: failedExchange,
+        };
+      }
+      for (const error of result.data.errors) errors.push(error);
+    }
     const pageProducts = result.data.products;
     if (pageProducts !== undefined && !Array.isArray(pageProducts)) {
       return {
@@ -1825,6 +1934,8 @@ async function discoverProductCatalog(
     ok: true,
     catalog: {
       products,
+      firstPage: firstPage!,
+      errors,
       evidence: {
         page_count: pageCount,
         product_count: products.length,
