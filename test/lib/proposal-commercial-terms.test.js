@@ -616,35 +616,40 @@ test('3.3 collection-list uniqueness uses reference identity even when access to
   assert.ok(result.mismatches.some(m => m.path.includes('collection_lists/1')));
 });
 
-test('3.3 snapshot verification refuses definition pins and references needing current-source verification', () => {
-  for (const pinPresent of [false, true]) {
-    const terms = structuredClone(current);
-    if (pinPresent)
-      terms.definition_pins = [
-        {
-          ref_kind: 'publisher_format_option',
-          reference: { publisher_domain: 'publisher.example', format_option_id: 'display' },
-          content_digest: '0'.repeat(64),
-        },
-      ];
-    else
-      terms.purchases[0].format_option_refs = [
-        { scope: 'publisher', publisher_domain: 'publisher.example', format_option_id: 'display' },
-      ];
-    const result = verify(candidate(terms), terms);
-    assert.equal(result.ok, false);
-    assert.ok(result.mismatches.some(m => m.message.includes('current-source')));
-  }
+test('3.3 beta.2 withdrew definition pins: a pin is an unknown term and publisher references verify', () => {
+  // adcp#8537 removed definition pins after beta.1. The verifier reads that from
+  // the selected schema, so the current-source fail-closed path never fires.
+  const pinned = structuredClone(current);
+  pinned.definition_pins = [
+    {
+      ref_kind: 'publisher_format_option',
+      reference: { publisher_domain: 'publisher.example', format_option_id: 'display' },
+      content_digest: '0'.repeat(64),
+    },
+  ];
+  const refused = verify(candidate(pinned), pinned);
+  assert.equal(refused.ok, false);
+  assert.ok(!refused.mismatches.some(m => m.message.includes('current-source')));
+
+  const referenced = structuredClone(current);
+  referenced.purchases[0].format_option_refs = [
+    { scope: 'publisher', publisher_domain: 'publisher.example', format_option_id: 'display' },
+  ];
+  assert.deepEqual(verify(candidate(referenced), referenced), {
+    ok: true,
+    schemaVersion: ADCP_VERSION,
+    mismatches: [],
+  });
 });
 
-test('3.3 beta.1 snapshot verification refuses installment selections and business-calendar SLAs', () => {
+test('3.3 beta.2 snapshot verification rejects withdrawn installment selections and refuses business-calendar SLAs', () => {
   const installments = structuredClone(current);
   installments.purchases[0].installments = [
     { collection_ref: { publisher_domain: 'publisher.example', collection_id: 'show-1' }, installment_id: 'ep-1' },
   ];
   const refusedInstallments = verify(candidate(installments), installments);
   assert.equal(refusedInstallments.ok, false);
-  assert.ok(refusedInstallments.mismatches.some(m => m.message.includes('installment membership')));
+  assert.ok(!refusedInstallments.mismatches.some(m => m.message.includes('installment membership')));
 
   const business = structuredClone(current);
   business.change_terms[0].processing_sla = {

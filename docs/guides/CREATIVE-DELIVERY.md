@@ -151,12 +151,52 @@ Unmatched assets, ambiguous matches, and assets competing for the same slot
 keep their original keys. Unknown definitions leave assets unchanged. Canonical
 delivery retains its asset keys, and projection never mutates the caller's data.
 
-One legacy creative can carry only one `format_id` across all its package
-assignments. By default, different package refs cause a
-`CreativeFormatProjectionError`; its `details.package_refs` lists each
+A legacy `sync_creatives` record carries one `format_id` for a creative,
+however many packages it is assigned to. On the legacy wire the SDK resolves
+the creative against each assigned package independently, then reconciles
+those refs by constraint satisfaction rather than requiring them to be
+identical:
+
+- Every package must resolve to the same format (`agent_url` and `id`).
+- The shared ref takes `width`/`height` and `duration_ms` from the resolved
+  refs only, per axis; refs that state different values conflict. Values that
+  only declarations state are used to detect conflicts but are never copied
+  into the shared ref, because the shared ref must match what each package
+  resolves to on its own. When no ref states a size, the shared ref omits it.
+- When some ref states a value, every package must accept it. A package always
+  accepts its own resolved ref. Where its ref is silent, it accepts what any of
+  its declarations accepts: exact `width`/`height` (either alone is fine),
+  `sizes` entries, `min_width`/`max_width`/`min_height`/`max_height` bounds,
+  `orientation`, `aspect_ratio` (within 1%, so 940x529 is 16:9), an exact
+  duration or a `duration_ms_range` (either end may be `null`). The catalog
+  entry for the id applies on top. A declaration with none of these leaves the
+  constraint open. A size or duration constraint the SDK does not understand
+  accepts nothing, so it fails closed. A package declaring 640x360 and
+  940x529, or `max_width: 640`, refuses a 300x250 or 940x529 that another
+  package states.
+- When no ref states a value, declarations that disagree only among
+  themselves do not refuse. The shared ref omits the value, which is what each
+  package resolved to alone, so the result never depends on unrelated packages
+  that leave the constraint open.
+
+So a VAST creative assigned to nine packages declaring `video_vast` at 940x529
+and three declaring an unsized `video_vast` is sent once as
+`{ id: 'video_vast', width: 940, height: 529 }`, and when no package states a
+size the shared ref omits it.
+
+When no single ref satisfies every package, projection throws a
+`CreativeFormatProjectionError`. Its `details.conflicts` names each conflicting
+constraint (`format_id`, `size` or `duration`) with each package's allowed
+values, and the message repeats it. `details.package_refs` lists each
 `package_id` and resolved `ref`, or the remaining `refs` and a `reason` when
-that package cannot resolve uniquely. Use those details to split incompatible
-assignments.
+that package cannot resolve uniquely.
+
+This reconciliation is a legacy-wire concern only. On the canonical wire each
+package checks the creative against its own `format_kind` and `params`, so
+there is no shared identity to agree on and canonical delivery is unchanged.
+A peer whose support is `unknown` receives the legacy projection (see above),
+so its multi-package creatives are reconciled the same way.
+
 Canonical creatives assigned to multiple packages need selector evidence or a
 resolver answer for every package; a missing package cannot borrow another
 package's ref. Creative resolver calls in this path receive that package's
@@ -165,28 +205,19 @@ Already-legacy creatives with a stated size also refuse conflicting package
 evidence. Supply a selector per assigned package, and update creative resolvers
 that read `selector_containers` to read the package container directly.
 
-For a seller that accepts player-sized VAST refs without an exact player size,
-opt in per call:
-
-```ts
-await agent.syncCreatives(request, undefined, {
-  creativeFormatProjection: {
-    selectorContainers: selectedPackages,
-    playerSizedRefs: 'omit_unstated_size',
-  },
-});
-```
-
-This applies only to `video_vast` and `audio_vast` creatives assigned to multiple
-packages. Every package must independently resolve to one ref with the same
-owner, ID, duration, and other non-size format constraints. If those refs differ only in player size and the
-creative states no size, the shared wire ref omits `width` and `height` while
-keeping the agreed duration. A single package and identical package refs retain
-their exact refs. Sized creatives, ambiguous packages, different owners or IDs,
-and duration conflicts still refuse. Confirm the seller accepts omitted player
-dimensions before enabling this option; some legacy sellers require exact refs.
-The pure `projectSyncCreativesForDelivery()` helper accepts the same policy in
-its optional seventh argument.
+`creativeFormatProjection.playerSizedRefs: 'omit_unstated_size'` (the seventh
+argument of the pure `projectSyncCreativesForDelivery()` helper) is deprecated
+and will be removed in 18.0.0; setting it logs a one-time deprecation warning.
+Mixed sized and unsized packages no longer need it. Until removal it is still accepted, and keeps its earlier meaning only
+where the declarations conflict: `video_vast` and `audio_vast` packages that
+state different player sizes but agree on owner, ID, duration and other format
+parameters, for a creative that states no size. Setting it asserts that the
+seller accepts a ref without `width` and `height`, and the shared ref then
+omits them while keeping the agreed duration. Whether a stated VAST size is a
+hard requirement or a player hint is a fact about the seller's format, so it
+belongs in the seller's format definition or the AdCP format params rather
+than in host policy; see
+[adcontextprotocol/adcp#8583](https://github.com/adcontextprotocol/adcp/issues/8583).
 
 Capability resolution uses the client's
 emitted wire release pin: AdCP 3.2+ is canonical by contract, 3.0 is legacy, and 3.1
