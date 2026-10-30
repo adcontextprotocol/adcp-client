@@ -1,5 +1,55 @@
 # Changelog
 
+## 17.0.0-beta.10
+
+### Minor Changes
+
+- a66b6b6: **Beta-channel break:** this SDK advertises and negotiates only the AdCP `3.3-beta.2` preview and no longer packages or advertises `3.3-beta.1`. A buyer or seller still on beta.1 (SDK 17.0.0-beta.5 through beta.9) will not select the 3.3 preview with this release; the pair negotiates a shared stable release (3.2.7, 3.1.31 or 3.0.25) instead. Upgrade both sides together to keep exercising 3.3 preview features. An explicit `adcpVersion: '3.3.0-beta.1'` pin now fails with a configuration error.
+
+  Adopt the signed AdCP 3.3.0-beta.2 bundle, replacing 3.3.0-beta.1. Public types, Zod schemas, tool metadata and the packaged compliance corpus are regenerated from the beta.2 release.
+
+  **Removed from 3.3 (adcp#8537):** definition pins (`commercial_terms.definition_pins[]`, `DefinitionPin`, `DefinitionPinReferenceKind`, the `REFERENCE_DEFINITION_CHANGED` error code, the `definition_changed` refinement reason and `drifted_pins[]`), purchase rights (`purchases[].rights[]` and the `paid_amplification` / `content_reuse` right uses) and installment selection (`purchases[].installments[]`, `installment_changes`, `unsatisfied_installment_changes`). Code that builds or reads these no longer type-checks; remove it. The standalone commercial-terms verifier reads the selected schema, so against beta.2 it no longer fails closed on publisher format references or placement, collection and signal targeting, and rejects `definition_pins` and purchase `installments[]` as unknown commercial terms. It still fails closed on business-calendar SLA windows.
+
+  New in beta.2:
+  - `request_account` change requests accept `allow_separate_account`, and may resolve as `created` (a separate account, only with the opt-in) or `matched` (an account the caller already holds). The new correctable error code `ACCOUNT_CHANGE_REQUIRES_NEW_ACCOUNT` reports a change the seller would take only on a new account.
+  - Experimental seller offers (`proposal_initiator`, `offer_reason`, the `proposal.offered` notification type) and measurement provenance (`CollectionMechanism`, `counting_mechanisms`, `vendor_metric_provenance`).
+  - Reporting-subscription additions: offering `standard_dimensions` / `unmapped_dimensions`, per-offering `offering_id` on coverage exceptions, gaps and timezone cutovers, `previous_timezone`, `prior_versions[].configuration` and `inactive_intervals`.
+  - `principal_kind` / `expected_principal_kind` are deprecated in the generated types.
+
+  Fix (#3529): the ESM build's envelope-status check for `list_products` and `decline_proposals` used the CommonJS schema loader, so a schema root registered through the ESM loader (`registerExternalSchemaRoot`, `withExternalSchemaRoot`) was invisible to it. A release served from such a root then kept `status` on a response whose schema forbids it. The check now uses the loader of its own module format, and an unresolved release is no longer cached. The artifact-webhook validator in `SingleAgentClient` had the same hazard and now uses the statically imported loader.
+
+- 89f451c: Throw a typed `RequestValidationError` when the client rejects a request against the request schema before sending it (#3378). It extends `ValidationError` (exported from the root as `ADCPValidationError`) and carries `code: 'VALIDATION_ERROR'`, `task`, and `fields` (JSON Pointers to the invalid fields). It never carries the submitted values. The message text is unchanged on both validation paths, so existing message matchers keep working. The generated-schema path used to throw a plain `Error`; it now throws an `ADCPError` subclass, so `isADCPError()` returns `true` for it.
+
+  Refusals the SDK decides locally, before any of the task's request is sent, now carry `dispatched: false`. A caller can tell them apart from agent failures without `instanceof` or message matching. The marked refusals are:
+  - request validation;
+  - `FeatureUnsupportedError` and `ProtocolFeatureUnsupportedError` (feature and release gates);
+  - `VersionUnsupportedError` where the client refuses a task based on capabilities it already holds.
+
+  `VersionUnsupportedError` takes a new options argument, `{ dispatched: false }`, so the marker is set per throw site.
+
+  Failures that involve contacting the agent are not marked:
+  - endpoint discovery and OAuth token fetches;
+  - the `get_adcp_capabilities` fetch, including its rejection of a v2 seller.
+
+  A refused connection, a 5xx or a 429 still counts as an agent failure. Refusing to resume a deferred task is not marked either, because the original task was sent.
+
+  The new `isPreDispatchError(error)` checks the marker. The storyboard runner now uses the marker to detect local schema refusals and falls back to the message match.
+
+  `ValidationError` takes an optional fourth `message` argument.
+
+### Patch Changes
+
+- 55d7c7c: Reduce cold MCP output-schema compilation and validation memory by factoring large remote schemas into small referenced validators. Preserve seller constraints, reference scopes, formats, and protocol dialects. Add required regression checks for generated function size and repeated output validation, and reduce discovery's peak-memory budget to 512 MiB.
+- e2f04a1: Fix a 17.0.0-beta.5 regression in legacy-wire `sync_creatives` projection: a creative assigned to several packages is no longer refused when the packages' legacy refs differ only because some leave width/height or duration unstated. The SDK now reconciles the per-package refs by constraint satisfaction. A package that leaves a constraint open accepts the value another package states, the shared `format_id` omits size when no package states one, and projection refuses only when packages state different values, naming the conflicting constraint and packages in the message and in `CreativeFormatProjectionError.details.conflicts`. Canonical-wire delivery is unchanged.
+
+  When some ref states a size or duration, every package must accept it: a package accepts its own resolved ref and, where its ref is silent, whatever any of its declarations accepts (exact or width-only sizes, `sizes` entries, min/max bounds, `orientation`, `aspect_ratio`, exact durations, `duration_ms_range`). Size and duration constraints the SDK does not understand fail closed. So a package declaring 640x360 and 940x529, or `max_width: 640`, refuses a 300x250 or 940x529 another package states. The shared `format_id` takes size and duration from the resolved refs only, matching what each package resolves to on its own; when no ref states a value it is omitted, and declarations that disagree only among themselves do not refuse. `unknown` wire mode sends the legacy projection and reconciles the same way.
+
+  `creativeFormatProjection.playerSizedRefs` is deprecated and will be removed in 18.0.0; setting it logs a one-time runtime deprecation warning. Until then it is still accepted and keeps its beta.5 meaning only for VAST packages that state different player sizes; mixed sized and unsized packages now project the stated size with or without it. Whether a stated VAST size is a hard requirement or a player hint belongs in the seller's format definition or the AdCP format params, not in host policy (adcontextprotocol/adcp#8583).
+
+- c649a4d: Reuse compiled MCP output-schema validators across tool listings and connections with a content-keyed LRU capped at 256 entries and 64 MiB of serialized schemas per MCP era. Preserve legacy and modern JSON Schema validation behavior, isolate schemas with conflicting `$id` values, and release compiler caches on eviction. Schemas exceeding the byte budget still validate but are not cached; generated validator code contributes additional memory beyond the schema-byte allowance.
+
+  Add reproducible performance comparisons using real AdCP schemas, with CI guards for repeated compilation, event-loop stalls, peak RSS, retained heap, and compiler retention after LRU eviction. Reports include an uncached reproduction and a hidden-cache memory-leak negative control.
+
 ## 17.0.0-beta.9
 
 ### Patch Changes
