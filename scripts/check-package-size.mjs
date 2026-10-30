@@ -141,7 +141,9 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // selection, coverage, capability and engine modules plus the principal
 // subscription runtime. Measured 26,423,860 packed bytes after merging main;
 // allow about 40 KB above that for compressor variance.
-const MAX_PACKED_TARBALL_BYTES = 26_465_000;
+// The buyer runtime, engine store and expectations (#3504) measured 26,470,249
+// packed bytes after merging main's 3.3.0-beta.2 adoption; allow about 40 KB.
+const MAX_PACKED_TARBALL_BYTES = 26_510_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 144 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
