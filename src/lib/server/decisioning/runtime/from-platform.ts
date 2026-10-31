@@ -79,7 +79,8 @@ import {
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from '../platform';
 import type { ComplianceTestingCapabilities } from '../capabilities';
 import { normalizeTargetingCapabilities } from '../capabilities';
-import { isAdcpVersionAtLeast } from '../../../utils/adcp-version-config';
+import { isAdcpVersionAtLeast, isPre31AdcpVersion } from '../../../utils/adcp-version-config';
+import { omitsEnvelopeStatusForRelease } from '../../../utils/envelope-status-compat';
 import type { Account, AccountResolutionMode, ResolvedAuthInfo, ResolveContext } from '../account';
 import {
   AccountNotFoundError,
@@ -5647,7 +5648,7 @@ function buildTaskWebhookPayload(
   // rejected it is the terminal artifact; for failed it carries
   // `errors: AdcpStructuredError[]` alongside the empty success shape.
   if ((status === 'completed' || status === 'rejected') && artifact.result !== undefined) {
-    payload.result = artifact.result;
+    payload.result = webhookResultForRelease(opts, artifact.result, status);
   }
   if (status === 'rejected' && artifact.message !== undefined) {
     payload.message = artifact.message;
@@ -5657,6 +5658,37 @@ function buildTaskWebhookPayload(
     payload.message = artifact.error.message;
   }
   return payload;
+}
+
+const WEBHOOK_MEDIA_BUY_RESULT_TOOLS = new Set(['create_media_buy', 'update_media_buy', 'cancel_media_buy']);
+/** Lifecycle values that are never a task status, so a `status` holding one is the buy's. */
+const MEDIA_BUY_ONLY_STATUS_VALUES = new Set(['pending_creatives', 'pending_start', 'active', 'paused']);
+
+/**
+ * A terminal webhook `result` is the task's full response, so it carries the task status like a
+ * synchronous one (AdCP 3.1+; 3.3.0-beta.3 composes the protocol envelope into every response and
+ * async status payload, adcp#8547). Normalize it as the synchronous path does: a media-buy lifecycle
+ * value in `status` moves to `media_buy_status`, then the task status is stamped when absent. A
+ * release whose schema has no `status` on the tool (3.2 `list_products` / `decline_proposals`) and
+ * 3.0 keep the artifact as the platform returned it.
+ */
+function webhookResultForRelease(opts: DispatchHitlOpts, result: unknown, status: 'completed' | 'rejected'): unknown {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+  const served = opts.servedAdcpVersion;
+  if (served === undefined || isPre31AdcpVersion(served) || omitsEnvelopeStatusForRelease(opts.tool, served)) {
+    return result;
+  }
+  const body = { ...(result as Record<string, unknown>) };
+  if (
+    WEBHOOK_MEDIA_BUY_RESULT_TOOLS.has(opts.tool) &&
+    typeof body.status === 'string' &&
+    MEDIA_BUY_ONLY_STATUS_VALUES.has(body.status)
+  ) {
+    body.media_buy_status ??= body.status;
+    delete body.status;
+  }
+  body.status ??= status;
+  return body;
 }
 
 function resolveWebhookPayloadOperationId(opts: DispatchHitlOpts, taskId: string): string {

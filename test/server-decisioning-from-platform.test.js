@@ -33,6 +33,24 @@ const PRODUCTS_ONLY_BRIEF_VECTORS = JSON.parse(
 const validateMcpWebhookPayload = getSchemaValidatorByRef('core/mcp-webhook-payload.json');
 assert.ok(validateMcpWebhookPayload, 'MCP webhook payload schema must compile');
 
+// Schema-complete discovery fixtures: AdCP 3.3.0-beta.3 webhook results are validated as full task
+// responses (adcp#8547), so the async product and signal must be valid ones.
+const ASYNC_POLLABLE_PRODUCT = (() => {
+  const { format_ids: _formatIds, ...product } = require('./lib/test-fixtures').createTestProduct({
+    product_id: 'p_async_pollable',
+    name: 'pollable product',
+  });
+  return { ...product, format_options: [{ format_kind: 'image', params: {} }] };
+})();
+const ASYNC_POLLABLE_SIGNAL = {
+  signal_agent_segment_id: 'sig_pollable',
+  name: 'Pollable signal',
+  signal_id: { source: 'agent', agent_url: 'https://signals.example', id: 'sig_pollable' },
+  description: 'Pollable signal',
+  signal_type: 'marketplace',
+  deployments: [],
+};
+
 function assertMcpWebhookPayloadValid(payload) {
   assert.strictEqual(validateMcpWebhookPayload(payload), true, JSON.stringify(validateMcpWebhookPayload.errors));
 }
@@ -4962,13 +4980,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
         ctx.handoffToTask(async () => {
           await unblockTask;
           return {
-            products: [
-              {
-                product_id: 'p_async_pollable',
-                name: 'pollable product',
-                format_options: [{ format_kind: 'image', params: {} }],
-              },
-            ],
+            products: [ASYNC_POLLABLE_PRODUCT],
             cache_scope: 'account',
           };
         }),
@@ -5044,13 +5056,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     });
     assert.strictEqual(completed.structuredContent.status, 'completed');
     assert.deepStrictEqual(completed.structuredContent.result, {
-      products: [
-        {
-          product_id: 'p_async_pollable',
-          name: 'pollable product',
-          format_options: [{ format_kind: 'image', params: {} }],
-        },
-      ],
+      products: [ASYNC_POLLABLE_PRODUCT],
       cache_scope: 'account',
     });
     assert.strictEqual(emits.length, 1, 'one get_products webhook emitted on terminal completion');
@@ -5061,14 +5067,10 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(emits[0].payload.operation_id, 'op_products_async');
     assert.strictEqual(emits[0].payload.token, 'webhook-token-1234');
     assert.deepStrictEqual(emits[0].payload.result, {
-      products: [
-        {
-          product_id: 'p_async_pollable',
-          name: 'pollable product',
-          format_options: [{ format_kind: 'image', params: {} }],
-        },
-      ],
+      products: [ASYNC_POLLABLE_PRODUCT],
       cache_scope: 'account',
+      // The terminal result is the task's full response, so it carries the task status (adcp#8547).
+      status: 'completed',
     });
     assertMcpWebhookPayloadValid(emits[0].payload);
   });
@@ -5091,7 +5093,8 @@ describe('HITL dual-method dispatch — *Task variants', () => {
           ctx.handoffToTask(async () => {
             await unblockTask;
             return {
-              signals: [{ signal_agent_segment_id: 'sig_pollable', name: 'Pollable signal' }],
+              signals: [ASYNC_POLLABLE_SIGNAL],
+              cache_scope: 'public',
             };
           }),
         activateSignal: async () => ({ deployments: [] }),
@@ -5170,7 +5173,8 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(completed.structuredContent.protocol, 'signals');
     assert.strictEqual(completed.structuredContent.status, 'completed');
     assert.deepStrictEqual(completed.structuredContent.result, {
-      signals: [{ signal_agent_segment_id: 'sig_pollable', name: 'Pollable signal' }],
+      signals: [ASYNC_POLLABLE_SIGNAL],
+      cache_scope: 'public',
     });
     assert.strictEqual(emits.length, 1, 'one get_signals webhook emitted on terminal completion');
     assert.strictEqual(emits[0].payload.task_type, 'get_signals');
@@ -5180,7 +5184,9 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(emits[0].payload.operation_id, 'op_signals_async');
     assert.strictEqual(emits[0].payload.token, 'signals-webhook-token-1234');
     assert.deepStrictEqual(emits[0].payload.result, {
-      signals: [{ signal_agent_segment_id: 'sig_pollable', name: 'Pollable signal' }],
+      signals: [ASYNC_POLLABLE_SIGNAL],
+      cache_scope: 'public',
+      status: 'completed',
     });
     assertMcpWebhookPayloadValid(emits[0].payload);
   });
@@ -8283,7 +8289,13 @@ describe('HITL push notification webhook on terminal state', () => {
       },
     };
 
-    const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' }));
+    const platform = buildHitlPlatform(async () => ({
+      media_buy_id: 'mb_42',
+      status: 'active',
+      confirmed_at: '2026-04-30T12:00:00Z',
+      revision: 1,
+      packages: [],
+    }));
     const server = createAdcpServerFromPlatform(platform, {
       name: 'webhook',
       version: '0.0.1',
@@ -8328,7 +8340,16 @@ describe('HITL push notification webhook on terminal state', () => {
     assert.strictEqual(emit.payload.protocol, 'media-buy');
     assert.ok(typeof emit.payload.idempotency_key === 'string' && emit.payload.idempotency_key.length >= 16);
     assert.ok(typeof emit.payload.timestamp === 'string');
-    assert.deepStrictEqual(emit.payload.result, { media_buy_id: 'mb_42', status: 'active' });
+    // As on the synchronous path, the buy's lifecycle value moves to media_buy_status and the result
+    // carries the task status (adcp#8547).
+    assert.deepStrictEqual(emit.payload.result, {
+      media_buy_id: 'mb_42',
+      media_buy_status: 'active',
+      confirmed_at: '2026-04-30T12:00:00Z',
+      revision: 1,
+      packages: [],
+      status: 'completed',
+    });
     assert.strictEqual(emit.payload.token, 'webhook-token-1234');
     assert.match(emit.delivery_id, new RegExp(`^task-webhook:acc_1:create_media_buy:${taskId}$`));
     assert.notStrictEqual(emit.delivery_id, 'op_webhook_test');
@@ -8475,7 +8496,11 @@ describe('HITL push notification webhook on terminal state', () => {
     assert.strictEqual(record.error, undefined);
     assert.strictEqual(emits.length, 1);
     assert.strictEqual(emits[0].payload.status, 'rejected');
-    assert.deepStrictEqual(emits[0].payload.result, { media_buy_id: 'mb_declined', decision: 'declined' });
+    assert.deepStrictEqual(emits[0].payload.result, {
+      media_buy_id: 'mb_declined',
+      decision: 'declined',
+      status: 'rejected',
+    });
     assert.strictEqual(emits[0].payload.message, 'Inventory is no longer available');
     assert.strictEqual(emits[0].payload.error, undefined);
   });
