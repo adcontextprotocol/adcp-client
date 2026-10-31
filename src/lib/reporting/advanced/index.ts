@@ -59,3 +59,12 @@ export {
   type ReliableReportingSubscriptionPolicyV1,
   type ReliableReportingSubscriptionsOptionsV1,
 } from '../service/subscriptions';
+
+// Typed errors the coverage function and the engine throw (also exported from the package root).
+export {
+  CoverageInputError,
+  ReportingSubscriptionEngineError,
+  type CoverageInputErrorCode,
+  type CoverageInputErrorDetail,
+  type ReportingSubscriptionEngineErrorCode,
+} from '../../errors';

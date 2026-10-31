@@ -2,6 +2,7 @@
  * Bridge from subscription coverage to the consumer runtime's `ExpectedReportingPeriod`
  * (experimental `media_buy.reporting_subscriptions`).
  */
+import { CoverageInputError } from '../../errors';
 import type { ReportingSubscription, ReportingSubscriptionState } from '../../types/core.generated';
 import type { ExpectedReportingCoverage, ExpectedReportingPeriod } from '../reconciliation';
 import type { ExpectedSubscriptionObligationV1, ReportingSubscriptionVersionRecordV1 } from './coverage';
@@ -47,8 +48,10 @@ export function reportingSubscriptionVersionRecordsV1(input: {
   return entries.map(entry => {
     const configuration = input.configurations?.[entry.version] ?? entry.published;
     if (!configuration) {
-      throw new TypeError(
-        `No configuration for ${state.subscription_id} version ${entry.version}: the readback does not carry it, so keep every version you send`
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INCOMPLETE',
+        `No configuration for ${state.subscription_id} version ${entry.version}: the readback does not carry it, so keep every version you send`,
+        'missing_version_configuration'
       );
     }
     const method = input.destinationMethods?.[entry.version];

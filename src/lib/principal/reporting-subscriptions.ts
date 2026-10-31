@@ -3,6 +3,7 @@
  * `media_buy.reporting_subscriptions`): write the `reporting_subscriptions` section through
  * the guarded `sync_principal` lifecycle and read the subscriptions back.
  */
+import { ReportingSubscriptionError } from '../errors';
 import type { ReportingSubscription, ReportingSubscriptionState } from '../types/core.generated';
 import {
   PrincipalLifecycleError,
@@ -28,7 +29,11 @@ export interface SyncReportingSubscriptionsOptionsV1 extends PrincipalLifecycleO
 }
 
 /**
- * Replace the caller's complete reporting subscription set. Uses the same guarded
+ * Replace the caller's complete reporting subscription set.
+ *
+ * Throws {@link ReportingSubscriptionError}: `SUBSCRIPTION_WOULD_DEACTIVATE` (with `dispatched: false`), `SUBSCRIPTION_CONFLICT_EXHAUSTED`, or `SUBSCRIPTION_READBACK_MISMATCH`.
+ * Other lifecycle failures throw `PrincipalLifecycleError`.
+ * Uses the same guarded
  * replacement as `syncPrincipalLifecycle` (expected_configuration_version, fresh idempotency
  * keys on conflict). Omitting a currently active subscription deactivates it, so that is
  * refused unless `allowDeactivation` is set; the check runs against every configuration read
@@ -46,29 +51,48 @@ export async function syncReportingSubscriptionsV1(
 ): Promise<SyncReportingSubscriptionsResultV1> {
   const { allowDeactivation = false, ...lifecycleOptions } = options;
   const submittedIds = new Set(subscriptions.map(subscription => subscription.subscription_id));
-  const result = await guardedSyncPrincipalLifecycle(
-    client,
-    { reporting_subscriptions: structuredClone([...subscriptions]) } as never,
-    lifecycleOptions,
-    prior => {
-      if (allowDeactivation || prior.kind !== 'current') return;
-      const current = (prior.configuration as { reporting_subscriptions?: ReportingSubscriptionState[] })
-        .reporting_subscriptions;
-      const omitted = (current ?? [])
-        .filter(state => state.state !== 'inactive' && !submittedIds.has(state.subscription_id))
-        .map(state => state.subscription_id);
-      if (omitted.length > 0) {
-        throw new PrincipalLifecycleError(
-          `The write would deactivate active subscriptions it omits (${omitted.map(id => JSON.stringify(id)).join(', ')}); include them, send active: false, or pass allowDeactivation: true`
-        );
+  let result: PrincipalLifecycleResult;
+  try {
+    result = await guardedSyncPrincipalLifecycle(
+      client,
+      { reporting_subscriptions: structuredClone([...subscriptions]) } as never,
+      lifecycleOptions,
+      prior => {
+        if (allowDeactivation || prior.kind !== 'current') return;
+        const current = (prior.configuration as { reporting_subscriptions?: ReportingSubscriptionState[] })
+          .reporting_subscriptions;
+        const omitted = (current ?? [])
+          .filter(state => state.state !== 'inactive' && !submittedIds.has(state.subscription_id))
+          .map(state => state.subscription_id);
+        if (omitted.length > 0) {
+          throw new ReportingSubscriptionError(
+            'SUBSCRIPTION_WOULD_DEACTIVATE',
+            `The write would deactivate active subscriptions it omits (${omitted.map(id => JSON.stringify(id)).join(', ')}), because reporting_subscriptions is the complete set. Include them, send them with active: false, or pass allowDeactivation: true.`,
+            // A refused write is never sent. An earlier attempt that met CONFLICT applied nothing.
+            { wouldDeactivate: omitted }
+          );
+        }
       }
+    );
+  } catch (error) {
+    if (error instanceof PrincipalLifecycleError && error.code === 'PRINCIPAL_CONFLICT_EXHAUSTED') {
+      throw new ReportingSubscriptionError(
+        'SUBSCRIPTION_CONFLICT_EXHAUSTED',
+        `${error.message} Another writer is updating this principal; retry later.`,
+        { cause: error }
+      );
     }
-  );
+    throw error;
+  }
   const states = (result.current.configuration.reporting_subscriptions ?? []) as ReportingSubscriptionState[];
   for (const subscription of subscriptions) {
     const state = states.find(item => item.subscription_id === subscription.subscription_id);
     const fail = (message: string) =>
-      new PrincipalLifecycleError(message, { applied: result.applied, current: result.current });
+      new ReportingSubscriptionError(
+        'SUBSCRIPTION_READBACK_MISMATCH',
+        `${message}. The seller altered a submitted field; contact the seller.`,
+        { readback: state, appliedResponse: result.applied, current: result.current }
+      );
     if (!state || state.subscription_version !== subscription.subscription_version) {
       throw fail(
         `Seller readback does not carry subscription ${JSON.stringify(subscription.subscription_id)} at version ${subscription.subscription_version}`

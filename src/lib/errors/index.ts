@@ -1272,3 +1272,222 @@ export class PreparedFixturesDeniedError extends ADCPError {
     this.details = { refusal_code: refusalCode };
   }
 }
+
+// ====== Reporting subscriptions (experimental `media_buy.reporting_subscriptions`, AdCP 3.3) ======
+// Codes and recovery classes follow the shared vocabulary in the spec repository
+// (`static/compliance/source/test-vectors/reporting-subscriptions/error-codes.json`), which the Python SDK uses too.
+
+/** How to recover from an SDK error: the same vocabulary as {@link ClientPreflightAdcpErrorRecovery}. */
+export type AdcpErrorRecovery = ClientPreflightAdcpErrorRecovery;
+
+/**
+ * Codes a buyer-side reporting-subscription refusal or failure carries.
+ *
+ * @experimental Reporting subscriptions (AdCP 3.3).
+ */
+export type ReportingSubscriptionErrorCode =
+  | 'SUBSCRIPTION_WOULD_DEACTIVATE'
+  | 'DESTINATION_WOULD_REVOKE'
+  | 'SUBSCRIPTION_ID_CLASH'
+  | 'SUBSCRIPTION_OPERATOR_SCOPE_REQUIRED'
+  | 'SUBSCRIPTION_SELECTOR_UNMATCHED'
+  | 'SUBSCRIPTION_CONFLICT_EXHAUSTED'
+  | 'SUBSCRIPTION_READBACK_MISMATCH';
+
+/** Codes the SDK raises only before sending anything, so they always carry `dispatched: false`. */
+const REPORTING_SUBSCRIPTION_PRE_DISPATCH: ReadonlySet<ReportingSubscriptionErrorCode> = new Set([
+  'SUBSCRIPTION_WOULD_DEACTIVATE',
+  'DESTINATION_WOULD_REVOKE',
+  'SUBSCRIPTION_ID_CLASH',
+  'SUBSCRIPTION_OPERATOR_SCOPE_REQUIRED',
+  'SUBSCRIPTION_SELECTOR_UNMATCHED',
+]);
+
+const REPORTING_SUBSCRIPTION_RECOVERY: Readonly<Record<ReportingSubscriptionErrorCode, AdcpErrorRecovery>> = {
+  SUBSCRIPTION_WOULD_DEACTIVATE: 'correctable',
+  DESTINATION_WOULD_REVOKE: 'correctable',
+  SUBSCRIPTION_ID_CLASH: 'correctable',
+  SUBSCRIPTION_OPERATOR_SCOPE_REQUIRED: 'correctable',
+  SUBSCRIPTION_SELECTOR_UNMATCHED: 'correctable',
+  SUBSCRIPTION_CONFLICT_EXHAUSTED: 'transient',
+  SUBSCRIPTION_READBACK_MISMATCH: 'terminal',
+};
+
+/** Options for {@link ReportingSubscriptionError}. */
+export interface ReportingSubscriptionErrorOptions {
+  cause?: unknown;
+  /** `SUBSCRIPTION_WOULD_DEACTIVATE`: the `subscription_id` values the write would deactivate. */
+  wouldDeactivate?: readonly string[];
+  /** `DESTINATION_WOULD_REVOKE`: the `destination_id` values the write would revoke. */
+  wouldRevoke?: readonly string[];
+  /** `SUBSCRIPTION_ID_CLASH`: the clashing `delivery_config_id`. */
+  deliveryConfigId?: string;
+  /** `SUBSCRIPTION_ID_CLASH`: the account that uses it. */
+  accountId?: string;
+  /** `SUBSCRIPTION_SELECTOR_UNMATCHED`: offerings that fail on the fewest attributes, each with the attributes it fails. */
+  nearest?: readonly unknown[];
+  /** `SUBSCRIPTION_READBACK_MISMATCH`: the seller's readback of the subscription. */
+  readback?: unknown;
+  /** The applied `sync_principal` result, when the write was applied and a later check failed. */
+  appliedResponse?: unknown;
+  /** The last coherent `get_principal` readback, when one was observed. */
+  current?: unknown;
+}
+
+/**
+ * A buyer-side reporting-subscription refusal or failure, with a stable `code` and `recovery`.
+ * The message's last sentence says how to fix it; it is display text, never parse it.
+ *
+ * `dispatched` is `false` for the codes the SDK raises only before sending a `sync_principal`
+ * write (`SUBSCRIPTION_WOULD_DEACTIVATE`, `DESTINATION_WOULD_REVOKE`, `SUBSCRIPTION_ID_CLASH`,
+ * `SUBSCRIPTION_OPERATOR_SCOPE_REQUIRED`, `SUBSCRIPTION_SELECTOR_UNMATCHED`), so the refused write
+ * changed nothing at the seller ({@link isPreDispatchError}). It is absent for the others, where the
+ * write may have reached the seller.
+ *
+ * Wire errors a seller returns (`INVALID_REQUEST`, `UNSUPPORTED_FEATURE`, `CONFLICT`) are not
+ * redefined here.
+ *
+ * @experimental Reporting subscriptions (AdCP 3.3).
+ */
+export class ReportingSubscriptionError extends ADCPError {
+  readonly code: ReportingSubscriptionErrorCode;
+  readonly recovery: AdcpErrorRecovery;
+  /** `false` when the write was refused before it was sent; absent otherwise. */
+  declare readonly dispatched?: false;
+  declare readonly wouldDeactivate?: readonly string[];
+  declare readonly wouldRevoke?: readonly string[];
+  declare readonly deliveryConfigId?: string;
+  declare readonly accountId?: string;
+  declare readonly nearest?: readonly unknown[];
+  declare readonly readback?: unknown;
+  declare readonly appliedResponse?: unknown;
+  declare readonly current?: unknown;
+
+  constructor(code: ReportingSubscriptionErrorCode, message: string, options: ReportingSubscriptionErrorOptions = {}) {
+    super(message);
+    this.code = code;
+    this.recovery = REPORTING_SUBSCRIPTION_RECOVERY[code];
+    if (REPORTING_SUBSCRIPTION_PRE_DISPATCH.has(code)) {
+      Object.defineProperty(this, 'dispatched', { value: false, enumerable: true });
+    }
+    if (options.cause !== undefined) Object.defineProperty(this, 'cause', { value: options.cause, configurable: true });
+    if (options.deliveryConfigId !== undefined) this.deliveryConfigId = options.deliveryConfigId;
+    if (options.accountId !== undefined) this.accountId = options.accountId;
+    if (options.nearest !== undefined) this.nearest = Object.freeze([...options.nearest]);
+    if (options.wouldDeactivate !== undefined) this.wouldDeactivate = Object.freeze([...options.wouldDeactivate]);
+    if (options.wouldRevoke !== undefined) this.wouldRevoke = Object.freeze([...options.wouldRevoke]);
+    if (options.readback !== undefined) this.readback = options.readback;
+    if (options.appliedResponse !== undefined) this.appliedResponse = options.appliedResponse;
+    if (options.current !== undefined) this.current = options.current;
+    this.details = {
+      code,
+      ...(this.wouldDeactivate ? { would_deactivate: this.wouldDeactivate } : {}),
+      ...(this.wouldRevoke ? { would_revoke: this.wouldRevoke } : {}),
+      ...(this.deliveryConfigId !== undefined ? { delivery_config_id: this.deliveryConfigId } : {}),
+      ...(this.accountId !== undefined ? { account_id: this.accountId } : {}),
+      ...(this.nearest ? { nearest: this.nearest } : {}),
+    };
+  }
+}
+
+/**
+ * Codes for a coverage computation that cannot run on its input.
+ *
+ * @experimental Reporting subscriptions (AdCP 3.3).
+ */
+export type CoverageInputErrorCode =
+  | 'COVERAGE_INPUT_INCOMPLETE'
+  | 'COVERAGE_INPUT_INVALID'
+  | 'COVERAGE_BUDGET_EXCEEDED';
+
+/**
+ * The specific cause of a {@link CoverageInputError}: `missing_*` details go with
+ * `COVERAGE_INPUT_INCOMPLETE`, `invalid_*` details with `COVERAGE_INPUT_INVALID`.
+ * `COVERAGE_BUDGET_EXCEEDED` has none.
+ *
+ * @experimental Reporting subscriptions (AdCP 3.3).
+ */
+export type CoverageInputErrorDetail =
+  | 'missing_account_timezone'
+  | 'missing_source_timezone'
+  | 'missing_previous_timezone'
+  | 'missing_standard_dimensions'
+  | 'missing_status_retention_days'
+  | 'missing_version_configuration'
+  | 'missing_destination_method'
+  | 'invalid_timezone'
+  | 'invalid_period_duration'
+  | 'invalid_instant'
+  | 'invalid_input';
+
+/**
+ * The coverage rule cannot be evaluated on this input: a value it needs is missing
+ * (`COVERAGE_INPUT_INCOMPLETE`), a value it reads is malformed (`COVERAGE_INPUT_INVALID`), or the
+ * result would exceed the caller's budget (`COVERAGE_BUDGET_EXCEEDED`). `detail` names the cause.
+ * Coverage is a local computation, so the error never carries `dispatched`. The SDK fails closed: it
+ * never returns a partial owed set.
+ *
+ * @experimental Reporting subscriptions (AdCP 3.3).
+ */
+export class CoverageInputError extends ADCPError {
+  readonly code: CoverageInputErrorCode;
+  readonly recovery = 'correctable' as const;
+  declare readonly detail?: CoverageInputErrorDetail;
+
+  constructor(code: CoverageInputErrorCode, message: string, detail?: CoverageInputErrorDetail) {
+    super(message);
+    this.code = code;
+    if (detail !== undefined) this.detail = detail;
+    this.details = { code, ...(detail !== undefined ? { detail } : {}) };
+  }
+}
+
+/**
+ * Codes for a seller-side reporting-subscription engine failure at run time.
+ *
+ * - `SUBSCRIPTION_STATE_CONFLICT`: concurrent reconciles kept winning the engine store's
+ *   compare-and-set; retry.
+ * - `SUBSCRIPTION_STATE_CORRUPT`: the engine store returned a malformed document, a revision of the
+ *   wrong type, or a repeating cursor.
+ * - `SUBSCRIPTION_ROSTER_INCOMPLETE`: `listAuthorizedAccounts` repeated a cursor or did not finish
+ *   within the page limit, so the engine refused a partial roster.
+ * - `SUBSCRIPTION_HOST_FACT_INVALID`: a host hook returned a fact the engine cannot use, such as a
+ *   re-grant without `granted_at`, a timezone change without `timezone_changed_at`, or an instant
+ *   that is not RFC 3339.
+ *
+ * @experimental Reporting subscriptions (AdCP 3.3).
+ */
+export type ReportingSubscriptionEngineErrorCode =
+  | 'SUBSCRIPTION_STATE_CONFLICT'
+  | 'SUBSCRIPTION_STATE_CORRUPT'
+  | 'SUBSCRIPTION_ROSTER_INCOMPLETE'
+  | 'SUBSCRIPTION_HOST_FACT_INVALID';
+
+const REPORTING_SUBSCRIPTION_ENGINE_RECOVERY: Readonly<
+  Record<ReportingSubscriptionEngineErrorCode, AdcpErrorRecovery>
+> = {
+  SUBSCRIPTION_STATE_CONFLICT: 'transient',
+  SUBSCRIPTION_STATE_CORRUPT: 'terminal',
+  SUBSCRIPTION_ROSTER_INCOMPLETE: 'correctable',
+  SUBSCRIPTION_HOST_FACT_INVALID: 'correctable',
+};
+
+/**
+ * A seller-side reporting-subscription engine failure at run time, with a stable `code` and
+ * `recovery`. Configuration mistakes caught when the engine is created throw `PlatformConfigError`
+ * instead, and coverage-rule input problems throw {@link CoverageInputError}.
+ *
+ * @experimental Reporting subscriptions (AdCP 3.3).
+ */
+export class ReportingSubscriptionEngineError extends ADCPError {
+  readonly code: ReportingSubscriptionEngineErrorCode;
+  readonly recovery: AdcpErrorRecovery;
+
+  constructor(code: ReportingSubscriptionEngineErrorCode, message: string, options: { cause?: unknown } = {}) {
+    super(message);
+    this.code = code;
+    this.recovery = REPORTING_SUBSCRIPTION_ENGINE_RECOVERY[code];
+    if (options.cause !== undefined) Object.defineProperty(this, 'cause', { value: options.cause, configurable: true });
+    this.details = { code };
+  }
+}

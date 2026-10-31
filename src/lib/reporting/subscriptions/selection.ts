@@ -5,6 +5,7 @@
  * Pure functions shared by the buyer coverage calculation and the seller obligation engine,
  * so both sides resolve the same offering for the same facts.
  */
+import { CoverageInputError } from '../../errors';
 import type { ReportingDeliveryOffering, ReportingSubscription } from '../../types/core.generated';
 import type { ReportingDeliveryOfferingWithDimensionsV1 } from './wire';
 
@@ -167,9 +168,11 @@ export function resolveReportingSubscriptionOfferingsV1(input: ResolveReportingS
   const standard = (offering: ReportingSubscriptionOfferingV1): readonly string[] => {
     // Sellers advertising subscriptions MUST publish it; without it match cannot be resolved.
     if (!Array.isArray(offering.standard_dimensions)) {
-      throw new TypeError(
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INCOMPLETE',
         `Offering ${JSON.stringify(offering.offering_id)} does not publish standard_dimensions; ` +
-          'a subscription selector cannot be resolved against it'
+          'a subscription selector cannot be resolved against it',
+        'missing_standard_dimensions'
       );
     }
     return offering.standard_dimensions;

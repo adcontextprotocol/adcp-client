@@ -3,6 +3,8 @@ export {
   PrincipalLifecycleError,
   PrincipalLifecycleTimeoutError,
   type PrincipalLifecycleClient,
+  type PrincipalLifecycleErrorCode,
+  type PrincipalLifecycleErrorOptions,
   type PrincipalLifecycleOptions,
   type PrincipalLifecycleResult,
 } from './lifecycle';
