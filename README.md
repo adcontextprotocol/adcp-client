@@ -543,7 +543,7 @@ const outcome = await client.accounts.ensure(key, { billing: 'operator' }); // r
 - **Grants.** The SDK is the only source of `authorized_at`. End a relationship with `windDownGrant()` instead of revoking.
 - **Coming in later betas:** buyer `reconcile`, `explain` and events, the test kit, and explain traces.
 
-Guides: [seller](docs/guides/REPORTING-SUBSCRIPTIONS-SELLER.md) · [buyer](docs/guides/REPORTING-SUBSCRIPTIONS-BUYER.md) · [accounts](docs/guides/FIRST-CALL-TO-A-SELLER.md) · [ledger and building blocks](docs/guides/REPORTING-LEDGER.md) · [storage package](packages/reporting-storage/README.md)
+Guides: [seller](docs/guides/REPORTING-SUBSCRIPTIONS-SELLER.md) · [buyer](docs/guides/REPORTING-SUBSCRIPTIONS-BUYER.md) · [accounts](docs/guides/FIRST-CALL-TO-A-SELLER.md) · [ledger and building blocks](docs/guides/REPORTING-LEDGER.md) · [storage package](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/README.md)
 
 ## Multi-Agent Operations
 
