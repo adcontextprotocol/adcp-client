@@ -288,5 +288,12 @@ describe('the service and the consumer take one storage', () => {
       /not both/
     );
     assert.throws(() => createReliableReportingConsumerV1({ accounts: [], ownerToken: 'owner-token-1' }), /storage/);
+    // Like the seller, a buyer refuses process-local storage in production.
+    withNodeEnv('production', () => {
+      assert.throws(() => createReliableReportingConsumerV1({ accounts: [], storage, ownerToken: 'owner-token-1' }), {
+        code: 'REPORTING_STORAGE_NOT_DURABLE',
+        message: /postgresStorage/,
+      });
+    });
   });
 });

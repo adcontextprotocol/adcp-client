@@ -96,7 +96,10 @@ export interface CreateReliableReportingConsumerOptionsV1<TCredential = unknown>
    *
    * @experimental Reporting storage (AdCP 3.3).
    */
-  storage?: { readonly consumer: ReliableReportingConsumerPersistenceV1 };
+  storage?: {
+    readonly consumer: ReliableReportingConsumerPersistenceV1;
+    readonly durability?: 'process-local' | 'durable';
+  };
   /** Unique per running process. It is coordination metadata, not a credential. */
   ownerToken: string;
   pollIntervalMs?: number;
@@ -336,6 +339,21 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
 ): ReliableReportingConsumerV1<TCredential> {
   if (input.persistence && input.storage) {
     throw new TypeError('Pass storage or persistence to the reliable reporting consumer, not both');
+  }
+  // Like the seller, a buyer refuses process-local storage in production: losing checkpoints, leases and
+  // the processed-notification set on restart reprocesses notifications and re-walks every account.
+  if (
+    input.storage?.durability === 'process-local' &&
+    process.env.NODE_ENV !== 'test' &&
+    process.env.NODE_ENV !== 'development'
+  ) {
+    throw Object.assign(
+      new TypeError(
+        'The reliable reporting consumer keeps checkpoints, leases and processed notifications in memoryStorage(), which does not survive a restart. ' +
+          'Pass storage: postgresStorage({ pool }) (@adcp/reporting-storage), or set NODE_ENV=development to run in memory.'
+      ),
+      { code: 'REPORTING_STORAGE_NOT_DURABLE' }
+    );
   }
   const persistence = input.persistence ?? input.storage?.consumer;
   if (!persistence) {
