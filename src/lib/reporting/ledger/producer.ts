@@ -18,7 +18,12 @@ import {
   type ReportingSourceOfferingV1,
   type ReportingSourceSliceRequestV1,
 } from '../source';
-import { assertReportingLedgerHistoryDoesNotOverlap, reportingLedgerSuccessor } from './coverage';
+import {
+  assertReportingLedgerHistoryDoesNotOverlap,
+  isReportingLedgerOwedSetV1,
+  reportingLedgerOwedSetOrdinalV1,
+  reportingLedgerSuccessor,
+} from './coverage';
 import {
   assertReportingCalendarDayPeriod,
   assertReportingCalendarDaySource,
@@ -36,8 +41,10 @@ import {
   retryReportingStatusNotificationsV1,
 } from './lifecycle';
 import { listAdjustmentMetadataFromStore, listRevisionMetadataFromStore } from './revision-metadata';
-import { ReportingConfigurationImmutableError } from './types';
+import { ReportingConfigurationImmutableError, isReportingLedgerErrorNamed } from './types';
 import type {
+  ReportingSubscriptionConfigurationInputV1,
+  ReportingSubscriptionLedgerObligationInputV1,
   CreateReportingProducerOptionsV1,
   ReportingLedgerAdjustmentMetadataV1,
   ReportingLedgerAdjustmentV1,
@@ -76,6 +83,9 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       if (Object.hasOwn(input, 'historyStart') || Object.hasOwn(input, 'historyStartOrdinal')) {
         throw new TypeError('Reporting history must be supplied through trusted install options');
       }
+      if (Object.hasOwn(input, 'subscription') || Object.hasOwn(input, 'owedSet')) {
+        throw new TypeError('Subscription generations are installed through planSubscriptionObligations');
+      }
       const normalizedInput = {
         ...structuredClone(input),
         schedule: {
@@ -91,7 +101,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       // offering up first made reinstalling one throw "Unknown reporting
       // source offering" without ever reading the ledger.
       const existing = (await options.store.listConfigurations(normalizedInput.account.account_id)).filter(
-        value => value.delivery_config_id === normalizedInput.delivery_config_id
+        value => value.delivery_config_id === normalizedInput.delivery_config_id && !isReportingLedgerOwedSetV1(value)
       );
       const semantic = { ...normalizedInput };
       const semanticFingerprint = prefixedDigest(semantic);
@@ -202,6 +212,9 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
         value => value.configurationId === input.configurationId
       );
       if (!configuration) throw new Error('Unknown reporting configuration');
+      if (isReportingLedgerOwedSetV1(configuration)) {
+        throw new TypeError('Subscription generations own their owed set and have no history to extend');
+      }
       if (configuration.historyStart !== undefined) {
         const requested = historyInstant(input.historyStart);
         if (requested === Date.parse(configuration.historyStart)) return configuration;
@@ -229,12 +242,16 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       const historyBySource = new Map<string, number>();
       const created: ReportingLedgerObligationV1[] = [];
       let attempted = 0;
-      const configurations = (await options.store.listConfigurations(planOptions.account_id)).sort(
-        (left, right) =>
-          instant(left.installedAt, 'installedAt') - instant(right.installedAt, 'installedAt') ||
-          left.delivery_config_version - right.delivery_config_version ||
-          left.configurationId.localeCompare(right.configurationId)
-      );
+      // Owed-set (subscription) generations own exactly the obligations written into them by
+      // planSubscriptionObligations and are never grid-filled here.
+      const configurations = (await options.store.listConfigurations(planOptions.account_id))
+        .filter(value => !isReportingLedgerOwedSetV1(value))
+        .sort(
+          (left, right) =>
+            instant(left.installedAt, 'installedAt') - instant(right.installedAt, 'installedAt') ||
+            left.delivery_config_version - right.delivery_config_version ||
+            left.configurationId.localeCompare(right.configurationId)
+        );
       const obligationsByAccount = new Map<string, ReportingLedgerObligationV1[]>();
       const retiredByAccount = new Map<string, { configurationId: string; periodOrdinal: number }[]>();
       // Complete the live pass across all configurations before filling history budgets.
@@ -347,6 +364,159 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
         }
       }
       return created;
+    },
+
+    async planSubscriptionObligations(plan) {
+      const store = options.store;
+      if (typeof store.recordOwedSetProgress !== 'function') {
+        throw new TypeError('Reporting ledger store does not support subscription generations');
+      }
+      const nowIso = plan.now ?? new Date().toISOString();
+      const nowMs = instant(nowIso, 'now');
+      const owedThroughMs = instant(plan.owedThrough, 'owedThrough');
+      if (owedThroughMs > nowMs) throw new RangeError('owedThrough must not be in the future');
+      const owedThrough = new Date(owedThroughMs).toISOString();
+      boundedId(plan.account_id, 'account_id');
+      boundedId(plan.subscriptionId, 'subscriptionId');
+      boundedId(plan.principal?.tenantId, 'principal.tenantId');
+      boundedId(plan.principal?.principalId, 'principal.principalId');
+      if (!Array.isArray(plan.configurations) || !Array.isArray(plan.obligations)) {
+        throw new TypeError('planSubscriptionObligations requires configurations and obligations arrays');
+      }
+      const ownedBySubscription = (value: ReportingLedgerConfigurationV1) =>
+        isReportingLedgerOwedSetV1(value) &&
+        value.account.account_id === plan.account_id &&
+        value.subscription!.tenantId === plan.principal.tenantId &&
+        value.subscription!.principalId === plan.principal.principalId &&
+        value.subscription!.subscriptionId === plan.subscriptionId;
+      const existing = (await store.listConfigurations(plan.account_id)).filter(ownedBySubscription);
+      // Install each (version, offering) generation once, oldest version first.
+      const inputs = [...plan.configurations].sort(
+        (left, right) =>
+          left.delivery_config_version - right.delivery_config_version ||
+          (left.offeringId < right.offeringId ? -1 : left.offeringId > right.offeringId ? 1 : 0)
+      );
+      const generations = new Map<string, ReportingLedgerConfigurationV1>();
+      for (const input of inputs) {
+        const configuration = subscriptionConfiguration(input, plan, nowIso);
+        const key = `${configuration.delivery_config_version}\0${configuration.offeringId}`;
+        if (generations.has(key)) {
+          throw new TypeError('planSubscriptionObligations names one (version, offering) generation twice');
+        }
+        const stored = existing.find(value => value.configurationId === configuration.configurationId);
+        if (stored) {
+          if (stored.semanticFingerprint !== configuration.semanticFingerprint) {
+            throw new ReportingConfigurationImmutableError({
+              accountId: plan.account_id,
+              deliveryConfigId: configuration.delivery_config_id,
+              deliveryConfigVersion: configuration.delivery_config_version,
+            });
+          }
+          generations.set(key, stored);
+          continue;
+        }
+        // Only a new generation needs a live offering, as in installConfiguration.
+        validateConfigurationAgainstOffering(
+          configuration,
+          requiredOffering(offeringById, configuration.offeringId),
+          'owed_set'
+        );
+        const written = (await store.putConfiguration(configuration)).value;
+        if (
+          written.configurationId !== configuration.configurationId ||
+          written.semanticFingerprint !== configuration.semanticFingerprint
+        ) {
+          throw new ReportingConfigurationImmutableError({
+            accountId: plan.account_id,
+            deliveryConfigId: configuration.delivery_config_id,
+            deliveryConfigVersion: configuration.delivery_config_version,
+          });
+        }
+        generations.set(key, written);
+      }
+      const prepared: Array<{
+        configuration: ReportingLedgerConfigurationV1;
+        obligation: ReportingLedgerObligationV1;
+      }> = [];
+      const seen = new Set<string>();
+      for (const input of plan.obligations) {
+        const configuration = generations.get(`${input?.delivery_config_version}\0${input?.offeringId}`);
+        if (!configuration) {
+          throw new TypeError('Every subscription obligation must name a generation in configurations');
+        }
+        const obligation = planOwedSetObligation(
+          configuration,
+          input,
+          requiredOffering(offeringById, configuration.offeringId),
+          owedThroughMs,
+          nowIso
+        );
+        const identity = `${obligation.configurationId}\0${obligation.periodOrdinal}`;
+        if (seen.has(identity)) throw new TypeError('planSubscriptionObligations names one period twice');
+        seen.add(identity);
+        prepared.push({ configuration, obligation });
+      }
+      prepared.sort(
+        (left, right) =>
+          Date.parse(left.obligation.period.start) - Date.parse(right.obligation.period.start) ||
+          (left.obligation.configurationId < right.obligation.configurationId ? -1 : 1)
+      );
+      const retired = new Set(
+        ((await store.listRetiredObligationOrdinals?.(plan.account_id)) ?? []).map(
+          value => `${value.configurationId}\0${value.periodOrdinal}`
+        )
+      );
+      // Widen each generation's scope summary before its obligations land, so a read never sees
+      // an obligation its generation does not answer for. Completeness (`through`) moves only
+      // after every obligation is durable.
+      for (const configuration of generations.values()) {
+        const owned = prepared.filter(value => value.configuration.configurationId === configuration.configurationId);
+        if (owned.length === 0) continue;
+        await store.recordOwedSetProgress({
+          configurationId: configuration.configurationId,
+          account_id: plan.account_id,
+          from: owned[0]!.obligation.period.start,
+          until: owned
+            .map(value => value.obligation.period.end)
+            .sort((left, right) => Date.parse(left) - Date.parse(right))
+            .at(-1)!,
+          mediaBuyIds: [...new Set(owned.flatMap(value => value.obligation.mediaBuyIds))].sort(),
+        });
+      }
+      const created: ReportingLedgerObligationV1[] = [];
+      for (const { obligation } of prepared) {
+        if (retired.has(`${obligation.configurationId}\0${obligation.periodOrdinal}`)) continue;
+        let written: { inserted: boolean; value: ReportingLedgerObligationV1 };
+        try {
+          written = await store.putObligation(obligation);
+        } catch (error) {
+          // Retention retired the period after the engine froze it; it is never re-created.
+          if (isReportingLedgerErrorNamed(error, 'ReportingLedgerPeriodRetiredError')) continue;
+          throw error;
+        }
+        if (!written.inserted) continue;
+        created.push(written.value);
+        await reconcileReportingStatusLifecycleV1({
+          store,
+          reporting_obligation_id: written.value.reporting_obligation_id,
+          // A fallback clock, never a pinned cutoff; see planObligations.
+          now: () => new Date(nowIso),
+          subscribers: options.subscribers,
+        });
+      }
+      const owned = new Map<string, ReportingLedgerConfigurationV1>();
+      for (const value of [...existing, ...generations.values()]) owned.set(value.configurationId, value);
+      const configurations: ReportingLedgerConfigurationV1[] = [];
+      for (const configuration of owned.values()) {
+        configurations.push(
+          await store.recordOwedSetProgress({
+            configurationId: configuration.configurationId,
+            account_id: plan.account_id,
+            through: owedThrough,
+          })
+        );
+      }
+      return { configurations, created };
     },
 
     async runWorker(workerOptions = {}) {
@@ -813,6 +983,194 @@ function planObligation(
     semanticFingerprint,
     createdAt,
   };
+}
+
+/** Identity, fingerprint and validation of one subscription generation. */
+function subscriptionConfiguration(
+  input: ReportingSubscriptionConfigurationInputV1,
+  plan: { account_id: string; principal: { tenantId: string; principalId: string }; subscriptionId: string },
+  installedAt: string
+): ReportingLedgerConfigurationV1 {
+  if (!input || typeof input !== 'object') throw new TypeError('Subscription configuration input must be an object');
+  for (const field of [
+    'configurationId',
+    'installedAt',
+    'semanticFingerprint',
+    'calendarRules',
+    'historyStart',
+    'historyStartOrdinal',
+    'owedSet',
+    'constituents',
+    'mediaBuyIds',
+  ]) {
+    if (Object.hasOwn(input, field)) {
+      throw new TypeError(`Subscription configuration input must not supply ${field}`);
+    }
+  }
+  const subscription = input.subscription;
+  if (
+    !subscription ||
+    subscription.ownership !== 'owed_set' ||
+    subscription.tenantId !== plan.principal.tenantId ||
+    subscription.principalId !== plan.principal.principalId ||
+    subscription.subscriptionId !== plan.subscriptionId ||
+    subscription.subscriptionId !== input.delivery_config_id ||
+    subscription.offeringId !== input.offeringId ||
+    input.account?.account_id !== plan.account_id
+  ) {
+    throw new TypeError(
+      'Subscription configuration must name the planned account, owner and subscription, with ' +
+        'delivery_config_id equal to subscription_id and offeringId equal to the resolved offering'
+    );
+  }
+  if (input.supersededAt !== undefined) {
+    throw new TypeError('Subscription generations own an owed set and are never superseded by time');
+  }
+  const normalized: Omit<ReportingLedgerConfigurationV1, 'configurationId' | 'installedAt' | 'semanticFingerprint'> = {
+    ...structuredClone(input),
+    subscription: {
+      tenantId: subscription.tenantId,
+      principalId: subscription.principalId,
+      subscriptionId: subscription.subscriptionId,
+      offeringId: subscription.offeringId,
+      ownership: 'owed_set',
+    },
+    schedule: {
+      ...structuredClone(input.schedule),
+      anchor: new Date(instant(input.schedule.anchor, 'schedule.anchor')).toISOString(),
+    },
+    // Each obligation freezes its own denominator at its scope_resolved_at; the generation
+    // carries none, so nothing can read a stale install-time scope from it.
+    constituents: [],
+    mediaBuyIds: [],
+  };
+  return {
+    ...normalized,
+    // Owner and offering join the identity: subscription ids are unique per principal, and one
+    // version owns one generation per resolved offering. Account generations keep their digest.
+    configurationId: `rcfg_${digest([
+      normalized.account.account_id,
+      normalized.delivery_config_id,
+      normalized.delivery_config_version,
+      'subscription-v1',
+      subscription.tenantId,
+      subscription.principalId,
+      subscription.offeringId,
+    ]).slice(0, 32)}`,
+    installedAt,
+    semanticFingerprint: prefixedDigest(normalized),
+  };
+}
+
+/** One owed obligation with its own period, frozen media buys and constituents. */
+function planOwedSetObligation(
+  configuration: ReportingLedgerConfigurationV1,
+  input: ReportingSubscriptionLedgerObligationInputV1,
+  offering: ReportingSourceOfferingV1,
+  owedThroughMs: number,
+  createdAt: string
+): ReportingLedgerObligationV1 {
+  const start = instant(input.period?.start, 'period.start');
+  const end = instant(input.period?.end, 'period.end');
+  if (end <= start) throw new RangeError('Subscription obligation period must be a non-empty interval');
+  if (start % 1_000 !== 0 || end % 1_000 !== 0) {
+    throw new RangeError('Subscription obligation periods must fall on whole seconds');
+  }
+  if (end > owedThroughMs) throw new RangeError('Subscription obligations must end at or before owedThrough');
+  if (
+    !Array.isArray(input.mediaBuyIds) ||
+    input.mediaBuyIds.length === 0 ||
+    input.mediaBuyIds.some(value => typeof value !== 'string' || value.length === 0)
+  ) {
+    throw new TypeError('Subscription obligations freeze at least one media buy');
+  }
+  const mediaBuyIds = [...new Set(input.mediaBuyIds)].sort();
+  if (mediaBuyIds.length !== input.mediaBuyIds.length) {
+    throw new TypeError('Subscription obligation media buys must be unique');
+  }
+  const constituents = structuredClone(input.constituents);
+  if (!Array.isArray(constituents) || constituents.length === 0) {
+    throw new TypeError('Subscription obligations require their authorized constituents');
+  }
+  if (
+    !sameMembers(mediaBuyIds, [...new Set(constituents.map(value => value.mediaBuyId).filter(Boolean) as string[])])
+  ) {
+    throw new Error('Subscription obligation media buys must equal its constituent denominator');
+  }
+  const listedProducts = listedReportingSourceProductIdsV1(offering.applicability);
+  if (listedProducts !== undefined && constituents.some(value => !listedProducts.includes(value.productId))) {
+    throw new Error('Reporting constituent product is outside its offering applicability');
+  }
+  if (constituents.some(value => !offering.applicability.constituentKinds.includes(value.constituentKind))) {
+    throw new Error('Reporting constituent kind is outside its offering applicability');
+  }
+  const periodStart = new Date(start).toISOString();
+  const periodEnd = new Date(end).toISOString();
+  const periodOrdinal = reportingLedgerOwedSetOrdinalV1(periodStart);
+  // `reporting-schedule.json`: expected_at is period.end + delivery_sla, and the offering is
+  // authoritative for timing.
+  const expectedOffset = configuration.schedule.deliverySlaMilliseconds;
+  const expectedAt = end + expectedOffset;
+  const recoveryDeadlineAt = expectedAt + configuration.schedule.recoveryWindowMilliseconds;
+  const semantic = {
+    configurationId: configuration.configurationId,
+    periodOrdinal,
+    period: { start: periodStart, end: periodEnd },
+    constituents,
+    mediaBuyIds,
+    coverageRequirement: 'full',
+  };
+  return {
+    reporting_obligation_id: `robl_${digest(semantic).slice(0, 32)}`,
+    configurationId: configuration.configurationId,
+    account: structuredClone(configuration.account),
+    sourceScope: structuredClone(configuration.sourceScope),
+    delivery_config_id: configuration.delivery_config_id,
+    delivery_config_version: configuration.delivery_config_version,
+    offeringId: configuration.offeringId,
+    report_definition_id: configuration.report_definition_id,
+    feedPurpose: configuration.feedPurpose,
+    requiredFinality: configuration.requiredFinality,
+    ...(configuration.finalityPolicy ? { finalityPolicy: structuredClone(configuration.finalityPolicy) } : {}),
+    ...(configuration.canonicalization ? { canonicalization: structuredClone(configuration.canonicalization) } : {}),
+    periodOrdinal,
+    period: { start: periodStart, end: periodEnd, sourceTimezone: configuration.sourceTimezone },
+    schedule: structuredClone(configuration.schedule),
+    // Each obligation freezes media_buy_ids at its own scope_resolved_at, its period end.
+    scopeResolvedAt: periodEnd,
+    coverage: {
+      status: 'full',
+      evaluatedAt: periodEnd,
+      mediaBuyIds: [...mediaBuyIds],
+      fullyCoveredMediaBuyIds: [...mediaBuyIds],
+      partiallyCoveredMediaBuyIds: [],
+      unsupportedMediaBuyIds: [],
+      unknownMediaBuyIds: [],
+    },
+    requestedMetrics: [...configuration.requestedMetrics],
+    requestedDimensions: [...configuration.requestedDimensions],
+    constituents,
+    mediaBuyIds,
+    sourceSettings: structuredClone(configuration.sourceSettings),
+    contract: structuredClone(configuration.contract),
+    expectedAt: new Date(expectedAt).toISOString(),
+    recoveryDeadlineAt: new Date(recoveryDeadlineAt).toISOString(),
+    publicationOffsets: [...new Set(configuration.schedule.restatementMilliseconds ?? [])]
+      .filter(value => Number.isSafeInteger(value) && value > expectedOffset)
+      .sort((left, right) => left - right),
+    nextAttemptAt: new Date(expectedAt).toISOString(),
+    attemptCount: 0,
+    state: 'pending',
+    semanticFingerprint: prefixedDigest(semantic),
+    createdAt,
+    subscription: structuredClone(configuration.subscription!),
+  };
+}
+
+function boundedId(value: unknown, field: string): void {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 255) {
+    throw new TypeError(`${field} must be a bounded non-empty string`);
+  }
 }
 
 function sourceRequest(
@@ -1596,7 +1954,8 @@ function assertScheduleIdentityMatchesBoundaries(
 
 function validateConfigurationAgainstOffering(
   configuration: Omit<ReportingLedgerConfigurationV1, 'configurationId' | 'installedAt' | 'semanticFingerprint'>,
-  offering: ReportingSourceOfferingV1
+  offering: ReportingSourceOfferingV1,
+  ownership: 'grid' | 'owed_set' = 'grid'
 ): void {
   // Refuse the reserved capability before any other validation so the buyer
   // gets UNSUPPORTED_FEATURE rather than an incidental complaint about a
@@ -1619,17 +1978,31 @@ function validateConfigurationAgainstOffering(
   if (offering.publicationClass === 'AUTHORITATIVE' && configuration.requiredFinality !== 'official') {
     throw new Error('Authoritative source offerings require official ledger finality');
   }
-  positiveInteger(configuration.schedule.periodMilliseconds, 'periodMilliseconds');
-  if (configuration.schedule.periodMilliseconds % 1_000 !== 0) {
-    throw new Error('Reporting period must be representable as whole ISO 8601 seconds');
-  }
-  const minimumWindow = reportingIsoDurationMillisecondsV1(offering.windowing.minimumWindow);
-  const maximumWindow = reportingIsoDurationMillisecondsV1(offering.windowing.maximumWindow);
-  if (
-    configuration.schedule.periodMilliseconds < minimumWindow ||
-    configuration.schedule.periodMilliseconds > maximumWindow
-  ) {
-    throw new Error('Reporting period is outside its offering window bounds');
+  if (ownership === 'owed_set') {
+    // An owed set takes every period from the engine, so its schedule is the offering's
+    // published identity (echoed on the wire), never a grid this ledger generates. Calendar
+    // periods (P1M, account_timezone, billing_cycle) are representable here.
+    nonnegativeInteger(configuration.schedule.periodMilliseconds, 'periodMilliseconds');
+    if (
+      typeof configuration.schedule.periodDuration !== 'string' ||
+      configuration.schedule.alignment === undefined ||
+      !['utc', 'account_timezone', 'source_timezone', 'billing_cycle'].includes(configuration.schedule.alignment)
+    ) {
+      throw new Error('Subscription generations require the offering schedule identity');
+    }
+  } else {
+    positiveInteger(configuration.schedule.periodMilliseconds, 'periodMilliseconds');
+    if (configuration.schedule.periodMilliseconds % 1_000 !== 0) {
+      throw new Error('Reporting period must be representable as whole ISO 8601 seconds');
+    }
+    const minimumWindow = reportingIsoDurationMillisecondsV1(offering.windowing.minimumWindow);
+    const maximumWindow = reportingIsoDurationMillisecondsV1(offering.windowing.maximumWindow);
+    if (
+      configuration.schedule.periodMilliseconds < minimumWindow ||
+      configuration.schedule.periodMilliseconds > maximumWindow
+    ) {
+      throw new Error('Reporting period is outside its offering window bounds');
+    }
   }
   nonnegativeInteger(configuration.schedule.deliverySlaMilliseconds, 'deliverySlaMilliseconds');
   if (configuration.schedule.deliverySlaMilliseconds % 1_000 !== 0) {
@@ -1645,13 +2018,24 @@ function validateConfigurationAgainstOffering(
   for (const offset of configuration.schedule.restatementMilliseconds ?? []) {
     nonnegativeInteger(offset, 'restatementMilliseconds');
   }
-  assertScheduleIdentityMatchesBoundaries(configuration.schedule, configuration.sourceTimezone);
-  if (isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone)) {
-    assertReportingCalendarDaySource(configuration.schedule, configuration.sourceTimezone, offering, Date.now());
-  }
-  const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
-  if (configuration.supersededAt && instant(configuration.supersededAt, 'supersededAt') <= anchor) {
-    throw new Error('Reporting configuration supersession must follow its schedule anchor');
+  if (ownership === 'owed_set') {
+    if (
+      configuration.schedule.deliverySlaDuration !== undefined &&
+      identityDurationMilliseconds(configuration.schedule.deliverySlaDuration) !==
+        configuration.schedule.deliverySlaMilliseconds
+    ) {
+      throw new Error('Reporting deliverySlaDuration does not describe the offset its obligations expect');
+    }
+    instant(configuration.schedule.anchor, 'schedule.anchor');
+  } else {
+    assertScheduleIdentityMatchesBoundaries(configuration.schedule, configuration.sourceTimezone);
+    if (isReportingCalendarDay(configuration.schedule, configuration.sourceTimezone)) {
+      assertReportingCalendarDaySource(configuration.schedule, configuration.sourceTimezone, offering, Date.now());
+    }
+    const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
+    if (configuration.supersededAt && instant(configuration.supersededAt, 'supersededAt') <= anchor) {
+      throw new Error('Reporting configuration supersession must follow its schedule anchor');
+    }
   }
   if (configuration.requiredFinality === 'official') {
     if (!configuration.finalityPolicy || !/^[A-Za-z0-9_.:-]{1,255}$/.test(configuration.finalityPolicy.policyId)) {
