@@ -395,13 +395,18 @@ export async function executeStoryboardTask(
 
   // Only pass TaskOptions when a flag is actually set — avoids changing
   // behavior for the common path that relies on method defaults.
+  // A storyboard tests the seller: it sends sync_principal exactly as written, including the
+  // deliberate deactivation and revocation by omission the client's raw-write guard refuses.
+  const unguardedPrincipalWrite = taskName === 'sync_principal';
   const taskOptions =
     opts.skipIdempotencyAutoInject ||
     opts.skipAccountValidation ||
     opts.skipRequestValidation ||
     opts.preserveGovernedPayload ||
-    opts.signal
+    opts.signal ||
+    unguardedPrincipalWrite
       ? {
+          ...(unguardedPrincipalWrite && { allowDeactivation: true, allowRevocation: true }),
           ...(opts.skipIdempotencyAutoInject && { skipIdempotencyAutoInject: true }),
           ...(opts.skipAccountValidation && { skipAccountValidation: true }),
           ...(opts.skipRequestValidation && { skipRequestValidation: true }),

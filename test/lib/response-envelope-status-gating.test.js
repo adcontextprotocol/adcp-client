@@ -91,13 +91,16 @@ describe('a release that composes the envelope: status is required and preserved
             context_id: 'ctx-1',
             timestamp: '2026-11-03T12:00:00Z',
             replayed: false,
-            message: 'x'.repeat(2500),
+            // AdCP 3.3.0-beta.3 bounds a task-level message at 2000 characters (core/task-message.json).
+            message: 'x'.repeat(2000),
             adcp_version: '3.3',
             context: { trace: 'abc' },
           },
           CURRENT
         );
         assert.strictEqual(result.valid, true, messages(result));
+        const tooLong = validateResponse(tool, { ...body, status: 'completed', message: 'x'.repeat(2001) }, CURRENT);
+        assert.strictEqual(tooLong.valid, false, 'a message longer than 2000 characters is refused');
       });
     });
 

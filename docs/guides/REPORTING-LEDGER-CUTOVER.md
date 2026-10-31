@@ -23,7 +23,7 @@ You have two ways to run the SDK's service on top of what you have.
 
 | | Adopt `PostgresReportingLedgerStore` (recommended) | Implement `ReportingLedgerStore` over your tables |
 | --- | --- | --- |
-| Schema | The SDK's `adcp_reporting_*` tables, installed by `REPORTING_LEDGER_MIGRATION` and friends | Yours |
+| Schema | The SDK's `adcp_reporting_*` tables, installed by `npx adcp-reporting-storage migrate` | Yours |
 | Row storage | `rowStorage`: verified chunked rows in your GCS, S3 or Azure bucket, or PostgreSQL | You implement `readRevisionRows` and verify rows against the committed binding yourself |
 | Change feed | `changeFeed: true`: `changesAfter`, current-revision reads, consumer cursors | You implement it, or go without host reads and the warehouse sink |
 | Retention | `maintenance.retention`: period-aligned retirement honouring the change-feed hold | You implement `retireExpiredPeriods` and tombstones, or never retire |
@@ -56,9 +56,8 @@ import { PostgresReportingLedgerStore, reportingLedgerMaintenance } from '@adcp/
 import { createGcsReportingRowObjectProviderV1 } from '@adcp/reporting-storage/gcs';
 import { createReliableReportingService } from '@adcp/sdk/reporting/service';
 
-// Apply once, in order, with your migration owner (PostgreSQL 13+):
-//   REPORTING_LEDGER_MIGRATION, REPORTING_ROW_STORAGE_MIGRATION,
-//   REPORTING_LEDGER_CHANGES_MIGRATION
+// Apply once with your migration owner (PostgreSQL 13+): npx adcp-reporting-storage migrate
+// (the ledger, row storage and change feed are versions 0002, 0004 and 0005).
 
 const pool = new Pool({ connectionString: process.env.REPORTING_LEDGER_DATABASE_URL });
 const store = new PostgresReportingLedgerStore(pool, {

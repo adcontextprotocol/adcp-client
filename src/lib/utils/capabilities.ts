@@ -116,6 +116,12 @@ export interface AccountCapabilities {
    */
   defaultBilling?: 'operator' | 'agent' | 'advertiser';
 
+  /**
+   * Whether the seller advertises the experimental `account.requests` lifecycle (`request_account`,
+   * AdCP 3.3). `client.accounts.ensure` routes to it when true.
+   */
+  requestsSupported?: boolean;
+
   /** Currency and timezone constraints for buyer-declared account provisioning. */
   supportedAccountCurrencyModes?: ('fixed' | 'per_media_buy')[];
   timezone?: {
@@ -687,6 +693,7 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
       authorizationEndpoint: response.account.authorization_endpoint,
       supportedBilling: response.account.supported_billing ?? [],
       defaultBilling: response.account.default_billing,
+      ...(response.account.requests?.supported === true && { requestsSupported: true }),
       ...((response.account as { agent_onboarding?: import('../identity-3.3/types').AgentOnboarding })
         .agent_onboarding && {
         agentOnboarding: structuredClone(

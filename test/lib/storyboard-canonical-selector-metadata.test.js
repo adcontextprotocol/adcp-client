@@ -28,7 +28,15 @@ const authoredStep = published.phases
   .flatMap(phase => phase.steps)
   .find(step => step.id === 'create_media_buy_with_direct_canonical_selector');
 const selector = authoredStep.sample_request.packages[0];
-const product = published.fixtures.products.find(entry => entry.product_id === selector.product_id);
+// AdCP 3.3.0-beta.3 seeds the product through a comply_test_controller seed_product step after native discovery
+// (adcp#8599) instead of listing it under fixtures.products; read it from wherever the storyboard declares it.
+const seededProducts = published.phases
+  .flatMap(phase => phase.steps)
+  .filter(step => step.task === 'comply_test_controller' && step.sample_request?.scenario === 'seed_product')
+  .map(step => ({ product_id: step.sample_request.params.product_id, ...step.sample_request.params.fixture }));
+const product = [...(published.fixtures?.products ?? []), ...seededProducts].find(
+  entry => entry.product_id === selector.product_id
+);
 const validation = authoredStep.validations.find(entry => entry.check === 'canonical_format_satisfaction');
 const metadata = ['ssl_required', 'asset_source', 'buyer_asset_acceptance', 'composition_model', 'slots'];
 

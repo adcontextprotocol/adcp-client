@@ -15,17 +15,18 @@ producer, handlers, and decisioning-platform account resolver.
 
 ```ts
 import { Pool } from 'pg';
-import { PostgresReportingLedgerStore } from '@adcp/reporting-storage';
+import { postgresStorage } from '@adcp/reporting-storage';
 import { createReliableReportingService } from '@adcp/sdk/reporting/service';
 import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const store = new PostgresReportingLedgerStore(pool, {
-  acknowledgeIsolatedDatabase: true,
-});
+// One storage decision: the ledger, principal records, reporting-subscription state and the buyer
+// consumer's state. memoryStorage() from '@adcp/sdk/storage' in development.
+const storage = postgresStorage({ pool, acknowledgeIsolatedDatabase: true });
+await storage.checkSchema(); // REPORTING_SCHEMA_BEHIND: run "npx adcp-reporting-storage migrate"
 
 const reporting = createReliableReportingService({
-  store,
+  storage,
   adapters: {
     // These descriptions are immutable declarations owned by your adapter.
     gam: { sourceOffering: gamSourceOffering, deliveryOffering: gamDeliveryOffering,
@@ -55,13 +56,22 @@ const reporting = createReliableReportingService({
   },
 });
 
-for (const sql of reporting.setup.migrations) await pool.query(sql);
 const installedPlatform = reporting.install(platform);
 const server = createAdcpServerFromPlatform(installedPlatform, serverOptions);
 
 reporting.start({ intervalMilliseconds: 60_000, deploymentWide: true });
 process.once('SIGTERM', () => void reporting.stop());
 ```
+
+Apply the schema before starting a release with `npx adcp-reporting-storage migrate`
+(`--status` lists applied and pending versions, `--dry-run` prints the plan; it reads
+`--database-url`, `$ADCP_DATABASE_URL` or `$DATABASE_URL`, and `--schema`). The migrations are
+versioned and recorded in `adcp_schema_migrations`; `storage.checkSchema()`, which the service also
+runs before its first cycle, refuses a schema that is behind and names the pending versions. A
+schema set up by applying the migration constants by hand migrates cleanly. The constants
+(`REPORTING_LEDGER_MIGRATION`, `REPORTING_ROW_STORAGE_MIGRATION`, `REPORTING_LEDGER_CHANGES_MIGRATION`,
+`REPORTING_MANAGED_DELIVERY_MIGRATION` and the others below) stay exported as deprecated re-exports
+for one beta; where this guide says to apply or re-apply one, `migrate` does it.
 
 The service advertises Reliable Reporting Core only. `sync_reporting_status` is advertised only when
 `resolveConsumerId` is installed and the supplied ledger implements its
@@ -73,8 +83,10 @@ For the complete seller deployment, use the async
 Delivery, reconciled receipts when the offering requests them, all three
 reporting notification types, durable webhook retries, principal-scoped
 webhook activity, fair per-account delivery work, and coordinated shutdown.
-Pass `applyMigrations` to bridge the returned ordered SQL into your migration
-runner; the constructor publishes no capability object until every table and
+Pass it `storage: postgresStorage({ pool, acknowledgeIsolatedDatabase: true })` instead of `db`: the
+constructor then refuses a schema that is behind. Its notification outbox and activity tables
+(configurable names) are still returned in `setup.migrations`; pass `applyMigrations` to bridge them
+into your migration runner. The constructor publishes no capability object until every table and
 worker dependency probes successfully and the advertised managed policy is
 durably adopted. Its `platform` mounts `sync_reporting_receipts` through
 `createAdcpServerFromPlatform`, and its scheduler drives production, managed
@@ -230,15 +242,210 @@ before deployment. It covers source replay, two-account isolation,
 configuration replay/frozen currency, lifecycle start/stop, and Core
 capability truthfulness.
 
+### Principal-level reporting subscriptions (experimental, AdCP 3.3)
+
+The [seller guide](REPORTING-SUBSCRIPTIONS-SELLER.md) walks through this path end to end.
+
+**The managed block (start here).** Add a `subscriptions` block to the service. With `storage`, pass
+`principal` (the principal runtime's options) and the service builds the runtime over
+`storage.principals` (serve it with `protocol: service.principals.protocol`); or pass the principal
+runtime your server already serves `get_principal`/`sync_principal` with as `principals`, created
+without `reportingSubscriptions`. The service builds the coverage engine, installs the
+`reporting_subscriptions` section on that runtime, advertises the principal capability in
+`install()`, reconciles a principal after each `sync_principal` write that submits
+subscriptions, and sweeps every subscribed principal at the start of each `runCycle`:
+
+```ts
+const service = createReliableReportingService({
+  storage, // postgresStorage({ pool }); engine state and principal records live here too
+  // ...adapters, resolveSource, resolveCurrency, resolveCoverage as above
+  subscriptions: {
+    principal: { notifications, agentUrl, resolvePrincipal }, // or principals: your runtime
+    maxAccounts: 500,
+    configure: ({ subscription, offering }) => ({
+      requestedMetrics: metricsFor(offering.report_definition_id),
+      requestedDimensions: dimensionsFor(offering.report_definition_id),
+      sourceSettings: settingsFor(offering.offering_id),
+    }),
+  },
+});
+const platform = service.install(myPlatform); // capabilities.principal is filled in
+const server = createAdcpServerFromPlatform(platform, { ...serverOptions, protocol: service.principals!.protocol });
+```
+
+The roster comes from the platform's `accounts.list` and the buys from `sales.getMediaBuys`, read
+under the principal's identity (a non-secret snapshot of its last authenticated request, never a
+token). Override either with `subscriptions.accounts` / `subscriptions.buys` when access depends on
+a live upstream credential; a roster the service cannot read is a `PlatformConfigError` coded
+`SUBSCRIPTION_ROSTER_UNAVAILABLE`. Reconcile and planning failures never reject a cycle:
+`runCycle` returns them in `subscriptionPlanningFailures`, and `planningErrorHandler` hears each.
+
+**`authorized_at` comes from one journal.** With the managed block the service keeps the grant
+journal and is the only source of `authorization.authorized_at`. It serves the journal's value on
+`list_accounts` and `sync_accounts` to callers holding subscriptions, so the value a buyer reads is
+the value coverage uses. A host value is adopted the first time a chain is observed; an omitted one
+is stamped. A value that moves an open chain earlier is refused and logged as
+`authorized_at_regressed`. A re-grant inside `status_retention_days` continues the chain; a later
+one starts a new one. Never compute the chain yourself. Sellers whose entitlement service emits
+events push them for an exact instant:
+
+```ts
+await service.grants!.changed({ principal, accountId: 'acc_1', at, authorized: false });
+await service.grants!.changed({ principal, accountId: 'acc_1', at, authorized: true, allowedTasks });
+```
+
+Later listings must agree with what was pushed. `resolveRevocationInstant` is optional on the
+engine: without it a revocation is dated when it was observed.
+
+The advanced block below, with your own `engine`, is rung 3.
+
+With `subscriptions` (formerly `reportingSubscriptions`, kept as a deprecated
+alias), every `runCycle` first writes the subscription
+engine's frozen owed sets into the ledger, then plans account configurations as
+before, and the worker executes both.
+
+The coverage engine, its stores, the coverage function, the calendar, offering
+selection, the capability builder and the type of this option are low-level
+building blocks. They import from `@adcp/sdk/reporting/advanced`, where every
+export is `@experimental`; `@adcp/sdk/reporting/service`, `/consumer`, `/ledger`
+and the package root no longer re-export them.
+
+```ts
+import { createReliableReportingService } from '@adcp/sdk/reporting/service';
+import {
+  createReportingSubscriptionEngineV1,
+  createReportingSubscriptionEngineStateStoreV1,
+} from '@adcp/sdk/reporting/advanced';
+
+const service = createReliableReportingService({
+  // ...store, adapters, resolveSource, resolveCurrency, resolveCoverage as above
+  subscriptions: {
+    engine, // createReportingSubscriptionEngineV1(...)
+    resolvePrincipal: ctx => principalScopeFrom(ctx), // the principal runtime's mapping
+    listSubscriptionPrincipals: async () =>
+      (await Promise.all(tenantIds.map(tenantId => engine.listSubscriptionPrincipals(tenantId)))).flat(),
+    // Seller policy for one (subscription version, resolved offering): the facts a
+    // sync_accounts mapping also supplies to installConfiguration.
+    resolveSubscriptionConfiguration: ({ subscription, offering }) => ({
+      requestedMetrics: metricsFor(offering.report_definition_id),
+      requestedDimensions: dimensionsFor(offering.report_definition_id),
+      sourceSettings: settingsFor(offering.offering_id),
+      // finalityPolicy for an official subscription, canonicalization for billing
+    }),
+  },
+});
+```
+
+- **One generation per (account, owning principal, `subscription_id`,
+  `subscription_version`, resolved `offering_id`).** Its `delivery_config_id`
+  is the `subscription_id` and its `delivery_config_version` the
+  `subscription_version`. Subscription ids are unique per principal, so two
+  principals can both own `analytics-daily` on one account. The generation
+  carries an immutable `subscription` block; account generations keep exactly
+  their previous ids and fingerprints.
+- **Sparse, never grid-filled.** Each obligation is one owed period with its own
+  `media_buy_ids` frozen at its `scope_resolved_at` (the period end) and the
+  host-authorized constituents of exactly those buys from `resolveCoverage`. Its
+  `periodOrdinal` is the period start in whole seconds. The offering is
+  authoritative for timing: `expected_at` is the period end plus its
+  `delivery_sla`, and obligations carry `offering_id`.
+- **Completeness is a horizon.** Only periods the engine has frozen are written,
+  and the generation's mutable `owedSet.through` advances after they are
+  durable. A gap is a period that is not owed, never a continuity error. A scope
+  ending after the horizon reports `scope_closed: false` and keeps
+  `coverage_complete: true`.
+- **Caller isolation.** `get_reporting_status`, `get_media_buy_delivery` and
+  `sync_reporting_status` show a principal the account configurations plus only
+  its own subscription generations. `sync_reporting_status` accepts a status
+  without `reporting_obligation_id` against a subscription only for an existing
+  owed obligation.
+- **Failures are isolated per subscription.** One subscription that cannot be
+  planned never stops another or the account's own configurations; it is passed
+  to `onPlanningError`, or `runCycle` rejects with an `AggregateError` after the
+  rest of the cycle has run.
+
+A custom `ReportingLedgerStore` holds subscription generations only when it
+implements `recordOwedSetProgress` (and should implement
+`findObligationByOrdinal`), keys generations by
+`reportingLedgerSubscriptionKeyV1`, and applies `subscription_principal` to every
+snapshot. For PostgreSQL, reapply `REPORTING_LEDGER_MIGRATION`: it adds
+`adcp_reporting_configurations.subscription_key` (empty for every existing row)
+and replaces the three-column generation constraint with a unique index on
+`(account_id, delivery_config_id, delivery_config_version, subscription_key)`.
+
+**Managed delivery of subscriptions.** A subscription with a `destination`
+resolves only managed offerings. Serve it with
+`createPostgresReliableReportingProductionService` and pass the principal
+runtime as `subscriptions.principal`. The engine must have
+`isAuthorized`. Then:
+
+- Before a managed generation's first obligation is written, the service binds
+  it to the owner's destination. The version's `destination.destination_id`
+  names the destination, and the binding uses that destination's current
+  generation (its `destination_ref`). The destination must be delivery-eligible
+  and serve the offering's pattern and transport.
+- One destination serves every covered account, so each account gets its own
+  authorization of that `destination_ref`.
+- A destination that is not ready rejects the bind, and the obligations wait
+  for a later cycle instead of becoming undeliverable.
+- Bindings are keyed by their Core configuration, so every (owner, offering)
+  generation of one version gets its own. Reapply
+  `REPORTING_MANAGED_DELIVERY_MIGRATION` to drop the three-column binding key.
+- The binding freezes the version's `path_template`. Each delivery expands it
+  per obligation and passes the result to the adapter as `delivery_path`.
+  Object-store writes place it inside the collision-free generation prefix:
+  `adcp-reporting/{namespace_key}/{scope_key}/{delivery_path}/{plan_id}/{index}`.
+- Every row of a subscription revision carries `account_id`. The producer stamps
+  it before the revision is bound, so the committed digest covers it, and it
+  refuses a row that names another account.
+- The managed worker re-checks `engine.isAuthorized(owner, account)` before
+  delivering and again before settling. A lost grant releases the claim with
+  `holdMaterialization` without spending an attempt: the obligation stays
+  owed, and the engine reports the loss in `accounts_unauthorized`.
+- Status subscribers with a `principal`, and notification activity, carry a
+  subscription obligation's transitions only to its owner.
+
+**Receipts, statuses and grants.** A subscription obligation accepts
+`sync_reporting_receipts` and `sync_reporting_status` only from its owning
+principal (`reportingSubscriptionReceiptAdmissibleV1`, the one rule). Account
+obligations stay open to every consumer of the account. This applies on top of
+the host's own account resolution and `allowed_tasks` checks.
+
+**To end a relationship, wind down; don't revoke.** Revocation means no access
+(adcp#8607): there is no post-revocation window. Once authority for an account
+ends, the account is unknown to every task, receipts and statuses included, and
+the principal's subscriptions stop covering it, so final revisions and
+adjustments for its buys never reach it. Revoke only for fraud or a compromise.
+A seller that wants a buyer to finish reconciling, for example after an agency
+change, replaces the grant with `windDownGrant()` from `@adcp/sdk/server`:
+
+```ts
+import { windDownGrant, REPORTING_WIND_DOWN_TASKS } from '@adcp/sdk/server';
+
+// allowed_tasks: get_reporting_status, sync_reporting_receipts, sync_reporting_status; read_only: false.
+// Passing the current grant keeps its authorized_at: a reduced grant continues the chain.
+account.authorization = windDownGrant(account.authorization);
+```
+
+Your account resolver must then refuse every task outside
+`REPORTING_WIND_DOWN_TASKS` for that principal, as it does for any grant.
+
+The engine counts an account as covered only while its grant lists
+`get_reporting_status` (`reportingSubscriptionCoverageGrantedV1`; a grant with
+no task restriction counts as all tasks). Report the grant's
+`authorization.allowed_tasks` on each `listAuthorizedAccounts` fact, or on
+`authorizationChanged`. Dropping `get_reporting_status` ends coverage at that
+instant, as a loss of authority with an `accounts_unauthorized` entry.
+
+The obligated-consumer roster stays host-owned, because it is keyed by consumer
+id. Include a subscription obligation's owner in it while the owner's grant
+lists the receipt task.
+
 ## Advanced: assemble the primitives directly
 
 ```ts
 import { Pool } from 'pg';
-import {
-  PostgresReportingLedgerStore,
-  REPORTING_LEDGER_MIGRATION,
-  sweepExpiredReportingLedgerState,
-} from '@adcp/reporting-storage';
+import { PostgresReportingLedgerStore, sweepExpiredReportingLedgerState } from '@adcp/reporting-storage';
 import {
   createReportingDeliveryHandler,
   createReportingProducer,
@@ -247,8 +454,7 @@ import {
   type ReportingConsumerStatusLedgerStore,
 } from '@adcp/sdk/reporting/ledger';
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-await pool.query(REPORTING_LEDGER_MIGRATION);
+const pool = new Pool({ connectionString: process.env.DATABASE_URL }); // after `npx adcp-reporting-storage migrate`
 
 const store = new PostgresReportingLedgerStore(pool, {
   acknowledgeIsolatedDatabase: true,
@@ -396,9 +602,7 @@ rows as verified canonical JSONL chunks (the shared SDK persistence layout,
 adcontextprotocol/adcp#7996):
 
 ```ts
-import { REPORTING_ROW_STORAGE_MIGRATION } from '@adcp/reporting-storage';
-
-await pool.query(REPORTING_ROW_STORAGE_MIGRATION); // after REPORTING_LEDGER_MIGRATION; PostgreSQL 13+
+// `npx adcp-reporting-storage migrate` installs the row-storage tables (version 0004, PostgreSQL 13+).
 const store = new PostgresReportingLedgerStore(pool, {
   acknowledgeIsolatedDatabase: true,
   rowStorage: true,
@@ -871,16 +1075,10 @@ partial-failure reporting, the `maxFeedHoldDays` that retention honours, per-tas
 limits and abort handling are identical.
 
 ```ts
-import {
-  PostgresReportingLedgerStore,
-  REPORTING_LEDGER_MIGRATION,
-  REPORTING_ROW_STORAGE_MIGRATION,
-  REPORTING_LEDGER_CHANGES_MIGRATION,
-  reportingLedgerMaintenance,
-} from '@adcp/reporting-storage';
+import { PostgresReportingLedgerStore, reportingLedgerMaintenance } from '@adcp/reporting-storage';
 import { createReliableReportingService } from '@adcp/sdk/reporting/service';
 
-// Apply the three migrations, then:
+// Run `npx adcp-reporting-storage migrate` (ledger, row storage and change feed), then:
 const store = new PostgresReportingLedgerStore(pool, {
   acknowledgeIsolatedDatabase: true,
   rowStorage, // verified chunked rows in your object store
@@ -959,9 +1157,7 @@ In-process consumers such as pacing, alerts and warehouse loaders read from the
 ledger, never from a warehouse copy.
 
 ```ts
-import { REPORTING_LEDGER_CHANGES_MIGRATION } from '@adcp/reporting-storage';
-
-await pool.query(REPORTING_LEDGER_CHANGES_MIGRATION); // PostgreSQL 13+
+// `npx adcp-reporting-storage migrate` installs the change feed (version 0005, PostgreSQL 13+).
 const store = new PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true, changeFeed: true });
 
 const current = await store.getCurrentRevision({ account_id, reporting_obligation_id });
@@ -1266,14 +1462,13 @@ import {
 } from '@adcp/reporting-storage';
 import {
   PostgresReportingManagedDeliveryStore,
-  REPORTING_MANAGED_DELIVERY_MIGRATION,
   createReportingManagedDeliveryRuntime,
 } from '@adcp/reporting-storage/managed';
 import {
   reportingManagedDeliveryBindingV1,
 } from '@adcp/sdk/reporting/ledger';
 
-await pool.query(REPORTING_MANAGED_DELIVERY_MIGRATION);
+// `npx adcp-reporting-storage migrate` installs the managed-delivery tables (version 0006).
 const managedStore = new PostgresReportingManagedDeliveryStore(pool);
 const managedCoreStore = new PostgresReportingLedgerStore(pool, {
   acknowledgeIsolatedDatabase: true,
@@ -1419,11 +1614,7 @@ only for health changes:
 
 ```ts
 import { createPostgresPersistentNotificationRuntime } from '@adcp/sdk/server';
-import {
-  PostgresReportingLedgerStore,
-  REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION,
-  REPORTING_LEDGER_MIGRATION,
-} from '@adcp/reporting-storage';
+import { PostgresReportingLedgerStore } from '@adcp/reporting-storage';
 import {
   createPostgresReportingNotificationActivityRuntime,
   createPostgresReportingNotificationAttemptCheckpoint,
@@ -1458,7 +1649,7 @@ const reportingActivity = createPostgresReportingNotificationActivityRuntime({
 
 // Rolling-deployment order: ledger and notification tables, activity table,
 // drain legacy pending transitions, then application code configured with the port.
-await pool.query(REPORTING_LEDGER_MIGRATION);
+// `npx adcp-reporting-storage migrate` applies the ledger tables.
 for (const sql of notifications.migrations.all) await pool.query(sql);
 for (const sql of reportingActivity.migrations.all) await pool.query(sql);
 
@@ -1469,7 +1660,8 @@ for (const sql of reportingActivity.migrations.all) await pool.query(sql);
 // Last cutover step, only once no pre-SDK-14 writer is still serving: fence
 // finality-less transitions out of the log. A surviving legacy writer now fails
 // closed on append instead of silently adding another redundant finality event.
-await pool.query(REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION);
+// `migrate` applies this fence as the stopped-worker version 0003; on such a cutover, stop every
+// pre-SDK-14 writer before running it.
 
 const store = new PostgresReportingLedgerStore(pool, {
   acknowledgeIsolatedDatabase: true,

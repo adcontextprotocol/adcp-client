@@ -79,7 +79,8 @@ import {
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from '../platform';
 import type { ComplianceTestingCapabilities } from '../capabilities';
 import { normalizeTargetingCapabilities } from '../capabilities';
-import { isAdcpVersionAtLeast } from '../../../utils/adcp-version-config';
+import { isAdcpVersionAtLeast, isPre31AdcpVersion } from '../../../utils/adcp-version-config';
+import { omitsEnvelopeStatusForRelease } from '../../../utils/envelope-status-compat';
 import type { Account, AccountResolutionMode, ResolvedAuthInfo, ResolveContext } from '../account';
 import {
   AccountNotFoundError,
@@ -3160,20 +3161,53 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const adopterCapabilityExt = platform.capabilities.ext;
   const adopterOverrides = platform.capabilities.overrides;
   const adopterExperimentalFeatures = (adopterOverrides?.experimental_features ?? []) as readonly string[];
+  // AdCP 3.3: advertising reporting subscriptions requires the
+  // media_buy.reporting_subscriptions feature id and the principal section that
+  // serves them. Without a subscriptions block and a principal block the list is
+  // exactly what it was before 3.3.
+  const principalCapability = platform.capabilities.principal;
+  const advertisesSubscriptions = reportingDelivery?.subscriptions !== undefined;
   if (
-    reportingDelivery &&
-    !adopterExperimentalFeatures.includes('media_buy.reporting_delivery') &&
-    adopterExperimentalFeatures.length >= 32
+    advertisesSubscriptions &&
+    !(principalCapability?.supported_sections as readonly string[] | undefined)?.includes('reporting_subscriptions')
   ) {
     throw new PlatformConfigError(
-      'Reliable Reporting Core cannot be added because experimental_features already contains 32 entries'
+      'Advertising reporting subscriptions requires capabilities.principal with reporting_subscriptions in ' +
+        'supported_sections; pass the principal runtime capabilities created with reportingSubscriptions'
     );
   }
-  const experimentalFeatures = reportingDelivery
-    ? Array.from(new Set([...adopterExperimentalFeatures, 'media_buy.reporting_delivery']))
-    : adopterOverrides?.experimental_features;
+  const principalSections = (principalCapability?.supported_sections as readonly string[] | undefined) ?? [];
+  if (
+    principalSections.includes('reporting_subscriptions') &&
+    !(reportingDelivery?.configuration_tasks as readonly string[] | undefined)?.includes('sync_principal')
+  ) {
+    throw new PlatformConfigError(
+      'capabilities.principal lists reporting_subscriptions, but the reporting capability does not list sync_principal ' +
+        'in configuration_tasks; create the reliable reporting service with subscriptions'
+    );
+  }
+  const derivedFeatureIds = [
+    ...(reportingDelivery ? ['media_buy.reporting_delivery'] : []),
+    ...(advertisesSubscriptions ? ['media_buy.reporting_subscriptions'] : []),
+    ...(principalCapability ? ['protocol.principal'] : []),
+  ];
+  if (
+    derivedFeatureIds.some(id => !adopterExperimentalFeatures.includes(id)) &&
+    new Set([...adopterExperimentalFeatures, ...derivedFeatureIds]).size > 32
+  ) {
+    throw new PlatformConfigError(
+      reportingDelivery
+        ? 'Reliable Reporting Core cannot be added because experimental_features already contains 32 entries'
+        : 'protocol.principal cannot be added because experimental_features already contains 32 entries'
+    );
+  }
+  const experimentalFeatures =
+    derivedFeatureIds.length > 0
+      ? Array.from(new Set([...adopterExperimentalFeatures, ...derivedFeatureIds]))
+      : adopterOverrides?.experimental_features;
   const adopterSupportedVersions = platform.capabilities.supported_versions;
-  const hasOverridesObject = hasOverridesProjection || adopterOverrides !== undefined;
+  const hasOverridesObject =
+    hasOverridesProjection || adopterOverrides !== undefined || platform.capabilities.principal !== undefined;
 
   const projectedCapabilitiesConfig = {
     ...(hasSpecialisms && {
@@ -3191,6 +3225,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ...(adopterCapabilityExt !== undefined && { ext: adopterCapabilityExt }),
     ...(adopterSupportedVersions !== undefined && {
       supported_versions: [...adopterSupportedVersions],
+    }),
+    ...(principalCapability !== undefined && { principal: structuredClone(principalCapability) }),
+    ...(platform.capabilities.capability_changes !== undefined && {
+      capability_changes: structuredClone(platform.capabilities.capability_changes),
     }),
     ...(hasOverridesObject && {
       overrides: {
@@ -5610,7 +5648,7 @@ function buildTaskWebhookPayload(
   // rejected it is the terminal artifact; for failed it carries
   // `errors: AdcpStructuredError[]` alongside the empty success shape.
   if ((status === 'completed' || status === 'rejected') && artifact.result !== undefined) {
-    payload.result = artifact.result;
+    payload.result = webhookResultForRelease(opts, artifact.result, status);
   }
   if (status === 'rejected' && artifact.message !== undefined) {
     payload.message = artifact.message;
@@ -5620,6 +5658,37 @@ function buildTaskWebhookPayload(
     payload.message = artifact.error.message;
   }
   return payload;
+}
+
+const WEBHOOK_MEDIA_BUY_RESULT_TOOLS = new Set(['create_media_buy', 'update_media_buy', 'cancel_media_buy']);
+/** Lifecycle values that are never a task status, so a `status` holding one is the buy's. */
+const MEDIA_BUY_ONLY_STATUS_VALUES = new Set(['pending_creatives', 'pending_start', 'active', 'paused']);
+
+/**
+ * A terminal webhook `result` is the task's full response, so it carries the task status like a
+ * synchronous one (AdCP 3.1+; 3.3.0-beta.3 composes the protocol envelope into every response and
+ * async status payload, adcp#8547). Normalize it as the synchronous path does: a media-buy lifecycle
+ * value in `status` moves to `media_buy_status`, then the task status is stamped when absent. A
+ * release whose schema has no `status` on the tool (3.2 `list_products` / `decline_proposals`) and
+ * 3.0 keep the artifact as the platform returned it.
+ */
+function webhookResultForRelease(opts: DispatchHitlOpts, result: unknown, status: 'completed' | 'rejected'): unknown {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
+  const served = opts.servedAdcpVersion;
+  if (served === undefined || isPre31AdcpVersion(served) || omitsEnvelopeStatusForRelease(opts.tool, served)) {
+    return result;
+  }
+  const body = { ...(result as Record<string, unknown>) };
+  if (
+    WEBHOOK_MEDIA_BUY_RESULT_TOOLS.has(opts.tool) &&
+    typeof body.status === 'string' &&
+    MEDIA_BUY_ONLY_STATUS_VALUES.has(body.status)
+  ) {
+    body.media_buy_status ??= body.status;
+    delete body.status;
+  }
+  body.status ??= status;
+  return body;
 }
 
 function resolveWebhookPayloadOperationId(opts: DispatchHitlOpts, taskId: string): string {

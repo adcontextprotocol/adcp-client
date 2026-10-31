@@ -1,4 +1,10 @@
 import type { MediaBuyDeliveryWebhookEnvelope } from '../webhooks/media-buy-delivery';
+import {
+  ReportingClient,
+  guardSyncPrincipal,
+  type ReportingFacadeClient,
+  type SyncPrincipalGuardOptions,
+} from '../principal/reporting-facade';
 import type * as ToolTypes from '../types/tools.generated';
 import type * as CoreTypes from '../types/core.generated';
 import { shouldReuseMCPConnection, withMCPConnectionPolicy } from '../protocols/mcp-connection-policy';
@@ -322,6 +328,7 @@ import {
   AccountRequiredError,
   AccountNotProvisionedError,
   AccountNotFoundError,
+  AccountRequestError,
   AccountSetupRequiredError,
   AccountPaymentRequiredError,
   UnsupportedBuyingModeError,
@@ -2217,6 +2224,37 @@ export class SingleAgentClient {
         provisionOwnsDispatchBoundary: true,
         maxEntries: this.config.accountRegistryMaxEntries,
         evictAtCapacity: () => !this.accountRegistryOptedIn(),
+        requests: {
+          supported: async taskOptions => (await this.getCapabilities(taskOptions)).account?.requestsSupported === true,
+          request: (params, taskOptions) =>
+            this.requestAccount(params as MutatingRequestInput<ToolTypes.RequestAccountRequest>, undefined, {
+              ...childTaskOptions(taskOptions),
+              [SKIP_ACCOUNT_REGISTRY_OBSERVATION]: true,
+            } as TaskOptions),
+          read: async (requestIds, taskOptions) => {
+            const found: ToolTypes.AccountRequest[] = [];
+            const cursors = new Set<string>();
+            let cursor: string | undefined;
+            for (let page = 0; page < 100; page++) {
+              const result = await this.listAccounts(
+                { request_ids: [...requestIds], ...(cursor && { requests_pagination: { cursor } }) },
+                undefined,
+                { ...childTaskOptions(taskOptions), [SKIP_ACCOUNT_REGISTRY_OBSERVATION]: true } as TaskOptions
+              );
+              if (!result.success || result.status !== 'completed' || !result.data || !('accounts' in result.data))
+                throw new AccountRequestError('list_accounts', [
+                  result.adcpError ?? { code: 'SERVICE_UNAVAILABLE', message: result.error ?? 'list_accounts failed' },
+                ]);
+              found.push(...(result.data.account_requests ?? []));
+              const pagination = result.data.account_requests_pagination;
+              const next = pagination?.has_more ? pagination.cursor : undefined;
+              if (!next || cursors.has(next)) return found;
+              cursors.add(next);
+              cursor = next;
+            }
+            return found;
+          },
+        },
         normalizeOptions: async (options, taskOptions) => {
           if (options.billing) return options;
           const caps = await this.getCapabilities(taskOptions);
@@ -10012,19 +10050,44 @@ export class SingleAgentClient {
     );
   }
 
-  /** Atomically replace selected sections of the authenticated caller's principal configuration. */
+  /**
+   * Replaces each submitted section. To add a reporting subscription, use `client.reporting.subscribe`.
+   *
+   * Atomically replace selected sections of the authenticated caller's principal configuration.
+   * Each submitted section is the complete desired state, so omitting an active reporting
+   * subscription deactivates it and omitting a destination revokes it for every account. Before
+   * such a write the client reads the current principal and refuses, before sending, with
+   * `ReportingSubscriptionError` (`SUBSCRIPTION_WOULD_DEACTIVATE` or `DESTINATION_WOULD_REVOKE`,
+   * `dispatched: false`) unless you pass `allowDeactivation` / `allowRevocation`.
+   */
   async syncPrincipal(
     params: MutatingRequestInput<SyncPrincipalRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: TaskOptions & SyncPrincipalGuardOptions
   ): Promise<TaskResult<SyncPrincipalResponse>> {
+    const { allowDeactivation, allowRevocation, ...taskOptions } = options ?? {};
+    await guardSyncPrincipal(this, params as { configuration?: unknown; dry_run?: boolean }, {
+      ...(allowDeactivation !== undefined ? { allowDeactivation } : {}),
+      ...(allowRevocation !== undefined ? { allowRevocation } : {}),
+    });
     return this.executeAndHandle<SyncPrincipalResponse>(
       'sync_principal',
       'onSyncPrincipalStatusChange',
       params,
       inputHandler,
-      options
+      taskOptions
     );
+  }
+
+  private reportingClient?: ReportingClient;
+
+  /**
+   * Patch-shaped reporting-subscription writes: `subscribe`, `unsubscribe`, `replaceSubscriptions`,
+   * `listSubscriptions`, `preview` (experimental `media_buy.reporting_subscriptions`, AdCP 3.3).
+   */
+  get reporting(): ReportingClient {
+    this.reportingClient ??= new ReportingClient(this as unknown as ReportingFacadeClient);
+    return this.reportingClient;
   }
 
   /**
@@ -10295,7 +10358,7 @@ export class SingleAgentClient {
       }
       let synced;
       try {
-        synced = await this.getAccountRegistry().ensure(
+        synced = await this.getAccountRegistry().provision(
           account,
           {
             billing,

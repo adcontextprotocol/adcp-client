@@ -120,7 +120,7 @@ is not a delivery-data webhook.
 `notification_type: 'final'` concerns report scheduling; envelope `completed`
 does not mean the media buy has finished. Per-buy state remains in
 `media_buy_deliveries[].status`. This follows the protocol's
-[envelope/result distinction](https://github.com/adcontextprotocol/adcp/blob/v3.3.0-beta.2/docs/building/by-layer/L3/webhooks.mdx#payload-anatomy-envelope-vs-result).
+[envelope/result distinction](https://github.com/adcontextprotocol/adcp/blob/v3.3.0-beta.3/docs/building/by-layer/L3/webhooks.mdx#payload-anatomy-envelope-vs-result).
 
 The protocol also requires receivers to ignore `aggregated_totals` in pushed
 reports as an authority source. The parser preserves that field for auditing

@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-10-30
+> Generated at: 2026-10-31
 > Library: @adcp/sdk v17.0.0-beta.10
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -11,7 +11,7 @@
 
 AdCP is an open protocol for AI agents to buy, manage, and optimize advertising programmatically. It defines MCP tools that agents call on publisher ad servers — discover inventory, create media buys, sync creatives, manage brand safety, and track delivery. Every tool follows request/response JSON schemas; the TypeScript client wraps them with async task handling, conversation context, and governance middleware.
 
-## Start here: AdCP 3.3.0-beta.2
+## Start here: AdCP 3.3.0-beta.3
 
 The SDK requires Node.js `^20.19.0 || >=22.12.0`. Install this reference's release train with `npm install @adcp/sdk@beta`; use the documentation from the exact published SDK version you install. For reproducible CLI runs, pin that exact SDK version. After installation, `node -p "require('@adcp/sdk').ADCP_VERSION"` reports its protocol pin; `ls node_modules/@adcp/sdk/compliance/cache` lists its packaged compliance versions. The `adcp-3.2` npm tag selects the maintained SDK 16 line. SDK 17 previews use `beta` and are intended for development and staging.
 
@@ -310,11 +310,11 @@ Request parameters for cross-protocol capability discovery.
 Request parameters for get_task_status, the 3.
 
 **Request:**
-- Required: `task_id: string`
+- Required: `task_id: Task Id`
 - Optional: `account: Account Ref`, `include_history: boolean`, `include_result: boolean`, `context: Context`
 
 **Response (success branch):**
-- Required: `task_id: string`, `task_type: Task Type`, `protocol: Adcp Protocol`, `status: Task Status`, `created_at: string`, `updated_at: string`
+- Required: `task_type: Task Type`, `protocol: Adcp Protocol`, `created_at: string`, `updated_at: string`
 - Optional: `completed_at: string`, `has_webhook: boolean`, `progress: object`, `error: object`, `history: object[]`, `result: object`, `context: Context`
 
 #### `list_tasks`
@@ -357,7 +357,7 @@ Declaratively synchronize caller-scoped webhooks and reusable reporting destinat
 Read caller-scoped connection configuration, version, and destination setup states without mutation.
 
 **Request:**
-- Optional: `context: Context`
+- Optional: `reporting_subscription_page: object`, `context: Context`
 
 **Response (success branch):**
 - Required: `result: union`
@@ -477,7 +477,7 @@ Request parameters for synchronous product-offer reads.
 
 **Response (success branch):**
 - Required: `outcome: 'listed'`, `products: Canonical Product[]`, `feed_version: string`, `cache_scope: 'public' | 'account'`
-- Optional: `adcp_version: string`, `collections: Response Collection[]`, `next_cursor: string`, `pricing_version: string`, `incomplete: object[]`, `replayed: 'true'`, `context: Context`
+- Optional: `collections: Response Collection[]`, `next_cursor: string`, `pricing_version: string`, `incomplete: object[]`, `context: Context`
 
 #### `list_proposals`
 
@@ -489,7 +489,7 @@ Request parameters for reading proposals and their dispositions (experimental).
 
 **Response (success branch):**
 - Required: `outcome: 'listed'`, `proposals: object[]`, `opportunities: object[]`
-- Optional: `next_cursor: string`, `replayed: 'true'`, `context: Context`
+- Optional: `next_cursor: string`, `context: Context`
 
 #### `list_collections`
 
@@ -500,7 +500,7 @@ Experimental: request parameters for reading a seller's collection card catalog 
 
 **Response (success branch):**
 - Required: `outcome: 'listed'`, `collections: Response Collection[]`, `collections_version: string`, `cache_scope: 'public' | 'account'`
-- Optional: `pagination: Pagination Response`, `replayed: 'true'`, `context: Context`
+- Optional: `pagination: Pagination Response`, `context: Context`
 
 #### `request_proposals`
 
@@ -512,7 +512,7 @@ Request parameters for creating actionable seller proposals.
 
 **Response (success branch):**
 - Required: `outcome: 'proposed'`, `proposals: Canonical Proposal[]`, `products: Canonical Product[]`
-- Optional: `adcp_version: string`, `collections: Response Collection[]`, `incomplete: object[]`, `targeting_resolution: Get Products Targeting Resolution`, `later_proposals: Later Proposals State`, `status: 'completed'`, `message: string`, `errors: Error[]`, +2 more
+- Optional: `collections: Response Collection[]`, `incomplete: object[]`, `targeting_resolution: Get Products Targeting Resolution`, `later_proposals: Later Proposals State`, `errors: Error[]`, `context: Context`, `status: 'completed'`
 
 #### `refine_proposals`
 
@@ -524,7 +524,7 @@ Request parameters for creating one or more proposal revisions.
 
 **Response (success branch):**
 - Required: `results: union[]`, `products: Canonical Product[]`
-- Optional: `adcp_version: string`, `collections: Response Collection[]`, `status: 'completed'`, `message: string`, `errors: Error[]`, `context: Context`, `replayed: 'true'`
+- Optional: `collections: Response Collection[]`, `errors: Error[]`, `context: Context`, `status: 'completed'`
 
 #### `decline_proposals`
 
@@ -536,7 +536,7 @@ Request parameters for terminally declining one or more proposals.
 
 **Response (success branch):**
 - Required: `results: object[]`
-- Optional: `message: string`, `errors: Error[]`, `context: Context`, `replayed: 'true'`
+- Optional: `errors: Error[]`, `context: Context`, `status: 'completed'`
 
 #### `buy_products`
 
@@ -564,7 +564,7 @@ Apply operational controls inside accepted commercial terms.
 
 **Response (success branch):**
 - Required: `status: 'completed'`, `media_buy_id: string`, `revision: integer`
-- Optional: `media_buy_status: Media Buy Status`, `implementation_date: string,null`, `affected_package_ids: string[]`, `available_actions: Canonical Media Buy Action[]`, `warnings: Warning[]`, `context: Context`, `replayed: 'true'`
+- Optional: `media_buy_status: Media Buy Status`, `implementation_date: string,null`, `affected_package_ids: string[]`, `available_actions: Canonical Media Buy Action[]`, `warnings: Warning[]`, `context: Context`
 
 #### `list_creative_formats`
 
@@ -684,7 +684,7 @@ Raise a seller-action report against an authorized media buy, optionally scoped 
 
 **Response (success branch):**
 - Required: `outcome: 'recorded'`, `issue: Media Buy Issue`
-- Optional: `context: Context`, `replayed: boolean`
+- Optional: `context: Context`
 
 #### `get_media_buy_issue`
 
@@ -696,7 +696,7 @@ Read the latest seller-owned state of one issue within an authorized account and
 
 **Response (success branch):**
 - Required: `outcome: 'found'`, `issue: Media Buy Issue`
-- Optional: `context: Context`, `replayed: boolean`
+- Optional: `context: Context`
 
 #### `provide_performance_feedback`
 
@@ -913,7 +913,7 @@ Request parameters for creating a new property list.
 
 **Response (success branch):**
 - Required: `list: Property List`, `auth_token: string`
-- Optional: `replayed: boolean`, `context: Context`
+- Optional: `context: Context`
 
 #### `update_property_list`
 
@@ -925,7 +925,7 @@ Request parameters for updating an existing property list.
 
 **Response (success branch):**
 - Required: `list: Property List`
-- Optional: `replayed: boolean`, `context: Context`
+- Optional: `context: Context`
 
 #### `get_property_list`
 
@@ -960,7 +960,7 @@ Request parameters for deleting a property list.
 
 **Response (success branch):**
 - Required: `deleted: boolean`, `list_id: string`
-- Optional: `replayed: boolean`, `context: Context`
+- Optional: `context: Context`
 
 #### `create_collection_list`
 
@@ -972,7 +972,7 @@ Request parameters for creating a new collection list.
 
 **Response (success branch):**
 - Required: `list: Collection List`, `auth_token: string`
-- Optional: `replayed: boolean`, `context: Context`
+- Optional: `context: Context`
 
 #### `update_collection_list`
 
@@ -984,7 +984,7 @@ Request parameters for updating an existing collection list.
 
 **Response (success branch):**
 - Required: `list: Collection List`
-- Optional: `replayed: boolean`, `context: Context`
+- Optional: `context: Context`
 
 #### `get_collection_list`
 
@@ -1019,7 +1019,7 @@ Request parameters for deleting a collection list.
 
 **Response (success branch):**
 - Required: `deleted: boolean`, `list_id: string`
-- Optional: `replayed: boolean`, `context: Context`
+- Optional: `context: Context`
 
 #### `list_content_standards`
 
@@ -1125,7 +1125,7 @@ Push campaign plans to the governance agent.
 
 **Response (success branch):**
 - Required: `plans: object[]`
-- Optional: `replayed: boolean`, `context: Context`
+- Optional: `context: Context`
 
 #### `report_plan_outcome`
 
@@ -1137,7 +1137,7 @@ Report the outcome of an action to the governance agent.
 
 **Response (success branch):**
 - Required: `outcome_id: string`, `outcome_state: 'accepted' | 'findings'`
-- Optional: `committed_budget: number`, `delivery_reconciliation_status: 'consistent' | 'measurement_variance' | 'disputed' | 'unmatched' | 'closed_unresolved'`, `delivery_period_state: 'open' | 'closed'`, `findings: object[]`, `plan_summary: object`, `replayed: boolean`, `context: Context`
+- Optional: `committed_budget: number`, `delivery_reconciliation_status: 'consistent' | 'measurement_variance' | 'disputed' | 'unmatched' | 'closed_unresolved'`, `delivery_period_state: 'open' | 'closed'`, `findings: object[]`, `plan_summary: object`, `context: Context`
 
 #### `report_plan_adjustment`
 
@@ -1149,7 +1149,7 @@ Seller-authenticated append-only commitment adjustment report.
 
 **Response (success branch):**
 - Required: `adjustment_id: string`, `adjustment_state: 'reported' | 'verified' | 'disputed'`, `adjustment_type: 'decommitment' | 'refund' | 'credit' | 'makegood'`, `amount: object`, `headroom_restored: number`, `plan_summary: object`
-- Optional: `replayed: boolean`, `context: Context`
+- Optional: `context: Context`
 
 #### `get_plan_audit_logs`
 
@@ -1172,7 +1172,7 @@ Orchestrator or seller calls the governance agent to validate an action against 
 
 **Response (success branch):**
 - Required: `check_id: string`, `verdict: Governance Decision`, `explanation: string`
-- Optional: `check_type: 'intent' | 'execution'`, `plan_id: string`, `budget_period_id: string`, `findings: object[]`, `conditions: object[]`, `consultation_context: string`, `expires_at: string`, `next_check: string`, +8 more
+- Optional: `check_type: 'intent' | 'execution'`, `plan_id: string`, `budget_period_id: string`, `findings: object[]`, `conditions: object[]`, `consultation_context: string`, `expires_at: string`, `next_check: string`, +7 more
 
 **Deep dive:**
 - docs/guides/HANDLER-PATTERNS-GUIDE.md — input handler patterns for governance flows
@@ -1312,6 +1312,12 @@ Flow: `get_adcp_capabilities → sync_creatives → list_creatives`
 
 **Policy-backed creative rejections** — Reports each violated registry policy as its own CREATIVE_REJECTED error entry.
 Flow: `get_products → sync_creatives`
+
+**Seller refuses an undeclared change to a live creative and leaves it unchanged** — Verifies that a seller declaring creative.live_updates without format refuses a format change to a live creative with CREATIVE_LIVE_UPDATE_UNSUPPORTED, names the refused kind and the live package, returns the same refusal on dry_run, and leaves the creative unchanged.
+Flow: `sync_creatives → comply_test_controller → sync_creatives → list_creatives`
+
+**Seller applies declared changes to a live creative under the same creative_id** — Verifies that a seller declaring creative.live_updates always accepts name changes, applies uninterrupted changes immediately, and keeps the approved prior version serving while a staged update is reviewed, promoting it on approval and keeping the prior version on rejection.
+Flow: `get_adcp_capabilities → sync_creatives → comply_test_controller → sync_creatives → list_creatives → sync_creatives → list_creatives → comply_test_controller → list_creatives → sync_creatives → comply_test_controller → list_creatives → sync_creatives`
 
 **Sales agent with creative capabilities** — Stateful sales agent that accepts pushed creative assets and renders them in its environment.
 Flow: `get_adcp_capabilities → sync_creatives → preview_creative`
@@ -1550,7 +1556,7 @@ Flow: `create_media_buy → sync_plans → sync_accounts → sync_governance →
 Flow: `create_media_buy → sync_plans → sync_accounts → sync_governance → get_products → check_governance → sync_plans → create_media_buy`
 
 **Seller accepts corrected buy after governance denial** — Verifies that a buyer can recover from GOVERNANCE_DENIED by shrinking the buy to fit the amended plan, obtaining a fresh intent approval, and retrying.
-Flow: `create_media_buy → sync_plans → sync_accounts → sync_governance → get_products → check_governance → sync_plans → create_media_buy → check_governance → create_media_buy`
+Flow: `create_media_buy → sync_accounts → get_products → sync_plans → sync_governance → get_products → check_governance → sync_plans → create_media_buy → check_governance → create_media_buy`
 
 **Inline media-buy creatives without sync_creatives** — Verifies that a seller advertising inline_creative_management accepts package creatives on create_media_buy and update_media_buy without requiring the Creative Protocol or sync_creatives.
 Flow: `get_adcp_capabilities → get_products → create_media_buy → update_media_buy → get_media_buys → create_media_buy → update_media_buy → get_media_buys → create_media_buy → update_media_buy → get_media_buys → get_products → create_media_buy → update_media_buy → get_media_buys`
@@ -1753,7 +1759,7 @@ Flow: `sync_accounts → get_products → create_media_buy → comply_test_contr
 Flow: `sync_accounts → create_media_buy → comply_test_controller → get_media_buy_delivery`
 
 **End-to-end metric accountability through the media buy lifecycle** — Buyer requires specific reporting metrics at discovery; seller filters products to those that can deliver; delivery report exposes any gaps via missing_metrics.
-Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
+Flow: `comply_test_controller → sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
 
 **Container-subsumption evaluation for metric set operations** — Verifies a container token (e.g. viewability) subsumes its leaf identities (e.g. viewable_rate) for required_metrics filtering and requested_metrics carrier selection, and that a leaf never subsumes a sibling leaf.
 Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery → get_products`
@@ -1768,7 +1774,7 @@ Flow: `get_media_buys → comply_test_controller → get_media_buy_delivery`
 Flow: `create_media_buy → comply_test_controller → get_media_buy_delivery`
 
 **End-to-end vendor-metric accountability: declaration → commitment → delivery audit** — Buyer commits vendor metrics on two packages, then verifies one clean package, one overdue gap, and one not-yet-measurable omission.
-Flow: `sync_accounts → get_products → create_media_buy → get_media_buys → comply_test_controller → get_media_buy_delivery`
+Flow: `comply_test_controller → sync_accounts → get_products → create_media_buy → get_media_buys → comply_test_controller → get_media_buy_delivery`
 
 **Reliable Reporting: Managed Delivery** — Validates the Managed Delivery tier's explicit capability, atomic managed offering, resource retention, and authorization-revocation contract.
 Flow: `get_adcp_capabilities → comply_test_controller → get_reporting_status → comply_test_controller`
@@ -1778,8 +1784,14 @@ Flow: `get_adcp_capabilities → comply_test_controller → get_reporting_status
 
 ### Products
 
+**Seller preserves custom canonical formats** — Verifies a seeded custom canonical formats declaration only after native catalog discovery establishes that optional format family.
+Flow: `comply_test_controller → get_products`
+
+**Seller preserves experimental canonical image formats** — Verifies a seeded experimental canonical image formats declaration only after native catalog discovery establishes that optional format family.
+Flow: `comply_test_controller → get_products`
+
 **Canonical formats and deprecated named-format compatibility** — Validates canonical product formats and the optional, explicitly deprecated named-format compatibility projection.
-Flow: `get_products → sync_accounts → get_products → create_media_buy`
+Flow: `comply_test_controller → get_products → sync_accounts → get_products → create_media_buy`
 
 ### Signals
 
@@ -2033,6 +2045,7 @@ Agents use the `recovery` classification to decide what to do: `transient` → r
 | `CONFLICTING_SELECTORS` | correctable | A 3.x package request carries multiple resolvable format selector routes that select different canonical product format declaration sets. Sellers MUST first resolve every present route independently (`format_option_refs`, direct `format_kind` plus `params`, and deprecated `format_ids`) without applying precedence. An unresolved option reference or an unprojectable legacy ID is rejected with `UNSUPPORTED_FEATURE`, not this code. Once all routes resolve, sellers derive the product `format_options[]` entries selected by each route using directional product satisfaction and require those sets to match. Legacy parameter compatibility uses the asymmetric v2-narrows-v1 relation defined by canonical formats, not raw object equality. For fixed-size image selectors, both width and height participate in compatibility. Sellers MUST reject different format shapes, selected option sets, or incompatible dimensions rather than silently choosing the canonical route. `error.field` SHOULD point at the conflicting package, and `error.details` SHOULD identify the supplied selector routes and their normalized canonical summaries. |
 | `CREATIVE_DEADLINE_EXCEEDED` | correctable | Creative change submitted after the package's creative_deadline. Distinct from CREATIVE_REJECTED (content-policy, brand-safety, or accessibility-review failure). |
 | `CREATIVE_INACCESSIBLE` | correctable | A creative governance agent (get_creative_features) could not retrieve the submitted creative_manifest assets for evaluation — an asset URL was unreachable, returned an error, or required credentials the agent does not hold. Distinct from CREATIVE_NOT_FOUND (a creative_id absent from the agent's library, not an asset-fetch failure) and CREATIVE_REJECTED (assets retrieved but failed creative review). |
+| `CREATIVE_LIVE_UPDATE_UNSUPPORTED` | correctable | A sync_creatives item changed a live creative in a way the seller does not apply in place under the same creative_id. A creative is live when its status is approved and it has at least one assignment on a package that is not canceled, whose flight has not ended, and whose media buy is not in a terminal state; a paused package still counts. Returned only by sellers that declare creative.live_updates (others keep returning INVALID_STATE). The seller MUST fail only that item, MUST leave the creative, its review state, and its serving unchanged, SHOULD set error.field to the item, and SHOULD return details conforming to error-details/creative-live-update-unsupported.json naming the refused change kinds and the live packages. A dry_run returns the same refusal. |
 | `CREATIVE_LOCALE_NOT_ACCEPTED` | correctable | A creative bound to a locale-constrained product format has no materialized variant matching locale_policy.accepted_language_ranges, lacks protocol-declared locale topology, or uses serve_default with a seller-ineligible default variant. Seller ranges use RFC 4647 Basic Filtering and are applied independently for every placement where the assignment may serve, before buyer Lookup, locale_fallbacks, or default selection. Distinct from CREATIVE_REJECTED because this is a mechanically discoverable assignment-eligibility mismatch, not subjective content review. error.field SHOULD point to the offending creative or assignment; error.details SHOULD include format_option_id when present, accepted_language_ranges, available_variant_locales, and placement identity when applicable. |
 | `CREATIVE_MERGE_REJECTED` | correctable | One or more sync_creatives merge assignment operations failed seller verification. The seller evaluates every merge in the request, MUST leave every assignment unchanged (assignment operations are atomic), SHOULD set error.field to the first rejected assignment_operations entry, and SHOULD return details conforming to error-details/creative-merge-rejected.json listing each rejected merge with a reason: content_mismatch (the seller judges the copy is a different creative), format_mismatch (the buyer's creative cannot take over the copy's serving object), not_on_package (merged_creative_id is not a seller-assigned creative assigned to the package in this account, reported uniformly for unknown IDs), or not_supported (the seller cannot merge this pairing on this package). A seller that does not declare creative.supports_assignment_merge returns UNSUPPORTED_FEATURE instead. |
 | `CREATIVE_MISSING_CLICK_URL` | correctable | A submitted creative that requires a destination URL does not provide one. Sellers SHOULD identify the missing buyer-visible field in error.field and MUST NOT expose downstream ad-server names or internal object identifiers in the buyer-facing message. |

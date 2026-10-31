@@ -15,6 +15,7 @@ import { ReportingRowStoreError } from '@adcp/sdk/reporting/ledger';
  * SDK per ledger database.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ * @deprecated Applied by the versioned migrations: run `npx adcp-reporting-storage migrate` (or `migrate(pool)`), which records each version and lets `postgresStorage().checkSchema()` refuse a schema that is behind. Kept for one beta.
  */
 export const REPORTING_LEDGER_CHANGES_MIGRATION = `
 -- Serialize concurrent appliers (several instances may run migrations at startup) so the guarded

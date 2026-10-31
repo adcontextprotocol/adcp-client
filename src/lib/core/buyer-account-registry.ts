@@ -1,10 +1,19 @@
 import { isDeepStrictEqual } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
-import type { AccountReference, BusinessEntity, PaymentTerms, SyncAccountsResponse } from '../types/tools.generated';
+import type {
+  AccountReference,
+  BusinessEntity,
+  PaymentTerms,
+  RequestAccountRequest,
+  RequestAccountResponse,
+  SyncAccountsResponse,
+} from '../types/tools.generated';
+import type { AccountRequest, AccountRequestState, PendingAction } from '../types/core.generated';
+import { SELLER_REVIEW, pendingActionFromWire, type AccountOutcome, type AccountVia } from './account-outcomes';
 import type { TaskOptions, TaskResult } from './ConversationTypes';
 import { accountReferenceKey } from './account-key';
 import { sameCountrySet } from './account-resolution';
-import { adcpErrorToTypedError, AccountNotFoundError, AccountSetupRequiredError } from '../errors';
+import { adcpErrorToTypedError, AccountNotFoundError, AccountRequestError, AccountSetupRequiredError } from '../errors';
 import { isAbortOrTimeoutError, MAX_TIMER_DELAY_MS, throwIfAborted, withAbortSignal } from '../protocols/abort';
 import { withTaskDeadline } from './task-deadline';
 import { isValidIdempotencyKey } from '../utils/idempotency';
@@ -16,6 +25,10 @@ export interface EnsureAccountOptions {
   billingEntity?: BusinessEntity;
   /** Caller-owned retry identity. Settle ambiguous dispatches explicitly with this key; the registry never rotates it. */
   idempotencyKey?: string;
+  /** `ensure` only: joins the natural key when the key does not carry `currency`. */
+  currency?: string;
+  /** `ensure` only: joins the natural key when the key does not carry `timezone`. */
+  timezone?: string;
 }
 export interface ProvisionedAccount {
   account: AccountReference;
@@ -38,6 +51,12 @@ export interface ProvisionedAccount {
   reduction?: { account: AccountReference; adcpVersion: string };
   /** Set on a reduced seller key: the one buyer key allowed to use it. */
   reducedFrom?: AccountReference;
+  /** The seller's `request_account` request behind this natural key (AdCP 3.3 `account.requests`). */
+  requestId?: string;
+  /** The request's last observed state. */
+  requestState?: AccountRequestState;
+  /** The last observed pending action of an open request or a `sync_accounts` row pending approval. */
+  pendingAction?: PendingAction;
 }
 /** Partitioned by seller and caller scope. Implementations must provide read-your-writes. */
 export interface BuyerAccountStorage {
@@ -47,6 +66,11 @@ export interface BuyerAccountStorage {
   getByAccountId?(accountId: string, scope: string): Promise<ProvisionedAccount | undefined>;
   /** Atomically insert (undefined revision) or replace. Store the supplied new revision. Required for multi-process safety. */
   compareAndSet?(key: string, expectedRevision: number | undefined, account: ProvisionedAccount): Promise<boolean>;
+  /**
+   * Every row stored under this exact seller/caller scope (keys starting `scope + ':'`). Optional: without
+   * it `client.accounts.refresh()` and `pending()` see only the keys this process ensured.
+   */
+  list?(scope: string): Promise<ProvisionedAccount[]>;
 }
 export interface BuyerAccountDispatch {
   storageKey: string;
@@ -71,6 +95,15 @@ export interface BuyerAccountRegistryOptions {
   /** @internal Only implicit routing caches may evict; explicitly used provisioning registries retain their state. */
   evictAtCapacity?: () => boolean;
   normalizeOptions?: (options: EnsureAccountOptions, taskOptions?: TaskOptions) => Promise<EnsureAccountOptions>;
+  /**
+   * @internal The seller's `account.requests` lifecycle, supplied by the client: whether the seller
+   * advertises it, `request_account`, and reading the caller's requests back through `list_accounts`.
+   */
+  requests?: {
+    supported(taskOptions?: TaskOptions): Promise<boolean>;
+    request(params: RequestAccountRequest, taskOptions?: TaskOptions): Promise<TaskResult<RequestAccountResponse>>;
+    read(requestIds: readonly string[], taskOptions?: TaskOptions): Promise<AccountRequest[]>;
+  };
 }
 type NaturalRef = Extract<AccountReference, { brand: unknown }>;
 type AccountRow = Partial<NaturalRef> & { account_id?: string; status?: string; action?: string };
@@ -131,7 +164,7 @@ export class BuyerAccountRegistry {
   private entries = new Map<string, ProvisionedAccount>();
   /** Reduction bindings when no storage is configured (never evicted). */
   private reductions = new Map<string, ProvisionedAccount>();
-  private pending = new Map<string, PendingProvisioning>();
+  private inFlight = new Map<string, PendingProvisioning>();
   private writes: Promise<void> = Promise.resolve();
   private repairs = new Map<string, object>();
   private repairWaiters = new Map<string, Promise<void>>();
@@ -144,7 +177,7 @@ export class BuyerAccountRegistry {
   private readonly normalizeOptions?: BuyerAccountRegistryOptions['normalizeOptions'];
   constructor(
     private scope: () => string,
-    private provision: (
+    private provisionAccount: (
       key: AccountReference,
       options: EnsureAccountOptions,
       taskOptions?: TaskOptions,
@@ -214,7 +247,12 @@ export class BuyerAccountRegistry {
   async getByAccountId(accountId: string): Promise<ProvisionedAccount | undefined> {
     return this.get({ account_id: accountId });
   }
-  async ensure(
+  /**
+   * Low-level: provision an account through `sync_accounts` and return the registry's record. This is
+   * what `ensure` returned before AdCP 3.3; most callers want {@link BuyerAccountRegistry.ensure}, which
+   * also routes to `request_account` and returns an `AccountOutcome`.
+   */
+  async provision(
     account: AccountReference,
     options: EnsureAccountOptions = {},
     taskOptions?: TaskOptions,
@@ -237,7 +275,7 @@ export class BuyerAccountRegistry {
     const current = await this.get(account);
     throwIfAborted(taskOptions?.signal);
     if (scope !== this.scope()) throw new AccountNotFoundError('Caller credentials changed during provisioning.');
-    const shared = this.pending.get(key);
+    const shared = this.inFlight.get(key);
     const wait = (promise: Promise<ProvisionedAccount>) =>
       withTaskDeadline(taskOptions, options =>
         withAbortSignal([options.signal], undefined, () => promise.then(entry => structuredClone(entry)))
@@ -309,7 +347,7 @@ export class BuyerAccountRegistry {
         );
     }
     const requiredEntries = current ? 1 : 2;
-    if (!this.storage && this.entries.size + this.pending.size * 2 + requiredEntries > this.maxEntries) {
+    if (!this.storage && this.entries.size + this.inFlight.size * 2 + requiredEntries > this.maxEntries) {
       throw new AccountSetupRequiredError(
         'Account registry capacity reached; configure durable storage or increase maxEntries.'
       );
@@ -360,7 +398,7 @@ export class BuyerAccountRegistry {
     const request = (async () => {
       try {
         if (!this.registryOptions.provisionOwnsDispatchBoundary) await beforeDispatch();
-        return await this.provision(structuredClone(account), pending.options, operationOptions, {
+        return await this.provisionAccount(structuredClone(account), pending.options, operationOptions, {
           idempotencyKey,
           beforeDispatch,
           requireIdempotencyKey: Boolean(
@@ -488,15 +526,385 @@ export class BuyerAccountRegistry {
       return settled;
     });
     pending.promise = request;
-    this.pending.set(key, pending);
+    this.inFlight.set(key, pending);
     const cleanup = () => {
-      if (this.pending.get(key) === pending) this.pending.delete(key);
+      if (this.inFlight.get(key) === pending) this.inFlight.delete(key);
     };
     void request.then(cleanup, cleanup);
     const entry = await wait(request);
     if (callbackFailed) throw callbackError;
     return entry;
   }
+  /** Natural keys this process ensured, for storage that cannot enumerate. */
+  private touched = new Set<string>();
+  /** Serializes `ensure` per natural key, so concurrent calls never open two requests. */
+  private ensuring = new Map<string, Promise<unknown>>();
+
+  /**
+   * Get an account for a natural key at this seller (AdCP 3.3). Routes by capability: `request_account`
+   * when the seller advertises `account.requests`, otherwise `sync_accounts`. Either way it resolves to an
+   * {@link AccountOutcome}: `ready`, `pending`, `ambiguous` or `rejected`. Pending, ambiguous and rejected
+   * are values, not errors; only a failure to process the call throws (`AccountRequestError` on the
+   * `request_account` path, the typed account errors on `sync_accounts`).
+   *
+   * Idempotent per (seller, caller, natural key): a repeat call returns the account, or the open request's
+   * current state, and never opens a duplicate. `currency` and `timezone` join the key when it does not
+   * carry them. Billing terms are sent only when an account is first requested.
+   *
+   * Breaking in SDK 17 (AdCP 3.3): `ensure` used to resolve to the registry's `ProvisionedAccount`. That
+   * call is now {@link BuyerAccountRegistry.provision}.
+   */
+  async ensure(
+    account: AccountReference,
+    options: EnsureAccountOptions = {},
+    taskOptions?: TaskOptions
+  ): Promise<AccountOutcome> {
+    const { currency, timezone, ...terms } = options;
+    let ref = structuredClone(account);
+    if (!('account_id' in ref)) {
+      if (currency !== undefined && ref.currency === undefined) ref = { ...ref, currency };
+      if (timezone !== undefined && ref.timezone === undefined) ref = { ...ref, timezone };
+    }
+    const key = this.key(ref);
+    const previous = this.ensuring.get(key) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(() => this.ensureOnce(ref, terms, taskOptions));
+    this.ensuring.set(key, run);
+    const cleanup = () => {
+      if (this.ensuring.get(key) === run) this.ensuring.delete(key);
+    };
+    void run.then(cleanup, cleanup);
+    return run;
+  }
+
+  private async ensureOnce(
+    ref: AccountReference,
+    terms: EnsureAccountOptions,
+    taskOptions?: TaskOptions
+  ): Promise<AccountOutcome> {
+    this.provisioningAccessed = true;
+    const requests = this.registryOptions.requests;
+    const natural = !('account_id' in ref);
+    if (natural) this.touched.add(this.key(ref));
+    const viaRequests = natural && requests !== undefined && (await requests.supported(taskOptions));
+    if (viaRequests) {
+      const existing = await this.get(ref);
+      if (existing) {
+        const known = await this.knownOutcome(ref, existing, true, taskOptions);
+        if (known) return known;
+      }
+      const body: Record<string, unknown> = { ...ref };
+      if (terms.billing !== undefined) body.billing = terms.billing;
+      if (terms.paymentTerms !== undefined) body.payment_terms = terms.paymentTerms;
+      if (terms.billingEntity !== undefined) body.billing_entity = terms.billingEntity;
+      const followed = existing?.requestState === 'rejected' ? existing.requestId : undefined;
+      return this.sendRequest(
+        ref,
+        {
+          idempotency_key: terms.idempotencyKey ?? this.ensureKey(body, followed),
+          ...body,
+        } as RequestAccountRequest,
+        taskOptions
+      );
+    }
+    let captured: TaskResult<unknown> | undefined;
+    let entry: ProvisionedAccount;
+    try {
+      entry = await this.provision(ref, terms, taskOptions, result => {
+        captured = result;
+      });
+    } catch (error) {
+      const row = this.syncRow(captured);
+      if (row && (row.action === 'failed' || row.status === 'rejected')) return this.syncRejected(row);
+      throw error;
+    }
+    const row = this.syncRow(captured);
+    if (entry.status === 'rejected') return this.syncRejected(row);
+    if (entry.status === 'pending_approval' && row?.setup && natural) {
+      const action = pendingActionFromWire(row.setup);
+      const latest = await this.get(ref);
+      if (latest && !isDeepStrictEqual(latest.pendingAction, action))
+        await this.write({ ...latest, pendingAction: action }, this.scope());
+      return this.syncOutcome({ ...entry, pendingAction: action });
+    }
+    return this.syncOutcome(entry);
+  }
+
+  /** A deterministic `request_account` idempotency key: one request per (seller, caller, body). */
+  private ensureKey(body: unknown, previous?: string): string {
+    const digest = createHash('sha256')
+      .update(JSON.stringify([this.scope(), body, previous ?? null]))
+      .digest('hex');
+    return `adcp-ensure-${digest.slice(0, 48)}`;
+  }
+
+  private syncRow(result: TaskResult<unknown> | undefined): Record<string, any> | undefined {
+    const data = result?.data as { accounts?: Record<string, any>[] } | undefined;
+    return Array.isArray(data?.accounts) ? data.accounts[0] : undefined;
+  }
+
+  private syncRejected(row: Record<string, any> | undefined): AccountOutcome {
+    const errors = Array.isArray(row?.errors) && row.errors.length > 0 ? row.errors : undefined;
+    return {
+      kind: 'rejected',
+      errors: structuredClone(errors ?? [{ code: 'ACCOUNT_REJECTED', message: 'The seller declined the account' }]),
+      via: 'sync_accounts',
+    };
+  }
+
+  /** The outcome of a `sync_accounts`-path record. */
+  private syncOutcome(entry: ProvisionedAccount): AccountOutcome {
+    if (entry.status === 'pending_approval' || entry.status === 'provisioning') {
+      return {
+        kind: 'pending',
+        action: structuredClone(
+          entry.pendingAction ??
+            (entry.status === 'provisioning'
+              ? { ...SELLER_REVIEW, message: 'The seller is still provisioning the account' }
+              : SELLER_REVIEW)
+        ),
+        via: 'sync_accounts',
+        ...(entry.account_id ? { account_id: entry.account_id } : {}),
+        status: entry.status,
+      };
+    }
+    if (entry.status === 'rejected') return this.syncRejected(undefined);
+    return {
+      kind: 'ready',
+      ...(entry.account_id ? { account_id: entry.account_id } : {}),
+      status: entry.status,
+      via: 'sync_accounts',
+    };
+  }
+
+  /** The outcome a stored record already answers, or `undefined` to request again. */
+  private async knownOutcome(
+    ref: AccountReference,
+    record: ProvisionedAccount,
+    requests: boolean,
+    taskOptions?: TaskOptions
+  ): Promise<AccountOutcome | undefined> {
+    if (record.requestId && (record.requestState === 'in_review' || record.requestState === 'ambiguous') && requests) {
+      const [wire] = (await this.registryOptions.requests!.read([record.requestId], taskOptions)).filter(
+        item => item.request_id === record.requestId
+      );
+      // The seller no longer knows the request (expired or dropped): request again.
+      return wire ? this.recordRequest(ref, wire, taskOptions) : undefined;
+    }
+    if (record.requestState === 'rejected' && !record.account_id) return undefined;
+    if (record.status === 'failed_provisioning' || record.status === 'unknown') return undefined;
+    if (!record.account_id && !record.requestId) return undefined;
+    const via: AccountVia = record.requestId ? 'request_account' : 'sync_accounts';
+    if (via === 'sync_accounts') return this.syncOutcome(record);
+    if (record.status === 'pending_approval') {
+      return {
+        kind: 'pending',
+        action: structuredClone(record.pendingAction ?? SELLER_REVIEW),
+        via,
+        request_id: record.requestId!,
+        ...(record.account_id ? { account_id: record.account_id } : {}),
+        status: record.status,
+      };
+    }
+    return {
+      kind: 'ready',
+      ...(record.account_id ? { account_id: record.account_id } : {}),
+      status: record.status,
+      via,
+      request_id: record.requestId!,
+    };
+  }
+
+  private async sendRequest(
+    ref: AccountReference,
+    params: RequestAccountRequest,
+    taskOptions?: TaskOptions
+  ): Promise<AccountOutcome> {
+    const result = await this.registryOptions.requests!.request(params, taskOptions);
+    const body = (result.data ?? {}) as Partial<RequestAccountResponse>;
+    if (!result.success || body.adcp_error || !body.request || typeof body.request !== 'object') {
+      const errors = (body.errors as { code: string; message?: string }[] | undefined)?.length
+        ? body.errors!
+        : [result.adcpError ?? { code: 'SERVICE_UNAVAILABLE', message: result.error ?? 'request_account failed' }];
+      throw new AccountRequestError('request_account', structuredClone(errors) as never);
+    }
+    return this.recordRequest(ref, body.request, taskOptions);
+  }
+
+  /** Persist a request's state under its natural key and return its outcome. */
+  private async recordRequest(
+    ref: AccountReference,
+    wire: AccountRequest,
+    taskOptions?: TaskOptions
+  ): Promise<AccountOutcome> {
+    const scope = this.scope();
+    const requestId = wire.request_id;
+    let outcome: AccountOutcome;
+    if (wire.state === 'resolved' && wire.account_id) {
+      const status = String((wire.account as { status?: string } | undefined)?.status ?? 'active');
+      outcome = {
+        kind: 'ready',
+        account_id: wire.account_id,
+        status,
+        via: 'request_account',
+        request_id: requestId,
+        ...(wire.account ? { account: structuredClone(wire.account) as unknown as Record<string, unknown> } : {}),
+      };
+      // Publish the account_id alias too, so resolveAccount and account-scoped tasks find it.
+      await this.record(ref, { account_id: wire.account_id, status }, scope);
+    } else if (wire.state === 'in_review') {
+      outcome = {
+        kind: 'pending',
+        action: pendingActionFromWire(wire.pending_action),
+        via: 'request_account',
+        request_id: requestId,
+      };
+    } else if (wire.state === 'ambiguous') {
+      outcome = {
+        kind: 'ambiguous',
+        candidates: structuredClone(wire.candidates ?? []),
+        request_id: requestId,
+        via: 'request_account',
+        choose: accountId => this.choose(ref, requestId, accountId, wire.candidates ?? [], taskOptions),
+      };
+    } else {
+      outcome = {
+        kind: 'rejected',
+        errors: structuredClone(
+          wire.errors?.length
+            ? wire.errors
+            : [{ code: 'ACCOUNT_REQUEST_REJECTED', message: 'The seller declined the request' }]
+        ),
+        via: 'request_account',
+        request_id: requestId,
+      };
+    }
+    const latest = await this.get(ref);
+    const ready = outcome.kind === 'ready' ? outcome : undefined;
+    const { pendingAction: _previousAction, ...kept } = latest ?? ({ account: ref } as ProvisionedAccount);
+    void _previousAction;
+    await this.write(
+      {
+        ...kept,
+        account: structuredClone(ref),
+        status: ready ? ready.status! : wire.state === 'rejected' ? 'rejected' : 'requested',
+        ...(ready?.account_id ? { account_id: ready.account_id } : {}),
+        requestId,
+        requestState: wire.state,
+        ...(outcome.kind === 'pending' ? { pendingAction: outcome.action } : {}),
+      },
+      scope
+    );
+    if (!('account_id' in ref)) this.touched.add(this.key(ref, scope));
+    return outcome;
+  }
+
+  private async choose(
+    ref: AccountReference,
+    requestId: string,
+    accountId: string,
+    candidates: readonly { account_id?: string }[],
+    taskOptions?: TaskOptions
+  ): Promise<AccountOutcome> {
+    if (!candidates.some(candidate => candidate.account_id === accountId))
+      throw new TypeError(`${JSON.stringify(accountId)} is not one of this request's candidates.`);
+    return this.sendRequest(
+      ref,
+      {
+        idempotency_key: this.ensureKey({ request_id: requestId, account_id: accountId }),
+        request_id: requestId,
+        account_id: accountId,
+      },
+      taskOptions
+    );
+  }
+
+  /** The natural-key records stored under the current seller and caller. */
+  private async known(): Promise<ProvisionedAccount[]> {
+    const scope = this.scope();
+    const byKey = new Map<string, ProvisionedAccount>();
+    if (this.storage?.list) {
+      for (const entry of await this.storage.list(scope)) byKey.set(this.key(entry.account, scope), entry);
+    }
+    const prefix = `${scope}:`;
+    const keys = new Set([...this.touched, ...[...this.entries.keys()]].filter(key => key.startsWith(prefix)));
+    for (const key of keys) {
+      if (byKey.has(key)) continue;
+      const entry = this.entries.get(key) ?? (await this.storage?.get(key));
+      if (entry) byKey.set(key, entry);
+    }
+    return [...byKey.values()].filter(entry => !('account_id' in entry.account));
+  }
+
+  /**
+   * The outcomes still waiting: open requests in review and accounts pending approval. Read from the
+   * registry; no network call. Use {@link BuyerAccountRegistry.refresh} to learn what moved.
+   */
+  async pending(): Promise<AccountOutcome[]> {
+    const result: AccountOutcome[] = [];
+    for (const record of await this.known()) {
+      // An ambiguous request's candidates live with the seller; refresh() reads them.
+      if (record.requestState === 'ambiguous') continue;
+      if (record.requestState === 'in_review' || record.status === 'pending_approval') {
+        result.push({
+          kind: 'pending',
+          action: structuredClone(record.pendingAction ?? SELLER_REVIEW),
+          via: record.requestId ? 'request_account' : 'sync_accounts',
+          ...(record.requestId ? { request_id: record.requestId } : {}),
+          ...(record.account_id ? { account_id: record.account_id } : {}),
+          status: record.status,
+        });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Re-read open requests and accounts pending approval; resolve to the outcomes whose state moved. Call
+   * it from a cron job or an `account_request.changed` webhook. One `list_accounts` read covers every
+   * open request (`request_ids`); each account pending approval is re-read by its `account_id`.
+   */
+  async refresh(taskOptions?: TaskOptions): Promise<AccountOutcome[]> {
+    const known = await this.known();
+    const open = known.filter(
+      record => record.requestId && (record.requestState === 'in_review' || record.requestState === 'ambiguous')
+    );
+    const pendingAccounts = known.filter(
+      record => !record.requestId && record.status === 'pending_approval' && record.account_id
+    );
+    const moved: AccountOutcome[] = [];
+    if (open.length > 0 && this.registryOptions.requests) {
+      const wire = new Map(
+        (
+          await this.registryOptions.requests.read(
+            open.map(record => record.requestId!),
+            taskOptions
+          )
+        ).map(item => [item.request_id, item])
+      );
+      for (const record of open) {
+        const current = wire.get(record.requestId!);
+        if (!current) continue;
+        const action = current.state === 'in_review' ? pendingActionFromWire(current.pending_action) : undefined;
+        if (current.state === record.requestState && isDeepStrictEqual(action, record.pendingAction)) continue;
+        moved.push(await this.recordRequest(record.account, current, taskOptions));
+      }
+    }
+    for (const record of pendingAccounts) {
+      if (!this.repair) break;
+      try {
+        await this.repairStatus(record.account_id!, taskOptions, false);
+      } catch (error) {
+        throwIfAborted(taskOptions?.signal);
+        // One account's failed re-read must not discard moves already recorded above: a request
+        // persisted as resolved would otherwise never be reported. It stays pending for the next refresh.
+        continue;
+      }
+      const latest = await this.get(record.account);
+      if (latest && latest.status !== record.status) moved.push(this.syncOutcome(latest));
+    }
+    return moved;
+  }
+
   private async write(entry: ProvisionedAccount, scope: string, isCurrent: () => boolean = () => true): Promise<void> {
     if (!isCurrent()) return;
     const key = this.key(entry.account, scope);

@@ -155,7 +155,13 @@ export class AgentCollection {
     return this.executeAllSettled(client => client.getPrincipal(params, inputHandler, options));
   }
 
-  /** Replace selected principal configuration sections across all selected agents. */
+  /**
+   * Replaces each submitted section. To add a reporting subscription, use `client.reporting.subscribe`.
+   *
+   * Replace selected principal configuration sections across all selected agents. Each agent's client
+   * applies the raw guard: a write that would deactivate a subscription or revoke a destination by
+   * omission is refused before sending.
+   */
   async syncPrincipal(
     params: MutatingRequestInput<SyncPrincipalRequest>,
     inputHandler?: InputHandler,
