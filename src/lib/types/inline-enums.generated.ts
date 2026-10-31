@@ -1446,6 +1446,11 @@ export const PropertyListChangedWebhook_EventValues = ["property_list_changed"] 
 /** single | ProposalCreatedWebhook.notification_type */
 export const ProposalCreatedWebhook_NotificationTypeValues = ["proposal.created"] as const;
 
+// ====== ProposalOfferedWebhook ======
+
+/** single | ProposalOfferedWebhook.notification_type */
+export const ProposalOfferedWebhook_NotificationTypeValues = ["proposal.offered"] as const;
+
 // ====== Provenance ======
 
 /** single | Provenance.human_oversight */
@@ -2353,6 +2358,9 @@ export const GetCreativeFeaturesSubmitted_StatusValues = BuildCreativeAsyncSubmi
 // --- GetProductsAsyncSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, GetProductsAsyncSubmitted.status duplicates the canonical export. */
 export const GetProductsAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
+// --- GetProductsRejected ---
+/** @deprecated use `AccountIdentityChangeRejected_StatusValues` — same literal set, GetProductsRejected.status duplicates the canonical export. */
+export const GetProductsRejected_StatusValues = AccountIdentityChangeRejected_StatusValues;
 // --- GetProductsResponse ---
 /** @deprecated use `GetProductsCompletion_CacheScopeValues` — same literal set, GetProductsResponse.cache_scope duplicates the canonical export. */
 export const GetProductsResponse_CacheScopeValues = GetProductsCompletion_CacheScopeValues;

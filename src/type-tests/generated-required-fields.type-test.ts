@@ -31,6 +31,8 @@ type AssertFalse<T extends false> = T;
 type IsRequired<T, K extends keyof T> = {} extends Pick<T, K> ? false : true;
 type IsOptional<T, K extends keyof T> = {} extends Pick<T, K> ? true : false;
 type HasKey<T, K extends PropertyKey> = K extends keyof T ? true : false;
+/** False when `K` is absent or optional on `T`. */
+type RequiresKey<T, K extends PropertyKey> = K extends keyof T ? IsRequired<T, K> : false;
 
 // Canonical core types must preserve every required property declared by their
 // source JSON Schema. Compatibility widening belongs on tool-specific response
@@ -110,7 +112,9 @@ type PartialProposal = Extract<RefineResult, { outcome: 'partial' }>['proposals'
 type FinalizedProposal = Extract<RefineResult, { outcome: 'finalized' }>['proposal'];
 type _RefineCompletedResultsRequired = Assert<IsRequired<RefineCompleted, 'results'>>;
 type _RefineCompletedProductsRequired = Assert<IsRequired<RefineCompleted, 'products'>>;
-type _RefineCompletedHasNoTaskId = AssertFalse<HasKey<RefineCompleted, 'task_id'>>;
+// A completed refinement is not a submitted task. Once every response composes the
+// protocol envelope (adcp#8547), task_id is an optional envelope field there.
+type _RefineCompletedDoesNotRequireTaskId = AssertFalse<RequiresKey<RefineCompleted, 'task_id'>>;
 type _RefineCompletedRejectsMixedFinalizeBatch = AssertFalse<
   [
     Extract<RefineResult, { outcome: 'revised' }>,
