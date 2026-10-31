@@ -1,0 +1,970 @@
+{
+  "capabilities": {
+    "supported": true,
+    "reliable_reporting_version": "1.0",
+    "configuration_task": "sync_accounts",
+    "status_task": "get_reporting_status",
+    "consumer_status_task": "sync_reporting_status",
+    "revision_content_task": "get_media_buy_delivery",
+    "offerings": [
+      {
+        "offering_id": "fixture-daily-snapshot",
+        "feed_purpose": "analytics",
+        "report_definition_id": "delivery-daily-v1",
+        "report_definition_uri": "https://contracts.example/reporting/delivery-daily-v1",
+        "report_definition_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reporting_profile": {
+          "id": "delivery",
+          "version": "1.0.0",
+          "schema_uri": "https://contracts.example/reporting/delivery-daily-v1/schema",
+          "schema_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "schema_dialect": "https://json-schema.org/draft/2020-12/schema",
+          "schema_ref_policy": "local_fragment_only",
+          "grain": "source_day",
+          "primary_keys": ["media_buy_id"]
+        },
+        "schedule": {
+          "period_duration": "P1D",
+          "alignment": "utc",
+          "delivery_sla": "PT0S"
+        },
+        "supported_finality": ["snapshot"],
+        "reconciliation_mode": "delivery_only"
+      }
+    ],
+    "automated_recovery_window_seconds": 86400,
+    "status_retention_days": 30
+  },
+  "installed": {
+    "delivery_config_id": "delivery-config",
+    "delivery_config_version": 1,
+    "offeringId": "fixture-daily-snapshot",
+    "report_definition_id": "delivery-daily-v1",
+    "feedPurpose": "analytics",
+    "requiredFinality": "snapshot",
+    "requestedMetrics": ["impressions", "spend"],
+    "requestedDimensions": ["media_buy_id"],
+    "schedule": {
+      "anchor": "2026-09-01T00:00:00.000Z",
+      "periodMilliseconds": 86400000,
+      "deliverySlaMilliseconds": 0,
+      "recoveryWindowMilliseconds": 86400000,
+      "periodDuration": "P1D",
+      "deliverySlaDuration": "PT0S",
+      "alignment": "utc"
+    },
+    "account": {
+      "account_id": "account-a"
+    },
+    "sourceScope": {
+      "network_id": "network-account-a",
+      "_adcp_reporting_adapter": "fixture"
+    },
+    "sourceTimezone": "UTC",
+    "sourceSettings": {
+      "attributionModel": "source_default",
+      "attributionWindow": "source_default",
+      "sourceSettingsVersion": "1",
+      "sourceSettingsSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "settingsSnapshotRef": "fixture-settings",
+      "currency": "USD"
+    },
+    "contract": {
+      "report_definition_id": "delivery-daily-v1",
+      "reportDefinitionUri": "https://contracts.example/reporting/delivery-daily-v1",
+      "reportDefinitionSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "reportingProfile": "delivery",
+      "schemaVersion": "1.0.0",
+      "schemaUri": "https://contracts.example/reporting/delivery-daily-v1/schema",
+      "schemaSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
+      "schemaRefPolicy": "local_fragment_only",
+      "mappingId": "fixture-delivery-v1",
+      "mappingVersion": "1",
+      "mappingSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "constituents": [
+      {
+        "constituentId": "constituent-account-a",
+        "constituentKind": "media_buy",
+        "productId": "fixture-product",
+        "mediaBuyId": "media-buy-account-a",
+        "productBinding": {
+          "owner": "caller",
+          "bindingId": "fixture-product-binding",
+          "bindingVersion": 1,
+          "bindingSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "productId": "fixture-product",
+          "bindingKind": "media_buy_product",
+          "mediaBuyId": "media-buy-account-a"
+        }
+      }
+    ],
+    "mediaBuyIds": ["media-buy-account-a"],
+    "configurationId": "rcfg_e786259e3d4f159969ff5c4a39e71c7a",
+    "installedAt": "<wall-clock>",
+    "semanticFingerprint": "sha256:462d031a7e11c7171ec7d3dd7e4235a7d8366431376e0c0e577d8eca7d2762fb"
+  },
+  "cycle": {
+    "planned": 3,
+    "claimed": 3,
+    "revisionsCommitted": 3,
+    "notReady": 0,
+    "failed": 0,
+    "reconcilesDeferred": 0
+  },
+  "configurations": [
+    {
+      "delivery_config_id": "delivery-config",
+      "delivery_config_version": 1,
+      "offeringId": "fixture-daily-snapshot",
+      "report_definition_id": "delivery-daily-v1",
+      "feedPurpose": "analytics",
+      "requiredFinality": "snapshot",
+      "requestedMetrics": ["impressions", "spend"],
+      "requestedDimensions": ["media_buy_id"],
+      "schedule": {
+        "anchor": "2026-09-01T00:00:00.000Z",
+        "periodMilliseconds": 86400000,
+        "deliverySlaMilliseconds": 0,
+        "recoveryWindowMilliseconds": 86400000,
+        "periodDuration": "P1D",
+        "deliverySlaDuration": "PT0S",
+        "alignment": "utc"
+      },
+      "account": {
+        "account_id": "account-a"
+      },
+      "sourceScope": {
+        "network_id": "network-account-a",
+        "_adcp_reporting_adapter": "fixture"
+      },
+      "sourceTimezone": "UTC",
+      "sourceSettings": {
+        "attributionModel": "source_default",
+        "attributionWindow": "source_default",
+        "sourceSettingsVersion": "1",
+        "sourceSettingsSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "settingsSnapshotRef": "fixture-settings",
+        "currency": "USD"
+      },
+      "contract": {
+        "report_definition_id": "delivery-daily-v1",
+        "reportDefinitionUri": "https://contracts.example/reporting/delivery-daily-v1",
+        "reportDefinitionSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reportingProfile": "delivery",
+        "schemaVersion": "1.0.0",
+        "schemaUri": "https://contracts.example/reporting/delivery-daily-v1/schema",
+        "schemaSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
+        "schemaRefPolicy": "local_fragment_only",
+        "mappingId": "fixture-delivery-v1",
+        "mappingVersion": "1",
+        "mappingSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "constituents": [
+        {
+          "constituentId": "constituent-account-a",
+          "constituentKind": "media_buy",
+          "productId": "fixture-product",
+          "mediaBuyId": "media-buy-account-a",
+          "productBinding": {
+            "owner": "caller",
+            "bindingId": "fixture-product-binding",
+            "bindingVersion": 1,
+            "bindingSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "productId": "fixture-product",
+            "bindingKind": "media_buy_product",
+            "mediaBuyId": "media-buy-account-a"
+          }
+        }
+      ],
+      "mediaBuyIds": ["media-buy-account-a"],
+      "configurationId": "rcfg_e786259e3d4f159969ff5c4a39e71c7a",
+      "installedAt": "<wall-clock>",
+      "semanticFingerprint": "sha256:462d031a7e11c7171ec7d3dd7e4235a7d8366431376e0c0e577d8eca7d2762fb"
+    }
+  ],
+  "obligations": [
+    {
+      "reporting_obligation_id": "robl_e09e4257780e4c490e74060ae367cc4b",
+      "configurationId": "rcfg_e786259e3d4f159969ff5c4a39e71c7a",
+      "account": {
+        "account_id": "account-a"
+      },
+      "sourceScope": {
+        "network_id": "network-account-a",
+        "_adcp_reporting_adapter": "fixture"
+      },
+      "delivery_config_id": "delivery-config",
+      "delivery_config_version": 1,
+      "offeringId": "fixture-daily-snapshot",
+      "report_definition_id": "delivery-daily-v1",
+      "feedPurpose": "analytics",
+      "requiredFinality": "snapshot",
+      "periodOrdinal": 0,
+      "period": {
+        "start": "2026-09-01T00:00:00.000Z",
+        "end": "2026-09-02T00:00:00.000Z",
+        "sourceTimezone": "UTC"
+      },
+      "schedule": {
+        "anchor": "2026-09-01T00:00:00.000Z",
+        "periodMilliseconds": 86400000,
+        "deliverySlaMilliseconds": 0,
+        "recoveryWindowMilliseconds": 86400000,
+        "periodDuration": "P1D",
+        "deliverySlaDuration": "PT0S",
+        "alignment": "utc"
+      },
+      "scopeResolvedAt": "2026-09-02T00:00:00.000Z",
+      "coverage": {
+        "status": "full",
+        "evaluatedAt": "2026-09-02T00:00:00.000Z",
+        "mediaBuyIds": ["media-buy-account-a"],
+        "fullyCoveredMediaBuyIds": ["media-buy-account-a"],
+        "partiallyCoveredMediaBuyIds": [],
+        "unsupportedMediaBuyIds": [],
+        "unknownMediaBuyIds": []
+      },
+      "requestedMetrics": ["impressions", "spend"],
+      "requestedDimensions": ["media_buy_id"],
+      "constituents": [
+        {
+          "constituentId": "constituent-account-a",
+          "constituentKind": "media_buy",
+          "productId": "fixture-product",
+          "mediaBuyId": "media-buy-account-a",
+          "productBinding": {
+            "owner": "caller",
+            "bindingId": "fixture-product-binding",
+            "bindingVersion": 1,
+            "bindingSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "productId": "fixture-product",
+            "bindingKind": "media_buy_product",
+            "mediaBuyId": "media-buy-account-a"
+          }
+        }
+      ],
+      "mediaBuyIds": ["media-buy-account-a"],
+      "sourceSettings": {
+        "attributionModel": "source_default",
+        "attributionWindow": "source_default",
+        "sourceSettingsVersion": "1",
+        "sourceSettingsSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "settingsSnapshotRef": "fixture-settings",
+        "currency": "USD"
+      },
+      "contract": {
+        "report_definition_id": "delivery-daily-v1",
+        "reportDefinitionUri": "https://contracts.example/reporting/delivery-daily-v1",
+        "reportDefinitionSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reportingProfile": "delivery",
+        "schemaVersion": "1.0.0",
+        "schemaUri": "https://contracts.example/reporting/delivery-daily-v1/schema",
+        "schemaSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
+        "schemaRefPolicy": "local_fragment_only",
+        "mappingId": "fixture-delivery-v1",
+        "mappingVersion": "1",
+        "mappingSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "expectedAt": "2026-09-02T00:00:00.000Z",
+      "recoveryDeadlineAt": "2026-09-03T00:00:00.000Z",
+      "publicationOffsets": [],
+      "nextAttemptAt": "2026-09-04T00:01:00.000Z",
+      "attemptCount": 1,
+      "state": "terminal",
+      "semanticFingerprint": "sha256:e09e4257780e4c490e74060ae367cc4b22c649b43ebc8195f6b7fda47a9d9557",
+      "createdAt": "<wall-clock>"
+    },
+    {
+      "reporting_obligation_id": "robl_8b727e3ab603b2fb63c50b4ce0d37482",
+      "configurationId": "rcfg_e786259e3d4f159969ff5c4a39e71c7a",
+      "account": {
+        "account_id": "account-a"
+      },
+      "sourceScope": {
+        "network_id": "network-account-a",
+        "_adcp_reporting_adapter": "fixture"
+      },
+      "delivery_config_id": "delivery-config",
+      "delivery_config_version": 1,
+      "offeringId": "fixture-daily-snapshot",
+      "report_definition_id": "delivery-daily-v1",
+      "feedPurpose": "analytics",
+      "requiredFinality": "snapshot",
+      "periodOrdinal": 1,
+      "period": {
+        "start": "2026-09-02T00:00:00.000Z",
+        "end": "2026-09-03T00:00:00.000Z",
+        "sourceTimezone": "UTC"
+      },
+      "schedule": {
+        "anchor": "2026-09-01T00:00:00.000Z",
+        "periodMilliseconds": 86400000,
+        "deliverySlaMilliseconds": 0,
+        "recoveryWindowMilliseconds": 86400000,
+        "periodDuration": "P1D",
+        "deliverySlaDuration": "PT0S",
+        "alignment": "utc"
+      },
+      "scopeResolvedAt": "2026-09-03T00:00:00.000Z",
+      "coverage": {
+        "status": "full",
+        "evaluatedAt": "2026-09-03T00:00:00.000Z",
+        "mediaBuyIds": ["media-buy-account-a"],
+        "fullyCoveredMediaBuyIds": ["media-buy-account-a"],
+        "partiallyCoveredMediaBuyIds": [],
+        "unsupportedMediaBuyIds": [],
+        "unknownMediaBuyIds": []
+      },
+      "requestedMetrics": ["impressions", "spend"],
+      "requestedDimensions": ["media_buy_id"],
+      "constituents": [
+        {
+          "constituentId": "constituent-account-a",
+          "constituentKind": "media_buy",
+          "productId": "fixture-product",
+          "mediaBuyId": "media-buy-account-a",
+          "productBinding": {
+            "owner": "caller",
+            "bindingId": "fixture-product-binding",
+            "bindingVersion": 1,
+            "bindingSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "productId": "fixture-product",
+            "bindingKind": "media_buy_product",
+            "mediaBuyId": "media-buy-account-a"
+          }
+        }
+      ],
+      "mediaBuyIds": ["media-buy-account-a"],
+      "sourceSettings": {
+        "attributionModel": "source_default",
+        "attributionWindow": "source_default",
+        "sourceSettingsVersion": "1",
+        "sourceSettingsSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "settingsSnapshotRef": "fixture-settings",
+        "currency": "USD"
+      },
+      "contract": {
+        "report_definition_id": "delivery-daily-v1",
+        "reportDefinitionUri": "https://contracts.example/reporting/delivery-daily-v1",
+        "reportDefinitionSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reportingProfile": "delivery",
+        "schemaVersion": "1.0.0",
+        "schemaUri": "https://contracts.example/reporting/delivery-daily-v1/schema",
+        "schemaSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
+        "schemaRefPolicy": "local_fragment_only",
+        "mappingId": "fixture-delivery-v1",
+        "mappingVersion": "1",
+        "mappingSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "expectedAt": "2026-09-03T00:00:00.000Z",
+      "recoveryDeadlineAt": "2026-09-04T00:00:00.000Z",
+      "publicationOffsets": [],
+      "nextAttemptAt": "2026-09-04T00:01:00.000Z",
+      "attemptCount": 1,
+      "state": "terminal",
+      "semanticFingerprint": "sha256:8b727e3ab603b2fb63c50b4ce0d37482c5214bbab7c5f44b75cdcb6182b5f515",
+      "createdAt": "<wall-clock>"
+    },
+    {
+      "reporting_obligation_id": "robl_333d9c1171590c380bb75ec2c5218110",
+      "configurationId": "rcfg_e786259e3d4f159969ff5c4a39e71c7a",
+      "account": {
+        "account_id": "account-a"
+      },
+      "sourceScope": {
+        "network_id": "network-account-a",
+        "_adcp_reporting_adapter": "fixture"
+      },
+      "delivery_config_id": "delivery-config",
+      "delivery_config_version": 1,
+      "offeringId": "fixture-daily-snapshot",
+      "report_definition_id": "delivery-daily-v1",
+      "feedPurpose": "analytics",
+      "requiredFinality": "snapshot",
+      "periodOrdinal": 2,
+      "period": {
+        "start": "2026-09-03T00:00:00.000Z",
+        "end": "2026-09-04T00:00:00.000Z",
+        "sourceTimezone": "UTC"
+      },
+      "schedule": {
+        "anchor": "2026-09-01T00:00:00.000Z",
+        "periodMilliseconds": 86400000,
+        "deliverySlaMilliseconds": 0,
+        "recoveryWindowMilliseconds": 86400000,
+        "periodDuration": "P1D",
+        "deliverySlaDuration": "PT0S",
+        "alignment": "utc"
+      },
+      "scopeResolvedAt": "2026-09-04T00:00:00.000Z",
+      "coverage": {
+        "status": "full",
+        "evaluatedAt": "2026-09-04T00:00:00.000Z",
+        "mediaBuyIds": ["media-buy-account-a"],
+        "fullyCoveredMediaBuyIds": ["media-buy-account-a"],
+        "partiallyCoveredMediaBuyIds": [],
+        "unsupportedMediaBuyIds": [],
+        "unknownMediaBuyIds": []
+      },
+      "requestedMetrics": ["impressions", "spend"],
+      "requestedDimensions": ["media_buy_id"],
+      "constituents": [
+        {
+          "constituentId": "constituent-account-a",
+          "constituentKind": "media_buy",
+          "productId": "fixture-product",
+          "mediaBuyId": "media-buy-account-a",
+          "productBinding": {
+            "owner": "caller",
+            "bindingId": "fixture-product-binding",
+            "bindingVersion": 1,
+            "bindingSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "productId": "fixture-product",
+            "bindingKind": "media_buy_product",
+            "mediaBuyId": "media-buy-account-a"
+          }
+        }
+      ],
+      "mediaBuyIds": ["media-buy-account-a"],
+      "sourceSettings": {
+        "attributionModel": "source_default",
+        "attributionWindow": "source_default",
+        "sourceSettingsVersion": "1",
+        "sourceSettingsSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "settingsSnapshotRef": "fixture-settings",
+        "currency": "USD"
+      },
+      "contract": {
+        "report_definition_id": "delivery-daily-v1",
+        "reportDefinitionUri": "https://contracts.example/reporting/delivery-daily-v1",
+        "reportDefinitionSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reportingProfile": "delivery",
+        "schemaVersion": "1.0.0",
+        "schemaUri": "https://contracts.example/reporting/delivery-daily-v1/schema",
+        "schemaSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
+        "schemaRefPolicy": "local_fragment_only",
+        "mappingId": "fixture-delivery-v1",
+        "mappingVersion": "1",
+        "mappingSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "expectedAt": "2026-09-04T00:00:00.000Z",
+      "recoveryDeadlineAt": "2026-09-05T00:00:00.000Z",
+      "publicationOffsets": [],
+      "nextAttemptAt": "2026-09-04T00:01:00.000Z",
+      "attemptCount": 1,
+      "state": "terminal",
+      "semanticFingerprint": "sha256:333d9c1171590c380bb75ec2c521811041456595af5c86140ad81dc90b45cab5",
+      "createdAt": "<wall-clock>"
+    }
+  ],
+  "summary": {
+    "status": "completed",
+    "adcp_version": "3.3-beta.2",
+    "adcp_major_version": 3,
+    "view": "summary",
+    "ledger_snapshot_id": "snapshot-0",
+    "ledger_as_of": "2026-09-04T00:01:00.000Z",
+    "account_id": "account-a",
+    "scope": {
+      "period_start": "2026-09-01T00:00:00.000Z",
+      "period_end": "2026-09-04T00:00:00.000Z",
+      "scope_closed": true,
+      "all_accessible_media_buys": true,
+      "delivery_config_generations": [
+        {
+          "delivery_config_id": "delivery-config",
+          "delivery_config_version": 1,
+          "feed_purpose": "analytics"
+        }
+      ],
+      "feed_purposes": ["analytics"],
+      "finality": ["snapshot"],
+      "ledger_retained_from": "2026-09-01T00:00:00.000Z",
+      "coverage_complete": true
+    },
+    "health": "complete",
+    "coverage": {
+      "status": "full",
+      "evaluated_at": "2026-09-04T00:01:00.000Z",
+      "media_buy_ids": ["media-buy-account-a"],
+      "fully_covered_media_buy_ids": ["media-buy-account-a"],
+      "partially_covered_media_buy_ids": [],
+      "unsupported_media_buy_ids": [],
+      "unknown_media_buy_ids": [],
+      "package_ids": [],
+      "covered_package_ids": [],
+      "unsupported_package_ids": [],
+      "unknown_package_ids": [],
+      "limitations": []
+    },
+    "data_through": "2026-09-02T00:00:00.000Z",
+    "next_expected_at": "2026-09-05T00:00:00.000Z",
+    "obligation_counts": {
+      "total": 3,
+      "waiting": 0,
+      "healthy": 0,
+      "delayed": 0,
+      "action_required": 0,
+      "complete": 3,
+      "consumer_status_pending": 2
+    },
+    "issues": []
+  },
+  "periods": {
+    "status": "completed",
+    "adcp_version": "3.3-beta.2",
+    "adcp_major_version": 3,
+    "view": "periods",
+    "ledger_snapshot_id": "snapshot-1",
+    "ledger_as_of": "2026-09-04T00:01:00.000Z",
+    "account_id": "account-a",
+    "changes_checkpoint": "2026-09-04T00:01:00.000Z",
+    "scope": {
+      "period_start": "2026-09-01T00:00:00.000Z",
+      "period_end": "2026-09-04T00:00:00.000Z",
+      "scope_closed": true,
+      "all_accessible_media_buys": true,
+      "delivery_config_generations": [
+        {
+          "delivery_config_id": "delivery-config",
+          "delivery_config_version": 1,
+          "feed_purpose": "analytics"
+        }
+      ],
+      "feed_purposes": ["analytics"],
+      "finality": ["snapshot"],
+      "ledger_retained_from": "2026-09-01T00:00:00.000Z",
+      "coverage_complete": true
+    },
+    "periods": [
+      {
+        "reporting_obligation_id": "robl_e09e4257780e4c490e74060ae367cc4b",
+        "delivery_config_id": "delivery-config",
+        "delivery_config_version": 1,
+        "report_definition_id": "delivery-daily-v1",
+        "feed_purpose": "analytics",
+        "reporting_profile": "delivery",
+        "account_id": "account-a",
+        "media_buy_ids": ["media-buy-account-a"],
+        "scope_resolved_at": "2026-09-02T00:00:00.000Z",
+        "coverage": {
+          "status": "full",
+          "evaluated_at": "2026-09-02T00:00:00.000Z",
+          "media_buy_ids": ["media-buy-account-a"],
+          "fully_covered_media_buy_ids": ["media-buy-account-a"],
+          "partially_covered_media_buy_ids": [],
+          "unsupported_media_buy_ids": [],
+          "unknown_media_buy_ids": [],
+          "package_ids": [],
+          "covered_package_ids": [],
+          "unsupported_package_ids": [],
+          "unknown_package_ids": [],
+          "limitations": []
+        },
+        "period": {
+          "start": "2026-09-01T00:00:00.000Z",
+          "end": "2026-09-02T00:00:00.000Z",
+          "source_timezone": "UTC"
+        },
+        "expected_at": "2026-09-02T00:00:00.000Z",
+        "schedule": {
+          "period_duration": "P1D",
+          "alignment": "utc",
+          "delivery_sla": "PT0S"
+        },
+        "required_finality": "snapshot",
+        "reconciliation_mode": "delivery_only",
+        "reconciliation_status": "not_required",
+        "health": "complete",
+        "production_status": "published",
+        "revision_count": 1,
+        "adjustment_count": 0,
+        "consumer_status_count": 0,
+        "issues": []
+      },
+      {
+        "reporting_obligation_id": "robl_8b727e3ab603b2fb63c50b4ce0d37482",
+        "delivery_config_id": "delivery-config",
+        "delivery_config_version": 1,
+        "report_definition_id": "delivery-daily-v1",
+        "feed_purpose": "analytics",
+        "reporting_profile": "delivery",
+        "account_id": "account-a",
+        "media_buy_ids": ["media-buy-account-a"],
+        "scope_resolved_at": "2026-09-03T00:00:00.000Z",
+        "coverage": {
+          "status": "full",
+          "evaluated_at": "2026-09-03T00:00:00.000Z",
+          "media_buy_ids": ["media-buy-account-a"],
+          "fully_covered_media_buy_ids": ["media-buy-account-a"],
+          "partially_covered_media_buy_ids": [],
+          "unsupported_media_buy_ids": [],
+          "unknown_media_buy_ids": [],
+          "package_ids": [],
+          "covered_package_ids": [],
+          "unsupported_package_ids": [],
+          "unknown_package_ids": [],
+          "limitations": []
+        },
+        "period": {
+          "start": "2026-09-02T00:00:00.000Z",
+          "end": "2026-09-03T00:00:00.000Z",
+          "source_timezone": "UTC"
+        },
+        "expected_at": "2026-09-03T00:00:00.000Z",
+        "schedule": {
+          "period_duration": "P1D",
+          "alignment": "utc",
+          "delivery_sla": "PT0S"
+        },
+        "required_finality": "snapshot",
+        "reconciliation_mode": "delivery_only",
+        "reconciliation_status": "not_required",
+        "health": "complete",
+        "production_status": "published",
+        "revision_count": 1,
+        "adjustment_count": 0,
+        "consumer_status_count": 0,
+        "issues": []
+      },
+      {
+        "reporting_obligation_id": "robl_333d9c1171590c380bb75ec2c5218110",
+        "delivery_config_id": "delivery-config",
+        "delivery_config_version": 1,
+        "report_definition_id": "delivery-daily-v1",
+        "feed_purpose": "analytics",
+        "reporting_profile": "delivery",
+        "account_id": "account-a",
+        "media_buy_ids": ["media-buy-account-a"],
+        "scope_resolved_at": "2026-09-04T00:00:00.000Z",
+        "coverage": {
+          "status": "full",
+          "evaluated_at": "2026-09-04T00:00:00.000Z",
+          "media_buy_ids": ["media-buy-account-a"],
+          "fully_covered_media_buy_ids": ["media-buy-account-a"],
+          "partially_covered_media_buy_ids": [],
+          "unsupported_media_buy_ids": [],
+          "unknown_media_buy_ids": [],
+          "package_ids": [],
+          "covered_package_ids": [],
+          "unsupported_package_ids": [],
+          "unknown_package_ids": [],
+          "limitations": []
+        },
+        "period": {
+          "start": "2026-09-03T00:00:00.000Z",
+          "end": "2026-09-04T00:00:00.000Z",
+          "source_timezone": "UTC"
+        },
+        "expected_at": "2026-09-04T00:00:00.000Z",
+        "schedule": {
+          "period_duration": "P1D",
+          "alignment": "utc",
+          "delivery_sla": "PT0S"
+        },
+        "required_finality": "snapshot",
+        "reconciliation_mode": "delivery_only",
+        "reconciliation_status": "not_required",
+        "health": "complete",
+        "production_status": "published",
+        "revision_count": 1,
+        "adjustment_count": 0,
+        "consumer_status_count": 0,
+        "issues": []
+      }
+    ],
+    "revisions": [
+      {
+        "reporting_revision_id": "rrev_328f2ee75243aed6f8ca8417885718a4",
+        "revision_content_sha256": "6d7b9b012026385b00138b6c82bdf99fa36c8d4606bde5b23da833605f9d1576",
+        "report_definition_id": "delivery-daily-v1",
+        "report_definition_uri": "https://contracts.example/reporting/delivery-daily-v1",
+        "report_definition_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reporting_profile": "delivery",
+        "schema_version": "1.0.0",
+        "schema_uri": "https://contracts.example/reporting/delivery-daily-v1/schema",
+        "schema_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "schema_dialect": "https://json-schema.org/draft/2020-12/schema",
+        "schema_ref_policy": "local_fragment_only",
+        "account_id": "account-a",
+        "media_buy_ids": ["media-buy-account-a"],
+        "coverage": {
+          "status": "full",
+          "evaluated_at": "2026-09-02T00:00:00.000Z",
+          "media_buy_ids": ["media-buy-account-a"],
+          "fully_covered_media_buy_ids": ["media-buy-account-a"],
+          "partially_covered_media_buy_ids": [],
+          "unsupported_media_buy_ids": [],
+          "unknown_media_buy_ids": [],
+          "package_ids": [],
+          "covered_package_ids": [],
+          "unsupported_package_ids": [],
+          "unknown_package_ids": [],
+          "limitations": []
+        },
+        "period": {
+          "start": "2026-09-01T00:00:00.000Z",
+          "end": "2026-09-02T00:00:00.000Z",
+          "source_timezone": "UTC"
+        },
+        "finality": "snapshot",
+        "observed_at": "2026-09-02T00:00:00.000Z",
+        "data_through": "2026-09-02T00:00:00.000Z",
+        "data_through_precision": "exact",
+        "row_count": 1,
+        "control_totals": [
+          {
+            "name": "impressions",
+            "value": "7",
+            "value_type": "integer"
+          },
+          {
+            "name": "spend",
+            "value": "2.5",
+            "value_type": "decimal"
+          }
+        ],
+        "created_at": "<wall-clock>"
+      },
+      {
+        "reporting_revision_id": "rrev_8fd3b428b979ed1ad5230e992e85fb24",
+        "revision_content_sha256": "3ca917826f0c945b31ec1042f65e378c8800d700cc4d61787203345f971f9a73",
+        "report_definition_id": "delivery-daily-v1",
+        "report_definition_uri": "https://contracts.example/reporting/delivery-daily-v1",
+        "report_definition_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reporting_profile": "delivery",
+        "schema_version": "1.0.0",
+        "schema_uri": "https://contracts.example/reporting/delivery-daily-v1/schema",
+        "schema_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "schema_dialect": "https://json-schema.org/draft/2020-12/schema",
+        "schema_ref_policy": "local_fragment_only",
+        "account_id": "account-a",
+        "media_buy_ids": ["media-buy-account-a"],
+        "coverage": {
+          "status": "full",
+          "evaluated_at": "2026-09-03T00:00:00.000Z",
+          "media_buy_ids": ["media-buy-account-a"],
+          "fully_covered_media_buy_ids": ["media-buy-account-a"],
+          "partially_covered_media_buy_ids": [],
+          "unsupported_media_buy_ids": [],
+          "unknown_media_buy_ids": [],
+          "package_ids": [],
+          "covered_package_ids": [],
+          "unsupported_package_ids": [],
+          "unknown_package_ids": [],
+          "limitations": []
+        },
+        "period": {
+          "start": "2026-09-02T00:00:00.000Z",
+          "end": "2026-09-03T00:00:00.000Z",
+          "source_timezone": "UTC"
+        },
+        "finality": "snapshot",
+        "observed_at": "2026-09-03T00:00:00.000Z",
+        "data_through": "2026-09-03T00:00:00.000Z",
+        "data_through_precision": "exact",
+        "row_count": 1,
+        "control_totals": [
+          {
+            "name": "impressions",
+            "value": "7",
+            "value_type": "integer"
+          },
+          {
+            "name": "spend",
+            "value": "2.5",
+            "value_type": "decimal"
+          }
+        ],
+        "created_at": "<wall-clock>"
+      },
+      {
+        "reporting_revision_id": "rrev_7ec1110de85e1d68bc48ffbbd489e4c1",
+        "revision_content_sha256": "ee4e7e62d7644ffad1aa416a47ea66aada4566220eb6a40dd8a49e3a23a2f40b",
+        "report_definition_id": "delivery-daily-v1",
+        "report_definition_uri": "https://contracts.example/reporting/delivery-daily-v1",
+        "report_definition_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reporting_profile": "delivery",
+        "schema_version": "1.0.0",
+        "schema_uri": "https://contracts.example/reporting/delivery-daily-v1/schema",
+        "schema_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "schema_dialect": "https://json-schema.org/draft/2020-12/schema",
+        "schema_ref_policy": "local_fragment_only",
+        "account_id": "account-a",
+        "media_buy_ids": ["media-buy-account-a"],
+        "coverage": {
+          "status": "full",
+          "evaluated_at": "2026-09-04T00:00:00.000Z",
+          "media_buy_ids": ["media-buy-account-a"],
+          "fully_covered_media_buy_ids": ["media-buy-account-a"],
+          "partially_covered_media_buy_ids": [],
+          "unsupported_media_buy_ids": [],
+          "unknown_media_buy_ids": [],
+          "package_ids": [],
+          "covered_package_ids": [],
+          "unsupported_package_ids": [],
+          "unknown_package_ids": [],
+          "limitations": []
+        },
+        "period": {
+          "start": "2026-09-03T00:00:00.000Z",
+          "end": "2026-09-04T00:00:00.000Z",
+          "source_timezone": "UTC"
+        },
+        "finality": "snapshot",
+        "observed_at": "2026-09-04T00:00:00.000Z",
+        "data_through": "2026-09-04T00:00:00.000Z",
+        "data_through_precision": "exact",
+        "row_count": 1,
+        "control_totals": [
+          {
+            "name": "impressions",
+            "value": "7",
+            "value_type": "integer"
+          },
+          {
+            "name": "spend",
+            "value": "2.5",
+            "value_type": "decimal"
+          }
+        ],
+        "created_at": "<wall-clock>"
+      }
+    ],
+    "adjustments": [],
+    "consumer_statuses": [],
+    "adjustment_receipts": [],
+    "materializations": [],
+    "receipts": [],
+    "pagination": {
+      "has_more": false,
+      "total_count": 6
+    }
+  },
+  "delivery": {
+    "reporting_period": {
+      "start": "2026-09-01T00:00:00.000Z",
+      "end": "2026-09-02T00:00:00.000Z"
+    },
+    "media_buy_deliveries": [],
+    "reporting_rows": [
+      {
+        "media_buy_id": "media-buy-account-a",
+        "impressions": 7,
+        "spend": "2.50"
+      }
+    ],
+    "notification_type": "scheduled",
+    "partial_data": false,
+    "unavailable_count": 0,
+    "sequence_number": 1,
+    "reporting_revision_binding": {
+      "reporting_revision_id": "rrev_328f2ee75243aed6f8ca8417885718a4",
+      "content_sha256": "6d7b9b012026385b00138b6c82bdf99fa36c8d4606bde5b23da833605f9d1576",
+      "row_count": 1,
+      "control_totals": [
+        {
+          "name": "impressions",
+          "value": "7",
+          "value_type": "integer"
+        },
+        {
+          "name": "spend",
+          "value": "2.5",
+          "value_type": "decimal"
+        }
+      ]
+    },
+    "reporting_revision": {
+      "reporting_revision_id": "rrev_328f2ee75243aed6f8ca8417885718a4",
+      "revision_content_sha256": "6d7b9b012026385b00138b6c82bdf99fa36c8d4606bde5b23da833605f9d1576",
+      "report_definition_id": "delivery-daily-v1",
+      "report_definition_uri": "https://contracts.example/reporting/delivery-daily-v1",
+      "report_definition_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "reporting_profile": "delivery",
+      "schema_version": "1.0.0",
+      "schema_uri": "https://contracts.example/reporting/delivery-daily-v1/schema",
+      "schema_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "schema_dialect": "https://json-schema.org/draft/2020-12/schema",
+      "schema_ref_policy": "local_fragment_only",
+      "account_id": "account-a",
+      "media_buy_ids": ["media-buy-account-a"],
+      "coverage": {
+        "status": "full",
+        "evaluated_at": "2026-09-02T00:00:00.000Z",
+        "media_buy_ids": ["media-buy-account-a"],
+        "fully_covered_media_buy_ids": ["media-buy-account-a"],
+        "partially_covered_media_buy_ids": [],
+        "unsupported_media_buy_ids": [],
+        "unknown_media_buy_ids": [],
+        "package_ids": [],
+        "covered_package_ids": [],
+        "unsupported_package_ids": [],
+        "unknown_package_ids": [],
+        "limitations": []
+      },
+      "period": {
+        "start": "2026-09-01T00:00:00.000Z",
+        "end": "2026-09-02T00:00:00.000Z",
+        "source_timezone": "UTC"
+      },
+      "finality": "snapshot",
+      "observed_at": "2026-09-02T00:00:00.000Z",
+      "data_through": "2026-09-02T00:00:00.000Z",
+      "data_through_precision": "exact",
+      "row_count": 1,
+      "control_totals": [
+        {
+          "name": "impressions",
+          "value": "7",
+          "value_type": "integer"
+        },
+        {
+          "name": "spend",
+          "value": "2.5",
+          "value_type": "decimal"
+        }
+      ],
+      "created_at": "<wall-clock>"
+    },
+    "currency": "USD",
+    "errors": [],
+    "pagination": {
+      "has_more": false,
+      "total_count": 1
+    }
+  },
+  "consumerStatus": {
+    "adcp_version": "3.3-beta.2",
+    "adcp_major_version": 3,
+    "status": "completed",
+    "results": [
+      {
+        "result": "recorded",
+        "consumer_status": {
+          "reporting_status_id": "option-off-status-0001",
+          "delivery_config_id": "delivery-config",
+          "delivery_config_version": 1,
+          "report_definition_id": "delivery-daily-v1",
+          "period": {
+            "start": "2026-09-01T00:00:00.000Z",
+            "end": "2026-09-02T00:00:00.000Z",
+            "source_timezone": "UTC"
+          },
+          "reporting_obligation_id": "robl_e09e4257780e4c490e74060ae367cc4b",
+          "reporting_revision_id": "rrev_328f2ee75243aed6f8ca8417885718a4",
+          "observed_revision_content_sha256": "6d7b9b012026385b00138b6c82bdf99fa36c8d4606bde5b23da833605f9d1576",
+          "consumer_status": "received",
+          "status_as_of": "2026-09-04T00:01:00.000Z",
+          "recorded_at": "<wall-clock>"
+        }
+      }
+    ]
+  }
+}

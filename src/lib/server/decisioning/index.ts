@@ -127,10 +127,12 @@ export type {
 
 export {
   AccountNotFoundError,
+  REPORTING_WIND_DOWN_TASKS,
   isAccountResolutionMode,
   normalizeAccountResolution,
   refAccountId,
   refHasNaturalKey,
+  windDownGrant,
 } from './account';
 
 // Multi-tenant AccountStore builder. Bakes in the two-path resolution

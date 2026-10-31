@@ -72,6 +72,33 @@ the helper throws `PrincipalLifecycleError` with the original `taskResult`
 attached. Use its `submitted` or `deferred` continuation when present; do not
 start a second logical replacement with a new idempotency key.
 
+Every `PrincipalLifecycleError` is an `ADCPError` with a stable `code` and a
+`recovery` (`transient`, `correctable` or `terminal`):
+
+| `code` | When | `recovery` |
+|---|---|---|
+| `PRINCIPAL_TASK_INCOMPLETE` | A `get_principal` or `sync_principal` task did not complete (see `taskResult`) | `transient` |
+| `PRINCIPAL_READ_FAILED` / `PRINCIPAL_WRITE_FAILED` | The seller returned a failed result (see `protocolErrors`) | the seller's, else `terminal` |
+| `PRINCIPAL_CONFLICT_EXHAUSTED` | Every guarded attempt met `CONFLICT` | `transient` |
+| `PRINCIPAL_TRANSPORT_FAILED` | The write threw; replay `attemptedRequest` exactly | `transient` |
+| `PRINCIPAL_IDENTITY_CHANGED` | The principal changed, or its kind did not match `expectedPrincipalKind` | `terminal` |
+| `PRINCIPAL_INVALID_RESPONSE` | The seller answered a write with a dry run, or applied nothing | `terminal` |
+| `PRINCIPAL_INVALID_OPTIONS` | `createIdempotencyKey` reused a key | `correctable` |
+| `PRINCIPAL_SETUP_TIMEOUT` | Destination setup did not finish in time (`PrincipalLifecycleTimeoutError`) | `transient` |
+| `PRINCIPAL_SETUP_INTERRUPTED` | The configuration disappeared or changed while setup was pending | `transient` |
+
+`dispatched` is `false` when the helper refused before sending any
+`sync_principal` write, so nothing changed at the seller; check it with
+`isPreDispatchError(error)`. It is absent whenever a write may have reached the
+seller. When the write was applied and a later step failed, the applied result
+is on `appliedResponse`. The older `applied` property is a deprecated alias.
+
+`syncReportingSubscriptionsV1` throws `ReportingSubscriptionError` for its own
+refusals: `SUBSCRIPTION_WOULD_DEACTIVATE` (with `wouldDeactivate` and
+`dispatched: false`), `SUBSCRIPTION_CONFLICT_EXHAUSTED`
+and `SUBSCRIPTION_READBACK_MISMATCH` (with `readback`). The codes and recovery
+classes are the shared vocabulary the Python SDK uses.
+
 ## Seller runtime
 
 `createPrincipalLifecycle()` is the server-side owner for `get_principal`,

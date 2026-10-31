@@ -12,7 +12,7 @@ import { projectStoredNotificationSubscriptionReadback } from '../notification-s
 import type {
   PrincipalStateStore,
   PrincipalConfiguration,
-  PrincipalStoreScope,
+  PrincipalRef,
   PrincipalStoreReplaceResult,
   StoredPrincipalRecord,
   VersionedPrincipalRecord,
@@ -35,7 +35,7 @@ type PrincipalOwnedNotificationStore = NotificationSubscriptionStore & {
   [PRINCIPAL_NOTIFICATION_STORE_OWNER]: PrincipalStateStore;
 };
 
-function scopeDocumentId(scope: Readonly<PrincipalStoreScope>): string {
+function scopeDocumentId(scope: Readonly<PrincipalRef>): string {
   return `principal_${createHash('sha256')
     .update(JSON.stringify([scope.tenantId, scope.principalId]))
     .digest('hex')}`;
@@ -45,7 +45,7 @@ function cloneRecord(record: Readonly<StoredPrincipalRecord>): StoredPrincipalRe
   return structuredClone(record);
 }
 
-function assertRecordScope(record: Readonly<StoredPrincipalRecord>, scope: Readonly<PrincipalStoreScope>): void {
+function assertRecordScope(record: Readonly<StoredPrincipalRecord>, scope: Readonly<PrincipalRef>): void {
   assertRecordShape(record);
   if (record.tenantId !== scope.tenantId || record.scopePrincipalId !== scope.principalId) {
     throw new Error('Principal store scope mismatch');
@@ -77,7 +77,7 @@ export function createPrincipalStateStore(options: CreatePrincipalStateStoreOpti
     throw new TypeError('InMemoryStateStore cannot be declared durable');
   }
   const collection = options.collection ?? DEFAULT_PRINCIPAL_STORE_COLLECTION;
-  const getRecord = async (scope: Readonly<PrincipalStoreScope>): Promise<VersionedPrincipalRecord | null> => {
+  const getRecord = async (scope: Readonly<PrincipalRef>): Promise<VersionedPrincipalRecord | null> => {
     const row = await options.store.getWithVersion!<StoredPrincipalRecord>(collection, scopeDocumentId(scope));
     if (!row) return null;
     assertRecordScope(row.data, scope);
@@ -147,7 +147,7 @@ export function createPrincipalStateStore(options: CreatePrincipalStateStoreOpti
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
         throw new TypeError('principal notification recovery limit must be 1 through 10000');
       }
-      const scopes: PrincipalStoreScope[] = [];
+      const scopes: PrincipalRef[] = [];
       const scanLimit = Math.min(10_000, limit * 10);
       let scanned = 0;
       let pages = 0;
@@ -276,7 +276,7 @@ export function principalNotificationSubscriptionStore(store: PrincipalStateStor
   return projection;
 }
 
-function callerScope(scope: Readonly<NotificationSubscriptionScope>): PrincipalStoreScope {
+function callerScope(scope: Readonly<NotificationSubscriptionScope>): PrincipalRef {
   if (scope.kind !== 'caller') throw new TypeError('Principal notifications require caller scope');
   return { tenantId: scope.tenantId, principalId: scope.principalId };
 }
