@@ -38,7 +38,7 @@ try {
     `
     const assert = require('node:assert/strict');
     const buyer = require('@adcp/sdk/reporting/consumer');
-    for (const name of ['reconcileReporting', 'reconcileReportingCoreV1', 'detectReportingContentMismatch', 'isReportingCoverageEvidence', 'createPostgresReportingConsumerRuntimeV1', 'createReliableReportingConsumerV1']) {
+    for (const name of ['reconcileReporting', 'reconcileReportingCoreV1', 'detectReportingContentMismatch', 'isReportingCoverageEvidence', 'createPostgresReportingConsumerRuntimeV1', 'createReliableReportingConsumerV1', 'expectedSubscriptionPeriods']) {
       assert.equal(typeof buyer[name], 'function', name);
     }
     assert.equal(buyer.createReliableReportingServiceV1, undefined);
@@ -49,7 +49,7 @@ try {
     `
     import assert from 'node:assert/strict';
     import * as buyer from '@adcp/sdk/reporting/consumer';
-    for (const name of ['reconcileReporting', 'reconcileReportingCoreV1', 'detectReportingContentMismatch', 'isReportingCoverageEvidence', 'createPostgresReportingConsumerRuntimeV1', 'createReliableReportingConsumerV1']) {
+    for (const name of ['reconcileReporting', 'reconcileReportingCoreV1', 'detectReportingContentMismatch', 'isReportingCoverageEvidence', 'createPostgresReportingConsumerRuntimeV1', 'createReliableReportingConsumerV1', 'expectedSubscriptionPeriods']) {
       assert.equal(typeof buyer[name], 'function', name);
     }
     assert.equal(buyer.createReliableReportingServiceV1, undefined);

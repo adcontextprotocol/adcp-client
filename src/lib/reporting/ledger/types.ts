@@ -838,6 +838,38 @@ export class ReportingLedgerContinuityError extends Error {
   }
 }
 
+/**
+ * `installConfiguration` was asked to install an existing `(delivery_config_id,
+ * delivery_config_version)` generation with different semantic content. A generation is
+ * immutable: install a higher `delivery_config_version` instead.
+ *
+ * The message is unchanged from earlier releases, so hosts that matched on it keep working;
+ * match on `code` (or `instanceof`, or `name` across SDK copies) instead.
+ */
+export class ReportingConfigurationImmutableError extends Error {
+  readonly code = 'REPORTING_CONFIGURATION_IMMUTABLE' as const;
+  readonly accountId: string;
+  readonly deliveryConfigId: string;
+  readonly deliveryConfigVersion: number;
+  constructor(details: { accountId: string; deliveryConfigId: string; deliveryConfigVersion: number }) {
+    super('Reporting configuration generation is immutable');
+    this.name = 'ReportingConfigurationImmutableError';
+    this.accountId = details.accountId;
+    this.deliveryConfigId = details.deliveryConfigId;
+    this.deliveryConfigVersion = details.deliveryConfigVersion;
+  }
+}
+
+/** Whether an error is a {@link ReportingConfigurationImmutableError}, including one from another SDK copy. */
+export function isReportingConfigurationImmutableError(error: unknown): error is ReportingConfigurationImmutableError {
+  return (
+    error instanceof ReportingConfigurationImmutableError ||
+    (error instanceof Error &&
+      error.name === 'ReportingConfigurationImmutableError' &&
+      (error as { code?: unknown }).code === 'REPORTING_CONFIGURATION_IMMUTABLE')
+  );
+}
+
 export class ReportingLedgerSnapshotUnavailableError extends Error {
   constructor() {
     super('Reporting ledger snapshot is unavailable');

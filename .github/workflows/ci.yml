@@ -815,6 +815,7 @@ jobs:
           test/examples/durable-buyer-writes.test.js
           test/lib/reporting-consumer-postgres.test.js
           test/lib/reporting-webhook-activity-pg.test.js
+          test/lib/reporting-subscription-postgres.test.js
 
   # The Reliable Reporting storage package (`@adcp/reporting-storage`) holds the PostgreSQL ledger store, row
   # storage, managed delivery, notification activity and the BigQuery sink, with their tests. It has its own job
