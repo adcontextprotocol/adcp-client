@@ -161,6 +161,8 @@ const TENANT_INDEX: PrincipalRef = { tenantId: '@adcp-reporting-subscriptions', 
 const TENANT_KEY = 'tenants';
 const BINDING_KEY = 'binding';
 const MAX_PAGES = 1_000;
+/** The authInfo fields a service-context read restores: identity only, never secrets. */
+const SNAPSHOT_AUTH_FIELDS: ReadonlySet<string> = new Set(['clientId', 'scopes', 'resource', 'expiresAt']);
 const ALL_BUY_STATUSES = ['pending_activation', 'active', 'paused', 'completed', 'canceled', 'rejected'];
 
 /** The managed block, resolved into the engine and the advanced options the service runs. */
@@ -282,8 +284,10 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
 
   async function platformAccounts(
     principal: PrincipalRef,
-    cursor: string | undefined
+    cursor: string | undefined,
+    signal?: AbortSignal
   ): Promise<SubscriptionAccountsPage> {
+    signal?.throwIfAborted();
     const list = platform?.accounts?.list;
     if (!list) throw rosterUnavailable(principal, 'the platform has no accounts.list');
     let page: { items?: unknown[]; nextCursor?: string };
@@ -354,7 +358,12 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
     };
   }
 
-  async function platformBuys(principal: PrincipalRef, accountId: string): Promise<ReportingSubscriptionBuyV1[]> {
+  async function platformBuys(
+    principal: PrincipalRef,
+    accountId: string,
+    signal?: AbortSignal
+  ): Promise<ReportingSubscriptionBuyV1[]> {
+    signal?.throwIfAborted();
     const getMediaBuys = platform?.sales?.getMediaBuys;
     if (!getMediaBuys) {
       throw new PlatformConfigError(
@@ -370,6 +379,7 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
     const buys: ReportingSubscriptionBuyV1[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < MAX_PAGES; page += 1) {
+      signal?.throwIfAborted();
       const response = (await withTimeout(
         'getMediaBuys',
         getMediaBuys.call(
@@ -404,11 +414,11 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
       listAuthorizedAccounts: (principal, { cursor, signal }) =>
         options.accounts
           ? options.accounts(principal, { ...(cursor !== undefined ? { cursor } : {}), ...(signal ? { signal } : {}) })
-          : platformAccounts(principal, cursor),
+          : platformAccounts(principal, cursor, signal),
       listAccountBuys: (principal, accountId, { signal }) =>
         options.buys
           ? options.buys(principal, accountId, { ...(signal ? { signal } : {}) })
-          : platformBuys(principal, accountId),
+          : platformBuys(principal, accountId, signal),
       resolveRevocationInstant: (_principal, _accountId, input) => input.observedAt,
       isPeriodDelivered: (principal, period) => options.isPeriodDelivered?.(principal, period) ?? false,
       ...(options.accountDeliveryConfigs
@@ -440,10 +450,10 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
     await rememberTenant(principal.tenantId);
     // The binding keeps a non-secret identity snapshot for reads outside a request; never a token.
     const auth = ctx.authInfo as Record<string, unknown> | undefined;
+    // Fail closed: keep only the non-secret identity fields, never a token or credential, whatever
+    // other keys an adopter's authInfo carries.
     const snapshot = auth
-      ? Object.fromEntries(
-          Object.entries(auth).filter(([key]) => !['token', 'credentials', 'extra', 'signal'].includes(key))
-        )
+      ? Object.fromEntries(Object.entries(auth).filter(([key]) => SNAPSHOT_AUTH_FIELDS.has(key)))
       : undefined;
     const current = await store.get(principal, BINDING_KEY);
     const value = { tenantId: principal.tenantId, ...(snapshot ? { authInfo: snapshot } : {}) };
