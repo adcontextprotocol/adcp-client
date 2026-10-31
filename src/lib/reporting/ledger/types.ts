@@ -1421,6 +1421,8 @@ export interface ReportingProducerV1 {
       | 'calendarRules'
       | 'historyStart'
       | 'historyStartOrdinal'
+      | 'subscription'
+      | 'owedSet'
     >,
     options?: { historyStart?: string }
   ): Promise<ReportingLedgerConfigurationV1>;

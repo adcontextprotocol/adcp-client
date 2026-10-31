@@ -38,6 +38,8 @@ import {
   type ReportingProducerContactV1,
   type ReportingProducerV1,
   type ReportingSourceWithReaderV1,
+  type ReportingSubscriptionConfigurationInputV1,
+  type ReportingSubscriptionLedgerObligationInputV1,
 } from '../ledger';
 import {
   reportReportingSchedulerError,
@@ -117,6 +119,8 @@ type LedgerInstallInput = Omit<
   | 'calendarRules'
   | 'historyStart'
   | 'historyStartOrdinal'
+  | 'subscription'
+  | 'owedSet'
   | 'account'
   | 'sourceScope'
   | 'sourceTimezone'
@@ -284,13 +288,68 @@ export interface CreateReliableReportingServiceOptionsV1<TCtxMeta = Record<strin
 }
 
 export interface ReliableReportingSubscriptionsOptionsV1<TCtxMeta = Record<string, unknown>> {
-  engine: Pick<ReportingSubscriptionEngineV1, 'subscriptionCoverage' | 'settings'>;
-  /** The same authenticated mapping the principal runtime uses. Never derive it from request content. */
+  engine: Pick<ReportingSubscriptionEngineV1, 'subscriptionCoverage' | 'settings' | 'frozenOwedSets'>;
+  /**
+   * The same authenticated mapping the principal runtime uses. Never derive it from request content.
+   * It also scopes `get_reporting_status`, `get_media_buy_delivery` and `sync_reporting_status`: a
+   * caller sees account configurations plus only its own subscription generations.
+   */
   resolvePrincipal(context: RequestContext<Account<TCtxMeta>>): PrincipalStoreScope | Promise<PrincipalStoreScope>;
+  /**
+   * Every principal whose subscription obligations `runCycle` writes into the ledger, for example
+   * `engine.listPrincipals(tenantId)` across your tenants. Each cycle plans the engine's frozen
+   * owed set of each of them (on the cycle's account) before it plans account configurations.
+   */
+  listSubscriptionPrincipals(): readonly PrincipalStoreScope[] | Promise<readonly PrincipalStoreScope[]>;
+  /**
+   * The account `resolveSource`, `resolveCurrency` and `resolveCoverage` receive for a subscription
+   * generation. Defaults to `{ id: accountId, ctx_metadata: {} }`.
+   */
+  resolveSubscriptionAccount?(
+    accountId: string
+  ): Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'> | Promise<Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'>>;
+  /**
+   * Seller policy for one subscription generation: the facts a host also supplies when it maps a
+   * `sync_accounts` configuration onto `installConfiguration`. The service takes identity, feed
+   * purpose, required finality, report definition and schedule from the subscription version and the
+   * resolved offering, and the source route, currency and authorized coverage from
+   * `resolveSource`, `resolveCurrency` and `resolveCoverage`, as for an account configuration.
+   */
+  resolveSubscriptionConfiguration(
+    input: ReliableReportingSubscriptionGenerationContextV1<TCtxMeta>
+  ): ReliableReportingSubscriptionPolicyV1 | Promise<ReliableReportingSubscriptionPolicyV1>;
+  /**
+   * Called for each subscription whose obligations a cycle could not write. One subscription never
+   * stops the others or the account's own configurations. Without it, `runCycle` rejects with an
+   * `AggregateError` of these failures after the rest of the cycle has run.
+   */
+  onPlanningError?(
+    error: unknown,
+    context: { principal: PrincipalStoreScope; accountId?: string; subscriptionId?: string }
+  ): void | Promise<void>;
   /** Standard dimensions the seller maps its report definitions onto (`subscriptions.dimensions`). */
   dimensions?: readonly string[];
   /** Keep serving `sync_accounts` `reporting_delivery_configs`. Defaults to true. */
   accountConfigurations?: boolean;
+}
+
+/** What {@link ReliableReportingSubscriptionsOptionsV1.resolveSubscriptionConfiguration} is asked about. */
+export interface ReliableReportingSubscriptionGenerationContextV1<TCtxMeta = Record<string, unknown>> {
+  principal: PrincipalStoreScope;
+  account: Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'>;
+  /** The subscription version's configuration. */
+  subscription: ReportingSubscriptionFrozenOwedSetV1['versions'][number]['configuration'];
+  offering: ReportingDeliveryOffering;
+  sourceOffering: ReportingSourceOfferingV1;
+}
+
+/** Seller policy for one subscription generation. */
+export interface ReliableReportingSubscriptionPolicyV1 {
+  requestedMetrics: string[];
+  requestedDimensions: string[];
+  sourceSettings: Omit<ReportingLedgerConfigurationV1['sourceSettings'], 'currency'>;
+  finalityPolicy?: ReportingLedgerConfigurationV1['finalityPolicy'];
+  canonicalization?: ReportingLedgerConfigurationV1['canonicalization'];
 }
 
 /**
@@ -352,7 +411,7 @@ export type ReliableReportingMaintenanceFactoryV1 = (
  *
  * @experimental Storage-facing building block: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
-import type { ReportingSubscriptionEngineV1 } from '../subscriptions/engine';
+import type { ReportingSubscriptionEngineV1, ReportingSubscriptionFrozenOwedSetV1 } from '../subscriptions/engine';
 import type { PrincipalStoreScope } from '../../server/principal/types';
 import { reportingConfigurationCapabilitiesV1 } from '../subscriptions/capabilities';
 import { isAdcpVersionAtLeast } from '../../utils/adcp-version-config';
@@ -554,11 +613,22 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
 
   const subscriptionOptions = options.reportingSubscriptions;
   if (subscriptionOptions !== undefined) {
-    if (typeof subscriptionOptions.engine?.subscriptionCoverage !== 'function') {
+    if (
+      typeof subscriptionOptions.engine?.subscriptionCoverage !== 'function' ||
+      typeof subscriptionOptions.engine.frozenOwedSets !== 'function'
+    ) {
       throw new TypeError('reportingSubscriptions requires a reporting subscription engine');
     }
     if (typeof subscriptionOptions.resolvePrincipal !== 'function') {
       throw new TypeError('reportingSubscriptions requires resolvePrincipal');
+    }
+    // A seller that advertises subscriptions owes their obligations: the service writes them into
+    // the ledger every cycle, so it must know whose to write.
+    if (typeof subscriptionOptions.listSubscriptionPrincipals !== 'function') {
+      throw new TypeError('reportingSubscriptions requires listSubscriptionPrincipals');
+    }
+    if (typeof subscriptionOptions.resolveSubscriptionConfiguration !== 'function') {
+      throw new TypeError('reportingSubscriptions requires resolveSubscriptionConfiguration');
     }
     // Sellers advertising subscriptions MUST publish standard_dimensions on every offering
     // (adcontextprotocol/adcp#8585), so buyers resolve match from the wire as the engine does.
@@ -606,21 +676,35 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       : {}),
   }) satisfies ReportingDeliveryCapabilities;
 
+  // Subscription generations are visible only to their owning principal. Without subscriptions
+  // nothing is passed, so every handler is exactly the pre-3.3 one.
+  const subscriptionScope = subscriptionOptions
+    ? {
+        resolveSubscriptionPrincipal: async (context: unknown) => {
+          const principal = await subscriptionOptions.resolvePrincipal(context as RequestContext<Account<TCtxMeta>>);
+          return { tenantId: principal.tenantId, principalId: principal.principalId };
+        },
+      }
+    : undefined;
   const getReportingStatus = options.resolveConsumerId
     ? createReportingStatusHandler(options.store, {
         resolveConsumerId: options.resolveConsumerId,
         ...(effectiveConsumerMismatchEscalation
           ? { consumerMismatchEscalation: effectiveConsumerMismatchEscalation }
           : {}),
+        ...(subscriptionScope ?? {}),
       })
-    : createReportingStatusHandler(options.store);
-  const getMediaBuyDelivery = createReportingDeliveryHandler(
-    options.store,
-    options.legacyRevisionReader ? { legacyRevisionReader: options.legacyRevisionReader } : {}
-  );
+    : subscriptionScope
+      ? createReportingStatusHandler(options.store, subscriptionScope)
+      : createReportingStatusHandler(options.store);
+  const getMediaBuyDelivery = createReportingDeliveryHandler(options.store, {
+    ...(options.legacyRevisionReader ? { legacyRevisionReader: options.legacyRevisionReader } : {}),
+    ...(subscriptionScope ?? {}),
+  });
   const syncReportingStatus = options.resolveConsumerId
     ? createSyncReportingStatusHandler(options.store as unknown as ReportingConsumerStatusLedgerStore, {
         resolveConsumerId: options.resolveConsumerId,
+        ...(subscriptionScope ?? {}),
       })
     : undefined;
 
@@ -645,6 +729,304 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   let schedulerAbort: AbortController | undefined;
   let schedulerPromise: Promise<void> | undefined;
 
+  /**
+   * The trusted install path shared by account configurations and subscription generations:
+   * offering and delivery-offering checks, the host's source route, currency and authorized
+   * coverage, and the frozen schedule identity. An owed-set (subscription) generation takes every
+   * period from the engine, so it skips the grid schedule checks and never reuses a keyless
+   * predecessor scope.
+   */
+  async function prepareGeneration(
+    configuration: ReliableReportingConfigurationInputV1,
+    account: Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'>,
+    ownership: 'account' | 'owed_set'
+  ) {
+    assertNoUntrustedLineageFields(configuration as unknown as Record<string, unknown>);
+    if (Object.prototype.hasOwnProperty.call(configuration.sourceSettings, 'currency')) {
+      throw new TypeError('Reporting configuration must not supply trusted lineage field sourceSettings.currency');
+    }
+    const frozenInput = structuredClone(configuration);
+    const offering = offerings.get(configuration.offeringId);
+    if (!offering) throw new TypeError('Reporting configuration selected an unknown offering');
+    const deliveryOffering = deliveryOfferings.find(value => value.offering_id === offering.offeringId)!;
+    validateConfigurationAgainstDeliveryOffering(frozenInput, deliveryOffering, options.automatedRecoveryWindowSeconds);
+    const [route, currency, coverage] = await Promise.all([
+      options.resolveSource(account, frozenInput),
+      options.resolveCurrency(account, frozenInput),
+      options.resolveCoverage(account, frozenInput),
+    ]);
+    if (!route || typeof route !== 'object' || !route.sourceScope || typeof route.sourceScope !== 'object') {
+      throw new TypeError('resolveSource must return an adapter, sourceScope, and sourceTimezone');
+    }
+    const source = sources.get(route.adapterId);
+    const adapterOffering = adapterOfferings.get(route.adapterId);
+    if (!source || !adapterOffering) throw new TypeError('resolveSource selected an unknown reporting adapter');
+    // The adapter's own validated offering must be the selected one — not
+    // merely an offering its executor happens to expose.
+    if (adapterOffering.offeringId !== offering.offeringId) {
+      throw new TypeError('Resolved reporting adapter does not provide the selected offering');
+    }
+    if (canonicalize(adapterOffering.contract) !== canonicalize(offering.contract)) {
+      throw new TypeError('Resolved reporting adapter contract differs from the selected offering');
+    }
+    const normalizedCurrency = trustedCurrency(currency);
+    const normalizedTimezone = trustedTimezone(route.sourceTimezone);
+    if (configuration.expectedCurrency !== undefined && configuration.expectedCurrency !== normalizedCurrency) {
+      throw new TypeError('Trusted reporting currency conflicts with the configuration currency assertion');
+    }
+    if (
+      configuration.expectedSourceTimezone !== undefined &&
+      configuration.expectedSourceTimezone !== normalizedTimezone
+    ) {
+      throw new TypeError('Trusted reporting timezone conflicts with the configuration timezone assertion');
+    }
+    if (ownership === 'account') {
+      assertSupportedScheduleSemantics(frozenInput.schedule, deliveryOffering, normalizedTimezone, offering);
+    }
+    const { constituents, mediaBuyIds } = trustedCoverage(coverage, frozenInput.requestedMetrics);
+    if (
+      configuration.expectedMediaBuyIds !== undefined &&
+      !sameIdMembers(configuration.expectedMediaBuyIds, mediaBuyIds)
+    ) {
+      throw new TypeError('Trusted reporting coverage conflicts with the configuration media-buy assertion');
+    }
+    if (Object.prototype.hasOwnProperty.call(route.sourceScope, ADAPTER_SCOPE_KEY)) {
+      throw new TypeError('Reporting sourceScope contains an SDK-reserved key');
+    }
+    const credentialPaths = scanArgsForCredentials(route.sourceScope);
+    if (credentialPaths.length > 0 || containsContextMetadata(route.sourceScope)) {
+      throw new TypeError('Reporting sourceScope must contain non-secret routing identifiers only');
+    }
+    const routedScope = ReportingSourceScopeV1Schema.parse({
+      ...structuredClone(route.sourceScope),
+      [ADAPTER_SCOPE_KEY]: route.adapterId,
+    });
+    const predecessor =
+      ownership === 'account' ? await predecessorGeneration(options.store, account.id, frozenInput) : undefined;
+    const sourceScope = keylessPredecessorScope(predecessor, route.sourceScope, sources.size) ?? routedScope;
+    // A generation installed before the identity was stored keeps its shape,
+    // or replaying it would change the semantic fingerprint.
+    const scheduleIdentity =
+      predecessor && predecessor.schedule.alignment === undefined
+        ? {}
+        : {
+            periodDuration: deliveryOffering.schedule.period_duration,
+            deliverySlaDuration: deliveryOffering.schedule.delivery_sla,
+            alignment: deliveryOffering.schedule.alignment,
+            ...(deliveryOffering.schedule.alignment === 'utc' ? {} : { periodTimezone: normalizedTimezone }),
+          };
+    const {
+      expectedCurrency: _currency,
+      expectedSourceTimezone: _timezone,
+      expectedMediaBuyIds: _mediaBuyIds,
+      sourceSettings,
+      ...ledgerInput
+    } = frozenInput;
+    void _currency;
+    void _timezone;
+    void _mediaBuyIds;
+    return {
+      input: {
+        ...ledgerInput,
+        schedule: { ...ledgerInput.schedule, ...scheduleIdentity },
+        account: { account_id: account.id },
+        sourceScope,
+        sourceTimezone: normalizedTimezone,
+        sourceSettings: { ...sourceSettings, currency: normalizedCurrency },
+        contract: structuredClone(offering.contract),
+        constituents,
+        mediaBuyIds,
+      },
+      requestedMetrics: frozenInput.requestedMetrics,
+    };
+  }
+
+  /**
+   * Write every frozen subscription owed set the engine holds (for the cycle's account) into the
+   * ledger. Failures are isolated per subscription and returned, never thrown here.
+   */
+  async function planSubscriptionCycle(
+    subscriptions: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>,
+    accountId: string | undefined,
+    now: Date,
+    signal: AbortSignal | undefined
+  ): Promise<{
+    planned: number;
+    failures: Array<{
+      error: unknown;
+      context: { principal: PrincipalStoreScope; accountId?: string; subscriptionId?: string };
+    }>;
+  }> {
+    const principals = await subscriptions.listSubscriptionPrincipals();
+    if (!Array.isArray(principals)) throw new TypeError('listSubscriptionPrincipals must return an array');
+    let planned = 0;
+    const failures: Awaited<ReturnType<typeof planSubscriptionCycle>>['failures'] = [];
+    for (const principal of principals) {
+      signal?.throwIfAborted();
+      const scope = { tenantId: principal.tenantId, principalId: principal.principalId };
+      let sets: ReportingSubscriptionFrozenOwedSetV1[];
+      try {
+        sets = await subscriptions.engine.frozenOwedSets(scope, accountId !== undefined ? { accountId } : {});
+      } catch (error) {
+        failures.push({ error, context: { principal: scope, ...(accountId !== undefined ? { accountId } : {}) } });
+        continue;
+      }
+      for (const set of sets) {
+        if (accountId !== undefined && set.account_id !== accountId) continue;
+        signal?.throwIfAborted();
+        try {
+          planned += await planFrozenOwedSet(subscriptions, scope, set, now);
+        } catch (error) {
+          failures.push({
+            error,
+            context: { principal: scope, accountId: set.account_id, subscriptionId: set.subscription_id },
+          });
+        }
+      }
+    }
+    return { planned, failures };
+  }
+
+  async function planFrozenOwedSet(
+    subscriptions: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>,
+    principal: PrincipalStoreScope,
+    set: ReportingSubscriptionFrozenOwedSetV1,
+    now: Date
+  ): Promise<number> {
+    // Only periods the engine froze, and never past this cycle's clock.
+    const owedThroughMs = Math.min(Date.parse(set.through), now.getTime());
+    if (!Number.isFinite(owedThroughMs)) throw new TypeError('Frozen owed set has no valid horizon');
+    const account = subscriptions.resolveSubscriptionAccount
+      ? await subscriptions.resolveSubscriptionAccount(set.account_id)
+      : ({ id: set.account_id, ctx_metadata: {} } as Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'>);
+    if (account?.id !== set.account_id) {
+      throw new TypeError('resolveSubscriptionAccount must return the account it was asked for');
+    }
+    const generations = new Map<string, Awaited<ReturnType<typeof subscriptionGeneration>>>();
+    const obligations: ReportingSubscriptionLedgerObligationInputV1[] = [];
+    for (const owed of set.obligations) {
+      if (Date.parse(owed.period_end) > owedThroughMs) continue;
+      const key = `${owed.subscription_version}\0${owed.offering_id}`;
+      let generation = generations.get(key);
+      if (!generation) {
+        const version = set.versions.find(value => value.subscription_version === owed.subscription_version);
+        if (!version) {
+          throw new TypeError(`Subscription version ${owed.subscription_version} owes periods but is not retained`);
+        }
+        generation = await subscriptionGeneration(subscriptions, principal, account, version, owed.offering_id);
+        generations.set(key, generation);
+      }
+      if (owed.report_definition_id !== generation.input.report_definition_id) {
+        throw new TypeError('Subscription obligation names a report definition its offering does not publish');
+      }
+      const owedBuys = new Set(owed.media_buy_ids);
+      // Each obligation freezes its own denominator: the host-authorized constituents of exactly
+      // the media buys owed for that period.
+      const constituents = generation.pool.filter(value => value.mediaBuyId && owedBuys.has(value.mediaBuyId));
+      const covered = new Set(constituents.map(value => value.mediaBuyId));
+      if (owed.media_buy_ids.some(mediaBuyId => !covered.has(mediaBuyId))) {
+        throw new TypeError('resolveCoverage did not authorize every media buy the subscription owes');
+      }
+      if (
+        constituents.length * generation.input.requestedMetrics.length >
+        SOURCE_BATCH_MANIFEST_MAX_METRIC_AVAILABILITY_V1
+      ) {
+        throw new TypeError('Subscription obligation exceeds the per-slice metric availability bound');
+      }
+      obligations.push({
+        delivery_config_version: owed.subscription_version,
+        offeringId: owed.offering_id,
+        period: { start: owed.period_start, end: owed.period_end },
+        mediaBuyIds: [...owed.media_buy_ids],
+        constituents: structuredClone(constituents),
+      });
+    }
+    const result = await producer.planSubscriptionObligations({
+      account_id: set.account_id,
+      principal,
+      subscriptionId: set.subscription_id,
+      configurations: [...generations.values()].map(value => value.input),
+      obligations,
+      owedThrough: new Date(owedThroughMs).toISOString(),
+      now: now.toISOString(),
+    });
+    return result.created.length;
+  }
+
+  /** One (version, offering) generation through the same trusted path as installConfiguration. */
+  async function subscriptionGeneration(
+    subscriptions: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>,
+    principal: PrincipalStoreScope,
+    account: Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'>,
+    version: ReportingSubscriptionFrozenOwedSetV1['versions'][number],
+    offeringId: string
+  ): Promise<{
+    input: ReportingSubscriptionConfigurationInputV1;
+    pool: ReportingLedgerConfigurationV1['constituents'];
+  }> {
+    const deliveryOffering = deliveryOfferings.find(value => value.offering_id === offeringId);
+    const sourceOffering = offerings.get(offeringId);
+    if (!deliveryOffering || !sourceOffering) {
+      throw new TypeError(
+        `Subscription resolved offering ${JSON.stringify(offeringId)}, which this service does not serve`
+      );
+    }
+    if (deliveryOffering.method !== undefined || deliveryOffering.reconciliation_mode !== 'delivery_only') {
+      throw new TypeError('Managed delivery of subscription obligations is not supported yet');
+    }
+    const subscription = version.configuration;
+    const policy = await subscriptions.resolveSubscriptionConfiguration({
+      principal,
+      account,
+      subscription: structuredClone(subscription),
+      offering: structuredClone(deliveryOffering),
+      sourceOffering: structuredClone(sourceOffering),
+    });
+    if (!policy || !Array.isArray(policy.requestedMetrics) || !Array.isArray(policy.requestedDimensions)) {
+      throw new TypeError(
+        'resolveSubscriptionConfiguration must return requested metrics, dimensions and source settings'
+      );
+    }
+    const configuration: ReliableReportingConfigurationInputV1 = {
+      delivery_config_id: subscription.subscription_id,
+      delivery_config_version: version.subscription_version,
+      offeringId,
+      report_definition_id: deliveryOffering.report_definition_id,
+      feedPurpose: subscription.selector.feed_purpose,
+      requiredFinality: subscription.selector
+        .required_finality as ReliableReportingConfigurationInputV1['requiredFinality'],
+      ...(policy.finalityPolicy ? { finalityPolicy: structuredClone(policy.finalityPolicy) } : {}),
+      ...(policy.canonicalization ? { canonicalization: structuredClone(policy.canonicalization) } : {}),
+      requestedMetrics: [...policy.requestedMetrics],
+      requestedDimensions: [...policy.requestedDimensions],
+      // Descriptive only: an owed set takes every period from the engine. The offering is
+      // authoritative for timing, so expected_at is period end plus its delivery_sla.
+      schedule: {
+        anchor: '1970-01-01T00:00:00.000Z',
+        periodMilliseconds: reportingIsoDurationMillisecondsV1(deliveryOffering.schedule.period_duration),
+        deliverySlaMilliseconds: reportingIsoDurationMillisecondsV1(deliveryOffering.schedule.delivery_sla),
+        recoveryWindowMilliseconds: options.automatedRecoveryWindowSeconds * 1_000,
+      },
+      sourceSettings: structuredClone(policy.sourceSettings),
+    };
+    const { input } = await prepareGeneration(configuration, account, 'owed_set');
+    const { constituents, mediaBuyIds: _mediaBuyIds, ...generation } = input;
+    void _mediaBuyIds;
+    return {
+      input: {
+        ...generation,
+        subscription: {
+          tenantId: principal.tenantId,
+          principalId: principal.principalId,
+          subscriptionId: subscription.subscription_id,
+          offeringId,
+          ownership: 'owed_set',
+        },
+      },
+      pool: constituents,
+    };
+  }
+
   const service: ReliableReportingServiceV1<TCtxMeta> = {
     setup: Object.freeze({
       component: 'reliable-reporting-core',
@@ -660,105 +1042,10 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
 
     async installConfiguration(configuration, context) {
       if (!context?.account?.id) throw new TypeError('Reporting configuration requires a framework-resolved account');
-      assertNoUntrustedLineageFields(configuration as unknown as Record<string, unknown>);
-      if (Object.prototype.hasOwnProperty.call(configuration.sourceSettings, 'currency')) {
-        throw new TypeError('Reporting configuration must not supply trusted lineage field sourceSettings.currency');
-      }
-      const frozenInput = structuredClone(configuration);
-      const offering = offerings.get(configuration.offeringId);
-      if (!offering) throw new TypeError('Reporting configuration selected an unknown offering');
-      const deliveryOffering = deliveryOfferings.find(value => value.offering_id === offering.offeringId)!;
-      validateConfigurationAgainstDeliveryOffering(
-        frozenInput,
-        deliveryOffering,
-        options.automatedRecoveryWindowSeconds
-      );
-      const [route, currency, coverage] = await Promise.all([
-        options.resolveSource(context.account, frozenInput),
-        options.resolveCurrency(context.account, frozenInput),
-        options.resolveCoverage(context.account, frozenInput),
-      ]);
-      if (!route || typeof route !== 'object' || !route.sourceScope || typeof route.sourceScope !== 'object') {
-        throw new TypeError('resolveSource must return an adapter, sourceScope, and sourceTimezone');
-      }
-      const source = sources.get(route.adapterId);
-      const adapterOffering = adapterOfferings.get(route.adapterId);
-      if (!source || !adapterOffering) throw new TypeError('resolveSource selected an unknown reporting adapter');
-      // The adapter's own validated offering must be the selected one — not
-      // merely an offering its executor happens to expose.
-      if (adapterOffering.offeringId !== offering.offeringId) {
-        throw new TypeError('Resolved reporting adapter does not provide the selected offering');
-      }
-      if (canonicalize(adapterOffering.contract) !== canonicalize(offering.contract)) {
-        throw new TypeError('Resolved reporting adapter contract differs from the selected offering');
-      }
-      const normalizedCurrency = trustedCurrency(currency);
-      const normalizedTimezone = trustedTimezone(route.sourceTimezone);
-      if (configuration.expectedCurrency !== undefined && configuration.expectedCurrency !== normalizedCurrency) {
-        throw new TypeError('Trusted reporting currency conflicts with the configuration currency assertion');
-      }
-      if (
-        configuration.expectedSourceTimezone !== undefined &&
-        configuration.expectedSourceTimezone !== normalizedTimezone
-      ) {
-        throw new TypeError('Trusted reporting timezone conflicts with the configuration timezone assertion');
-      }
-      assertSupportedScheduleSemantics(frozenInput.schedule, deliveryOffering, normalizedTimezone, offering);
-      const { constituents, mediaBuyIds } = trustedCoverage(coverage, frozenInput.requestedMetrics);
-      if (
-        configuration.expectedMediaBuyIds !== undefined &&
-        !sameIdMembers(configuration.expectedMediaBuyIds, mediaBuyIds)
-      ) {
-        throw new TypeError('Trusted reporting coverage conflicts with the configuration media-buy assertion');
-      }
-      if (Object.prototype.hasOwnProperty.call(route.sourceScope, ADAPTER_SCOPE_KEY)) {
-        throw new TypeError('Reporting sourceScope contains an SDK-reserved key');
-      }
-      const credentialPaths = scanArgsForCredentials(route.sourceScope);
-      if (credentialPaths.length > 0 || containsContextMetadata(route.sourceScope)) {
-        throw new TypeError('Reporting sourceScope must contain non-secret routing identifiers only');
-      }
-      const routedScope = ReportingSourceScopeV1Schema.parse({
-        ...structuredClone(route.sourceScope),
-        [ADAPTER_SCOPE_KEY]: route.adapterId,
+      const { input } = await prepareGeneration(configuration, context.account, 'account');
+      return producer.installConfiguration(input, {
+        ...(context.historyStart !== undefined ? { historyStart: context.historyStart } : {}),
       });
-      const predecessor = await predecessorGeneration(options.store, context.account.id, frozenInput);
-      const sourceScope = keylessPredecessorScope(predecessor, route.sourceScope, sources.size) ?? routedScope;
-      // A generation installed before the identity was stored keeps its shape,
-      // or replaying it would change the semantic fingerprint.
-      const scheduleIdentity =
-        predecessor && predecessor.schedule.alignment === undefined
-          ? {}
-          : {
-              periodDuration: deliveryOffering.schedule.period_duration,
-              deliverySlaDuration: deliveryOffering.schedule.delivery_sla,
-              alignment: deliveryOffering.schedule.alignment,
-              ...(deliveryOffering.schedule.alignment === 'utc' ? {} : { periodTimezone: normalizedTimezone }),
-            };
-      const {
-        expectedCurrency: _currency,
-        expectedSourceTimezone: _timezone,
-        expectedMediaBuyIds: _mediaBuyIds,
-        sourceSettings,
-        ...ledgerInput
-      } = frozenInput;
-      void _currency;
-      void _timezone;
-      void _mediaBuyIds;
-      return producer.installConfiguration(
-        {
-          ...ledgerInput,
-          schedule: { ...ledgerInput.schedule, ...scheduleIdentity },
-          account: { account_id: context.account.id },
-          sourceScope,
-          sourceTimezone: normalizedTimezone,
-          sourceSettings: { ...sourceSettings, currency: normalizedCurrency },
-          contract: structuredClone(offering.contract),
-          constituents,
-          mediaBuyIds,
-        },
-        { ...(context.historyStart !== undefined ? { historyStart: context.historyStart } : {}) }
-      );
     },
 
     extendConfigurationHistory(input) {
@@ -790,6 +1077,10 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       const accountId = cycleAccountId(cycle);
       const planningNow = cycle.now ?? new Date();
       cycle.signal?.throwIfAborted();
+      // Subscription obligations first: the engine's frozen owed sets, never grid-filled.
+      const subscriptionPlanning = subscriptionOptions
+        ? await planSubscriptionCycle(subscriptionOptions, accountId, planningNow, cycle.signal)
+        : undefined;
       const planned = await producer.planObligations(planningNow.toISOString(), {
         ...(accountId !== undefined ? { account_id: accountId } : {}),
         ...(cycle.maxObligations !== undefined ? { maxObligations: cycle.maxObligations } : {}),
@@ -814,7 +1105,19 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
           ? { settlementGraceMilliseconds: cycle.settlementGraceMilliseconds }
           : {}),
       });
-      return { planned: planned.length, ...result };
+      if (subscriptionPlanning?.failures.length) {
+        if (subscriptionOptions!.onPlanningError) {
+          for (const failure of subscriptionPlanning.failures) {
+            await subscriptionOptions!.onPlanningError(failure.error, failure.context);
+          }
+        } else {
+          throw new AggregateError(
+            subscriptionPlanning.failures.map(failure => failure.error),
+            `Reporting subscription obligations could not be written for ${subscriptionPlanning.failures.length} subscription(s)`
+          );
+        }
+      }
+      return { planned: planned.length + (subscriptionPlanning?.planned ?? 0), ...result };
     },
 
     async runMaintenance(maintenanceOptions) {
@@ -1056,6 +1359,7 @@ async function predecessorGeneration(
 ): Promise<ReportingLedgerConfigurationV1 | undefined> {
   return (await store.listConfigurations(accountId)).find(
     value =>
+      value.subscription === undefined &&
       value.delivery_config_id === configuration.delivery_config_id &&
       value.delivery_config_version === configuration.delivery_config_version
   );
@@ -1623,6 +1927,8 @@ function assertNoUntrustedLineageFields(configuration: Record<string, unknown>):
     'applicability',
     'products',
     'productIds',
+    'subscription',
+    'owedSet',
   ]) {
     if (Object.prototype.hasOwnProperty.call(configuration, field)) {
       throw new TypeError(`Reporting configuration must not supply trusted lineage field ${field}`);
