@@ -33,7 +33,11 @@
 import { canonicalize } from '../../utils/jcs';
 import { ReportingSubscriptionEngineError } from '../../errors';
 import { PlatformConfigError } from '../../server/decisioning/runtime/validate-platform';
-import type { PendingAction } from '../../types/core.generated';
+import type {
+  PendingAction,
+  ReportingSubscriptionCoverage,
+  ReportingSubscriptionState,
+} from '../../types/core.generated';
 import type {
   PrincipalLifecycleRuntimeSubscriptions,
   PrincipalReportingSubscriptionState,
@@ -44,11 +48,6 @@ import type {
   StoredReportingSubscriptionVersion,
 } from '../../server/principal/reporting-subscriptions';
 import { createReportingPeriodCalendarV1, type ReportingPeriodCalendarV1 } from './calendar';
-import type {
-  ReportingSubscriptionGapV1,
-  ReportingSubscriptionInactiveIntervalV1,
-  ReportingSubscriptionTimezoneCutoverV1,
-} from './wire';
 import {
   owedSubscriptionPeriodsV1,
   groupOwedSubscriptionPeriodsV1,
@@ -64,6 +63,10 @@ import {
   resolveReportingSubscriptionOfferingsV1,
   type ReportingSubscriptionOfferingV1,
 } from './selection';
+
+type ReportingSubscriptionGapV1 = NonNullable<ReportingSubscriptionCoverage['gaps']>[number];
+type ReportingSubscriptionTimezoneCutoverV1 = NonNullable<ReportingSubscriptionCoverage['timezone_cutovers']>[number];
+type ReportingSubscriptionInactiveIntervalV1 = NonNullable<ReportingSubscriptionState['inactive_intervals']>[number];
 
 type MaybePromise<T> = T | Promise<T>;
 const DAY_MS = 86_400_000;

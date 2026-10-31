@@ -1,6 +1,6 @@
 // Generated entity-hydration field map — do NOT edit by hand
 //
-// Source: `schemas/cache/3.3.0-beta.2/manifest.json` + per-tool request
+// Source: `schemas/cache/3.3.0-beta.3/manifest.json` + per-tool request
 // schemas. Every top-level `x-entity`-tagged string field on a request
 // schema lands here. The runtime hydrator (`from-platform.ts` →
 // `hydrateForTool`) walks this map plus the hand-curated
@@ -85,9 +85,6 @@ export const TOOL_ENTITY_FIELDS: Readonly<Record<string, ReadonlyArray<EntityHyd
   ],
   get_rights: [
     { field: "brand_id", xEntity: "rights_holder_brand" },
-  ],
-  get_task_status: [
-    { field: "task_id", xEntity: "task" },
   ],
   log_event: [
     { field: "event_source_id", xEntity: "event_source" },

@@ -63,7 +63,15 @@ function runColdProbe(moduleFormat) {
 
     const { unwrapProtocolResponse } = ${load(`./dist/lib/utils/response-unwrapper.${isEsm ? 'mjs' : 'js'}`)};
     const unwrapped = unwrapProtocolResponse(
-      { structuredContent: { outcome: 'listed', products: [], feed_version: 'feed-v1', cache_scope: 'public' } },
+      {
+        structuredContent: {
+          status: 'completed',
+          outcome: 'listed',
+          products: [],
+          feed_version: 'feed-v1',
+          cache_scope: 'public',
+        },
+      },
       'list_products',
       'mcp'
     );

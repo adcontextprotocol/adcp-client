@@ -3541,6 +3541,36 @@ export function postProcessCanonicalPrimitiveConstraints(content: string): strin
   };
   const versionEnvelopeProperties = envelopeProperties('version-envelope.json');
   const protocolEnvelopeProperties = envelopeProperties('protocol-envelope.json');
+  // AdCP 3.3.0-beta.3 (adcp#8547) names shared primitives in their own core files
+  // (`task_id` is core/task-id.json) and composes envelopes inside envelopes (the
+  // protocol envelope composes the version envelope; task-submitted carries
+  // `task_id`). Follow a `$ref` to a core document so its constraints still apply.
+  const coreDocuments = new Map<string, Record<string, unknown> | null>();
+  const coreDocument = (ref: unknown): Record<string, unknown> | null => {
+    if (typeof ref !== 'string') return null;
+    const match = /\/core\/([a-z0-9-]+\.json)$/.exec(ref);
+    if (!match) return null;
+    const file = match[1]!;
+    if (!coreDocuments.has(file)) {
+      const absolute = path.join(cacheRoot, 'core', file);
+      coreDocuments.set(
+        file,
+        existsSync(absolute) ? (JSON.parse(readFileSync(absolute, 'utf8')) as Record<string, unknown>) : null
+      );
+    }
+    return coreDocuments.get(file) ?? null;
+  };
+  const primitive = (schema: Record<string, unknown> | undefined): Record<string, unknown> | undefined => {
+    if (!schema || typeof schema.$ref !== 'string') return schema;
+    const target = coreDocument(schema.$ref);
+    return target && (target.type === 'string' || target.type === 'number' || target.type === 'integer')
+      ? target
+      : schema;
+  };
+  const taskSubmittedProperties = (() => {
+    const target = coreDocument('/core/task-submitted.json');
+    return (target?.properties ?? {}) as Record<string, Record<string, unknown>>;
+  })();
 
   const constrainExpression = (expression: string, constraints: CanonicalPrimitiveConstraints): string => {
     let result = expression;
@@ -3656,7 +3686,7 @@ export function postProcessCanonicalPrimitiveConstraints(content: string): strin
       if (node.properties && typeof node.properties === 'object' && !Array.isArray(node.properties)) {
         for (const [propertyName, propertySchema] of Object.entries(node.properties)) {
           if (!propertySchema || typeof propertySchema !== 'object' || Array.isArray(propertySchema)) continue;
-          const constraints = constraintsFor(propertySchema as Record<string, unknown>);
+          const constraints = constraintsFor(primitive(propertySchema as Record<string, unknown>)!);
           const signature = JSON.stringify(constraints);
           const bySignature = occurrences.get(propertyName) ?? new Map<string, CanonicalPrimitiveConstraints>();
           bySignature.set(signature, constraints);
@@ -3670,10 +3700,17 @@ export function postProcessCanonicalPrimitiveConstraints(content: string): strin
     };
     visitSchema(schema);
 
-    const constrainProperty = (propertyName: string, constraints: CanonicalPrimitiveConstraints): void => {
+    const constrainProperty = (
+      propertyName: string,
+      constraints: CanonicalPrimitiveConstraints,
+      options: { topLevel?: boolean } = {}
+    ): void => {
       if (Object.keys(constraints).length === 0) return;
       const escapedName = escapeRegExp(propertyName);
-      const propertyLine = new RegExp(`^(\\s*)(?:${escapedName}|${JSON.stringify(propertyName)}): ([^\\n]+)$`, 'gm');
+      // topLevel: only the block's own root properties (four-space indent), never a nested
+      // field that reuses the name with its own contract.
+      const indent = options.topLevel ? '( {4})' : '(\\s*)';
+      const propertyLine = new RegExp(`^${indent}(?:${escapedName}|${JSON.stringify(propertyName)}): ([^\\n]+)$`, 'gm');
       block = block.replace(propertyLine, (line, indent: string, expression: string) => {
         return `${indent}${line.slice(indent.length, line.length - expression.length)}${constrainExpression(expression, constraints)}`;
       });
@@ -3687,6 +3724,18 @@ export function postProcessCanonicalPrimitiveConstraints(content: string): strin
     // intermediary. Restore only the fields from the exact canonical envelope
     // a titled schema references; this avoids globally constraining unrelated
     // properties that happen to reuse names such as `adcp_version`.
+    // Envelopes compose envelopes, so follow each referenced core document's own
+    // allOf references (protocol envelope -> version envelope).
+    const pending = [...references];
+    while (pending.length > 0) {
+      const target = coreDocument(pending.pop());
+      for (const member of Array.isArray(target?.allOf) ? (target!.allOf as Array<Record<string, unknown>>) : []) {
+        if (typeof member?.$ref === 'string' && !references.has(member.$ref)) {
+          references.add(member.$ref);
+          pending.push(member.$ref);
+        }
+      }
+    }
     const inherits = (file: string): boolean => [...references].some(ref => ref.endsWith(`/core/${file}`));
     if (inherits('version-envelope.json')) {
       for (const propertyName of ['adcp_version', 'adcp_major_version']) {
@@ -3697,6 +3746,14 @@ export function postProcessCanonicalPrimitiveConstraints(content: string): strin
       for (const propertyName of ['timestamp', 'governance_context']) {
         constrainProperty(propertyName, constraintsFor(protocolEnvelopeProperties[propertyName]!));
       }
+      for (const propertyName of ['task_id', 'message']) {
+        const property = primitive(protocolEnvelopeProperties[propertyName]);
+        if (property) constrainProperty(propertyName, constraintsFor(property), { topLevel: true });
+      }
+    }
+    if (inherits('task-submitted.json')) {
+      const property = primitive(taskSubmittedProperties.task_id);
+      if (property) constrainProperty('task_id', constraintsFor(property), { topLevel: true });
     }
 
     content = content.slice(0, exportStart) + block + content.slice(exportEnd);

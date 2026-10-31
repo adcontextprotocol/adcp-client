@@ -189,7 +189,7 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
       next.prior_versions.map(({ configuration: _configuration, ...prior }) => prior),
       [{ subscription_version: 1, accepted_at: '2026-11-01T12:00:00.000Z', superseded_at: '2026-11-04T12:00:00.000Z' }]
     );
-    assert.equal(next.prior_versions[0].configuration.subscription_version, 1, 'adcp#8588, served from 3.3.0-beta.2');
+    assert.equal(next.prior_versions[0].configuration.subscription_version, 1, 'adcp#8588');
 
     // Versions cannot regress.
     const regress = await sync(lifecycle, { reporting_subscriptions: [subscription()] });
@@ -223,8 +223,8 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
       { from: '2026-11-04T12:00:00.000Z', until: '2026-11-06T12:00:00.000Z' },
     ]);
     // The readback lists inactive_intervals (adcontextprotocol/adcp#8585) to callers served a
-    // release whose bundle defines it (3.3.0-beta.2 on), and never to a response without a
-    // served release; the internal state carries it.
+    // release whose bundle defines it, which the pinned 3.3.0-beta.3 does; a response without a
+    // served release is the pinned release.
     const { states } = await lifecycle.listReportingSubscriptions(SCOPE);
     assert.deepEqual(states[0].inactive_intervals, [
       { deactivated_at: '2026-11-04T12:00:00.000Z', reactivated_at: '2026-11-06T12:00:00.000Z' },
@@ -235,7 +235,10 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
     );
     assertSchemaValid('sync_principal', on);
     const unpinned = await lifecycle.protocol.getPrincipal({}, CTX_UNPINNED);
-    assert.equal(unpinned.result.configuration.reporting_subscriptions[0].inactive_intervals, undefined);
+    assert.deepEqual(
+      unpinned.result.configuration.reporting_subscriptions[0].inactive_intervals,
+      states[0].inactive_intervals
+    );
 
     time.now = new Date('2026-11-08T00:00:00.000Z');
     const omitted = await sync(lifecycle, { reporting_subscriptions: [] });
@@ -665,15 +668,18 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
     const { states } = await lifecycle.listReportingSubscriptions(SCOPE);
     assert.equal(states[0].prior_versions[0].configuration.subscription_version, 1);
     assert.equal(states[0].prior_versions[0].configuration.exclude_account_ids, undefined);
-    // Served at a release that defines it (adcp#8588, 3.3.0-beta.2 on), the field is emitted;
-    // without a served release it is not.
+    // Served at a release that defines it (adcp#8588), the field is emitted; without a served
+    // release, the pinned 3.3.0-beta.3 does.
     const served = await lifecycle.protocol.getPrincipal({}, CTX);
     assert.equal(
       served.result.configuration.reporting_subscriptions[0].prior_versions[0].configuration.subscription_version,
       1
     );
     const unpinned = await lifecycle.protocol.getPrincipal({}, CTX_UNPINNED);
-    assert.equal(unpinned.result.configuration.reporting_subscriptions[0].prior_versions[0].configuration, undefined);
+    assert.equal(
+      unpinned.result.configuration.reporting_subscriptions[0].prior_versions[0].configuration.subscription_version,
+      1
+    );
     assertSchemaValid('get_principal', served);
   });
 

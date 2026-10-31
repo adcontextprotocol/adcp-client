@@ -41,6 +41,8 @@ export const ACCOUNT_NOTIFICATION_TYPES = Object.freeze([
   'creative.assignment_changed',
   'indicators.changed',
   'creative.purged',
+  // AdCP 3.3 experimental creative.live_updates (adcp#8404): a staged update's review outcome.
+  'creative.staged_update_changed',
   'account.status_changed',
   'account.change_recorded',
   'product.created',

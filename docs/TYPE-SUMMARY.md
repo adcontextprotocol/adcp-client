@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-10-30
+> Generated at: 2026-10-31
 > @adcp/sdk v17.0.0-beta.10
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -575,7 +575,7 @@ Request parameters for get_task_status, the 3.
 _Request:_
 ```
 {
-  task_id: string  // required
+  task_id: Task Id  // required
   account: Account Ref
   include_history: boolean
   include_result: boolean
@@ -586,10 +586,8 @@ _Request:_
 _Response (success branch):_
 ```
 {
-  task_id: string  // required
   task_type: Task Type  // required
   protocol: Adcp Protocol  // required
-  status: Task Status  // required
   created_at: string  // required
   updated_at: string  // required
   completed_at: string
@@ -684,6 +682,7 @@ Read caller-scoped connection configuration, version, and destination setup stat
 _Request:_
 ```
 {
+  reporting_subscription_page: object
   context: Context
 }
 ```
@@ -998,12 +997,10 @@ _Response (success branch):_
   products: Canonical Product[]  // required
   feed_version: string  // required
   cache_scope: 'public' | 'account'  // required
-  adcp_version: string
   collections: Response Collection[]
   next_cursor: string
   pricing_version: string
   incomplete: object[]
-  replayed: 'true'
   context: Context
 }
 ```
@@ -1038,7 +1035,6 @@ _Response (success branch):_
   proposals: object[]  // required
   opportunities: object[]  // required
   next_cursor: string
-  replayed: 'true'
   context: Context
 }
 ```
@@ -1069,7 +1065,6 @@ _Response (success branch):_
   collections_version: string  // required
   cache_scope: 'public' | 'account'  // required
   pagination: Pagination Response
-  replayed: 'true'
   context: Context
 }
 ```
@@ -1102,16 +1097,13 @@ _Response (success branch):_
   outcome: 'proposed'  // required
   proposals: Canonical Proposal[]  // required
   products: Canonical Product[]  // required
-  adcp_version: string
   collections: Response Collection[]
   incomplete: object[]
   targeting_resolution: Get Products Targeting Resolution
   later_proposals: Later Proposals State
-  status: 'completed'
-  message: string
   errors: Error[]
   context: Context
-  replayed: 'true'
+  status: 'completed'
 }
 ```
 
@@ -1138,13 +1130,10 @@ _Response (success branch):_
 {
   results: union[]  // required
   products: Canonical Product[]  // required
-  adcp_version: string
   collections: Response Collection[]
-  status: 'completed'
-  message: string
   errors: Error[]
   context: Context
-  replayed: 'true'
+  status: 'completed'
 }
 ```
 
@@ -1170,10 +1159,9 @@ _Response (success branch):_
 ```
 {
   results: object[]  // required
-  message: string
   errors: Error[]
   context: Context
-  replayed: 'true'
+  status: 'completed'
 }
 ```
 
@@ -1289,7 +1277,6 @@ _Response (success branch):_
   available_actions: Canonical Media Buy Action[]
   warnings: Warning[]
   context: Context
-  replayed: 'true'
 }
 ```
 
@@ -1688,7 +1675,6 @@ _Response (success branch):_
   outcome: 'recorded'  // required
   issue: Media Buy Issue  // required
   context: Context
-  replayed: boolean
 }
 ```
 
@@ -1716,7 +1702,6 @@ _Response (success branch):_
   outcome: 'found'  // required
   issue: Media Buy Issue  // required
   context: Context
-  replayed: boolean
 }
 ```
 
@@ -2100,7 +2085,7 @@ _Request:_
   include_webhook_activity: boolean
   webhook_activity_limit: integer
   account: Account Ref
-  fields: ('creative_id' | 'name' | 'format_id' | 'format_kind' | 'format_option_ref' | 'assets' | 'status' | 'created_date' | 'updated_date' | 'tags' | 'provenance' | 'rights' | 'rights_attestation_evaluations' | 'localization' | 'localization_unavailable' | 'assignments' | 'snapshot' | 'items' | 'variables' | 'concept' | 'pricing_options')[]
+  fields: ('creative_id' | 'name' | 'format_id' | 'format_kind' | 'format_option_ref' | 'assets' | 'status' | 'created_date' | 'updated_date' | 'tags' | 'provenance' | 'rights' | 'rights_attestation_evaluations' | 'localization' | 'localization_unavailable' | 'assignments' | 'snapshot' | 'items' | 'variables' | 'concept' | 'pricing_options' | 'staged_update')[]
   context: Context
 }
 ```
@@ -2268,7 +2253,6 @@ _Response (success branch):_
 {
   list: Property List  // required
   auth_token: string  // required
-  replayed: boolean
   context: Context
 }
 ```
@@ -2297,7 +2281,6 @@ _Response (success branch):_
 ```
 {
   list: Property List  // required
-  replayed: boolean
   context: Context
 }
 ```
@@ -2372,7 +2355,6 @@ _Response (success branch):_
 {
   deleted: boolean  // required
   list_id: string  // required
-  replayed: boolean
   context: Context
 }
 ```
@@ -2400,7 +2382,6 @@ _Response (success branch):_
 {
   list: Collection List  // required
   auth_token: string  // required
-  replayed: boolean
   context: Context
 }
 ```
@@ -2429,7 +2410,6 @@ _Response (success branch):_
 ```
 {
   list: Collection List  // required
-  replayed: boolean
   context: Context
 }
 ```
@@ -2504,7 +2484,6 @@ _Response (success branch):_
 {
   deleted: boolean  // required
   list_id: string  // required
-  replayed: boolean
   context: Context
 }
 ```
@@ -2727,7 +2706,6 @@ _Response (success branch):_
 ```
 {
   plans: object[]  // required
-  replayed: boolean
   context: Context
 }
 ```
@@ -2762,7 +2740,6 @@ _Response (success branch):_
   delivery_period_state: 'open' | 'closed'
   findings: object[]
   plan_summary: object
-  replayed: boolean
   context: Context
 }
 ```
@@ -2800,7 +2777,6 @@ _Response (success branch):_
   amount: object  // required
   headroom_restored: number  // required
   plan_summary: object  // required
-  replayed: boolean
   context: Context
 }
 ```
@@ -2878,7 +2854,6 @@ _Response (success branch):_
   mode: Governance Mode
   runtime_attestation_evaluations: Attestation Evaluation[]
   runtime_attestation_binding_digest: string
-  governance_context: string
   context: Context
 }
 ```

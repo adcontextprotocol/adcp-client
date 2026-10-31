@@ -92,6 +92,7 @@ import type {
   CreativeApprovalStatus,
   CreativeAsset,
   CreativeBrief,
+  CreativeChangeKind,
   CreativeEventReasonCode,
   CreativeIdentifierType,
   CreativeMergeRejectionReason,
@@ -176,6 +177,7 @@ import type {
   LandingPageRequirement,
   LaterProposalReason,
   LiftDimension,
+  LiveUpdateServingMode,
   LogoSlot,
   MacroDialectFamily,
   MacroMappingStatus,
@@ -318,7 +320,7 @@ import type {
   WebhookSigningProfile,
 } from './core.generated';
 
-export type { AccountCurrencyMode, AccountReference, AccountRequestResolution, AccountRequestState, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AgentOnboardingMode, AgentOnboardingRequirementKind, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceEvidenceRelationship, AudienceMatchRateBasis, AudienceResolutionMethod, AudienceSizePrecision, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailabilityStatus, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BudgetChangeConstraints, BusinessEntity, C2PAWatermarkAction, CTVAdExperience, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatCoordinatedPlacements, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatOption, CanonicalFormatResponsiveCreative, CanonicalFormatSellerRenderedStatefulDisplay, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTAudio, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CanonicalOptimizationGoal, CanonicalProposal, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionMechanism, CollectionRelationship, CollectionStatus, CommittedMediaBuy, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeActivationMethod, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeEventReasonCode, CreativeIdentifierType, CreativeMergeRejectionReason, CreativeMotionLevel, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DOOHMotionType, DayOfWeek, DaypartTarget, DaypartTimeGranularity, DaypartTimezoneMode, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryProjectionBasis, DeliveryProjectionEndState, DeliveryRecipientCloud, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EffectiveTimingConstraints, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExecutionReadinessStatus, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, FlightChangeConstraints, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, Format, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapControlMode, FrequencyCapMutableField, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, InvoiceKind, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LaterProposalReason, LiftDimension, LogoSlot, MacroDialectFamily, MacroMappingStatus, MacroProcessingActor, MacroProcessingOperation, MacroResolutionReason, MacroValueContext, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyAvailableAction, MediaBuyChangeTermConstraints, MediaBuyDeliveryWebhookResult, MediaBuyFrequencyCapControlMode, MediaBuyHealth, MediaBuyLineageReason, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferReason, OfferingAvailabilityStatus, OptimizationGoal, OutcomeTargetCostStrength, OutcomeType, Pacing, PackageCountConstraints, PackageUpdate, PaymentTerms, PendingActionKind, PendingActionParty, PerformanceBaseline, PerformanceStandardMetric, PixelTrackingEvent, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, PrincipalKind, PrincipalRelationshipStatus, ProductAllowedAction, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalDisposition, ProposalInitiator, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachAggregation, ReachUnit, ReportingCustody, ReportingDeliveryMethod, ReportingDestinationSetupState, ReportingDimension, ReportingFinality, ReportingFrequency, ReportingHealth, RepresentationSelectionStrategy, RequestProposalsResponse, RequestSigningErrorCode, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SellerPolicyDeclineReason, SignalAvailabilityType, SignalDefinitionEnrichment, SignalDeliveryStatus, SignalSource, SignalStatus, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, SpotStatus, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TrackerExecutionActor, TrackerFiringPath, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTMediaDeliveryMethod, VASTTrackingEvent, VASTVersion, ValidationMode, VendorRelationship, VideoPlacementType, ViewThresholdBasis, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod, WebhookSigningProfile } from './core.generated';
+export type { AccountCurrencyMode, AccountReference, AccountRequestResolution, AccountRequestState, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AgentOnboardingMode, AgentOnboardingRequirementKind, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceEvidenceRelationship, AudienceMatchRateBasis, AudienceResolutionMethod, AudienceSizePrecision, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailabilityStatus, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BudgetChangeConstraints, BusinessEntity, C2PAWatermarkAction, CTVAdExperience, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatCoordinatedPlacements, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatOption, CanonicalFormatResponsiveCreative, CanonicalFormatSellerRenderedStatefulDisplay, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTAudio, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CanonicalOptimizationGoal, CanonicalProposal, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionMechanism, CollectionRelationship, CollectionStatus, CommittedMediaBuy, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeActivationMethod, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeChangeKind, CreativeEventReasonCode, CreativeIdentifierType, CreativeMergeRejectionReason, CreativeMotionLevel, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DOOHMotionType, DayOfWeek, DaypartTarget, DaypartTimeGranularity, DaypartTimezoneMode, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryProjectionBasis, DeliveryProjectionEndState, DeliveryRecipientCloud, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EffectiveTimingConstraints, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExecutionReadinessStatus, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, FlightChangeConstraints, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, Format, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapControlMode, FrequencyCapMutableField, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, InvoiceKind, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LaterProposalReason, LiftDimension, LiveUpdateServingMode, LogoSlot, MacroDialectFamily, MacroMappingStatus, MacroProcessingActor, MacroProcessingOperation, MacroResolutionReason, MacroValueContext, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyAvailableAction, MediaBuyChangeTermConstraints, MediaBuyDeliveryWebhookResult, MediaBuyFrequencyCapControlMode, MediaBuyHealth, MediaBuyLineageReason, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferReason, OfferingAvailabilityStatus, OptimizationGoal, OutcomeTargetCostStrength, OutcomeType, Pacing, PackageCountConstraints, PackageUpdate, PaymentTerms, PendingActionKind, PendingActionParty, PerformanceBaseline, PerformanceStandardMetric, PixelTrackingEvent, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, PrincipalKind, PrincipalRelationshipStatus, ProductAllowedAction, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalDisposition, ProposalInitiator, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachAggregation, ReachUnit, ReportingCustody, ReportingDeliveryMethod, ReportingDestinationSetupState, ReportingDimension, ReportingFinality, ReportingFrequency, ReportingHealth, RepresentationSelectionStrategy, RequestProposalsResponse, RequestSigningErrorCode, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SellerPolicyDeclineReason, SignalAvailabilityType, SignalDefinitionEnrichment, SignalDeliveryStatus, SignalSource, SignalStatus, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, SpotStatus, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TrackerExecutionActor, TrackerFiringPath, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTMediaDeliveryMethod, VASTTrackingEvent, VASTVersion, ValidationMode, VendorRelationship, VideoPlacementType, ViewThresholdBasis, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod, WebhookSigningProfile } from './core.generated';
 
 // Tool Parameter and Response Types
 // Generated from official AdCP schemas
@@ -5186,6 +5188,14 @@ export interface PaginationRequest {
 
 // get_products response
 /**
+ * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete. A submitted response carries it: every submitted body and branch composes core/task-submitted.json, which requires it.
+ */
+export type TaskID = string;
+/**
+ * Human-readable summary of the task result, suitable for display to end users or for AI agent comprehension. At most 2,000 characters, and untrusted input to the receiver: see core/task-message.json.
+ */
+export type TaskMessage = string;
+/**
  * Represents available advertising inventory
  */
 export type Product = {
@@ -7934,25 +7944,28 @@ export type ExecutionRequirementReadiness = {
  */
 export interface GetProductsResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -7969,15 +7982,6 @@ export interface GetProductsResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Array of matching products
    */
@@ -11208,6 +11212,41 @@ export type ListProductsResponse = {
    */
   adcp_version?: string;
   /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
+   */
+  context_id?: string;
+  context?: ContextObject;
+  task_id?: TaskID;
+  status: TaskStatus;
+  message?: TaskMessage;
+  /**
+   * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
+   */
+  timestamp?: string;
+  /**
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   */
+  replayed?: boolean;
+  adcp_error?: Error;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Opaque authorization context issued only by an approved check_governance decision. Buyers attach it to governed requests across protocol roles (media buys, rights acquisitions, signal activations, creative services); receiving services persist it and forward it on subsequent execution and lifecycle checks. The context is the authoritative plan binding at service boundaries, so a service MUST NOT require a separate plan_id.
+   *
+   * Governance agents MUST emit a compact JWS per the AdCP JWS profile. Verifiers validate standard authorization claims such as signature, issuer, audience, expiry, and replay protection, but intermediaries MUST NOT interpret embedded governance state for business logic. A conditions or denied verdict never carries an authorization context.
+   *
+   * This is the primary correlation key for audit and reporting across the governance lifecycle.
+   */
+  governance_context?: string;
+  /**
+   * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
+   */
+  payload?: {};
+  /**
    * Whether this response carries a product page or confirms that the selected feed has not changed.
    */
   outcome?: 'listed' | 'unchanged';
@@ -11241,15 +11280,9 @@ export type ListProductsResponse = {
     description: string;
     estimated_wait?: Duration;
   }[];
-  replayed?: true;
-  context?: ContextObject;
   ext?: ExtensionObject;
 } & (
   | {
-      /**
-       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-       */
-      adcp_version?: string;
       /**
        * Whether this response carries a product page or confirms that the selected feed has not changed.
        */
@@ -11284,15 +11317,10 @@ export type ListProductsResponse = {
         description: string;
         estimated_wait?: Duration;
       }[];
-      replayed?: true;
       context?: ContextObject;
       ext?: ExtensionObject;
     }
   | {
-      /**
-       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-       */
-      adcp_version?: string;
       /**
        * Whether this response carries a product page or confirms that the selected feed has not changed.
        */
@@ -11326,7 +11354,6 @@ export type ListProductsResponse = {
         description: string;
         estimated_wait?: Duration;
       }[];
-      replayed?: true;
       context?: ContextObject;
       ext?: ExtensionObject;
     }
@@ -12179,6 +12206,45 @@ export type CanonicalReportingCommitment =
  * One page of proposals for the requested account with their seller-tracked dispositions, plus the current state of every opportunity those proposals belong to. Each snapshot is returned byte-for-byte as issued, so terms_digest still verifies; lifecycle state lives beside it, never inside it. Experimental (media_buy.open_opportunities).
  */
 export interface ListProposalsResponse {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
+   */
+  context_id?: string;
+  context?: ContextObject;
+  task_id?: TaskID;
+  status: TaskStatus;
+  message?: TaskMessage;
+  /**
+   * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
+   */
+  timestamp?: string;
+  /**
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   */
+  replayed?: boolean;
+  adcp_error?: Error;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Opaque authorization context issued only by an approved check_governance decision. Buyers attach it to governed requests across protocol roles (media buys, rights acquisitions, signal activations, creative services); receiving services persist it and forward it on subsequent execution and lifecycle checks. The context is the authoritative plan binding at service boundaries, so a service MUST NOT require a separate plan_id.
+   *
+   * Governance agents MUST emit a compact JWS per the AdCP JWS profile. Verifiers validate standard authorization claims such as signature, issuer, audience, expiry, and replay protection, but intermediaries MUST NOT interpret embedded governance state for business logic. A conditions or denied verdict never carries an authorization context.
+   *
+   * This is the primary correlation key for audit and reporting across the governance lifecycle.
+   */
+  governance_context?: string;
+  /**
+   * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
+   */
+  payload?: {};
   outcome: 'listed';
   proposals: {
     proposal: CanonicalProposal;
@@ -12220,8 +12286,6 @@ export interface ListProposalsResponse {
    * @minLength 1
    */
   next_cursor?: string;
-  replayed?: true;
-  context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
@@ -12479,6 +12543,7 @@ export interface LaterProposalsState {
   updated_at: string;
 }
 
+
 // list_collections parameters
 /**
  * Experimental (media_buy.collection_catalog), added in AdCP 3.3. Read the selling agent's catalog of collection cards: look up specific collections by key, or browse with filters and pages. Returns the same core/response-collection.json copies, under the same authority rules, as include_collections on product and proposal reads, and never returns products. Not to be confused with list_collection_lists, which lists buyer-owned collection targeting lists on a governance agent. Side-effect free: the call never provisions an account. It is the bootstrap and repair read for collection_card.* and collection_catalog.bulk_change webhooks, which are registered only through sync_accounts notification_configs; the request takes no push_notification_config, so a call never creates a subscription. Sellers implementing it MUST list media_buy.collection_catalog and media_buy.collection_cards in experimental_features. A seller MUST NOT serve this task to a caller whose adcp_version is below 3.3; it fails the request with UNSUPPORTED_FEATURE.
@@ -12570,6 +12635,45 @@ export interface ListCollectionsRequest {
  */
 export type ListCollectionsResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
+   */
+  context_id?: string;
+  context?: ContextObject;
+  task_id?: TaskID;
+  status: TaskStatus;
+  message?: TaskMessage;
+  /**
+   * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
+   */
+  timestamp?: string;
+  /**
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   */
+  replayed?: boolean;
+  adcp_error?: Error;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Opaque authorization context issued only by an approved check_governance decision. Buyers attach it to governed requests across protocol roles (media buys, rights acquisitions, signal activations, creative services); receiving services persist it and forward it on subsequent execution and lifecycle checks. The context is the authoritative plan binding at service boundaries, so a service MUST NOT require a separate plan_id.
+   *
+   * Governance agents MUST emit a compact JWS per the AdCP JWS profile. Verifiers validate standard authorization claims such as signature, issuer, audience, expiry, and replay protection, but intermediaries MUST NOT interpret embedded governance state for business logic. A conditions or denied verdict never carries an authorization context.
+   *
+   * This is the primary correlation key for audit and reporting across the governance lifecycle.
+   */
+  governance_context?: string;
+  /**
+   * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
+   */
+  payload?: {};
+  /**
    * listed when the response carries a page of collections; unchanged when if_collections_version matched the current version of the selected catalog.
    */
   outcome?: 'listed' | 'unchanged';
@@ -12587,8 +12691,6 @@ export type ListCollectionsResponse = {
    * public when the visible set does not depend on the account, and always when the request carried no account; account when it does. A seller MAY return public to a conditional request whose earlier response was account, meaning the account no longer has a distinct visible set; the buyer drops its account-scoped copy and uses the public one.
    */
   cache_scope?: 'public' | 'account';
-  replayed?: true;
-  context?: ContextObject;
   ext?: ExtensionObject;
 } & (
   | {
@@ -12610,7 +12712,6 @@ export type ListCollectionsResponse = {
        * public when the visible set does not depend on the account, and always when the request carried no account; account when it does. A seller MAY return public to a conditional request whose earlier response was account, meaning the account no longer has a distinct visible set; the buyer drops its account-scoped copy and uses the public one.
        */
       cache_scope: 'public' | 'account';
-      replayed?: true;
       context?: ContextObject;
       ext?: ExtensionObject;
     }
@@ -12628,7 +12729,6 @@ export type ListCollectionsResponse = {
        * public when the visible set does not depend on the account, and always when the request carried no account; account when it does. A seller MAY return public to a conditional request whose earlier response was account, meaning the account no longer has a distinct visible set; the buyer drops its account-scoped copy and uses the public one.
        */
       cache_scope: 'public' | 'account';
-      replayed?: true;
       context?: ContextObject;
       ext?: ExtensionObject;
     }
@@ -13014,7 +13114,6 @@ export type TargetingOverlay1 = TargetingUnknownAgeEligibilityConstraint &
     keyword_targets?: TargetingKeywords;
     negative_keywords?: TargetingNegativeKeywords;
   };
-
 /**
  * Response-level confirmation of structured targeting interpreted from explicit hard requirements in the brief. Sellers MUST emit this when that interpretation materially affects eligibility, pricing, or forecasting; otherwise it remains a best practice. Product-specific changes to explicit criteria.targeting_overlay values remain on Product.targeting_resolution.
  */
@@ -13172,11 +13271,7 @@ export interface ProductChangeMap {
  * One ordered result per requested source proposal. Revision results may carry multiple immutable draft proposals when alternatives were requested; finalization and hold extension each return one committed proposal per source. Products contains the compact canonical products needed to evaluate the resulting terms.
  */
 export type RefineProposalsResponse =
-  | {
-      /**
-       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-       */
-      adcp_version?: string;
+  | (ProtocolEnvelope & {
       /**
        * Results in the request's refinements[] order; position carries no ranking. If any result is finalized, every result MUST be finalized; under inventory_hold semantics a finalize batch either creates every requested hold or none, and under terms_only semantics (get_adcp_capabilities media_buy.proposal_refinement.hold_semantics, or a draft hold_policy with available false) it commits every requested proposal's terms or none, with no inventory hold placed for those entries. An extend_hold batch either extends every requested hold or none. Every returned proposal carries parent_proposal_id equal to the result's source_proposal_id, making negotiation lineage reconstructible from the proposals alone.
        */
@@ -13272,21 +13367,12 @@ export type RefineProposalsResponse =
        * Experimental (media_buy.collection_cards). Full collection objects for collections referenced by the collections selectors of the returned products. Sellers MUST NOT return this array unless the request set include_collections to true; when it is set, sellers SHOULD include every referenced collection and MUST NOT include one that no returned product references. At most one entry per (publisher_domain, collection_id). If a key appears more than once, that collection is unresolvable from this response; buyers fall back to the publisher's adagents.json, as they do for an omitted collection, and ignore entries that no returned product references. These are convenience copies, never authorization evidence: a copy wins over adagents.json only on images, sample_content, url, description, season, cadence and distribution[].followers (see core/response-collection.json). Present only alongside products.
        */
       collections?: ResponseCollection[];
-      status?: 'completed';
-      /**
-       * @maxLength 2000
-       */
-      message?: string;
       errors?: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-      replayed?: true;
-    }
-  | {
-      /**
-       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-       */
-      adcp_version?: string;
+      status?: 'completed';
+    })
+  | (ProtocolEnvelope & {
       /**
        * Results in the request's refinements[] order; position carries no ranking. If any result is finalized, every result MUST be finalized; under inventory_hold semantics a finalize batch either creates every requested hold or none, and under terms_only semantics (get_adcp_capabilities media_buy.proposal_refinement.hold_semantics, or a draft hold_policy with available false) it commits every requested proposal's terms or none, with no inventory hold placed for those entries. An extend_hold batch either extends every requested hold or none. Every returned proposal carries parent_proposal_id equal to the result's source_proposal_id, making negotiation lineage reconstructible from the proposals alone.
        */
@@ -13321,21 +13407,12 @@ export type RefineProposalsResponse =
        * Experimental (media_buy.collection_cards). Full collection objects for collections referenced by the collections selectors of the returned products. Sellers MUST NOT return this array unless the request set include_collections to true; when it is set, sellers SHOULD include every referenced collection and MUST NOT include one that no returned product references. At most one entry per (publisher_domain, collection_id). If a key appears more than once, that collection is unresolvable from this response; buyers fall back to the publisher's adagents.json, as they do for an omitted collection, and ignore entries that no returned product references. These are convenience copies, never authorization evidence: a copy wins over adagents.json only on images, sample_content, url, description, season, cadence and distribution[].followers (see core/response-collection.json). Present only alongside products.
        */
       collections?: ResponseCollection[];
-      status?: 'completed';
-      /**
-       * @maxLength 2000
-       */
-      message?: string;
       errors?: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-      replayed?: true;
-    }
-  | {
-      /**
-       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-       */
-      adcp_version?: string;
+      status?: 'completed';
+    })
+  | (ProtocolEnvelope & {
       /**
        * Results in the request's refinements[] order; position carries no ranking. If any result is finalized, every result MUST be finalized; under inventory_hold semantics a finalize batch either creates every requested hold or none, and under terms_only semantics (get_adcp_capabilities media_buy.proposal_refinement.hold_semantics, or a draft hold_policy with available false) it commits every requested proposal's terms or none, with no inventory hold placed for those entries. An extend_hold batch either extends every requested hold or none. Every returned proposal carries parent_proposal_id equal to the result's source_proposal_id, making negotiation lineage reconstructible from the proposals alone.
        */
@@ -13431,15 +13508,6 @@ export type RefineProposalsResponse =
        * Experimental (media_buy.collection_cards). Full collection objects for collections referenced by the collections selectors of the returned products. Sellers MUST NOT return this array unless the request set include_collections to true; when it is set, sellers SHOULD include every referenced collection and MUST NOT include one that no returned product references. At most one entry per (publisher_domain, collection_id). If a key appears more than once, that collection is unresolvable from this response; buyers fall back to the publisher's adagents.json, as they do for an omitted collection, and ignore entries that no returned product references. These are convenience copies, never authorization evidence: a copy wins over adagents.json only on images, sample_content, url, description, season, cadence and distribution[].followers (see core/response-collection.json). Present only alongside products.
        */
       collections?: ResponseCollection[];
-      status: 'submitted';
-      /**
-       * @minLength 1
-       */
-      task_id: string;
-      /**
-       * @maxLength 2000
-       */
-      message?: string;
       /**
        * Optional estimate, on a submitted response to a finalize-only or extend_hold-only request, of when the seller expects to resolve the finalize or extension, for example when a creator, host or talent must agree before the hold or its extension. Same semantics as on `create_media_buy`: an estimate, not a commitment or expiry; buyers SHOULD schedule a status check for it and MUST NOT treat a passed timestamp as failure. Sellers SHOULD NOT send it on revise requests.
        * @format date-time
@@ -13448,13 +13516,10 @@ export type RefineProposalsResponse =
       errors?: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-      replayed?: true;
-    }
-  | {
-      /**
-       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-       */
-      adcp_version?: string;
+      status: 'submitted';
+      task_id: TaskID;
+    })
+  | (ProtocolEnvelope & {
       /**
        * Results in the request's refinements[] order; position carries no ranking. If any result is finalized, every result MUST be finalized; under inventory_hold semantics a finalize batch either creates every requested hold or none, and under terms_only semantics (get_adcp_capabilities media_buy.proposal_refinement.hold_semantics, or a draft hold_policy with available false) it commits every requested proposal's terms or none, with no inventory hold placed for those entries. An extend_hold batch either extends every requested hold or none. Every returned proposal carries parent_proposal_id equal to the result's source_proposal_id, making negotiation lineage reconstructible from the proposals alone.
        */
@@ -13489,15 +13554,6 @@ export type RefineProposalsResponse =
        * Experimental (media_buy.collection_cards). Full collection objects for collections referenced by the collections selectors of the returned products. Sellers MUST NOT return this array unless the request set include_collections to true; when it is set, sellers SHOULD include every referenced collection and MUST NOT include one that no returned product references. At most one entry per (publisher_domain, collection_id). If a key appears more than once, that collection is unresolvable from this response; buyers fall back to the publisher's adagents.json, as they do for an omitted collection, and ignore entries that no returned product references. These are convenience copies, never authorization evidence: a copy wins over adagents.json only on images, sample_content, url, description, season, cadence and distribution[].followers (see core/response-collection.json). Present only alongside products.
        */
       collections?: ResponseCollection[];
-      status: 'submitted';
-      /**
-       * @minLength 1
-       */
-      task_id: string;
-      /**
-       * @maxLength 2000
-       */
-      message?: string;
       /**
        * Optional estimate, on a submitted response to a finalize-only or extend_hold-only request, of when the seller expects to resolve the finalize or extension, for example when a creator, host or talent must agree before the hold or its extension. Same semantics as on `create_media_buy`: an estimate, not a commitment or expiry; buyers SHOULD schedule a status check for it and MUST NOT treat a passed timestamp as failure. Sellers SHOULD NOT send it on revise requests.
        * @format date-time
@@ -13506,8 +13562,9 @@ export type RefineProposalsResponse =
       errors?: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-      replayed?: true;
-    };
+      status: 'submitted';
+      task_id: TaskID;
+    });
 /**
  * Confirmation of structured targeting interpreted from this refinement's explicit hard prose instructions. Required when that interpretation materially affects the revised proposal's eligibility, pricing, or forecast; otherwise a best practice.
  */
@@ -13599,7 +13656,7 @@ export interface DeclineProposalsRequest {
  * One ordered terminal result for each requested proposal decline.
  */
 export type DeclineProposalsResponse =
-  | {
+  | (ProtocolEnvelope & {
       /**
        * One result per requested decline, in request order. Empty only when the request carried an empty declines array with an opportunity update.
        */
@@ -13624,16 +13681,12 @@ export type DeclineProposalsResponse =
             reason: string;
           }
       )[];
-      /**
-       * @maxLength 2000
-       */
-      message?: string;
       errors?: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-      replayed?: true;
-    }
-  | {
+      status?: 'completed';
+    })
+  | (ProtocolEnvelope & {
       /**
        * One result per requested decline, in request order. Empty only when the request carried an empty declines array with an opportunity update.
        */
@@ -13658,21 +13711,12 @@ export type DeclineProposalsResponse =
             reason: string;
           }
       )[];
-      status: 'submitted';
-      /**
-       * @minLength 1
-       */
-      task_id: string;
-      /**
-       * @maxLength 2000
-       */
-      message?: string;
       errors?: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-      replayed?: true;
-    };
-
+      status: 'submitted';
+      task_id: TaskID;
+    });
 
 // buy_products parameters
 /**
@@ -13882,7 +13926,7 @@ export type BuyProductsResponse = MediaBuyCommitmentResponse;
 /**
  * Shared result for clean product purchase and proposal acceptance. A successful result returns the MediaBuy identity and the immutable accepted commercial snapshot without embedding creative or package graphs. Optional warnings report non-blocking observations at the commitment boundary; continuing conditions remain readable as indicators through get_media_buys.
  */
-export type MediaBuyCommitmentResponse = CommittedMediaBuy | CommitmentError | CommitmentSubmitted;
+export type MediaBuyCommitmentResponse = ProtocolEnvelope & (CommittedMediaBuy | CommitmentError | CommitmentSubmitted);
 /**
  * A currently available MediaBuy action with the compact-lifecycle task an SDK calls to exercise it. Deprecated coarse action values are absent. In AdCP 3.3, update_creative_start_policy is an operational package control with an explicit eligible package scope, independent of commercial change terms.
  */
@@ -13940,6 +13984,7 @@ export type Warning = {
   };
   ext?: ExtensionObject;
 };
+export type CommitmentSubmitted = TaskSubmitted;
 export interface CommitmentError {
   status: 'failed';
   /**
@@ -13948,20 +13993,13 @@ export interface CommitmentError {
   errors: [Error, ...Error[]];
   context?: ContextObject;
   ext?: ExtensionObject;
-  replayed?: true;
 }
-export interface CommitmentSubmitted {
+/**
+ * The submitted task acknowledgement: status is submitted and task_id identifies the task the caller polls and webhooks reference. Every submitted response body and branch composes this schema through allOf, so the rule lives in one place.
+ */
+export interface TaskSubmitted {
   status: 'submitted';
-  task_id: string;
-  message?: string;
-  /**
-   * Optional estimate of when the seller expects to confirm this request, used when confirmation depends on a scheduled event such as a booking round or a manual review window. A seller SHOULD set it when it knows that event; omit it when it does not. Buyers SHOULD schedule a status check (get_task_status, or reconciling against the webhook) for this time rather than polling tightly before it. This is an estimate, not a commitment: the seller MAY confirm earlier or later, the task status remains authoritative, and buyers MUST NOT treat a passed timestamp as a failure or auto-cancel on it. Sellers SHOULD NOT send a timestamp in the past. Not an expiry or SLA.
-   */
-  expected_confirmation_at?: string;
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-  replayed?: true;
+  task_id: TaskID;
 }
 
 
@@ -14238,7 +14276,7 @@ export interface KeywordTarget {
 /**
  * Result of applying operational controls without embedding the package or creative object graphs.
  */
-export type ControlMediaBuyResponse = ControlApplied | ControlError | ControlSubmitted;
+export type ControlMediaBuyResponse = ProtocolEnvelope & (ControlApplied | ControlError | ControlSubmitted);
 export interface ControlApplied {
   status: 'completed';
   /**
@@ -14265,29 +14303,19 @@ export interface ControlApplied {
   })[];
   context?: ContextObject;
   ext?: ExtensionObject;
-  replayed?: true;
 }
 export interface ControlError {
   status: 'failed';
   errors: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
-  replayed?: true;
 }
 export interface ControlSubmitted {
   status: 'submitted';
-  /**
-   * @minLength 1
-   */
-  task_id: string;
-  /**
-   * @maxLength 2000
-   */
-  message?: string;
+  task_id: TaskID;
   errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
-  replayed?: true;
 }
 
 
@@ -14632,25 +14660,28 @@ export type GroupDaastTrackerAsset = BaseGroupAsset;
  */
 export interface ListCreativeFormatsResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -14667,15 +14698,6 @@ export interface ListCreativeFormatsResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * @deprecated
    * Deprecated named-format definitions projected for older 3.x callers. This list is neither the publisher acceptance catalog nor the seller's canonical product deliverability contract.
@@ -15359,25 +15381,28 @@ export interface CommittedProposalExecution {
  */
 export type CreateMediaBuyResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -15394,15 +15419,6 @@ export type CreateMediaBuyResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (CreateMediaBuySuccess | CreateMediaBuyError | CreateMediaBuySubmitted);
 /**
  * Deprecated in 3.3. Pending or rejected operator-identity transition. While present, the top-level operator and operator_unit remain the current canonical identity. Re-read list_accounts until the request is applied (canonical fields change and this object disappears) or rejected.
@@ -15432,6 +15448,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15457,6 +15474,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15523,6 +15541,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15548,6 +15567,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15614,6 +15634,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15639,6 +15660,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15705,6 +15727,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15730,6 +15753,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15796,6 +15820,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15821,6 +15846,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15887,6 +15913,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15912,6 +15939,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15978,6 +16006,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16003,6 +16032,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16069,6 +16099,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16094,6 +16125,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16160,6 +16192,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16185,6 +16218,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16251,6 +16285,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16276,6 +16311,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16342,6 +16378,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16367,6 +16404,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16433,6 +16471,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16458,6 +16497,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16524,6 +16564,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16549,6 +16590,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16615,6 +16657,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16640,6 +16683,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16706,6 +16750,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16731,6 +16776,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16797,6 +16843,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16822,6 +16869,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -18654,19 +18702,8 @@ export interface CreateMediaBuyError {
  * Async task envelope returned when the media buy cannot be confirmed before the response is emitted — for example, when a guaranteed buy requires IO signing, when governance review is outstanding, or when the seller has queued the request for batch processing. The buyer invokes get_task_status with task_id or receives a webhook when the task completes; the media_buy_id and packages land in the terminal result, not this envelope. Do not use a 'pending_approval' MediaBuy.status for this case — that value is not in MediaBuyStatus; IO review and similar pre-issuance workflows are modeled at the task layer only.
  */
 export interface CreateMediaBuySubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, which uses `media_buy_status` for lifecycle state. See task-status.json for the full task-status enum.
-   */
   status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. The media_buy_id is issued on the completion artifact, not here. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Awaiting IO signature from sales team; typical turnaround 2–4 hours.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   * @maxLength 2000
-   */
-  message?: string;
+  task_id: TaskID;
   /**
    * Optional estimate of when the seller expects to confirm this request, used when confirmation depends on a scheduled event such as a booking round or a manual review window. A seller SHOULD set it when it knows that event; omit it when it does not. Buyers SHOULD schedule a status check (get_task_status, or reconciling against the webhook) for this time rather than polling tightly before it. This is an estimate, not a commitment: the seller MAY confirm earlier or later, the task status remains authoritative, and buyers MUST NOT treat a passed timestamp as a failure or auto-cancel on it. Sellers SHOULD NOT send a timestamp in the past. Not an expiry or SLA.
    * @format date-time
@@ -18803,25 +18840,28 @@ export interface UpdateMediaBuyRequest {
  */
 export type UpdateMediaBuyResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -18838,15 +18878,6 @@ export type UpdateMediaBuyResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (UpdateMediaBuySuccess | UpdateMediaBuyError | UpdateMediaBuySubmitted);
 /**
  * Success response - media buy updated successfully
@@ -18944,19 +18975,8 @@ export interface UpdateMediaBuyError {
  * Async task envelope returned when update_media_buy cannot be confirmed before the response — for example, when operator re-approval is required for mid-flight changes. The buyer invokes get_task_status with task_id or receives a webhook when the task completes; the updated media buy state lands in the terminal result, not this envelope.
  */
 export interface UpdateMediaBuySubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose media_buy_id is issued in-line. See task-status.json for the full task-status enum.
-   */
   status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Awaiting operator re-approval; typical turnaround 2–4 hours.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   * @maxLength 2000
-   */
-  message?: string;
+  task_id: TaskID;
   /**
    * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
    */
@@ -19031,25 +19051,28 @@ export interface GetMediaBuysRequest {
  */
 export interface GetMediaBuysResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -19066,15 +19089,6 @@ export interface GetMediaBuysResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Array of media buys with status, creative approval state, and optional delivery snapshots
    */
@@ -19219,10 +19233,36 @@ export interface GetMediaBuysResponseMediaBuy {
     reason?: string;
   };
   /**
+   * Present only when status is canceled: when delivery stops under the cancellation. It equals cancellation.canceled_at when delivery stops at once, and is later when the seller keeps delivering through a notice period (the product's cancellation_policy.notice_period) or to the end of a committed unit. Not later than end_time. Sellers advertising media_buy.reporting_subscriptions MUST populate it, because subscription reporting is owed through the period containing this instant, not the instant the cancellation was recorded. Buyers use cancellation.canceled_at when it is absent.
+   * @format date-time
+   */
+  cancellation_effective_at?: string;
+  /**
    * When the seller moved the buy to completed; present when status is completed. Sellers advertising media_buy.reporting_subscriptions MUST populate it for completed buys, because a buy that completes before end_time stops being owed reporting at this instant.
    * @format date-time
    */
   completed_at?: string;
+  /**
+   * Retroactive flight edits, oldest first, so a buyer can recompute which periods a reporting subscription owed (media_buy.reporting_subscriptions). The buy's flight runs from start_time to its stop time, as the reporting-subscription.json coverage rule defines it. An edit is retroactive when the start_time or stop time before or after it is earlier than the instant the seller recorded it. Each entry carries the flight in force before that edit. The flight in force at an instant X is the one in the earliest entry recorded after X, or the current flight when no entry is. Edits whose before and after values all lie after recorded_at change no elapsed period, so they are not listed. Sellers advertising media_buy.reporting_subscriptions MUST list every retroactive edit recorded within the last status_retention_days; an older entry MAY be dropped, because it governs only periods that ended before it was recorded. At most 64 entries are retained: a seller MUST refuse a retroactive edit that would exceed that with INVALID_STATE, and an edit it cannot refuse, such as one observed on a connected platform, it applies from the instant it records it (no start_time or stop time earlier than recorded_at), which needs no entry.
+   * @maxItems 64
+   */
+  flight_history?: {
+    /**
+     * When the seller recorded the edit, or ingested it when it was observed on a connected platform. Flight values change at this instant for every period resolved after it.
+     * @format date-time
+     */
+    recorded_at: string;
+    /**
+     * start_time in force before the edit.
+     * @format date-time
+     */
+    start_time: string;
+    /**
+     * Stop time in force before the edit.
+     * @format date-time
+     */
+    stop_time: string;
+  }[];
   /**
    * Current optimistic concurrency token. Pass this in update_media_buy requests intended to change state. Sellers advance it on every committed change to state this read reports, whatever its origin (AdCP task, seller operator, seller automation, another authorized principal, or a connected platform), and reject stale tokens with CONFLICT when a revision token is provided.
    * @minimum 1
@@ -19433,6 +19473,11 @@ export interface PackageStatus {
    * @format date-time
    */
   end_time?: string;
+  /**
+   * The reporting delivery offerings this package can satisfy (media_buy.reporting_subscriptions): its product's reporting_capabilities.reporting_delivery_offering_ids after account-level narrowing, fixed when the package is confirmed. A later product or catalog change does not alter it, so a buyer resolves a subscription selector per package from this list and each offering's available_from and withdrawn_at. An offering in it stops being a candidate at its withdrawn_at. Sellers advertising media_buy.reporting_subscriptions MUST include it on every package, [] when none applies.
+   * @maxItems 64
+   */
+  reporting_delivery_offering_ids?: ReportingDeliveryOfferingID[];
   /**
    * AdCP 3.3 initial-start policy. False (default) serves eligible approved assignments. True MUST retain booking and inventory commitment but block first enablement for serving until every current assignment is approved in all applicable package scopes; an empty set or library approval alone is insufficient. Retain pending-review/rejected assignments; same-creative_id resubmission needs no reassignment. Flight, pause, format-coverage and commitment constraints still apply. After first enablement, ordinary serving and impairment rules apply. Opt-in requires media_buy.features.creative_start_policy: true; otherwise buyers MUST NOT send true and sellers MUST reject true with UNSUPPORTED_FEATURE before mutation. Stage the full initial set atomically or while paused; the gate cannot anticipate future assignments. Sellers MUST echo the effective value on package readback, including false when defaulted.
    */
@@ -20305,25 +20350,28 @@ export type PlacementPropertyDeliveryMetrics = DeliveryMetrics & {
  */
 export interface GetMediaBuyDeliveryResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -20340,15 +20388,6 @@ export interface GetMediaBuyDeliveryResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Type of webhook notification (only present in webhook deliveries): scheduled = regular periodic update, final = campaign completed, delayed = data not yet available, adjusted = resending period with corrected data (same window), window_update = resending period with a wider measurement window (e.g., C3 superseding live, C7 superseding C3)
    */
@@ -21308,25 +21347,28 @@ export interface GetReportingStatusRequest {
  */
 export type GetReportingStatusResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -21343,15 +21385,6 @@ export type GetReportingStatusResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   view?: ReportingStatusView;
   /**
    * Opaque identity of the seller's consistent reporting-ledger snapshot. Every page reached from one periods cursor MUST return the same value.
@@ -21397,7 +21430,7 @@ export type GetReportingStatusResponse = {
      */
     all_accessible_media_buys: boolean;
     /**
-     * Exact independently reconciled configuration generations in the denominator.
+     * Exact independently reconciled configuration generations in the denominator. A generation derived from a reporting subscription is listed once per resolved offering, with offering_id, because one subscription version can resolve several offerings (match all, different products, or a resolution change).
      */
     delivery_config_generations: {
       /**
@@ -21411,6 +21444,13 @@ export type GetReportingStatusResponse = {
        */
       delivery_config_version: number;
       feed_purpose: ReportingFeedPurpose;
+      /**
+       * Present when and only when the generation is derived from a reporting subscription (media_buy.reporting_subscriptions): the offering its obligations in this entry resolved.
+       * @minLength 1
+       * @maxLength 128
+       * @pattern ^[A-Za-z0-9_.:-]{1,128}$
+       */
+      offering_id?: string;
     }[];
     feed_purposes: ReportingFeedPurpose[];
     finality: ReportingFinality[];
@@ -21432,7 +21472,7 @@ export type GetReportingStatusResponse = {
    */
   data_through?: string | null;
   /**
-   * Next obligation due time for an open scope. In a complete summary (view: summary, health: complete), the nearest future period start, strictly after ledger_as_of, across all active committed configuration generations in scope.delivery_config_generations. Sellers MUST populate it when such a scheduled period exists outside the closed evaluated scope, and omit it when none exists. This complete-scope projection applies only to summary responses. It is derived from the configuration schedule and does not represent an open obligation in the evaluated scope; its presence does not indicate that the scope is still open. Projecting it MUST NOT create, expose, lease, count, or alter an obligation whose period has not closed, or change obligation_counts, scope, or coverage. Obligation expected_at remains period.end plus schedule.delivery_sla; get_media_buy_delivery.next_expected_at remains the next webhook notification time.
+   * Next obligation due time for an open scope. In a complete summary (view: summary, health: complete), the nearest future period start, strictly after ledger_as_of, across all active committed configuration generations in scope.delivery_config_generations. Sellers MUST populate it when such a scheduled period exists outside the closed evaluated scope, and omit it when none exists. This complete-scope projection applies only to summary responses. It is derived from the configuration schedule and does not represent an open obligation in the evaluated scope; its presence does not indicate that the scope is still open. Projecting it MUST NOT create, expose, lease, count, or alter an obligation whose period has not closed, or change obligation_counts, scope, or coverage. Obligation expected_at remains period.end plus schedule.delivery_sla; get_media_buy_delivery.next_expected_at remains the next webhook notification time. For a generation derived from a reporting subscription, a scheduled period counts only when the subscription coverage rule, less open exceptions, owes it for at least one covered buy as flights currently stand; the value is a projection that a flight edit, a new buy, or an exception can move.
    * @format date-time
    */
   next_expected_at?: string;
@@ -21485,7 +21525,7 @@ export type GetReportingStatusResponse = {
    */
   adjustments?: ReportingAdjustment[];
   /**
-   * Authenticated caller's append-only reporting status history on this page. Current leaves are identified by obligation current_consumer_status_id or, for a missing seller obligation, by the supersession chain over configuration generation, report definition, and period. No other consumer's status is disclosed.
+   * Authenticated caller's append-only reporting status history on this page. Current leaves are identified by obligation current_consumer_status_id or, for a missing seller obligation, by the supersession chain over configuration generation, report definition, offering when the generation is subscription-derived, and period. No other consumer's status is disclosed.
    */
   consumer_statuses?: ReportingConsumerStatus[];
   /**
@@ -21500,7 +21540,7 @@ export type GetReportingStatusResponse = {
    */
   receipts?: ReportingReceipt[];
   /**
-   * Summary and periods views (experimental, media_buy.reporting_subscriptions): coverage exceptions, one entry per caller reporting subscription whose scope includes this account, including inactive subscriptions with retained obligations. Omitted when the seller does not advertise subscriptions.
+   * Summary and periods views (experimental, media_buy.reporting_subscriptions): coverage exceptions, one entry per caller reporting subscription whose scope includes this account, including inactive subscriptions with retained obligations, which carry status inactive, and subscriptions the account was removed from in place while its excluded_by_buyer entry is retained. Omitted when the seller does not advertise subscriptions.
    */
   subscription_coverage?: ReportingSubscriptionCoverage[];
   errors?: Error[];
@@ -21520,6 +21560,10 @@ export type ReportingObligation = {
    */
   offering_id?: string;
   feed_purpose: ReportingFeedPurpose;
+  /**
+   * Present, and true, only on a billing stub: the stretch [E, first incoming boundary after E) that a cutover hands to a billing feed whose schedule has no boundary at E (reporting-subscription.json cutover), on a billing reporting subscription or an account-level billing configuration (reporting-delivery-config.json billing_continuity). Its period starts off the schedule's grid and is shorter than one schedule period. It is otherwise an ordinary obligation: expected_at is period.end plus schedule.delivery_sla, and revisions, receipts, and consumer status key on its exact period. Absent on every other obligation.
+   */
+  stub?: true;
   reporting_profile: string;
   account_id: string;
   /**
@@ -21604,7 +21648,7 @@ export type ReportingObligation = {
   resource_retained_until?: string;
 };
 /**
- * One immutable, authenticated consumer statement about whether the required reporting for an expected configuration period could actually be consumed. It is operational status, not measurement data, delivery totals, a billing receipt, or authority to overwrite the seller's obligation/revision ledger. New statements supersede the current statement for the same consumer, configuration generation, report definition, and period while preserving append-only history.
+ * One immutable, authenticated consumer statement about whether the required reporting for an expected configuration period could actually be consumed. It is operational status, not measurement data, delivery totals, a billing receipt, or authority to overwrite the seller's obligation/revision ledger. New statements supersede the current statement for the same consumer, configuration generation, report definition, offering_id when present, and period while preserving append-only history.
  */
 export type ReportingConsumerStatus = {
 } & {
@@ -21613,7 +21657,7 @@ export type ReportingConsumerStatus = {
    */
   reporting_status_id: string;
   /**
-   * The authenticated consumer's current status leaf replaced by this statement. It must identify the same account, configuration generation, report definition, and period.
+   * The authenticated consumer's current status leaf replaced by this statement. It must identify the same account, configuration generation, report definition, offering_id when present, and period.
    */
   supersedes_reporting_status_id?: string;
   delivery_config_id: string;
@@ -21622,6 +21666,10 @@ export type ReportingConsumerStatus = {
    * Exact immutable report definition accepted with the configuration generation, preventing unlike reporting promises from sharing a status chain.
    */
   report_definition_id: string;
+  /**
+   * The resolved offering, for a generation derived from a reporting subscription (media_buy.reporting_subscriptions). Part of the chain identity there, because one subscription version can resolve several offerings that share a report definition and period. Required when the period's obligation carries offering_id, or would carry one when the consumer reports obligation_missing; absent otherwise.
+   */
+  offering_id?: string;
   /**
    * Expected half-open reporting period derived from the accepted configuration generation. This identity works even when the seller omitted the corresponding obligation.
    */
@@ -21882,9 +21930,13 @@ export type ReportingSubscriptionCoverage = {
   subscription_id: string;
   subscription_version: number;
   /**
-   * Current account-level state. active: no account-level exclusion is in effect; individual buys may still be excluded. excluded: an open account-level entry is in effect and none has reason action_required. action_required: an open account-level entry with reason action_required is in effect and pending_action says what must happen.
+   * Current account-level state. active: no account-level exclusion is in effect; individual buys may still be excluded. excluded: an open account-level entry is in effect and none has reason action_required. action_required: an open account-level entry with reason action_required is in effect and pending_action says what must happen. inactive: the subscription is deactivated (active false or omitted); periods that started before deactivated_at stay owed, and no later periods are. Takes precedence over the other values. An inactive subscription appears only while it still has retained obligations for this account; after that its entry is omitted.
    */
-  status: 'active' | 'excluded' | 'action_required';
+  status: 'active' | 'excluded' | 'action_required' | 'inactive';
+  /**
+   * When the subscription was deactivated. Present when and only when status is inactive.
+   */
+  deactivated_at?: string;
   pending_action?: PendingAction;
   /**
    * Exceptions that remove periods. An entry without media_buy_id applies to the whole account. Opening or closing one fires principal.changed with reason reporting_subscription_changed. Retained for status_retention_days after until. When the account's covered offerings have different period boundaries, the seller lists one entry per offering_id, each with that offering's cutover instants, as for gaps and timezone_cutovers.
@@ -21892,7 +21944,7 @@ export type ReportingSubscriptionCoverage = {
   excluded: {
   }[];
   /**
-   * Account timezone changes affecting account_timezone-aligned periods, retained for status_retention_days. A cutover: periods under the old timezone are owed when they start before the change, so they end by effective_at; periods under the new timezone are owed when they start at or after effective_at. Any stretch from effective_at to the first new-timezone boundary is owed under neither. Period boundaries differ between offerings, so when the account's covered offerings have different boundaries the seller lists one entry per offering_id; an entry without offering_id applies to every offering on the account.
+   * Account timezone changes affecting account_timezone-aligned periods, retained for status_retention_days. A cutover: periods under the old timezone are owed when they start before the change, so they end by effective_at; periods under the new timezone are owed when they start at or after effective_at. Any stretch from effective_at to the first new-timezone boundary is owed under neither, except on a billing offering, where it is owed as one stub period [effective_at, first new-timezone boundary) whose obligation carries stub true, so no billable hour goes unreported. Period boundaries differ between offerings, so when the account's covered offerings have different boundaries the seller lists one entry per offering_id; an entry without offering_id applies to every offering on the account.
    */
   timezone_cutovers?: {
     /**
@@ -21925,7 +21977,7 @@ export type ReportingSubscriptionCoverage = {
      */
     from: string;
     /**
-     * First period boundary at or after the re-grant.
+     * First period boundary at or after the re-grant, authorization.regranted_at.
      */
     until: string;
     reason: 'unauthorized';
@@ -22018,22 +22070,11 @@ export interface RevisionView {
   pagination: {};
 }
 export interface UnavailableLookup {
-  adcp_version?: string;
-  /**
-   * @format int
-   */
-  adcp_major_version?: number;
   status: 'failed';
   view: 'summary' | 'periods' | 'revision';
   failure_kind: 'lookup_unavailable';
-  context_id?: string;
   context?: ContextObject;
   message?: 'Reporting status resource is unavailable.';
-  /**
-   * @format date-time
-   */
-  timestamp?: string;
-  replayed?: boolean;
   adcp_error?: {
     code: 'NOT_FOUND';
     message: 'Reporting status resource is unavailable.';
@@ -22047,30 +22088,17 @@ export interface UnavailableLookup {
   }[];
 }
 export interface OperationalFailure {
-  adcp_version?: string;
-  /**
-   * @format int
-   */
-  adcp_major_version?: number;
   status: 'failed';
   view: 'summary' | 'periods' | 'revision';
   failure_kind: 'operational';
-  context_id?: string;
   context?: ContextObject;
-  message?: string;
-  /**
-   * @format date-time
-   */
-  timestamp?: string;
-  replayed?: boolean;
-  adcp_error?: Error;
   errors: Error[];
 }
 
 
 // sync_reporting_status parameters
 /**
- * Submit the authenticated consumer's operational reporting status for expected configuration periods. This is a batched idempotent append-only sync over seller-hosted task transport, not a webhook registration, measurement-data feed, or billing receipt. Identity comes from authenticated transport; the request MUST NOT assert a buyer or consumer principal. After the caller loses account authority, statuses for revisions it read before unauthorized_at remain acceptable for status_retention_days.
+ * Submit the authenticated consumer's operational reporting status for expected configuration periods. This is a batched idempotent append-only sync over seller-hosted task transport, not a webhook registration, measurement-data feed, or billing receipt. Identity comes from authenticated transport; the request MUST NOT assert a buyer or consumer principal. After the caller loses account authority, its statuses for that account are refused like any other reference; a seller that permits reconciliation after a relationship ends keeps a reduced grant instead of revoking.
  */
 export interface SyncReportingStatusRequest {
   /**
@@ -22105,25 +22133,28 @@ export interface SyncReportingStatusRequest {
  */
 export interface SyncReportingStatusResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -22140,15 +22171,6 @@ export interface SyncReportingStatusResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * @maxItems 100
    */
@@ -22181,7 +22203,7 @@ export interface FailedReportingConsumerStatus {
 
 // sync_reporting_receipts parameters
 /**
- * Submit durable authenticated consumer reconciliation results for reporting materializations and post-official adjustments. This is a batched idempotent upsert, not an acknowledgement of mere webhook receipt. Identity comes from authenticated transport; the request MUST NOT assert a buyer or governance principal. After the caller loses account authority, receipts for revisions it read before unauthorized_at remain acceptable for status_retention_days.
+ * Submit durable authenticated consumer reconciliation results for reporting materializations and post-official adjustments. This is a batched idempotent upsert, not an acknowledgement of mere webhook receipt. Identity comes from authenticated transport; the request MUST NOT assert a buyer or governance principal. After the caller loses account authority, its receipts for that account are refused like any other reference; a seller that permits reconciliation after a relationship ends keeps a reduced grant instead of revoking.
  */
 export interface SyncReportingReceiptsRequest {
   /**
@@ -22220,25 +22242,28 @@ export interface SyncReportingReceiptsRequest {
  */
 export interface SyncReportingReceiptsResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -22255,15 +22280,6 @@ export interface SyncReportingReceiptsResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * @maxItems 100
    */
@@ -22364,27 +22380,21 @@ export interface ReportMediaBuyIssueRequest {
 /**
  * Stored issue snapshot or terminal task error, never both. The issue status is a domain lifecycle distinct from completion of the reporting/read task.
  */
-export type ReportMediaBuyIssueResponse =
-  | {
-      outcome: 'recorded';
-      issue: MediaBuyIssue;
-      context?: ContextObject;
-      ext?: ExtensionObject;
-      /**
-       * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
-       */
-      replayed?: boolean;
-    }
-  | {
-      outcome: 'failed';
-      errors: Error[];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-      /**
-       * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
-       */
-      replayed?: boolean;
-    };
+export type ReportMediaBuyIssueResponse = ProtocolEnvelope &
+  (
+    | {
+        outcome: 'recorded';
+        issue: MediaBuyIssue;
+        context?: ContextObject;
+        ext?: ExtensionObject;
+      }
+    | {
+        outcome: 'failed';
+        errors: Error[];
+        context?: ContextObject;
+        ext?: ExtensionObject;
+      }
+  );
 /**
  * Seller-owned report status, separate from transport task status and MediaBuy revision. Only the seller may acknowledge or resolve it. Reporting never changes delivery or commercial terms.
  */
@@ -22459,27 +22469,21 @@ export interface GetMediaBuyIssueRequest {
 /**
  * Stored issue snapshot or terminal task error, never both. The issue status is a domain lifecycle distinct from completion of the reporting/read task.
  */
-export type GetMediaBuyIssueResponse =
-  | {
-      outcome: 'found';
-      issue: MediaBuyIssue;
-      context?: ContextObject;
-      ext?: ExtensionObject;
-      /**
-       * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
-       */
-      replayed?: boolean;
-    }
-  | {
-      outcome: 'failed';
-      errors: Error[];
-      context?: ContextObject;
-      ext?: ExtensionObject;
-      /**
-       * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
-       */
-      replayed?: boolean;
-    };
+export type GetMediaBuyIssueResponse = ProtocolEnvelope &
+  (
+    | {
+        outcome: 'found';
+        issue: MediaBuyIssue;
+        context?: ContextObject;
+        ext?: ExtensionObject;
+      }
+    | {
+        outcome: 'failed';
+        errors: Error[];
+        context?: ContextObject;
+        ext?: ExtensionObject;
+      }
+  );
 
 // provide_performance_feedback parameters
 /**
@@ -22623,25 +22627,28 @@ export interface DatetimeRange {
  */
 export type ProvidePerformanceFeedbackResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -22658,15 +22665,6 @@ export type ProvidePerformanceFeedbackResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (ProvidePerformanceFeedbackSuccess | ProvidePerformanceFeedbackError);
 /**
  * Success response - feedback received and processed
@@ -22818,25 +22816,28 @@ export interface EventSurface {
  */
 export type SyncEventSourcesResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -22853,15 +22854,6 @@ export type SyncEventSourcesResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (SyncEventSourcesSuccess | SyncEventSourcesError);
 /**
  * Success response - sync operation processed event sources
@@ -23192,25 +23184,28 @@ export interface EventCustomData {
  */
 export type LogEventResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -23227,15 +23222,6 @@ export type LogEventResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (LogEventSuccess | LogEventError);
 /**
  * Success response - events received and queued for processing
@@ -23440,25 +23426,28 @@ export interface PlatformSegment {
  */
 export type SyncAudiencesResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -23475,15 +23464,6 @@ export type SyncAudiencesResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (SyncAudiencesSuccess | SyncAudiencesError | SyncAudiencesSubmitted);
 /**
  * Success response - sync operation processed audiences (may include per-item failures)
@@ -23630,19 +23610,8 @@ export interface SyncAudiencesError {
  * Async task envelope returned when the whole sync operation cannot be confirmed before the response is emitted — for example, when the seller batches ingestion, when governance review gates the upload before matching can start, or when an upstream clean-room flow needs to settle before any per-audience result can be issued. The buyer invokes get_task_status with task_id or receives a webhook when the task completes; the audiences array with per-item action/status lands in the terminal result, not this envelope. Per-audience asynchronous matching (one audience in 'processing' while the rest of the sync resolves synchronously) belongs on the SyncAudiencesSuccess branch with status: processing on that item, not here. Matching latency on the per-audience status enum (processing → ready / too_small) is the common case; this envelope is the less-common operation-level case.
  */
 export interface SyncAudiencesSubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose audiences array carries per-item matching state via audience-status. See task-status.json for the full task-status enum.
-   */
   status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. The audiences array is issued on the completion artifact, not here. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Batch ingestion queued; typical turnaround 15-30 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   * @maxLength 2000
-   */
-  message?: string;
+  task_id: TaskID;
   /**
    * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
    */
@@ -23781,25 +23750,28 @@ export interface CatalogItemAvailabilityReference {
  */
 export type SyncCatalogsResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -23816,15 +23788,6 @@ export type SyncCatalogsResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (SyncCatalogsSuccess | SyncCatalogsError | SyncCatalogsSubmitted);
 /**
  * Seller acknowledgement for one buyer-authored catalog item availability update.
@@ -23922,7 +23885,6 @@ export type CatalogItemAvailabilityState = {
   errors?: [CatalogItemAvailabilityError, ...CatalogItemAvailabilityError[]];
   ext?: ExtensionObject;
 };
-
 /**
  * Success response - sync operation processed catalogs (may include per-catalog failures)
  */
@@ -24047,19 +24009,8 @@ export interface SyncCatalogsError {
  * Async task envelope returned when a catalog-only sync cannot be confirmed before the response — for example, when catalog ingestion and deduplication are queued for batch processing. A request containing item_availability_updates or item_availability_queries MUST NOT return this branch because availability operations are synchronous; mixed requests whose catalog work cannot finish synchronously and atomically fail before mutation and are retried as separate calls. For catalog-only requests, the buyer invokes get_task_status with task_id or receives a webhook when the task completes; the per-catalog results land in the terminal result, not this envelope.
  */
 export interface SyncCatalogsSubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose catalogs array is issued in-line. See task-status.json for the full task-status enum.
-   */
   status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Catalog ingestion queued; typical turnaround 5–15 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   * @maxLength 2000
-   */
-  message?: string;
+  task_id: TaskID;
   /**
    * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
    */
@@ -24762,25 +24713,28 @@ export interface Artifact {
  */
 export type BuildCreativeResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -24797,15 +24751,6 @@ export type BuildCreativeResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (
   | BuildCreativeSuccess
   | BuildCreativeMultiSuccess
@@ -25506,19 +25451,8 @@ export interface BuildCreativeError {
  * Async task envelope returned when build_creative cannot be confirmed before the response — for example, when a slow generative pipeline or multi-minute LLM workflow is queued. The buyer invokes get_task_status with task_id or receives a webhook when the task completes; the creative_manifest(s) land in the terminal result, not this envelope.
  */
 export interface BuildCreativeSubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shapes, whose creative_manifest or creative_manifests are issued in-line. See task-status.json for the full task-status enum.
-   */
   status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Generative build queued; typical turnaround 3–5 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   * @maxLength 2000
-   */
-  message?: string;
+  task_id: TaskID;
   /**
    * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
    */
@@ -25654,25 +25588,28 @@ export type PreviewCreativeRequest = {
  */
 export type PreviewCreativeResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -25689,15 +25626,6 @@ export type PreviewCreativeResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (
   | PreviewCreativeSingleResponse
   | PreviewCreativeBatchResponse
@@ -25826,23 +25754,12 @@ export interface PreviewCreativeVariantResponse {
  * Async task envelope returned only when the preview_creative request set allow_async to true and rendering cannot complete inline. The buyer polls get_task_status with task_id; the completed preview response is the task result.
  */
 export interface PreviewCreativeSubmitted {
+  status: 'submitted';
+  task_id: TaskID;
   /**
    * Preview-response discriminator for the asynchronous arm.
    */
   response_type: 'submitted';
-  /**
-   * Discriminates this opt-in async envelope from synchronous preview responses.
-   */
-  status: 'submitted';
-  /**
-   * Task handle used to poll get_task_status for the completed preview response.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why preview rendering was queued. Plain text only; buyers MUST treat this as untrusted agent input.
-   * @maxLength 2000
-   */
-  message?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -26140,25 +26057,28 @@ export type TransformerParam = {
  */
 export interface ListTransformersResponseCreativeAgent {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -26175,15 +26095,6 @@ export interface ListTransformersResponseCreativeAgent {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Transformer descriptors matching the query.
    */
@@ -26288,25 +26199,28 @@ export type CreativeVariant = DeliveryMetrics & {
  */
 export interface GetCreativeDeliveryResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -26323,15 +26237,6 @@ export interface GetCreativeDeliveryResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Account identifier. Present when the response spans or is scoped to a specific account.
    */
@@ -26501,7 +26406,7 @@ export interface ListCreativesRequest {
   webhook_activity_limit?: number;
   account?: AccountReference;
   /**
-   * Specific fields to include in response (omit for all fields). The 'concept' value returns both concept_id and concept_name. `format_id` is a deprecated 3.x compatibility projection; new integrations request `format_kind` and `format_option_ref`. Selecting localization automatically includes creative_id, status, assets, the selected format identity, and localization_unavailable when applicable. Selecting rights_attestation_evaluations automatically includes rights so each seller-produced result can be reconciled with the exact retained constraint and reference.
+   * Specific fields to include in response (omit for all fields). The 'concept' value returns both concept_id and concept_name. `format_id` is a deprecated 3.x compatibility projection; new integrations request `format_kind` and `format_option_ref`. Selecting localization automatically includes creative_id, status, assets, the selected format identity, and localization_unavailable when applicable. Selecting rights_attestation_evaluations automatically includes rights so each seller-produced result can be reconciled with the exact retained constraint and reference. staged_update is experimental (creative.live_updates); selecting it automatically includes status so the serving state and the staged update are read together.
    */
   fields?: (
     | 'creative_id'
@@ -26525,6 +26430,7 @@ export interface ListCreativesRequest {
     | 'variables'
     | 'concept'
     | 'pricing_options'
+    | 'staged_update'
   )[];
   context?: ContextObject;
   ext?: ExtensionObject;
@@ -26644,6 +26550,31 @@ export interface CreativeFilters {
 
 // list_creatives response
 /**
+ * A change accepted in staged mode and not yet promoted. While present, assets, revision_id, and status describe the version that serves; the staged content is the buyer's last synced content. Removed on promotion (the staged content and revision become current) and on withdrawal. Stays with status rejected under on_rejection keeps_prior until the buyer supersedes or withdraws it.
+ */
+export type CreativeStagedUpdate = {
+} & {
+  /**
+   * Review state of the staged update. rejected appears only when the seller's on_rejection is keeps_prior; the prior version keeps serving until the buyer supersedes or withdraws the update.
+   */
+  status: 'processing' | 'pending_review' | 'rejected';
+  revision_id?: CreativeRevisionID;
+  /**
+   * Kinds of change the staged update makes relative to the serving version.
+   *
+   * @minItems 1
+   */
+  change_kinds: [CreativeChangeKind, ...CreativeChangeKind[]];
+  /**
+   * When the seller accepted the staged update.
+   */
+  staged_at: string;
+  /**
+   * Human-readable reason. Present only when status is rejected.
+   */
+  rejection_reason?: string;
+};
+/**
  * An asset inside a materialized creative locale variant. Text and markdown assets may omit language when they make no language claim. When language is present, it MUST use the shared AdCP BCP 47 wire profile; conformance additionally requires exact equality with the enclosing variant locale.
  */
 export type LocalizedCreativeAsset = AssetVariant & {
@@ -26705,25 +26636,28 @@ export type MacroBearingURL11 = MacroBearingURL;
  */
 export interface ListCreativesResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -26740,15 +26674,6 @@ export interface ListCreativesResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Summary of the query that was executed
    */
@@ -26851,6 +26776,7 @@ export interface ListedCreativeNamedFormatReference {
    */
   platform_id?: string;
   revision_id?: CreativeRevisionID;
+  staged_update?: CreativeStagedUpdate;
   /**
    * Seller-maintained change token for this creative, distinct from the buyer-assigned revision_id. Sellers MUST use a positive integer or a string of 1 to 255 characters; the schema does not encode these bounds because JSON Schema bounds on an integer-or-string type break SDK code generation. The seller advances it on every committed change to state this read reports, whatever its origin: an AdCP task, a seller operator, seller automation, another authorized principal, or a connected platform. An externally observed change advances it when the seller ingests it. Reads, validation-only calls, and exact idempotency replays do not advance it. Sellers MUST NOT reuse a value for a different state of the same creative or move it backward. Buyers MUST treat the value as opaque: equal values mean the same state as the seller has observed and a different value means the state changed. Integer values also order numerically. A change record's resource_revision is the value immediately after that change, in the same JSON type; a read that returns a different value reflects later changes. Sellers MUST NOT use it as the buyer revision_id, and a buyer revision_id never substitutes for it. Optional; a seller that does not maintain it omits it.
    */
@@ -27067,7 +26993,7 @@ export interface ListedCreativeNamedFormatReference {
     reason_code: CreativeEventReasonCode;
   };
   /**
-   * Recent webhook fires scoped to this creative — creative.status_changed, creative.purged, creative.assignment_changed, and assignment-level indicators.changed deliveries. Present only when include_webhook_activity is true. Account-anchored records include subscriber_id; the parent creative_id disambiguates the record. Retention: 30 days from completed_at. See snapshot-and-log.mdx § Webhook activity log pattern.
+   * Recent webhook fires scoped to this creative — creative.status_changed, creative.staged_update_changed, creative.purged, creative.assignment_changed, and assignment-level indicators.changed deliveries. Present only when include_webhook_activity is true. Account-anchored records include subscriber_id; the parent creative_id disambiguates the record. Retention: 30 days from completed_at. See snapshot-and-log.mdx § Webhook activity log pattern.
    * @maxItems 200
    */
   webhook_activity?: WebhookActivityRecord[];
@@ -27200,6 +27126,7 @@ export interface ListedCreativeCanonicalFormatKind {
    */
   platform_id?: string;
   revision_id?: CreativeRevisionID;
+  staged_update?: CreativeStagedUpdate;
   /**
    * Seller-maintained change token for this creative, distinct from the buyer-assigned revision_id. Sellers MUST use a positive integer or a string of 1 to 255 characters; the schema does not encode these bounds because JSON Schema bounds on an integer-or-string type break SDK code generation. The seller advances it on every committed change to state this read reports, whatever its origin: an AdCP task, a seller operator, seller automation, another authorized principal, or a connected platform. An externally observed change advances it when the seller ingests it. Reads, validation-only calls, and exact idempotency replays do not advance it. Sellers MUST NOT reuse a value for a different state of the same creative or move it backward. Buyers MUST treat the value as opaque: equal values mean the same state as the seller has observed and a different value means the state changed. Integer values also order numerically. A change record's resource_revision is the value immediately after that change, in the same JSON type; a read that returns a different value reflects later changes. Sellers MUST NOT use it as the buyer revision_id, and a buyer revision_id never substitutes for it. Optional; a seller that does not maintain it omits it.
    */
@@ -27416,7 +27343,7 @@ export interface ListedCreativeCanonicalFormatKind {
     reason_code: CreativeEventReasonCode;
   };
   /**
-   * Recent webhook fires scoped to this creative — creative.status_changed, creative.purged, creative.assignment_changed, and assignment-level indicators.changed deliveries. Present only when include_webhook_activity is true. Account-anchored records include subscriber_id; the parent creative_id disambiguates the record. Retention: 30 days from completed_at. See snapshot-and-log.mdx § Webhook activity log pattern.
+   * Recent webhook fires scoped to this creative — creative.status_changed, creative.staged_update_changed, creative.purged, creative.assignment_changed, and assignment-level indicators.changed deliveries. Present only when include_webhook_activity is true. Account-anchored records include subscriber_id; the parent creative_id disambiguates the record. Retention: 30 days from completed_at. See snapshot-and-log.mdx § Webhook activity log pattern.
    * @maxItems 200
    */
   webhook_activity?: WebhookActivityRecord[];
@@ -27647,25 +27574,28 @@ export interface MergeSellerCopy {
  */
 export type SyncCreativesResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -27682,15 +27612,6 @@ export type SyncCreativesResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (SyncCreativesSuccess | SyncCreativesError | SyncCreativesSubmitted);
 /**
  * Path-addressable preflight result for one declaration. `resolvable` means the selected execution path advertises the exact operation; it does not claim that serve-time substitution has already occurred.
@@ -27742,6 +27663,7 @@ export interface SyncCreativesSuccess {
     account?: Account;
     action: CreativeAction;
     status?: CreativeStatus;
+    staged_update?: CreativeStagedUpdate;
     /**
      * The seller's identifier for this creative in its source of truth. Also returned on list_creatives.
      */
@@ -27831,19 +27753,8 @@ export interface SyncCreativesError {
  * Async task envelope returned when the whole sync operation cannot be confirmed before the response is emitted — for example, when the seller batches ingestion, when async review must settle before per-item results can be issued, or when governance review gates the sync. The buyer invokes get_task_status with task_id or receives a webhook when the task completes; the creatives array with per-item action/status lands in the terminal result, not this envelope. Per-item async review (an item in pending_review while the rest of the sync resolves synchronously) belongs on the SyncCreativesSuccess branch with status: pending_review, not here.
  */
 export interface SyncCreativesSubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose creatives array carries per-item approval state via CreativeStatus. See task-status.json for the full task-status enum.
-   */
   status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. The creatives array is issued on the completion artifact, not here. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Batch ingestion queued; typical turnaround 15-30 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   * @maxLength 2000
-   */
-  message?: string;
+  task_id: TaskID;
   /**
    * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
    */
@@ -27972,25 +27883,28 @@ export type ValidateInputResult = {
  */
 export interface ValidateInputResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -28007,15 +27921,6 @@ export interface ValidateInputResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Per-target validation results.
    */
@@ -28428,25 +28333,28 @@ export type Deployment =
  */
 export interface GetSignalsResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -28463,15 +28371,6 @@ export interface GetSignalsResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Array of matching signals
    */
@@ -28782,25 +28681,28 @@ export interface ActivateSignalRequest {
  */
 export type ActivateSignalResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -28817,15 +28719,6 @@ export type ActivateSignalResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (ActivateSignalSuccess | ActivateSignalError);
 /**
  * Success response - signal activated successfully to one or more deployment targets
@@ -28996,25 +28889,28 @@ export interface PropertyListFilters {
  */
 export interface CreatePropertyListResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -29031,15 +28927,6 @@ export interface CreatePropertyListResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   list: PropertyList;
   /**
    * Read-only bearer credential shareable with receivers to call get_property_list for this list_id, including all pages, in place of normal agent credentials. MUST NOT authorize other lists or mutations. Store this; it is only returned at creation time.
@@ -29152,25 +29039,28 @@ export interface UpdatePropertyListRequest {
  */
 export interface UpdatePropertyListResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -29187,15 +29077,6 @@ export interface UpdatePropertyListResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   list: PropertyList;
   ext?: ExtensionObject;
 }
@@ -29249,25 +29130,28 @@ export interface GetPropertyListRequest {
  */
 export interface GetPropertyListResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -29284,15 +29168,6 @@ export interface GetPropertyListResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   list: PropertyList;
   /**
    * Resolved identifiers that passed filters (if resolve=true). Cache these locally for real-time use.
@@ -29348,25 +29223,28 @@ export interface ListPropertyListsRequest {
  */
 export interface ListPropertyListsResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -29383,15 +29261,6 @@ export interface ListPropertyListsResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Array of property lists (metadata only, not resolved properties)
    */
@@ -29436,25 +29305,28 @@ export interface DeletePropertyListRequest {
  */
 export interface DeletePropertyListResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -29471,15 +29343,6 @@ export interface DeletePropertyListResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Whether the list was successfully deleted
    */
@@ -29673,25 +29536,28 @@ export interface CollectionListFilters {
  */
 export interface CreateCollectionListResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -29708,15 +29574,6 @@ export interface CreateCollectionListResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   list: CollectionList;
   /**
    * Token that authorizes sellers to fetch this list via get_collection_list. Only returned at creation time — buyers MUST store it in a secret manager. Scoped to this one list_id; MUST NOT be reused across lists. Governance agents MUST issue a distinct token per seller so per-relationship revocation is possible. Tokens MUST NOT be logged, appear in cache keys, or echo in error responses. delete_collection_list MUST revoke the token immediately; compromise-driven revocation MUST also signal cache invalidation to sellers (reduced cache_valid_until or a list-changed webhook). See Security considerations in docs/governance/collection/tasks/collection_lists.
@@ -29823,25 +29680,28 @@ export interface UpdateCollectionListRequest {
  */
 export interface UpdateCollectionListResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -29858,15 +29718,6 @@ export interface UpdateCollectionListResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   list: CollectionList;
   ext?: ExtensionObject;
 }
@@ -29920,25 +29771,28 @@ export interface GetCollectionListRequest {
  */
 export interface GetCollectionListResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -29955,15 +29809,6 @@ export interface GetCollectionListResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   list: CollectionList;
   /**
    * Resolved collections that passed filters (if resolve=true). Each entry contains identification and key metadata for seller matching.
@@ -30061,25 +29906,28 @@ export interface ListCollectionListsRequest {
  */
 export interface ListCollectionListsResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -30096,15 +29944,6 @@ export interface ListCollectionListsResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Array of collection lists (metadata only, not resolved collections)
    */
@@ -30149,25 +29988,28 @@ export interface DeleteCollectionListRequest {
  */
 export interface DeleteCollectionListResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -30184,15 +30026,6 @@ export interface DeleteCollectionListResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Whether the list was successfully deleted
    */
@@ -30241,25 +30074,28 @@ export interface ListContentStandardsRequest {
  */
 export type ListContentStandardsResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -30276,15 +30112,6 @@ export type ListContentStandardsResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (
   | {
       /**
@@ -30783,25 +30610,28 @@ export interface GetContentStandardsRequest {
  */
 export type GetContentStandardsResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -30818,15 +30648,6 @@ export type GetContentStandardsResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (
   | {
       /**
@@ -31183,25 +31004,28 @@ export interface Artifact1 {
  */
 export type CreateContentStandardsResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -31218,15 +31042,6 @@ export type CreateContentStandardsResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (
   | {
       /**
@@ -31356,25 +31171,28 @@ export interface UpdateContentStandardsRequest {
  */
 export type UpdateContentStandardsResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -31391,15 +31209,6 @@ export type UpdateContentStandardsResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (UpdateContentStandardsSuccess | UpdateContentStandardsError);
 export interface UpdateContentStandardsSuccess {
   /**
@@ -31466,25 +31275,28 @@ export interface CalibrateContentRequest {
  */
 export type CalibrateContentResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -31501,15 +31313,6 @@ export type CalibrateContentResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (
   | {
       verdict: BinaryVerdict;
@@ -31634,25 +31437,28 @@ export interface ValidateContentDeliveryRequest {
  */
 export type ValidateContentDeliveryResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -31669,15 +31475,6 @@ export type ValidateContentDeliveryResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (
   | {
       /**
@@ -31809,25 +31606,28 @@ export interface GetMediaBuyArtifactsRequest {
  */
 export type GetMediaBuyArtifactsResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -31844,15 +31644,6 @@ export type GetMediaBuyArtifactsResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (
   | {
       /**
@@ -31976,25 +31767,28 @@ export interface GetCreativeFeaturesRequest {
  */
 export type GetCreativeFeaturesResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -32011,15 +31805,6 @@ export type GetCreativeFeaturesResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (GetCreativeFeaturesSuccess | GetCreativeFeaturesError | GetCreativeFeaturesSubmitted);
 /**
  * Terminal success response. In AdCP 3.x evaluation_id is an optional migration field that providers SHOULD emit; it becomes required in AdCP 4.0. When present, it is the provider-side reconciliation identity allocated when the evaluation was accepted and remains stable across exact replays and asynchronous completion.
@@ -32138,25 +31923,13 @@ export interface GetCreativeFeaturesError {
  * Async acknowledgement returned after the provider accepts an evaluation but cannot complete it within the response window. Exact keyed request replays return this original acknowledgement with replayed: true and the same task_id. In AdCP 3.x providers SHOULD also return evaluation_id; it becomes required in AdCP 4.0. When present, exact replays and terminal results preserve it. The caller polls get_task_status using task_id.
  */
 export interface GetCreativeFeaturesSubmitted {
-  /**
-   * Task-level status literal that discriminates this acknowledgement from terminal success and error responses.
-   */
   status: 'submitted';
-  /**
-   * AdCP task handle used to poll get_task_status or correlate terminal webhook delivery. Distinct from evaluation_id.
-   * @minLength 1
-   */
-  task_id: string;
+  task_id: TaskID;
   /**
    * Provider-generated identity allocated when the evaluation is accepted. Optional in AdCP 3.x and required in AdCP 4.0. Providers SHOULD emit it in 3.x; when present, exact replays and the terminal result MUST carry this same value. Distinct from task_id and idempotency_key.
    * @minLength 1
    */
   evaluation_id?: string;
-  /**
-   * Optional human-readable explanation of why the evaluation is submitted. Plain text only; callers treat it as untrusted provider input.
-   * @maxLength 2000
-   */
-  message?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -32486,25 +32259,28 @@ export interface SyncPlansRequest {
  */
 export interface SyncPlansResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -32521,15 +32297,6 @@ export interface SyncPlansResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Status for each synced plan.
    */
@@ -32890,6 +32657,36 @@ export interface ReportPlanOutcomeResponse {
    */
   adcp_major_version?: number;
   /**
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
+   */
+  context_id?: string;
+  context?: ContextObject;
+  task_id?: TaskID;
+  status: TaskStatus;
+  message?: TaskMessage;
+  /**
+   * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
+   */
+  timestamp?: string;
+  /**
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   */
+  replayed?: boolean;
+  adcp_error?: Error;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Opaque authorization context issued only by an approved check_governance decision. Buyers attach it to governed requests across protocol roles (media buys, rights acquisitions, signal activations, creative services); receiving services persist it and forward it on subsequent execution and lifecycle checks. The context is the authoritative plan binding at service boundaries, so a service MUST NOT require a separate plan_id.
+   *
+   * Governance agents MUST emit a compact JWS per the AdCP JWS profile. Verifiers validate standard authorization claims such as signature, issuer, audience, expiry, and replay protection, but intermediaries MUST NOT interpret embedded governance state for business logic. A conditions or denied verdict never carries an authorization context.
+   *
+   * This is the primary correlation key for audit and reporting across the governance lifecycle.
+   */
+  governance_context?: string;
+  /**
+   * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
+   */
+  payload?: {};
+  /**
    * Unique identifier for this outcome record.
    */
   outcome_id: string;
@@ -32945,11 +32742,6 @@ export interface ReportPlanOutcomeResponse {
      */
     budget_remaining?: number;
   };
-  /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
-   */
-  replayed?: boolean;
-  context?: ContextObject;
   ext?: ExtensionObject;
 }
 
@@ -33076,6 +32868,36 @@ export interface ReportPlanAdjustmentResponse {
    */
   adcp_major_version?: number;
   /**
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
+   */
+  context_id?: string;
+  context?: ContextObject;
+  task_id?: TaskID;
+  status: TaskStatus;
+  message?: TaskMessage;
+  /**
+   * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
+   */
+  timestamp?: string;
+  /**
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   */
+  replayed?: boolean;
+  adcp_error?: Error;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Opaque authorization context issued only by an approved check_governance decision. Buyers attach it to governed requests across protocol roles (media buys, rights acquisitions, signal activations, creative services); receiving services persist it and forward it on subsequent execution and lifecycle checks. The context is the authoritative plan binding at service boundaries, so a service MUST NOT require a separate plan_id.
+   *
+   * Governance agents MUST emit a compact JWS per the AdCP JWS profile. Verifiers validate standard authorization claims such as signature, issuer, audience, expiry, and replay protection, but intermediaries MUST NOT interpret embedded governance state for business logic. A conditions or denied verdict never carries an authorization context.
+   *
+   * This is the primary correlation key for audit and reporting across the governance lifecycle.
+   */
+  governance_context?: string;
+  /**
+   * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
+   */
+  payload?: {};
+  /**
    * Governance-agent identifier for the adjustment record.
    */
   adjustment_id: string;
@@ -33128,11 +32950,6 @@ export interface ReportPlanAdjustmentResponse {
     net_committed: number;
     budget_remaining: number;
   };
-  /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
-   */
-  replayed?: boolean;
-  context?: ContextObject;
   ext?: ExtensionObject;
 }
 
@@ -33180,25 +32997,28 @@ export interface GetPlanAuditLogsRequest {
  */
 export interface GetPlanAuditLogsResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -33215,15 +33035,6 @@ export interface GetPlanAuditLogsResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Audit data for each requested plan.
    */
@@ -34068,6 +33879,36 @@ export interface CheckGovernanceResponse {
    */
   adcp_major_version?: number;
   /**
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
+   */
+  context_id?: string;
+  context?: ContextObject;
+  task_id?: TaskID;
+  status: TaskStatus;
+  message?: TaskMessage;
+  /**
+   * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
+   */
+  timestamp?: string;
+  /**
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   */
+  replayed?: boolean;
+  adcp_error?: Error;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Opaque authorization context issued only by an approved check_governance decision. Buyers attach it to governed requests across protocol roles (media buys, rights acquisitions, signal activations, creative services); receiving services persist it and forward it on subsequent execution and lifecycle checks. The context is the authoritative plan binding at service boundaries, so a service MUST NOT require a separate plan_id.
+   *
+   * Governance agents MUST emit a compact JWS per the AdCP JWS profile. Verifiers validate standard authorization claims such as signature, issuer, audience, expiry, and replay protection, but intermediaries MUST NOT interpret embedded governance state for business logic. A conditions or denied verdict never carries an authorization context.
+   *
+   * This is the primary correlation key for audit and reporting across the governance lifecycle.
+   */
+  governance_context?: string;
+  /**
+   * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
+   */
+  payload?: {};
+  /**
    * Unique identifier for this governance check record. Use in report_plan_outcome to link outcomes to the check that authorized them.
    */
   check_id: string;
@@ -34234,16 +34075,6 @@ export interface CheckGovernanceResponse {
    * @pattern ^sha256:[a-f0-9]{64}$
    */
   runtime_attestation_binding_digest?: string;
-  /**
-   * Opaque authorization context for this governed action. Present only when verdict is approved; denied and conditions responses MUST NOT carry it. The buyer attaches it to the protocol envelope when sending the governed request. The service persists and forwards it on subsequent execution and lifecycle checks without requiring plan_id.
-   *
-   * Governance agents MUST emit a compact JWS per the AdCP JWS profile. Verifiers validate the standard authorization claims but MUST NOT interpret embedded governance state for business logic. The issuing governance agent uses the token to recover its internal plan and decision state.
-   * @minLength 1
-   * @maxLength 4096
-   * @pattern ^[\x20-\x7E]+$
-   */
-  governance_context?: string;
-  context?: ContextObject;
   ext?: ExtensionObject;
 }
 
@@ -34295,25 +34126,28 @@ export type SIContextUse = 'presentation_only' | 'comparison_set' | 'reasoning_c
  */
 export interface SIGetOfferingResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -34330,15 +34164,6 @@ export interface SIGetOfferingResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Whether the offering is currently available
    */
@@ -34817,25 +34642,28 @@ export type SIUIElement = {
  */
 export interface SIInitiateSessionResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -34852,15 +34680,6 @@ export interface SIInitiateSessionResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Unique session identifier for subsequent messages
    */
@@ -34947,25 +34766,28 @@ export interface SISendMessageRequest {
  */
 export interface SISendMessageResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -34982,15 +34804,6 @@ export interface SISendMessageResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Session identifier
    */
@@ -35165,25 +34978,28 @@ export interface SITerminateSessionRequest {
  */
 export interface SITerminateSessionResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -35200,15 +35016,6 @@ export interface SITerminateSessionResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Terminated session identifier
    */
@@ -35988,7 +35795,7 @@ export type ReportingDeliveryCapabilities = {
   subscriptions?: {
     supported: true;
     /**
-     * Most accounts one subscription serves. Beyond it the seller excludes accounts with reason capacity, deterministically, and reports which. Absent means no declared limit.
+     * Most accounts one subscription serves. Admission is sticky and ordered by the account's authorization.authorized_at, then account_id in byte order, the same for every subscription of a principal, and accounts without covered buys count (reporting-subscription.json admission). Waiting accounts carry a capacity exception. Absent means no declared limit.
      */
     max_accounts?: number;
     /**
@@ -36039,7 +35846,7 @@ export type ReportingDeliveryCapabilities = {
    */
   automated_recovery_window_seconds: number;
   /**
-   * Minimum period for which obligation, revision, and materialization metadata remain queryable. Revision content is retained for this period only for the revisions named in reporting-revision.json content_retention; other superseded snapshot revisions MAY be compacted to metadata only.
+   * Minimum period, in exact 24-hour days (86,400 seconds each, not civil days, wherever it bounds a window such as unauthorized_at plus status_retention_days), for which obligation, revision, and materialization metadata remain queryable. Revision content is retained for this period only for the revisions named in reporting-revision.json content_retention; other superseded snapshot revisions MAY be compacted to metadata only.
    */
   status_retention_days: number;
   /**
@@ -36101,6 +35908,14 @@ export type ReportingDeliveryOffering = {
    */
   unmapped_dimensions?:
     string[];
+  /**
+   * Experimental (media_buy.reporting_subscriptions). When this offering became, or becomes, available. Before it the offering is not a candidate for subscription resolution or configuration. Absent: available since before any retained obligation.
+   */
+  available_from?: string;
+  /**
+   * Experimental (media_buy.reporting_subscriptions). When the seller withdrew, or will withdraw, this offering. From it the offering is not a candidate, and subscriptions that resolved it move to their next candidate as a resolution change, a cutover at withdrawn_at, so periods that started before it stay owed under it in full. A withdrawn offering stays in offerings, with withdrawn_at, while any obligation that resolved it is retained, so buyers can still read its schedule. Sellers advertising media_buy.reporting_subscriptions MUST NOT remove an offering from offerings any other way while such an obligation is retained.
+   */
+  withdrawn_at?: string;
   /**
    * Retrievable immutable reporting-report-definition.json document on the authenticated seller/provider or AdCP-registry origin.
    */
@@ -36191,6 +36006,14 @@ export type ReportingDeliveryOffering = {
    */
   unmapped_dimensions?:
     string[];
+  /**
+   * Experimental (media_buy.reporting_subscriptions). When this offering became, or becomes, available. Before it the offering is not a candidate for subscription resolution or configuration. Absent: available since before any retained obligation.
+   */
+  available_from?: string;
+  /**
+   * Experimental (media_buy.reporting_subscriptions). When the seller withdrew, or will withdraw, this offering. From it the offering is not a candidate, and subscriptions that resolved it move to their next candidate as a resolution change, a cutover at withdrawn_at, so periods that started before it stay owed under it in full. A withdrawn offering stays in offerings, with withdrawn_at, while any obligation that resolved it is retained, so buyers can still read its schedule. Sellers advertising media_buy.reporting_subscriptions MUST NOT remove an offering from offerings any other way while such an obligation is retained.
+   */
+  withdrawn_at?: string;
   /**
    * Retrievable immutable reporting-report-definition.json document on the authenticated seller/provider or AdCP-registry origin.
    */
@@ -36394,25 +36217,28 @@ export type ExperimentalFeatureID = string;
  */
 export interface GetAdCPCapabilitiesResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -36429,15 +36255,6 @@ export interface GetAdCPCapabilitiesResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Seller working-time calendars, uniquely keyed by immutable calendar_id. Every published business-clock SLA MUST resolve to one declaration here. Retain earlier declarations while requests referencing them remain pending. Presence declares calendar support, not any product-level timing commitment.
    * @maxItems 32
@@ -37593,6 +37410,28 @@ export interface GetAdCPCapabilitiesResponse {
      */
     supports_assignment_merge?: boolean;
     /**
+     * Which kinds of change this agent applies in place to a live creative through sync_creatives under the same creative_id, and how the creative serves while each is decided. A creative is live when its status is approved and it has at least one assignment on a package that is not canceled, whose flight has not ended, and whose media buy is not in a terminal state; a paused package still counts. This declaration is a floor: every listed kind is accepted on every live creative in the listed serving mode or a less disruptive one (uninterrupted < staged < paused_for_review). An unlisted kind may still be accepted for some creatives; a sync_creatives dry_run returns the exact outcome of one change. A declaring agent MUST refuse a change it does not apply in place with CREATIVE_LIVE_UPDATE_UNSUPPORTED (not INVALID_STATE), and MUST always accept changes to name and tags. Requires has_creative_library: true. Omitted: the agent makes no claim about live creatives.
+     */
+    live_updates?: {
+      /**
+       * Change kinds applied in place, each with its serving mode. At most one entry per change kind (sellers MUST NOT list a kind twice). An empty array means live creatives are immutable apart from name and tags.
+       */
+      in_place: {
+        change: CreativeChangeKind;
+        serving: LiveUpdateServingMode;
+        /**
+         * Only with serving staged; defaults to keeps_prior. keeps_prior: if review rejects the staged update, the prior version keeps serving and the creative's status is unchanged. stops: the creative transitions to rejected and stops serving, with impairments on its media buys.
+         */
+        on_rejection?: 'keeps_prior' | 'stops';
+      }[];
+      /**
+       * Upper bound, in seconds, between the moment an in-place change is applied or a staged update is promoted and the moment no assignment serves the prior version anywhere (ad-server, CDN, SSAI, and exchange caches). Omitted: the agent makes no bound claim, and buyers SHOULD assume the prior version may serve briefly.
+       * @minimum 0
+       * @format int
+       */
+      max_propagation_seconds?: number;
+    };
+    /**
      * When true, this agent accepts trackers on creative assignments in create_media_buy, update_media_buy, and sync_creatives, fires them in addition to the creative's own trackers or rejects the assignment, enforces shared format tracker-slot limits, and returns the assignment-scoped tracker list in list_creatives and get_media_buys readback. Requires has_creative_library: true. When false or absent, the agent MUST reject the field with UNSUPPORTED_FEATURE and buyers MUST NOT send it.
      */
     supports_assignment_trackers?: boolean;
@@ -38229,7 +38068,7 @@ export interface AccountRequestsSupported {
   request_task: 'request_account';
   read_task: 'list_accounts';
   /**
-   * Account attributes this seller accepts in request_account change requests (account_id plus fields). Absent or empty means the seller supports opening accounts only. Advisory: sellers still validate each change.
+   * Account attributes this seller accepts in request_account change requests (account_id plus fields). Absent or empty means the seller supports opening accounts only. Advisory: sellers still validate each change. currency and timezone are changeable only when listed; a seller that changes an account's timezone through request_account MUST list timezone, and refuses a change to an unlisted currency or timezone with UNSUPPORTED_FEATURE.
    */
   changeable_attributes?: (
     | 'countries'
@@ -38462,10 +38301,7 @@ export interface GetTaskStatusRequest {
    * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
-  /**
-   * Unique identifier of the task to retrieve
-   */
-  task_id: string;
+  task_id: TaskID;
   account?: AccountReference;
   /**
    * Include full conversation history for this task (may increase response size)
@@ -38485,25 +38321,28 @@ export interface GetTaskStatusRequest {
  */
 export interface GetTaskStatusResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for this task
-   */
-  task_id: string;
+  task_id: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -38520,15 +38359,6 @@ export interface GetTaskStatusResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   task_type: TaskType;
   protocol: AdCPProtocol;
   /**
@@ -38687,7 +38517,7 @@ export interface ListTasksRequest {
      * Filter by specific task IDs
      * @maxItems 100
      */
-    task_ids?: string[];
+    task_ids?: TaskID[];
     /**
      * Filter tasks where context contains this text (searches media_buy_id, signal_id, etc.)
      */
@@ -38722,25 +38552,28 @@ export interface ListTasksRequest {
  */
 export interface ListTasksResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -38757,15 +38590,6 @@ export interface ListTasksResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Summary of the query that was executed
    */
@@ -38831,10 +38655,7 @@ export interface ListTasksResponse {
    * Array of tasks matching the query criteria
    */
   tasks: {
-    /**
-     * Unique identifier for this task
-     */
-    task_id: string;
+    task_id: TaskID;
     task_type: TaskType;
     /**
      * AdCP domain this task belongs to
@@ -38958,25 +38779,28 @@ export interface AgentNotificationConfig {
  */
 export interface SyncAgentNotificationConfigsResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -38993,15 +38817,6 @@ export interface SyncAgentNotificationConfigsResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Whether this was a dry run and no persisted subscriber set changed.
    */
@@ -39040,7 +38855,7 @@ export type ReportingSubscription = {
    */
   subscription_id: string;
   /**
-   * Caller-selected immutable semantic generation, with its own accepted_at. Increment when the selector, reconciliation_mode, destination, scope, exclude_account_ids, or operator_domains change. active and replace_account_configs change in place. Sellers reject a reused version with different semantic content.
+   * Caller-selected immutable semantic generation, with its own accepted_at. Increment when the selector, reconciliation_mode, destination (including destination_overrides), the scope kind (all_authorized_accounts or account_ids), or operator_domains change. Membership edits, adding or removing account_ids and changing exclude_account_ids, apply in place without a new version (see membership), as do active and replace_account_configs. Sellers reject a reused version with different semantic content.
    */
   subscription_version: number;
   /**
@@ -39098,11 +38913,11 @@ export type ReportingSubscription = {
     dimensions?:
       ReportingDimension[];
     /**
-     * exact selects the offering whose dimension set equals dimensions; native dimensions that do not map to the vocabulary count as distinct, so package by device does not equal package. finest selects the single offering with the most mapped dimensions among those including every selector dimension. Ties under exact and finest go to the lowest offering_id in byte order. all selects every offering including every selector dimension, each with its own obligations. Defaults to exact when dimensions is present and finest when it is absent. With match exact and no dimensions, every candidate qualifies and the lowest offering_id wins. Matching reads each offering's standard_dimensions and unmapped_dimensions. Billing subscriptions SHOULD use exact.
+     * exact selects the offering whose dimension set equals dimensions; native dimensions that do not map to the vocabulary count as distinct, so package by device does not equal package. finest selects the single offering with the most mapped dimensions among those including every selector dimension. Ties under exact and finest go to the lowest offering_id in byte order. all selects every offering including every selector dimension, each with its own obligations. Defaults to exact when dimensions is present and finest when it is absent. With match exact and no dimensions, every candidate qualifies and the lowest offering_id wins. Matching reads each offering's standard_dimensions and unmapped_dimensions. Billing subscriptions MUST use exact with dimensions, so a billing feed's breakdown never depends on which offerings happen to exist.
      */
     match?: 'exact' | 'finest' | 'all';
     /**
-     * IANA timezone override for period boundaries. Only valid when scope.account_ids names exactly one account. An account_timezone offering matches and uses this zone in place of the account's. A utc offering matches only when this is a UTC alias (UTC or Etc/UTC). A source_timezone or fixed billing_cycle offering matches only when its published period_timezone equals this one. A billing_cycle offering whose anchor the buyer configures never matches a subscription, which has no way to supply the anchor.
+     * IANA timezone override for period boundaries. Only valid when scope.account_ids names exactly one account. An account_timezone offering matches and uses this zone in place of the account's. A utc offering matches only when this is exactly UTC or Etc/UTC; other names that tzdata links to UTC, such as Etc/GMT, GMT, Etc/Universal, or Zulu, do not match. A source_timezone or fixed billing_cycle offering matches only when its published period_timezone equals this one. A billing_cycle offering whose anchor the buyer configures never matches a subscription, which has no way to supply the anchor.
      */
     period_timezone?: string;
   };
@@ -39124,6 +38939,25 @@ export type ReportingSubscription = {
      */
     path_template?: string;
   };
+  /**
+   * Per-account routing inside one subscription, so an agency keeps advertisers apart without registering a subscription per destination. Each entry sends the accounts it selects, by account_ids or by operator domain, to its own destination; every other account uses destination. An account_ids entry wins over an operator_domains entry. An account may appear in at most one account_ids entry and an operator domain in at most one operator_domains entry; otherwise the whole request fails with INVALID_REQUEST. Every override destination MUST have the same pattern and transport as destination, so routing never changes which offering resolves. Changing overrides is a destination change and needs a new subscription_version. Requires destination.
+   *
+   * @minItems 1
+   * @maxItems 64
+   */
+  destination_overrides?: ({
+    } & (
+      | {
+        }
+      | {
+        }
+    ) &
+      (
+        | {
+          }
+        | {
+          }
+      ))[];
 };
 /**
  * This task begins after authentication: AdCP defines no credential-registration protocol, and the seller’s authorization system (OAuth, API keys, signed requests, workload identity) issues and maps credentials before the first call. Declaratively synchronize selected sections of the authenticated principal's standing configuration with one AdCP agent. The principal is a party: a buyer agent, or an operator-side identity acting through any client. Use this task only to change state; read current state, the configuration version, and destination setup progress through get_principal, and prefer this task over the narrower sync_agent_notification_configs when both are advertised. This task does not register a buyer agent: the stable principal MAY be a delegated human user or an autonomous workload. Identity is resolved from authenticated transport and MUST NOT be accepted from request-body agent URLs, signing key IDs, account IDs, or other self-asserted fields. Each present section is the caller's complete desired set and replaces only that section; omitted sections remain unchanged. All submitted sections apply atomically or none do. This task configures reusable principal resources but grants no advertiser-account authority. Sellers implementing it MUST advertise adcp.principal and protocol.principal.
@@ -39375,17 +39209,16 @@ export type ReportingSubscriptionState = {
    */
   accepted_at: string;
   /**
-   * Earlier versions, newest first, retained while any obligation of that version is retained, so a buyer can recompute their expected periods after local-state loss. Each entry carries the configuration that version had.
+   * Earlier versions, newest first, retained while any obligation of that version is retained, so a buyer can recompute their expected periods after local-state loss. Each entry carries the configuration that version had. At most the 16 newest are listed inline; prior_versions_count gives the total, and the rest are read through get_principal reporting_subscription_page.
+   *
+   * @maxItems 16
    */
-  prior_versions?: {
-    subscription_version: number;
-    accepted_at: string;
-    /**
-     * The next version's accepted_at, the cutover instant: this version owes its periods that start before it, in full.
-     */
-    superseded_at: string;
-    configuration?: ReportingSubscription;
-  }[];
+  prior_versions?:
+    ReportingSubscriptionPriorVersion[];
+  /**
+   * Total retained prior versions. Present whenever prior_versions is. When larger than the number listed inline, page the rest through get_principal reporting_subscription_page with list prior_versions.
+   */
+  prior_versions_count?: number;
   /**
    * When active false was applied. Present when and only when state is inactive.
    */
@@ -39418,73 +39251,62 @@ export type ReportingSubscriptionState = {
   issues?:
     Error[];
   /**
-   * Accounts where this subscription has an open get_reporting_status exception, so a caller need not poll every account. Changes fire principal.changed with reason reporting_subscription_changed.
+   * Accounts where this subscription has an open get_reporting_status exception, so a caller need not poll every account, in account_id byte order. At most 1000 are listed inline; accounts_with_exceptions_count gives the total, and the rest are read through get_principal reporting_subscription_page. Changes fire principal.changed with reason reporting_subscription_changed.
    *
    * @maxItems 1000
    */
-  accounts_with_exceptions?: {
-    account_id: string;
-    /**
-     * Reasons of the open exceptions, account- or buy-level.
-     *
-     * @minItems 1
-     */
-    reasons: [
-      'offering_unsupported' | 'capacity' | 'overridden' | 'excluded_by_buyer' | 'action_required',
-      ...('offering_unsupported' | 'capacity' | 'overridden' | 'excluded_by_buyer' | 'action_required')[]
-    ];
+  accounts_with_exceptions?: ReportingSubscriptionAccountExceptions[];
+  /**
+   * Total accounts with an open exception. Present whenever accounts_with_exceptions is.
+   */
+  accounts_with_exceptions_count?: number;
+  /**
+   * Total accounts in accounts_unauthorized. Present whenever accounts_unauthorized is.
+   */
+  accounts_unauthorized_count?: number;
+  /**
+   * Destination generation bound for each destination_overrides destination_id. Present when and only when the configuration has destination_overrides.
+   *
+   * @maxItems 64
+   */
+  destination_override_refs?: {
+    destination_id: string;
+    destination_ref: string;
   }[];
   /**
-   * Accounts this subscription covered whose authority the caller has since lost, so a revoked grant reads differently from a seller that stopped publishing. Only accounts the subscription previously covered appear. Entries carry no current account data and nothing created after unauthorized_at. An entry is removed on re-grant and is otherwise retained for status_retention_days after unauthorized_at; after that it drops, and a later re-grant is a fresh coverage start from authorized_at with no gap claimed. Every addition or removal fires principal.changed with reason reporting_subscription_changed.
+   * Accounts this subscription covered whose authority the caller has since lost, in account_id byte order, so a revoked grant reads differently from a seller that stopped publishing. At most 1000 are listed inline; accounts_unauthorized_count gives the total, and the rest are read through get_principal reporting_subscription_page. Only accounts the subscription previously covered appear. Entries carry no current account data and nothing created after unauthorized_at. An entry is removed on re-grant and is otherwise retained for status_retention_days after unauthorized_at; after that it drops, and a later re-grant is a fresh coverage start from authorized_at with no gap claimed. Every addition or removal fires principal.changed with reason reporting_subscription_changed.
    *
    * @maxItems 1000
    */
-  accounts_unauthorized?: {
-    account_id: string;
-    /**
-     * When the caller's authority for the account ended. Nothing is delivered for periods ending after it, including on retries.
-     */
-    unauthorized_at: string;
-    /**
-     * Last period boundary at or before unauthorized_at: the end of the last period owed before authority ended.
-     */
-    last_owed_period_end?: string;
-    /**
-     * Owed periods that ended at or before unauthorized_at but were not delivered by then. They are withheld, not missing, and never count as seller delay. If authority returns, they are owed again, due at the re-grant time plus the offering's delivery_sla.
-     */
-    withheld_period_count: number;
-    /**
-     * Obligations of the withheld periods, when the seller lists them.
-     *
-     * @maxItems 1000
-     */
-    withheld_reporting_obligation_ids?: string[];
-  }[];
+  accounts_unauthorized?: ReportingSubscriptionUnauthorizedAccount[];
 };
 /**
  * Result of synchronizing selected sections of the principal's standing configuration. Applied responses return the complete current credential-free configuration. Validated dry-run responses report the would-be action without issuing durable identifiers. Failed responses deliberately cannot carry principal identifiers, versions, or configuration state.
  */
 export interface SyncPrincipalResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -39501,15 +39323,6 @@ export interface SyncPrincipalResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   result: AppliedPrincipalConfiguration | ValidatedPrincipalDryRun | FailedPrincipalSync;
   ext?: ExtensionObject;
 }
@@ -39640,6 +39453,48 @@ export interface PrincipalDeclarationsState {
     reason: string;
   }[];
 }
+export interface ReportingSubscriptionPriorVersion {
+  subscription_version: number;
+  accepted_at: string;
+  /**
+   * The next version's accepted_at, the cutover instant: this version owes its periods that start before it, in full.
+   */
+  superseded_at: string;
+  configuration?: ReportingSubscription;
+}
+export interface ReportingSubscriptionAccountExceptions {
+  account_id: string;
+  /**
+   * Reasons of the open exceptions, account- or buy-level.
+   *
+   * @minItems 1
+   */
+  reasons: [
+    'offering_unsupported' | 'capacity' | 'overridden' | 'excluded_by_buyer' | 'action_required',
+    ...('offering_unsupported' | 'capacity' | 'overridden' | 'excluded_by_buyer' | 'action_required')[]
+  ];
+}
+export interface ReportingSubscriptionUnauthorizedAccount {
+  account_id: string;
+  /**
+   * When the caller's authority for the account ended. Nothing is delivered for periods ending after it, including on retries.
+   */
+  unauthorized_at: string;
+  /**
+   * Last period boundary at or before unauthorized_at: the end of the last period owed before authority ended.
+   */
+  last_owed_period_end?: string;
+  /**
+   * Owed periods that ended at or before unauthorized_at but were not delivered by then. They are withheld, not missing, and never count as seller delay. If authority returns, they are owed again, due at the re-grant time plus the offering's delivery_sla.
+   */
+  withheld_period_count: number;
+  /**
+   * Obligations of the withheld periods, when the seller lists them.
+   *
+   * @maxItems 1000
+   */
+  withheld_reporting_obligation_ids?: string[];
+}
 export interface ValidatedPrincipalDryRun {
   kind: 'validated';
   action: 'would_update' | 'would_be_unchanged' | 'would_clear';
@@ -39672,6 +39527,19 @@ export interface GetPrincipalRequest {
    * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
+  /**
+   * Experimental (media_buy.reporting_subscriptions). Page through one reporting subscription's accounts_with_exceptions, accounts_unauthorized, or prior_versions when the inline list in configuration.reporting_subscriptions is shorter than its count. The response carries the usual result plus reporting_subscription_page. An unknown subscription_id fails with INVALID_REQUEST.
+   */
+  reporting_subscription_page?: {
+    /**
+     * @minLength 1
+     * @maxLength 64
+     * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+     */
+    subscription_id: string;
+    list: 'accounts_with_exceptions' | 'accounts_unauthorized' | 'prior_versions';
+    pagination?: PaginationRequest;
+  };
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -39682,25 +39550,28 @@ export interface GetPrincipalRequest {
  */
 export interface GetPrincipalResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -39717,15 +39588,6 @@ export interface GetPrincipalResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   result:
     | CurrentPrincipalConfiguration
     | RecognizedPrincipalWithoutStandingConfiguration
@@ -39750,6 +39612,31 @@ export interface CurrentPrincipalConfiguration {
    */
   configuration_version: string;
   configuration: PrincipalState;
+  /**
+   * Present when and only when the request carried reporting_subscription_page: one page of the requested list, with the same entries and order as the inline list (account_id byte order for the account lists, newest first for prior_versions). Exactly the property named by list is present.
+   */
+  reporting_subscription_page?: {
+    /**
+     * @minLength 1
+     * @maxLength 64
+     * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+     */
+    subscription_id: string;
+    list: 'accounts_with_exceptions' | 'accounts_unauthorized' | 'prior_versions';
+    /**
+     * @maxItems 100
+     */
+    accounts_with_exceptions?: ReportingSubscriptionAccountExceptions[];
+    /**
+     * @maxItems 100
+     */
+    accounts_unauthorized?: ReportingSubscriptionUnauthorizedAccount[];
+    /**
+     * @maxItems 100
+     */
+    prior_versions?: ReportingSubscriptionPriorVersion[];
+    pagination: PaginationResponse;
+  };
 }
 /**
  * The seller's commercial relationship with this caller, or its application in progress. Omitted when there is neither.
@@ -39852,25 +39739,28 @@ export interface ListAccountChangesRequest {
  */
 export type ListAccountChangesResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -39887,15 +39777,6 @@ export type ListAccountChangesResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Matching changes in oldest-first total account order. Timestamps are descriptive and do not define this order.
    * @maxItems 100
@@ -40313,6 +40194,24 @@ export type AccountRequest = {
   account?: Account;
   resolution?: AccountRequestResolution;
   /**
+   * Present when and only when the request resolved as updated and changed billing, billing_entity, or payment_terms: when the new money terms take effect. Delivery before it is invoiced under the previous terms, and delivery from it under the new ones. At or after the instant the request resolved; a seller MAY choose a later instant, such as its next invoice-period boundary. Changes to other attributes take effect when the request resolves.
+   */
+  effective_at?: string;
+  /**
+   * Present when and only when a change request resolved as created, a separate new account: the named account's account-level configurations the new account does not have, so the buyer knows what to set up again. notification_configs, reporting_delivery_configs, reporting_bucket, and governance_agents are the account fields of the same names; creatives, audiences, catalogs, and event_sources are account-scoped libraries synced through their own tasks. [] means every one of them carried over. Principal-level configuration is unaffected: an all_authorized_accounts reporting subscription covers the new account from its authorization, while an account_ids subscription covers it only once the buyer adds it.
+   *
+   * @maxItems 8
+   */
+  not_carried_over?:
+    (| 'notification_configs'
+        | 'reporting_delivery_configs'
+        | 'reporting_bucket'
+        | 'governance_agents'
+        | 'creatives'
+        | 'audiences'
+        | 'catalogs'
+        | 'event_sources')[];
+  /**
    * Present when state is ambiguous. Accounts that match the request, limited to accounts the caller is already granted. The seller MUST NOT list accounts the caller cannot already reach. When the only matches are outside the caller's grants, every caller-visible state, pending-action kind, and error MUST be one the seller could also return when nothing matches.
    *
    * @minItems 2
@@ -40340,25 +40239,28 @@ export type AccountRequest = {
  */
 export interface ListAccountsResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -40375,15 +40277,6 @@ export interface ListAccountsResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Array of accounts accessible to the authenticated agent. Each entry is the full Account object plus optional authorization. Buyer-declared entries include account_id, brand, operator, and any operator_unit, fixed currency, buyer-selected account timezone, and sandbox attributes so a buyer can recover its account IDs after a cold start. Sellers SHOULD return account_scope on every entry, with brand and/or operator wherever the scope names them, so a caller can map its buyers onto listed accounts. There is no preference order between scopes: the choice decides who is invoiced, so a person makes it.
    */
@@ -40424,6 +40317,10 @@ export interface AccountAuthorization {
    */
   authorized_at?: string;
   /**
+   * The latest re-grant within the caller's current authorization chain for this account: when authority last resumed after a loss that the re-grant continued, because it came before the previous unauthorized_at plus status_retention_days. Absent while the chain has had no re-grant. A re-grant that starts a new chain sets authorized_at to the re-grant time and leaves this absent. Reporting subscriptions owe withheld periods at this instant plus the offering's delivery_sla, and an unbackfilled gap ends at the first period boundary at or after it. Sellers advertising media_buy.reporting_subscriptions MUST populate it whenever the current chain has a re-grant.
+   */
+  regranted_at?: string;
+  /**
    * Convenience flag. When true, the caller is permitted only non-mutating tasks. Sellers MUST reject any mutation from a read-only caller with READ_ONLY_SCOPE. For the AdCP 3.2 product split, read-only permits list_products but rejects request_proposals, refine_proposals, and decline_proposals; a legacy get_products call is permitted only when the seller can guarantee the selected arm is a synchronous side-effect-free read. Sellers MAY omit this field; omission is equivalent to `false`. Callers MUST NOT infer read-only from `allowed_tasks` alone — the seller MUST set this explicitly when it applies.
    */
   read_only?: boolean;
@@ -40462,7 +40359,7 @@ export interface AccountCandidate {
 
 // request_account parameters
 /**
- * The single account write (experimental, account.requests). Open an account (brand and operator: the seller finds an existing one or creates one) or change one (account_id plus the attributes to change), possibly after human review on either side. Every write is a request with the same lifecycle. Experimental in 3.3 (#8280): sellers implementing this task MUST list account.requests in experimental_features. Retries are safe through idempotency_key; deduplicating separate requests for the same advertiser is seller discretion, with non-normative guidance in the task docs. Send either account_id, or brand and operator; sellers enforce this at runtime so the MCP input schema stays a plain root object, and reject a request carrying both, or neither, with INVALID_REQUEST. With account_id, every other field present is a requested change, validated as when the account opens: brand.domain and brand.brand_id must equal the account's (a different brand is a different account, INVALID_REQUEST), currency and timezone changes MAY be refused with UNSUPPORTED_FEATURE, and sandbox never changes. Authorization (change or select): the seller first resolves account_id against the caller's own access and answers an unreachable account exactly as an unknown one, before any other validation of the body. A change requires request_account in the caller's allowed_tasks for that account and read_only: false; when the grant lists request_account under field_scopes, every changed field (including billing, billing_entity, and payment_terms) must be in that allowlist, as field_scopes already works. Otherwise SCOPE_INSUFFICIENT, READ_ONLY_SCOPE, or FIELD_NOT_PERMITTED. A change that goes in_review re-checks revision when it resolves; if the account changed meanwhile, the request is rejected with CONFLICT. A new change request for the same account from the same caller supersedes that caller's open change request: the new request gets its own request_id and must carry every change still wanted, and the open one moves to rejected with CONFLICT and details.superseded_by. It never affects another caller's request.
+ * The single account write (experimental, account.requests). Open an account (brand and operator: the seller finds an existing one or creates one) or change one (account_id plus the attributes to change), possibly after human review on either side. Every write is a request with the same lifecycle. Experimental in 3.3 (#8280): sellers implementing this task MUST list account.requests in experimental_features. Retries are safe through idempotency_key; deduplicating separate requests for the same advertiser is seller discretion, with non-normative guidance in the task docs. Send either account_id, or brand and operator; sellers enforce this at runtime so the MCP input schema stays a plain root object, and reject a request carrying both, or neither, with INVALID_REQUEST. With account_id, every other field present is a requested change, validated as when the account opens: brand.domain and brand.brand_id must equal the account's (a different brand is a different account, INVALID_REQUEST), currency and timezone change only on sellers that list them in account.requests.changeable_attributes and are otherwise refused with UNSUPPORTED_FEATURE, and sandbox never changes. A timezone change is a reporting cutover for account_timezone periods. Authorization (change or select): the seller first resolves account_id against the caller's own access and answers an unreachable account exactly as an unknown one, before any other validation of the body. A change requires request_account in the caller's allowed_tasks for that account and read_only: false; when the grant lists request_account under field_scopes, every changed field (including billing, billing_entity, and payment_terms) must be in that allowlist, as field_scopes already works. Otherwise SCOPE_INSUFFICIENT, READ_ONLY_SCOPE, or FIELD_NOT_PERMITTED. A change that goes in_review re-checks revision when it resolves; if the account changed meanwhile, the request is rejected with CONFLICT. A new change request for the same account from the same caller supersedes that caller's open change request: the new request gets its own request_id and must carry every change still wanted, and the open one moves to rejected with CONFLICT and details.superseded_by. It never affects another caller's request.
  */
 export interface RequestAccountRequest {
   /**
@@ -40535,25 +40432,28 @@ export interface RequestAccountRequest {
  */
 export type RequestAccountResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -40570,15 +40470,6 @@ export type RequestAccountResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   request?: AccountRequest;
   errors?: Error[];
   ext?: ExtensionObject;
@@ -40742,25 +40633,28 @@ export interface SettingsUpdateMode {
  */
 export type SyncAccountsResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -40777,15 +40671,6 @@ export type SyncAccountsResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (SyncAccountsSuccess | SyncAccountsError);
 /**
  * Deprecated in 3.3 with operator_identity. Dry-run-only preview of whether the requested identity would apply, require approval, or be blocked, plus evaluated resource impacts. This value is not persisted; canonical fields and revision remain current.
@@ -41047,25 +40932,28 @@ export interface SyncGovernanceRequest {
  */
 export type SyncGovernanceResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -41082,15 +40970,6 @@ export type SyncGovernanceResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (SyncGovernanceSuccess | SyncGovernanceError);
 /**
  * Sync processed — individual accounts may have errors
@@ -41254,25 +41133,28 @@ export interface ReportUsageRequest {
  */
 export interface ReportUsageResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -41289,15 +41171,6 @@ export interface ReportUsageResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Number of usage records successfully stored.
    * @minimum 0
@@ -41341,25 +41214,28 @@ export interface GetAccountFinancialsRequest {
  */
 export type GetAccountFinancialsResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -41376,15 +41252,6 @@ export type GetAccountFinancialsResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (GetAccountFinancialsSuccess | GetAccountFinancialsError);
 /**
  * Financial data retrieved successfully
@@ -41647,284 +41514,282 @@ export type ComplianceTaskCompletionData =
 /**
  * Canonical response contract for get_products, including completed results, terminal failures, wholesale unchanged responses, and the structured GetProductsRejected business outcome.
  */
-export type GetProductsCompletion = AdCPVersionEnvelope &
-  ProtocolEnvelope & {
-  } & {
+export type GetProductsCompletion = ProtocolEnvelope & {
+} & {
+  /**
+   * Array of matching products
+   */
+  products?: Product[];
+  /**
+   * Experimental (media_buy.collection_cards). Full collection objects for collections referenced by the collections selectors of the returned products. Sellers MUST NOT return this array unless the request set include_collections to true; when it is set, sellers SHOULD include every referenced collection and MUST NOT include one that no returned product references. At most one entry per (publisher_domain, collection_id). If a key appears more than once, that collection is unresolvable from this response; buyers fall back to the publisher's adagents.json, as they do for an omitted collection, and ignore entries that no returned product references. These are convenience copies, never authorization evidence: a copy wins over adagents.json only on images, sample_content, url, description, season, cadence and distribution[].followers (see core/response-collection.json). Present only alongside products.
+   *
+   * @minItems 1
+   */
+  collections?: [ResponseCollection, ...ResponseCollection[]];
+  targeting_resolution?: ProductDiscoveryTargetingResolution;
+  /**
+   * Bundled platform-extension definitions referenced by any product in `products`. Keyed by `<extension_uri>@<digest>` (e.g., `https://creative.adcontextprotocol.org/translated/meta/extensions/meta_pixel@sha256:abc...`). When present, lets buyers resolve `platform_extensions` references on product format declarations without a separate fetch. Buyer SDKs cache by URI@digest; subsequent get_products responses MAY omit definitions the buyer already has cached and rely on the digest match. Each value is an extension definition with `extends` (the canonical concept it extends, e.g., `tracking`), `fields` (the schema for additional fields the extension contributes), `version`, and optional `description`.
+   */
+  extensions?: {
+  };
+  /**
+   * Optional legacy proposed media plans. When the request carries media_buy_frequency_cap, every returned proposal echoes the bound value as proposal.frequency_cap. Buyers may refine or execute a committed proposal by ID.
+   */
+  proposals?: Proposal[];
+  /**
+   * Task-specific errors and warnings (e.g., product filtering issues)
+   */
+  errors?: Error[];
+  /**
+   * Buyer-facing market explanation required only on the GetProductsRejected arm. MAY be sanitized to protect confidential seller rules. Plain text only.
+   */
+  reason?: string;
+  /**
+   * Actionable alternatives available only on the GetProductsRejected arm.
+   *
+   * @maxItems 20
+   */
+  suggestions?:
+    string[];
+  /**
+   * [AdCP 3.0] Indicates whether deprecated top-level property_list filtering was applied. True if the agent filtered products based on the provided property_list; every returned product also carries the corresponding property/include list_applications receipt. Absent or false if property_list was not provided or not supported by this agent.
+   */
+  property_list_applied?: boolean;
+  /**
+   * Whether the seller filtered results based on the provided catalog. True if the seller matched catalog items against its inventory. Absent or false if no catalog was provided or the seller does not support catalog matching.
+   */
+  catalog_applied?: boolean;
+  /**
+   * Seller's response to each change request in the refine array, matched by position. Each entry acknowledges whether the corresponding ask was applied, partially applied, or unable to be fulfilled. MUST contain the same number of entries in the same order as the request's refine array. Only present when the request used buying_mode: 'refine'. Each entry MUST echo the request entry's scope and — for product and proposal scopes — the matching id field (product_id or proposal_id), so orchestrators can cross-validate alignment. In AdCP 3.3, when any refine entry carries package, this array is REQUIRED for the entire request. For each package entry, applied requires result_product_id, resolved_start_time, and resolved_end_time and confirms that the mapped returned product forecast uses exactly the resolved package inputs, including its goal; unable requires non-empty notes explaining why those exact inputs could not be forecast, and the product MUST NOT carry a substitute forecast. partial MUST NOT be used to imply exact package forecast support. Insufficient inventory is an applied forecast with availability_status unavailable, not an unable outcome.
+   */
+  refinement_applied?: (
+    | {
+        /**
+         * Echoes scope 'request' from the corresponding refine entry.
+         */
+        scope: 'request';
+        /**
+         * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
+         */
+        status: 'applied' | 'partial' | 'unable';
+        /**
+         * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
+         */
+        notes?: string;
+      }
+    | {
+      }
+    | {
+        /**
+         * Echoes scope 'proposal' from the corresponding refine entry.
+         */
+        scope: 'proposal';
+        /**
+         * Echoes proposal_id from the corresponding refine entry.
+         */
+        proposal_id: string;
+        /**
+         * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
+         */
+        status: 'applied' | 'partial' | 'unable';
+        /**
+         * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
+         */
+        notes?: string;
+      }
+  )[];
+  /**
+   * Declares what the seller could not finish within the buyer's time_budget or due to internal limits while still returning a usable response. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete. This field does not classify the condition as retryable; retryability is carried by error.recovery on the error channel.
+   *
+   * @minItems 1
+   */
+  incomplete?: [
+    {
+      /**
+       * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget — symmetric with get_signals' 'wholesale_feed' scope so sellers have a precise way to declare wholesale-incomplete on the products surface.
+       */
+      scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
+      /**
+       * Human-readable explanation of what is missing and why.
+       */
+      description: string;
+      /**
+       * How much additional time is expected to resolve this scope. Allows the buyer to decide whether to make a new attempt with a larger time_budget; its presence is not an automatic-retry instruction.
+       */
+      estimated_wait?: Duration;
+    },
+    ...{
+      /**
+       * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget — symmetric with get_signals' 'wholesale_feed' scope so sellers have a precise way to declare wholesale-incomplete on the products surface.
+       */
+      scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
+      /**
+       * Human-readable explanation of what is missing and why.
+       */
+      description: string;
+      /**
+       * How much additional time is expected to resolve this scope. Allows the buyer to decide whether to make a new attempt with a larger time_budget; its presence is not an automatic-retry instruction.
+       */
+      estimated_wait?: Duration;
+    }[]
+  ];
+  /**
+   * Optional non-fatal diagnostic block describing how the request's `filters` narrowed the candidate set. Use this to disambiguate empty/small result lists between 'no inventory matches the brief' and 'a specific filter excluded everything', without breaking the filter-not-fail convention (sellers still silently exclude unmatched products; this block is observability, not error reporting). Sellers MAY populate this when meaningful narrowing occurred; buyers MAY use it for triage UX without depending on its presence. Counts only — products are not enumerated by name to avoid leaking competitive intelligence about adjacent campaigns or seller inventory. `total_candidates` and `excluded_by` are independently optional — sellers whose baseline candidate set size is sensitive MAY emit `excluded_by` without `total_candidates`, or vice versa.
+   */
+  filter_diagnostics?: {
     /**
-     * Array of matching products
+     * How `excluded_by[*].count` values are computed across multiple filters. `only`: counts products that would have been included if not for THIS filter alone (deterministic; the right value for 'which filter killed my result set' triage — recommended when feasible). `any`: counts products excluded by ANY filter (so multiple filters' counts may overlap and sum to more than `total_candidates`). `approximate`: sellers SHOULD use this when their pipeline can't cleanly attribute exclusions to a single filter. Buyers SHOULD inspect `semantics` before doing arithmetic on counts.
      */
-    products?: Product[];
+    semantics?: 'only' | 'any' | 'approximate';
     /**
-     * Experimental (media_buy.collection_cards). Full collection objects for collections referenced by the collections selectors of the returned products. Sellers MUST NOT return this array unless the request set include_collections to true; when it is set, sellers SHOULD include every referenced collection and MUST NOT include one that no returned product references. At most one entry per (publisher_domain, collection_id). If a key appears more than once, that collection is unresolvable from this response; buyers fall back to the publisher's adagents.json, as they do for an omitted collection, and ignore entries that no returned product references. These are convenience copies, never authorization evidence: a copy wins over adagents.json only on images, sample_content, url, description, season, cadence and distribution[].followers (see core/response-collection.json). Present only alongside products.
-     *
-     * @minItems 1
+     * Number of products the seller considered before applying `filters`. Baseline for interpreting per-filter exclusion counts. Approximate — sellers MAY return a sampled or capped count when their candidate pool is large. Optional; sellers whose baseline candidate set size is sensitive (revealing market posture or competitive density) MAY omit this while still emitting `excluded_by`.
      */
-    collections?: [ResponseCollection, ...ResponseCollection[]];
-    targeting_resolution?: ProductDiscoveryTargetingResolution;
+    total_candidates?: number;
     /**
-     * Bundled platform-extension definitions referenced by any product in `products`. Keyed by `<extension_uri>@<digest>` (e.g., `https://creative.adcontextprotocol.org/translated/meta/extensions/meta_pixel@sha256:abc...`). When present, lets buyers resolve `platform_extensions` references on product format declarations without a separate fetch. Buyer SDKs cache by URI@digest; subsequent get_products responses MAY omit definitions the buyer already has cached and rely on the digest match. Each value is an extension definition with `extends` (the canonical concept it extends, e.g., `tracking`), `fields` (the schema for additional fields the extension contributes), `version`, and optional `description`.
+     * Per-filter exclusion counts, keyed by the filter property name as it appears in the request's `filters` object (e.g., `pricing_currencies`, `required_metrics`, `required_vendor_metrics`, `required_geo_targeting`, `budget_range`). Values are objects carrying `count` and optional filter-specific detail. Only filters that actually narrowed the set need appear here; absence of a key means that filter did not exclude anything (or was not in the request).
      */
-    extensions?: {
+    excluded_by?: {
+      [k: string]:
+        | {
+            /**
+             * Number of products excluded by this filter, interpreted per the parent `semantics` field.
+             */
+            count: number;
+            /**
+             * Optional list of the specific filter values that contributed to exclusions, when meaningful. For `required_metrics`: the metric names that excluded products (strings). For `required_vendor_metrics`: the vendor/metric pin entries (objects). Item shape is filter-specific; the schema admits string OR object items. Buyers without filter-specific knowledge SHOULD treat as opaque.
+             */
+            values?: (string | {})[];
+            /**
+             * Optional human-readable note about why this filter narrowed the set (e.g., 'no products in this brief support DV viewability at the requested threshold').
+             */
+            notes?: string;
+          }
+        | undefined;
     };
+  };
+  pagination?: PaginationResponse;
+  /**
+   * Opaque token representing the version of the wholesale product feed state used to compose this response. Sellers that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so buyers can cache and probe later. Buyers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A buyer caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog, include_collections) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. Without include_collections, collection copies are outside the version; with include_collections true, the version also changes when any returned collection copy changes, and sellers issue distinct tokens for the two settings. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
+   */
+  wholesale_feed_version?: string;
+  /**
+   * Opaque token representing the version of the pricing layer, including product pricing_options and nested signal_targeting_options pricing_options. When the seller supports independent pricing versioning, pricing_version changes when prices move but wholesale_feed_version changes only when structure/metadata moves. Same cache_scope keying as wholesale_feed_version. Sellers not separating these MAY omit pricing_version and use wholesale_feed_version for both.
+   */
+  pricing_version?: string;
+  /**
+   * Experimental (`media_buy.execution_readiness`). Whether the request's `account` can satisfy the `execution_requirements[]` of the products on this response, keyed by `product_id`. Present only when the request set `include_execution_readiness: true` and carried an authorized `account`. Advisory: `create_media_buy` revalidates. Not part of the cache layer: it does not change `cache_scope`, `wholesale_feed_version`, or `pricing_version`, buyers key it by (account, `version`) and MUST NOT cache it under the public key, sellers MUST NOT put it in wholesale feed webhooks and MUST omit it on `unchanged: true` responses. Covers only this response's products; merge pages by `product_id`. See the media-buy specification, 'Per-account execution readiness'.
+   */
+  execution_readiness?: {
     /**
-     * Optional legacy proposed media plans. When the request carries media_buy_frequency_cap, every returned proposal echoes the bound value as proposal.frequency_cap. Buyers may refine or execute a committed proposal by ID.
+     * Opaque token for the account's readiness state, independent of `wholesale_feed_version` and `pricing_version`. Compare for equality only. Equal versions MUST imply identical entries for any product present in both responses.
      */
-    proposals?: Proposal[];
+    version: string;
     /**
-     * Task-specific errors and warnings (e.g., product filtering issues)
+     * When the seller read the account's resources. Readiness may be stale by then; `create_media_buy` is authoritative.
      */
-    errors?: Error[];
+    evaluated_at?: string;
     /**
-     * Buyer-facing market explanation required only on the GetProductsRejected arm. MAY be sanitized to protect confidential seller rules. Plain text only.
+     * Readiness keyed by `product_id`, for returned products that declare `execution_requirements`. A missing entry means not evaluated, not ready.
      */
-    reason?: string;
-    /**
-     * Actionable alternatives available only on the GetProductsRejected arm.
-     *
-     * @maxItems 20
-     */
-    suggestions?:
-      string[];
-    /**
-     * [AdCP 3.0] Indicates whether deprecated top-level property_list filtering was applied. True if the agent filtered products based on the provided property_list; every returned product also carries the corresponding property/include list_applications receipt. Absent or false if property_list was not provided or not supported by this agent.
-     */
-    property_list_applied?: boolean;
-    /**
-     * Whether the seller filtered results based on the provided catalog. True if the seller matched catalog items against its inventory. Absent or false if no catalog was provided or the seller does not support catalog matching.
-     */
-    catalog_applied?: boolean;
-    /**
-     * Seller's response to each change request in the refine array, matched by position. Each entry acknowledges whether the corresponding ask was applied, partially applied, or unable to be fulfilled. MUST contain the same number of entries in the same order as the request's refine array. Only present when the request used buying_mode: 'refine'. Each entry MUST echo the request entry's scope and — for product and proposal scopes — the matching id field (product_id or proposal_id), so orchestrators can cross-validate alignment. In AdCP 3.3, when any refine entry carries package, this array is REQUIRED for the entire request. For each package entry, applied requires result_product_id, resolved_start_time, and resolved_end_time and confirms that the mapped returned product forecast uses exactly the resolved package inputs, including its goal; unable requires non-empty notes explaining why those exact inputs could not be forecast, and the product MUST NOT carry a substitute forecast. partial MUST NOT be used to imply exact package forecast support. Insufficient inventory is an applied forecast with availability_status unavailable, not an unable outcome.
-     */
-    refinement_applied?: (
-      | {
-          /**
-           * Echoes scope 'request' from the corresponding refine entry.
-           */
-          scope: 'request';
-          /**
-           * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
-           */
-          status: 'applied' | 'partial' | 'unable';
-          /**
-           * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
-           */
-          notes?: string;
-        }
-      | {
-        }
-      | {
-          /**
-           * Echoes scope 'proposal' from the corresponding refine entry.
-           */
-          scope: 'proposal';
-          /**
-           * Echoes proposal_id from the corresponding refine entry.
-           */
-          proposal_id: string;
-          /**
-           * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
-           */
-          status: 'applied' | 'partial' | 'unable';
-          /**
-           * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
-           */
-          notes?: string;
-        }
-    )[];
-    /**
-     * Declares what the seller could not finish within the buyer's time_budget or due to internal limits while still returning a usable response. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete. This field does not classify the condition as retryable; retryability is carried by error.recovery on the error channel.
-     *
-     * @minItems 1
-     */
-    incomplete?: [
-      {
-        /**
-         * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget — symmetric with get_signals' 'wholesale_feed' scope so sellers have a precise way to declare wholesale-incomplete on the products surface.
-         */
-        scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
-        /**
-         * Human-readable explanation of what is missing and why.
-         */
-        description: string;
-        /**
-         * How much additional time is expected to resolve this scope. Allows the buyer to decide whether to make a new attempt with a larger time_budget; its presence is not an automatic-retry instruction.
-         */
-        estimated_wait?: Duration;
-      },
-      ...{
-        /**
-         * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget — symmetric with get_signals' 'wholesale_feed' scope so sellers have a precise way to declare wholesale-incomplete on the products surface.
-         */
-        scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
-        /**
-         * Human-readable explanation of what is missing and why.
-         */
-        description: string;
-        /**
-         * How much additional time is expected to resolve this scope. Allows the buyer to decide whether to make a new attempt with a larger time_budget; its presence is not an automatic-retry instruction.
-         */
-        estimated_wait?: Duration;
-      }[]
-    ];
-    /**
-     * Optional non-fatal diagnostic block describing how the request's `filters` narrowed the candidate set. Use this to disambiguate empty/small result lists between 'no inventory matches the brief' and 'a specific filter excluded everything', without breaking the filter-not-fail convention (sellers still silently exclude unmatched products; this block is observability, not error reporting). Sellers MAY populate this when meaningful narrowing occurred; buyers MAY use it for triage UX without depending on its presence. Counts only — products are not enumerated by name to avoid leaking competitive intelligence about adjacent campaigns or seller inventory. `total_candidates` and `excluded_by` are independently optional — sellers whose baseline candidate set size is sensitive MAY emit `excluded_by` without `total_candidates`, or vice versa.
-     */
-    filter_diagnostics?: {
-      /**
-       * How `excluded_by[*].count` values are computed across multiple filters. `only`: counts products that would have been included if not for THIS filter alone (deterministic; the right value for 'which filter killed my result set' triage — recommended when feasible). `any`: counts products excluded by ANY filter (so multiple filters' counts may overlap and sum to more than `total_candidates`). `approximate`: sellers SHOULD use this when their pipeline can't cleanly attribute exclusions to a single filter. Buyers SHOULD inspect `semantics` before doing arithmetic on counts.
-       */
-      semantics?: 'only' | 'any' | 'approximate';
-      /**
-       * Number of products the seller considered before applying `filters`. Baseline for interpreting per-filter exclusion counts. Approximate — sellers MAY return a sampled or capped count when their candidate pool is large. Optional; sellers whose baseline candidate set size is sensitive (revealing market posture or competitive density) MAY omit this while still emitting `excluded_by`.
-       */
-      total_candidates?: number;
-      /**
-       * Per-filter exclusion counts, keyed by the filter property name as it appears in the request's `filters` object (e.g., `pricing_currencies`, `required_metrics`, `required_vendor_metrics`, `required_geo_targeting`, `budget_range`). Values are objects carrying `count` and optional filter-specific detail. Only filters that actually narrowed the set need appear here; absence of a key means that filter did not exclude anything (or was not in the request).
-       */
-      excluded_by?: {
-        [k: string]:
-          | {
-              /**
-               * Number of products excluded by this filter, interpreted per the parent `semantics` field.
-               */
-              count: number;
-              /**
-               * Optional list of the specific filter values that contributed to exclusions, when meaningful. For `required_metrics`: the metric names that excluded products (strings). For `required_vendor_metrics`: the vendor/metric pin entries (objects). Item shape is filter-specific; the schema admits string OR object items. Buyers without filter-specific knowledge SHOULD treat as opaque.
-               */
-              values?: (string | {})[];
-              /**
-               * Optional human-readable note about why this filter narrowed the set (e.g., 'no products in this brief support DV viewability at the requested threshold').
-               */
-              notes?: string;
-            }
-          | undefined;
-      };
+    products: {
+      [k: string]: ProductExecutionReadiness | undefined;
     };
-    pagination?: PaginationResponse;
-    /**
-     * Opaque token representing the version of the wholesale product feed state used to compose this response. Sellers that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so buyers can cache and probe later. Buyers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A buyer caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog, include_collections) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. Without include_collections, collection copies are outside the version; with include_collections true, the version also changes when any returned collection copy changes, and sellers issue distinct tokens for the two settings. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
-     */
-    wholesale_feed_version?: string;
-    /**
-     * Opaque token representing the version of the pricing layer, including product pricing_options and nested signal_targeting_options pricing_options. When the seller supports independent pricing versioning, pricing_version changes when prices move but wholesale_feed_version changes only when structure/metadata moves. Same cache_scope keying as wholesale_feed_version. Sellers not separating these MAY omit pricing_version and use wholesale_feed_version for both.
-     */
-    pricing_version?: string;
-    /**
-     * Experimental (`media_buy.execution_readiness`). Whether the request's `account` can satisfy the `execution_requirements[]` of the products on this response, keyed by `product_id`. Present only when the request set `include_execution_readiness: true` and carried an authorized `account`. Advisory: `create_media_buy` revalidates. Not part of the cache layer: it does not change `cache_scope`, `wholesale_feed_version`, or `pricing_version`, buyers key it by (account, `version`) and MUST NOT cache it under the public key, sellers MUST NOT put it in wholesale feed webhooks and MUST omit it on `unchanged: true` responses. Covers only this response's products; merge pages by `product_id`. See the media-buy specification, 'Per-account execution readiness'.
-     */
-    execution_readiness?: {
-      /**
-       * Opaque token for the account's readiness state, independent of `wholesale_feed_version` and `pricing_version`. Compare for equality only. Equal versions MUST imply identical entries for any product present in both responses.
-       */
-      version: string;
-      /**
-       * When the seller read the account's resources. Readiness may be stale by then; `create_media_buy` is authoritative.
-       */
-      evaluated_at?: string;
-      /**
-       * Readiness keyed by `product_id`, for returned products that declare `execution_requirements`. A missing entry means not evaluated, not ready.
-       */
-      products: {
-        [k: string]: ProductExecutionReadiness | undefined;
-      };
-      ext?: ExtensionObject;
-    };
-    /**
-     * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the seller's published rate card; the buyer MAY dedupe under (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog) without scoping by account. 'account': this response includes account-specific overrides; the buyer MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the seller MUST return `cache_scope: 'public'`. When the request included `account`, the seller MUST return either: 'public' (this account prices off the public rate card — buyer dedupes) or 'account' (account-specific overrides exist — buyer caches under the account key). Sellers MAY return 'public' on an account-scoped request that previously had overrides — buyers SHOULD interpret this as a downgrade and drop their account-overlay. Without schema-required cache_scope, a seller silently omitting the field on an account-scoped response would cause buyers to mis-key the cache and serve account-overlay payloads to other accounts. **Backward-compatibility note for 3.1 validators:** SDKs that validate strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version` (release-precision version negotiation, 3.1). For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed.
-     */
-    cache_scope?: 'public' | 'account';
-    /**
-     * Present and `true` ONLY on wholesale-mode responses when the request carried if_wholesale_feed_version (and/or if_pricing_version) matching the seller's current version for the buyer's cache_scope, in which case products[] MUST be omitted; wholesale_feed_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Buyers receiving unchanged: true MUST NOT mutate their local wholesale product mirror. **One shape per state:** sellers MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries products. Two shapes ({ unchanged: false, products: [...] } vs. { products: [...] }) for the same state would let some sellers always emit the field and some never would, creating an inconsistency the wire shouldn't carry. **Cross-scope isolation:** the comparator that decides `unchanged` MUST be keyed on `(cache_scope, wholesale_feed_version)`, not on the token value alone. A seller MUST NOT emit `unchanged: true` when it resolves the request to a different `cache_scope` than the one whose token the buyer echoed in `if_wholesale_feed_version` (and/or `if_pricing_version`): because the token is scope-keyed, a value minted for `cache_scope: 'public'` cannot match the seller's current token for `cache_scope: 'account'` (or vice-versa), so such a request MUST return the full feed for the resolved scope with that scope's own token.
-     */
-    unchanged?: true;
-    /**
-     * When true, this response contains simulated data from sandbox mode.
-     */
-    sandbox?: boolean;
-    context?: ContextObject;
     ext?: ExtensionObject;
   };
+  /**
+   * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the seller's published rate card; the buyer MAY dedupe under (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog) without scoping by account. 'account': this response includes account-specific overrides; the buyer MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the seller MUST return `cache_scope: 'public'`. When the request included `account`, the seller MUST return either: 'public' (this account prices off the public rate card — buyer dedupes) or 'account' (account-specific overrides exist — buyer caches under the account key). Sellers MAY return 'public' on an account-scoped request that previously had overrides — buyers SHOULD interpret this as a downgrade and drop their account-overlay. Without schema-required cache_scope, a seller silently omitting the field on an account-scoped response would cause buyers to mis-key the cache and serve account-overlay payloads to other accounts. **Backward-compatibility note for 3.1 validators:** SDKs that validate strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version` (release-precision version negotiation, 3.1). For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed.
+   */
+  cache_scope?: 'public' | 'account';
+  /**
+   * Present and `true` ONLY on wholesale-mode responses when the request carried if_wholesale_feed_version (and/or if_pricing_version) matching the seller's current version for the buyer's cache_scope, in which case products[] MUST be omitted; wholesale_feed_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Buyers receiving unchanged: true MUST NOT mutate their local wholesale product mirror. **One shape per state:** sellers MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries products. Two shapes ({ unchanged: false, products: [...] } vs. { products: [...] }) for the same state would let some sellers always emit the field and some never would, creating an inconsistency the wire shouldn't carry. **Cross-scope isolation:** the comparator that decides `unchanged` MUST be keyed on `(cache_scope, wholesale_feed_version)`, not on the token value alone. A seller MUST NOT emit `unchanged: true` when it resolves the request to a different `cache_scope` than the one whose token the buyer echoed in `if_wholesale_feed_version` (and/or `if_pricing_version`): because the token is scope-keyed, a value minted for `cache_scope: 'public'` cannot match the seller's current token for `cache_scope: 'account'` (or vice-versa), so such a request MUST return the full feed for the resolved scope with that scope's own token.
+   */
+  unchanged?: true;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+};
 /**
  * Response payload for get_signals task
  */
-export type GetSignalsCompletion = AdCPVersionEnvelope &
-  ProtocolEnvelope & {
-    /**
-     * Array of matching signals
-     */
-    signals?: (SignalListing &
-      SignalDefinitionEnrichment & {
-      })[];
-    /**
-     * Experimental (signals.pricing_groups). Signal-agent default rules for how fees of signals sharing a pricing_group combine. Product-scoped signal_targeting_rules.signal_pricing_group_rules override these for the same pricing_group. A group with no rule is charged 'each'.
-     *
-     * @minItems 1
-     */
-    signal_pricing_group_rules?: [SignalPricingGroupRule, ...SignalPricingGroupRule[]];
-    /**
-     * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
-     */
-    errors?: Error[];
-    /**
-     * Declares what the agent could not finish within the caller's time_budget or due to internal limits. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete.
-     *
-     * @minItems 1
-     */
-    incomplete?: [
-      {
-        /**
-         * 'signals': not all matching signals were returned. 'pricing': signals returned but pricing is absent or unconfirmed. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget.
-         */
-        scope: 'signals' | 'pricing' | 'wholesale_feed';
-        /**
-         * Human-readable explanation of what is missing and why.
-         */
-        description: string;
-        /**
-         * How much additional time would resolve this scope. Allows the caller to decide whether to retry with a larger time_budget.
-         */
-        estimated_wait?: Duration;
-      },
-      ...{
-        /**
-         * 'signals': not all matching signals were returned. 'pricing': signals returned but pricing is absent or unconfirmed. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget.
-         */
-        scope: 'signals' | 'pricing' | 'wholesale_feed';
-        /**
-         * Human-readable explanation of what is missing and why.
-         */
-        description: string;
-        /**
-         * How much additional time would resolve this scope. Allows the caller to decide whether to retry with a larger time_budget.
-         */
-        estimated_wait?: Duration;
-      }[]
-    ];
-    /**
-     * Opaque token representing the version of the wholesale signals feed state used to compose this response. Agents that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so callers can cache and probe later. Callers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A caller caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, discovery_mode, filters, destinations, countries) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
-     */
-    wholesale_feed_version?: string;
-    /**
-     * Opaque token representing the version of the pricing layer. When the agent supports independent pricing versioning, pricing_version changes when prices move but wholesale_feed_version changes only when structure/metadata moves. Same cache_scope keying as wholesale_feed_version. Agents not separating these MAY omit pricing_version and use wholesale_feed_version for both.
-     */
-    pricing_version?: string;
-    /**
-     * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the agent's published rate card; the caller MAY dedupe under (agent, discovery_mode, filters, destinations, countries) without scoping by account. 'account': this response includes account-specific overrides; the caller MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the agent MUST return `cache_scope: 'public'`. When the request included `account`, the agent MUST return either 'public' (this account prices off the public rate card — caller dedupes) or 'account' (account-specific overrides exist — caller caches under the account key). Agents MAY return 'public' on an account-scoped request that previously had overrides — callers SHOULD interpret this as a downgrade. Without schema-required cache_scope, an agent silently omitting the field on an account-scoped response would cause callers to mis-key the cache and serve account-overlay payloads to other accounts — the canonical safety invariant of the entire cache layering model. **Backward-compatibility note for 3.1 validators:** SDKs validating strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version`. For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed — pre-3.1 agents correctly emit no cache_scope and remain conformant to their declared version. This is a tightening within 3.1, not a 3.0 break.
-     */
-    cache_scope?: 'public' | 'account';
-    /**
-     * Present and `true` ONLY on wholesale-mode responses when the request carried if_wholesale_feed_version (and/or if_pricing_version) matching the agent's current version for the caller's cache_scope, in which case signals[] MUST be omitted; wholesale_feed_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Callers receiving unchanged: true MUST NOT mutate their local wholesale signals mirror. **One shape per state:** agents MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries signals. **Cross-scope isolation:** the comparator that decides `unchanged` MUST be keyed on `(cache_scope, wholesale_feed_version)`, not on the token value alone. An agent MUST NOT emit `unchanged: true` when it resolves the request to a different `cache_scope` than the one whose token the caller echoed in `if_wholesale_feed_version` (and/or `if_pricing_version`): because the token is scope-keyed, a value minted for `cache_scope: 'public'` cannot match the agent's current token for `cache_scope: 'account'` (or vice-versa), so such a request MUST return the full feed for the resolved scope with that scope's own token.
-     */
-    unchanged?: true;
-    pagination?: PaginationResponse;
-    /**
-     * When true, this response contains simulated data from sandbox mode.
-     */
-    sandbox?: boolean;
-    context?: ContextObject;
-    ext?: ExtensionObject;
-  };
+export type GetSignalsCompletion = ProtocolEnvelope & {
+  /**
+   * Array of matching signals
+   */
+  signals?: (SignalListing &
+    SignalDefinitionEnrichment & {
+    })[];
+  /**
+   * Experimental (signals.pricing_groups). Signal-agent default rules for how fees of signals sharing a pricing_group combine. Product-scoped signal_targeting_rules.signal_pricing_group_rules override these for the same pricing_group. A group with no rule is charged 'each'.
+   *
+   * @minItems 1
+   */
+  signal_pricing_group_rules?: [SignalPricingGroupRule, ...SignalPricingGroupRule[]];
+  /**
+   * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
+   */
+  errors?: Error[];
+  /**
+   * Declares what the agent could not finish within the caller's time_budget or due to internal limits. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete.
+   *
+   * @minItems 1
+   */
+  incomplete?: [
+    {
+      /**
+       * 'signals': not all matching signals were returned. 'pricing': signals returned but pricing is absent or unconfirmed. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget.
+       */
+      scope: 'signals' | 'pricing' | 'wholesale_feed';
+      /**
+       * Human-readable explanation of what is missing and why.
+       */
+      description: string;
+      /**
+       * How much additional time would resolve this scope. Allows the caller to decide whether to retry with a larger time_budget.
+       */
+      estimated_wait?: Duration;
+    },
+    ...{
+      /**
+       * 'signals': not all matching signals were returned. 'pricing': signals returned but pricing is absent or unconfirmed. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget.
+       */
+      scope: 'signals' | 'pricing' | 'wholesale_feed';
+      /**
+       * Human-readable explanation of what is missing and why.
+       */
+      description: string;
+      /**
+       * How much additional time would resolve this scope. Allows the caller to decide whether to retry with a larger time_budget.
+       */
+      estimated_wait?: Duration;
+    }[]
+  ];
+  /**
+   * Opaque token representing the version of the wholesale signals feed state used to compose this response. Agents that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so callers can cache and probe later. Callers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A caller caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, discovery_mode, filters, destinations, countries) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
+   */
+  wholesale_feed_version?: string;
+  /**
+   * Opaque token representing the version of the pricing layer. When the agent supports independent pricing versioning, pricing_version changes when prices move but wholesale_feed_version changes only when structure/metadata moves. Same cache_scope keying as wholesale_feed_version. Agents not separating these MAY omit pricing_version and use wholesale_feed_version for both.
+   */
+  pricing_version?: string;
+  /**
+   * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the agent's published rate card; the caller MAY dedupe under (agent, discovery_mode, filters, destinations, countries) without scoping by account. 'account': this response includes account-specific overrides; the caller MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the agent MUST return `cache_scope: 'public'`. When the request included `account`, the agent MUST return either 'public' (this account prices off the public rate card — caller dedupes) or 'account' (account-specific overrides exist — caller caches under the account key). Agents MAY return 'public' on an account-scoped request that previously had overrides — callers SHOULD interpret this as a downgrade. Without schema-required cache_scope, an agent silently omitting the field on an account-scoped response would cause callers to mis-key the cache and serve account-overlay payloads to other accounts — the canonical safety invariant of the entire cache layering model. **Backward-compatibility note for 3.1 validators:** SDKs validating strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version`. For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed — pre-3.1 agents correctly emit no cache_scope and remain conformant to their declared version. This is a tightening within 3.1, not a 3.0 break.
+   */
+  cache_scope?: 'public' | 'account';
+  /**
+   * Present and `true` ONLY on wholesale-mode responses when the request carried if_wholesale_feed_version (and/or if_pricing_version) matching the agent's current version for the caller's cache_scope, in which case signals[] MUST be omitted; wholesale_feed_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Callers receiving unchanged: true MUST NOT mutate their local wholesale signals mirror. **One shape per state:** agents MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries signals. **Cross-scope isolation:** the comparator that decides `unchanged` MUST be keyed on `(cache_scope, wholesale_feed_version)`, not on the token value alone. An agent MUST NOT emit `unchanged: true` when it resolves the request to a different `cache_scope` than the one whose token the caller echoed in `if_wholesale_feed_version` (and/or `if_pricing_version`): because the token is scope-keyed, a value minted for `cache_scope: 'public'` cannot match the agent's current token for `cache_scope: 'account'` (or vice-versa), so such a request MUST return the full feed for the resolved scope with that scope's own token.
+   */
+  unchanged?: true;
+  pagination?: PaginationResponse;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+};
 /**
  * Projected authoritative demographic meaning for the signal. When projected from another provider, this MUST match the provider's definition exactly. Signal names alone never establish demographic semantics.
  */
@@ -41953,7 +41818,7 @@ export interface ComplyTestControllerRequest {
    */
   adcp_major_version?: number;
   /**
-   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'force_*' and 'simulate_*' trigger state transitions. 'reporting_core_lifecycle_probe' installs a caller/account-scoped Core fixture whose first elapsed obligation is visible before any report, advances its virtual clock into delayed or action_required, and can publish deterministic zero-row or non-empty revisions, restate a provisional revision, restate one the caller already received, or cross the consumer-status deadline and consumer-mismatch escalation boundaries, without waiting for wall-clock boundaries. 'force_hold_unavailable' (experimental, media_buy.hold_policy) makes the next refine_proposals finalize of one draft proposal fail with hold_unavailable, its batch siblings with batch_aborted, and is then consumed. Other scenarios provide deterministic sandbox probes for their documented lifecycle checks. Runners and sellers MUST accept unknown scenario strings - new scenarios may be added in additive releases.
+   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'reporting_subscription_probe' (experimental, media_buy.reporting_subscriptions) revokes, re-grants, or reduces the caller's own grant on a sandbox account, changes a sandbox account's timezone, or advances the sandbox clock, so storyboards can test reporting-subscription coverage across grants and cutovers against a remote seller. 'force_*' and 'simulate_*' trigger state transitions. 'reporting_core_lifecycle_probe' installs a caller/account-scoped Core fixture whose first elapsed obligation is visible before any report, advances its virtual clock into delayed or action_required, and can publish deterministic zero-row or non-empty revisions, restate a provisional revision, restate one the caller already received, or cross the consumer-status deadline and consumer-mismatch escalation boundaries, without waiting for wall-clock boundaries. 'force_hold_unavailable' (experimental, media_buy.hold_policy) makes the next refine_proposals finalize of one draft proposal fail with hold_unavailable, its batch siblings with batch_aborted, and is then consumed. Other scenarios provide deterministic sandbox probes for their documented lifecycle checks. Runners and sellers MUST accept unknown scenario strings - new scenarios may be added in additive releases.
    */
   scenario: string;
   /**
@@ -42013,7 +41878,7 @@ export interface ComplyTestControllerRequest {
      */
     fixture?: {};
     /**
-     * Scenario-specific probe operation. catalog_item_availability_probe uses seed_inaccessible_item, query_eligibility, advance_time, and recreate_catalog. compact_product_lifecycle_probe uses prepare to make one seeded product's compact proposal, acceptance, operational-control, and MediaBuy readback path deterministic and expire_proposal to advance strictly beyond a committed proposal's stored expires_at and process the hold lapse. compact_direct_buy_lifecycle_probe uses prepare to make one seeded product's list, direct-purchase, operational-control, and readback path deterministic. reporting_core_lifecycle_probe uses prepare, advance_time, publish_zero_row, publish_nonempty, restate_snapshot, restate_after_received, omit_obligation, advance_past_status_deadline, and advance_past_escalation to exercise obligation availability, health deadlines, explicit reporting, provisional restatement, stale-received grace, buyer-side missing-obligation detection, counted consumer-status silence, and consumer-mismatch escalation. advance_past_status_deadline moves the clock strictly past expected_at plus the advertised automated_recovery_window_seconds without recording any consumer status, so obligation_counts.consumer_status_pending is gradable; advance_past_escalation moves it strictly past the open CONSUMER_STATUS_MISMATCH issue opened_at plus the advertised consumer_mismatch_escalation_seconds and returns both that boundary and any still-future stale_received_grace_deadline, so the escalation precedence rule is gradable. restate_snapshot publishes a new snapshot revision that immediately supersedes the current snapshot for the same logical slice and is invalid when the current revision is official. restate_after_received does the same restatement but only against the revision named in received_reporting_revision_id, so the stale-received grace projection can be graded live; it returns the grace deadline and advance_to positions the virtual clock inside or past it. Reliable Reporting tier probes use prepare plus publish_official_adjustment, probe_scheduler_dst, suppress_readiness, advance_within_retention, revoke_access, or publish_adjustment to seed deterministic Core-integrity, Managed Delivery, and Reconciled Billing lifecycle evidence.
+     * Scenario-specific probe operation. catalog_item_availability_probe uses seed_inaccessible_item, query_eligibility, advance_time, and recreate_catalog. compact_product_lifecycle_probe uses prepare to make one seeded product's compact proposal, acceptance, operational-control, and MediaBuy readback path deterministic and expire_proposal to advance strictly beyond a committed proposal's stored expires_at and process the hold lapse. compact_direct_buy_lifecycle_probe uses prepare to make one seeded product's list, direct-purchase, operational-control, and readback path deterministic. reporting_core_lifecycle_probe uses prepare, advance_time, publish_zero_row, publish_nonempty, restate_snapshot, restate_after_received, omit_obligation, advance_past_status_deadline, and advance_past_escalation to exercise obligation availability, health deadlines, explicit reporting, provisional restatement, stale-received grace, buyer-side missing-obligation detection, counted consumer-status silence, and consumer-mismatch escalation. advance_past_status_deadline moves the clock strictly past expected_at plus the advertised automated_recovery_window_seconds without recording any consumer status, so obligation_counts.consumer_status_pending is gradable; advance_past_escalation moves it strictly past the open CONSUMER_STATUS_MISMATCH issue opened_at plus the advertised consumer_mismatch_escalation_seconds and returns both that boundary and any still-future stale_received_grace_deadline, so the escalation precedence rule is gradable. restate_snapshot publishes a new snapshot revision that immediately supersedes the current snapshot for the same logical slice and is invalid when the current revision is official. restate_after_received does the same restatement but only against the revision named in received_reporting_revision_id, so the stale-received grace projection can be graded live; it returns the grace deadline and advance_to positions the virtual clock inside or past it. Reliable Reporting tier probes use prepare plus publish_official_adjustment, probe_scheduler_dst, suppress_readiness, advance_within_retention, revoke_access, or publish_adjustment to seed deterministic Core-integrity, Managed Delivery, and Reconciled Billing lifecycle evidence. reporting_subscription_probe (experimental, media_buy.reporting_subscriptions) uses revoke_grant, regrant, reduce_grant, set_account_timezone, and advance_time to drive grants, account timezone cutovers, and the sandbox clock for reporting-subscription coverage.
      */
     operation?:
       | 'seed_inaccessible_item'
@@ -42034,7 +41899,11 @@ export interface ComplyTestControllerRequest {
       | 'suppress_readiness'
       | 'advance_within_retention'
       | 'revoke_access'
-      | 'publish_adjustment';
+      | 'publish_adjustment'
+      | 'revoke_grant'
+      | 'regrant'
+      | 'reduce_grant'
+      | 'set_account_timezone';
     /**
      * Clock-derived health boundary selected by reporting_core_lifecycle_probe advance_time. The controller chooses the corresponding deterministic target time; callers do not supply timestamps.
      */
@@ -42069,7 +41938,18 @@ export interface ComplyTestControllerRequest {
      */
     item_id?: string;
     /**
-     * Deterministic sandbox clock target used by catalog_item_availability_probe advance_time.
+     * reporting_subscription_probe reduce_grant: the complete allowed_tasks the caller's grant on account_id keeps, for example only get_reporting_status, sync_reporting_receipts, and sync_reporting_status to model a wind-down.
+     * @maxItems 64
+     */
+    allowed_tasks?: string[];
+    /**
+     * reporting_subscription_probe set_account_timezone: the account's new IANA timezone.
+     * @minLength 1
+     * @maxLength 255
+     */
+    timezone?: string;
+    /**
+     * Deterministic sandbox clock target used by catalog_item_availability_probe advance_time and reporting_subscription_probe advance_time.
      * @format date-time
      */
     target_time?: string;
@@ -42265,9 +42145,8 @@ export interface ComplyTestControllerRequest {
     arm?: 'submitted' | 'completed' | 'input-required' | 'rejected';
     /**
      * Deterministic task handle the seller MUST emit verbatim on the next forced operation response when arm is 'submitted'. The seller MUST accept this exact value on subsequent tasks/get or get_task_status calls within the same authenticated sandbox account + principal pair and MUST return REFERENCE_NOT_FOUND for the same task_id under any other account or principal. Sandbox task_ids are caller-opaque strings - the seller's production task-id format rules do not apply.
-     * @maxLength 128
      */
-    task_id?: string;
+    task_id?: TaskID;
     /**
      * Deterministic provider evaluation identity the seller MUST emit on the next forced get_creative_features submitted acknowledgement and preserve on its terminal completion result.
      * @minLength 1
@@ -42438,25 +42317,28 @@ export interface GetCreativeFeaturesCompletion {
  */
 export type ComplyTestControllerResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -42473,15 +42355,6 @@ export type ComplyTestControllerResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (
   | ListScenariosSuccess
   | StateTransitionSuccess
@@ -42498,7 +42371,7 @@ export type ComplyTestControllerResponse = {
 export interface ListScenariosSuccess {
   success: true;
   /**
-   * Scenarios this seller has implemented. Runners and sellers MUST accept unknown scenario strings (open-for-extension) — new scenarios may be added in additive releases. Adopters who advertise `catalog_item_availability_probe` support deterministic cross-principal reference, eligibility-gate, expiry-clock, and catalog-generation tests for the catalog availability storyboard. Adopters who advertise `compact_product_lifecycle_probe` support deterministic synchronous list/request/finalize/decline/accept/control/readback behavior for a prepared product and strict post-deadline expiry of a committed proposal. Adopters who advertise `compact_direct_buy_lifecycle_probe` support deterministic synchronous list/buy/control/readback behavior for a prepared product. Adopters who advertise `reporting_core_lifecycle_probe` support deterministic obligation-before-report, clock-health, zero-row reporting, provisional-restatement, and post-received restatement-grace tests without wall-clock waits. `reliable_reporting_core_integrity_probe`, `reliable_reporting_managed_delivery_probe`, and `reliable_reporting_reconciled_billing_probe` seed the source-calendar/checkpoint, managed-resource, and receipt/adjustment workflows used by the Reliable Reporting tier storyboards. Adopters who advertise `force_creative_purge` opt in to deterministic creative purge coverage for account-level lifecycle webhooks. Adopters who advertise `force_media_buy_purge` opt in to deterministic deletion-independent idempotency replay coverage. Adopters who advertise `seed_measurement_catalog` opt in to deterministic measurement-catalog fixtures used by vendor_metric precondition storyboards. Adopters who advertise `query_upstream_traffic` opt in to the upstream-traffic conformance contract; storyboards that declare `check: upstream_traffic` grade not_applicable against adopters who do not advertise it. Adopters who advertise `query_provenance_audit_observations` opt in to sandbox-only audit-observation assertions for accepted creatives. Adopters who advertise `force_upstream_unavailable` opt in to stale-cache conformance testing via the `stale_response_advisory` storyboard. Adopters who advertise `force_hold_unavailable` opt in to deterministic hold-failure coverage for `refine_proposals` finalize (experimental, `media_buy.hold_policy`).
+   * Scenarios this seller has implemented. Runners and sellers MUST accept unknown scenario strings (open-for-extension) — new scenarios may be added in additive releases. Adopters who advertise `catalog_item_availability_probe` support deterministic cross-principal reference, eligibility-gate, expiry-clock, and catalog-generation tests for the catalog availability storyboard. Adopters who advertise `compact_product_lifecycle_probe` support deterministic synchronous list/request/finalize/decline/accept/control/readback behavior for a prepared product and strict post-deadline expiry of a committed proposal. Adopters who advertise `compact_direct_buy_lifecycle_probe` support deterministic synchronous list/buy/control/readback behavior for a prepared product. Adopters who advertise `reporting_core_lifecycle_probe` support deterministic obligation-before-report, clock-health, zero-row reporting, provisional-restatement, and post-received restatement-grace tests without wall-clock waits. Adopters who advertise `reporting_subscription_probe` (experimental) support deterministic grant revocation, re-grant, grant reduction, account timezone cutover, and sandbox clock tests for reporting-subscription coverage. `reliable_reporting_core_integrity_probe`, `reliable_reporting_managed_delivery_probe`, and `reliable_reporting_reconciled_billing_probe` seed the source-calendar/checkpoint, managed-resource, and receipt/adjustment workflows used by the Reliable Reporting tier storyboards. Adopters who advertise `force_creative_purge` opt in to deterministic creative purge coverage for account-level lifecycle webhooks. Adopters who advertise `force_media_buy_purge` opt in to deterministic deletion-independent idempotency replay coverage. Adopters who advertise `seed_measurement_catalog` opt in to deterministic measurement-catalog fixtures used by vendor_metric precondition storyboards. Adopters who advertise `query_upstream_traffic` opt in to the upstream-traffic conformance contract; storyboards that declare `check: upstream_traffic` grade not_applicable against adopters who do not advertise it. Adopters who advertise `query_provenance_audit_observations` opt in to sandbox-only audit-observation assertions for accepted creatives. Adopters who advertise `force_upstream_unavailable` opt in to stale-cache conformance testing via the `stale_response_advisory` storyboard. Adopters who advertise `force_hold_unavailable` opt in to deterministic hold-failure coverage for `refine_proposals` finalize (experimental, `media_buy.hold_policy`).
    */
   scenarios: string[];
   context?: ContextObject;
@@ -42517,15 +42390,11 @@ export interface StateTransitionSuccess {
    * State after this transition
    */
   current_state: string;
-  /**
-   * Human-readable description of the transition
-   */
-  message?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
 /**
- * A simulate_delivery, simulate_budget_spend, simulate_later_proposal, catalog_item_availability_probe, compact_product_lifecycle_probe, compact_direct_buy_lifecycle_probe, reporting_core_lifecycle_probe, or Reliable Reporting tier-probe operation succeeded. For delivery: simulated contains the metrics injected by this call (impressions/clicks/plays/reported_spend/conversions plus optional DOOH, reach, frequency, reach-window, and viewability values) and cumulative contains running totals or latest non-additive metric state. For budget: simulated contains spend_percentage/computed_spend/budget. For a later proposal: simulated contains proposal_id, opportunity_id, and later_reason of the created snapshot. For catalog availability: simulated reports seeded foreign identity, actual eligibility gates, processed expiry time, or delete/recreate generation rotation according to params.operation. For compact product lifecycle: simulated reports deterministic preparation through MediaBuy control/readback or strict post-deadline proposal expiry. For compact direct-buy lifecycle: simulated reports deterministic preparation. For reporting Core: simulated reports the fixed virtual time plus stable account, configuration, obligation, and revision identifiers created or advanced by the operation; prepare also reports the complete resolved configuration, period, expected_at, and recovery_deadline, restate_snapshot reports the new revision plus supersedes_reporting_revision_id, and restate_after_received additionally reports received_reporting_revision_id, restated_at, and stale_received_grace_deadline; advance_past_status_deadline reports expected_at, automated_recovery_window_seconds, and the crossed consumer_status_deadline; and advance_past_escalation reports issue_id, issue_opened_at, consumer_mismatch_escalation_seconds, consumer_mismatch_escalation_deadline, expected_recommended_action, and any still-future stale_received_grace_deadline. Reliable Reporting tier probes return the exact seeded ledger IDs, checkpoints, notification order, resource lifecycle evidence, and receipt bodies required by their storyboards.
+ * A simulate_delivery, simulate_budget_spend, simulate_later_proposal, catalog_item_availability_probe, compact_product_lifecycle_probe, compact_direct_buy_lifecycle_probe, reporting_core_lifecycle_probe, reporting_subscription_probe, or Reliable Reporting tier-probe operation succeeded. For delivery: simulated contains the metrics injected by this call (impressions/clicks/plays/reported_spend/conversions plus optional DOOH, reach, frequency, reach-window, and viewability values) and cumulative contains running totals or latest non-additive metric state. For budget: simulated contains spend_percentage/computed_spend/budget. For a later proposal: simulated contains proposal_id, opportunity_id, and later_reason of the created snapshot. For catalog availability: simulated reports seeded foreign identity, actual eligibility gates, processed expiry time, or delete/recreate generation rotation according to params.operation. For compact product lifecycle: simulated reports deterministic preparation through MediaBuy control/readback or strict post-deadline proposal expiry. For compact direct-buy lifecycle: simulated reports deterministic preparation. For reporting Core: simulated reports the fixed virtual time plus stable account, configuration, obligation, and revision identifiers created or advanced by the operation; prepare also reports the complete resolved configuration, period, expected_at, and recovery_deadline, restate_snapshot reports the new revision plus supersedes_reporting_revision_id, and restate_after_received additionally reports received_reporting_revision_id, restated_at, and stale_received_grace_deadline; advance_past_status_deadline reports expected_at, automated_recovery_window_seconds, and the crossed consumer_status_deadline; and advance_past_escalation reports issue_id, issue_opened_at, consumer_mismatch_escalation_seconds, consumer_mismatch_escalation_deadline, expected_recommended_action, and any still-future stale_received_grace_deadline. For reporting subscriptions: simulated reports simulated_now and account_id; revoke_grant adds unauthorized_at; regrant adds authorized_at, regranted_at when the re-grant continued the chain, and chain (continued or new); reduce_grant adds the applied allowed_tasks; set_account_timezone adds previous_timezone, timezone, and the per-offering effective_at cutover instants; advance_time adds the applied simulated_now. Reliable Reporting tier probes return the exact seeded ledger IDs, checkpoints, notification order, resource lifecycle evidence, and receipt bodies required by their storyboards.
  */
 export interface SimulationSuccess {
   success: true;
@@ -42537,7 +42406,6 @@ export interface SimulationSuccess {
    * Running totals across all simulation calls (simulate_delivery only)
    */
   cumulative?: {};
-  message?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -42556,9 +42424,8 @@ export interface ForcedDirectiveSuccess {
     arm: 'submitted' | 'completed' | 'input-required' | 'rejected' | 'unable';
     /**
      * Echo of the registered task_id. Present only when arm is 'submitted' (the arm that emits a task envelope).
-     * @maxLength 128
      */
-    task_id?: string;
+    task_id?: TaskID;
     /**
      * Echo of the provider evaluation identity registered by force_get_creative_features_arm.
      * @minLength 1
@@ -42582,10 +42449,6 @@ export interface ForcedDirectiveSuccess {
      */
     proposal_id?: string;
   };
-  /**
-   * Human-readable acknowledgement.
-   */
-  message?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -42594,10 +42457,6 @@ export interface ForcedDirectiveSuccess {
  */
 export interface SeedSuccess {
   success: true;
-  /**
-   * Human-readable acknowledgement.
-   */
-  message?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }

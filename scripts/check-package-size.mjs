@@ -162,7 +162,11 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // packed bytes; allow about 44 KB above that for compressor variance. Other budgets stay fixed.
 // The storage facade, the accounts.ensure outcome and the reporting-subscription guides, README section and
 // skill (#3504, T8-T10) measured 26,613,272 packed bytes; allow about 27 KB above that. Other budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 26_640_000;
+// AdCP 3.3.0-beta.3 (#3504, T1) replaces the beta.2 schemas and compliance corpus with larger
+// ones (the composed protocol envelope on every response, live creative updates, the
+// reporting_subscription_probe controller scenario) and regenerates the types. Measured
+// 26,825,751 packed bytes; allow about 44 KB above that. Other budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 26_870_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 144 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -329,7 +333,6 @@ const MAX_PACKED_FILE_COUNT =
   8 + // Discovery currency and required-metric invariants (two dual-format runtime/declaration sets).
   1840 + // SDK 17: 3.3 schemas/compliance, per-tool type entrypoints and migration/release notes.
   20 + // Reporting subscription calendar, selection, coverage, capabilities and index (five dual-format sets).
-  4 + // Reporting subscription hand-modeled wire types until 3.3.0-beta.2 (one dual-format set).
   8 + // Reporting subscription engine and principal subscription runtime (two dual-format sets).
   4 + // Reporting subscription release gate (one dual-format set).
   12 + // Reporting subscription engine store, buyer expectations and client helper (three dual-format sets).
@@ -339,7 +342,10 @@ const MAX_PACKED_FILE_COUNT =
   4 + // Buyer reporting-subscription write facade, client.reporting (one dual-format set).
   8 + // `storage` subpath: memoryStorage() and its in-memory ledger (two dual-format sets).
   4 + // Account outcomes for client.accounts.ensure: AccountOutcome, nextStep, formatPendingAction (one dual-format set).
-  3; // Reporting-subscription seller and buyer guides, and the reporting-subscriptions skill.
+  3 + // Reporting-subscription seller and buyer guides, and the reporting-subscriptions skill.
+  // AdCP 3.3.0-beta.3: eleven new source schemas (task-id, task-message and the task-status envelopes; live
+  // creative updates) and the new compliance storyboards and controller-scenario files that ship with them.
+  21;
 const MAX_BUNDLED_SCHEMA_BYTES = 2000 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

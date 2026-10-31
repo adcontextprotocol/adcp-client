@@ -1,14 +1,16 @@
 /**
  * Which reporting-subscription wire fields a served release defines.
  *
- * Fields settled after AdCP 3.3.0-beta.1 (adcontextprotocol/adcp#8585, #8588) are emitted only
- * when the served release's own bundled schema declares them: earlier response shapes are
- * closed (`additionalProperties: false`). The answer comes from the bundle, not from a
- * version literal, so a release cut without these fields never opens the gate. A response
- * without a served release (a direct handler call outside protocol dispatch) gets none of
- * them; read the internal state APIs for the complete record.
+ * Fields settled after AdCP 3.3.0-beta.1 (adcontextprotocol/adcp#8585, #8588, #8613, #8619) are
+ * emitted only when the served release's own bundled schema declares them: earlier response
+ * shapes are closed (`additionalProperties: false`). The answer comes from the bundle, not from
+ * a version literal, so a release cut without these fields never opens the gate. The SDK's own
+ * pin (3.3.0-beta.3) defines all of them; the gate stays for callers served an older release
+ * (an external schema root, for example). A response without a served release (a direct
+ * handler call outside protocol dispatch) is the pinned release, as in the Python SDK.
  */
 import { canonicalize } from '../utils/jcs';
+import { ADCP_VERSION } from '../version';
 import { getSchemaDocumentByRef } from '../validation/schema-loader';
 
 export interface ReportingSubscriptionReleaseFieldsV1 {
@@ -26,25 +28,26 @@ export interface ReportingSubscriptionReleaseFieldsV1 {
   perOfferingExclusions: boolean;
   /** `reporting-subscription-coverage.json` `status: "inactive"` with `deactivated_at` (adcp#8613). */
   inactiveCoverageStatus: boolean;
+  /**
+   * `reporting-subscription-state.json` `prior_versions_count`, `accounts_with_exceptions_count` and
+   * `accounts_unauthorized_count` (adcp#8619): each bounded list carries its total.
+   */
+  readbackCounts: boolean;
 }
-
-const NONE: ReportingSubscriptionReleaseFieldsV1 = Object.freeze({
-  offeringDimensions: false,
-  inactiveIntervals: false,
-  priorVersionConfiguration: false,
-  cutoverPreviousTimezone: false,
-  perOfferingEntries: false,
-  perOfferingExclusions: false,
-  inactiveCoverageStatus: false,
-});
 
 const cache = new Map<string, ReportingSubscriptionReleaseFieldsV1>();
 
 type Schema = Readonly<Record<string, unknown>> | undefined;
 const properties = (schema: Schema): Record<string, unknown> =>
   ((schema?.properties as Record<string, unknown> | undefined) ?? {}) as Record<string, unknown>;
+/** A local `#/definitions/...` reference resolved within the same document (beta.3 names its item shapes). */
+function local(root: Schema, schema: Schema): Schema {
+  const ref = (schema as { $ref?: unknown } | undefined)?.$ref;
+  if (typeof ref !== 'string' || !ref.startsWith('#/definitions/')) return schema;
+  return (root?.definitions as Record<string, Schema> | undefined)?.[ref.slice('#/definitions/'.length)];
+}
 const itemProperties = (schema: Schema, field: string): Record<string, unknown> =>
-  properties((properties(schema)[field] as { items?: Schema } | undefined)?.items);
+  properties(local(schema, (properties(schema)[field] as { items?: Schema } | undefined)?.items));
 
 function read(ref: string, version: string): Schema {
   try {
@@ -54,11 +57,10 @@ function read(ref: string, version: string): Schema {
   }
 }
 
-/** The settled fields the served release's bundle defines; none when no release is served. */
+/** The settled fields the served release's bundle defines; absent means the SDK's pinned release. */
 export function reportingSubscriptionReleaseFieldsV1(
-  servedAdcpVersion: string | undefined
+  servedAdcpVersion: string | undefined = ADCP_VERSION
 ): ReportingSubscriptionReleaseFieldsV1 {
-  if (servedAdcpVersion === undefined) return NONE;
   const cached = cache.get(servedAdcpVersion);
   if (cached) return cached;
   const offering = read('core/reporting-delivery-offering.json', servedAdcpVersion);
@@ -76,6 +78,10 @@ export function reportingSubscriptionReleaseFieldsV1(
     inactiveCoverageStatus:
       'deactivated_at' in properties(coverage) &&
       ((properties(coverage).status as { enum?: unknown[] } | undefined)?.enum ?? []).includes('inactive'),
+    readbackCounts:
+      'prior_versions_count' in properties(state) &&
+      'accounts_with_exceptions_count' in properties(state) &&
+      'accounts_unauthorized_count' in properties(state),
   });
   if (cache.size > 64) cache.clear();
   cache.set(servedAdcpVersion, result);
@@ -117,6 +123,13 @@ export function reportingSubscriptionCoverageForReleaseV1<T extends Record<strin
   return copy as T;
 }
 
+/** The readback's bounded lists and their totals (adcp#8619). */
+const READBACK_LISTS = [
+  ['prior_versions', 'prior_versions_count'],
+  ['accounts_with_exceptions', 'accounts_with_exceptions_count'],
+  ['accounts_unauthorized', 'accounts_unauthorized_count'],
+] as const;
+
 /** Project a principal configuration's `reporting_subscriptions` onto a release. */
 export function reportingSubscriptionStatesForReleaseV1<T extends { reporting_subscriptions?: unknown }>(
   configuration: T,
@@ -132,6 +145,11 @@ export function reportingSubscriptionStatesForReleaseV1<T extends { reporting_su
         next.prior_versions = (next.prior_versions as Array<Record<string, unknown>>).map(
           ({ configuration: _configuration, ...prior }) => prior
         );
+      }
+      for (const [list, count] of READBACK_LISTS) {
+        if (!fields.readbackCounts || !Array.isArray(next[list])) delete next[count];
+        // A record written before the counts existed lists every entry it has, so its length is the total.
+        else if (typeof next[count] !== 'number') next[count] = (next[list] as unknown[]).length;
       }
       return next;
     }),

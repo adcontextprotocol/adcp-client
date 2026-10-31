@@ -72,11 +72,19 @@ function capabilities({ version = SDK_PIN, tools, discoveredTools, replayTtlSeco
   };
 }
 
+// AdCP 3.3.0-beta.3 composes the protocol envelope into every task response (adcp#8547), so a 3.3
+// seller's decline_proposals completion carries status. A 3.2 seller's must not (its root is closed).
+function withEnvelopeStatus(taskName, data) {
+  if (taskName !== 'decline_proposals' || !data || typeof data !== 'object' || 'status' in data) return data;
+  if (typeof data.adcp_version === 'string' && data.adcp_version.startsWith('3.2')) return data;
+  return { status: 'completed', ...data };
+}
+
 function completed(taskName, data) {
   return {
     success: true,
     status: 'completed',
-    data,
+    data: withEnvelopeStatus(taskName, data),
     metadata: {
       taskId: `${taskName}-task`,
       taskName,
@@ -1176,7 +1184,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
         status: 'completed',
         createdAt: Date.now(),
         updatedAt: Date.now(),
-        result: { results: [{ proposal_id: asyncId, outcome: 'declined' }] },
+        result: { status: 'completed', results: [{ proposal_id: asyncId, outcome: 'declined' }] },
       });
     }
     assert.equal(coordinator.proposalSnapshotStore.pendingDeclines.size, 0);
@@ -2493,6 +2501,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
         result: {
+          status: 'completed',
           results: [{ proposal_id: proposalId, outcome: 'unable', reason: 'The proposal remains available.' }],
         },
       };

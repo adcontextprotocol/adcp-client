@@ -63,6 +63,7 @@ export const ACCOUNT_AUTHORIZATION_WIRE_KEYS = [
   'scope_name',
   'read_only',
   'authorized_at',
+  'regranted_at',
 ] as const satisfies readonly (keyof AccountAuthorization)[];
 
 type MissingAccountAuthorizationWireKey = Exclude<
@@ -1218,6 +1219,7 @@ function projectAccountAuthorization(authorization: AccountAuthorization): Accou
   if (authorization.scope_name !== undefined) projected.scope_name = authorization.scope_name;
   if (authorization.read_only !== undefined) projected.read_only = authorization.read_only;
   if (authorization.authorized_at !== undefined) projected.authorized_at = authorization.authorized_at;
+  if (authorization.regranted_at !== undefined) projected.regranted_at = authorization.regranted_at;
   return projected;
 }
 
@@ -1246,8 +1248,8 @@ export const REPORTING_WIND_DOWN_TASKS = Object.freeze([
  * {@link REPORTING_WIND_DOWN_TASKS} and `read_only` is `false`, because receipts and statuses are
  * writes. Coverage continues while the grant lists `get_reporting_status`.
  *
- * Pass the grant being wound down to keep its `authorized_at`: a reduced grant continues the
- * current authorization chain, so `authorized_at` must not move. Its `field_scopes` and
+ * Pass the grant being wound down to keep its `authorized_at` and `regranted_at`: a reduced grant
+ * continues the current authorization chain, so neither moves. Its `field_scopes` and
  * `scope_name` describe the old task set and are dropped.
  *
  * ```ts
@@ -1256,11 +1258,14 @@ export const REPORTING_WIND_DOWN_TASKS = Object.freeze([
  *
  * @experimental Reporting subscriptions (`media_buy.reporting_subscriptions`, AdCP 3.3).
  */
-export function windDownGrant(current?: Pick<AccountAuthorization, 'authorized_at'>): AccountAuthorization {
+export function windDownGrant(
+  current?: Pick<AccountAuthorization, 'authorized_at' | 'regranted_at'>
+): AccountAuthorization {
   return {
     allowed_tasks: [...REPORTING_WIND_DOWN_TASKS],
     read_only: false,
     ...(current?.authorized_at !== undefined ? { authorized_at: current.authorized_at } : {}),
+    ...(current?.regranted_at !== undefined ? { regranted_at: current.regranted_at } : {}),
   };
 }
 

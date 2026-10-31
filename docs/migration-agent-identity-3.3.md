@@ -3,7 +3,7 @@
 The experimental identity rollout is tracked in
 [adcp-client#3233](https://github.com/adcontextprotocol/adcp-client/issues/3233).
 This release implements the rollout behind explicit experimental configuration.
-SDK 17 beta pins `ADCP_VERSION` to **3.3.0-beta.2**; SDK 16 remains on 3.2.
+SDK 17 beta pins `ADCP_VERSION` to **3.3.0-beta.3**; SDK 16 remains on 3.2.
 The identity experiment can change before graduation. Setting `identity33`
 selects the 3.3 schema scope for the entire server instance, including its
 non-identity tools. To keep an existing 3.2 endpoint while evaluating identity,

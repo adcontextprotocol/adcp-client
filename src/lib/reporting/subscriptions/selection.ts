@@ -7,7 +7,6 @@
  */
 import { CoverageInputError } from '../../errors';
 import type { ReportingDeliveryOffering, ReportingSubscription } from '../../types/core.generated';
-import type { ReportingDeliveryOfferingWithDimensionsV1 } from './wire';
 
 /**
  * A seller delivery offering as published in `media_buy.reporting_delivery.offerings`.
@@ -19,17 +18,7 @@ import type { ReportingDeliveryOfferingWithDimensionsV1 } from './wire';
  *
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
-export type ReportingSubscriptionOfferingV1 = ReportingDeliveryOfferingWithDimensionsV1 & {
-  /**
-   * When the seller began offering it. A resolution that changes because an offering
-   * appears or is withdrawn is a cutover at that instant. Absent: always available. Not on
-   * the wire (a withdrawn offering simply disappears from `reporting_delivery.offerings`), so a
-   * buyer MUST retain offering history to agree with the seller across a resolution change.
-   */
-  available_from?: string;
-  /** When the seller withdrew it. Absent: still available. */
-  withdrawn_at?: string;
-};
+export type ReportingSubscriptionOfferingV1 = ReportingDeliveryOffering;
 
 /** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export type ReportingSubscriptionSelectorV1 = ReportingSubscription['selector'];

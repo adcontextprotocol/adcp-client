@@ -141,6 +141,7 @@ export const GetProductsRequestSchema = z.object({
 }).passthrough();
 
 export const GetProductsResponseSchema = z.object({
+    message: z.string().optional(),
     timestamp: z.string().optional(),
     governance_context: z.string().optional(),
     adcp_version: z.string().optional(),
@@ -478,8 +479,12 @@ const source = JSON.parse(
   readFileSync(path.join(root, 'schemas/cache/latest/media-buy/refine-proposals-response.json'), 'utf8')
 );
 const transformed = enforceStrictSchema(applyCodegenSchemaWorkarounds(source, 'RefineProposalsResponse'));
-const completed = transformed.oneOf.filter((branch: any) => branch.properties?.status?.const === 'completed');
-const submitted = transformed.oneOf.filter((branch: any) => branch.properties?.status?.const === 'submitted');
+// AdCP 3.3.0-beta.3 composes the protocol envelope at the root, so each materialized
+// branch is { allOf: [envelope, branch] }; read the branch itself.
+const unwrap = (branch: any) => (Array.isArray(branch?.allOf) ? branch.allOf.find((member: any) => member?.properties) ?? branch : branch);
+const arms = transformed.oneOf.map(unwrap);
+const completed = arms.filter((branch: any) => branch.properties?.status?.const === 'completed');
+const submitted = arms.filter((branch: any) => branch.properties?.status?.const === 'submitted');
 const branches = completed.flatMap((branch: any) => branch.properties.results.items.oneOf);
 
 function inspectIntersection(schema: any) {
@@ -582,10 +587,14 @@ const source = JSON.parse(
   readFileSync(path.join(__REPO_ROOT__, 'schemas/cache/latest/media-buy/request-proposals-response.json'), 'utf8')
 );
 const transformed = enforceStrictSchema(applyCodegenSchemaWorkarounds(source, 'RequestProposalsResponse'));
-const proposed = transformed.oneOf.find(
+// AdCP 3.3.0-beta.3 composes the protocol envelope at the root, so each materialized
+// branch is { allOf: [envelope, branch] }; read the branch itself.
+const unwrap = (branch: any) => (Array.isArray(branch?.allOf) ? branch.allOf.find((member: any) => member?.properties) ?? branch : branch);
+const arms = transformed.oneOf.map(unwrap);
+const proposed = arms.find(
   (branch: any) => branch.properties?.outcome?.const === 'proposed'
 );
-const productsAvailable = transformed.oneOf.find(
+const productsAvailable = arms.find(
   (branch: any) => branch.properties?.outcome?.const === 'products_available'
 );
 const legacyCreate = productsAvailable.properties.purchase_continuation.oneOf.find(
@@ -625,7 +634,10 @@ const source = JSON.parse(
   readFileSync(path.join(__REPO_ROOT__, 'schemas/cache/latest/media-buy/decline-proposals-response.json'), 'utf8')
 );
 const transformed = enforceStrictSchema(applyCodegenSchemaWorkarounds(source, 'DeclineProposalsResponse'));
-const branches = transformed.oneOf.map((response: any) => response.properties.results.items.oneOf);
+// AdCP 3.3.0-beta.3 composes the protocol envelope at the root, so each materialized
+// branch is { allOf: [envelope, branch] }; read the branch itself.
+const unwrap = (branch: any) => (Array.isArray(branch?.allOf) ? branch.allOf.find((member: any) => member?.properties) ?? branch : branch);
+const branches = transformed.oneOf.map(unwrap).map((response: any) => response.properties.results.items.oneOf);
 writeFileSync(__OUTPUT__, JSON.stringify({
   branches: branches.map((arms: any[]) => arms.map((arm: any) => ({
     outcome: arm.properties.outcome.const,

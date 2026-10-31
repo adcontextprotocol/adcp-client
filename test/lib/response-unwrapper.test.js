@@ -56,27 +56,40 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(isAdcpSuccess(result, 'get_products'), true);
     });
 
-    test('preserves the status-free list_products success arm', () => {
+    // AdCP 3.2.x publishes these success arms without status; 3.3.0-beta.3 composes the protocol
+    // envelope into them (adcp#8547), so status is required. Neither is stripped nor filled in.
+    test('preserves the status-free list_products success arm of a 3.2 response', () => {
       const payload = {
         outcome: 'listed',
         products: [],
         feed_version: 'feed-v1',
         cache_scope: 'public',
       };
-      const result = unwrapProtocolResponse({ structuredContent: payload }, 'list_products', 'mcp');
+      const result = unwrapProtocolResponse({ structuredContent: payload }, 'list_products', 'mcp', {
+        responseAdcpVersion: '3.2.7',
+      });
 
       assert.deepStrictEqual(result, payload);
       assert.strictEqual(result.status, undefined);
+      const current = { status: 'completed', ...payload };
+      assert.deepStrictEqual(unwrapProtocolResponse({ structuredContent: current }, 'list_products', 'mcp'), current);
     });
 
-    test('preserves the status-free decline_proposals success arm', () => {
+    test('preserves the status-free decline_proposals success arm of a 3.2 response', () => {
       const payload = {
         results: [{ proposal_id: 'proposal-1', outcome: 'declined' }],
       };
-      const result = unwrapProtocolResponse({ structuredContent: payload }, 'decline_proposals', 'mcp');
+      const result = unwrapProtocolResponse({ structuredContent: payload }, 'decline_proposals', 'mcp', {
+        responseAdcpVersion: '3.2.7',
+      });
 
       assert.deepStrictEqual(result, payload);
       assert.strictEqual(result.status, undefined);
+      const current = { status: 'completed', ...payload };
+      assert.deepStrictEqual(
+        unwrapProtocolResponse({ structuredContent: current }, 'decline_proposals', 'mcp'),
+        current
+      );
     });
 
     test('rejects decline results without the required proposal_id', () => {

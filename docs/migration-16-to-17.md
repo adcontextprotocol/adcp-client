@@ -1,6 +1,6 @@
 # Migrating from SDK 16 to 17
 
-SDK 17 beta pins the signed AdCP `3.3.0-beta.2` release. Use the beta in
+SDK 17 beta pins the signed AdCP `3.3.0-beta.3` release. Use the beta in
 development and staging; production remains on SDK 16 and AdCP 3.2.
 
 ## Companion packages
@@ -106,7 +106,7 @@ request release. Existing cursor, account identity, and acknowledgement checks
 still apply.
 
 A `3.3.0` or `3.3` configuration pin does not select a beta. Use the exact
-`3.3.0-beta.2` bundle (wire alias `3.3-beta.2`); unavailable pins now produce a
+`3.3.0-beta.3` bundle (wire alias `3.3-beta.3`); unavailable pins now produce a
 short list of bundled release lines instead of every compatible patch.
 
 ## pnpm peer resolution
@@ -140,7 +140,7 @@ and [peer-dependency settings](https://pnpm.io/settings#dedupepeerdependents).
 
 The SDK packages the exact 3.3 beta schema and compliance bundle alongside
 maintained AdCP 3.2.7, 3.1.29 and 3.0.25 bundles. A seller must advertise
-`3.3-beta.2` (or its full bundle version, `3.3.0-beta.2`) before the buyer
+`3.3-beta.3` (or its full bundle version, `3.3.0-beta.3`) before the buyer
 selects that preview. A different beta, a moving `3.3-beta` alias, or a
 served-version echo alone does not establish support. The buyer can negotiate
 an older stable release the seller advertises. Missing or synthetic capability
@@ -152,9 +152,56 @@ server handlers are `mediaBuy.listCollections` and `mediaBuy.listProposals`,
 or optional methods on `MediaBuyLifecyclePlatform`. Their synchronous results
 use `outcome` and do not acquire a synthetic task `status` field.
 
+## AdCP 3.3.0-beta.3
+
+SDK 17 now pins AdCP `3.3.0-beta.3` and no longer packages or advertises
+`3.3.0-beta.2`. Preview negotiation is exact, so a beta.2 seller and a beta.3
+buyer settle on a stable release they share, and an explicit
+`adcpVersion: '3.3.0-beta.2'` pin fails with a configuration error. Upgrade
+both sides together when you test preview-only features.
+
+- **Protocol envelope on every response (adcp#8547).** Every 3.3 task response
+  composes `core/protocol-envelope.json`, so `status` is required on every
+  response and the generated response types no longer restate envelope fields
+  (`task_id`, `message`, `replayed`, `adcp_version`). `createAdcpServer` stamps
+  the envelope; a hand-built 3.3 response must carry `status`.
+- **Account requests (adcp#8620).** A request that resolves as `matched` or
+  `created` must carry `account` with its money terms; one that resolves as
+  `updated` and changed `billing`, `billing_entity` or `payment_terms` carries
+  `effective_at`; a change request that resolves as `created` carries
+  `not_carried_over`. A `requestAccount` handler that returns a resolved
+  record without them now fails response validation.
+- **Live creative updates (experimental `creative.live_updates`).** The types,
+  the `CREATIVE_LIVE_UPDATE_UNSUPPORTED` error code and the
+  `creative.staged_update_changed` notification type are generated;
+  `ACCOUNT_NOTIFICATION_TYPES` includes the notification type.
+- **Reporting subscriptions (experimental).** `authorization.regranted_at` is
+  an account authorization field; `toWireAccount` and `windDownGrant` keep it. Media buys carry
+  `cancellation_effective_at` and `flight_history`, packages carry
+  `reporting_delivery_offering_ids`, offerings carry `available_from` and
+  `withdrawn_at`, billing obligations may carry `stub: true`, and
+  `subscription_coverage[].status` may be `inactive` with `deactivated_at`.
+  Readbacks list at most 16 `prior_versions` and carry
+  `prior_versions_count`, `accounts_with_exceptions_count` and
+  `accounts_unauthorized_count`. A subscription response served without a
+  negotiated release now uses the pinned release, as the Python SDK does.
+- **Hand-modelled wire types removed from `@adcp/sdk/reporting/advanced`.**
+  The generated types now carry every field, so
+  `ReportingDeliveryOfferingWithDimensionsV1`,
+  `ReportingSubscriptionCoverageWithOfferingsV1`,
+  `ReportingSubscriptionExclusionEntryV1`, `ReportingSubscriptionGapV1`,
+  `ReportingSubscriptionInactiveIntervalV1`,
+  `ReportingSubscriptionStateWithIntervalsV1` and
+  `ReportingSubscriptionTimezoneCutoverV1` are gone. Use
+  `ReportingDeliveryOffering`, `ReportingSubscriptionCoverage` and
+  `ReportingSubscriptionState` (and their indexed members, such as
+  `NonNullable<ReportingSubscriptionCoverage['gaps']>[number]`) from
+  `@adcp/sdk`. `ReportingSubscriptionOfferingV1` is now an alias of
+  `ReportingDeliveryOffering`.
+
 ## AdCP 3.3.0-beta.2
 
-SDK 17 now pins AdCP `3.3.0-beta.2` and no longer packages or advertises
+SDK 17 beta.10 pinned AdCP `3.3.0-beta.2` and no longer packaged or advertised
 `3.3.0-beta.1`. Preview negotiation is exact, so a beta.1 seller and a beta.2
 buyer settle on a stable release they share, and an explicit
 `adcpVersion: '3.3.0-beta.1'` pin fails with a configuration error. Upgrade

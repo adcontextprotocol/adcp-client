@@ -1048,10 +1048,21 @@ export function createPrincipalLifecycle<TAccount = unknown>(
         const unauthorized = [...update.accountsUnauthorized].sort((left, right) =>
           compareBytes(left.account_id, right.account_id)
         );
-        if (withExceptions.length > 0) state.accounts_with_exceptions = structuredClone(withExceptions);
-        else delete state.accounts_with_exceptions;
-        if (unauthorized.length > 0) state.accounts_unauthorized = structuredClone(unauthorized);
-        else delete state.accounts_unauthorized;
+        // adcp#8619: each list carries its total.
+        if (withExceptions.length > 0) {
+          state.accounts_with_exceptions = structuredClone(withExceptions);
+          state.accounts_with_exceptions_count = withExceptions.length;
+        } else {
+          delete state.accounts_with_exceptions;
+          delete state.accounts_with_exceptions_count;
+        }
+        if (unauthorized.length > 0) {
+          state.accounts_unauthorized = structuredClone(unauthorized);
+          state.accounts_unauthorized_count = unauthorized.length;
+        } else {
+          delete state.accounts_unauthorized;
+          delete state.accounts_unauthorized_count;
+        }
         if (canonicalJsonSha256([state.accounts_with_exceptions ?? [], state.accounts_unauthorized ?? []]) !== before) {
           changed = true;
         }
