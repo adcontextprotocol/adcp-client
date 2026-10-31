@@ -230,6 +230,136 @@ before deployment. It covers source replay, two-account isolation,
 configuration replay/frozen currency, lifecycle start/stop, and Core
 capability truthfulness.
 
+### Principal-level reporting subscriptions (experimental, AdCP 3.3)
+
+With `reportingSubscriptions`, every `runCycle` first writes the subscription
+engine's frozen owed sets into the ledger, then plans account configurations as
+before, and the worker executes both.
+
+The coverage engine, its stores, the coverage function, the calendar, offering
+selection, the capability builder and the type of this option are low-level
+building blocks. They import from `@adcp/sdk/reporting/advanced`, where every
+export is `@experimental`; `@adcp/sdk/reporting/service`, `/consumer`, `/ledger`
+and the package root no longer re-export them.
+
+```ts
+import { createReliableReportingService } from '@adcp/sdk/reporting/service';
+import {
+  createReportingSubscriptionEngineV1,
+  createReportingSubscriptionEngineStateStoreV1,
+} from '@adcp/sdk/reporting/advanced';
+
+const service = createReliableReportingService({
+  // ...store, adapters, resolveSource, resolveCurrency, resolveCoverage as above
+  reportingSubscriptions: {
+    engine, // createReportingSubscriptionEngineV1(...)
+    resolvePrincipal: ctx => principalScopeFrom(ctx), // the principal runtime's mapping
+    listSubscriptionPrincipals: async () =>
+      (await Promise.all(tenantIds.map(tenantId => engine.listPrincipals(tenantId)))).flat(),
+    // Seller policy for one (subscription version, resolved offering): the facts a
+    // sync_accounts mapping also supplies to installConfiguration.
+    resolveSubscriptionConfiguration: ({ subscription, offering }) => ({
+      requestedMetrics: metricsFor(offering.report_definition_id),
+      requestedDimensions: dimensionsFor(offering.report_definition_id),
+      sourceSettings: settingsFor(offering.offering_id),
+      // finalityPolicy for an official subscription, canonicalization for billing
+    }),
+  },
+});
+```
+
+- **One generation per (account, owning principal, `subscription_id`,
+  `subscription_version`, resolved `offering_id`).** Its `delivery_config_id`
+  is the `subscription_id` and its `delivery_config_version` the
+  `subscription_version`. Subscription ids are unique per principal, so two
+  principals can both own `analytics-daily` on one account. The generation
+  carries an immutable `subscription` block; account generations keep exactly
+  their previous ids and fingerprints.
+- **Sparse, never grid-filled.** Each obligation is one owed period with its own
+  `media_buy_ids` frozen at its `scope_resolved_at` (the period end) and the
+  host-authorized constituents of exactly those buys from `resolveCoverage`. Its
+  `periodOrdinal` is the period start in whole seconds. The offering is
+  authoritative for timing: `expected_at` is the period end plus its
+  `delivery_sla`, and obligations carry `offering_id`.
+- **Completeness is a horizon.** Only periods the engine has frozen are written,
+  and the generation's mutable `owedSet.through` advances after they are
+  durable. A gap is a period that is not owed, never a continuity error. A scope
+  ending after the horizon reports `scope_closed: false` and keeps
+  `coverage_complete: true`.
+- **Caller isolation.** `get_reporting_status`, `get_media_buy_delivery` and
+  `sync_reporting_status` show a principal the account configurations plus only
+  its own subscription generations. `sync_reporting_status` accepts a status
+  without `reporting_obligation_id` against a subscription only for an existing
+  owed obligation.
+- **Failures are isolated per subscription.** One subscription that cannot be
+  planned never stops another or the account's own configurations; it is passed
+  to `onPlanningError`, or `runCycle` rejects with an `AggregateError` after the
+  rest of the cycle has run.
+
+A custom `ReportingLedgerStore` holds subscription generations only when it
+implements `recordOwedSetProgress` (and should implement
+`findObligationByOrdinal`), keys generations by
+`reportingLedgerSubscriptionKeyV1`, and applies `subscription_principal` to every
+snapshot. For PostgreSQL, reapply `REPORTING_LEDGER_MIGRATION`: it adds
+`adcp_reporting_configurations.subscription_key` (empty for every existing row)
+and replaces the three-column generation constraint with a unique index on
+`(account_id, delivery_config_id, delivery_config_version, subscription_key)`.
+
+**Managed delivery of subscriptions.** A subscription with a `destination`
+resolves only managed offerings. Serve it with
+`createPostgresReliableReportingProductionService` and pass the principal
+runtime as `reportingSubscriptions.principal`. The engine must have
+`isAuthorized`. Then:
+
+- Before a managed generation's first obligation is written, the service binds
+  it to the owner's destination. The version's `destination.destination_id`
+  names the destination, and the binding uses that destination's current
+  generation (its `destination_ref`). The destination must be delivery-eligible
+  and serve the offering's pattern and transport.
+- One destination serves every covered account, so each account gets its own
+  authorization of that `destination_ref`.
+- A destination that is not ready rejects the bind, and the obligations wait
+  for a later cycle instead of becoming undeliverable.
+- Bindings are keyed by their Core configuration, so every (owner, offering)
+  generation of one version gets its own. Reapply
+  `REPORTING_MANAGED_DELIVERY_MIGRATION` to drop the three-column binding key.
+- The binding freezes the version's `path_template`. Each delivery expands it
+  per obligation and passes the result to the adapter as `delivery_path`.
+  Object-store writes place it inside the collision-free generation prefix:
+  `adcp-reporting/{namespace_key}/{scope_key}/{delivery_path}/{plan_id}/{index}`.
+- Every row of a subscription revision carries `account_id`. The producer stamps
+  it before the revision is bound, so the committed digest covers it, and it
+  refuses a row that names another account.
+- The managed worker re-checks `engine.isAuthorized(owner, account)` before
+  delivering and again before settling. A lost grant releases the claim with
+  `holdMaterialization` without spending an attempt: the obligation stays
+  owed, and the engine reports the loss in `accounts_unauthorized`.
+- Status subscribers with a `principal`, and notification activity, carry a
+  subscription obligation's transitions only to its owner.
+
+**Receipts, statuses and grants.** A subscription obligation accepts
+`sync_reporting_receipts` and `sync_reporting_status` only from its owning
+principal (`reportingSubscriptionReceiptAdmissibleV1`, the one rule). Account
+obligations stay open to every consumer of the account. This applies on top of
+the host's own account resolution and `allowed_tasks` checks.
+
+Access means access: there is no post-revocation window. Once authority for an
+account ends, the account is unknown to every task, receipts and statuses
+included. A seller that wants a buyer to finish reconciling keeps a reduced
+grant instead of revoking, for example `allowed_tasks` limited to
+`get_reporting_status`, `sync_reporting_receipts` and `sync_reporting_status`.
+
+The engine counts an account as covered only while its grant lists
+`get_reporting_status` (`reportingSubscriptionCoverageGrantedV1`; a grant with
+no task restriction counts as all tasks). Report the grant's
+`authorization.allowed_tasks` on each `listAuthorizedAccounts` fact, or on
+`authorizationChanged`. Dropping `get_reporting_status` ends coverage at that
+instant, as a loss of authority with an `accounts_unauthorized` entry.
+
+The obligated-consumer roster stays host-owned, because it is keyed by consumer
+id. Include a subscription obligation's owner in it while the owner's grant
+lists the receipt task.
+
 ## Advanced: assemble the primitives directly
 
 ```ts
