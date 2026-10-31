@@ -43,8 +43,8 @@ try {
     }
     assert.equal(buyer.createReliableReportingServiceV1, undefined);
     // Reporting-subscription coverage is a low-level building block on the advanced subpath only.
-    assert.equal(buyer.expectedSubscriptionPeriods, undefined);
-    assert.equal(typeof require('@adcp/sdk/reporting/advanced').expectedSubscriptionPeriods, 'function');
+    assert.equal(buyer.owedSubscriptionPeriodsV1, undefined);
+    assert.equal(typeof require('@adcp/sdk/reporting/advanced').owedSubscriptionPeriodsV1, 'function');
   `
   );
   writeFileSync(
@@ -56,9 +56,9 @@ try {
       assert.equal(typeof buyer[name], 'function', name);
     }
     assert.equal(buyer.createReliableReportingServiceV1, undefined);
-    assert.equal(buyer.expectedSubscriptionPeriods, undefined);
+    assert.equal(buyer.owedSubscriptionPeriodsV1, undefined);
     const advanced = await import('@adcp/sdk/reporting/advanced');
-    assert.equal(typeof advanced.expectedSubscriptionPeriods, 'function');
+    assert.equal(typeof advanced.owedSubscriptionPeriodsV1, 'function');
   `
   );
   for (const file of ['consumer.cjs', 'consumer.mjs']) {

@@ -45,7 +45,7 @@ import type {
   ReportingLedgerRevisionSnapshotV1,
   ReportingLedgerSnapshotQueryV1,
   ReportingLedgerStore,
-  ReportingLedgerSubscriptionPrincipalV1,
+  PrincipalRef,
   ReportingManagedDeliveryBindingV1,
   CreateReportingDeliveryHandlerOptionsV1,
   ReportingDeliveryHandlerV1,
@@ -88,13 +88,13 @@ export interface ReportingStatusSubscriptionScopeOptionsV1<TContext = unknown> {
  */
 export type ReportingSubscriptionPrincipalResolverV1<TContext = unknown> = (
   context: TContext
-) => ReportingLedgerSubscriptionPrincipalV1 | Promise<ReportingLedgerSubscriptionPrincipalV1>;
+) => PrincipalRef | Promise<PrincipalRef>;
 
 /** Resolve and shape-check the caller's subscription principal. */
 export async function resolveReportingSubscriptionPrincipalV1<TContext>(
   resolver: ReportingSubscriptionPrincipalResolverV1<TContext> | undefined,
   context: TContext
-): Promise<ReportingLedgerSubscriptionPrincipalV1 | undefined> {
+): Promise<PrincipalRef | undefined> {
   if (!resolver) return undefined;
   const principal = await resolver(context);
   if (

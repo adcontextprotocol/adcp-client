@@ -8,7 +8,7 @@
 import type { Account } from '../../server/decisioning/account';
 import type { RequestContext } from '../../server/decisioning/context';
 import type { ReliableReportingPlatform } from '../../server/decisioning/specialisms/reporting';
-import type { PrincipalLifecycleRuntimeSubscriptions, PrincipalStoreScope } from '../../server/principal/types';
+import type { PrincipalLifecycleRuntimeSubscriptions, PrincipalRef } from '../../server/principal/types';
 import type { PrincipalLifecycleRuntime } from '../../server/principal/runtime';
 import {
   reportingSubscriptionCoverageForReleaseV1,
@@ -36,13 +36,13 @@ export interface ReliableReportingSubscriptionsOptionsV1<TCtxMeta = Record<strin
    * It also scopes `get_reporting_status`, `get_media_buy_delivery` and `sync_reporting_status`: a
    * caller sees account configurations plus only its own subscription generations.
    */
-  resolvePrincipal(context: RequestContext<Account<TCtxMeta>>): PrincipalStoreScope | Promise<PrincipalStoreScope>;
+  resolvePrincipal(context: RequestContext<Account<TCtxMeta>>): PrincipalRef | Promise<PrincipalRef>;
   /**
    * Every principal whose subscription obligations `runCycle` writes into the ledger, for example
-   * `engine.listPrincipals(tenantId)` across your tenants. Each cycle plans the engine's frozen
+   * `engine.listSubscriptionPrincipals(tenantId)` across your tenants. Each cycle plans the engine's frozen
    * owed set of each of them (on the cycle's account) before it plans account configurations.
    */
-  listSubscriptionPrincipals(): readonly PrincipalStoreScope[] | Promise<readonly PrincipalStoreScope[]>;
+  listSubscriptionPrincipals(): readonly PrincipalRef[] | Promise<readonly PrincipalRef[]>;
   /**
    * The account `resolveSource`, `resolveCurrency` and `resolveCoverage` receive for a subscription
    * generation. Defaults to `{ id: accountId, ctx_metadata: {} }`.
@@ -67,7 +67,7 @@ export interface ReliableReportingSubscriptionsOptionsV1<TCtxMeta = Record<strin
    */
   onPlanningError?(
     error: unknown,
-    context: { principal: PrincipalStoreScope; accountId?: string; subscriptionId?: string }
+    context: { principal: PrincipalRef; accountId?: string; subscriptionId?: string }
   ): void | Promise<void>;
   /**
    * Binds a managed subscription generation to its destination before its first obligation is
@@ -89,7 +89,7 @@ export interface ReliableReportingSubscriptionsOptionsV1<TCtxMeta = Record<strin
  */
 export interface ReliableReportingSubscriptionBindingInputV1 {
   /** The owning principal. */
-  principal: PrincipalStoreScope;
+  principal: PrincipalRef;
   /** The installed generation, with its `subscription` block. */
   configuration: ReportingLedgerConfigurationV1;
   /** The subscription version's configuration, naming `destination.destination_id` and `path_template`. */
@@ -106,7 +106,7 @@ export interface ReliableReportingSubscriptionBindingInputV1 {
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReliableReportingSubscriptionGenerationContextV1<TCtxMeta = Record<string, unknown>> {
-  principal: PrincipalStoreScope;
+  principal: PrincipalRef;
   account: Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'>;
   /** The subscription version's configuration. */
   subscription: ReportingSubscriptionFrozenOwedSetV1['versions'][number]['configuration'];

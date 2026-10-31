@@ -2,7 +2,7 @@
  * Buyer-computable coverage for principal-level reporting subscriptions
  * (experimental `media_buy.reporting_subscriptions`, AdCP 3.3).
  *
- * `expectedSubscriptionPeriods` is a pure function of plain data the buyer already holds:
+ * `owedSubscriptionPeriodsV1` is a pure function of plain data the buyer already holds:
  * its subscription versions and their `accepted_at`, its visible confirmed buys, the
  * account's grants and timezone, the seller's offerings, and the exceptions the seller
  * published in `get_reporting_status` `subscription_coverage`. It returns every period the
@@ -161,7 +161,7 @@ export interface ReportingSubscriptionCoverageAccountV1 {
 }
 
 /** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
-export interface ExpectedSubscriptionPeriodsInputV1 {
+export interface OwedSubscriptionPeriodsInputV1 {
   subscription_id: string;
   /** Every version whose obligations matter, oldest first. */
   versions: readonly ReportingSubscriptionVersionRecordV1[];
@@ -194,7 +194,7 @@ export interface ExpectedSubscriptionPeriodsInputV1 {
  *
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
-export interface ExpectedSubscriptionPeriodV1 {
+export interface OwedSubscriptionPeriodV1 {
   subscription_id: string;
   /** The version that owes it, the obligation's `delivery_config_version`. */
   subscription_version: number;
@@ -212,7 +212,7 @@ export interface ExpectedSubscriptionPeriodV1 {
  *
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
-export interface ExpectedSubscriptionObligationV1 {
+export interface OwedSubscriptionObligationV1 {
   subscription_id: string;
   subscription_version: number;
   account_id: string;
@@ -268,7 +268,7 @@ interface AuthorityChain {
  *
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
-export function expectedSubscriptionPeriods(input: ExpectedSubscriptionPeriodsInputV1): ExpectedSubscriptionPeriodV1[] {
+export function owedSubscriptionPeriodsV1(input: OwedSubscriptionPeriodsInputV1): OwedSubscriptionPeriodV1[] {
   const now = instant(input.now, 'now');
   const maxPeriods = input.max_periods ?? DEFAULT_MAX_PERIODS;
   if (!Number.isSafeInteger(maxPeriods) || maxPeriods < 1)
@@ -287,7 +287,7 @@ export function expectedSubscriptionPeriods(input: ExpectedSubscriptionPeriodsIn
     offeringsById.set(offering.offering_id, offering);
   }
   const calendars = new Map<string, ReportingPeriodCalendarV1>();
-  const result: ExpectedSubscriptionPeriodV1[] = [];
+  const result: OwedSubscriptionPeriodV1[] = [];
   const seenBuys = new Set<string>();
   const maxIterations = input.max_iterations ?? DEFAULT_MAX_ITERATIONS;
   if (!Number.isSafeInteger(maxIterations) || maxIterations < 1) {
@@ -390,10 +390,10 @@ function firstOwedBoundary(calendar: ReportingPeriodCalendarV1, handoff: number,
  *
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
-export function groupExpectedSubscriptionPeriodsV1(
-  periods: readonly ExpectedSubscriptionPeriodV1[]
-): ExpectedSubscriptionObligationV1[] {
-  const groups = new Map<string, ExpectedSubscriptionObligationV1>();
+export function groupOwedSubscriptionPeriodsV1(
+  periods: readonly OwedSubscriptionPeriodV1[]
+): OwedSubscriptionObligationV1[] {
+  const groups = new Map<string, OwedSubscriptionObligationV1>();
   for (const period of periods) {
     const key = JSON.stringify([
       period.subscription_id,
@@ -429,7 +429,7 @@ export function groupExpectedSubscriptionPeriodsV1(
     );
 }
 
-function comparePeriods(left: ExpectedSubscriptionPeriodV1, right: ExpectedSubscriptionPeriodV1): number {
+function comparePeriods(left: OwedSubscriptionPeriodV1, right: OwedSubscriptionPeriodV1): number {
   return (
     Date.parse(left.period_start) - Date.parse(right.period_start) ||
     left.subscription_version - right.subscription_version ||
@@ -696,7 +696,7 @@ interface ExceptionWindow extends Window {
   offeringId?: string;
 }
 
-function exceptionWindows(coverage: ExpectedSubscriptionPeriodsInputV1['coverage']): ExceptionWindow[] {
+function exceptionWindows(coverage: OwedSubscriptionPeriodsInputV1['coverage']): ExceptionWindow[] {
   const windows: ExceptionWindow[] = [];
   for (const entry of coverage?.excluded ?? []) {
     // A package-level offering_unsupported entry removes packages from the buy's
@@ -769,7 +769,7 @@ function flightAt(timeline: ReadonlyArray<{ until: number; flight: Flight }>, re
 function buildRegimes(
   buy: ReportingSubscriptionBuyV1,
   versions: readonly NormalizedVersion[],
-  input: ExpectedSubscriptionPeriodsInputV1,
+  input: OwedSubscriptionPeriodsInputV1,
   offeringsById: ReadonlyMap<string, ReportingSubscriptionOfferingV1>,
   timezones: TimezoneTimeline,
   calendars: Map<string, ReportingPeriodCalendarV1>
@@ -834,7 +834,7 @@ function sameResolution(left: readonly ResolvedOffering[], right: readonly Resol
 function resolveForBuy(
   buy: ReportingSubscriptionBuyV1,
   version: ReportingSubscriptionVersionRecordV1,
-  input: ExpectedSubscriptionPeriodsInputV1,
+  input: OwedSubscriptionPeriodsInputV1,
   offeringsById: ReadonlyMap<string, ReportingSubscriptionOfferingV1>,
   timezones: TimezoneTimeline,
   at: number,
@@ -955,3 +955,14 @@ function instant(value: unknown, field: string): number {
     throw new CoverageInputError('COVERAGE_INPUT_INVALID', `${field} must be an RFC 3339 date-time`, 'invalid_instant');
   return parsed;
 }
+
+/** @deprecated Renamed {@link owedSubscriptionPeriodsV1}: "owed" is the one word for what a seller must deliver. This alias is removed in a later beta. */
+export const expectedSubscriptionPeriods = owedSubscriptionPeriodsV1;
+/** @deprecated Renamed {@link groupOwedSubscriptionPeriodsV1}: "owed" is the one word for what a seller must deliver. This alias is removed in a later beta. */
+export const groupExpectedSubscriptionPeriodsV1 = groupOwedSubscriptionPeriodsV1;
+/** @deprecated Renamed {@link OwedSubscriptionPeriodV1}: "owed" is the one word for what a seller must deliver. This alias is removed in a later beta. */
+export type ExpectedSubscriptionPeriodV1 = OwedSubscriptionPeriodV1;
+/** @deprecated Renamed {@link OwedSubscriptionObligationV1}: "owed" is the one word for what a seller must deliver. This alias is removed in a later beta. */
+export type ExpectedSubscriptionObligationV1 = OwedSubscriptionObligationV1;
+/** @deprecated Renamed {@link OwedSubscriptionPeriodsInputV1}: "owed" is the one word for what a seller must deliver. This alias is removed in a later beta. */
+export type ExpectedSubscriptionPeriodsInputV1 = OwedSubscriptionPeriodsInputV1;

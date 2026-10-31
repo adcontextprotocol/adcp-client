@@ -68,7 +68,7 @@ import {
 } from '../source';
 
 import type { ReportingSubscriptionFrozenOwedSetV1 } from '../subscriptions/engine';
-import type { PrincipalStoreScope } from '../../server/principal/types';
+import type { PrincipalRef } from '../../server/principal/types';
 import { reportingConfigurationCapabilitiesV1 } from '../subscriptions/capabilities';
 import type { ReportingDeliveryOfferingWithDimensionsV1 } from '../subscriptions/wire';
 import { type ReliableReportingSubscriptionsOptionsV1, withReportingSubscriptionCoverageV1 } from './subscriptions';
@@ -291,6 +291,11 @@ export interface CreateReliableReportingServiceOptionsV1<TCtxMeta = Record<strin
    * created with `reportingSubscriptions` and a reporting subscription engine from
    * `@adcp/sdk/reporting/advanced`, where this option's type is also published. Without it
    * capabilities and responses are unchanged.
+   */
+  subscriptions?: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>;
+  /**
+   * @deprecated Renamed `subscriptions`, the service's one reporting-subscription block. Passing both
+   * is a configuration error. This alias is removed in a later beta.
    */
   reportingSubscriptions?: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>;
 }
@@ -544,35 +549,41 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   ): Promise<readonly ReliableReportingMaintenanceTaskResultV1[]> =>
     maintenance!.run({ signal, ...(report ? { report } : {}) });
 
-  const subscriptionOptions = options.reportingSubscriptions;
+  if (options.subscriptions !== undefined && options.reportingSubscriptions !== undefined) {
+    throw new PlatformConfigError(
+      'Pass subscriptions or the deprecated reportingSubscriptions, not both. Move the block to subscriptions.',
+      { configField: 'subscriptions' }
+    );
+  }
+  const subscriptionOptions = options.subscriptions ?? options.reportingSubscriptions;
   if (subscriptionOptions !== undefined) {
     if (
       typeof subscriptionOptions.engine?.subscriptionCoverage !== 'function' ||
       typeof subscriptionOptions.engine.frozenOwedSets !== 'function'
     ) {
       throw new PlatformConfigError(
-        'reportingSubscriptions requires a reporting subscription engine. Pass engine: createReportingSubscriptionEngineV1(...) from @adcp/sdk/reporting/advanced.',
-        { configField: 'reportingSubscriptions.engine' }
+        'subscriptions requires a reporting subscription engine. Pass engine: createReportingSubscriptionEngineV1(...) from @adcp/sdk/reporting/advanced.',
+        { configField: 'subscriptions.engine' }
       );
     }
     if (typeof subscriptionOptions.resolvePrincipal !== 'function') {
       throw new PlatformConfigError(
-        "reportingSubscriptions requires resolvePrincipal. Pass the principal runtime's authenticated mapping.",
-        { configField: 'reportingSubscriptions.resolvePrincipal' }
+        "subscriptions requires resolvePrincipal. Pass the principal runtime's authenticated mapping.",
+        { configField: 'subscriptions.resolvePrincipal' }
       );
     }
     // A seller that advertises subscriptions owes their obligations: the service writes them into
     // the ledger every cycle, so it must know whose to write.
     if (typeof subscriptionOptions.listSubscriptionPrincipals !== 'function') {
       throw new PlatformConfigError(
-        'reportingSubscriptions requires listSubscriptionPrincipals. Return engine.listPrincipals(tenantId) across your tenants.',
-        { configField: 'reportingSubscriptions.listSubscriptionPrincipals' }
+        'subscriptions requires listSubscriptionPrincipals. Return engine.listSubscriptionPrincipals(tenantId) across your tenants.',
+        { configField: 'subscriptions.listSubscriptionPrincipals' }
       );
     }
     if (typeof subscriptionOptions.resolveSubscriptionConfiguration !== 'function') {
       throw new PlatformConfigError(
-        'reportingSubscriptions requires resolveSubscriptionConfiguration. Return the metrics, dimensions and source settings for each subscription generation.',
-        { configField: 'reportingSubscriptions.resolveSubscriptionConfiguration' }
+        'subscriptions requires resolveSubscriptionConfiguration. Return the metrics, dimensions and source settings for each subscription generation.',
+        { configField: 'subscriptions.resolveSubscriptionConfiguration' }
       );
     }
     // Sellers advertising subscriptions MUST publish standard_dimensions on every offering
@@ -803,7 +814,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     planned: number;
     failures: Array<{
       error: unknown;
-      context: { principal: PrincipalStoreScope; accountId?: string; subscriptionId?: string };
+      context: { principal: PrincipalRef; accountId?: string; subscriptionId?: string };
     }>;
   }> {
     const principals = await subscriptions.listSubscriptionPrincipals();
@@ -838,7 +849,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
 
   async function planFrozenOwedSet(
     subscriptions: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>,
-    principal: PrincipalStoreScope,
+    principal: PrincipalRef,
     set: ReportingSubscriptionFrozenOwedSetV1,
     now: Date
   ): Promise<number> {
@@ -922,7 +933,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   /** One (version, offering) generation through the same trusted path as installConfiguration. */
   async function subscriptionGeneration(
     subscriptions: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>,
-    principal: PrincipalStoreScope,
+    principal: PrincipalRef,
     account: Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'>,
     version: ReportingSubscriptionFrozenOwedSetV1['versions'][number],
     offeringId: string

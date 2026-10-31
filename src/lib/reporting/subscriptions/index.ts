@@ -31,8 +31,16 @@ export type {
   ReportingSubscriptionSelectorV1,
   ResolveReportingSubscriptionOfferingsInputV1,
 } from './selection';
-export { expectedSubscriptionPeriods, groupExpectedSubscriptionPeriodsV1 } from './coverage';
+export {
+  owedSubscriptionPeriodsV1,
+  groupOwedSubscriptionPeriodsV1,
+  expectedSubscriptionPeriods,
+  groupExpectedSubscriptionPeriodsV1,
+} from './coverage';
 export type {
+  OwedSubscriptionObligationV1,
+  OwedSubscriptionPeriodV1,
+  OwedSubscriptionPeriodsInputV1,
   ExpectedSubscriptionObligationV1,
   ExpectedSubscriptionPeriodV1,
   ExpectedSubscriptionPeriodsInputV1,

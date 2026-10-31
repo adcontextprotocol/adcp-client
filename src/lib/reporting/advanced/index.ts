@@ -22,6 +22,7 @@ export * from '../subscriptions';
 // Coverage onto the consumer runtime's expected periods (buyer).
 export {
   reportingSubscriptionVersionRecordsV1,
+  toExpectedReportingPeriodsV1,
   subscriptionExpectedReportingPeriodsV1,
   type SubscriptionExpectationTemplateV1,
 } from '../subscriptions/expectations';
@@ -68,3 +69,6 @@ export {
   type CoverageInputErrorDetail,
   type ReportingSubscriptionEngineErrorCode,
 } from '../../errors';
+
+// The principal identity every reporting-subscription API takes.
+export type { PrincipalRef } from '../../server/principal/types';

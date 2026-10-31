@@ -32,7 +32,7 @@ import type {
   ReportingLedgerObligationV1,
   ReportingLedgerRevisionV1,
   ReportingLedgerStore,
-  ReportingLedgerSubscriptionPrincipalV1,
+  PrincipalRef,
   ReportingManagedDeliveryBindingV1,
   ReportingSubscriptionPrincipalResolverV1,
 } from '@adcp/sdk/reporting/ledger';
@@ -486,7 +486,7 @@ export interface ReportingManagedDeliveryWorkerOptionsV1 {
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export type ReportingSubscriptionDeliveryAuthorityV1 = (input: {
-  principal: ReportingLedgerSubscriptionPrincipalV1;
+  principal: PrincipalRef;
   account_id: string;
   obligation: ReportingLedgerObligationV1;
   binding: ReportingManagedDeliveryBindingV1;
@@ -1041,7 +1041,7 @@ export function reportingSubscriptionDeliveryPathV1(
 
 /**
  * Binds one managed subscription generation to the subscription's destination, for
- * `createReliableReportingService({ reportingSubscriptions: { bindManagedGeneration } })`.
+ * `createReliableReportingService({ subscriptions: { bindManagedGeneration } })`.
  *
  * The destination is resolved from the owner: the subscription version names
  * `destination.destination_id`, the principal's current generation of that destination supplies
@@ -1058,7 +1058,7 @@ export function reportingSubscriptionDeliveryPathV1(
 export function createReportingSubscriptionManagedBindingV1(options: {
   store: Pick<ReportingManagedDeliveryStore, 'installBinding' | 'ensureDestinationAuthorization'>;
   principal: {
-    listReportingSubscriptions(scope: ReportingLedgerSubscriptionPrincipalV1): Promise<{
+    listReportingSubscriptions(scope: PrincipalRef): Promise<{
       states: ReadonlyArray<{
         subscription_id: string;
         destination_ref?: string;
@@ -1066,7 +1066,7 @@ export function createReportingSubscriptionManagedBindingV1(options: {
       }>;
     }>;
     resolveReportingDestination(
-      scope: ReportingLedgerSubscriptionPrincipalV1,
+      scope: PrincipalRef,
       destinationRef: string
     ): Promise<{
       destinationId: string;

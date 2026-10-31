@@ -325,11 +325,14 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   // Principal-level reporting subscriptions (AdCP 3.3): a managed subscription generation is bound
   // to the owner's destination before its first obligation, every delivery re-checks the owner's
   // authority for the account, and reads are scoped to the caller's principal. Without
-  // `reportingSubscriptions` nothing here is wired.
-  const subscriptions = options.reportingSubscriptions;
+  // `subscriptions` (or the deprecated `reportingSubscriptions`) nothing here is wired.
+  if (options.subscriptions !== undefined && options.reportingSubscriptions !== undefined) {
+    throw new TypeError('Pass subscriptions or the deprecated reportingSubscriptions, not both.');
+  }
+  const subscriptions = options.subscriptions ?? options.reportingSubscriptions;
   if (subscriptions && typeof subscriptions.engine?.isAuthorized !== 'function') {
     throw new TypeError(
-      'reportingSubscriptions on the production service requires an engine with isAuthorized, so every ' +
+      'subscriptions on the production service requires an engine with isAuthorized, so every ' +
         'managed delivery re-checks the owner principal’s account authority'
     );
   }
@@ -343,11 +346,13 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
           verificationProfiles: options.managedDelivery.adapter.verificationProfiles,
         })
       : undefined);
+  const { reportingSubscriptions: _deprecatedSubscriptions, ...rest } = options;
+  void _deprecatedSubscriptions;
   const coreOptions = {
-    ...options,
+    ...rest,
     ...(subscriptions
       ? {
-          reportingSubscriptions: {
+          subscriptions: {
             ...subscriptions,
             ...(bindManagedGeneration ? { bindManagedGeneration } : {}),
           },

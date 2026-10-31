@@ -5,11 +5,7 @@ import { canonicalize } from '../../utils/jcs';
 import { isReportingAdjustmentReceiptEvidence, isReportingReceiptEvidence } from '../evidence';
 import type { AdcpToolMap } from '../../server/create-adcp-server';
 import { AdcpError } from '../../server/decisioning/async-outcome';
-import type {
-  ReportingLedgerSubscriptionPrincipalV1,
-  ReportingManagedDeliveryBindingV1,
-  ReportingSubscriptionReceiptAdmissionV1,
-} from './types';
+import type { PrincipalRef, ReportingManagedDeliveryBindingV1, ReportingSubscriptionReceiptAdmissionV1 } from './types';
 
 /** RC3 `maxItems` on `receipts` and on `adjustment_receipts`, applied separately. */
 const MAX_RECEIPTS_PER_ARRAY = 100;
@@ -72,9 +68,7 @@ export function createSyncReportingReceiptsHandler<TContext extends { account?: 
   resolveConsumerId: (context: TContext) => string | Promise<string>,
   now: () => Date = () => new Date(),
   options: {
-    resolveSubscriptionPrincipal?: (
-      context: TContext
-    ) => ReportingLedgerSubscriptionPrincipalV1 | Promise<ReportingLedgerSubscriptionPrincipalV1>;
+    resolveSubscriptionPrincipal?: (context: TContext) => PrincipalRef | Promise<PrincipalRef>;
   } = {}
 ) {
   if (options.resolveSubscriptionPrincipal && store.receiptAdmission !== true) {

@@ -10,8 +10,8 @@ const root = require('@adcp/sdk');
 
 const {
   createReportingPeriodCalendarV1,
-  expectedSubscriptionPeriods,
-  groupExpectedSubscriptionPeriodsV1,
+  owedSubscriptionPeriodsV1,
+  groupOwedSubscriptionPeriodsV1,
   resolveReportingSubscriptionOfferingsV1,
   reportingSubscriptionScopeIncludesV1,
 } = advanced;
@@ -104,7 +104,7 @@ function runCase(testCase) {
   const input = structuredClone(testCase.input);
   if (testCase.expected_error) {
     assert.throws(
-      () => expectedSubscriptionPeriods(input),
+      () => owedSubscriptionPeriodsV1(input),
       error =>
         error instanceof CoverageInputError &&
         error.code === testCase.expected_error.code &&
@@ -114,7 +114,7 @@ function runCase(testCase) {
     );
     return;
   }
-  const actual = expectedSubscriptionPeriods(input);
+  const actual = owedSubscriptionPeriodsV1(input);
   assert.deepEqual(comparable(actual), comparable(testCase.expected), testCase.rule);
   const offerings = new Map(input.offerings.map(offering => [offering.offering_id, offering]));
   for (const row of actual) {
@@ -125,7 +125,7 @@ function runCase(testCase) {
   }
   assert.ok(testCase.expected_obligations, 'every case states its obligations');
   if (testCase.expected_obligations) {
-    const grouped = groupExpectedSubscriptionPeriodsV1(actual).map(group => ({
+    const grouped = groupOwedSubscriptionPeriodsV1(actual).map(group => ({
       subscription_version: group.subscription_version,
       offering_id: group.offering_id,
       period_start: instant(group.period_start),
@@ -143,7 +143,7 @@ function runCase(testCase) {
   }
 }
 
-describe('expectedSubscriptionPeriods over the vectors', () => {
+describe('owedSubscriptionPeriodsV1 over the vectors', () => {
   test('every subscription in the table is schema-valid', () => {
     // Validate against the bundle the SDK pins (ADCP_VERSION).
     const Ajv = require('ajv');
@@ -177,26 +177,26 @@ describe('expectedSubscriptionPeriods over the vectors', () => {
     for (const testCase of table.cases.filter(c => !c.expected_error)) {
       const input = structuredClone(testCase.input);
       const snapshot = structuredClone(input);
-      const first = expectedSubscriptionPeriods(input);
+      const first = owedSubscriptionPeriodsV1(input);
       assert.deepEqual(input, snapshot, testCase.name);
-      assert.deepEqual(expectedSubscriptionPeriods(input), first, testCase.name);
+      assert.deepEqual(owedSubscriptionPeriodsV1(input), first, testCase.name);
     }
   });
 
   test('only the advanced entry point exports the rule', () => {
-    assert.equal(typeof expectedSubscriptionPeriods, 'function');
+    assert.equal(typeof owedSubscriptionPeriodsV1, 'function');
     for (const [name, surface] of Object.entries({ consumer, ledger, service, root })) {
-      assert.equal(surface.expectedSubscriptionPeriods, undefined, name);
+      assert.equal(surface.owedSubscriptionPeriodsV1, undefined, name);
       assert.equal(surface.createReportingPeriodCalendarV1, undefined, name);
     }
   });
 });
 
-describe('expectedSubscriptionPeriods invariants', () => {
+describe('owedSubscriptionPeriodsV1 invariants', () => {
   const baseline = table.cases.find(c => c.name === 'baseline').input;
 
   test('exceptions only ever remove periods', () => {
-    const owed = expectedSubscriptionPeriods(structuredClone(baseline));
+    const owed = owedSubscriptionPeriodsV1(structuredClone(baseline));
     const windows = [
       { reason: 'capacity', from: '2026-11-03T00:00:00Z' },
       { reason: 'capacity', from: '2026-10-01T00:00:00Z', until: '2026-11-04T00:00:00Z' },
@@ -204,7 +204,7 @@ describe('expectedSubscriptionPeriods invariants', () => {
       { reason: 'offering_unsupported', media_buy_id: 'mb_other', from: '2026-11-01T00:00:00Z' },
     ];
     for (const entry of windows) {
-      const reduced = expectedSubscriptionPeriods({ ...structuredClone(baseline), coverage: { excluded: [entry] } });
+      const reduced = owedSubscriptionPeriodsV1({ ...structuredClone(baseline), coverage: { excluded: [entry] } });
       const keys = new Set(owed.map(row => JSON.stringify(row)));
       for (const row of reduced) assert.ok(keys.has(JSON.stringify(row)), 'an exception never adds a period');
       const removed = owed.filter(row => !reduced.some(other => JSON.stringify(other) === JSON.stringify(row)));
@@ -219,7 +219,7 @@ describe('expectedSubscriptionPeriods invariants', () => {
     const input = structuredClone(baseline);
     input.buys[0].end_time = '2027-06-30T07:00:00Z';
     input.now = '2027-08-01T00:00:00Z';
-    const owed = expectedSubscriptionPeriods(input);
+    const owed = owedSubscriptionPeriodsV1(input);
     assert.equal(owed[0].period_start, '2026-11-03T00:00:00.000Z');
     assert.equal(owed.at(-1).period_start, '2027-06-30T00:00:00.000Z', 'the period containing the stop is owed');
     for (let index = 1; index < owed.length; index += 1) {
@@ -233,7 +233,7 @@ describe('expectedSubscriptionPeriods invariants', () => {
       table.cases.find(c => c.name === 'new subscription version, aligned schedules').input
     );
     input.buys[0].end_time = '2026-11-20T00:00:00Z';
-    const owed = expectedSubscriptionPeriods(input);
+    const owed = owedSubscriptionPeriodsV1(input);
     const starts = owed.map(row => row.period_start);
     assert.equal(new Set(starts).size, starts.length);
     for (let index = 1; index < owed.length; index += 1)
@@ -243,7 +243,7 @@ describe('expectedSubscriptionPeriods invariants', () => {
   test('fails closed above max_periods', () => {
     const input = structuredClone(baseline);
     input.max_periods = 2;
-    assert.throws(() => expectedSubscriptionPeriods(input), {
+    assert.throws(() => owedSubscriptionPeriodsV1(input), {
       name: 'CoverageInputError',
       code: 'COVERAGE_BUDGET_EXCEEDED',
       recovery: 'correctable',
@@ -251,22 +251,22 @@ describe('expectedSubscriptionPeriods invariants', () => {
   });
 
   test('rejects malformed instants and mismatched version records', () => {
-    assert.throws(() => expectedSubscriptionPeriods({ ...structuredClone(baseline), now: '2026-12-01' }), {
+    assert.throws(() => owedSubscriptionPeriodsV1({ ...structuredClone(baseline), now: '2026-12-01' }), {
       code: 'COVERAGE_INPUT_INVALID',
       detail: 'invalid_instant',
     });
     const input = structuredClone(baseline);
     input.versions[0].configuration.subscription_version = 9;
-    assert.throws(() => expectedSubscriptionPeriods(input), {
+    assert.throws(() => owedSubscriptionPeriodsV1(input), {
       code: 'COVERAGE_INPUT_INVALID',
       detail: 'invalid_input',
     });
     const inactive = structuredClone(baseline);
     inactive.versions[0].configuration.active = false;
-    assert.throws(() => expectedSubscriptionPeriods(inactive), /deactivated_at/);
+    assert.throws(() => owedSubscriptionPeriodsV1(inactive), /deactivated_at/);
     const destination = structuredClone(baseline);
     destination.versions[0].configuration.destination = { destination_id: 'd' };
-    assert.throws(() => expectedSubscriptionPeriods(destination), {
+    assert.throws(() => owedSubscriptionPeriodsV1(destination), {
       code: 'COVERAGE_INPUT_INCOMPLETE',
       detail: 'missing_destination_method',
     });

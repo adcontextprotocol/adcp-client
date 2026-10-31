@@ -650,7 +650,7 @@ describe('ReliableReportingService', () => {
     reportingAdapter.deliveryOffering.standard_dimensions = ['package'];
     const { service } = serviceFixture({
       adapters: { fixture: reportingAdapter },
-      reportingSubscriptions: subscriptionOptions,
+      subscriptions: subscriptionOptions,
     });
     assert.deepEqual(service.capabilities.offerings[0].standard_dimensions, ['package']);
     assert.deepEqual(service.capabilities.configuration_tasks, ['sync_principal', 'sync_accounts']);

@@ -54,7 +54,7 @@ export interface ReliableReportingConsumerAccountV1<TCredential = unknown> {
    * Before each reconciliation the runtime reads the summary view's
    * `subscription_coverage[]` and passes it here; the returned periods are reconciled
    * alongside `reconciliation.expectedPeriods`. Compute them with
-   * `expectedSubscriptionPeriods` and `subscriptionExpectedReportingPeriodsV1`, passing
+   * `owedSubscriptionPeriodsV1` and `toExpectedReportingPeriodsV1`, passing
    * `now` so the expectations match the snapshot being reconciled.
    *
    * Use this only against a seller that materializes subscription obligations in its

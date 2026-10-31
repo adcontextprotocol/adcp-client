@@ -195,10 +195,10 @@ async function world({ bind, subscribers = [] } = {}) {
     }),
     resolveCurrency: () => 'USD',
     resolveCoverage: () => ({ constituents: ['mb-a', 'mb-b'].map(constituent) }),
-    reportingSubscriptions: {
+    subscriptions: {
       engine,
       resolvePrincipal: context => context.principalScope,
-      listSubscriptionPrincipals: () => engine.listPrincipals(TENANT),
+      listSubscriptionPrincipals: () => engine.listSubscriptionPrincipals(TENANT),
       resolveSubscriptionConfiguration: () => ({
         requestedMetrics: request.requestedMetrics,
         requestedDimensions: request.requestedDimensions,

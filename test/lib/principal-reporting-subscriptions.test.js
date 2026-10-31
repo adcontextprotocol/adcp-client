@@ -565,7 +565,7 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
     });
     const version = created.result.configuration_version;
     assert.equal(
-      await lifecycle.recordReportingSubscriptionCoverage(SCOPE, [
+      await lifecycle.recordSubscriptionReadback(SCOPE, [
         {
           subscriptionId: 'analytics-daily',
           accountsWithExceptions: [{ account_id: 'acct_2', reasons: ['capacity'] }],
@@ -581,7 +581,7 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
     );
     assert.equal(guarded.result.kind, 'applied', JSON.stringify(guarded));
     await assert.rejects(
-      lifecycle.recordReportingSubscriptionCoverage(SCOPE, [
+      lifecycle.recordSubscriptionReadback(SCOPE, [
         {
           subscriptionId: 'analytics-daily',
           accountsWithExceptions: Array.from({ length: 1001 }, (_, index) => ({
@@ -751,8 +751,10 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
         ],
       },
     ];
-    assert.equal(await lifecycle.recordReportingSubscriptionCoverage(SCOPE, update), true);
-    assert.equal(await lifecycle.recordReportingSubscriptionCoverage(SCOPE, update), false);
+    assert.equal(await lifecycle.recordSubscriptionReadback(SCOPE, update), true);
+    assert.equal(await lifecycle.recordSubscriptionReadback(SCOPE, update), false);
+    // recordReportingSubscriptionCoverage is the deprecated name of the same function.
+    assert.equal(lifecycle.recordReportingSubscriptionCoverage, lifecycle.recordSubscriptionReadback);
     assert.equal(emitted.filter(event => event.payload.reason === 'reporting_subscription_changed').length, 1);
     const read = await lifecycle.protocol.getPrincipal({}, CTX);
     assertSchemaValid('get_principal', read);

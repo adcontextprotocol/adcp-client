@@ -44,7 +44,7 @@ import {
   type ReportingLedgerConfigurationV1,
   type ReportingLedgerConsumerStatementV1,
   type ReportingLedgerObligationV1,
-  type ReportingLedgerSubscriptionPrincipalV1,
+  type PrincipalRef,
 } from './types';
 
 const statusId = z
@@ -361,7 +361,7 @@ async function validateStatus(
   status: ReportingConsumerStatusV1,
   now: Date,
   clockSkewMilliseconds = 5 * 60_000,
-  subscriptionPrincipal?: ReportingLedgerSubscriptionPrincipalV1
+  subscriptionPrincipal?: PrincipalRef
 ): Promise<void> {
   if (compareReportingInstantToOffset(status.status_as_of, now.toISOString(), clockSkewMilliseconds) > 0) {
     throw new ReportingStatusValidationError('future status');

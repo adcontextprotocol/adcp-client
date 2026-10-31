@@ -13,7 +13,7 @@ import { ReportingSubscriptionEngineError } from '../../errors';
 import { PlatformConfigError } from '../../server/decisioning/runtime/validate-platform';
 import { createHash } from 'node:crypto';
 import { InMemoryStateStore, type AdcpStateStore } from '../../server/state-store';
-import type { PrincipalStoreScope } from '../../server/principal/types';
+import type { PrincipalRef } from '../../server/principal/types';
 import type { ReportingSubscriptionEngineStoreV1 } from './engine';
 
 /** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
@@ -37,7 +37,7 @@ interface EngineDocument extends Record<string, unknown> {
   value: Record<string, unknown>;
 }
 
-function documentId(scope: Readonly<PrincipalStoreScope>, key: string): string {
+function documentId(scope: Readonly<PrincipalRef>, key: string): string {
   return `subscription_engine_${createHash('sha256')
     .update(JSON.stringify([scope.tenantId, scope.principalId, key]))
     .digest('hex')}`;
@@ -139,7 +139,7 @@ export function createReportingSubscriptionEngineStateStoreV1(
       return documents.map(document => document.key);
     },
     async listPrincipals(tenantId) {
-      const seen = new Map<string, PrincipalStoreScope>();
+      const seen = new Map<string, PrincipalRef>();
       for (const document of await listAll({ tenantId })) {
         if (typeof document.principalId === 'string') {
           seen.set(document.principalId, { tenantId, principalId: document.principalId });

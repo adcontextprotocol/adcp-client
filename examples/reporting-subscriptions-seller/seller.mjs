@@ -187,11 +187,11 @@ export function createReportingSubscriptionsSeller({
     }),
     resolveCurrency: () => 'USD',
     resolveCoverage: () => ({ constituents: [] }),
-    reportingSubscriptions: {
+    subscriptions: {
       engine,
       principal: lifecycle,
       resolvePrincipal: principalOf,
-      listSubscriptionPrincipals: () => engine.listPrincipals(REFERENCE_TENANT),
+      listSubscriptionPrincipals: () => engine.listSubscriptionPrincipals(REFERENCE_TENANT),
       dimensions: ['package'],
       accountConfigurations: false,
       resolveSubscriptionConfiguration: () => ({
