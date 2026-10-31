@@ -90,7 +90,7 @@ for (const [policy, status] of [
       validateFeatures: false,
       validation: { requests: 'off', responses: 'off' },
     });
-    const provisioned = await buyer.accounts.ensure(account);
+    const provisioned = await buyer.accounts.provision(account);
     assert.equal(provisioned.account_id, 'seller-id');
     assert.equal(provisioned.status, status);
     assert.deepEqual(provisioned.account, account);
@@ -130,7 +130,7 @@ test('legacy sellers retain natural keys; the override keeps natural keys on sta
     [{ accountPolicy: 'auto', accountReferenceMode: 'natural-key' }, true],
   ]) {
     const c = client(config, stable);
-    await c.accounts.ensure(account);
+    await c.accounts.provision(account);
     for (const task of ['get_products', 'list_products', 'sync_creatives', 'create_media_buy', 'get_media_buys']) {
       const params = { account };
       assert.equal(await c.applyAccountPolicy(task, params), params);
@@ -171,7 +171,7 @@ test('auth-required sellers keep ID references and expose the selected ID in det
 test('reference selection reloads bindings and status after awaiting capabilities', async () => {
   for (const change of ['replacement', 'suspended', 'principal']) {
     const c = client({ accountPolicy: 'strict' });
-    await c.accounts.ensure(account);
+    await c.accounts.provision(account);
     const caps = await c.getCapabilities();
     c.getCapabilities = async () => {
       if (change === 'principal') c.config.accountRegistryScope = 'another-caller';
@@ -201,7 +201,7 @@ test('reference selection reloads bindings and status after awaiting capabilitie
 
 test('explicit ID references and provisioning references are preserved', async () => {
   const c = client({ accountPolicy: 'strict' });
-  await c.accounts.ensure(account);
+  await c.accounts.provision(account);
   for (const task of ['get_products', 'sync_creatives', 'create_media_buy']) {
     const params = { account: { account_id: 'seller-id' } };
     assert.equal(await c.applyAccountPolicy(task, params), params);
@@ -263,7 +263,7 @@ test('automatic aliases are bounded, while explicitly used registries retain cap
     assert.deepEqual(await c.resolveAccount(key), { account_id: 'seller-id' });
     assert.ok((await c.accounts.getByAccountId('seller-id')).aliases.length <= 4);
   }
-  await assert.rejects(c.accounts.ensure({ ...account, brand: { domain: 'new.example' } }), /capacity reached/);
+  await assert.rejects(c.accounts.provision({ ...account, brand: { domain: 'new.example' } }), /capacity reached/);
 });
 
 test('stable-ID resolution rejects ambiguous rows instead of reusing a cached active binding', async () => {
@@ -307,7 +307,7 @@ test('a natural binding is only published after its ID alias is available', asyn
       },
     },
   });
-  const setup = c.accounts.ensure(account);
+  const setup = c.accounts.provision(account);
   await ready;
   try {
     const selected = await c.applyAccountPolicy('get_products', { account });
@@ -343,7 +343,7 @@ test('registry ID lookup survives restart and keeps sellers and callers isolated
       async () => result(),
       adapter
     );
-    await registry.ensure(account);
+    await registry.provision(account);
     const indexed = await registry.getByAccountId('seller-id');
     assert.equal(indexed.account_id, 'seller-id');
     assert.deepEqual(indexed.aliases, [account]);
@@ -417,7 +417,7 @@ test('strict discovery requires an account on stable-ID sellers, including when 
   ]) {
     await assert.rejects(c.getProducts(params), AccountNotProvisionedError);
   }
-  await c.accounts.ensure(account);
+  await c.accounts.provision(account);
   await assert.rejects(c.getProducts({ brief: 'Inventory' }), AccountNotProvisionedError);
   const legacy = client({ accountPolicy: 'strict' }, false);
   assert.deepEqual(await legacy.applyAccountPolicy('get_products', { brand: account.brand }), { brand: account.brand });
@@ -476,7 +476,7 @@ test('only an AdCP 4+ wire contract requires IDs without the declaration', async
   const c = client({ accountPolicy: 'auto' }, false);
   const caps = await c.getCapabilities();
   c.getCapabilities = async () => ({ ...caps, supportedVersions: ['3.2.3', '4.0.0'], servedVersion: '4.0.0' });
-  await c.accounts.ensure(account);
+  await c.accounts.provision(account);
   assert.deepEqual((await c.applyAccountPolicy('get_products', { account })).account, account);
   c.config.wireAdcpVersion = '4.0.0';
   assert.deepEqual((await c.applyAccountPolicy('get_products', { account })).account, { account_id: 'seller-id' });

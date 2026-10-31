@@ -12,6 +12,7 @@ import {
   isReportingReceiptEvidence,
   isReportingRowStoreError,
   REPORTING_LEDGER_AUTHORITY,
+  reportingSubscriptionReceiptAdmissibleV1,
 } from '@adcp/sdk/reporting/ledger';
 import type { ReportingPgPool } from '../postgres';
 import type {
@@ -22,6 +23,7 @@ import type {
   ReportingLedgerTransactionV1,
   ReportingManagedDeliveryBindingV1,
   ReportingLedgerStore,
+  ReportingLedgerSubscriptionV1,
   ReportingReceiptBatchEntryV1,
   ReportingReceiptBatchInputV1,
 } from '@adcp/sdk/reporting/ledger';
@@ -69,6 +71,7 @@ interface PgClient {
  * independently. Apply after REPORTING_LEDGER_MIGRATION in the same schema.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ * @deprecated Applied by the versioned migrations: run `npx adcp-reporting-storage migrate` (or `migrate(pool)`), which records each version and lets `postgresStorage().checkSchema()` refuse a schema that is behind. Kept for one beta.
  */
 export const REPORTING_MANAGED_DELIVERY_MIGRATION = `
 CREATE TABLE IF NOT EXISTS adcp_reporting_destination_authorizations (
@@ -107,8 +110,7 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_managed_bindings (
   data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
   FOREIGN KEY (account_id, destination_ref, authorization_generation)
-    REFERENCES adcp_reporting_destination_authorizations(account_id, destination_ref, generation),
-  UNIQUE (account_id, delivery_config_id, delivery_config_version)
+    REFERENCES adcp_reporting_destination_authorizations(account_id, destination_ref, generation)
 );
 
 CREATE TABLE IF NOT EXISTS adcp_reporting_materializations (
@@ -333,6 +335,36 @@ BEGIN
   END IF;
 END
 $pattern_transport$;
+
+-- A binding is keyed by its Core configuration (the primary key). Principal-level reporting
+-- subscriptions (AdCP 3.3) install one Core configuration per owning principal and resolved
+-- offering under one (account, delivery_config_id, delivery_config_version), so the published
+-- three-column constraint would refuse their bindings. Core configurations stay unique per
+-- (account, id, version, subscription_key), so every account binding keeps its uniqueness. The
+-- constraint is found by its columns, not by a guessed name, and the block is idempotent.
+DO $binding_configuration_key$
+DECLARE
+  bindings regclass := to_regclass('adcp_reporting_managed_bindings');
+  legacy RECORD;
+BEGIN
+  FOR legacy IN
+    SELECT constraint_row.conname
+      FROM pg_constraint constraint_row
+     WHERE constraint_row.conrelid = bindings
+       AND constraint_row.contype = 'u'
+       AND (
+         SELECT array_agg(attribute.attname::text ORDER BY attribute.attname::text)
+           FROM unnest(constraint_row.conkey) AS key(attnum)
+           JOIN pg_attribute attribute
+             ON attribute.attrelid = constraint_row.conrelid AND attribute.attnum = key.attnum
+       ) = ARRAY['account_id', 'delivery_config_id', 'delivery_config_version']::text[]
+  LOOP
+    EXECUTE format('ALTER TABLE adcp_reporting_managed_bindings DROP CONSTRAINT %I', legacy.conname);
+  END LOOP;
+END
+$binding_configuration_key$;
+CREATE INDEX IF NOT EXISTS adcp_reporting_managed_bindings_generation
+  ON adcp_reporting_managed_bindings (account_id, delivery_config_id, delivery_config_version);
 `.trim();
 
 const GENERIC_RECEIPT_MESSAGE = 'Receipt does not match authorized current reporting evidence';
@@ -440,6 +472,8 @@ export interface PostgresReportingManagedDeliveryStoreOptions {
 export class PostgresReportingManagedDeliveryStore
   implements ReportingManagedDeliveryStore, ReportingObjectWriteStoreV1, ReportingObjectWriteAuthorityStoreV1
 {
+  /** Enforces `ReportingReceiptBatchInputV1.admission` (experimental, AdCP 3.3). */
+  readonly receiptAdmission = true as const;
   private readonly evidenceRetentionDays: number | undefined;
   private readonly statusRetentionDays: number | undefined;
   private readonly pendingRecoveryWindowSeconds: number | undefined;
@@ -1143,6 +1177,85 @@ export class PostgresReportingManagedDeliveryStore
     });
   }
 
+  /**
+   * The current authorization generation of a destination for one account, creating the next one
+   * when none is current. Used when a principal-level reporting subscription binds a shared
+   * destination to each account it covers: one destination, one authorization per account.
+   */
+  async ensureDestinationAuthorization(input: {
+    account_id: string;
+    destination_ref: string;
+    pattern: ReportingDestinationAuthorizationV1['pattern'];
+    transport?: string;
+  }): Promise<number> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const current = await this.query<
+        QueryRow & { generation: string; pattern: string | null; transport: string | null }
+      >(
+        `SELECT generation::text, pattern, transport FROM adcp_reporting_destination_authorizations
+          WHERE account_id = $1 AND destination_ref = $2 AND revoked_at IS NULL`,
+        [input.account_id, input.destination_ref]
+      );
+      const row = current.rows[0];
+      if (row) {
+        if (
+          (row.pattern !== null && row.pattern !== input.pattern) ||
+          (row.transport !== null && input.transport !== undefined && row.transport !== input.transport)
+        ) {
+          throw new Error('The current destination authorization serves another pattern or transport');
+        }
+        return Number(row.generation);
+      }
+      const latest = await this.query<QueryRow & { generation: string | null }>(
+        `SELECT MAX(generation)::text AS generation FROM adcp_reporting_destination_authorizations
+          WHERE account_id = $1 AND destination_ref = $2`,
+        [input.account_id, input.destination_ref]
+      );
+      const generation = Number(latest.rows[0]?.generation ?? 0) + 1;
+      try {
+        await this.authorizeDestination({
+          account_id: input.account_id,
+          destination_ref: input.destination_ref,
+          generation,
+          authorized_at: new Date().toISOString(),
+          ...(input.pattern ? { pattern: input.pattern } : {}),
+          ...(input.transport !== undefined ? { transport: input.transport } : {}),
+        });
+        return generation;
+      } catch (error) {
+        // A concurrent bind authorized it first; read it back.
+        if (attempt === 2) throw error;
+      }
+    }
+    throw new Error('Destination authorization could not be resolved');
+  }
+
+  /**
+   * Releases a claimed materialization without spending a delivery attempt and holds it out of
+   * selection for `backoff_milliseconds`. For a subscription whose owner has lost authority for
+   * the account: the delivery stops, and the obligation stays owed rather than failed.
+   */
+  async holdMaterialization(input: {
+    lease: ReportingManagedDeliveryLeaseV1;
+    backoff_milliseconds: number;
+  }): Promise<boolean> {
+    positiveInteger(input.backoff_milliseconds, 'backoff_milliseconds');
+    const result = await this.query(
+      `UPDATE adcp_reporting_materializations
+          SET lease_owner = NULL,
+              lease_generation = GREATEST(lease_generation - 1, 0),
+              lease_expires_at = clock_timestamp() + ($4::bigint * INTERVAL '1 millisecond')
+        WHERE materialization_id = $1 AND lease_owner = $2 AND lease_generation = $3 AND status = 'pending'`,
+      [
+        input.lease.materialization.reporting_materialization_id,
+        input.lease.owner,
+        input.lease.generation,
+        input.backoff_milliseconds,
+      ]
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
   async revokeDestination(input: {
     account_id: string;
     destination_ref: string;
@@ -1198,6 +1311,14 @@ export class PostgresReportingManagedDeliveryStore
     // caller's `semantic_fingerprint`, so changed binding content carrying a
     // copied-over old fingerprint was accepted as an idempotent replay and the
     // immutable binding silently meant something else than the stored row.
+    if (
+      binding.path_template !== undefined &&
+      (typeof binding.path_template !== 'string' ||
+        binding.path_template.length > 512 ||
+        !/^(?!\/)(?!(?:.*\/)?\.{1,2}(?:\/|$))[A-Za-z0-9_.=/{}-]+$/.test(binding.path_template))
+    ) {
+      throw new Error('Managed binding path_template is not a relative path template');
+    }
     const expectedFingerprint = managedBindingFingerprint(binding);
     if (binding.semantic_fingerprint !== expectedFingerprint) {
       throw new Error('Managed binding semantic fingerprint does not match its immutable content');
@@ -2733,6 +2854,17 @@ export class PostgresReportingManagedDeliveryStore
     )?.reporting_receipt_id;
     const evidence = await this.loadReceiptEvidence(client, batch.account_id, entry);
     if (!evidence) return failed(entry.receipt.reporting_receipt_id);
+    // A subscription obligation accepts only its owner. A refusal reads exactly like an unknown
+    // reference.
+    if (
+      batch.admission &&
+      !reportingSubscriptionReceiptAdmissibleV1({
+        obligation: evidence.subscription ? { subscription: evidence.subscription } : {},
+        admission: batch.admission,
+      })
+    ) {
+      return failed(entry.receipt.reporting_receipt_id);
+    }
     const matches =
       entry.kind === 'revision'
         ? receiptEvidenceMatches(entry.receipt, evidence.materialization!)
@@ -2811,11 +2943,19 @@ export class PostgresReportingManagedDeliveryStore
     subjectId: string;
     materialization?: ReportingMaterialization;
     adjustment?: ReportingLedgerAdjustmentV1;
+    /** The owning subscription of the obligation, when it is a subscription obligation. */
+    subscription?: ReportingLedgerSubscriptionV1;
   } | null> {
     if (entry.kind === 'revision') {
       const receipt = entry.receipt;
-      const result = await client.query<QueryRow & { materialization: ReportingMaterialization }>(
-        `SELECT materialization.data AS materialization
+      const result = await client.query<
+        QueryRow & {
+          materialization: ReportingMaterialization;
+          subscription: ReportingLedgerSubscriptionV1 | null;
+        }
+      >(
+        `SELECT materialization.data AS materialization,
+                obligation.data->'subscription' AS subscription
            FROM adcp_reporting_materializations materialization
            JOIN adcp_reporting_managed_bindings binding ON binding.configuration_id = materialization.configuration_id
            JOIN adcp_reporting_destination_authorizations authz
@@ -2842,13 +2982,24 @@ export class PostgresReportingManagedDeliveryStore
           receipt.reporting_obligation_id,
         ]
       );
-      return result.rows[0]
-        ? { subjectId: receipt.reporting_revision_id, materialization: result.rows[0].materialization }
+      const row = result.rows[0];
+      return row
+        ? {
+            subjectId: receipt.reporting_revision_id,
+            materialization: row.materialization,
+            ...(row.subscription ? { subscription: row.subscription } : {}),
+          }
         : null;
     }
     const receipt = entry.receipt;
-    const result = await client.query<QueryRow & { adjustment: ReportingLedgerAdjustmentV1 }>(
-      `SELECT adjustment.data AS adjustment
+    const result = await client.query<
+      QueryRow & {
+        adjustment: ReportingLedgerAdjustmentV1;
+        subscription: ReportingLedgerSubscriptionV1 | null;
+      }
+    >(
+      `SELECT adjustment.data AS adjustment,
+              obligation.data->'subscription' AS subscription
          FROM adcp_reporting_adjustments adjustment
          JOIN adcp_reporting_revisions revision ON revision.revision_id = adjustment.adjusts_revision_id
          JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = adjustment.obligation_id
@@ -2865,8 +3016,13 @@ export class PostgresReportingManagedDeliveryStore
           AND binding.data->>'reconciliation_mode' = 'consumer_receipt'`,
       [accountId, receipt.reporting_adjustment_id, receipt.adjusts_reporting_revision_id]
     );
-    return result.rows[0]
-      ? { subjectId: receipt.reporting_adjustment_id, adjustment: result.rows[0].adjustment }
+    const row = result.rows[0];
+    return row
+      ? {
+          subjectId: receipt.reporting_adjustment_id,
+          adjustment: row.adjustment,
+          ...(row.subscription ? { subscription: row.subscription } : {}),
+        }
       : null;
   }
 

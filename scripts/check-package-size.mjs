@@ -137,12 +137,30 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // 26,314,876 packed bytes, 144,462,916 unpacked bytes and 8,411 files. Allow
 // about 45 KB of compressor variance; the unpacked, file-count, bundled-schema
 // and declaration budgets are unchanged and still pass.
+// AdCP 3.3 reporting subscriptions (#3504) add the subscription calendar,
+// selection, coverage, capability and engine modules plus the principal
+// subscription runtime. Measured 26,423,860 packed bytes after merging main;
+// allow about 40 KB above that for compressor variance.
+// The buyer runtime, engine store and expectations (#3504) measured 26,470,249
+// packed bytes after merging main's 3.3.0-beta.2 adoption; allow about 40 KB.
+// Writing subscription obligations into the reporting ledger (#3504) extends the
+// ledger producer, coverage, handlers and status ingest, and then the service,
+// engine and managed delivery, and adds no module file. Allow about 55 KB above
+// the runtime's budget for them. Other budgets stay fixed.
+// AdCP 3.3 reporting subscription coverage (#3504) adds the calendar,
+// selection, coverage and capability modules and the parity table. Measured
+// 26,370,041 packed bytes; allow about 40 KB above that for compressor variance.
 // AdCP 3.3.0-beta.2 (#3541) and the creative-delivery legacy-ref
 // reconciliation (#3510) landed together. CI measured 26,363,856 packed bytes
 // after #3510 and 26,369,089 after #3541 on main, about 9 KB over the beta.1
 // cap. Allow about 50 KB of compressor variance; the unpacked, file-count,
 // bundled-schema and declaration budgets are unchanged and still pass.
-const MAX_PACKED_TARBALL_BYTES = 26_420_000;
+// The reporting-subscription DX slices (#3504: the advanced subpath, wind-down grant, typed errors with
+// their TSDoc, and the canonical-vector fixes) plus main through #3510 measured 26,520,756 packed bytes;
+// allow about 40 KB above that for compressor variance. Other budgets stay fixed.
+// The managed seller path, grant journal and buyer write facade (#3504, T5-T7) measured 26,566,153
+// packed bytes; allow about 44 KB above that for compressor variance. Other budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 26_610_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 144 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -307,7 +325,18 @@ const MAX_PACKED_FILE_COUNT =
   4 + // Property-list reference probe (one dual-format runtime/declaration module set).
   5 + // Creative build probe: one dual-format runtime/declaration module (+4) and one guide (+1).
   8 + // Discovery currency and required-metric invariants (two dual-format runtime/declaration sets).
-  1840; // SDK 17: 3.3 schemas/compliance, per-tool type entrypoints and migration/release notes.
+  1840 + // SDK 17: 3.3 schemas/compliance, per-tool type entrypoints and migration/release notes.
+  20 + // Reporting subscription calendar, selection, coverage, capabilities and index (five dual-format sets).
+  4 + // Reporting subscription hand-modeled wire types until 3.3.0-beta.2 (one dual-format set).
+  8 + // Reporting subscription engine and principal subscription runtime (two dual-format sets).
+  4 + // Reporting subscription release gate (one dual-format set).
+  12 + // Reporting subscription engine store, buyer expectations and client helper (three dual-format sets).
+  2 + // Reporting subscriptions example storyboard and reference seller.
+  8 + // `reporting/advanced` subpath and the service's subscription-hook module (two dual-format sets).
+  4 + // Managed reporting-subscription block for the Reliable Reporting service (one dual-format set).
+  4 + // Buyer reporting-subscription write facade, client.reporting (one dual-format set).
+  8 + // `storage` subpath: memoryStorage() and its in-memory ledger (two dual-format sets).
+  4; // Account outcomes for client.accounts.ensure: AccountOutcome, nextStep, formatPendingAction (one dual-format set).
 const MAX_BUNDLED_SCHEMA_BYTES = 2000 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

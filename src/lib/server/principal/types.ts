@@ -1,5 +1,6 @@
 import type { GetPrincipalResponse, SyncPrincipalRequest, SyncPrincipalResponse } from '../../types/tools.generated';
 import type { MaybePromise } from '../create-adcp-server';
+import type { StoredReportingSubscriptionHistory } from './reporting-subscriptions';
 import type {
   NotificationRecipientRef,
   NotificationSubscriptionMatch,
@@ -33,10 +34,17 @@ export interface ResolvedPrincipalScope {
   principal_record_id?: string;
 }
 
-export interface PrincipalStoreScope {
+/**
+ * The identity of an authenticated principal: who a reporting subscription, an engine record or a
+ * principal store row belongs to. The same shape everywhere in the SDK, with no snake-case variant.
+ */
+export interface PrincipalRef {
   tenantId: string;
   principalId: string;
 }
+
+/** @deprecated Use {@link PrincipalRef}, the same shape. Kept as an alias for existing principal-store code. */
+export type PrincipalStoreScope = PrincipalRef;
 
 export interface PendingPrincipalNotification {
   notificationId: string;
@@ -51,6 +59,7 @@ export interface PendingPrincipalNotification {
     | 'setup_expired'
     | 'proof_invalidated'
     | 'declarations_intersection_changed'
+    | 'reporting_subscription_changed'
     | 'other';
   destinationId?: string;
   recipients: NotificationRecipientRef[];
@@ -79,6 +88,11 @@ export interface StoredPrincipalRecord extends Record<string, unknown> {
   notificationSubscriptions: StoredNotificationSubscription[];
   reportingGenerations: StoredReportingDestinationGeneration[];
   pendingNotifications: PendingPrincipalNotification[];
+  /**
+   * Reporting subscription history the readback omits (experimental, AdCP 3.3). Absent on
+   * rows written without subscription support.
+   */
+  reportingSubscriptionHistory?: StoredReportingSubscriptionHistory[];
 }
 
 export interface VersionedPrincipalRecord {
@@ -94,7 +108,7 @@ export interface PrincipalNotificationRecoveryResult {
 }
 
 export interface PrincipalPendingNotificationPage {
-  scopes: PrincipalStoreScope[];
+  scopes: PrincipalRef[];
   nextCursor?: string;
 }
 
@@ -106,9 +120,9 @@ export type PrincipalStoreReplaceResult =
 export interface PrincipalStateStore {
   readonly durability: 'process-local' | 'durable';
   probe?(): Promise<void>;
-  get(scope: Readonly<PrincipalStoreScope>): MaybePromise<VersionedPrincipalRecord | null>;
+  get(scope: Readonly<PrincipalRef>): MaybePromise<VersionedPrincipalRecord | null>;
   replace(args: {
-    scope: Readonly<PrincipalStoreScope>;
+    scope: Readonly<PrincipalRef>;
     expectedRevision: string | null;
     record: Readonly<StoredPrincipalRecord>;
   }): MaybePromise<PrincipalStoreReplaceResult>;
@@ -141,7 +155,7 @@ export interface ReportingDestinationPreparation {
 
 /** Pure validation/canonicalization hook. It must not create provider grants. */
 export type PrepareReportingDestination = (input: {
-  scope: Readonly<PrincipalStoreScope>;
+  scope: Readonly<PrincipalRef>;
   destination: Readonly<PrincipalReportingDestinationInput>;
   previous?: Readonly<PrincipalReportingDestination>;
   dryRun: boolean;
@@ -163,4 +177,82 @@ export interface ResolvedReportingDestination {
   state: PrincipalReportingDestination['state'];
   lifecycle: StoredReportingDestinationGeneration['lifecycle'];
   deliveryEligible: boolean;
+}
+
+export type PrincipalReportingSubscriptionState = NonNullable<
+  PrincipalConfiguration['reporting_subscriptions']
+>[number];
+
+/**
+ * Opt-in support for the `sync_principal` `reporting_subscriptions` section
+ * (experimental `media_buy.reporting_subscriptions`). Without it the section is refused
+ * with `UNSUPPORTED_FEATURE`, as before.
+ */
+export interface PrincipalReportingSubscriptionSupport {
+  /**
+   * The caller's `sync_accounts` `delivery_config_id` values on any account. A
+   * `subscription_id` equal to one is rejected; the host's `sync_accounts` must reject the
+   * reverse clash using {@link PrincipalLifecycleRuntimeSubscriptions.reportingSubscriptionIds}.
+   */
+  listDeliveryConfigIds?(scope: Readonly<PrincipalRef>): MaybePromise<readonly string[]>;
+  /**
+   * Apply `replace_account_configs`: deactivate the caller's own active
+   * `reporting_delivery_configs` with this `feed_purpose`, by cutover at `at`, on in-scope
+   * accounts where the subscription resolves an offering, without advancing any account's
+   * revision. Called after the principal row commits, never on `dry_run`. Without it a
+   * subscription with `replace_account_configs: true` is refused with `UNSUPPORTED_FEATURE`.
+   */
+  replaceAccountConfigs?(input: {
+    scope: Readonly<PrincipalRef>;
+    subscriptionId: string;
+    subscriptionVersion: number;
+    feedPurpose: string;
+    at: string;
+  }): MaybePromise<void>;
+  /** Most subscriptions per principal. Defaults to 64. */
+  maxSubscriptions?: number;
+  /**
+   * Whether the seller also serves account-level `sync_accounts` configurations (the
+   * default). When true, `listDeliveryConfigIds` is required so a `subscription_id` that
+   * equals one of the caller's `delivery_config_id` values is always rejected.
+   */
+  accountConfigurations?: boolean;
+  /**
+   * Called after a write that submitted `reporting_subscriptions` commits. The managed
+   * subscriptions block reconciles the principal here. A rejection never fails the write.
+   */
+  onApplied?(scope: Readonly<PrincipalRef>): void | Promise<void>;
+}
+
+/** Runtime surface the reporting subscription engine and hosts use. */
+export interface PrincipalLifecycleRuntimeSubscriptions {
+  /** Current readback plus the retained version history, for coverage computation. */
+  listReportingSubscriptions(scope: Readonly<PrincipalRef>): Promise<{
+    states: PrincipalReportingSubscriptionState[];
+    history: StoredReportingSubscriptionHistory[];
+  }>;
+  /** Subscription IDs of this principal, active or retained, for the reverse namespace check. */
+  reportingSubscriptionIds(scope: Readonly<PrincipalRef>): Promise<string[]>;
+  /**
+   * Record engine-maintained readback (`accounts_with_exceptions`, `accounts_unauthorized`).
+   * Any change enqueues `principal.changed` with reason `reporting_subscription_changed`.
+   * Returns whether anything changed. It writes the readback lists, not `subscription_coverage`.
+   */
+  recordSubscriptionReadback(
+    scope: Readonly<PrincipalRef>,
+    updates: ReadonlyArray<{
+      subscriptionId: string;
+      accountsWithExceptions: NonNullable<PrincipalReportingSubscriptionState['accounts_with_exceptions']>;
+      accountsUnauthorized: NonNullable<PrincipalReportingSubscriptionState['accounts_unauthorized']>;
+    }>,
+    /** `forceNotification` fires even when the readback is unchanged, for example when an exception opened and another closed. */
+    options?: { deferNotification?: boolean; forceNotification?: boolean }
+  ): Promise<boolean>;
+  /**
+   * @deprecated Renamed {@link PrincipalLifecycleRuntimeSubscriptions.recordSubscriptionReadback}: it
+   * writes readback lists, not `subscription_coverage`. This alias is removed in a later beta.
+   */
+  recordReportingSubscriptionCoverage?(
+    ...args: Parameters<PrincipalLifecycleRuntimeSubscriptions['recordSubscriptionReadback']>
+  ): Promise<boolean>;
 }

@@ -1,0 +1,12 @@
+---
+'@adcp/sdk': minor
+'@adcp/reporting-storage': minor
+---
+
+Reporting storage facade (experimental, AdCP 3.3): one storage decision covers the reporting ledger, `sync_principal` principal records, the reporting-subscription engine state and the buyer consumer's checkpoints and leases.
+
+- **`@adcp/sdk/storage`** (new subpath): `memoryStorage()` returns a process-local `ReportingStorage` (ledger, `principals`, `subscriptions`, `consumer`, `checkSchema()`, `close()`). It is refused outside `NODE_ENV=test|development` with `REPORTING_STORAGE_NOT_DURABLE`. Also exports `developmentEnvironment`, `requireDurable`, `isReportingStorage` and `DEVELOPMENT_ENVIRONMENTS`.
+- **`postgresStorage({ pool })`** in `@adcp/reporting-storage`: the durable storage over one pool. Its `checkSchema()` refuses a schema that is behind with `REPORTING_SCHEMA_BEHIND`, naming the pending versions and the command to run.
+- **Versioned migrations** in `@adcp/reporting-storage`: `migrations()`, `migrate(pool)`, `migrationStatus`, `pendingMigrations` and the `npx adcp-reporting-storage migrate [--status | --dry-run]` command. Versions are recorded in `adcp_schema_migrations`, the table the Python SDK uses. A schema set up by hand from the old constants migrates cleanly. `REPORTING_LEDGER_MIGRATION`, `REPORTING_MANAGED_DELIVERY_MIGRATION` and the other constants the migrations cover are deprecated re-exports for one beta.
+- **`createReliableReportingService({ storage })`** takes the storage instead of `store`, and passing both is refused. The first cycle runs `checkSchema()`. With the managed `subscriptions` block, engine state defaults to `storage.subscriptions`. `subscriptions.principals` is now optional: pass `subscriptions.principal` (the principal runtime's options) and the service builds the runtime over `storage.principals`, exposed as `service.principals`. `createPostgresReliableReportingProductionService({ storage })` accepts the same storage instead of `db`, and `createReliableReportingConsumerV1({ storage })` uses `storage.consumer` as its persistence.
+- **Durability is intrinsic.** `AdcpStateStore` declares `durability` (`InMemoryStateStore` is process-local, `PostgresStateStore` is durable). The `durability` option of `createPrincipalStateStore` and `createReportingSubscriptionEngineStateStoreV1` is deprecated: a value that agrees with the store is ignored, and one that contradicts it is refused.

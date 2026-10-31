@@ -341,6 +341,21 @@ export interface DecisioningCapabilities<TConfig = unknown> {
   supported_versions?: string[];
 
   /**
+   * The `adcp.principal` block for sellers serving `sync_principal` (experimental
+   * `protocol.principal`). Pass the principal runtime's `capabilities`. The framework adds
+   * `protocol.principal` to `experimental_features`, and requires `reporting_subscriptions`
+   * in `supported_sections` when the reporting capability advertises subscriptions.
+   */
+  principal?: NonNullable<GetAdCPCapabilitiesResponse['adcp']['principal']>;
+
+  /**
+   * The `adcp.capability_changes` block. A principal block listing `notification_configs`
+   * requires `notifications` with `registration_task: 'sync_principal'`; the framework then
+   * also requires the compatibility `sync_agent_notification_configs` handler.
+   */
+  capability_changes?: NonNullable<GetAdCPCapabilitiesResponse['adcp']['capability_changes']>;
+
+  /**
    * Platform-specific config. Strongly typed when the adopter uses the generic.
    * Example: `class GAM extends DecisioningPlatform<{ networkId: string }>`.
    */

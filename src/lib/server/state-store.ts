@@ -176,6 +176,14 @@ export type PutIfMatchResult = { ok: true; version: number } | { ok: false; curr
  * Each document is identified by collection + id.
  */
 export interface AdcpStateStore {
+  /**
+   * Whether the documents survive process loss. Stores built over this one (the principal store,
+   * the reporting-subscription engine store) read it instead of taking a flag: `InMemoryStateStore`
+   * is `'process-local'` and `PostgresStateStore` is `'durable'`. Declare `'durable'` on a custom
+   * store only when its backend survives a restart. Absent reads as `'process-local'`.
+   */
+  readonly durability?: 'process-local' | 'durable';
+
   /** Get a document by collection and id. Returns null if not found. */
   get<T extends Record<string, unknown> = Record<string, unknown>>(collection: string, id: string): Promise<T | null>;
 
@@ -235,6 +243,33 @@ export interface AdcpStateStore {
 }
 
 /**
+ * The durability a store built over `store` inherits: the store's own declaration. `declared` is the
+ * deprecated `durability` option those factories used to take. It is accepted only when it agrees
+ * with the store, or when the store declares nothing; a claim that contradicts the store is refused,
+ * because a flag that disagrees with the backend loses state in production.
+ *
+ * @internal
+ */
+export function resolveStoreDurability(
+  store: AdcpStateStore,
+  declared: 'process-local' | 'durable' | undefined,
+  refuse: (message: string) => Error
+): 'process-local' | 'durable' {
+  const intrinsic = store.durability;
+  if (declared !== undefined && declared !== 'process-local' && declared !== 'durable') {
+    throw refuse('durability must be "process-local" or "durable". Omit it: the state store declares its own.');
+  }
+  if (intrinsic !== undefined && declared !== undefined && declared !== intrinsic) {
+    throw refuse(
+      intrinsic === 'process-local'
+        ? `This ${store.constructor?.name ?? 'state store'} is process-local and cannot be declared durable. Use durable storage, such as PostgresStateStore or postgresStorage(), and omit durability.`
+        : `This ${store.constructor?.name ?? 'state store'} is durable and cannot be declared process-local. Omit durability: the store declares its own.`
+    );
+  }
+  return intrinsic ?? declared ?? 'process-local';
+}
+
+/**
  * Return a session-scoped view of any `AdcpStateStore`.
  *
  * Prefers `store.scoped(sessionKey)` when the store defines it; otherwise
@@ -277,6 +312,8 @@ interface VersionedRow {
  * State is lost when the process restarts. Use PostgresStateStore for production.
  */
 export class InMemoryStateStore implements AdcpStateStore {
+  /** Process memory: lost on restart. */
+  readonly durability = 'process-local' as const;
   private collections = new Map<string, Map<string, VersionedRow>>();
   private readonly maxDocumentBytes: number;
 
@@ -462,6 +499,7 @@ export function createSessionedStore(inner: AdcpStateStore, sessionKey: string):
   };
 
   return {
+    ...(inner.durability !== undefined ? { durability: inner.durability } : {}),
     async get<T extends Record<string, unknown> = Record<string, unknown>>(
       collection: string,
       id: string
