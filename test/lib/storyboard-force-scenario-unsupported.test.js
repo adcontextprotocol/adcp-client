@@ -18,7 +18,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner');
+const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner');
 const { DETAILED_SKIP_TO_CANONICAL } = require('../../dist/lib/testing/storyboard/types');
 
 function buildControllerStubClient(controllerResponse) {
@@ -147,4 +147,166 @@ describe('runStoryboardStep: force_scenario_unsupported (adcp#1805)', () => {
     assert.notEqual(result.skipped, true, 'successful force_* must not be skipped');
     assert.notEqual(result.skip_reason, 'force_scenario_unsupported');
   });
+});
+
+async function runForceDependency({
+  layout = 'downstream',
+  controllerResponse = { success: false, error: 'UNKNOWN_SCENARIO' },
+  observedStatus = 'completed',
+  failBeforeForce = false,
+  statefulForce = true,
+  deferredSetup = null,
+} = {}) {
+  const force = structuredClone(storyboard.phases[0].steps[0]);
+  force.stateful = statefulForce;
+  const observe = id => ({
+    id,
+    title: 'Observe forced outcome',
+    task: 'get_products',
+    stateful: true,
+    sample_request: { buying_mode: 'brief', brief: 'Display inventory' },
+    validations: [{ check: 'field_value', path: 'status', value: 'rejected', description: 'Forced rejection' }],
+  });
+  const setup = { id: 'setup', title: 'Set up forced state', steps: [force] };
+  if (deferredSetup) {
+    setup.steps.unshift({
+      id: 'missing_setup',
+      title: 'Prepare account state',
+      task: 'sync_accounts',
+      stateful: true,
+      sample_request: {},
+    });
+    setup.steps.push({ ...observe('substitute'), provides_state_for: 'missing_setup' });
+  }
+  const phases = [setup];
+  if (failBeforeForce) {
+    phases.unshift({ id: 'failure', title: 'Independent failure', depends_on: [], steps: [observe('real_failure')] });
+    setup.depends_on = [];
+  }
+  if (layout === 'same_phase') setup.steps.push(observe('observe'));
+  else {
+    phases.push({
+      id: 'observe',
+      title: 'Observe forced state',
+      depends_on: layout === 'independent' ? [] : failBeforeForce ? ['setup', 'failure'] : ['setup'],
+      steps: [observe('observe')],
+    });
+    if (layout === 'chain') {
+      phases.push({ id: 'readback', title: 'Read back', depends_on: ['observe'], steps: [observe('readback')] });
+    }
+  }
+  const calls = [];
+  const tools = ['comply_test_controller', 'get_products'];
+  const client = {
+    executeTask: async task => {
+      calls.push(task);
+      return {
+        success: true,
+        data: task === 'comply_test_controller' ? controllerResponse : { status: observedStatus },
+      };
+    },
+  };
+  const result = await runStoryboard(
+    'https://stub.example/mcp',
+    { ...storyboard, phases },
+    {
+      protocol: 'mcp',
+      agentTools: tools,
+      skip_controller_seeding: true,
+      _client: client,
+      _profile: {
+        name: 'stub',
+        tools,
+        ...(deferredSetup === 'not_applicable' && {
+          raw_capabilities: { account: { require_operator_auth: true } },
+        }),
+      },
+    }
+  );
+  return { result, calls, steps: result.phases.flatMap(phase => phase.steps) };
+}
+
+describe('runStoryboard: unsupported force setup cascades (adcp-client#3549)', () => {
+  for (const layout of ['same_phase', 'downstream', 'chain']) {
+    test(`${layout}: observations skip without dispatch or seller failures`, async () => {
+      const { result, calls, steps } = await runForceDependency({ layout });
+      assert.deepEqual(calls, ['comply_test_controller'], 'unforced observations must never dispatch');
+      assert.equal(steps[0].skip_reason, 'force_scenario_unsupported');
+      for (const step of steps.slice(1)) {
+        assert.equal(step.skipped, true);
+        assert.equal(step.passed, true);
+        assert.equal(step.skip.reason, 'not_applicable');
+        assert.match(step.skip.detail, /force_creative.*force_scenario_unsupported/);
+        assert.deepEqual(step.validations, []);
+      }
+      assert.equal(result.overall_passed, true, 'unavailable forcing is a coverage skip');
+      assert.equal(result.failed_count, 0);
+      assert.equal(result.passed_count, 0, 'skipped observations receive no passing-step credit');
+    });
+  }
+
+  test('an independent phase still executes and its failure remains visible', async () => {
+    const { result, calls, steps } = await runForceDependency({ layout: 'independent' });
+    assert.deepEqual(calls, ['comply_test_controller', 'get_products']);
+    assert.notEqual(steps[1].skipped, true);
+    assert.equal(steps[1].passed, false);
+    assert.equal(result.overall_passed, false);
+  });
+
+  test('non-stateful unsupported forcing does not create a state dependency', async () => {
+    const { calls, steps } = await runForceDependency({ statefulForce: false });
+    assert.deepEqual(calls, ['comply_test_controller', 'get_products']);
+    assert.notEqual(steps[1].skipped, true);
+  });
+
+  test('successful forcing runs and validates the observation', async () => {
+    const { result, calls, steps } = await runForceDependency({
+      controllerResponse: { success: true },
+      observedStatus: 'rejected',
+    });
+    assert.deepEqual(calls, ['comply_test_controller', 'get_products']);
+    assert.ok(steps.every(step => step.passed && !step.skipped));
+    assert.equal(result.overall_passed, true);
+  });
+
+  test('a wrong outcome after successful forcing still fails', async () => {
+    const { result, calls, steps } = await runForceDependency({ controllerResponse: { success: true } });
+    assert.deepEqual(calls, ['comply_test_controller', 'get_products']);
+    assert.equal(steps[1].passed, false);
+    assert.equal(result.overall_passed, false);
+  });
+
+  test('a real controller failure is not treated as unavailable forcing', async () => {
+    const { result, steps } = await runForceDependency({
+      controllerResponse: { success: false, error: 'INVALID_PARAMS' },
+    });
+    assert.equal(steps[0].passed, false);
+    assert.equal(steps[1].skip_reason, 'prerequisite_failed');
+    assert.equal(steps[1].passed, false);
+    assert.equal(result.overall_passed, false);
+  });
+
+  test('a real earlier failure takes precedence over unavailable forcing', async () => {
+    const { result, calls, steps } = await runForceDependency({ failBeforeForce: true });
+    assert.deepEqual(calls, ['get_products', 'comply_test_controller']);
+    assert.equal(steps[0].passed, false);
+    assert.equal(steps[1].skip_reason, 'force_scenario_unsupported');
+    assert.equal(steps[2].skip_reason, 'prerequisite_failed');
+    assert.equal(steps[2].passed, false);
+    assert.equal(result.overall_passed, false);
+  });
+
+  for (const deferredSetup of ['missing_tool', 'not_applicable']) {
+    test(`unrescued ${deferredSetup} state takes precedence over unavailable forcing`, async () => {
+      const { result, calls, steps } = await runForceDependency({ deferredSetup });
+      assert.deepEqual(calls, ['comply_test_controller']);
+      assert.equal(steps[0].skip_reason, deferredSetup);
+      assert.equal(steps[1].skip_reason, 'force_scenario_unsupported');
+      const dependent = steps.at(-1);
+      assert.equal(dependent.skip_reason, 'prerequisite_failed');
+      assert.match(dependent.skip.detail, /missing_setup/);
+      assert.equal(dependent.passed, false);
+      assert.equal(result.overall_passed, false);
+    });
+  }
 });
