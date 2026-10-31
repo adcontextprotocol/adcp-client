@@ -735,3 +735,206 @@ test('legacy density checks preserve OR alternatives and the selected full refer
   assert.equal(result.wire.mode, 'legacy');
   assert.deepEqual(result.wire.selector.format_id, ref(600, 500));
 });
+
+test('AND layers need one shared image density and logical-size interpretation', () => {
+  const creative = image({ width: 600, height: 500 });
+  const conflict = {
+    package_id: 'A',
+    format_options: [declaration({ width: 600, height: 500 })],
+    selector_containers: [{ format_options: [declaration({ width: 300, height: 250, pixel_ratios: [2] })] }],
+  };
+  assert.equal(fit(creative, [conflict]).perPackage[0].verdict, 'does_not_fit');
+  const compatible = {
+    ...conflict,
+    selector_containers: [{ format_options: [declaration({ width: 600, height: 500 })] }],
+  };
+  assert.equal(fit(creative, [compatible]).perPackage[0].verdict, 'fits');
+  const alternatives = {
+    ...conflict,
+    format_options: [
+      declaration({ width: 600, height: 500 }),
+      declaration({ width: 300, height: 250, pixel_ratios: [2] }),
+    ],
+  };
+  assert.equal(fit(creative, [alternatives]).perPackage[0].verdict, 'fits');
+});
+test('different packages can infer different image densities independently', () => {
+  const result = fit(image({ width: 600, height: 500 }), [
+    pkg('A', declaration({ width: 600, height: 500 })),
+    pkg('B', declaration({ width: 300, height: 250, pixel_ratios: [2] })),
+  ]);
+  assert.deepEqual(
+    result.perPackage.map(item => item.verdict),
+    ['fits', 'fits']
+  );
+  assert.equal(result.wire.mode, 'canonical');
+});
+test('AND layers cannot independently inherit incompatible VAST placement sizes as proven fits', () => {
+  const creative = {
+    creative_id: 'v',
+    name: 'Acme VAST',
+    format_kind: 'video_vast',
+    assets: { vast_tag: { asset_type: 'vast', url: 'https://cdn.acme.example/vast.xml' } },
+  };
+  const option = (width, height) => ({
+    format_kind: 'video_vast',
+    params: { width, height },
+    technical_requirements_complete: true,
+  });
+  const packages = [
+    {
+      package_id: 'A',
+      format_options: [option(640, 360)],
+      selector_containers: [{ format_options: [option(940, 529)] }],
+    },
+  ];
+  assert.equal(fit(creative, packages).perPackage[0].verdict, 'insufficient_facts');
+});
+test('a physical witness cannot borrow a different option legacy route', () => {
+  const generic = { agent_url: OWNER, id: 'display_image', width: 300, height: 250 };
+  const options = [
+    declaration(
+      { width: 300, height: 250, image_formats: ['png'] },
+      { format_option_id: 'png-a', v1_format_ref: [generic] }
+    ),
+    declaration(
+      { width: 300, height: 250, image_formats: ['png'] },
+      { format_option_id: 'png-d', v1_format_ref: [generic] }
+    ),
+    declaration(
+      { width: 300, height: 250, image_formats: ['jpeg'] },
+      { format_option_id: 'jpeg-b', v1_format_ref: [{ agent_url: OWNER, id: 'display_300x250_image' }] }
+    ),
+  ];
+  const result = fit(image({ width: 300, height: 250, format: 'png' }), [pkg('A', ...options)], {
+    adcpVersion: '3.1.0',
+  });
+  assert.equal(result.perPackage[0].verdict, 'fits');
+  assert.ok(!result.wire || result.wire.selector.format_id.id !== 'display_300x250_image');
+});
+test('untyped top-level constraints do not disappear behind nested declarations', () => {
+  const result = fit(image(), [
+    {
+      package_id: 'A',
+      params: { width: 320 },
+      selector_containers: [{ format_options: [declaration({ width: 300, height: 250 })] }],
+    },
+  ]);
+  assert.equal(result.perPackage[0].verdict, 'insufficient_facts');
+});
+
+test('product plus SDK package-selection sidecar is one logical option', () => {
+  const { packageRefsForFormatOptions } = require('../../dist/lib/v2/projection');
+  const product = {
+    product_id: 'product',
+    format_options: [declaration({ width: 300, height: 250 }, { format_option_id: 'mrec' })],
+  };
+  const selection = packageRefsForFormatOptions(product, ['mrec']);
+  const result = fit(image(), [{ ...product, package_id: 'A', ...selection }]);
+  assert.equal(result.perPackage[0].verdict, 'fits');
+  assert.equal(result.wire.mode, 'canonical');
+});
+test('selected sidecars cannot widen a fresh native product contract', () => {
+  const { packageRefsForFormatOptions } = require('../../dist/lib/v2/projection');
+  const product = {
+    product_id: 'product',
+    format_options: [declaration({ width: 300, height: 250 }, { format_option_id: 'mrec' })],
+  };
+  const selection = packageRefsForFormatOptions(product, ['mrec']);
+  const changed = {
+    ...product,
+    format_options: [declaration({ width: 320, height: 50 }, { format_option_id: 'mrec' })],
+  };
+  assert.equal(fit(image(), [{ ...changed, package_id: 'A', ...selection }]).perPackage[0].verdict, 'does_not_fit');
+});
+
+test('an explicitly empty native option set cannot regain a proven fit from old sidecars', () => {
+  const { packageRefsForFormatOptions } = require('../../dist/lib/v2/projection');
+  const product = {
+    product_id: 'product',
+    format_options: [declaration({ width: 300, height: 250 }, { format_option_id: 'mrec' })],
+  };
+  const selection = packageRefsForFormatOptions(product, ['mrec']);
+  assert.notEqual(
+    fit(image(), [{ ...product, format_options: [], package_id: 'A', ...selection }]).perPackage[0].verdict,
+    'fits'
+  );
+});
+
+test('a creative resolver cannot replace an authoritative linked option identity', () => {
+  const creative = {
+    ...image(),
+    format_parameters: { width: 300, height: 250 },
+    format_option_ref: { scope: 'product', format_option_id: 'pinned' },
+  };
+  const packages = [
+    pkg(
+      'A',
+      declaration(
+        { width: 300, height: 250 },
+        { format_option_id: 'pinned', v1_format_ref: [{ agent_url: OWNER, id: 'display_728x90_image' }] }
+      )
+    ),
+  ];
+  const result = fit(creative, packages, {
+    adcpVersion: '3.1.0',
+    canonicalFormatLegacyResolver: context =>
+      context.source === 'creative' ? { agent_url: OWNER, id: 'display_300x250_image' } : undefined,
+  });
+  assert.equal(result.perPackage[0].verdict, 'fits');
+  assert.equal(result.wire, undefined);
+});
+
+test('fresh native legacy routes outrank stale selected sidecars', () => {
+  const { packageRefsForFormatOptions } = require('../../dist/lib/v2/projection');
+  const old = { agent_url: OWNER, id: 'display_300x250_image' };
+  const fresh = { agent_url: OWNER, id: 'display_image', width: 300, height: 250 };
+  const product = {
+    product_id: 'product',
+    format_options: [declaration({ width: 300, height: 250 }, { format_option_id: 'mrec', v1_format_ref: [old] })],
+  };
+  const selection = packageRefsForFormatOptions(product, ['mrec']);
+  assert.equal(
+    fit(image(), [{ ...product, package_id: 'A', ...selection }], { adcpVersion: '3.1.0' }).wire.selector.format_id.id,
+    old.id
+  );
+  const changed = {
+    ...product,
+    format_options: [declaration({ width: 300, height: 250 }, { format_option_id: 'mrec', v1_format_ref: [fresh] })],
+  };
+  const result = fit(image(), [{ ...changed, package_id: 'A', ...selection }], { adcpVersion: '3.1.0' });
+  assert.ok(!result.wire || result.wire.selector.format_id.id === fresh.id);
+  const restored = {
+    ...product,
+    format_options: [declaration({ width: 300, height: 250 }, { format_option_id: 'mrec' })],
+  };
+  assert.equal(
+    fit(image(), [{ ...restored, package_id: 'A', ...selection }], { adcpVersion: '3.1.0' }).wire.selector.format_id.id,
+    old.id
+  );
+});
+test('pinned mapped aliases cannot be widened by a creative resolver', () => {
+  const first = { agent_url: OWNER, id: 'display_image', width: 300, height: 250 };
+  const second = { ...first, agent_url: 'https://formats.acme.example/mcp' };
+  const third = { ...first, agent_url: 'https://other.acme.example/mcp' };
+  const packages = [
+    pkg('A', declaration({ width: 300, height: 250 }, { format_option_id: 'pinned', v1_format_ref: [first, second] })),
+  ];
+  const creative = { ...image(), format_option_ref: { scope: 'product', format_option_id: 'pinned' } };
+  let calls = 0;
+  const result = fit(creative, packages, {
+    adcpVersion: '3.1.0',
+    canonicalFormatLegacyResolver: context => {
+      if (context.source !== 'creative') return undefined;
+      calls++;
+      return third;
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.wire, undefined);
+  const allowed = fit(creative, packages, {
+    adcpVersion: '3.1.0',
+    canonicalFormatLegacyResolver: context => (context.source === 'creative' ? first : undefined),
+  });
+  assert.deepEqual(allowed.wire.selector.format_id, first);
+});

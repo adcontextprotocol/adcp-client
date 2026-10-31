@@ -2972,7 +2972,11 @@ type FitLayer = {
   selector: CreativeFormatSelectorContainer;
   option?: FormatOptionReference;
   requiresOption?: boolean;
+  imageWitnesses?: readonly string[];
+  placementSize?: boolean;
 };
+
+type FitResolverRoutes = WeakMap<object, Map<string, readonly V1FormatId[]>>;
 
 function legacyLinkContradictsDeclaration(ref: V1FormatId, declaration: Record<string, unknown>): boolean {
   const params = record(declaration.params) ?? {};
@@ -2985,17 +2989,47 @@ function legacyLinkContradictsDeclaration(ref: V1FormatId, declaration: Record<s
   );
 }
 
+/** Fresh native contracts/routes outrank cached selection sidecars. */
+function fitLegacyDeclarations(
+  container: CreativeFormatSelectorContainer,
+  resolverRoutes: FitResolverRoutes
+): Record<string, unknown>[] {
+  const productId = typeof container.product_id === 'string' ? container.product_id : '<selector>';
+  const sidecars = selectedFormatOptions(container);
+  const options = container.format_options !== undefined ? container.format_options : sidecars;
+  const resolved = options.map(value => {
+    const declaration = record(value);
+    if (!declaration) return value;
+    const direct = legacyFormatRefsForDeclaration(declaration);
+    let refs = direct.length > 0 ? direct : (resolverRoutes.get(declaration)?.get(productId) ?? []);
+    const pin = optionReference(declaration);
+    if (refs.length === 0 && pin)
+      refs = sidecars.flatMap(value => {
+        const option = optionReference(value);
+        return option && sameOptionReference(pin, option) ? [...legacyFormatRefsForDeclaration(value)] : [];
+      });
+    return refs.length > 0 ? { ...declaration, v1_format_ref: refs } : declaration;
+  });
+  return (
+    container.format_options !== undefined ? withDualEmissionLegacyRefs(resolved, container.format_ids) : resolved
+  ).flatMap(value => (record(value) ? [record(value)!] : []));
+}
+
 function legacyWireFitsDeclarations(
   creative: Record<string, unknown>,
   container: CreativeFormatSelectorContainer,
   ref: V1FormatId,
   facts: NormalizedCreativeFitFacts,
-  wireDensity: unknown
+  wireDensity: unknown,
+  resolverRoutes: FitResolverRoutes,
+  creativeRoutes: ReadonlyMap<string | undefined, readonly V1FormatId[]>,
+  inheritedPackageId?: string
 ): boolean {
-  const declarations = [...(container.format_options ?? []), ...selectedFormatOptions(container)].flatMap(value =>
-    record(value) ? [record(value)!] : []
-  );
+  const packageId = typeof container.package_id === 'string' ? container.package_id : inheritedPackageId;
+  const declarations = fitLegacyDeclarations(container, resolverRoutes);
   const pin = optionReference(creative.format_option_ref);
+  if (declarations.length === 0 && container.params !== undefined && legacyLinkContradictsDeclaration(ref, container))
+    return false;
   const selected = selectedOptionReferences({ ...container, selector_containers: undefined });
   const eligible = declarations.filter(declaration => {
     const option = optionReference(declaration);
@@ -3009,6 +3043,21 @@ function legacyWireFitsDeclarations(
     declarations.length > 0 &&
     !eligible.some(declaration => {
       if (legacyLinkContradictsDeclaration(ref, declaration)) return false;
+      const option = optionReference(declaration);
+      const linked = legacyFormatRefsForDeclaration(declaration);
+      const unlinkedContext = declarations.every(value => legacyFormatRefsForDeclaration(value).length === 0);
+      const fallback = linked.length === 0 && (unlinkedContext || (pin && option && sameOptionReference(pin, option)));
+      const authorized = [...linked, ...(fallback ? (creativeRoutes.get(packageId) ?? []) : [])];
+      if (
+        !authorized.some(
+          route =>
+            sameLegacyIdentity(route, ref) &&
+            (route.width === undefined || ref.width === undefined || route.width === ref.width) &&
+            (route.height === undefined || ref.height === undefined || route.height === ref.height) &&
+            (route.duration_ms === undefined || ref.duration_ms === undefined || route.duration_ms === ref.duration_ms)
+        )
+      )
+        return false;
       const fit = evaluateDeclaredCreativeFit(facts, declaration);
       return (
         fit.verdict !== 'does_not_fit' &&
@@ -3018,14 +3067,18 @@ function legacyWireFitsDeclarations(
   )
     return false;
   return (container.selector_containers ?? []).every(child =>
-    legacyWireFitsDeclarations(creative, child, ref, facts, wireDensity)
+    legacyWireFitsDeclarations(creative, child, ref, facts, wireDensity, resolverRoutes, creativeRoutes, packageId)
   );
 }
 
-function rawLegacyRefs(container: CreativeFormatSelectorContainer, creative: Record<string, unknown>): unknown[] {
+function rawLegacyRefs(
+  container: CreativeFormatSelectorContainer,
+  creative: Record<string, unknown>,
+  resolverRoutes: FitResolverRoutes
+): unknown[] {
   const pin = optionReference(creative.format_option_ref);
   const selected = selectedOptionReferences({ ...container, selector_containers: undefined });
-  const declarations = [...(container.format_options ?? []), ...selectedFormatOptions(container)].filter(value => {
+  const declarations = fitLegacyDeclarations(container, resolverRoutes).filter(value => {
     const option = optionReference(value);
     return (
       (!pin || (option && sameOptionReference(pin, option))) &&
@@ -3035,7 +3088,7 @@ function rawLegacyRefs(container: CreativeFormatSelectorContainer, creative: Rec
   const linked = declarations.flatMap(option => [...legacyFormatRefsForDeclaration(option)]);
   return [
     ...(linked.length > 0 ? linked : [...(container.format_ids ?? []), ...(container.formats ?? [])]),
-    ...(container.selector_containers ?? []).flatMap(child => rawLegacyRefs(child, creative)),
+    ...(container.selector_containers ?? []).flatMap(child => rawLegacyRefs(child, creative, resolverRoutes)),
   ];
 }
 
@@ -3045,7 +3098,15 @@ function fitSelectorLayer(
   container: CreativeFormatSelectorContainer
 ): FitLayer {
   const layers: FitLayer[] = [];
-  const declared = [...(container.format_options ?? []), ...selectedFormatOptions(container)];
+  const declared =
+    container.format_options !== undefined ? container.format_options : [...selectedFormatOptions(container)];
+  if (declared.length === 0 && container.params !== undefined && typeof container.format_kind !== 'string') {
+    layers.push({
+      verdict: 'insufficient_facts',
+      reasons: [{ code: 'constraint_kind_missing', path: 'params' }],
+      selector: container,
+    });
+  }
   if (declared.length > 0 || typeof container.format_kind === 'string') {
     const options = declared.length > 0 ? declared : [container];
     const pin = optionReference(creative.format_option_ref);
@@ -3069,6 +3130,10 @@ function fitSelectorLayer(
     const candidates = fits.length > 0 ? fits : unknown;
     const verdict: CreativeFitVerdict =
       fits.length > 0 ? 'fits' : unknown.length > 0 ? 'insufficient_facts' : 'does_not_fit';
+    const fittedRefs =
+      fits.length > 0 && fits.every(item => item.ref !== undefined) ? fits.map(item => item.ref!) : undefined;
+    if (fittedRefs && Array.isArray(container.format_option_refs))
+      transferLegacyCreativeMetadata(container.format_option_refs, fittedRefs);
     layers.push({
       verdict,
       requiresOption: options.filter(value => record(value)?.format_kind === facts.kind).length > 1,
@@ -3081,9 +3146,20 @@ function fitSelectorLayer(
       selector: {
         ...container,
         ...(declared.length > 0 && !container.format_options && { format_options: declared }),
-        ...(fits.length === 1 && fits[0]!.ref && { format_option_refs: [fits[0]!.ref] }),
+        ...(fittedRefs && { format_option_refs: fittedRefs }),
       },
       ...(candidates.length === 1 && candidates[0]!.ref && { option: candidates[0]!.ref }),
+      ...(facts.kind === 'image' &&
+        facts.primary_assets.length === 1 &&
+        candidates.length > 0 &&
+        candidates.every(item => item.fit.logical_size && item.fit.pixel_ratio !== undefined) && {
+          imageWitnesses: candidates.map(item =>
+            canonicalizeJson({ ...item.fit.logical_size, pixel_ratio: item.fit.pixel_ratio })
+          ),
+        }),
+      placementSize: candidates.some(item =>
+        Object.keys(record(item.declaration.params) ?? {}).some(key => SIZE_PARAM_KEYS.has(key))
+      ),
     });
   }
   const nested = (container.selector_containers ?? []).map(child => fitSelectorLayer(facts, creative, child));
@@ -3094,21 +3170,49 @@ function fitSelectorLayer(
       reasons: [{ code: 'technical_declaration_missing', path: 'format_options' }],
       selector: container,
     };
-  const verdict = layers.some(item => item.verdict === 'does_not_fit')
+  let verdict: CreativeFitVerdict = layers.some(item => item.verdict === 'does_not_fit')
     ? 'does_not_fit'
     : layers.some(item => item.verdict === 'insufficient_facts')
       ? 'insufficient_facts'
       : 'fits';
   const direct = layers.length > nested.length ? layers[0]! : undefined;
   const refs = layers.flatMap(item => (item.option ? [item.option] : []));
+  let imageWitnesses = layers[0]?.imageWitnesses;
+  const jointReasons: CreativeFitReason[] = [];
+  if (facts.kind === 'image' && layers.length > 1 && verdict === 'fits') {
+    if (layers.some(item => item.imageWitnesses === undefined)) {
+      verdict = 'insufficient_facts';
+      jointReasons.push({ code: 'joint_image_witness_unproven', path: 'selector_containers' });
+      imageWitnesses = undefined;
+    } else {
+      imageWitnesses = imageWitnesses!.filter(value => layers.every(item => item.imageWitnesses!.includes(value)));
+      if (imageWitnesses.length === 0) {
+        verdict = 'does_not_fit';
+        jointReasons.push({ code: 'incompatible_image_interpretations', path: 'selector_containers' });
+      }
+    }
+  }
+  const placementSize = layers.some(item => item.placementSize);
+  if (
+    (facts.kind === 'video_vast' || facts.kind === 'audio_vast') &&
+    layers.length > 1 &&
+    placementSize &&
+    verdict === 'fits' &&
+    (positiveConstraint(facts.params.width) === undefined || positiveConstraint(facts.params.height) === undefined)
+  ) {
+    verdict = 'insufficient_facts';
+    jointReasons.push({ code: 'joint_placement_witness_unproven', path: 'selector_containers' });
+  }
   return {
     verdict,
-    reasons: layers.flatMap(item => item.reasons).slice(0, 32),
+    reasons: [...jointReasons, ...layers.flatMap(item => item.reasons)].slice(0, 32),
     selector: {
       ...(direct?.selector ?? container),
       ...(nested.length > 0 && { selector_containers: nested.map(item => item.selector) }),
     },
     requiresOption: layers.some(item => item.requiresOption),
+    ...(imageWitnesses !== undefined && { imageWitnesses }),
+    placementSize,
     ...(refs.length > 0 && refs.every(ref => sameOptionReference(ref, refs[0]!)) && { option: refs[0]! }),
   };
 }
@@ -3162,6 +3266,8 @@ function decideCreativePackageFit(
   let callbackFailed = false;
   let callbackError: unknown;
   const converterCache = new Map<string, ReturnType<LegacyFormatConverter>>();
+  const resolverRoutes: FitResolverRoutes = new WeakMap();
+  const creativeRoutes = new Map<string | undefined, V1FormatId[]>();
   const legacyFormatConverter: LegacyFormatConverter | undefined = options.legacyFormatConverter
     ? context => {
         const key = canonicalizeJson(context);
@@ -3185,13 +3291,41 @@ function decideCreativePackageFit(
     : undefined;
   const canonicalFormatLegacyResolver: CanonicalFormatLegacyResolver | undefined = options.canonicalFormatLegacyResolver
     ? context => {
+        let answer: ReturnType<CanonicalFormatLegacyResolver>;
         try {
-          return options.canonicalFormatLegacyResolver!(context);
+          answer = options.canonicalFormatLegacyResolver!(context);
         } catch (error) {
           callbackFailed = true;
           callbackError = error;
           throw error;
         }
+        // Validate without invoking accessors, snapshotting only accepted data.
+        // The real projection still handles invalid answers as its usual refusal.
+        let refs: readonly V1FormatId[];
+        try {
+          refs = resolveCanonicalFormatLegacyRefs(() => answer, context) ?? [];
+        } catch {
+          return answer;
+        }
+        if (context.source === 'product') {
+          const routes = resolverRoutes.get(context.declaration) ?? new Map<string, readonly V1FormatId[]>();
+          if (refs.length > 0) routes.set(context.productId, refs);
+          resolverRoutes.set(context.declaration, routes);
+        } else if (context.source === 'creative') {
+          const packageIds = (value: Record<string, unknown>): string[] => {
+            if (typeof value.package_id === 'string') return [value.package_id];
+            return Array.isArray(value.selector_containers)
+              ? value.selector_containers.flatMap(child => {
+                  const selector = record(child);
+                  return selector ? packageIds(selector) : [];
+                })
+              : [];
+          };
+          const ids = packageIds(context.selector);
+          for (const id of ids.length > 0 ? ids : [undefined])
+            creativeRoutes.set(id, [...(creativeRoutes.get(id) ?? []), ...refs]);
+        }
+        return answer;
       }
     : undefined;
   try {
@@ -3346,7 +3480,7 @@ function decideCreativePackageFit(
       const ref = legacyRef(projected.format_id)!;
       const unsupported = [
         creative.format_id,
-        ...prepared.flatMap(container => rawLegacyRefs(container, normalized)),
+        ...prepared.flatMap(container => rawLegacyRefs(container, normalized, resolverRoutes)),
       ].some(value => {
         const raw = record(value);
         const candidate = legacyRef(value);
@@ -3375,7 +3509,10 @@ function decideCreativePackageFit(
       if (
         unsupported ||
         densityConflict ||
-        prepared.some(container => !legacyWireFitsDeclarations(normalized, container, ref, facts, wireDensity))
+        prepared.some(
+          container =>
+            !legacyWireFitsDeclarations(normalized, container, ref, facts, wireDensity, resolverRoutes, creativeRoutes)
+        )
       ) {
         const error = new CreativeFormatProjectionError(
           'sync_creatives',
