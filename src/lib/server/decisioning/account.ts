@@ -239,6 +239,10 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
    *
    * Absence is silence, not denial: it means the adapter does not expose
    * introspectable account authorization for this caller/account tuple.
+   *
+   * To end a relationship while letting the caller finish reporting reconciliation, set
+   * {@link windDownGrant} here instead of removing the account: removal is revocation, which
+   * ends every task, receipts included (adcp#8607).
    */
   authorization?: AccountAuthorization;
 
@@ -1215,6 +1219,49 @@ function projectAccountAuthorization(authorization: AccountAuthorization): Accou
   if (authorization.read_only !== undefined) projected.read_only = authorization.read_only;
   if (authorization.authorized_at !== undefined) projected.authorized_at = authorization.authorized_at;
   return projected;
+}
+
+/**
+ * The tasks a wind-down grant keeps: reconciliation only. A principal holding them can still read
+ * `get_reporting_status` (so its reporting subscriptions keep covering the account and it keeps
+ * receiving final revisions and adjustments), file `sync_reporting_receipts`, and report
+ * `sync_reporting_status`, and nothing else.
+ *
+ * @experimental Reporting subscriptions (`media_buy.reporting_subscriptions`, AdCP 3.3).
+ */
+export const REPORTING_WIND_DOWN_TASKS = Object.freeze([
+  'get_reporting_status',
+  'sync_reporting_receipts',
+  'sync_reporting_status',
+] as const);
+
+/**
+ * A reduced grant that lets a principal finish reconciling an account after the relationship ends,
+ * for example after an agency change. Use it instead of revoking.
+ *
+ * Revocation means no access at all (adcp#8607): once a grant ends, the account is unknown to every
+ * task, `sync_reporting_receipts` and `sync_reporting_status` included, and its reporting
+ * subscriptions stop covering it. Revoke only for fraud or a compromise. To end a relationship,
+ * replace the account's `authorization` with this grant: `allowed_tasks` is
+ * {@link REPORTING_WIND_DOWN_TASKS} and `read_only` is `false`, because receipts and statuses are
+ * writes. Coverage continues while the grant lists `get_reporting_status`.
+ *
+ * Pass the grant being wound down to keep its `authorized_at`: a reduced grant continues the
+ * current authorization chain, so `authorized_at` must not move. Its `field_scopes` and
+ * `scope_name` describe the old task set and are dropped.
+ *
+ * ```ts
+ * account.authorization = windDownGrant(account.authorization);
+ * ```
+ *
+ * @experimental Reporting subscriptions (`media_buy.reporting_subscriptions`, AdCP 3.3).
+ */
+export function windDownGrant(current?: Pick<AccountAuthorization, 'authorized_at'>): AccountAuthorization {
+  return {
+    allowed_tasks: [...REPORTING_WIND_DOWN_TASKS],
+    read_only: false,
+    ...(current?.authorized_at !== undefined ? { authorized_at: current.authorized_at } : {}),
+  };
 }
 
 export type WireSyncAccountRow = SyncAccountsSuccess['accounts'][number];

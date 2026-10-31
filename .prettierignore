@@ -41,3 +41,5 @@ test/fixtures/wba-profile/
 
 # Local agent worktrees (Claude Code); not part of the repo tree.
 .claude/
+# Canonical reporting-subscription coverage vectors, byte-identical to adcp#8616 (see PINNED.json).
+test/fixtures/reporting-subscriptions/canonical/

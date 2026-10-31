@@ -3160,20 +3160,53 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const adopterCapabilityExt = platform.capabilities.ext;
   const adopterOverrides = platform.capabilities.overrides;
   const adopterExperimentalFeatures = (adopterOverrides?.experimental_features ?? []) as readonly string[];
+  // AdCP 3.3: advertising reporting subscriptions requires the
+  // media_buy.reporting_subscriptions feature id and the principal section that
+  // serves them. Without a subscriptions block and a principal block the list is
+  // exactly what it was before 3.3.
+  const principalCapability = platform.capabilities.principal;
+  const advertisesSubscriptions = reportingDelivery?.subscriptions !== undefined;
   if (
-    reportingDelivery &&
-    !adopterExperimentalFeatures.includes('media_buy.reporting_delivery') &&
-    adopterExperimentalFeatures.length >= 32
+    advertisesSubscriptions &&
+    !(principalCapability?.supported_sections as readonly string[] | undefined)?.includes('reporting_subscriptions')
   ) {
     throw new PlatformConfigError(
-      'Reliable Reporting Core cannot be added because experimental_features already contains 32 entries'
+      'Advertising reporting subscriptions requires capabilities.principal with reporting_subscriptions in ' +
+        'supported_sections; pass the principal runtime capabilities created with reportingSubscriptions'
     );
   }
-  const experimentalFeatures = reportingDelivery
-    ? Array.from(new Set([...adopterExperimentalFeatures, 'media_buy.reporting_delivery']))
-    : adopterOverrides?.experimental_features;
+  const principalSections = (principalCapability?.supported_sections as readonly string[] | undefined) ?? [];
+  if (
+    principalSections.includes('reporting_subscriptions') &&
+    !(reportingDelivery?.configuration_tasks as readonly string[] | undefined)?.includes('sync_principal')
+  ) {
+    throw new PlatformConfigError(
+      'capabilities.principal lists reporting_subscriptions, but the reporting capability does not list sync_principal ' +
+        'in configuration_tasks; create the reliable reporting service with subscriptions'
+    );
+  }
+  const derivedFeatureIds = [
+    ...(reportingDelivery ? ['media_buy.reporting_delivery'] : []),
+    ...(advertisesSubscriptions ? ['media_buy.reporting_subscriptions'] : []),
+    ...(principalCapability ? ['protocol.principal'] : []),
+  ];
+  if (
+    derivedFeatureIds.some(id => !adopterExperimentalFeatures.includes(id)) &&
+    new Set([...adopterExperimentalFeatures, ...derivedFeatureIds]).size > 32
+  ) {
+    throw new PlatformConfigError(
+      reportingDelivery
+        ? 'Reliable Reporting Core cannot be added because experimental_features already contains 32 entries'
+        : 'protocol.principal cannot be added because experimental_features already contains 32 entries'
+    );
+  }
+  const experimentalFeatures =
+    derivedFeatureIds.length > 0
+      ? Array.from(new Set([...adopterExperimentalFeatures, ...derivedFeatureIds]))
+      : adopterOverrides?.experimental_features;
   const adopterSupportedVersions = platform.capabilities.supported_versions;
-  const hasOverridesObject = hasOverridesProjection || adopterOverrides !== undefined;
+  const hasOverridesObject =
+    hasOverridesProjection || adopterOverrides !== undefined || platform.capabilities.principal !== undefined;
 
   const projectedCapabilitiesConfig = {
     ...(hasSpecialisms && {
@@ -3191,6 +3224,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ...(adopterCapabilityExt !== undefined && { ext: adopterCapabilityExt }),
     ...(adopterSupportedVersions !== undefined && {
       supported_versions: [...adopterSupportedVersions],
+    }),
+    ...(principalCapability !== undefined && { principal: structuredClone(principalCapability) }),
+    ...(platform.capabilities.capability_changes !== undefined && {
+      capability_changes: structuredClone(platform.capabilities.capability_changes),
     }),
     ...(hasOverridesObject && {
       overrides: {
