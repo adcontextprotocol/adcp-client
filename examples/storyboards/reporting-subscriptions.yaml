@@ -1,0 +1,607 @@
+id: reporting_subscriptions
+version: '1.0.0'
+title: 'Principal-level reporting subscriptions'
+category: schema_validation
+summary: 'Validates the experimental sync_principal reporting_subscriptions section: capability discovery, dry run, applied lifecycle with readback and idempotent replay, rejections, versioning with prior_versions, get_reporting_status subscription_coverage, and deactivation by omission.'
+track: core
+required_tools:
+  - get_adcp_capabilities
+  - sync_principal
+  - get_principal
+  - get_reporting_status
+
+narrative: |
+  A buyer registers reporting once for its whole relationship with a seller:
+  one `reporting_subscriptions` entry in `sync_principal` covers every account
+  the principal is authorized on, now and later. The seller versions each
+  subscription, keeps superseded versions readable through `prior_versions`,
+  deactivates a subscription the buyer omits instead of deleting it, and
+  reports per-account coverage exceptions in `get_reporting_status`
+  `subscription_coverage`.
+
+  The subscription here names no destination (`reconciliation_mode:
+  delivery_only`), so no destination proof or outbound call is needed. The
+  seller under test authorizes the authenticated principal on the account
+  `acct-reference` (the SDK reference seller in
+  `examples/reporting-subscriptions-seller/seller.mjs` does), and the principal
+  starts with no reporting subscriptions.
+
+  Not covered, because the runner cannot express it:
+  - Owed periods. Which periods a subscription owes on each account depends on
+    elapsed time and on media buys the runner cannot create, and the runner
+    cannot move the seller's clock or compare an owed set to a ledger.
+  - Grant changes. Revoking or reducing a principal's grant on an account, and
+    the `accounts_unauthorized` and `gaps` that follow, need a seller-side
+    change the runner cannot make. `comply_test_controller` scenarios are a
+    spec-defined enum, so an SDK-local storyboard cannot add one.
+  - The `delivery_config_id` namespace clash. It needs an account-level
+    `reporting_delivery_configs` entry made through `sync_accounts`, which a
+    seller that lists only `sync_principal` in `configuration_tasks` does not
+    serve, and which the runner cannot seed.
+  - Destination delivery, receipts and `replace_account_configs`.
+
+agent:
+  interaction_model: any
+  capabilities:
+    - 'protocol.principal'
+    - 'media_buy.reporting_subscriptions'
+  examples:
+    - 'The SDK reference seller in examples/reporting-subscriptions-seller'
+
+caller:
+  role: buyer_agent
+  example: 'Compliance test harness acting as a stable authenticated principal'
+
+prerequisites:
+  description: |
+    The agent under test advertises `sync_principal` with the
+    `reporting_subscriptions` section and the experimental
+    `media_buy.reporting_subscriptions` feature. The authenticated caller is
+    authorized on account `acct-reference` and has no reporting subscriptions.
+  controller_seeding: false
+
+phases:
+  - id: capability_declaration
+    title: 'Advertise principal-level reporting subscriptions'
+    narrative: |
+      The principal section, the reporting registration tasks, the
+      subscriptions block and the experimental feature id agree.
+
+    steps:
+      - id: get_capabilities_declares_subscriptions
+        title: 'Read the subscription capability'
+        task: get_adcp_capabilities
+        schema_ref: 'protocol/get-adcp-capabilities-request.json'
+        response_schema_ref: 'protocol/get-adcp-capabilities-response.json'
+        stateful: false
+        sample_request:
+          context:
+            correlation_id: 'reporting_subscriptions--capabilities'
+        validations:
+          - check: response_schema
+            description: 'Response matches get-adcp-capabilities-response.json'
+          - check: field_contains
+            path: 'adcp.principal.supported_sections[*]'
+            value: 'reporting_subscriptions'
+            description: 'sync_principal accepts the reporting_subscriptions section'
+          - check: field_contains
+            path: 'media_buy.reporting_delivery.configuration_tasks[*]'
+            value: 'sync_principal'
+            description: 'Reporting registrations are accepted through sync_principal'
+          - check: field_value
+            path: 'media_buy.reporting_delivery.subscriptions.supported'
+            value: true
+            description: 'The subscriptions block is advertised'
+          - check: field_contains
+            path: 'experimental_features[*]'
+            value: 'media_buy.reporting_subscriptions'
+            description: 'The experimental subscriptions feature is declared'
+          - check: field_contains
+            path: 'experimental_features[*]'
+            value: 'protocol.principal'
+            description: 'The experimental principal feature is declared'
+
+  - id: dry_run
+    title: 'Validate a subscription without persisting it'
+    depends_on: ['capability_declaration']
+    narrative: |
+      dry_run validates the section and persists nothing.
+
+    steps:
+      - id: dry_run_subscription
+        title: 'Dry-run one subscription'
+        task: sync_principal
+        schema_ref: 'protocol/sync-principal-request.json'
+        response_schema_ref: 'protocol/sync-principal-response.json'
+        stateful: false
+        sample_request:
+          idempotency_key: '$generate:uuid_v4#subscriptions_dry_run'
+          dry_run: true
+          configuration:
+            reporting_subscriptions:
+              - &subscription_v1
+                subscription_id: 'analytics-daily'
+                subscription_version: 1
+                active: true
+                scope:
+                  all_authorized_accounts: true
+                selector:
+                  feed_purpose: analytics
+                  period_duration: P1D
+                  required_finality: snapshot
+                reconciliation_mode: delivery_only
+          context:
+            correlation_id: 'reporting_subscriptions--dry_run'
+        validations:
+          - check: response_schema
+            description: 'Response matches sync-principal-response.json'
+          - check: field_value
+            path: 'result.kind'
+            value: 'validated'
+            description: 'The subscription validates'
+          - check: field_value
+            path: 'result.dry_run'
+            value: true
+            description: 'Nothing was applied'
+
+      - id: dry_run_persisted_nothing
+        title: 'Read back: the dry run left no subscription'
+        task: get_principal
+        schema_ref: 'protocol/get-principal-request.json'
+        response_schema_ref: 'protocol/get-principal-response.json'
+        stateful: true
+        sample_request:
+          context:
+            correlation_id: 'reporting_subscriptions--after_dry_run'
+        validations:
+          - check: response_schema
+            description: 'Response matches get-principal-response.json'
+          - check: field_absent
+            path: 'result.configuration.reporting_subscriptions[0]'
+            description: 'The dry run persisted no subscription'
+
+  - id: applied_lifecycle
+    title: 'Apply, read back and replay a subscription'
+    depends_on: ['dry_run']
+    narrative: |
+      The applied response, a get_principal read and an exact replay describe
+      the same subscription version, acceptance time and configuration
+      version.
+
+    steps:
+      - id: apply_subscription
+        title: 'Apply one subscription'
+        task: sync_principal
+        schema_ref: 'protocol/sync-principal-request.json'
+        response_schema_ref: 'protocol/sync-principal-response.json'
+        stateful: true
+        context_outputs:
+          - name: subscription_configuration_version
+            path: 'result.configuration_version'
+          - name: subscription_v1_accepted_at
+            path: 'result.configuration.reporting_subscriptions[0].accepted_at'
+        sample_request:
+          idempotency_key: '$generate:uuid_v4#subscriptions_apply'
+          configuration:
+            reporting_subscriptions:
+              - *subscription_v1
+          context:
+            correlation_id: 'reporting_subscriptions--apply'
+        validations:
+          - check: response_schema
+            description: 'Response matches sync-principal-response.json'
+          - check: field_value
+            path: 'result.kind'
+            value: 'applied'
+            description: 'The subscription is persisted'
+          - check: field_value
+            path: 'result.dry_run'
+            value: false
+            description: 'Applied responses assert dry_run false'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].subscription_id'
+            value: 'analytics-daily'
+            description: 'Readback echoes the subscription_id'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].subscription_version'
+            value: 1
+            description: 'Readback carries the accepted version'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].state'
+            value: 'active'
+            description: 'A subscription without a destination is active at once'
+          - check: field_present
+            path: 'result.configuration.reporting_subscriptions[0].accepted_at'
+            description: 'The seller records when it accepted this version'
+          - check: field_absent
+            path: 'result.configuration.reporting_subscriptions[0].prior_versions'
+            description: 'A first version has no prior versions'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].configuration.selector.feed_purpose'
+            value: 'analytics'
+            description: 'Readback carries the accepted configuration'
+
+      - id: read_back_subscription
+        title: 'Read the subscription back'
+        task: get_principal
+        schema_ref: 'protocol/get-principal-request.json'
+        response_schema_ref: 'protocol/get-principal-response.json'
+        stateful: true
+        sample_request:
+          context:
+            correlation_id: 'reporting_subscriptions--read_back'
+        validations:
+          - check: response_schema
+            description: 'Response matches get-principal-response.json'
+          - check: field_value
+            path: 'result.kind'
+            value: 'current'
+            description: 'The principal record is readable'
+          - check: field_equals_context
+            path: 'result.configuration_version'
+            context_key: 'subscription_configuration_version'
+            description: 'Reading does not advance the configuration version'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].state'
+            value: 'active'
+            description: 'The subscription reads back active'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].subscription_version'
+            value: 1
+            description: 'The subscription reads back at version 1'
+          - check: field_equals_context
+            path: 'result.configuration.reporting_subscriptions[0].accepted_at'
+            context_key: 'subscription_v1_accepted_at'
+            description: 'accepted_at is stable'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].configuration.scope.all_authorized_accounts'
+            value: true
+            description: 'Readback carries the accepted scope'
+
+      - id: replay_subscription
+        title: 'Replay the applied sync with its original key and body'
+        task: sync_principal
+        schema_ref: 'protocol/sync-principal-request.json'
+        response_schema_ref: 'protocol/sync-principal-response.json'
+        stateful: true
+        sample_request:
+          idempotency_key: '$generate:uuid_v4#subscriptions_apply'
+          configuration:
+            reporting_subscriptions:
+              - *subscription_v1
+          context:
+            correlation_id: 'reporting_subscriptions--replay'
+        validations:
+          - check: response_schema
+            description: 'Response matches sync-principal-response.json'
+          - check: field_value
+            path: 'result.kind'
+            value: 'applied'
+            description: 'The replay resolves to the applied outcome'
+          - check: field_equals_context
+            path: 'result.configuration_version'
+            context_key: 'subscription_configuration_version'
+            description: 'The replay does not advance the configuration version'
+          - check: field_equals_context
+            path: 'result.configuration.reporting_subscriptions[0].accepted_at'
+            context_key: 'subscription_v1_accepted_at'
+            description: 'The replay does not re-accept the subscription'
+
+  - id: rejections
+    title: 'Reject invalid subscription sections'
+    depends_on: ['applied_lifecycle']
+    narrative: |
+      An invalid section is refused whole and changes nothing.
+
+    steps:
+      - id: reject_duplicate_subscription_id
+        title: 'Reject two entries with one subscription_id'
+        task: sync_principal
+        schema_ref: 'protocol/sync-principal-request.json'
+        response_schema_ref: 'protocol/sync-principal-response.json'
+        stateful: true
+        expect_error: true
+        negative_path: payload_well_formed
+        sample_request:
+          idempotency_key: '$generate:uuid_v4#subscriptions_duplicate'
+          configuration:
+            reporting_subscriptions:
+              - *subscription_v1
+              - *subscription_v1
+          context:
+            correlation_id: 'reporting_subscriptions--duplicate'
+        validations:
+          - check: field_value
+            path: 'result.kind'
+            value: 'failed'
+            description: 'The section is refused'
+          - check: field_value
+            path: 'result.errors[0].code'
+            value: 'INVALID_REQUEST'
+            description: 'A duplicate subscription_id is an invalid request'
+
+      - id: reject_invalid_scope
+        title: 'Reject a scope that names both scope forms'
+        task: sync_principal
+        schema_ref: 'protocol/sync-principal-request.json'
+        stateful: true
+        expect_error: true
+        negative_path: schema_invalid
+        sample_request:
+          idempotency_key: '$generate:uuid_v4#subscriptions_invalid_scope'
+          configuration:
+            reporting_subscriptions:
+              - subscription_id: 'analytics-daily'
+                subscription_version: 1
+                active: true
+                scope:
+                  all_authorized_accounts: true
+                  account_ids: ['acct-reference']
+                selector:
+                  feed_purpose: analytics
+                  period_duration: P1D
+                  required_finality: snapshot
+                reconciliation_mode: delivery_only
+          context:
+            correlation_id: 'reporting_subscriptions--invalid_scope'
+        validations:
+          - check: error_code
+            allowed_values: ['VALIDATION_ERROR', 'INVALID_REQUEST']
+            description: 'A scope must name exactly one of all_authorized_accounts or account_ids'
+
+      - id: reject_reused_version
+        title: 'Reject changed content under the same subscription_version'
+        task: sync_principal
+        schema_ref: 'protocol/sync-principal-request.json'
+        response_schema_ref: 'protocol/sync-principal-response.json'
+        stateful: true
+        expect_error: true
+        negative_path: payload_well_formed
+        sample_request:
+          idempotency_key: '$generate:uuid_v4#subscriptions_reused_version'
+          configuration:
+            reporting_subscriptions:
+              - subscription_id: 'analytics-daily'
+                subscription_version: 1
+                active: true
+                scope:
+                  all_authorized_accounts: true
+                exclude_account_ids: ['acct-excluded']
+                selector:
+                  feed_purpose: analytics
+                  period_duration: P1D
+                  required_finality: snapshot
+                reconciliation_mode: delivery_only
+          context:
+            correlation_id: 'reporting_subscriptions--reused_version'
+        validations:
+          - check: field_value
+            path: 'result.kind'
+            value: 'failed'
+            description: 'Changed content needs a new subscription_version'
+          - check: field_value
+            path: 'result.errors[0].code'
+            value: 'INVALID_REQUEST'
+            description: 'Reusing a version for different content is an invalid request'
+
+      - id: rejections_changed_nothing
+        title: 'Read back: the rejections changed nothing'
+        task: get_principal
+        schema_ref: 'protocol/get-principal-request.json'
+        response_schema_ref: 'protocol/get-principal-response.json'
+        stateful: true
+        sample_request:
+          context:
+            correlation_id: 'reporting_subscriptions--after_rejections'
+        validations:
+          - check: field_equals_context
+            path: 'result.configuration_version'
+            context_key: 'subscription_configuration_version'
+            description: 'No rejected request advanced the configuration version'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].subscription_version'
+            value: 1
+            description: 'The subscription is still at version 1'
+
+  - id: versioning
+    title: 'Supersede a version and keep the prior one readable'
+    depends_on: ['rejections']
+    narrative: |
+      A changed subscription carries a new subscription_version. The readback
+      lists the superseded version in prior_versions with when it was
+      accepted and when it was superseded.
+
+    steps:
+      - id: apply_version_2
+        title: 'Apply version 2 with an account exclusion'
+        task: sync_principal
+        schema_ref: 'protocol/sync-principal-request.json'
+        response_schema_ref: 'protocol/sync-principal-response.json'
+        stateful: true
+        context_outputs:
+          - name: subscription_v2_accepted_at
+            path: 'result.configuration.reporting_subscriptions[0].accepted_at'
+        sample_request:
+          idempotency_key: '$generate:uuid_v4#subscriptions_version_2'
+          configuration:
+            reporting_subscriptions:
+              - subscription_id: 'analytics-daily'
+                subscription_version: 2
+                active: true
+                scope:
+                  all_authorized_accounts: true
+                exclude_account_ids: ['acct-excluded']
+                selector:
+                  feed_purpose: analytics
+                  period_duration: P1D
+                  required_finality: snapshot
+                reconciliation_mode: delivery_only
+          context:
+            correlation_id: 'reporting_subscriptions--version_2'
+        validations:
+          - check: response_schema
+            description: 'Response matches sync-principal-response.json'
+          - check: field_value
+            path: 'result.kind'
+            value: 'applied'
+            description: 'The new version is persisted'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].subscription_version'
+            value: 2
+            description: 'Readback carries the new version'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].prior_versions[0].subscription_version'
+            value: 1
+            description: 'The superseded version is listed'
+          - check: field_equals_context
+            path: 'result.configuration.reporting_subscriptions[0].prior_versions[0].accepted_at'
+            context_key: 'subscription_v1_accepted_at'
+            description: 'The prior version keeps its acceptance time'
+          - check: field_present
+            path: 'result.configuration.reporting_subscriptions[0].prior_versions[0].superseded_at'
+            description: 'The prior version records when it was superseded'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].configuration.exclude_account_ids[0]'
+            value: 'acct-excluded'
+            description: 'Readback carries the new configuration'
+
+      - id: read_back_version_2
+        title: 'Read version 2 back'
+        task: get_principal
+        schema_ref: 'protocol/get-principal-request.json'
+        response_schema_ref: 'protocol/get-principal-response.json'
+        stateful: true
+        context_outputs:
+          - name: subscription_v2_configuration_version
+            path: 'result.configuration_version'
+        sample_request:
+          context:
+            correlation_id: 'reporting_subscriptions--read_version_2'
+        validations:
+          - check: response_schema
+            description: 'Response matches get-principal-response.json'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].subscription_version'
+            value: 2
+            description: 'The subscription reads back at version 2'
+          - check: field_equals_context
+            path: 'result.configuration.reporting_subscriptions[0].accepted_at'
+            context_key: 'subscription_v2_accepted_at'
+            description: 'Version 2 keeps its acceptance time'
+          - check: field_equals_context
+            path: 'result.configuration.reporting_subscriptions[0].prior_versions[0].superseded_at'
+            context_key: 'subscription_v2_accepted_at'
+            description: 'Version 1 was superseded when version 2 was accepted'
+
+  - id: coverage
+    title: 'Report subscription coverage per account'
+    depends_on: ['versioning']
+    narrative: |
+      get_reporting_status lists one subscription_coverage entry for each of
+      the caller's subscriptions whose scope includes the account. The account
+      is in scope and has no exceptions.
+
+    steps:
+      - id: get_reporting_status_coverage
+        title: 'Read the account summary'
+        task: get_reporting_status
+        schema_ref: 'media-buy/get-reporting-status-request.json'
+        response_schema_ref: 'media-buy/get-reporting-status-response.json'
+        stateful: true
+        sample_request:
+          account:
+            account_id: 'acct-reference'
+          view: summary
+          context:
+            correlation_id: 'reporting_subscriptions--coverage'
+        validations:
+          - check: response_schema
+            description: 'Response matches get-reporting-status-response.json'
+          - check: field_value
+            path: 'subscription_coverage[0].subscription_id'
+            value: 'analytics-daily'
+            description: 'The subscription covers the account'
+          - check: field_value
+            path: 'subscription_coverage[0].subscription_version'
+            value: 2
+            description: 'Coverage follows the current version'
+          - check: field_value
+            path: 'subscription_coverage[0].status'
+            value: 'active'
+            description: 'The account has no coverage exception'
+
+  - id: deactivation
+    title: 'Deactivate a subscription by omission'
+    depends_on: ['coverage']
+    narrative: |
+      sync_principal replaces the whole section. A subscription the buyer
+      omits is deactivated, not deleted: it stays readable as inactive with
+      deactivated_at and its version history.
+
+    steps:
+      - id: omit_subscription
+        title: 'Sync an empty reporting_subscriptions section'
+        task: sync_principal
+        schema_ref: 'protocol/sync-principal-request.json'
+        response_schema_ref: 'protocol/sync-principal-response.json'
+        stateful: true
+        context_outputs:
+          - name: subscription_deactivated_at
+            path: 'result.configuration.reporting_subscriptions[0].deactivated_at'
+        sample_request:
+          idempotency_key: '$generate:uuid_v4#subscriptions_omit'
+          configuration:
+            reporting_subscriptions: []
+          context:
+            correlation_id: 'reporting_subscriptions--omit'
+        validations:
+          - check: response_schema
+            description: 'Response matches sync-principal-response.json'
+          - check: field_value
+            path: 'result.kind'
+            value: 'applied'
+            description: 'The omission is persisted'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].subscription_id'
+            value: 'analytics-daily'
+            description: 'The omitted subscription stays readable'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].state'
+            value: 'inactive'
+            description: 'Omission deactivates'
+          - check: field_present
+            path: 'result.configuration.reporting_subscriptions[0].deactivated_at'
+            description: 'The seller records when it deactivated'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].configuration.active'
+            value: false
+            description: 'The configuration reads back inactive'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].prior_versions[0].subscription_version'
+            value: 1
+            description: 'Version history survives deactivation'
+
+      - id: read_back_inactive
+        title: 'Read the inactive subscription back'
+        task: get_principal
+        schema_ref: 'protocol/get-principal-request.json'
+        response_schema_ref: 'protocol/get-principal-response.json'
+        stateful: true
+        sample_request:
+          context:
+            correlation_id: 'reporting_subscriptions--read_inactive'
+        validations:
+          - check: response_schema
+            description: 'Response matches get-principal-response.json'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].state'
+            value: 'inactive'
+            description: 'The subscription reads back inactive'
+          - check: field_equals_context
+            path: 'result.configuration.reporting_subscriptions[0].deactivated_at'
+            context_key: 'subscription_deactivated_at'
+            description: 'deactivated_at is stable'
+          - check: field_value
+            path: 'result.configuration.reporting_subscriptions[0].subscription_version'
+            value: 2
+            description: 'The current version is unchanged by deactivation'

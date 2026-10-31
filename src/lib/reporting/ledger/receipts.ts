@@ -5,7 +5,11 @@ import { canonicalize } from '../../utils/jcs';
 import { isReportingAdjustmentReceiptEvidence, isReportingReceiptEvidence } from '../evidence';
 import type { AdcpToolMap } from '../../server/create-adcp-server';
 import { AdcpError } from '../../server/decisioning/async-outcome';
-import type { ReportingManagedDeliveryBindingV1 } from './types';
+import type {
+  ReportingLedgerSubscriptionPrincipalV1,
+  ReportingManagedDeliveryBindingV1,
+  ReportingSubscriptionReceiptAdmissionV1,
+} from './types';
 
 /** RC3 `maxItems` on `receipts` and on `adjustment_receipts`, applied separately. */
 const MAX_RECEIPTS_PER_ARRAY = 100;
@@ -31,6 +35,13 @@ export interface ReportingReceiptBatchInputV1 {
   request_fingerprint: string;
   entries: ReportingReceiptBatchEntryV1[];
   received_at: string;
+  /**
+   * Who may file against which obligation (experimental, AdCP 3.3). A store that sets
+   * `receiptAdmission` applies `reportingSubscriptionReceiptAdmissibleV1` to every entry after
+   * resolving its obligation and revision, and answers a refused entry exactly like an unknown
+   * reference. Absent when subscriptions are off.
+   */
+  admission?: ReportingSubscriptionReceiptAdmissionV1;
 }
 
 /** The `sync_reporting_receipts` request as the server framework hands it to a handler. */
@@ -45,16 +56,37 @@ export type SyncReportingReceiptsParamsV1 = AdcpToolMap['sync_reporting_receipts
  */
 export interface ReportingReceiptSyncStoreV1 {
   syncReceiptBatch(input: ReportingReceiptBatchInputV1): Promise<SyncReportingReceiptsResponse['results']>;
+  /** True when the store enforces `ReportingReceiptBatchInputV1.admission`. */
+  readonly receiptAdmission?: true;
 }
 
-/** Protocol handler for `sync_reporting_receipts`. Works against any `ReportingReceiptSyncStoreV1`. */
+/**
+ * Protocol handler for `sync_reporting_receipts`. Works against any `ReportingReceiptSyncStoreV1`.
+ *
+ * With `resolveSubscriptionPrincipal` (experimental, AdCP 3.3), a subscription obligation accepts
+ * receipts only from its owning principal; see `reportingSubscriptionReceiptAdmissibleV1`. The
+ * host's account resolution and `allowed_tasks` still decide who reaches the handler at all.
+ */
 export function createSyncReportingReceiptsHandler<TContext extends { account?: unknown }>(
   store: ReportingReceiptSyncStoreV1,
   resolveConsumerId: (context: TContext) => string | Promise<string>,
-  now: () => Date = () => new Date()
+  now: () => Date = () => new Date(),
+  options: {
+    resolveSubscriptionPrincipal?: (
+      context: TContext
+    ) => ReportingLedgerSubscriptionPrincipalV1 | Promise<ReportingLedgerSubscriptionPrincipalV1>;
+  } = {}
 ) {
+  if (options.resolveSubscriptionPrincipal && store.receiptAdmission !== true) {
+    throw new TypeError('Scoping receipts to subscription owners requires a store that enforces receipt admission');
+  }
   return async (request: SyncReportingReceiptsParamsV1, context: TContext): Promise<SyncReportingReceiptsResponse> => {
     const account_id = resolvedAccountId(context.account);
+    let admission: ReportingSubscriptionReceiptAdmissionV1 | undefined;
+    if (options.resolveSubscriptionPrincipal) {
+      const resolved = await options.resolveSubscriptionPrincipal(context);
+      admission = { principal: { tenantId: resolved.tenantId, principalId: resolved.principalId } };
+    }
     const consumer_id = await resolveConsumerId(context);
     if (!consumer_id || consumer_id.length > 255) {
       throw new TypeError('resolveConsumerId must return a durable authenticated principal of at most 255 characters');
@@ -182,6 +214,7 @@ export function createSyncReportingReceiptsHandler<TContext extends { account?: 
           request_fingerprint,
           entries: validEntries,
           received_at: now().toISOString(),
+          ...(admission ? { admission } : {}),
         })
       : [];
     let storedIndex = 0;
