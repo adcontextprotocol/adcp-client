@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.3.0-beta.2
-// Generated at: 2026-10-30T14:18:15.187Z
+// Generated AdCP core types from official schemas v3.3.0-beta.3
+// Generated at: 2026-10-31T11:38:21.151Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -656,6 +656,12 @@ export type CreativeAgentCapability = 'validation' | 'assembly' | 'generation' |
  */
 export type CreativeApprovalStatus = 'pending_review' | 'approved' | 'partially_approved' | 'rejected';
 
+// CREATIVECHANGEKIND CANONICAL ENUM
+/**
+ * A kind of change a sync_creatives item makes to a creative, classified from the item's diff against the version of the creative that serves. Buyer and seller compute the same classification, so a buyer can tell before it sends a change which live-update rules apply. Fields excluded from canonical revision content (name, tags, status, weight, placement_refs, placement_ids) are not a change kind.
+ */
+export type CreativeChangeKind = 'click_through' | 'trackers' | 'asset_content' | 'format';
+
 // CREATIVEEVENTREASONCODE CANONICAL ENUM
 /**
  * Categorical reason carried on creative lifecycle webhooks (`creative.status_changed`, `creative.purged`). Distinct from `impairment-reason-code` because creative-policy reasons differ in vocabulary and remediation paths from media-buy delivery impairments — a creative may be revoked for a content-policy reason that produces no impairment on any buy, and an impairment may close without any creative-side status change. Buyers correlate the two via `creative_id` when both surfaces fire.
@@ -986,6 +992,7 @@ export type ErrorCode =
   | 'CREATIVE_VALUE_NOT_ALLOWED'
   | 'CREATIVE_REVISION_CONTENT_MISMATCH'
   | 'CREATIVE_MERGE_REJECTED'
+  | 'CREATIVE_LIVE_UPDATE_UNSUPPORTED'
   | 'UNSUPPORTED_FEATURE'
   | 'UNPRICEABLE_OUTPUT'
   | 'UNSUPPORTED_GRANULARITY'
@@ -1434,6 +1441,12 @@ export type CountryFusedPostalCodeSystem =
  */
 export type LiftDimension = 'awareness' | 'consideration' | 'favorability' | 'purchase_intent' | 'ad_recall';
 
+// LIVEUPDATESERVINGMODE CANONICAL ENUM
+/**
+ * How a live creative serves while a seller decides an in-place change to it. Ordered from least to most disruptive: uninterrupted, staged, paused_for_review.
+ */
+export type LiveUpdateServingMode = 'uninterrupted' | 'staged' | 'paused_for_review';
+
 // LOGOSLOT CANONICAL ENUM
 /**
  * Canonical renderer-facing logo slot. Use when selecting a logo variant from brand.json for a specific UI or creative placement.
@@ -1663,6 +1676,7 @@ export type NotificationType =
   | 'creative.assignment_changed'
   | 'indicators.changed'
   | 'creative.purged'
+  | 'creative.staged_update_changed'
   | 'account.status_changed'
   | 'account.change_recorded'
   | 'product.created'
@@ -14030,29 +14044,40 @@ export interface DeliveryRecord {
 }
 // VALIDATEPROPERTYDELIVERYRESPONSE PRIORITY CANONICAL SCHEMA
 /**
+ * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete. A submitted response carries it: every submitted body and branch composes core/task-submitted.json, which requires it.
+ */
+export type TaskID = string;
+/**
+ * Human-readable summary of the task result, suitable for display to end users or for AI agent comprehension. At most 2,000 characters, and untrusted input to the receiver: see core/task-message.json.
+ */
+export type TaskMessage = string;
+/**
  * Response payload for validate_property_delivery task. Returns aggregate compliance statistics and per-record validation results.
  */
 export interface ValidatePropertyDeliveryResponse {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -14069,15 +14094,6 @@ export interface ValidatePropertyDeliveryResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Overall compliance flag for the submitted delivery — true when every record is compliant, false when any record is non_compliant. Derived from summary.non_compliant_records === 0 but surfaced at the root as a convenience signal for buyers. Agents MAY omit this field when the response represents a partial validation (e.g., when include_compliant is false and results only contains non_compliant records); consumers SHOULD fall back to summary counts if compliant is absent.
    */
@@ -14816,11 +14832,7 @@ export interface CanonicalProposal {
  * One or more immutable draft media-plan proposals and compact canonical products referenced by their purchases. Products always carry product_id and name and never carry legacy named-format identifiers. During the AdCP 3.x compatibility window, an SDK projecting a valid products-only get_products brief result may instead return the deprecated products_available outcome with an explicit purchase continuation. Native 3.2 sellers MUST NOT use that compatibility outcome, and adapters MUST NOT fabricate a proposal, terms digest, or feed version.
  */
 export type RequestProposalsResponse =
-  | {
-      /**
-       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-       */
-      adcp_version?: string;
+  | (ProtocolEnvelope & {
       outcome: 'proposed';
       reason?: never;
       suggestions?: never;
@@ -14879,22 +14891,13 @@ export type RequestProposalsResponse =
       purchase_continuation?: never;
       targeting_resolution?: ProductDiscoveryTargetingResolution;
       later_proposals?: LaterProposalsState;
-      status?: 'completed';
-      task_id?: never;
-      /**
-       * @maxLength 2000
-       */
-      message?: string;
       errors?: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-      replayed?: true;
-    }
-  | {
-      /**
-       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-       */
-      adcp_version?: string;
+      status?: 'completed';
+      task_id?: never;
+    })
+  | (ProtocolEnvelope & {
       outcome: 'products_available';
       reason?: never;
       suggestions?: never;
@@ -14993,22 +14996,13 @@ export type RequestProposalsResponse =
           };
       targeting_resolution?: ProductDiscoveryTargetingResolution;
       later_proposals?: LaterProposalsState;
-      status?: 'completed';
-      task_id?: never;
-      /**
-       * @maxLength 2000
-       */
-      message?: string;
       errors?: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-      replayed?: true;
-    }
-  | {
-      /**
-       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-       */
-      adcp_version?: string;
+      status?: 'completed';
+      task_id?: never;
+    })
+  | (ProtocolEnvelope & {
       outcome: 'rejected';
       /**
        * @minLength 1
@@ -15025,22 +15019,13 @@ export type RequestProposalsResponse =
       purchase_continuation?: never;
       targeting_resolution?: ProductDiscoveryTargetingResolution;
       later_proposals?: LaterProposalsState;
-      status?: 'completed';
-      task_id?: never;
-      /**
-       * @maxLength 2000
-       */
-      message?: string;
       errors?: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-      replayed?: true;
-    }
-  | {
-      /**
-       * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-       */
-      adcp_version?: string;
+      status?: 'completed';
+      task_id?: never;
+    })
+  | (ProtocolEnvelope & {
       outcome?: 'proposed' | 'products_available' | 'rejected';
       /**
        * @minLength 1
@@ -15163,26 +15148,18 @@ export type RequestProposalsResponse =
           };
       targeting_resolution?: ProductDiscoveryTargetingResolution;
       later_proposals?: LaterProposalsState;
-      status: 'submitted';
-      /**
-       * @minLength 1
-       */
-      task_id: string;
-      /**
-       * @maxLength 2000
-       */
-      message?: string;
       errors?: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-      replayed?: true;
-    };
+      status: 'submitted';
+      task_id: TaskID;
+    });
 // DECLINEPROPOSALSRESPONSE PRIORITY EXTRACTED TYPE
 /**
  * One ordered terminal result for each requested proposal decline.
  */
 export type DeclineProposalsResponse =
-  | {
+  | (ProtocolEnvelope & {
       /**
        * One result per requested decline, in request order. Empty only when the request carried an empty declines array with an opportunity update.
        */
@@ -15207,16 +15184,12 @@ export type DeclineProposalsResponse =
             reason: string;
           }
       )[];
-      /**
-       * @maxLength 2000
-       */
-      message?: string;
       errors?: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-      replayed?: true;
-    }
-  | {
+      status?: 'completed';
+    })
+  | (ProtocolEnvelope & {
       /**
        * One result per requested decline, in request order. Empty only when the request carried an empty declines array with an opportunity update.
        */
@@ -15241,21 +15214,12 @@ export type DeclineProposalsResponse =
             reason: string;
           }
       )[];
-      status: 'submitted';
-      /**
-       * @minLength 1
-       */
-      task_id: string;
-      /**
-       * @maxLength 2000
-       */
-      message?: string;
       errors?: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-      replayed?: true;
-    };
-
+      status: 'submitted';
+      task_id: TaskID;
+    });
 // SYNCCREATIVESSUCCESS PRIORITY EXTRACTED TYPE
 /**
  * Success response - sync operation processed creatives (may include per-item failures)
@@ -15277,6 +15241,7 @@ export interface SyncCreativesSuccess {
     account?: Account;
     action: CreativeAction;
     status?: CreativeStatus;
+    staged_update?: CreativeStagedUpdate;
     /**
      * The seller's identifier for this creative in its source of truth. Also returned on list_creatives.
      */
@@ -15409,7 +15374,6 @@ export interface CommittedMediaBuy {
   })[];
   context?: ContextObject;
   ext?: ExtensionObject;
-  replayed?: true;
 }
 // MEDIA-BUY SCHEMA
 /**
@@ -15440,6 +15404,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15465,6 +15430,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15531,6 +15497,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15556,6 +15523,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15622,6 +15590,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15647,6 +15616,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15713,6 +15683,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15738,6 +15709,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15804,6 +15776,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15829,6 +15802,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15895,6 +15869,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15920,6 +15895,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -15986,6 +15962,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16011,6 +15988,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16077,6 +16055,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16102,6 +16081,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16168,6 +16148,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16193,6 +16174,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16259,6 +16241,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16284,6 +16267,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16350,6 +16334,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16375,6 +16360,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16441,6 +16427,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16466,6 +16453,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16532,6 +16520,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16557,6 +16546,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16623,6 +16613,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16648,6 +16639,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16714,6 +16706,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16739,6 +16732,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16805,6 +16799,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -16830,6 +16825,7 @@ export type NotificationConfig = {
       | 'creative.assignment_changed'
       | 'indicators.changed'
       | 'creative.purged'
+      | 'creative.staged_update_changed'
       | 'account.status_changed'
       | 'account.change_recorded'
       | 'product.created'
@@ -18814,10 +18810,36 @@ export interface MediaBuy {
     reason?: string;
   };
   /**
+   * Present only when status is canceled: when delivery stops under the cancellation. It equals cancellation.canceled_at when delivery stops at once, and is later when the seller keeps delivering through a notice period (the product's cancellation_policy.notice_period) or to the end of a committed unit. Not later than end_time. Sellers advertising media_buy.reporting_subscriptions MUST populate it, because subscription reporting is owed through the period containing this instant, not the instant the cancellation was recorded. Buyers use cancellation.canceled_at when it is absent.
+   * @format date-time
+   */
+  cancellation_effective_at?: string;
+  /**
    * When the seller moved the buy to completed; present when status is completed. Sellers advertising media_buy.reporting_subscriptions MUST populate it for completed buys, because a buy that completes before end_time stops being owed reporting at this instant.
    * @format date-time
    */
   completed_at?: string;
+  /**
+   * Retroactive flight edits, oldest first, so a buyer can recompute which periods a reporting subscription owed (media_buy.reporting_subscriptions). The buy's flight runs from start_time to its stop time, as the reporting-subscription.json coverage rule defines it. An edit is retroactive when the start_time or stop time before or after it is earlier than the instant the seller recorded it. Each entry carries the flight in force before that edit. The flight in force at an instant X is the one in the earliest entry recorded after X, or the current flight when no entry is. Edits whose before and after values all lie after recorded_at change no elapsed period, so they are not listed. Sellers advertising media_buy.reporting_subscriptions MUST list every retroactive edit recorded within the last status_retention_days; an older entry MAY be dropped, because it governs only periods that ended before it was recorded. At most 64 entries are retained: a seller MUST refuse a retroactive edit that would exceed that with INVALID_STATE, and an edit it cannot refuse, such as one observed on a connected platform, it applies from the instant it records it (no start_time or stop time earlier than recorded_at), which needs no entry.
+   * @maxItems 64
+   */
+  flight_history?: {
+    /**
+     * When the seller recorded the edit, or ingested it when it was observed on a connected platform. Flight values change at this instant for every period resolved after it.
+     * @format date-time
+     */
+    recorded_at: string;
+    /**
+     * start_time in force before the edit.
+     * @format date-time
+     */
+    start_time: string;
+    /**
+     * Stop time in force before the edit.
+     * @format date-time
+     */
+    stop_time: string;
+  }[];
   /**
    * Hard aggregate lifetime budget amount
    * @minimum 0
@@ -21822,204 +21844,239 @@ export type AdCPAsyncResponseData =
 /**
  * Response for completed or failed get_products
  */
-export type GetProductsResponse = AdCPVersionEnvelope &
-  ProtocolEnvelope & {
-  } & {
+export type GetProductsResponse = ProtocolEnvelope & {
+} & {
+  /**
+   * Array of matching products
+   */
+  products?: Product[];
+  /**
+   * Experimental (media_buy.collection_cards). Full collection objects for collections referenced by the collections selectors of the returned products. Sellers MUST NOT return this array unless the request set include_collections to true; when it is set, sellers SHOULD include every referenced collection and MUST NOT include one that no returned product references. At most one entry per (publisher_domain, collection_id). If a key appears more than once, that collection is unresolvable from this response; buyers fall back to the publisher's adagents.json, as they do for an omitted collection, and ignore entries that no returned product references. These are convenience copies, never authorization evidence: a copy wins over adagents.json only on images, sample_content, url, description, season, cadence and distribution[].followers (see core/response-collection.json). Present only alongside products.
+   *
+   * @minItems 1
+   */
+  collections?: [ResponseCollection, ...ResponseCollection[]];
+  targeting_resolution?: ProductDiscoveryTargetingResolution;
+  /**
+   * Bundled platform-extension definitions referenced by any product in `products`. Keyed by `<extension_uri>@<digest>` (e.g., `https://creative.adcontextprotocol.org/translated/meta/extensions/meta_pixel@sha256:abc...`). When present, lets buyers resolve `platform_extensions` references on product format declarations without a separate fetch. Buyer SDKs cache by URI@digest; subsequent get_products responses MAY omit definitions the buyer already has cached and rely on the digest match. Each value is an extension definition with `extends` (the canonical concept it extends, e.g., `tracking`), `fields` (the schema for additional fields the extension contributes), `version`, and optional `description`.
+   */
+  extensions?: {
+  };
+  /**
+   * Optional legacy proposed media plans. When the request carries media_buy_frequency_cap, every returned proposal echoes the bound value as proposal.frequency_cap. Buyers may refine or execute a committed proposal by ID.
+   */
+  proposals?: Proposal[];
+  /**
+   * Task-specific errors and warnings (e.g., product filtering issues)
+   */
+  errors?: Error[];
+  /**
+   * Buyer-facing market explanation required only on the GetProductsRejected arm. MAY be sanitized to protect confidential seller rules. Plain text only.
+   */
+  reason?: string;
+  /**
+   * Actionable alternatives available only on the GetProductsRejected arm.
+   *
+   * @maxItems 20
+   */
+  suggestions?:
+    string[];
+  /**
+   * [AdCP 3.0] Indicates whether deprecated top-level property_list filtering was applied. True if the agent filtered products based on the provided property_list; every returned product also carries the corresponding property/include list_applications receipt. Absent or false if property_list was not provided or not supported by this agent.
+   */
+  property_list_applied?: boolean;
+  /**
+   * Whether the seller filtered results based on the provided catalog. True if the seller matched catalog items against its inventory. Absent or false if no catalog was provided or the seller does not support catalog matching.
+   */
+  catalog_applied?: boolean;
+  /**
+   * Seller's response to each change request in the refine array, matched by position. Each entry acknowledges whether the corresponding ask was applied, partially applied, or unable to be fulfilled. MUST contain the same number of entries in the same order as the request's refine array. Only present when the request used buying_mode: 'refine'. Each entry MUST echo the request entry's scope and — for product and proposal scopes — the matching id field (product_id or proposal_id), so orchestrators can cross-validate alignment. In AdCP 3.3, when any refine entry carries package, this array is REQUIRED for the entire request. For each package entry, applied requires result_product_id, resolved_start_time, and resolved_end_time and confirms that the mapped returned product forecast uses exactly the resolved package inputs, including its goal; unable requires non-empty notes explaining why those exact inputs could not be forecast, and the product MUST NOT carry a substitute forecast. partial MUST NOT be used to imply exact package forecast support. Insufficient inventory is an applied forecast with availability_status unavailable, not an unable outcome.
+   */
+  refinement_applied?: (
+    | {
+        /**
+         * Echoes scope 'request' from the corresponding refine entry.
+         */
+        scope: 'request';
+        /**
+         * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
+         */
+        status: 'applied' | 'partial' | 'unable';
+        /**
+         * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
+         */
+        notes?: string;
+      }
+    | {
+      }
+    | {
+        /**
+         * Echoes scope 'proposal' from the corresponding refine entry.
+         */
+        scope: 'proposal';
+        /**
+         * Echoes proposal_id from the corresponding refine entry.
+         */
+        proposal_id: string;
+        /**
+         * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
+         */
+        status: 'applied' | 'partial' | 'unable';
+        /**
+         * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
+         */
+        notes?: string;
+      }
+  )[];
+  /**
+   * Declares what the seller could not finish within the buyer's time_budget or due to internal limits while still returning a usable response. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete. This field does not classify the condition as retryable; retryability is carried by error.recovery on the error channel.
+   *
+   * @minItems 1
+   */
+  incomplete?: [
+    {
+      /**
+       * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget — symmetric with get_signals' 'wholesale_feed' scope so sellers have a precise way to declare wholesale-incomplete on the products surface.
+       */
+      scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
+      /**
+       * Human-readable explanation of what is missing and why.
+       */
+      description: string;
+      /**
+       * How much additional time is expected to resolve this scope. Allows the buyer to decide whether to make a new attempt with a larger time_budget; its presence is not an automatic-retry instruction.
+       */
+      estimated_wait?: Duration;
+    },
+    ...{
+      /**
+       * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget — symmetric with get_signals' 'wholesale_feed' scope so sellers have a precise way to declare wholesale-incomplete on the products surface.
+       */
+      scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
+      /**
+       * Human-readable explanation of what is missing and why.
+       */
+      description: string;
+      /**
+       * How much additional time is expected to resolve this scope. Allows the buyer to decide whether to make a new attempt with a larger time_budget; its presence is not an automatic-retry instruction.
+       */
+      estimated_wait?: Duration;
+    }[]
+  ];
+  /**
+   * Optional non-fatal diagnostic block describing how the request's `filters` narrowed the candidate set. Use this to disambiguate empty/small result lists between 'no inventory matches the brief' and 'a specific filter excluded everything', without breaking the filter-not-fail convention (sellers still silently exclude unmatched products; this block is observability, not error reporting). Sellers MAY populate this when meaningful narrowing occurred; buyers MAY use it for triage UX without depending on its presence. Counts only — products are not enumerated by name to avoid leaking competitive intelligence about adjacent campaigns or seller inventory. `total_candidates` and `excluded_by` are independently optional — sellers whose baseline candidate set size is sensitive MAY emit `excluded_by` without `total_candidates`, or vice versa.
+   */
+  filter_diagnostics?: {
     /**
-     * Array of matching products
+     * How `excluded_by[*].count` values are computed across multiple filters. `only`: counts products that would have been included if not for THIS filter alone (deterministic; the right value for 'which filter killed my result set' triage — recommended when feasible). `any`: counts products excluded by ANY filter (so multiple filters' counts may overlap and sum to more than `total_candidates`). `approximate`: sellers SHOULD use this when their pipeline can't cleanly attribute exclusions to a single filter. Buyers SHOULD inspect `semantics` before doing arithmetic on counts.
      */
-    products?: Product[];
+    semantics?: 'only' | 'any' | 'approximate';
     /**
-     * Experimental (media_buy.collection_cards). Full collection objects for collections referenced by the collections selectors of the returned products. Sellers MUST NOT return this array unless the request set include_collections to true; when it is set, sellers SHOULD include every referenced collection and MUST NOT include one that no returned product references. At most one entry per (publisher_domain, collection_id). If a key appears more than once, that collection is unresolvable from this response; buyers fall back to the publisher's adagents.json, as they do for an omitted collection, and ignore entries that no returned product references. These are convenience copies, never authorization evidence: a copy wins over adagents.json only on images, sample_content, url, description, season, cadence and distribution[].followers (see core/response-collection.json). Present only alongside products.
-     *
-     * @minItems 1
+     * Number of products the seller considered before applying `filters`. Baseline for interpreting per-filter exclusion counts. Approximate — sellers MAY return a sampled or capped count when their candidate pool is large. Optional; sellers whose baseline candidate set size is sensitive (revealing market posture or competitive density) MAY omit this while still emitting `excluded_by`.
      */
-    collections?: [ResponseCollection, ...ResponseCollection[]];
-    targeting_resolution?: ProductDiscoveryTargetingResolution;
+    total_candidates?: number;
     /**
-     * Bundled platform-extension definitions referenced by any product in `products`. Keyed by `<extension_uri>@<digest>` (e.g., `https://creative.adcontextprotocol.org/translated/meta/extensions/meta_pixel@sha256:abc...`). When present, lets buyers resolve `platform_extensions` references on product format declarations without a separate fetch. Buyer SDKs cache by URI@digest; subsequent get_products responses MAY omit definitions the buyer already has cached and rely on the digest match. Each value is an extension definition with `extends` (the canonical concept it extends, e.g., `tracking`), `fields` (the schema for additional fields the extension contributes), `version`, and optional `description`.
+     * Per-filter exclusion counts, keyed by the filter property name as it appears in the request's `filters` object (e.g., `pricing_currencies`, `required_metrics`, `required_vendor_metrics`, `required_geo_targeting`, `budget_range`). Values are objects carrying `count` and optional filter-specific detail. Only filters that actually narrowed the set need appear here; absence of a key means that filter did not exclude anything (or was not in the request).
      */
-    extensions?: {
+    excluded_by?: {
+      [k: string]:
+        | {
+            /**
+             * Number of products excluded by this filter, interpreted per the parent `semantics` field.
+             */
+            count: number;
+            /**
+             * Optional list of the specific filter values that contributed to exclusions, when meaningful. For `required_metrics`: the metric names that excluded products (strings). For `required_vendor_metrics`: the vendor/metric pin entries (objects). Item shape is filter-specific; the schema admits string OR object items. Buyers without filter-specific knowledge SHOULD treat as opaque.
+             */
+            values?: (string | {})[];
+            /**
+             * Optional human-readable note about why this filter narrowed the set (e.g., 'no products in this brief support DV viewability at the requested threshold').
+             */
+            notes?: string;
+          }
+        | undefined;
     };
+  };
+  pagination?: PaginationResponse;
+  /**
+   * Opaque token representing the version of the wholesale product feed state used to compose this response. Sellers that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so buyers can cache and probe later. Buyers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A buyer caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog, include_collections) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. Without include_collections, collection copies are outside the version; with include_collections true, the version also changes when any returned collection copy changes, and sellers issue distinct tokens for the two settings. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
+   */
+  wholesale_feed_version?: string;
+  /**
+   * Opaque token representing the version of the pricing layer, including product pricing_options and nested signal_targeting_options pricing_options. When the seller supports independent pricing versioning, pricing_version changes when prices move but wholesale_feed_version changes only when structure/metadata moves. Same cache_scope keying as wholesale_feed_version. Sellers not separating these MAY omit pricing_version and use wholesale_feed_version for both.
+   */
+  pricing_version?: string;
+  /**
+   * Experimental (`media_buy.execution_readiness`). Whether the request's `account` can satisfy the `execution_requirements[]` of the products on this response, keyed by `product_id`. Present only when the request set `include_execution_readiness: true` and carried an authorized `account`. Advisory: `create_media_buy` revalidates. Not part of the cache layer: it does not change `cache_scope`, `wholesale_feed_version`, or `pricing_version`, buyers key it by (account, `version`) and MUST NOT cache it under the public key, sellers MUST NOT put it in wholesale feed webhooks and MUST omit it on `unchanged: true` responses. Covers only this response's products; merge pages by `product_id`. See the media-buy specification, 'Per-account execution readiness'.
+   */
+  execution_readiness?: {
     /**
-     * Optional legacy proposed media plans. When the request carries media_buy_frequency_cap, every returned proposal echoes the bound value as proposal.frequency_cap. Buyers may refine or execute a committed proposal by ID.
+     * Opaque token for the account's readiness state, independent of `wholesale_feed_version` and `pricing_version`. Compare for equality only. Equal versions MUST imply identical entries for any product present in both responses.
      */
-    proposals?: Proposal[];
+    version: string;
     /**
-     * Task-specific errors and warnings (e.g., product filtering issues)
+     * When the seller read the account's resources. Readiness may be stale by then; `create_media_buy` is authoritative.
      */
-    errors?: Error[];
+    evaluated_at?: string;
     /**
-     * Buyer-facing market explanation required only on the GetProductsRejected arm. MAY be sanitized to protect confidential seller rules. Plain text only.
+     * Readiness keyed by `product_id`, for returned products that declare `execution_requirements`. A missing entry means not evaluated, not ready.
      */
-    reason?: string;
-    /**
-     * Actionable alternatives available only on the GetProductsRejected arm.
-     *
-     * @maxItems 20
-     */
-    suggestions?:
-      string[];
-    /**
-     * [AdCP 3.0] Indicates whether deprecated top-level property_list filtering was applied. True if the agent filtered products based on the provided property_list; every returned product also carries the corresponding property/include list_applications receipt. Absent or false if property_list was not provided or not supported by this agent.
-     */
-    property_list_applied?: boolean;
-    /**
-     * Whether the seller filtered results based on the provided catalog. True if the seller matched catalog items against its inventory. Absent or false if no catalog was provided or the seller does not support catalog matching.
-     */
-    catalog_applied?: boolean;
-    /**
-     * Seller's response to each change request in the refine array, matched by position. Each entry acknowledges whether the corresponding ask was applied, partially applied, or unable to be fulfilled. MUST contain the same number of entries in the same order as the request's refine array. Only present when the request used buying_mode: 'refine'. Each entry MUST echo the request entry's scope and — for product and proposal scopes — the matching id field (product_id or proposal_id), so orchestrators can cross-validate alignment. In AdCP 3.3, when any refine entry carries package, this array is REQUIRED for the entire request. For each package entry, applied requires result_product_id, resolved_start_time, and resolved_end_time and confirms that the mapped returned product forecast uses exactly the resolved package inputs, including its goal; unable requires non-empty notes explaining why those exact inputs could not be forecast, and the product MUST NOT carry a substitute forecast. partial MUST NOT be used to imply exact package forecast support. Insufficient inventory is an applied forecast with availability_status unavailable, not an unable outcome.
-     */
-    refinement_applied?: (
-      | {
-          /**
-           * Echoes scope 'request' from the corresponding refine entry.
-           */
-          scope: 'request';
-          /**
-           * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
-           */
-          status: 'applied' | 'partial' | 'unable';
-          /**
-           * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
-           */
-          notes?: string;
-        }
-      | {
-        }
-      | {
-          /**
-           * Echoes scope 'proposal' from the corresponding refine entry.
-           */
-          scope: 'proposal';
-          /**
-           * Echoes proposal_id from the corresponding refine entry.
-           */
-          proposal_id: string;
-          /**
-           * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
-           */
-          status: 'applied' | 'partial' | 'unable';
-          /**
-           * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
-           */
-          notes?: string;
-        }
-    )[];
-    /**
-     * Declares what the seller could not finish within the buyer's time_budget or due to internal limits while still returning a usable response. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete. This field does not classify the condition as retryable; retryability is carried by error.recovery on the error channel.
-     *
-     * @minItems 1
-     */
-    incomplete?: [
-      {
-        /**
-         * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget — symmetric with get_signals' 'wholesale_feed' scope so sellers have a precise way to declare wholesale-incomplete on the products surface.
-         */
-        scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
-        /**
-         * Human-readable explanation of what is missing and why.
-         */
-        description: string;
-        /**
-         * How much additional time is expected to resolve this scope. Allows the buyer to decide whether to make a new attempt with a larger time_budget; its presence is not an automatic-retry instruction.
-         */
-        estimated_wait?: Duration;
-      },
-      ...{
-        /**
-         * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget — symmetric with get_signals' 'wholesale_feed' scope so sellers have a precise way to declare wholesale-incomplete on the products surface.
-         */
-        scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
-        /**
-         * Human-readable explanation of what is missing and why.
-         */
-        description: string;
-        /**
-         * How much additional time is expected to resolve this scope. Allows the buyer to decide whether to make a new attempt with a larger time_budget; its presence is not an automatic-retry instruction.
-         */
-        estimated_wait?: Duration;
-      }[]
-    ];
-    /**
-     * Optional non-fatal diagnostic block describing how the request's `filters` narrowed the candidate set. Use this to disambiguate empty/small result lists between 'no inventory matches the brief' and 'a specific filter excluded everything', without breaking the filter-not-fail convention (sellers still silently exclude unmatched products; this block is observability, not error reporting). Sellers MAY populate this when meaningful narrowing occurred; buyers MAY use it for triage UX without depending on its presence. Counts only — products are not enumerated by name to avoid leaking competitive intelligence about adjacent campaigns or seller inventory. `total_candidates` and `excluded_by` are independently optional — sellers whose baseline candidate set size is sensitive MAY emit `excluded_by` without `total_candidates`, or vice versa.
-     */
-    filter_diagnostics?: {
-      /**
-       * How `excluded_by[*].count` values are computed across multiple filters. `only`: counts products that would have been included if not for THIS filter alone (deterministic; the right value for 'which filter killed my result set' triage — recommended when feasible). `any`: counts products excluded by ANY filter (so multiple filters' counts may overlap and sum to more than `total_candidates`). `approximate`: sellers SHOULD use this when their pipeline can't cleanly attribute exclusions to a single filter. Buyers SHOULD inspect `semantics` before doing arithmetic on counts.
-       */
-      semantics?: 'only' | 'any' | 'approximate';
-      /**
-       * Number of products the seller considered before applying `filters`. Baseline for interpreting per-filter exclusion counts. Approximate — sellers MAY return a sampled or capped count when their candidate pool is large. Optional; sellers whose baseline candidate set size is sensitive (revealing market posture or competitive density) MAY omit this while still emitting `excluded_by`.
-       */
-      total_candidates?: number;
-      /**
-       * Per-filter exclusion counts, keyed by the filter property name as it appears in the request's `filters` object (e.g., `pricing_currencies`, `required_metrics`, `required_vendor_metrics`, `required_geo_targeting`, `budget_range`). Values are objects carrying `count` and optional filter-specific detail. Only filters that actually narrowed the set need appear here; absence of a key means that filter did not exclude anything (or was not in the request).
-       */
-      excluded_by?: {
-        [k: string]:
-          | {
-              /**
-               * Number of products excluded by this filter, interpreted per the parent `semantics` field.
-               */
-              count: number;
-              /**
-               * Optional list of the specific filter values that contributed to exclusions, when meaningful. For `required_metrics`: the metric names that excluded products (strings). For `required_vendor_metrics`: the vendor/metric pin entries (objects). Item shape is filter-specific; the schema admits string OR object items. Buyers without filter-specific knowledge SHOULD treat as opaque.
-               */
-              values?: (string | {})[];
-              /**
-               * Optional human-readable note about why this filter narrowed the set (e.g., 'no products in this brief support DV viewability at the requested threshold').
-               */
-              notes?: string;
-            }
-          | undefined;
-      };
+    products: {
+      [k: string]: ProductExecutionReadiness | undefined;
     };
-    pagination?: PaginationResponse;
-    /**
-     * Opaque token representing the version of the wholesale product feed state used to compose this response. Sellers that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so buyers can cache and probe later. Buyers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A buyer caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog, include_collections) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. Without include_collections, collection copies are outside the version; with include_collections true, the version also changes when any returned collection copy changes, and sellers issue distinct tokens for the two settings. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
-     */
-    wholesale_feed_version?: string;
-    /**
-     * Opaque token representing the version of the pricing layer, including product pricing_options and nested signal_targeting_options pricing_options. When the seller supports independent pricing versioning, pricing_version changes when prices move but wholesale_feed_version changes only when structure/metadata moves. Same cache_scope keying as wholesale_feed_version. Sellers not separating these MAY omit pricing_version and use wholesale_feed_version for both.
-     */
-    pricing_version?: string;
-    /**
-     * Experimental (`media_buy.execution_readiness`). Whether the request's `account` can satisfy the `execution_requirements[]` of the products on this response, keyed by `product_id`. Present only when the request set `include_execution_readiness: true` and carried an authorized `account`. Advisory: `create_media_buy` revalidates. Not part of the cache layer: it does not change `cache_scope`, `wholesale_feed_version`, or `pricing_version`, buyers key it by (account, `version`) and MUST NOT cache it under the public key, sellers MUST NOT put it in wholesale feed webhooks and MUST omit it on `unchanged: true` responses. Covers only this response's products; merge pages by `product_id`. See the media-buy specification, 'Per-account execution readiness'.
-     */
-    execution_readiness?: {
-      /**
-       * Opaque token for the account's readiness state, independent of `wholesale_feed_version` and `pricing_version`. Compare for equality only. Equal versions MUST imply identical entries for any product present in both responses.
-       */
-      version: string;
-      /**
-       * When the seller read the account's resources. Readiness may be stale by then; `create_media_buy` is authoritative.
-       */
-      evaluated_at?: string;
-      /**
-       * Readiness keyed by `product_id`, for returned products that declare `execution_requirements`. A missing entry means not evaluated, not ready.
-       */
-      products: {
-        [k: string]: ProductExecutionReadiness | undefined;
-      };
-      ext?: ExtensionObject;
-    };
-    /**
-     * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the seller's published rate card; the buyer MAY dedupe under (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog) without scoping by account. 'account': this response includes account-specific overrides; the buyer MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the seller MUST return `cache_scope: 'public'`. When the request included `account`, the seller MUST return either: 'public' (this account prices off the public rate card — buyer dedupes) or 'account' (account-specific overrides exist — buyer caches under the account key). Sellers MAY return 'public' on an account-scoped request that previously had overrides — buyers SHOULD interpret this as a downgrade and drop their account-overlay. Without schema-required cache_scope, a seller silently omitting the field on an account-scoped response would cause buyers to mis-key the cache and serve account-overlay payloads to other accounts. **Backward-compatibility note for 3.1 validators:** SDKs that validate strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version` (release-precision version negotiation, 3.1). For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed.
-     */
-    cache_scope?: 'public' | 'account';
-    /**
-     * Present and `true` ONLY on wholesale-mode responses when the request carried if_wholesale_feed_version (and/or if_pricing_version) matching the seller's current version for the buyer's cache_scope, in which case products[] MUST be omitted; wholesale_feed_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Buyers receiving unchanged: true MUST NOT mutate their local wholesale product mirror. **One shape per state:** sellers MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries products. Two shapes ({ unchanged: false, products: [...] } vs. { products: [...] }) for the same state would let some sellers always emit the field and some never would, creating an inconsistency the wire shouldn't carry. **Cross-scope isolation:** the comparator that decides `unchanged` MUST be keyed on `(cache_scope, wholesale_feed_version)`, not on the token value alone. A seller MUST NOT emit `unchanged: true` when it resolves the request to a different `cache_scope` than the one whose token the buyer echoed in `if_wholesale_feed_version` (and/or `if_pricing_version`): because the token is scope-keyed, a value minted for `cache_scope: 'public'` cannot match the seller's current token for `cache_scope: 'account'` (or vice-versa), so such a request MUST return the full feed for the resolved scope with that scope's own token.
-     */
-    unchanged?: true;
-    /**
-     * When true, this response contains simulated data from sandbox mode.
-     */
-    sandbox?: boolean;
-    context?: ContextObject;
     ext?: ExtensionObject;
   };
+  /**
+   * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the seller's published rate card; the buyer MAY dedupe under (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog) without scoping by account. 'account': this response includes account-specific overrides; the buyer MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the seller MUST return `cache_scope: 'public'`. When the request included `account`, the seller MUST return either: 'public' (this account prices off the public rate card — buyer dedupes) or 'account' (account-specific overrides exist — buyer caches under the account key). Sellers MAY return 'public' on an account-scoped request that previously had overrides — buyers SHOULD interpret this as a downgrade and drop their account-overlay. Without schema-required cache_scope, a seller silently omitting the field on an account-scoped response would cause buyers to mis-key the cache and serve account-overlay payloads to other accounts. **Backward-compatibility note for 3.1 validators:** SDKs that validate strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version` (release-precision version negotiation, 3.1). For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed.
+   */
+  cache_scope?: 'public' | 'account';
+  /**
+   * Present and `true` ONLY on wholesale-mode responses when the request carried if_wholesale_feed_version (and/or if_pricing_version) matching the seller's current version for the buyer's cache_scope, in which case products[] MUST be omitted; wholesale_feed_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Buyers receiving unchanged: true MUST NOT mutate their local wholesale product mirror. **One shape per state:** sellers MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries products. Two shapes ({ unchanged: false, products: [...] } vs. { products: [...] }) for the same state would let some sellers always emit the field and some never would, creating an inconsistency the wire shouldn't carry. **Cross-scope isolation:** the comparator that decides `unchanged` MUST be keyed on `(cache_scope, wholesale_feed_version)`, not on the token value alone. A seller MUST NOT emit `unchanged: true` when it resolves the request to a different `cache_scope` than the one whose token the buyer echoed in `if_wholesale_feed_version` (and/or `if_pricing_version`): because the token is scope-keyed, a value minted for `cache_scope: 'public'` cannot match the seller's current token for `cache_scope: 'account'` (or vice-versa), so such a request MUST return the full feed for the resolved scope with that scope's own token.
+   */
+  unchanged?: true;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+};
+/**
+ * Canonical envelope field-set for AdCP task responses, normalized across transports. Defines the protocol-layer fields (status, context_id, context, task_id, message, timestamp, replayed, adcp_error, push_notification_config, governance_context) and the conceptual `payload` grouping for task-specific response data, and composes `core/version-envelope.json` so the served `adcp_version` and the deprecated `adcp_major_version` are envelope fields on every response. The server framework stamps these fields; they are not task data. The serialization rules — whether envelope fields appear as siblings of payload fields, as a nested `payload` object, or via transport-native containers — are transport-specific and normative per transport (see Transport serialization below). The `status` field is REQUIRED on every task response envelope, including synchronous metadata responses (e.g., `get_adcp_capabilities`) where the value is `completed`. Agents shipping responses without a top-level `status` are non-conformant regardless of whether the task body schema would otherwise validate.
+ */
+export type ProtocolEnvelope = AdCPVersionEnvelope & {
+  /**
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
+   */
+  context_id?: string;
+  context?: ContextObject;
+  task_id?: TaskID;
+  status: TaskStatus;
+  message?: TaskMessage;
+  /**
+   * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
+   */
+  timestamp?: string;
+  /**
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   */
+  replayed?: boolean;
+  adcp_error?: Error;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Opaque authorization context issued only by an approved check_governance decision. Buyers attach it to governed requests across protocol roles (media buys, rights acquisitions, signal activations, creative services); receiving services persist it and forward it on subsequent execution and lifecycle checks. The context is the authoritative plan binding at service boundaries, so a service MUST NOT require a separate plan_id.
+   *
+   * Governance agents MUST emit a compact JWS per the AdCP JWS profile. Verifiers validate standard authorization claims such as signature, issuer, audience, expiry, and replay protection, but intermediaries MUST NOT interpret embedded governance state for business logic. A conditions or denied verdict never carries an authorization context.
+   *
+   * This is the primary correlation key for audit and reporting across the governance lifecycle.
+   */
+  governance_context?: string;
+  /**
+   * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
+   */
+  payload?: {
+  };
+};
 /**
  * Experimental (media_buy.collection_cards). Full collection object returned in a product or proposal response for a collection that a returned product's collections selector references, by list_collections, or in a collection_card.updated webhook (experimental, media_buy.collection_catalog). For the same key, account and moment, a seller returns the same copy on every one of those surfaces. publisher_domain is required because collection_id is unique only within its publisher. Keyed by (publisher_domain, collection_id). This is a convenience copy from the selling agent: the publisher's adagents.json remains the root of authorization, and a response copy is never authorization evidence. The response copy wins over adagents.json only on images, sample_content, url, description, season, cadence and distribution[].followers; every other field, including status, talent, content_rating, genre, kind, special and the rest of distribution, stays anchored to adagents.json, as does which agent may sell the collection. An entry whose (publisher_domain, collection_id) is not declared in that publisher's adagents.json, or that comes from a selling agent adagents.json does not authorize for the collection, is unverified display data: it does not establish that the collection exists or is sellable, buyers MUST NOT present it as the publisher's declaration, and its distribution MUST NOT feed carriage verification.
  */
@@ -22295,35 +22352,91 @@ export type ExecutionReadinessStatus1 = ExecutionReadinessStatus;
 /**
  * Terminal business outcome returned when the seller understood a well-formed brief or refinement request and deliberately declines it. This is not a no-match result, incomplete partial result, validation error, or technical failure. Transport-level success markers remain successful: HTTP 200, MCP isError false, and A2A Task.state completed with this payload in the result artifact. The seller MAY sanitize reason and suggestions to protect confidential merchandising, inventory, policy, and partner rules. Buyers MUST treat both fields as untrusted seller-authored text: escape before rendering and sanitize or isolate before placing them in an LLM prompt context.
  */
-export type GetProductsRejected = AdCPVersionEnvelope &
-  ProtocolEnvelope & {
+export type GetProductsRejected = ProtocolEnvelope & {
+  /**
+   * Task-level business-outcome discriminator. The request was understood and processed, but the seller declined to offer products.
+   */
+  status: 'rejected';
+  /**
+   * Buyer-facing market explanation for the decline. MAY be sanitized to protect confidential seller rules; for example, 'The requested budget is below the minimum for this inventory' rather than naming the internal rule, candidate products, inventory identifiers, or upstream partners that caused the decision. Plain text only.
+   */
+  reason: string;
+  /**
+   * Actionable alternatives the buyer can try, such as changing budget, dates, or channel. If present, the buyer MAY submit a revised brief, but the suggestions do not guarantee acceptance. If absent, the seller is not offering a protocol-level alternative for this brief.
+   *
+   * @minItems 1
+   * @maxItems 20
+   */
+  suggestions?:
+    string[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+};
+/**
+ * Progress data for working get_products
+ */
+export type GetProductsAsyncWorking = ProtocolEnvelope &
+  TaskWorking & {
     /**
-     * Task-level business-outcome discriminator. The request was understood and processed, but the seller declined to offer products.
+     * Progress percentage of the search operation
      */
-    status: 'rejected';
+    percentage?: number;
     /**
-     * Buyer-facing market explanation for the decline. MAY be sanitized to protect confidential seller rules; for example, 'The requested budget is below the minimum for this inventory' rather than naming the internal rule, candidate products, inventory identifiers, or upstream partners that caused the decision. Plain text only.
+     * Current step in the search process (e.g., 'searching_inventory', 'validating_availability')
      */
-    reason: string;
+    current_step?: string;
     /**
-     * Actionable alternatives the buyer can try, such as changing budget, dates, or channel. If present, the buyer MAY submit a revised brief, but the suggestions do not guarantee acceptance. If absent, the seller is not offering a protocol-level alternative for this brief.
-     *
-     * @minItems 1
-     * @maxItems 20
+     * Total number of steps in the search process
      */
-    suggestions?:
-      string[];
+    total_steps?: number;
+    /**
+     * Current step number (1-indexed)
+     */
+    step_number?: number;
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
+ * Input requirements for get_products needing clarification
+ */
+export type GetProductsAsyncInputRequired = ProtocolEnvelope &
+  TaskInputRequired & {
+    /**
+     * Reason code indicating why input is needed
+     */
+    reason?: 'CLARIFICATION_NEEDED' | 'BUDGET_REQUIRED';
+    /**
+     * Partial product results that may help inform the clarification
+     */
+    partial_results?: Product[];
+    /**
+     * Suggested values or options for the required input
+     */
+    suggestions?: string[];
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
+ * Acknowledgment for submitted get_products (custom curation)
+ */
+export type GetProductsAsyncSubmitted = ProtocolEnvelope &
+  TaskSubmitted & {
+    /**
+     * Estimated completion time for the search
+     */
+    estimated_completion?: string;
+    /**
+     * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+     */
+    errors?: Error[];
     context?: ContextObject;
     ext?: ExtensionObject;
   };
 /**
  * Bounded submitted envelope shared by the compact lifecycle tools.
  */
-export type CompactTaskSubmitted = AdCPVersionEnvelope &
-  ProtocolEnvelope & {
-    status: 'submitted';
-    task_id: string;
-    message?: string;
+export type CompactTaskSubmitted = ProtocolEnvelope &
+  TaskSubmitted & {
     errors?: Error[];
     context?: ContextObject;
     ext?: ExtensionObject;
@@ -22827,49 +22940,22 @@ export type RequestProposalsAsyncSubmitted = CompactTaskSubmitted;
 /**
  * Terminal response for refine_proposals
  */
-export type RefineProposalsResponse = (
-  | {
-      status?: 'completed';
-    }
-  | CompactTaskSubmitted
-) & {
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * Results in the request's refinements[] order; position carries no ranking. If any result is finalized, every result MUST be finalized; under inventory_hold semantics a finalize batch either creates every requested hold or none, and under terms_only semantics (get_adcp_capabilities media_buy.proposal_refinement.hold_semantics, or a draft hold_policy with available false) it commits every requested proposal's terms or none, with no inventory hold placed for those entries. An extend_hold batch either extends every requested hold or none. Every returned proposal carries parent_proposal_id equal to the result's source_proposal_id, making negotiation lineage reconstructible from the proposals alone.
-   *
-   * @minItems 1
-   */
-  results?: {
-  } & [
-    {
-    } & (
-      | {
-          outcome: 'revised';
-          proposals: {
-            proposal_status: 'draft';
-          }[];
-        }
-      | {
-          outcome: 'partial';
-          proposals: {
-            proposal_status: 'draft';
-          }[];
-        }
-      | {
-          outcome: 'finalized';
-          proposal: {
-            proposal_status: 'committed';
-            expires_at: string;
-          };
-        }
-      | {
-          outcome: 'unable';
-        }
-    ) &
-      (
+export type RefineProposalsResponse = ProtocolEnvelope &
+  (
+    | {
+        status?: 'completed';
+      }
+    | CompactTaskSubmitted
+  ) & {
+    /**
+     * Results in the request's refinements[] order; position carries no ranking. If any result is finalized, every result MUST be finalized; under inventory_hold semantics a finalize batch either creates every requested hold or none, and under terms_only semantics (get_adcp_capabilities media_buy.proposal_refinement.hold_semantics, or a draft hold_policy with available false) it commits every requested proposal's terms or none, with no inventory hold placed for those entries. An extend_hold batch either extends every requested hold or none. Every returned proposal carries parent_proposal_id equal to the result's source_proposal_id, making negotiation lineage reconstructible from the proposals alone.
+     *
+     * @minItems 1
+     */
+    results?: {
+    } & [
+      {
+      } & (
         | {
             outcome: 'revised';
             proposals: {
@@ -22892,33 +22978,33 @@ export type RefineProposalsResponse = (
         | {
             outcome: 'unable';
           }
-      ),
-    ...({
-    } & (
-      | {
-          outcome: 'revised';
-          proposals: {
-            proposal_status: 'draft';
-          }[];
-        }
-      | {
-          outcome: 'partial';
-          proposals: {
-            proposal_status: 'draft';
-          }[];
-        }
-      | {
-          outcome: 'finalized';
-          proposal: {
-            proposal_status: 'committed';
-            expires_at: string;
-          };
-        }
-      | {
-          outcome: 'unable';
-        }
-    ) &
-      (
+      ) &
+        (
+          | {
+              outcome: 'revised';
+              proposals: {
+                proposal_status: 'draft';
+              }[];
+            }
+          | {
+              outcome: 'partial';
+              proposals: {
+                proposal_status: 'draft';
+              }[];
+            }
+          | {
+              outcome: 'finalized';
+              proposal: {
+                proposal_status: 'committed';
+                expires_at: string;
+              };
+            }
+          | {
+              outcome: 'unable';
+            }
+        ),
+      ...({
+      } & (
         | {
             outcome: 'revised';
             proposals: {
@@ -22941,30 +23027,50 @@ export type RefineProposalsResponse = (
         | {
             outcome: 'unable';
           }
-      ))[]
-  ];
-  /**
-   * Canonical products needed to evaluate the resulting terms. For revised or partial results whose effective criteria contain property or collection lists, each affected product MUST carry fresh list_applications receipts from the revision's product reevaluation. Finalization changes no terms and MAY repeat the receipts already bound to the source proposal rather than reevaluating them.
-   */
-  products?: CanonicalProduct[];
-  /**
-   * Experimental (media_buy.collection_cards). Full collection objects for collections referenced by the collections selectors of the returned products. Sellers MUST NOT return this array unless the request set include_collections to true; when it is set, sellers SHOULD include every referenced collection and MUST NOT include one that no returned product references. At most one entry per (publisher_domain, collection_id). If a key appears more than once, that collection is unresolvable from this response; buyers fall back to the publisher's adagents.json, as they do for an omitted collection, and ignore entries that no returned product references. These are convenience copies, never authorization evidence: a copy wins over adagents.json only on images, sample_content, url, description, season, cadence and distribution[].followers (see core/response-collection.json). Present only alongside products.
-   *
-   * @minItems 1
-   */
-  collections?: [ResponseCollection, ...ResponseCollection[]];
-  status?: 'completed' | 'submitted';
-  task_id?: string;
-  message?: string;
-  /**
-   * Optional estimate, on a submitted response to a finalize-only or extend_hold-only request, of when the seller expects to resolve the finalize or extension, for example when a creator, host or talent must agree before the hold or its extension. Same semantics as on `create_media_buy`: an estimate, not a commitment or expiry; buyers SHOULD schedule a status check for it and MUST NOT treat a passed timestamp as failure. Sellers SHOULD NOT send it on revise requests.
-   */
-  expected_confirmation_at?: string;
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-  replayed?: true;
-};
+      ) &
+        (
+          | {
+              outcome: 'revised';
+              proposals: {
+                proposal_status: 'draft';
+              }[];
+            }
+          | {
+              outcome: 'partial';
+              proposals: {
+                proposal_status: 'draft';
+              }[];
+            }
+          | {
+              outcome: 'finalized';
+              proposal: {
+                proposal_status: 'committed';
+                expires_at: string;
+              };
+            }
+          | {
+              outcome: 'unable';
+            }
+        ))[]
+    ];
+    /**
+     * Canonical products needed to evaluate the resulting terms. For revised or partial results whose effective criteria contain property or collection lists, each affected product MUST carry fresh list_applications receipts from the revision's product reevaluation. Finalization changes no terms and MAY repeat the receipts already bound to the source proposal rather than reevaluating them.
+     */
+    products?: CanonicalProduct[];
+    /**
+     * Experimental (media_buy.collection_cards). Full collection objects for collections referenced by the collections selectors of the returned products. Sellers MUST NOT return this array unless the request set include_collections to true; when it is set, sellers SHOULD include every referenced collection and MUST NOT include one that no returned product references. At most one entry per (publisher_domain, collection_id). If a key appears more than once, that collection is unresolvable from this response; buyers fall back to the publisher's adagents.json, as they do for an omitted collection, and ignore entries that no returned product references. These are convenience copies, never authorization evidence: a copy wins over adagents.json only on images, sample_content, url, description, season, cadence and distribution[].followers (see core/response-collection.json). Present only alongside products.
+     *
+     * @minItems 1
+     */
+    collections?: [ResponseCollection, ...ResponseCollection[]];
+    /**
+     * Optional estimate, on a submitted response to a finalize-only or extend_hold-only request, of when the seller expects to resolve the finalize or extension, for example when a creator, host or talent must agree before the hold or its extension. Same semantics as on `create_media_buy`: an estimate, not a commitment or expiry; buyers SHOULD schedule a status check for it and MUST NOT treat a passed timestamp as failure. Sellers SHOULD NOT send it on revise requests.
+     */
+    expected_confirmation_at?: string;
+    errors?: Error[];
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
 /**
  * Acknowledgment for submitted refine_proposals (complex revision requiring re-underwriting or upstream pricing queries)
  */
@@ -22977,7 +23083,7 @@ export type RefineProposalsAsyncSubmitted = CompactTaskSubmitted & {
 /**
  * Shared terminal response for buy_products and accept_proposal; originating task identity is carried by the task envelope and manifest resolver.
  */
-export type MediaBuyCommitmentResponse = CommittedMediaBuy | CommitmentError | CommitmentSubmitted;
+export type MediaBuyCommitmentResponse = ProtocolEnvelope & (CommittedMediaBuy | CommitmentError | CommitmentSubmitted);
 /**
  * A currently available MediaBuy action with the compact-lifecycle task an SDK calls to exercise it. Deprecated coarse action values are absent. In AdCP 3.3, update_creative_start_policy is an operational package control with an explicit eligible package scope, independent of commercial change terms.
  */
@@ -23022,90 +23128,113 @@ export type Warning = {
   };
   ext?: ExtensionObject;
 };
+export type CommitmentSubmitted = TaskSubmitted;
 /**
  * Terminal response for control_media_buy
  */
-export type ControlMediaBuyResponse = ControlApplied | ControlError | ControlSubmitted;
+export type ControlMediaBuyResponse = ProtocolEnvelope & (ControlApplied | ControlError | ControlSubmitted);
+export type ControlSubmitted = TaskSubmitted;
 /**
- * Response for completed or failed get_signals
+ * Working progress for any compact lifecycle task.
  */
-export type GetSignalsResponse = AdCPVersionEnvelope &
-  ProtocolEnvelope & {
-    /**
-     * Array of matching signals
-     */
-    signals?: (SignalListing &
-      SignalDefinitionEnrichment & {
-      })[];
-    /**
-     * Experimental (signals.pricing_groups). Signal-agent default rules for how fees of signals sharing a pricing_group combine. Product-scoped signal_targeting_rules.signal_pricing_group_rules override these for the same pricing_group. A group with no rule is charged 'each'.
-     *
-     * @minItems 1
-     */
-    signal_pricing_group_rules?: [SignalPricingGroupRule, ...SignalPricingGroupRule[]];
-    /**
-     * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
-     */
-    errors?: Error[];
-    /**
-     * Declares what the agent could not finish within the caller's time_budget or due to internal limits. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete.
-     *
-     * @minItems 1
-     */
-    incomplete?: [
-      {
-        /**
-         * 'signals': not all matching signals were returned. 'pricing': signals returned but pricing is absent or unconfirmed. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget.
-         */
-        scope: 'signals' | 'pricing' | 'wholesale_feed';
-        /**
-         * Human-readable explanation of what is missing and why.
-         */
-        description: string;
-        /**
-         * How much additional time would resolve this scope. Allows the caller to decide whether to retry with a larger time_budget.
-         */
-        estimated_wait?: Duration;
-      },
-      ...{
-        /**
-         * 'signals': not all matching signals were returned. 'pricing': signals returned but pricing is absent or unconfirmed. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget.
-         */
-        scope: 'signals' | 'pricing' | 'wholesale_feed';
-        /**
-         * Human-readable explanation of what is missing and why.
-         */
-        description: string;
-        /**
-         * How much additional time would resolve this scope. Allows the caller to decide whether to retry with a larger time_budget.
-         */
-        estimated_wait?: Duration;
-      }[]
-    ];
-    /**
-     * Opaque token representing the version of the wholesale signals feed state used to compose this response. Agents that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so callers can cache and probe later. Callers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A caller caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, discovery_mode, filters, destinations, countries) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
-     */
-    wholesale_feed_version?: string;
-    /**
-     * Opaque token representing the version of the pricing layer. When the agent supports independent pricing versioning, pricing_version changes when prices move but wholesale_feed_version changes only when structure/metadata moves. Same cache_scope keying as wholesale_feed_version. Agents not separating these MAY omit pricing_version and use wholesale_feed_version for both.
-     */
-    pricing_version?: string;
-    /**
-     * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the agent's published rate card; the caller MAY dedupe under (agent, discovery_mode, filters, destinations, countries) without scoping by account. 'account': this response includes account-specific overrides; the caller MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the agent MUST return `cache_scope: 'public'`. When the request included `account`, the agent MUST return either 'public' (this account prices off the public rate card — caller dedupes) or 'account' (account-specific overrides exist — caller caches under the account key). Agents MAY return 'public' on an account-scoped request that previously had overrides — callers SHOULD interpret this as a downgrade. Without schema-required cache_scope, an agent silently omitting the field on an account-scoped response would cause callers to mis-key the cache and serve account-overlay payloads to other accounts — the canonical safety invariant of the entire cache layering model. **Backward-compatibility note for 3.1 validators:** SDKs validating strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version`. For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed — pre-3.1 agents correctly emit no cache_scope and remain conformant to their declared version. This is a tightening within 3.1, not a 3.0 break.
-     */
-    cache_scope?: 'public' | 'account';
-    /**
-     * Present and `true` ONLY on wholesale-mode responses when the request carried if_wholesale_feed_version (and/or if_pricing_version) matching the agent's current version for the caller's cache_scope, in which case signals[] MUST be omitted; wholesale_feed_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Callers receiving unchanged: true MUST NOT mutate their local wholesale signals mirror. **One shape per state:** agents MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries signals. **Cross-scope isolation:** the comparator that decides `unchanged` MUST be keyed on `(cache_scope, wholesale_feed_version)`, not on the token value alone. An agent MUST NOT emit `unchanged: true` when it resolves the request to a different `cache_scope` than the one whose token the caller echoed in `if_wholesale_feed_version` (and/or `if_pricing_version`): because the token is scope-keyed, a value minted for `cache_scope: 'public'` cannot match the agent's current token for `cache_scope: 'account'` (or vice-versa), so such a request MUST return the full feed for the resolved scope with that scope's own token.
-     */
-    unchanged?: true;
-    pagination?: PaginationResponse;
-    /**
-     * When true, this response contains simulated data from sandbox mode.
-     */
-    sandbox?: boolean;
+export type CompactTaskWorking = ProtocolEnvelope &
+  TaskWorking & {
+    percentage?: number;
+    current_step?: string;
+    total_steps?: number;
+    step_number?: number;
     context?: ContextObject;
     ext?: ExtensionObject;
   };
+/**
+ * Input-required payload for any compact lifecycle task.
+ */
+export type CompactTaskInputRequired = ProtocolEnvelope &
+  TaskInputRequired & {
+    reason?: string;
+    errors?: Error[];
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
+ * Response for completed or failed get_signals
+ */
+export type GetSignalsResponse = ProtocolEnvelope & {
+  /**
+   * Array of matching signals
+   */
+  signals?: (SignalListing &
+    SignalDefinitionEnrichment & {
+    })[];
+  /**
+   * Experimental (signals.pricing_groups). Signal-agent default rules for how fees of signals sharing a pricing_group combine. Product-scoped signal_targeting_rules.signal_pricing_group_rules override these for the same pricing_group. A group with no rule is charged 'each'.
+   *
+   * @minItems 1
+   */
+  signal_pricing_group_rules?: [SignalPricingGroupRule, ...SignalPricingGroupRule[]];
+  /**
+   * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
+   */
+  errors?: Error[];
+  /**
+   * Declares what the agent could not finish within the caller's time_budget or due to internal limits. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete.
+   *
+   * @minItems 1
+   */
+  incomplete?: [
+    {
+      /**
+       * 'signals': not all matching signals were returned. 'pricing': signals returned but pricing is absent or unconfirmed. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget.
+       */
+      scope: 'signals' | 'pricing' | 'wholesale_feed';
+      /**
+       * Human-readable explanation of what is missing and why.
+       */
+      description: string;
+      /**
+       * How much additional time would resolve this scope. Allows the caller to decide whether to retry with a larger time_budget.
+       */
+      estimated_wait?: Duration;
+    },
+    ...{
+      /**
+       * 'signals': not all matching signals were returned. 'pricing': signals returned but pricing is absent or unconfirmed. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget.
+       */
+      scope: 'signals' | 'pricing' | 'wholesale_feed';
+      /**
+       * Human-readable explanation of what is missing and why.
+       */
+      description: string;
+      /**
+       * How much additional time would resolve this scope. Allows the caller to decide whether to retry with a larger time_budget.
+       */
+      estimated_wait?: Duration;
+    }[]
+  ];
+  /**
+   * Opaque token representing the version of the wholesale signals feed state used to compose this response. Agents that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so callers can cache and probe later. Callers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A caller caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, discovery_mode, filters, destinations, countries) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
+   */
+  wholesale_feed_version?: string;
+  /**
+   * Opaque token representing the version of the pricing layer. When the agent supports independent pricing versioning, pricing_version changes when prices move but wholesale_feed_version changes only when structure/metadata moves. Same cache_scope keying as wholesale_feed_version. Agents not separating these MAY omit pricing_version and use wholesale_feed_version for both.
+   */
+  pricing_version?: string;
+  /**
+   * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the agent's published rate card; the caller MAY dedupe under (agent, discovery_mode, filters, destinations, countries) without scoping by account. 'account': this response includes account-specific overrides; the caller MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the agent MUST return `cache_scope: 'public'`. When the request included `account`, the agent MUST return either 'public' (this account prices off the public rate card — caller dedupes) or 'account' (account-specific overrides exist — caller caches under the account key). Agents MAY return 'public' on an account-scoped request that previously had overrides — callers SHOULD interpret this as a downgrade. Without schema-required cache_scope, an agent silently omitting the field on an account-scoped response would cause callers to mis-key the cache and serve account-overlay payloads to other accounts — the canonical safety invariant of the entire cache layering model. **Backward-compatibility note for 3.1 validators:** SDKs validating strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version`. For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed — pre-3.1 agents correctly emit no cache_scope and remain conformant to their declared version. This is a tightening within 3.1, not a 3.0 break.
+   */
+  cache_scope?: 'public' | 'account';
+  /**
+   * Present and `true` ONLY on wholesale-mode responses when the request carried if_wholesale_feed_version (and/or if_pricing_version) matching the agent's current version for the caller's cache_scope, in which case signals[] MUST be omitted; wholesale_feed_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Callers receiving unchanged: true MUST NOT mutate their local wholesale signals mirror. **One shape per state:** agents MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries signals. **Cross-scope isolation:** the comparator that decides `unchanged` MUST be keyed on `(cache_scope, wholesale_feed_version)`, not on the token value alone. An agent MUST NOT emit `unchanged: true` when it resolves the request to a different `cache_scope` than the one whose token the caller echoed in `if_wholesale_feed_version` (and/or `if_pricing_version`): because the token is scope-keyed, a value minted for `cache_scope: 'public'` cannot match the agent's current token for `cache_scope: 'account'` (or vice-versa), so such a request MUST return the full feed for the resolved scope with that scope's own token.
+   */
+  unchanged?: true;
+  pagination?: PaginationResponse;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+};
 /**
  * Optional signal-definition enrichment fields that may be projected inline on signal listings when requested through get_signals.fields. This schema intentionally excludes signal identity and required definition fields so source-native, private, or compact listings can include typed partial disclosure without becoming a full adagents.json signal definition.
  */
@@ -23396,25 +23525,182 @@ export type SignalModelingDisclosure = {
   notes?: string;
 };
 /**
+ * Progress data for working get_signals
+ */
+export type GetSignalsAsyncWorking = ProtocolEnvelope &
+  TaskWorking & {
+    /**
+     * Progress percentage of the signal discovery operation.
+     */
+    percentage?: number;
+    /**
+     * Current step in the signal discovery process, such as `querying_providers`, `ranking_signals`, or `checking_deployments`.
+     */
+    current_step?: string;
+    /**
+     * Total number of steps in the signal discovery process.
+     */
+    total_steps?: number;
+    /**
+     * Current step number (1-indexed).
+     */
+    step_number?: number;
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
+ * Acknowledgment for submitted get_signals (semantic discovery)
+ */
+export type GetSignalsAsyncSubmitted = ProtocolEnvelope &
+  TaskSubmitted & {
+    /**
+     * Estimated completion time for the signal discovery task.
+     */
+    estimated_completion?: string;
+    /**
+     * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories or partial provider unavailability). Terminal failures belong in the error branch, not here.
+     */
+    errors?: Error[];
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
  * Response for completed or failed create_media_buy
  */
-export type CreateMediaBuyResponse = AdCPVersionEnvelope &
-  ProtocolEnvelope & {} & (CreateMediaBuySuccess | CreateMediaBuyError | CreateMediaBuySubmitted);
+export type CreateMediaBuyResponse = ProtocolEnvelope & {} & (
+    | CreateMediaBuySuccess
+    | CreateMediaBuyError
+    | CreateMediaBuySubmitted
+  );
 /**
  * Success response - media buy created successfully
  */
 export type CreateMediaBuySuccess = {
 };
 /**
+ * Async task envelope returned when the media buy cannot be confirmed before the response is emitted — for example, when a guaranteed buy requires IO signing, when governance review is outstanding, or when the seller has queued the request for batch processing. The buyer invokes get_task_status with task_id or receives a webhook when the task completes; the media_buy_id and packages land in the terminal result, not this envelope. Do not use a 'pending_approval' MediaBuy.status for this case — that value is not in MediaBuyStatus; IO review and similar pre-issuance workflows are modeled at the task layer only.
+ */
+export type CreateMediaBuySubmitted = TaskSubmitted;
+/**
+ * Progress data for working create_media_buy
+ */
+export type CreateMediaBuyAsyncWorking = ProtocolEnvelope &
+  TaskWorking & {
+    /**
+     * Completion percentage (0-100)
+     */
+    percentage?: number;
+    /**
+     * Current step or phase of the operation
+     */
+    current_step?: string;
+    /**
+     * Total number of steps in the operation
+     */
+    total_steps?: number;
+    /**
+     * Current step number
+     */
+    step_number?: number;
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
+ * Input requirements for create_media_buy needing user input
+ */
+export type CreateMediaBuyAsyncInputRequired = ProtocolEnvelope &
+  TaskInputRequired & {
+    /**
+     * Reason code indicating why input is needed
+     */
+    reason?: 'APPROVAL_REQUIRED' | 'BUDGET_EXCEEDS_LIMIT';
+    /**
+     * Optional validation errors or warnings for debugging purposes. Helps explain why input is required.
+     */
+    errors?: Error[];
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
+ * Acknowledgment for submitted create_media_buy
+ */
+export type CreateMediaBuyAsyncSubmitted = ProtocolEnvelope &
+  TaskSubmitted & {
+    /**
+     * Optional estimate of when the seller expects to confirm this request, used when confirmation depends on a scheduled event such as a booking round or a manual review window. A seller SHOULD set it when it knows that event; omit it when it does not. Buyers SHOULD schedule a status check (get_task_status, or reconciling against the webhook) for this time rather than polling tightly before it. This is an estimate, not a commitment: the seller MAY confirm earlier or later, the task status remains authoritative, and buyers MUST NOT treat a passed timestamp as a failure or auto-cancel on it. Sellers SHOULD NOT send a timestamp in the past. Not an expiry or SLA.
+     */
+    expected_confirmation_at?: string;
+    /**
+     * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+     */
+    errors?: Error[];
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
  * Response for completed or failed update_media_buy
  */
-export type UpdateMediaBuyResponse = AdCPVersionEnvelope &
-  ProtocolEnvelope & {} & (UpdateMediaBuySuccess | UpdateMediaBuyError | UpdateMediaBuySubmitted);
+export type UpdateMediaBuyResponse = ProtocolEnvelope & {} & (
+    | UpdateMediaBuySuccess
+    | UpdateMediaBuyError
+    | UpdateMediaBuySubmitted
+  );
+/**
+ * Async task envelope returned when update_media_buy cannot be confirmed before the response — for example, when operator re-approval is required for mid-flight changes. The buyer invokes get_task_status with task_id or receives a webhook when the task completes; the updated media buy state lands in the terminal result, not this envelope.
+ */
+export type UpdateMediaBuySubmitted = TaskSubmitted;
+/**
+ * Progress data for working update_media_buy
+ */
+export type UpdateMediaBuyAsyncWorking = ProtocolEnvelope &
+  TaskWorking & {
+    /**
+     * Completion percentage (0-100)
+     */
+    percentage?: number;
+    /**
+     * Current step or phase of the operation
+     */
+    current_step?: string;
+    /**
+     * Total number of steps in the operation
+     */
+    total_steps?: number;
+    /**
+     * Current step number
+     */
+    step_number?: number;
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
+ * Input requirements for update_media_buy needing user input
+ */
+export type UpdateMediaBuyAsyncInputRequired = ProtocolEnvelope &
+  TaskInputRequired & {
+    /**
+     * Reason code indicating why input is needed
+     */
+    reason?: 'APPROVAL_REQUIRED' | 'CHANGE_CONFIRMATION';
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
+ * Acknowledgment for submitted update_media_buy
+ */
+export type UpdateMediaBuyAsyncSubmitted = ProtocolEnvelope &
+  TaskSubmitted & {
+    /**
+     * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+     */
+    errors?: Error[];
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
 /**
  * Response for completed or failed build_creative
  */
-export type BuildCreativeResponse = AdCPVersionEnvelope &
-  ProtocolEnvelope & {} & (
+export type BuildCreativeResponse = ProtocolEnvelope & {} & (
     | BuildCreativeSuccess
     | BuildCreativeMultiSuccess
     | BuildCreativeVariantSuccess
@@ -23607,30 +23893,174 @@ export type PreviewRender =
       renderer?: PreviewRendererMetadata;
     };
 /**
+ * Async task envelope returned when build_creative cannot be confirmed before the response — for example, when a slow generative pipeline or multi-minute LLM workflow is queued. The buyer invokes get_task_status with task_id or receives a webhook when the task completes; the creative_manifest(s) land in the terminal result, not this envelope.
+ */
+export type BuildCreativeSubmitted = TaskSubmitted;
+/**
  * Terminal response for completed preview_creative
  */
-export type PreviewCreativeResponse = AdCPVersionEnvelope &
-  ProtocolEnvelope & {} & (
+export type PreviewCreativeResponse = ProtocolEnvelope & {} & (
     | PreviewCreativeSingleResponse
     | PreviewCreativeBatchResponse
     | PreviewCreativeVariantResponse
     | PreviewCreativeSubmitted
   );
 /**
+ * Async task envelope returned only when the preview_creative request set allow_async to true and rendering cannot complete inline. The buyer polls get_task_status with task_id; the completed preview response is the task result.
+ */
+export type PreviewCreativeSubmitted = TaskSubmitted;
+/**
+ * Progress data for working build_creative
+ */
+export type BuildCreativeAsyncWorking = ProtocolEnvelope &
+  TaskWorking & {
+    /**
+     * Completion percentage (0-100)
+     */
+    percentage?: number;
+    /**
+     * Current step or phase of the operation (e.g., 'generating_assets', 'resolving_macros', 'rendering_preview')
+     */
+    current_step?: string;
+    /**
+     * Total number of steps in the operation
+     */
+    total_steps?: number;
+    /**
+     * Current step number
+     */
+    step_number?: number;
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
+ * Input requirements for build_creative needing user input
+ */
+export type BuildCreativeAsyncInputRequired = ProtocolEnvelope &
+  TaskInputRequired & {
+    /**
+     * Reason code indicating why input is needed
+     */
+    reason?: 'APPROVAL_REQUIRED' | 'CREATIVE_DIRECTION_NEEDED' | 'ASSET_SELECTION_NEEDED';
+    /**
+     * Optional validation errors or warnings explaining why input is required.
+     */
+    errors?: Error[];
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
+ * Acknowledgment for submitted build_creative
+ */
+export type BuildCreativeAsyncSubmitted = ProtocolEnvelope &
+  TaskSubmitted & {
+    /**
+     * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+     */
+    errors?: Error[];
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
  * Terminal response for completed or failed get_creative_features
  */
-export type GetCreativeFeaturesResponse = AdCPVersionEnvelope &
-  ProtocolEnvelope & {} & (GetCreativeFeaturesSuccess | GetCreativeFeaturesError | GetCreativeFeaturesSubmitted);
+export type GetCreativeFeaturesResponse = ProtocolEnvelope & {} & (
+    | GetCreativeFeaturesSuccess
+    | GetCreativeFeaturesError
+    | GetCreativeFeaturesSubmitted
+  );
+/**
+ * Async acknowledgement returned after the provider accepts an evaluation but cannot complete it within the response window. Exact keyed request replays return this original acknowledgement with replayed: true and the same task_id. In AdCP 3.x providers SHOULD also return evaluation_id; it becomes required in AdCP 4.0. When present, exact replays and terminal results preserve it. The caller polls get_task_status using task_id.
+ */
+export type GetCreativeFeaturesSubmitted = TaskSubmitted;
+/**
+ * Acknowledgment for an accepted provider creative-feature evaluation
+ */
+export type GetCreativeFeaturesAsyncSubmitted = ProtocolEnvelope &
+  TaskSubmitted & {
+    /**
+     * Provider-generated identity allocated when the evaluation is accepted. Optional in AdCP 3.x and required in AdCP 4.0. Providers SHOULD emit it in 3.x; when present, exact replays and the terminal result MUST carry this same value. Distinct from task_id and idempotency_key.
+     */
+    evaluation_id?: string;
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
 /**
  * Response for completed or failed sync_creatives
  */
-export type SyncCreativesResponse = AdCPVersionEnvelope &
-  ProtocolEnvelope & {} & (SyncCreativesSuccess | SyncCreativesError | SyncCreativesSubmitted);
+export type SyncCreativesResponse = ProtocolEnvelope & {} & (
+    | SyncCreativesSuccess
+    | SyncCreativesError
+    | SyncCreativesSubmitted
+  );
+/**
+ * Async task envelope returned when the whole sync operation cannot be confirmed before the response is emitted — for example, when the seller batches ingestion, when async review must settle before per-item results can be issued, or when governance review gates the sync. The buyer invokes get_task_status with task_id or receives a webhook when the task completes; the creatives array with per-item action/status lands in the terminal result, not this envelope. Per-item async review (an item in pending_review while the rest of the sync resolves synchronously) belongs on the SyncCreativesSuccess branch with status: pending_review, not here.
+ */
+export type SyncCreativesSubmitted = TaskSubmitted;
+/**
+ * Progress data for working sync_creatives
+ */
+export type SyncCreativesAsyncWorking = ProtocolEnvelope &
+  TaskWorking & {
+    /**
+     * Completion percentage (0-100)
+     */
+    percentage?: number;
+    /**
+     * Current step or phase of the operation
+     */
+    current_step?: string;
+    /**
+     * Total number of steps in the operation
+     */
+    total_steps?: number;
+    /**
+     * Current step number
+     */
+    step_number?: number;
+    /**
+     * Number of creatives processed so far
+     */
+    creatives_processed?: number;
+    /**
+     * Total number of creatives to process
+     */
+    creatives_total?: number;
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
+ * Input requirements for sync_creatives needing user input
+ */
+export type SyncCreativesAsyncInputRequired = ProtocolEnvelope &
+  TaskInputRequired & {
+    /**
+     * Reason code indicating why buyer input is needed
+     */
+    reason?: 'APPROVAL_REQUIRED' | 'ASSET_CONFIRMATION' | 'FORMAT_CLARIFICATION';
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
+ * Acknowledgment for submitted sync_creatives
+ */
+export type SyncCreativesAsyncSubmitted = ProtocolEnvelope &
+  TaskSubmitted & {
+    /**
+     * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+     */
+    errors?: Error[];
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
 /**
  * Response for completed or failed sync_catalogs
  */
-export type SyncCatalogsResponse = AdCPVersionEnvelope &
-  ProtocolEnvelope & {} & (SyncCatalogsSuccess | SyncCatalogsError | SyncCatalogsSubmitted);
+export type SyncCatalogsResponse = ProtocolEnvelope & {} & (
+    | SyncCatalogsSuccess
+    | SyncCatalogsError
+    | SyncCatalogsSubmitted
+  );
 /**
  * Seller acknowledgement for one buyer-authored catalog item availability update.
  */
@@ -23820,6 +24250,74 @@ export type CatalogItemAvailabilityState = {
  */
 export type SyncCatalogsError = {
 };
+/**
+ * Async task envelope returned when a catalog-only sync cannot be confirmed before the response — for example, when catalog ingestion and deduplication are queued for batch processing. A request containing item_availability_updates or item_availability_queries MUST NOT return this branch because availability operations are synchronous; mixed requests whose catalog work cannot finish synchronously and atomically fail before mutation and are retried as separate calls. For catalog-only requests, the buyer invokes get_task_status with task_id or receives a webhook when the task completes; the per-catalog results land in the terminal result, not this envelope.
+ */
+export type SyncCatalogsSubmitted = TaskSubmitted;
+/**
+ * Progress data for working sync_catalogs
+ */
+export type SyncCatalogsAsyncWorking = ProtocolEnvelope &
+  TaskWorking & {
+    /**
+     * Completion percentage (0-100)
+     */
+    percentage?: number;
+    /**
+     * Current step or phase of the operation (e.g., 'Fetching product feed', 'Validating items', 'Platform review')
+     */
+    current_step?: string;
+    /**
+     * Total number of steps in the operation
+     */
+    total_steps?: number;
+    /**
+     * Current step number
+     */
+    step_number?: number;
+    /**
+     * Number of catalogs processed so far
+     */
+    catalogs_processed?: number;
+    /**
+     * Total number of catalogs to process
+     */
+    catalogs_total?: number;
+    /**
+     * Total number of catalog items processed across all catalogs
+     */
+    items_processed?: number;
+    /**
+     * Total number of catalog items to process across all catalogs
+     */
+    items_total?: number;
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
+ * Input requirements for sync_catalogs needing buyer input
+ */
+export type SyncCatalogsAsyncInputRequired = ProtocolEnvelope &
+  TaskInputRequired & {
+    /**
+     * Reason code indicating why buyer input is needed. APPROVAL_REQUIRED: platform requires explicit approval before activating the catalog. FEED_VALIDATION: feed URL returned unexpected format or schema errors. ITEM_REVIEW: platform flagged items for manual review. FEED_ACCESS: platform cannot access the feed URL (authentication, CORS, etc.).
+     */
+    reason?: 'APPROVAL_REQUIRED' | 'FEED_VALIDATION' | 'ITEM_REVIEW' | 'FEED_ACCESS';
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
+/**
+ * Acknowledgment for submitted sync_catalogs
+ */
+export type SyncCatalogsAsyncSubmitted = ProtocolEnvelope &
+  TaskSubmitted & {
+    /**
+     * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+     */
+    errors?: Error[];
+    context?: ContextObject;
+    ext?: ExtensionObject;
+  };
 
 /**
  * Standard envelope for AdCP application-layer HTTP push notifications. This defines the wire format sent to the URL configured in task input `push_notification_config`, including when that task was invoked through the AdCP A2A profile. It is distinct from A2A transport notifications registered through `configuration.taskPushNotificationConfig`, which use native StreamResponse branches.
@@ -23843,10 +24341,7 @@ export interface MCPWebhookPayload {
    * Client-generated correlation identifier for the operation that produced this webhook. Buyers supply this value at webhook registration time via `push_notification_config.operation_id`; sellers MUST echo it verbatim in every webhook payload. Sellers MUST NOT derive `operation_id` by parsing `push_notification_config.url` — the URL is opaque to the seller. Receivers MAY dispatch endpoints by URL path or query string, but MUST correlate the operation using this payload field, not URL-derived values. See [Webhooks — Operation IDs and URL templates](/docs/building/by-layer/L3/webhooks#operation-ids-and-url-templates) for the full normative wire contract.
    */
   operation_id: string;
-  /**
-   * Unique identifier for this task. Use this to correlate webhook notifications with the original task submission.
-   */
-  task_id: string;
+  task_id: TaskID;
   task_type: TaskType;
   protocol?: AdCPProtocol;
   status: TaskStatus;
@@ -23855,10 +24350,7 @@ export interface MCPWebhookPayload {
    * @format date-time
    */
   timestamp: string;
-  /**
-   * Human-readable summary of the current task state. Provides context about what happened and what action may be needed.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * Compatibility metadata copied from the originating response when present. This value alone is not continuation authority and MUST NOT be used to resume input-required or auth-required work or to select session state.
    */
@@ -23872,7 +24364,7 @@ export interface MCPWebhookPayload {
   result?: AdCPAsyncResponseData;
 }
 /**
- * Release-precision AdCP protocol version negotiation fields. Composed via `allOf` into AdCP request schemas and shared response components so the version semantics live in one place. Strict (`additionalProperties: false`) request schemas also redeclare these two fields in their own `properties` via `$ref`, because draft-07 does not evaluate properties across `allOf`. The Trusted Match match requests are the exception: they inline both fields for their strict privacy boundary. Distinct from `core/protocol-envelope.json`, which wraps responses at the transport layer (context_id / task_id / status / payload). This envelope is part of the payload itself.
+ * Release-precision AdCP protocol version negotiation fields, defined once. Request schemas compose this envelope directly through `allOf`. Strict (`additionalProperties: false`) request schemas also redeclare these two fields in their own `properties` via `$ref`, because draft-07 does not evaluate properties across `allOf`. The Trusted Match match requests are the exception: they inline both fields for their strict privacy boundary. On a request, these fields are part of the request payload: the buyer's version pin. Responses do not compose this envelope directly. `core/protocol-envelope.json` composes it, so on a response `adcp_version` and `adcp_major_version` are envelope fields that the server framework stamps beside `status`, `task_id` and the other protocol-layer fields, not task body data.
  */
 export interface AdCPVersionEnvelope {
   /**
@@ -23884,48 +24376,6 @@ export interface AdCPVersionEnvelope {
    * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
-}
-/**
- * Canonical envelope field-set for AdCP task responses, normalized across transports. Defines the protocol-layer fields (status, context_id, context, task_id, timestamp, replayed, adcp_error, push_notification_config, governance_context) and the conceptual `payload` grouping for task-specific response data. The serialization rules — whether envelope fields appear as siblings of payload fields, as a nested `payload` object, or via transport-native containers — are transport-specific and normative per transport (see Transport serialization below). The `status` field is REQUIRED on every task response envelope, including synchronous metadata responses (e.g., `get_adcp_capabilities`) where the value is `completed`. Agents shipping responses without a top-level `status` are non-conformant regardless of whether the task body schema would otherwise validate.
- */
-export interface ProtocolEnvelope {
-  /**
-   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
-   */
-  context_id?: string;
-  context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
-  status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
-  /**
-   * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
-   */
-  timestamp?: string;
-  /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
-   */
-  replayed?: boolean;
-  adcp_error?: Error;
-  push_notification_config?: PushNotificationConfig;
-  /**
-   * Opaque authorization context issued only by an approved check_governance decision. Buyers attach it to governed requests across protocol roles (media buys, rights acquisitions, signal activations, creative services); receiving services persist it and forward it on subsequent execution and lifecycle checks. The context is the authoritative plan binding at service boundaries, so a service MUST NOT require a separate plan_id.
-   *
-   * Governance agents MUST emit a compact JWS per the AdCP JWS profile. Verifiers validate standard authorization claims such as signature, issuer, audience, expiry, and replay protection, but intermediaries MUST NOT interpret embedded governance state for business logic. A conditions or denied verdict never carries an authorization context.
-   *
-   * This is the primary correlation key for audit and reporting across the governance lifecycle.
-   */
-  governance_context?: string;
-  /**
-   * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
-   */
-  payload?: {
-  };
 }
 /**
  * A recurring inventory container — a named program, publication, event series, rotation, or programmed channel that produces bookable installments on a defined cadence. The kind field indicates how to interpret this collection: 'series' for TV/podcast programs, 'publication' for print/newsletter titles, 'event_series' for live events, 'rotation' for DOOH scheduling, and 'channel' for continuously programmed audio or video streams regardless of carriage or monetization model. Declared in the publisher's adagents.json and referenced by products via collection selectors. Selling agents may also return copies in product and proposal responses (core/response-collection.json); adagents.json remains the authorization source.
@@ -24270,73 +24720,23 @@ export interface ProductExecutionReadiness {
   ext?: ExtensionObject;
 }
 /**
- * Progress data for working get_products
+ * The status of a working task payload: status is working. Every working response body composes this schema through allOf, so the status the body describes is pinned in one place.
  */
-export interface GetProductsAsyncWorking {
-  /**
-   * Progress percentage of the search operation
-   */
-  percentage?: number;
-  /**
-   * Current step in the search process (e.g., 'searching_inventory', 'validating_availability')
-   */
-  current_step?: string;
-  /**
-   * Total number of steps in the search process
-   */
-  total_steps?: number;
-  /**
-   * Current step number (1-indexed)
-   */
-  step_number?: number;
-  context?: ContextObject;
-  ext?: ExtensionObject;
+export interface TaskWorking {
+  status: 'working';
 }
 /**
- * Input requirements for get_products needing clarification
+ * The status of a input-required task payload: status is input-required. Every input-required response body composes this schema through allOf, so the status the body describes is pinned in one place.
  */
-export interface GetProductsAsyncInputRequired {
-  /**
-   * Reason code indicating why input is needed
-   */
-  reason?: 'CLARIFICATION_NEEDED' | 'BUDGET_REQUIRED';
-  /**
-   * Partial product results that may help inform the clarification
-   */
-  partial_results?: Product[];
-  /**
-   * Suggested values or options for the required input
-   */
-  suggestions?: string[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
+export interface TaskInputRequired {
+  status: 'input-required';
 }
 /**
- * Acknowledgment for submitted get_products (custom curation)
+ * The submitted task acknowledgement: status is submitted and task_id identifies the task the caller polls and webhooks reference. Every submitted response body and branch composes this schema through allOf, so the rule lives in one place.
  */
-export interface GetProductsAsyncSubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose products array is issued in-line. See task-status.json for the full task-status enum.
-   */
+export interface TaskSubmitted {
   status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. The products array is issued on the completion artifact, not here. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Custom curation queued; typical turnaround 10–30 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   */
-  message?: string;
-  /**
-   * Estimated completion time for the search
-   */
-  estimated_completion?: string;
-  /**
-   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
-   */
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
+  task_id: TaskID;
 }
 /**
  * The held installment.
@@ -24895,20 +25295,6 @@ export interface CommitmentError {
   errors: [Error, ...Error[]];
   context?: ContextObject;
   ext?: ExtensionObject;
-  replayed?: true;
-}
-export interface CommitmentSubmitted {
-  status: 'submitted';
-  task_id: string;
-  message?: string;
-  /**
-   * Optional estimate of when the seller expects to confirm this request, used when confirmation depends on a scheduled event such as a booking round or a manual review window. A seller SHOULD set it when it knows that event; omit it when it does not. Buyers SHOULD schedule a status check (get_task_status, or reconciling against the webhook) for this time rather than polling tightly before it. This is an estimate, not a commitment: the seller MAY confirm earlier or later, the task status remains authoritative, and buyers MUST NOT treat a passed timestamp as a failure or auto-cancel on it. Sellers SHOULD NOT send a timestamp in the past. Not an expiry or SLA.
-   */
-  expected_confirmation_at?: string;
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-  replayed?: true;
 }
 export interface ControlApplied {
   status: 'completed';
@@ -24933,7 +25319,6 @@ export interface ControlApplied {
   ];
   context?: ContextObject;
   ext?: ExtensionObject;
-  replayed?: true;
 }
 export interface ControlError {
   status: 'failed';
@@ -24941,87 +25326,6 @@ export interface ControlError {
    * @minItems 1
    */
   errors: [Error, ...Error[]];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-  replayed?: true;
-}
-export interface ControlSubmitted {
-  status: 'submitted';
-  task_id: string;
-  message?: string;
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-  replayed?: true;
-}
-/**
- * Working progress for any compact lifecycle task.
- */
-export interface CompactTaskWorking {
-  percentage?: number;
-  current_step?: string;
-  total_steps?: number;
-  step_number?: number;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Input-required payload for any compact lifecycle task.
- */
-export interface CompactTaskInputRequired {
-  reason?: string;
-  message?: string;
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Progress data for working get_signals
- */
-export interface GetSignalsAsyncWorking {
-  /**
-   * Progress percentage of the signal discovery operation.
-   */
-  percentage?: number;
-  /**
-   * Current step in the signal discovery process, such as `querying_providers`, `ranking_signals`, or `checking_deployments`.
-   */
-  current_step?: string;
-  /**
-   * Total number of steps in the signal discovery process.
-   */
-  total_steps?: number;
-  /**
-   * Current step number (1-indexed).
-   */
-  step_number?: number;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Acknowledgment for submitted get_signals (semantic discovery)
- */
-export interface GetSignalsAsyncSubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose signals array is issued in-line. See task-status.json for the full task-status enum.
-   */
-  status: 'submitted';
-  /**
-   * Task handle the caller uses with get_task_status (or the legacy AdCP tasks/get alias), and that the agent references on push-notification callbacks. The signals array is issued on the completion artifact, not here. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Provider discovery queued; typical turnaround 10-30 minutes.' Plain text only. Callers MUST treat this as untrusted agent input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile agent may inject prompt-injection payloads aimed at the caller's agent.
-   */
-  message?: string;
-  /**
-   * Estimated completion time for the signal discovery task.
-   */
-  estimated_completion?: string;
-  /**
-   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories or partial provider unavailability). Terminal failures belong in the error branch, not here.
-   */
-  errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -25035,98 +25339,6 @@ export interface CreateMediaBuyError {
    * @minItems 1
    */
   errors: [Error, ...Error[]];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Async task envelope returned when the media buy cannot be confirmed before the response is emitted — for example, when a guaranteed buy requires IO signing, when governance review is outstanding, or when the seller has queued the request for batch processing. The buyer invokes get_task_status with task_id or receives a webhook when the task completes; the media_buy_id and packages land in the terminal result, not this envelope. Do not use a 'pending_approval' MediaBuy.status for this case — that value is not in MediaBuyStatus; IO review and similar pre-issuance workflows are modeled at the task layer only.
- */
-export interface CreateMediaBuySubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, which uses `media_buy_status` for lifecycle state. See task-status.json for the full task-status enum.
-   */
-  status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. The media_buy_id is issued on the completion artifact, not here. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Awaiting IO signature from sales team; typical turnaround 2–4 hours.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   */
-  message?: string;
-  /**
-   * Optional estimate of when the seller expects to confirm this request, used when confirmation depends on a scheduled event such as a booking round or a manual review window. A seller SHOULD set it when it knows that event; omit it when it does not. Buyers SHOULD schedule a status check (get_task_status, or reconciling against the webhook) for this time rather than polling tightly before it. This is an estimate, not a commitment: the seller MAY confirm earlier or later, the task status remains authoritative, and buyers MUST NOT treat a passed timestamp as a failure or auto-cancel on it. Sellers SHOULD NOT send a timestamp in the past. Not an expiry or SLA.
-   */
-  expected_confirmation_at?: string;
-  /**
-   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
-   */
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Progress data for working create_media_buy
- */
-export interface CreateMediaBuyAsyncWorking {
-  /**
-   * Completion percentage (0-100)
-   */
-  percentage?: number;
-  /**
-   * Current step or phase of the operation
-   */
-  current_step?: string;
-  /**
-   * Total number of steps in the operation
-   */
-  total_steps?: number;
-  /**
-   * Current step number
-   */
-  step_number?: number;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Input requirements for create_media_buy needing user input
- */
-export interface CreateMediaBuyAsyncInputRequired {
-  /**
-   * Reason code indicating why input is needed
-   */
-  reason?: 'APPROVAL_REQUIRED' | 'BUDGET_EXCEEDS_LIMIT';
-  /**
-   * Optional validation errors or warnings for debugging purposes. Helps explain why input is required.
-   */
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Acknowledgment for submitted create_media_buy
- */
-export interface CreateMediaBuyAsyncSubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, which carries media-buy lifecycle state in `media_buy_status`. See task-status.json for the full task-status enum.
-   */
-  status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. The media_buy_id is issued on the completion artifact, not here. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Awaiting IO signature from sales team; typical turnaround 2–4 hours.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   */
-  message?: string;
-  /**
-   * Optional estimate of when the seller expects to confirm this request, used when confirmation depends on a scheduled event such as a booking round or a manual review window. A seller SHOULD set it when it knows that event; omit it when it does not. Buyers SHOULD schedule a status check (get_task_status, or reconciling against the webhook) for this time rather than polling tightly before it. This is an estimate, not a commitment: the seller MAY confirm earlier or later, the task status remains authoritative, and buyers MUST NOT treat a passed timestamp as a failure or auto-cancel on it. Sellers SHOULD NOT send a timestamp in the past. Not an expiry or SLA.
-   */
-  expected_confirmation_at?: string;
-  /**
-   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
-   */
-  errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -25224,86 +25436,6 @@ export interface UpdateMediaBuyError {
    * @minItems 1
    */
   errors: [Error, ...Error[]];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Async task envelope returned when update_media_buy cannot be confirmed before the response — for example, when operator re-approval is required for mid-flight changes. The buyer invokes get_task_status with task_id or receives a webhook when the task completes; the updated media buy state lands in the terminal result, not this envelope.
- */
-export interface UpdateMediaBuySubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose media_buy_id is issued in-line. See task-status.json for the full task-status enum.
-   */
-  status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Awaiting operator re-approval; typical turnaround 2–4 hours.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   */
-  message?: string;
-  /**
-   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
-   */
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Progress data for working update_media_buy
- */
-export interface UpdateMediaBuyAsyncWorking {
-  /**
-   * Completion percentage (0-100)
-   */
-  percentage?: number;
-  /**
-   * Current step or phase of the operation
-   */
-  current_step?: string;
-  /**
-   * Total number of steps in the operation
-   */
-  total_steps?: number;
-  /**
-   * Current step number
-   */
-  step_number?: number;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Input requirements for update_media_buy needing user input
- */
-export interface UpdateMediaBuyAsyncInputRequired {
-  /**
-   * Reason code indicating why input is needed
-   */
-  reason?: 'APPROVAL_REQUIRED' | 'CHANGE_CONFIRMATION';
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Acknowledgment for submitted update_media_buy
- */
-export interface UpdateMediaBuyAsyncSubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose media_buy_id is issued in-line. See task-status.json for the full task-status enum.
-   */
-  status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Awaiting operator re-approval; typical turnaround 2–4 hours.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   */
-  message?: string;
-  /**
-   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
-   */
-  errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -25716,29 +25848,6 @@ export interface BuildCreativeError {
   ext?: ExtensionObject;
 }
 /**
- * Async task envelope returned when build_creative cannot be confirmed before the response — for example, when a slow generative pipeline or multi-minute LLM workflow is queued. The buyer invokes get_task_status with task_id or receives a webhook when the task completes; the creative_manifest(s) land in the terminal result, not this envelope.
- */
-export interface BuildCreativeSubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shapes, whose creative_manifest or creative_manifests are issued in-line. See task-status.json for the full task-status enum.
-   */
-  status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Generative build queued; typical turnaround 3–5 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   */
-  message?: string;
-  /**
-   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
-   */
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
  * Single preview response - each preview URL returns an HTML page that can be embedded in an iframe
  */
 export interface PreviewCreativeSingleResponse {
@@ -25915,90 +26024,6 @@ export interface PreviewCreativeVariantResponse {
   ext?: ExtensionObject;
 }
 /**
- * Async task envelope returned only when the preview_creative request set allow_async to true and rendering cannot complete inline. The buyer polls get_task_status with task_id; the completed preview response is the task result.
- */
-export interface PreviewCreativeSubmitted {
-  /**
-   * Preview-response discriminator for the asynchronous arm.
-   */
-  response_type: 'submitted';
-  /**
-   * Discriminates this opt-in async envelope from synchronous preview responses.
-   */
-  status: 'submitted';
-  /**
-   * Task handle used to poll get_task_status for the completed preview response.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why preview rendering was queued. Plain text only; buyers MUST treat this as untrusted agent input.
-   */
-  message?: string;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Progress data for working build_creative
- */
-export interface BuildCreativeAsyncWorking {
-  /**
-   * Completion percentage (0-100)
-   */
-  percentage?: number;
-  /**
-   * Current step or phase of the operation (e.g., 'generating_assets', 'resolving_macros', 'rendering_preview')
-   */
-  current_step?: string;
-  /**
-   * Total number of steps in the operation
-   */
-  total_steps?: number;
-  /**
-   * Current step number
-   */
-  step_number?: number;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Input requirements for build_creative needing user input
- */
-export interface BuildCreativeAsyncInputRequired {
-  /**
-   * Reason code indicating why input is needed
-   */
-  reason?: 'APPROVAL_REQUIRED' | 'CREATIVE_DIRECTION_NEEDED' | 'ASSET_SELECTION_NEEDED';
-  /**
-   * Optional validation errors or warnings explaining why input is required.
-   */
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Acknowledgment for submitted build_creative
- */
-export interface BuildCreativeAsyncSubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shapes, whose creative_manifest or creative_manifests are issued in-line. See task-status.json for the full task-status enum.
-   */
-  status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Generative build queued; typical turnaround 3–5 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   */
-  message?: string;
-  /**
-   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
-   */
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
  * Terminal success response. In AdCP 3.x evaluation_id is an optional migration field that providers SHOULD emit; it becomes required in AdCP 4.0. When present, it is the provider-side reconciliation identity allocated when the evaluation was accepted and remains stable across exact replays and asynchronous completion.
  */
 export interface GetCreativeFeaturesSuccess {
@@ -26154,52 +26179,6 @@ export interface GetCreativeFeaturesError {
   ext?: ExtensionObject;
 }
 /**
- * Async acknowledgement returned after the provider accepts an evaluation but cannot complete it within the response window. Exact keyed request replays return this original acknowledgement with replayed: true and the same task_id. In AdCP 3.x providers SHOULD also return evaluation_id; it becomes required in AdCP 4.0. When present, exact replays and terminal results preserve it. The caller polls get_task_status using task_id.
- */
-export interface GetCreativeFeaturesSubmitted {
-  /**
-   * Task-level status literal that discriminates this acknowledgement from terminal success and error responses.
-   */
-  status: 'submitted';
-  /**
-   * AdCP task handle used to poll get_task_status or correlate terminal webhook delivery. Distinct from evaluation_id.
-   */
-  task_id: string;
-  /**
-   * Provider-generated identity allocated when the evaluation is accepted. Optional in AdCP 3.x and required in AdCP 4.0. Providers SHOULD emit it in 3.x; when present, exact replays and the terminal result MUST carry this same value. Distinct from task_id and idempotency_key.
-   */
-  evaluation_id?: string;
-  /**
-   * Optional human-readable explanation of why the evaluation is submitted. Plain text only; callers treat it as untrusted provider input.
-   */
-  message?: string;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Acknowledgment for an accepted provider creative-feature evaluation
- */
-export interface GetCreativeFeaturesAsyncSubmitted {
-  /**
-   * Task-level status literal that discriminates this acknowledgement from terminal success and error responses.
-   */
-  status: 'submitted';
-  /**
-   * AdCP task handle used to poll get_task_status or correlate terminal webhook delivery. Distinct from evaluation_id.
-   */
-  task_id: string;
-  /**
-   * Provider-generated identity allocated when the evaluation is accepted. Optional in AdCP 3.x and required in AdCP 4.0. Providers SHOULD emit it in 3.x; when present, exact replays and the terminal result MUST carry this same value. Distinct from task_id and idempotency_key.
-   */
-  evaluation_id?: string;
-  /**
-   * Optional human-readable explanation of why the evaluation is submitted. Plain text only; callers treat it as untrusted provider input.
-   */
-  message?: string;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
  * Error response - operation failed completely, no creatives were processed
  */
 export interface SyncCreativesError {
@@ -26209,94 +26188,6 @@ export interface SyncCreativesError {
    * @minItems 1
    */
   errors: [Error, ...Error[]];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Async task envelope returned when the whole sync operation cannot be confirmed before the response is emitted — for example, when the seller batches ingestion, when async review must settle before per-item results can be issued, or when governance review gates the sync. The buyer invokes get_task_status with task_id or receives a webhook when the task completes; the creatives array with per-item action/status lands in the terminal result, not this envelope. Per-item async review (an item in pending_review while the rest of the sync resolves synchronously) belongs on the SyncCreativesSuccess branch with status: pending_review, not here.
- */
-export interface SyncCreativesSubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose creatives array carries per-item approval state via CreativeStatus. See task-status.json for the full task-status enum.
-   */
-  status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. The creatives array is issued on the completion artifact, not here. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Batch ingestion queued; typical turnaround 15-30 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   */
-  message?: string;
-  /**
-   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
-   */
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Progress data for working sync_creatives
- */
-export interface SyncCreativesAsyncWorking {
-  /**
-   * Completion percentage (0-100)
-   */
-  percentage?: number;
-  /**
-   * Current step or phase of the operation
-   */
-  current_step?: string;
-  /**
-   * Total number of steps in the operation
-   */
-  total_steps?: number;
-  /**
-   * Current step number
-   */
-  step_number?: number;
-  /**
-   * Number of creatives processed so far
-   */
-  creatives_processed?: number;
-  /**
-   * Total number of creatives to process
-   */
-  creatives_total?: number;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Input requirements for sync_creatives needing user input
- */
-export interface SyncCreativesAsyncInputRequired {
-  /**
-   * Reason code indicating why buyer input is needed
-   */
-  reason?: 'APPROVAL_REQUIRED' | 'ASSET_CONFIRMATION' | 'FORMAT_CLARIFICATION';
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Acknowledgment for submitted sync_creatives
- */
-export interface SyncCreativesAsyncSubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose creatives array carries per-item approval state via CreativeStatus. See task-status.json for the full task-status enum.
-   */
-  status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. The creatives array is issued on the completion artifact, not here. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Batch ingestion queued; typical turnaround 15-30 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   */
-  message?: string;
-  /**
-   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
-   */
-  errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -26335,102 +26226,6 @@ export interface SyncCatalogsSuccess {
    * When true, this response contains simulated data from sandbox mode.
    */
   sandbox?: boolean;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Async task envelope returned when a catalog-only sync cannot be confirmed before the response — for example, when catalog ingestion and deduplication are queued for batch processing. A request containing item_availability_updates or item_availability_queries MUST NOT return this branch because availability operations are synchronous; mixed requests whose catalog work cannot finish synchronously and atomically fail before mutation and are retried as separate calls. For catalog-only requests, the buyer invokes get_task_status with task_id or receives a webhook when the task completes; the per-catalog results land in the terminal result, not this envelope.
- */
-export interface SyncCatalogsSubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose catalogs array is issued in-line. See task-status.json for the full task-status enum.
-   */
-  status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Catalog ingestion queued; typical turnaround 5–15 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   */
-  message?: string;
-  /**
-   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
-   */
-  errors?: Error[];
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Progress data for working sync_catalogs
- */
-export interface SyncCatalogsAsyncWorking {
-  /**
-   * Completion percentage (0-100)
-   */
-  percentage?: number;
-  /**
-   * Current step or phase of the operation (e.g., 'Fetching product feed', 'Validating items', 'Platform review')
-   */
-  current_step?: string;
-  /**
-   * Total number of steps in the operation
-   */
-  total_steps?: number;
-  /**
-   * Current step number
-   */
-  step_number?: number;
-  /**
-   * Number of catalogs processed so far
-   */
-  catalogs_processed?: number;
-  /**
-   * Total number of catalogs to process
-   */
-  catalogs_total?: number;
-  /**
-   * Total number of catalog items processed across all catalogs
-   */
-  items_processed?: number;
-  /**
-   * Total number of catalog items to process across all catalogs
-   */
-  items_total?: number;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Input requirements for sync_catalogs needing buyer input
- */
-export interface SyncCatalogsAsyncInputRequired {
-  /**
-   * Reason code indicating why buyer input is needed. APPROVAL_REQUIRED: platform requires explicit approval before activating the catalog. FEED_VALIDATION: feed URL returned unexpected format or schema errors. ITEM_REVIEW: platform flagged items for manual review. FEED_ACCESS: platform cannot access the feed URL (authentication, CORS, etc.).
-   */
-  reason?: 'APPROVAL_REQUIRED' | 'FEED_VALIDATION' | 'ITEM_REVIEW' | 'FEED_ACCESS';
-  context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Acknowledgment for submitted sync_catalogs
- */
-export interface SyncCatalogsAsyncSubmitted {
-  /**
-   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose catalogs array is issued in-line. See task-status.json for the full task-status enum.
-   */
-  status: 'submitted';
-  /**
-   * Task handle the buyer uses with get_task_status (or the legacy AdCP tasks/get alias), and that the seller references on push-notification callbacks. This AdCP application-layer handle remains the snake_case task_id in every transport payload and is distinct from any transport-native A2A Task id.
-   */
-  task_id: string;
-  /**
-   * Optional human-readable explanation of why the task is submitted — e.g., 'Catalog ingestion queued; typical turnaround 5–15 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
-   */
-  message?: string;
-  /**
-   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
-   */
-  errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -26750,25 +26545,28 @@ export interface AcquireRightsRequest {
  */
 export type AcquireRightsResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -26785,15 +26583,6 @@ export type AcquireRightsResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected | AcquireRightsError);
 export interface AcquireRightsAcquired {
   /**
@@ -26986,25 +26775,28 @@ export interface CreativeApprovalRequest {
  */
 export type CreativeApprovalResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -27021,15 +26813,6 @@ export type CreativeApprovalResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (CreativeApproved | CreativeRejected | CreativePendingReview | CreativeApprovalError);
 export interface CreativeApproved {
   /**
@@ -27153,25 +26936,28 @@ export interface GetBrandIdentityRequest {
  */
 export type GetBrandIdentityResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -27188,15 +26974,6 @@ export type GetBrandIdentityResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (GetBrandIdentitySuccess | GetBrandIdentityError);
 export interface GetBrandIdentitySuccess {
   /**
@@ -27640,25 +27417,28 @@ export interface GetRightsRequest {
  */
 export type GetRightsResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -27675,15 +27455,6 @@ export type GetRightsResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (GetRightsSuccess | GetRightsError);
 export interface GetRightsSuccess {
   /**
@@ -27892,7 +27663,7 @@ export interface SearchBrandsRequest {
 /**
  * Brand stubs matching the search query. Each stub carries the public identity tier — enough to evaluate a brand and follow up with get_brand_identity (for full identity) or get_rights (for pricing). Rich authorized data (voice synthesis, high-res assets, tone guidelines) is not included.
  */
-export type SearchBrandsResponse = AdCPVersionEnvelope & ProtocolEnvelope & (SearchBrandsSuccess | SearchBrandsError);
+export type SearchBrandsResponse = ProtocolEnvelope & (SearchBrandsSuccess | SearchBrandsError);
 export interface SearchBrandsSuccess {
   /**
    * Brand stubs matching the query, ranked by relevance
@@ -28059,25 +27830,28 @@ export interface UpdateRightsRequest {
  */
 export type UpdateRightsResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -28094,15 +27868,6 @@ export type UpdateRightsResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (UpdateRightsSuccess | UpdateRightsError);
 export interface UpdateRightsSuccess {
   /**
@@ -28257,25 +28022,28 @@ export interface VerifyTrademarkClaim {
  */
 export type VerifyBrandClaimResponse = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -28292,15 +28060,6 @@ export type VerifyBrandClaimResponse = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (VerifyBrandClaimSuccess | VerifyBrandClaimError);
 export interface VerifyBrandClaimSuccess {
   /**
@@ -28432,25 +28191,28 @@ export interface VerifyBrandClaimsRequestBulk {
  */
 export type VerifyBrandClaimsResponseBulk = {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -28467,15 +28229,6 @@ export type VerifyBrandClaimsResponseBulk = {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
 } & (VerifyBrandClaimsSuccess | VerifyBrandClaimsError);
 /**
  * One entry in `results[]`. Either a per-claim success (claim_type + status + optional details/context_note) or a per-claim error (error field only). Mirrors the single-target `verify_brand_claim` response success arm shape.
@@ -28782,284 +28535,282 @@ export type ComplianceTaskCompletionData =
 /**
  * Canonical response contract for get_products, including completed results, terminal failures, wholesale unchanged responses, and the structured GetProductsRejected business outcome.
  */
-export type GetProductsCompletion = AdCPVersionEnvelope &
-  ProtocolEnvelope & {
-  } & {
+export type GetProductsCompletion = ProtocolEnvelope & {
+} & {
+  /**
+   * Array of matching products
+   */
+  products?: Product[];
+  /**
+   * Experimental (media_buy.collection_cards). Full collection objects for collections referenced by the collections selectors of the returned products. Sellers MUST NOT return this array unless the request set include_collections to true; when it is set, sellers SHOULD include every referenced collection and MUST NOT include one that no returned product references. At most one entry per (publisher_domain, collection_id). If a key appears more than once, that collection is unresolvable from this response; buyers fall back to the publisher's adagents.json, as they do for an omitted collection, and ignore entries that no returned product references. These are convenience copies, never authorization evidence: a copy wins over adagents.json only on images, sample_content, url, description, season, cadence and distribution[].followers (see core/response-collection.json). Present only alongside products.
+   *
+   * @minItems 1
+   */
+  collections?: [ResponseCollection, ...ResponseCollection[]];
+  targeting_resolution?: ProductDiscoveryTargetingResolution;
+  /**
+   * Bundled platform-extension definitions referenced by any product in `products`. Keyed by `<extension_uri>@<digest>` (e.g., `https://creative.adcontextprotocol.org/translated/meta/extensions/meta_pixel@sha256:abc...`). When present, lets buyers resolve `platform_extensions` references on product format declarations without a separate fetch. Buyer SDKs cache by URI@digest; subsequent get_products responses MAY omit definitions the buyer already has cached and rely on the digest match. Each value is an extension definition with `extends` (the canonical concept it extends, e.g., `tracking`), `fields` (the schema for additional fields the extension contributes), `version`, and optional `description`.
+   */
+  extensions?: {
+  };
+  /**
+   * Optional legacy proposed media plans. When the request carries media_buy_frequency_cap, every returned proposal echoes the bound value as proposal.frequency_cap. Buyers may refine or execute a committed proposal by ID.
+   */
+  proposals?: Proposal[];
+  /**
+   * Task-specific errors and warnings (e.g., product filtering issues)
+   */
+  errors?: Error[];
+  /**
+   * Buyer-facing market explanation required only on the GetProductsRejected arm. MAY be sanitized to protect confidential seller rules. Plain text only.
+   */
+  reason?: string;
+  /**
+   * Actionable alternatives available only on the GetProductsRejected arm.
+   *
+   * @maxItems 20
+   */
+  suggestions?:
+    string[];
+  /**
+   * [AdCP 3.0] Indicates whether deprecated top-level property_list filtering was applied. True if the agent filtered products based on the provided property_list; every returned product also carries the corresponding property/include list_applications receipt. Absent or false if property_list was not provided or not supported by this agent.
+   */
+  property_list_applied?: boolean;
+  /**
+   * Whether the seller filtered results based on the provided catalog. True if the seller matched catalog items against its inventory. Absent or false if no catalog was provided or the seller does not support catalog matching.
+   */
+  catalog_applied?: boolean;
+  /**
+   * Seller's response to each change request in the refine array, matched by position. Each entry acknowledges whether the corresponding ask was applied, partially applied, or unable to be fulfilled. MUST contain the same number of entries in the same order as the request's refine array. Only present when the request used buying_mode: 'refine'. Each entry MUST echo the request entry's scope and — for product and proposal scopes — the matching id field (product_id or proposal_id), so orchestrators can cross-validate alignment. In AdCP 3.3, when any refine entry carries package, this array is REQUIRED for the entire request. For each package entry, applied requires result_product_id, resolved_start_time, and resolved_end_time and confirms that the mapped returned product forecast uses exactly the resolved package inputs, including its goal; unable requires non-empty notes explaining why those exact inputs could not be forecast, and the product MUST NOT carry a substitute forecast. partial MUST NOT be used to imply exact package forecast support. Insufficient inventory is an applied forecast with availability_status unavailable, not an unable outcome.
+   */
+  refinement_applied?: (
+    | {
+        /**
+         * Echoes scope 'request' from the corresponding refine entry.
+         */
+        scope: 'request';
+        /**
+         * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
+         */
+        status: 'applied' | 'partial' | 'unable';
+        /**
+         * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
+         */
+        notes?: string;
+      }
+    | {
+      }
+    | {
+        /**
+         * Echoes scope 'proposal' from the corresponding refine entry.
+         */
+        scope: 'proposal';
+        /**
+         * Echoes proposal_id from the corresponding refine entry.
+         */
+        proposal_id: string;
+        /**
+         * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
+         */
+        status: 'applied' | 'partial' | 'unable';
+        /**
+         * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
+         */
+        notes?: string;
+      }
+  )[];
+  /**
+   * Declares what the seller could not finish within the buyer's time_budget or due to internal limits while still returning a usable response. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete. This field does not classify the condition as retryable; retryability is carried by error.recovery on the error channel.
+   *
+   * @minItems 1
+   */
+  incomplete?: [
+    {
+      /**
+       * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget — symmetric with get_signals' 'wholesale_feed' scope so sellers have a precise way to declare wholesale-incomplete on the products surface.
+       */
+      scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
+      /**
+       * Human-readable explanation of what is missing and why.
+       */
+      description: string;
+      /**
+       * How much additional time is expected to resolve this scope. Allows the buyer to decide whether to make a new attempt with a larger time_budget; its presence is not an automatic-retry instruction.
+       */
+      estimated_wait?: Duration;
+    },
+    ...{
+      /**
+       * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget — symmetric with get_signals' 'wholesale_feed' scope so sellers have a precise way to declare wholesale-incomplete on the products surface.
+       */
+      scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
+      /**
+       * Human-readable explanation of what is missing and why.
+       */
+      description: string;
+      /**
+       * How much additional time is expected to resolve this scope. Allows the buyer to decide whether to make a new attempt with a larger time_budget; its presence is not an automatic-retry instruction.
+       */
+      estimated_wait?: Duration;
+    }[]
+  ];
+  /**
+   * Optional non-fatal diagnostic block describing how the request's `filters` narrowed the candidate set. Use this to disambiguate empty/small result lists between 'no inventory matches the brief' and 'a specific filter excluded everything', without breaking the filter-not-fail convention (sellers still silently exclude unmatched products; this block is observability, not error reporting). Sellers MAY populate this when meaningful narrowing occurred; buyers MAY use it for triage UX without depending on its presence. Counts only — products are not enumerated by name to avoid leaking competitive intelligence about adjacent campaigns or seller inventory. `total_candidates` and `excluded_by` are independently optional — sellers whose baseline candidate set size is sensitive MAY emit `excluded_by` without `total_candidates`, or vice versa.
+   */
+  filter_diagnostics?: {
     /**
-     * Array of matching products
+     * How `excluded_by[*].count` values are computed across multiple filters. `only`: counts products that would have been included if not for THIS filter alone (deterministic; the right value for 'which filter killed my result set' triage — recommended when feasible). `any`: counts products excluded by ANY filter (so multiple filters' counts may overlap and sum to more than `total_candidates`). `approximate`: sellers SHOULD use this when their pipeline can't cleanly attribute exclusions to a single filter. Buyers SHOULD inspect `semantics` before doing arithmetic on counts.
      */
-    products?: Product[];
+    semantics?: 'only' | 'any' | 'approximate';
     /**
-     * Experimental (media_buy.collection_cards). Full collection objects for collections referenced by the collections selectors of the returned products. Sellers MUST NOT return this array unless the request set include_collections to true; when it is set, sellers SHOULD include every referenced collection and MUST NOT include one that no returned product references. At most one entry per (publisher_domain, collection_id). If a key appears more than once, that collection is unresolvable from this response; buyers fall back to the publisher's adagents.json, as they do for an omitted collection, and ignore entries that no returned product references. These are convenience copies, never authorization evidence: a copy wins over adagents.json only on images, sample_content, url, description, season, cadence and distribution[].followers (see core/response-collection.json). Present only alongside products.
-     *
-     * @minItems 1
+     * Number of products the seller considered before applying `filters`. Baseline for interpreting per-filter exclusion counts. Approximate — sellers MAY return a sampled or capped count when their candidate pool is large. Optional; sellers whose baseline candidate set size is sensitive (revealing market posture or competitive density) MAY omit this while still emitting `excluded_by`.
      */
-    collections?: [ResponseCollection, ...ResponseCollection[]];
-    targeting_resolution?: ProductDiscoveryTargetingResolution;
+    total_candidates?: number;
     /**
-     * Bundled platform-extension definitions referenced by any product in `products`. Keyed by `<extension_uri>@<digest>` (e.g., `https://creative.adcontextprotocol.org/translated/meta/extensions/meta_pixel@sha256:abc...`). When present, lets buyers resolve `platform_extensions` references on product format declarations without a separate fetch. Buyer SDKs cache by URI@digest; subsequent get_products responses MAY omit definitions the buyer already has cached and rely on the digest match. Each value is an extension definition with `extends` (the canonical concept it extends, e.g., `tracking`), `fields` (the schema for additional fields the extension contributes), `version`, and optional `description`.
+     * Per-filter exclusion counts, keyed by the filter property name as it appears in the request's `filters` object (e.g., `pricing_currencies`, `required_metrics`, `required_vendor_metrics`, `required_geo_targeting`, `budget_range`). Values are objects carrying `count` and optional filter-specific detail. Only filters that actually narrowed the set need appear here; absence of a key means that filter did not exclude anything (or was not in the request).
      */
-    extensions?: {
+    excluded_by?: {
+      [k: string]:
+        | {
+            /**
+             * Number of products excluded by this filter, interpreted per the parent `semantics` field.
+             */
+            count: number;
+            /**
+             * Optional list of the specific filter values that contributed to exclusions, when meaningful. For `required_metrics`: the metric names that excluded products (strings). For `required_vendor_metrics`: the vendor/metric pin entries (objects). Item shape is filter-specific; the schema admits string OR object items. Buyers without filter-specific knowledge SHOULD treat as opaque.
+             */
+            values?: (string | {})[];
+            /**
+             * Optional human-readable note about why this filter narrowed the set (e.g., 'no products in this brief support DV viewability at the requested threshold').
+             */
+            notes?: string;
+          }
+        | undefined;
     };
+  };
+  pagination?: PaginationResponse;
+  /**
+   * Opaque token representing the version of the wholesale product feed state used to compose this response. Sellers that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so buyers can cache and probe later. Buyers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A buyer caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog, include_collections) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. Without include_collections, collection copies are outside the version; with include_collections true, the version also changes when any returned collection copy changes, and sellers issue distinct tokens for the two settings. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
+   */
+  wholesale_feed_version?: string;
+  /**
+   * Opaque token representing the version of the pricing layer, including product pricing_options and nested signal_targeting_options pricing_options. When the seller supports independent pricing versioning, pricing_version changes when prices move but wholesale_feed_version changes only when structure/metadata moves. Same cache_scope keying as wholesale_feed_version. Sellers not separating these MAY omit pricing_version and use wholesale_feed_version for both.
+   */
+  pricing_version?: string;
+  /**
+   * Experimental (`media_buy.execution_readiness`). Whether the request's `account` can satisfy the `execution_requirements[]` of the products on this response, keyed by `product_id`. Present only when the request set `include_execution_readiness: true` and carried an authorized `account`. Advisory: `create_media_buy` revalidates. Not part of the cache layer: it does not change `cache_scope`, `wholesale_feed_version`, or `pricing_version`, buyers key it by (account, `version`) and MUST NOT cache it under the public key, sellers MUST NOT put it in wholesale feed webhooks and MUST omit it on `unchanged: true` responses. Covers only this response's products; merge pages by `product_id`. See the media-buy specification, 'Per-account execution readiness'.
+   */
+  execution_readiness?: {
     /**
-     * Optional legacy proposed media plans. When the request carries media_buy_frequency_cap, every returned proposal echoes the bound value as proposal.frequency_cap. Buyers may refine or execute a committed proposal by ID.
+     * Opaque token for the account's readiness state, independent of `wholesale_feed_version` and `pricing_version`. Compare for equality only. Equal versions MUST imply identical entries for any product present in both responses.
      */
-    proposals?: Proposal[];
+    version: string;
     /**
-     * Task-specific errors and warnings (e.g., product filtering issues)
+     * When the seller read the account's resources. Readiness may be stale by then; `create_media_buy` is authoritative.
      */
-    errors?: Error[];
+    evaluated_at?: string;
     /**
-     * Buyer-facing market explanation required only on the GetProductsRejected arm. MAY be sanitized to protect confidential seller rules. Plain text only.
+     * Readiness keyed by `product_id`, for returned products that declare `execution_requirements`. A missing entry means not evaluated, not ready.
      */
-    reason?: string;
-    /**
-     * Actionable alternatives available only on the GetProductsRejected arm.
-     *
-     * @maxItems 20
-     */
-    suggestions?:
-      string[];
-    /**
-     * [AdCP 3.0] Indicates whether deprecated top-level property_list filtering was applied. True if the agent filtered products based on the provided property_list; every returned product also carries the corresponding property/include list_applications receipt. Absent or false if property_list was not provided or not supported by this agent.
-     */
-    property_list_applied?: boolean;
-    /**
-     * Whether the seller filtered results based on the provided catalog. True if the seller matched catalog items against its inventory. Absent or false if no catalog was provided or the seller does not support catalog matching.
-     */
-    catalog_applied?: boolean;
-    /**
-     * Seller's response to each change request in the refine array, matched by position. Each entry acknowledges whether the corresponding ask was applied, partially applied, or unable to be fulfilled. MUST contain the same number of entries in the same order as the request's refine array. Only present when the request used buying_mode: 'refine'. Each entry MUST echo the request entry's scope and — for product and proposal scopes — the matching id field (product_id or proposal_id), so orchestrators can cross-validate alignment. In AdCP 3.3, when any refine entry carries package, this array is REQUIRED for the entire request. For each package entry, applied requires result_product_id, resolved_start_time, and resolved_end_time and confirms that the mapped returned product forecast uses exactly the resolved package inputs, including its goal; unable requires non-empty notes explaining why those exact inputs could not be forecast, and the product MUST NOT carry a substitute forecast. partial MUST NOT be used to imply exact package forecast support. Insufficient inventory is an applied forecast with availability_status unavailable, not an unable outcome.
-     */
-    refinement_applied?: (
-      | {
-          /**
-           * Echoes scope 'request' from the corresponding refine entry.
-           */
-          scope: 'request';
-          /**
-           * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
-           */
-          status: 'applied' | 'partial' | 'unable';
-          /**
-           * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
-           */
-          notes?: string;
-        }
-      | {
-        }
-      | {
-          /**
-           * Echoes scope 'proposal' from the corresponding refine entry.
-           */
-          scope: 'proposal';
-          /**
-           * Echoes proposal_id from the corresponding refine entry.
-           */
-          proposal_id: string;
-          /**
-           * 'applied': the ask was fulfilled. 'partial': the ask was partially fulfilled — see notes for details. 'unable': the seller could not fulfill the ask — see notes for why.
-           */
-          status: 'applied' | 'partial' | 'unable';
-          /**
-           * Seller explanation of what was done, what couldn't be done, or why. Recommended when status is 'partial' or 'unable'.
-           */
-          notes?: string;
-        }
-    )[];
-    /**
-     * Declares what the seller could not finish within the buyer's time_budget or due to internal limits while still returning a usable response. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete. This field does not classify the condition as retryable; retryability is carried by error.recovery on the error channel.
-     *
-     * @minItems 1
-     */
-    incomplete?: [
-      {
-        /**
-         * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget — symmetric with get_signals' 'wholesale_feed' scope so sellers have a precise way to declare wholesale-incomplete on the products surface.
-         */
-        scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
-        /**
-         * Human-readable explanation of what is missing and why.
-         */
-        description: string;
-        /**
-         * How much additional time is expected to resolve this scope. Allows the buyer to decide whether to make a new attempt with a larger time_budget; its presence is not an automatic-retry instruction.
-         */
-        estimated_wait?: Duration;
-      },
-      ...{
-        /**
-         * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget — symmetric with get_signals' 'wholesale_feed' scope so sellers have a precise way to declare wholesale-incomplete on the products surface.
-         */
-        scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'wholesale_feed';
-        /**
-         * Human-readable explanation of what is missing and why.
-         */
-        description: string;
-        /**
-         * How much additional time is expected to resolve this scope. Allows the buyer to decide whether to make a new attempt with a larger time_budget; its presence is not an automatic-retry instruction.
-         */
-        estimated_wait?: Duration;
-      }[]
-    ];
-    /**
-     * Optional non-fatal diagnostic block describing how the request's `filters` narrowed the candidate set. Use this to disambiguate empty/small result lists between 'no inventory matches the brief' and 'a specific filter excluded everything', without breaking the filter-not-fail convention (sellers still silently exclude unmatched products; this block is observability, not error reporting). Sellers MAY populate this when meaningful narrowing occurred; buyers MAY use it for triage UX without depending on its presence. Counts only — products are not enumerated by name to avoid leaking competitive intelligence about adjacent campaigns or seller inventory. `total_candidates` and `excluded_by` are independently optional — sellers whose baseline candidate set size is sensitive MAY emit `excluded_by` without `total_candidates`, or vice versa.
-     */
-    filter_diagnostics?: {
-      /**
-       * How `excluded_by[*].count` values are computed across multiple filters. `only`: counts products that would have been included if not for THIS filter alone (deterministic; the right value for 'which filter killed my result set' triage — recommended when feasible). `any`: counts products excluded by ANY filter (so multiple filters' counts may overlap and sum to more than `total_candidates`). `approximate`: sellers SHOULD use this when their pipeline can't cleanly attribute exclusions to a single filter. Buyers SHOULD inspect `semantics` before doing arithmetic on counts.
-       */
-      semantics?: 'only' | 'any' | 'approximate';
-      /**
-       * Number of products the seller considered before applying `filters`. Baseline for interpreting per-filter exclusion counts. Approximate — sellers MAY return a sampled or capped count when their candidate pool is large. Optional; sellers whose baseline candidate set size is sensitive (revealing market posture or competitive density) MAY omit this while still emitting `excluded_by`.
-       */
-      total_candidates?: number;
-      /**
-       * Per-filter exclusion counts, keyed by the filter property name as it appears in the request's `filters` object (e.g., `pricing_currencies`, `required_metrics`, `required_vendor_metrics`, `required_geo_targeting`, `budget_range`). Values are objects carrying `count` and optional filter-specific detail. Only filters that actually narrowed the set need appear here; absence of a key means that filter did not exclude anything (or was not in the request).
-       */
-      excluded_by?: {
-        [k: string]:
-          | {
-              /**
-               * Number of products excluded by this filter, interpreted per the parent `semantics` field.
-               */
-              count: number;
-              /**
-               * Optional list of the specific filter values that contributed to exclusions, when meaningful. For `required_metrics`: the metric names that excluded products (strings). For `required_vendor_metrics`: the vendor/metric pin entries (objects). Item shape is filter-specific; the schema admits string OR object items. Buyers without filter-specific knowledge SHOULD treat as opaque.
-               */
-              values?: (string | {})[];
-              /**
-               * Optional human-readable note about why this filter narrowed the set (e.g., 'no products in this brief support DV viewability at the requested threshold').
-               */
-              notes?: string;
-            }
-          | undefined;
-      };
+    products: {
+      [k: string]: ProductExecutionReadiness | undefined;
     };
-    pagination?: PaginationResponse;
-    /**
-     * Opaque token representing the version of the wholesale product feed state used to compose this response. Sellers that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so buyers can cache and probe later. Buyers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A buyer caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog, include_collections) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. Without include_collections, collection copies are outside the version; with include_collections true, the version also changes when any returned collection copy changes, and sellers issue distinct tokens for the two settings. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
-     */
-    wholesale_feed_version?: string;
-    /**
-     * Opaque token representing the version of the pricing layer, including product pricing_options and nested signal_targeting_options pricing_options. When the seller supports independent pricing versioning, pricing_version changes when prices move but wholesale_feed_version changes only when structure/metadata moves. Same cache_scope keying as wholesale_feed_version. Sellers not separating these MAY omit pricing_version and use wholesale_feed_version for both.
-     */
-    pricing_version?: string;
-    /**
-     * Experimental (`media_buy.execution_readiness`). Whether the request's `account` can satisfy the `execution_requirements[]` of the products on this response, keyed by `product_id`. Present only when the request set `include_execution_readiness: true` and carried an authorized `account`. Advisory: `create_media_buy` revalidates. Not part of the cache layer: it does not change `cache_scope`, `wholesale_feed_version`, or `pricing_version`, buyers key it by (account, `version`) and MUST NOT cache it under the public key, sellers MUST NOT put it in wholesale feed webhooks and MUST omit it on `unchanged: true` responses. Covers only this response's products; merge pages by `product_id`. See the media-buy specification, 'Per-account execution readiness'.
-     */
-    execution_readiness?: {
-      /**
-       * Opaque token for the account's readiness state, independent of `wholesale_feed_version` and `pricing_version`. Compare for equality only. Equal versions MUST imply identical entries for any product present in both responses.
-       */
-      version: string;
-      /**
-       * When the seller read the account's resources. Readiness may be stale by then; `create_media_buy` is authoritative.
-       */
-      evaluated_at?: string;
-      /**
-       * Readiness keyed by `product_id`, for returned products that declare `execution_requirements`. A missing entry means not evaluated, not ready.
-       */
-      products: {
-        [k: string]: ProductExecutionReadiness | undefined;
-      };
-      ext?: ExtensionObject;
-    };
-    /**
-     * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the seller's published rate card; the buyer MAY dedupe under (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog) without scoping by account. 'account': this response includes account-specific overrides; the buyer MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the seller MUST return `cache_scope: 'public'`. When the request included `account`, the seller MUST return either: 'public' (this account prices off the public rate card — buyer dedupes) or 'account' (account-specific overrides exist — buyer caches under the account key). Sellers MAY return 'public' on an account-scoped request that previously had overrides — buyers SHOULD interpret this as a downgrade and drop their account-overlay. Without schema-required cache_scope, a seller silently omitting the field on an account-scoped response would cause buyers to mis-key the cache and serve account-overlay payloads to other accounts. **Backward-compatibility note for 3.1 validators:** SDKs that validate strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version` (release-precision version negotiation, 3.1). For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed.
-     */
-    cache_scope?: 'public' | 'account';
-    /**
-     * Present and `true` ONLY on wholesale-mode responses when the request carried if_wholesale_feed_version (and/or if_pricing_version) matching the seller's current version for the buyer's cache_scope, in which case products[] MUST be omitted; wholesale_feed_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Buyers receiving unchanged: true MUST NOT mutate their local wholesale product mirror. **One shape per state:** sellers MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries products. Two shapes ({ unchanged: false, products: [...] } vs. { products: [...] }) for the same state would let some sellers always emit the field and some never would, creating an inconsistency the wire shouldn't carry. **Cross-scope isolation:** the comparator that decides `unchanged` MUST be keyed on `(cache_scope, wholesale_feed_version)`, not on the token value alone. A seller MUST NOT emit `unchanged: true` when it resolves the request to a different `cache_scope` than the one whose token the buyer echoed in `if_wholesale_feed_version` (and/or `if_pricing_version`): because the token is scope-keyed, a value minted for `cache_scope: 'public'` cannot match the seller's current token for `cache_scope: 'account'` (or vice-versa), so such a request MUST return the full feed for the resolved scope with that scope's own token.
-     */
-    unchanged?: true;
-    /**
-     * When true, this response contains simulated data from sandbox mode.
-     */
-    sandbox?: boolean;
-    context?: ContextObject;
     ext?: ExtensionObject;
   };
+  /**
+   * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the seller's published rate card; the buyer MAY dedupe under (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog) without scoping by account. 'account': this response includes account-specific overrides; the buyer MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the seller MUST return `cache_scope: 'public'`. When the request included `account`, the seller MUST return either: 'public' (this account prices off the public rate card — buyer dedupes) or 'account' (account-specific overrides exist — buyer caches under the account key). Sellers MAY return 'public' on an account-scoped request that previously had overrides — buyers SHOULD interpret this as a downgrade and drop their account-overlay. Without schema-required cache_scope, a seller silently omitting the field on an account-scoped response would cause buyers to mis-key the cache and serve account-overlay payloads to other accounts. **Backward-compatibility note for 3.1 validators:** SDKs that validate strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version` (release-precision version negotiation, 3.1). For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed.
+   */
+  cache_scope?: 'public' | 'account';
+  /**
+   * Present and `true` ONLY on wholesale-mode responses when the request carried if_wholesale_feed_version (and/or if_pricing_version) matching the seller's current version for the buyer's cache_scope, in which case products[] MUST be omitted; wholesale_feed_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Buyers receiving unchanged: true MUST NOT mutate their local wholesale product mirror. **One shape per state:** sellers MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries products. Two shapes ({ unchanged: false, products: [...] } vs. { products: [...] }) for the same state would let some sellers always emit the field and some never would, creating an inconsistency the wire shouldn't carry. **Cross-scope isolation:** the comparator that decides `unchanged` MUST be keyed on `(cache_scope, wholesale_feed_version)`, not on the token value alone. A seller MUST NOT emit `unchanged: true` when it resolves the request to a different `cache_scope` than the one whose token the buyer echoed in `if_wholesale_feed_version` (and/or `if_pricing_version`): because the token is scope-keyed, a value minted for `cache_scope: 'public'` cannot match the seller's current token for `cache_scope: 'account'` (or vice-versa), so such a request MUST return the full feed for the resolved scope with that scope's own token.
+   */
+  unchanged?: true;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+};
 /**
  * Response payload for get_signals task
  */
-export type GetSignalsCompletion = AdCPVersionEnvelope &
-  ProtocolEnvelope & {
-    /**
-     * Array of matching signals
-     */
-    signals?: (SignalListing &
-      SignalDefinitionEnrichment & {
-      })[];
-    /**
-     * Experimental (signals.pricing_groups). Signal-agent default rules for how fees of signals sharing a pricing_group combine. Product-scoped signal_targeting_rules.signal_pricing_group_rules override these for the same pricing_group. A group with no rule is charged 'each'.
-     *
-     * @minItems 1
-     */
-    signal_pricing_group_rules?: [SignalPricingGroupRule, ...SignalPricingGroupRule[]];
-    /**
-     * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
-     */
-    errors?: Error[];
-    /**
-     * Declares what the agent could not finish within the caller's time_budget or due to internal limits. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete.
-     *
-     * @minItems 1
-     */
-    incomplete?: [
-      {
-        /**
-         * 'signals': not all matching signals were returned. 'pricing': signals returned but pricing is absent or unconfirmed. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget.
-         */
-        scope: 'signals' | 'pricing' | 'wholesale_feed';
-        /**
-         * Human-readable explanation of what is missing and why.
-         */
-        description: string;
-        /**
-         * How much additional time would resolve this scope. Allows the caller to decide whether to retry with a larger time_budget.
-         */
-        estimated_wait?: Duration;
-      },
-      ...{
-        /**
-         * 'signals': not all matching signals were returned. 'pricing': signals returned but pricing is absent or unconfirmed. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget.
-         */
-        scope: 'signals' | 'pricing' | 'wholesale_feed';
-        /**
-         * Human-readable explanation of what is missing and why.
-         */
-        description: string;
-        /**
-         * How much additional time would resolve this scope. Allows the caller to decide whether to retry with a larger time_budget.
-         */
-        estimated_wait?: Duration;
-      }[]
-    ];
-    /**
-     * Opaque token representing the version of the wholesale signals feed state used to compose this response. Agents that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so callers can cache and probe later. Callers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A caller caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, discovery_mode, filters, destinations, countries) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
-     */
-    wholesale_feed_version?: string;
-    /**
-     * Opaque token representing the version of the pricing layer. When the agent supports independent pricing versioning, pricing_version changes when prices move but wholesale_feed_version changes only when structure/metadata moves. Same cache_scope keying as wholesale_feed_version. Agents not separating these MAY omit pricing_version and use wholesale_feed_version for both.
-     */
-    pricing_version?: string;
-    /**
-     * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the agent's published rate card; the caller MAY dedupe under (agent, discovery_mode, filters, destinations, countries) without scoping by account. 'account': this response includes account-specific overrides; the caller MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the agent MUST return `cache_scope: 'public'`. When the request included `account`, the agent MUST return either 'public' (this account prices off the public rate card — caller dedupes) or 'account' (account-specific overrides exist — caller caches under the account key). Agents MAY return 'public' on an account-scoped request that previously had overrides — callers SHOULD interpret this as a downgrade. Without schema-required cache_scope, an agent silently omitting the field on an account-scoped response would cause callers to mis-key the cache and serve account-overlay payloads to other accounts — the canonical safety invariant of the entire cache layering model. **Backward-compatibility note for 3.1 validators:** SDKs validating strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version`. For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed — pre-3.1 agents correctly emit no cache_scope and remain conformant to their declared version. This is a tightening within 3.1, not a 3.0 break.
-     */
-    cache_scope?: 'public' | 'account';
-    /**
-     * Present and `true` ONLY on wholesale-mode responses when the request carried if_wholesale_feed_version (and/or if_pricing_version) matching the agent's current version for the caller's cache_scope, in which case signals[] MUST be omitted; wholesale_feed_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Callers receiving unchanged: true MUST NOT mutate their local wholesale signals mirror. **One shape per state:** agents MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries signals. **Cross-scope isolation:** the comparator that decides `unchanged` MUST be keyed on `(cache_scope, wholesale_feed_version)`, not on the token value alone. An agent MUST NOT emit `unchanged: true` when it resolves the request to a different `cache_scope` than the one whose token the caller echoed in `if_wholesale_feed_version` (and/or `if_pricing_version`): because the token is scope-keyed, a value minted for `cache_scope: 'public'` cannot match the agent's current token for `cache_scope: 'account'` (or vice-versa), so such a request MUST return the full feed for the resolved scope with that scope's own token.
-     */
-    unchanged?: true;
-    pagination?: PaginationResponse;
-    /**
-     * When true, this response contains simulated data from sandbox mode.
-     */
-    sandbox?: boolean;
-    context?: ContextObject;
-    ext?: ExtensionObject;
-  };
+export type GetSignalsCompletion = ProtocolEnvelope & {
+  /**
+   * Array of matching signals
+   */
+  signals?: (SignalListing &
+    SignalDefinitionEnrichment & {
+    })[];
+  /**
+   * Experimental (signals.pricing_groups). Signal-agent default rules for how fees of signals sharing a pricing_group combine. Product-scoped signal_targeting_rules.signal_pricing_group_rules override these for the same pricing_group. A group with no rule is charged 'each'.
+   *
+   * @minItems 1
+   */
+  signal_pricing_group_rules?: [SignalPricingGroupRule, ...SignalPricingGroupRule[]];
+  /**
+   * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
+   */
+  errors?: Error[];
+  /**
+   * Declares what the agent could not finish within the caller's time_budget or due to internal limits. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete.
+   *
+   * @minItems 1
+   */
+  incomplete?: [
+    {
+      /**
+       * 'signals': not all matching signals were returned. 'pricing': signals returned but pricing is absent or unconfirmed. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget.
+       */
+      scope: 'signals' | 'pricing' | 'wholesale_feed';
+      /**
+       * Human-readable explanation of what is missing and why.
+       */
+      description: string;
+      /**
+       * How much additional time would resolve this scope. Allows the caller to decide whether to retry with a larger time_budget.
+       */
+      estimated_wait?: Duration;
+    },
+    ...{
+      /**
+       * 'signals': not all matching signals were returned. 'pricing': signals returned but pricing is absent or unconfirmed. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget.
+       */
+      scope: 'signals' | 'pricing' | 'wholesale_feed';
+      /**
+       * Human-readable explanation of what is missing and why.
+       */
+      description: string;
+      /**
+       * How much additional time would resolve this scope. Allows the caller to decide whether to retry with a larger time_budget.
+       */
+      estimated_wait?: Duration;
+    }[]
+  ];
+  /**
+   * Opaque token representing the version of the wholesale signals feed state used to compose this response. Agents that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so callers can cache and probe later. Callers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A caller caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, discovery_mode, filters, destinations, countries) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
+   */
+  wholesale_feed_version?: string;
+  /**
+   * Opaque token representing the version of the pricing layer. When the agent supports independent pricing versioning, pricing_version changes when prices move but wholesale_feed_version changes only when structure/metadata moves. Same cache_scope keying as wholesale_feed_version. Agents not separating these MAY omit pricing_version and use wholesale_feed_version for both.
+   */
+  pricing_version?: string;
+  /**
+   * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the agent's published rate card; the caller MAY dedupe under (agent, discovery_mode, filters, destinations, countries) without scoping by account. 'account': this response includes account-specific overrides; the caller MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the agent MUST return `cache_scope: 'public'`. When the request included `account`, the agent MUST return either 'public' (this account prices off the public rate card — caller dedupes) or 'account' (account-specific overrides exist — caller caches under the account key). Agents MAY return 'public' on an account-scoped request that previously had overrides — callers SHOULD interpret this as a downgrade. Without schema-required cache_scope, an agent silently omitting the field on an account-scoped response would cause callers to mis-key the cache and serve account-overlay payloads to other accounts — the canonical safety invariant of the entire cache layering model. **Backward-compatibility note for 3.1 validators:** SDKs validating strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version`. For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed — pre-3.1 agents correctly emit no cache_scope and remain conformant to their declared version. This is a tightening within 3.1, not a 3.0 break.
+   */
+  cache_scope?: 'public' | 'account';
+  /**
+   * Present and `true` ONLY on wholesale-mode responses when the request carried if_wholesale_feed_version (and/or if_pricing_version) matching the agent's current version for the caller's cache_scope, in which case signals[] MUST be omitted; wholesale_feed_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Callers receiving unchanged: true MUST NOT mutate their local wholesale signals mirror. **One shape per state:** agents MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries signals. **Cross-scope isolation:** the comparator that decides `unchanged` MUST be keyed on `(cache_scope, wholesale_feed_version)`, not on the token value alone. An agent MUST NOT emit `unchanged: true` when it resolves the request to a different `cache_scope` than the one whose token the caller echoed in `if_wholesale_feed_version` (and/or `if_pricing_version`): because the token is scope-keyed, a value minted for `cache_scope: 'public'` cannot match the agent's current token for `cache_scope: 'account'` (or vice-versa), so such a request MUST return the full feed for the resolved scope with that scope's own token.
+   */
+  unchanged?: true;
+  pagination?: PaginationResponse;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+};
 /**
  * Success response - media buy created successfully
  */
@@ -29846,6 +29597,11 @@ export interface AccountAuthorization {
    */
   authorized_at?: string;
   /**
+   * The latest re-grant within the caller's current authorization chain for this account: when authority last resumed after a loss that the re-grant continued, because it came before the previous unauthorized_at plus status_retention_days. Absent while the chain has had no re-grant. A re-grant that starts a new chain sets authorized_at to the re-grant time and leaves this absent. Reporting subscriptions owe withheld periods at this instant plus the offering's delivery_sla, and an unbackfilled gap ends at the first period boundary at or after it. Sellers advertising media_buy.reporting_subscriptions MUST populate it whenever the current chain has a re-grant.
+   * @format date-time
+   */
+  regranted_at?: string;
+  /**
    * Convenience flag. When true, the caller is permitted only non-mutating tasks. Sellers MUST reject any mutation from a read-only caller with READ_ONLY_SCOPE. For the AdCP 3.2 product split, read-only permits list_products but rejects request_proposals, refine_proposals, and decline_proposals; a legacy get_products call is permitted only when the seller can guarantee the selected arm is a synchronous side-effect-free read. Sellers MAY omit this field; omission is equivalent to `false`. Callers MUST NOT infer read-only from `allowed_tasks` alone — the seller MUST set this explicitly when it applies.
    */
   read_only?: boolean;
@@ -30224,6 +29980,25 @@ export interface AccountRequest {
   account_id?: string;
   account?: Account;
   resolution?: AccountRequestResolution;
+  /**
+   * Present when and only when the request resolved as updated and changed billing, billing_entity, or payment_terms: when the new money terms take effect. Delivery before it is invoiced under the previous terms, and delivery from it under the new ones. At or after the instant the request resolved; a seller MAY choose a later instant, such as its next invoice-period boundary. Changes to other attributes take effect when the request resolves.
+   * @format date-time
+   */
+  effective_at?: string;
+  /**
+   * Present when and only when a change request resolved as created, a separate new account: the named account's account-level configurations the new account does not have, so the buyer knows what to set up again. notification_configs, reporting_delivery_configs, reporting_bucket, and governance_agents are the account fields of the same names; creatives, audiences, catalogs, and event_sources are account-scoped libraries synced through their own tasks. [] means every one of them carried over. Principal-level configuration is unaffected: an all_authorized_accounts reporting subscription covers the new account from its authorization, while an account_ids subscription covers it only once the buyer adds it.
+   * @maxItems 8
+   */
+  not_carried_over?: (
+    | 'notification_configs'
+    | 'reporting_delivery_configs'
+    | 'reporting_bucket'
+    | 'governance_agents'
+    | 'creatives'
+    | 'audiences'
+    | 'catalogs'
+    | 'event_sources'
+  )[];
   /**
    * Present when state is ambiguous. Accounts that match the request, limited to accounts the caller is already granted. The seller MUST NOT list accounts the caller cannot already reach. When the only matches are outside the caller's grants, every caller-visible state, pending-action kind, and error MUST be one the seller could also return when nothing matches.
    * @maxItems 50
@@ -32535,6 +32310,32 @@ export interface CreativeRepresentationSet {
   provenance?: Provenance;
 }
 
+// core/creative-staged-update.json
+/**
+ * A change to a live creative that the seller accepted in staged mode and has not yet promoted. The creative's approved prior version keeps serving under the same creative_id until the seller promotes this update. A creative has at most one staged update; a later staged sync with different content supersedes it, a sync of the same staged content leaves it and its review unchanged, and a sync whose content equals the serving version withdraws it. Once promoted, the staged content and revision_id become the creative's current state and this object is removed.
+ */
+export interface CreativeStagedUpdate {
+  /**
+   * Review state of the staged update. rejected appears only when the seller's on_rejection is keeps_prior; the prior version keeps serving until the buyer supersedes or withdraws the update.
+   */
+  status: 'processing' | 'pending_review' | 'rejected';
+  revision_id?: CreativeRevisionID;
+  /**
+   * Kinds of change the staged update makes relative to the serving version.
+   */
+  change_kinds: CreativeChangeKind[];
+  /**
+   * When the seller accepted the staged update.
+   * @format date-time
+   */
+  staged_at: string;
+  /**
+   * Human-readable reason. Present only when status is rejected.
+   */
+  rejection_reason?: string;
+}
+
+
 // core/creative-variable.json
 /**
  * A dynamic content variable (DCO slot) on a creative. Variables represent content that can change at serve time — headlines, images, product data, etc.
@@ -34838,6 +34639,26 @@ export interface KeywordTarget {
 }
 
 
+// core/live-update-policy.json
+/**
+ * Which kinds of change a seller applies in place to a live creative, and how the creative serves while each is decided. A creative is live when its status is approved and it has at least one assignment on a package that is not canceled, whose flight has not ended, and whose media buy is not in a terminal state; a paused package still counts. The declaration is a floor (see get_adcp_capabilities creative.live_updates): a kind that is not listed may still be accepted for some creatives, and a sync_creatives dry_run returns the exact outcome of one change.
+ */
+export interface LiveUpdatePolicy {
+  /**
+   * Change kinds applied in place, each with its serving mode. At most one entry per change kind (sellers MUST NOT list a kind twice). An empty array means live creatives are immutable apart from name and tags.
+   * @maxItems 4
+   */
+  in_place: {
+    change: CreativeChangeKind;
+    serving: LiveUpdateServingMode;
+    /**
+     * Only with serving staged; defaults to keeps_prior. keeps_prior: if review rejects the staged update, the prior version keeps serving and the creative's status is unchanged. stops: the creative transitions to rejected and stops serving, with impairments on its media buys.
+     */
+    on_rejection?: 'keeps_prior' | 'stops';
+  }[];
+}
+
+
 // core/macro-resolution-result.json
 /**
  * Path-addressable preflight result for one declaration. `resolvable` means the selected execution path advertises the exact operation; it does not claim that serve-time substitution has already occurred.
@@ -36258,17 +36079,16 @@ export type ReportingSubscriptionState = {
    */
   accepted_at: string;
   /**
-   * Earlier versions, newest first, retained while any obligation of that version is retained, so a buyer can recompute their expected periods after local-state loss. Each entry carries the configuration that version had.
+   * Earlier versions, newest first, retained while any obligation of that version is retained, so a buyer can recompute their expected periods after local-state loss. Each entry carries the configuration that version had. At most the 16 newest are listed inline; prior_versions_count gives the total, and the rest are read through get_principal reporting_subscription_page.
+   *
+   * @maxItems 16
    */
-  prior_versions?: {
-    subscription_version: number;
-    accepted_at: string;
-    /**
-     * The next version's accepted_at, the cutover instant: this version owes its periods that start before it, in full.
-     */
-    superseded_at: string;
-    configuration?: ReportingSubscription;
-  }[];
+  prior_versions?:
+    ReportingSubscriptionPriorVersion[];
+  /**
+   * Total retained prior versions. Present whenever prior_versions is. When larger than the number listed inline, page the rest through get_principal reporting_subscription_page with list prior_versions.
+   */
+  prior_versions_count?: number;
   /**
    * When active false was applied. Present when and only when state is inactive.
    */
@@ -36301,60 +36121,51 @@ export type ReportingSubscriptionState = {
   issues?:
     Error[];
   /**
-   * Accounts where this subscription has an open get_reporting_status exception, so a caller need not poll every account. Changes fire principal.changed with reason reporting_subscription_changed.
+   * Accounts where this subscription has an open get_reporting_status exception, so a caller need not poll every account, in account_id byte order. At most 1000 are listed inline; accounts_with_exceptions_count gives the total, and the rest are read through get_principal reporting_subscription_page. Changes fire principal.changed with reason reporting_subscription_changed.
    *
    * @maxItems 1000
    */
-  accounts_with_exceptions?: {
-    account_id: string;
-    /**
-     * Reasons of the open exceptions, account- or buy-level.
-     *
-     * @minItems 1
-     */
-    reasons: [
-      'offering_unsupported' | 'capacity' | 'overridden' | 'excluded_by_buyer' | 'action_required',
-      ...('offering_unsupported' | 'capacity' | 'overridden' | 'excluded_by_buyer' | 'action_required')[]
-    ];
+  accounts_with_exceptions?: ReportingSubscriptionAccountExceptions[];
+  /**
+   * Total accounts with an open exception. Present whenever accounts_with_exceptions is.
+   */
+  accounts_with_exceptions_count?: number;
+  /**
+   * Total accounts in accounts_unauthorized. Present whenever accounts_unauthorized is.
+   */
+  accounts_unauthorized_count?: number;
+  /**
+   * Destination generation bound for each destination_overrides destination_id. Present when and only when the configuration has destination_overrides.
+   *
+   * @maxItems 64
+   */
+  destination_override_refs?: {
+    destination_id: string;
+    destination_ref: string;
   }[];
   /**
-   * Accounts this subscription covered whose authority the caller has since lost, so a revoked grant reads differently from a seller that stopped publishing. Only accounts the subscription previously covered appear. Entries carry no current account data and nothing created after unauthorized_at. An entry is removed on re-grant and is otherwise retained for status_retention_days after unauthorized_at; after that it drops, and a later re-grant is a fresh coverage start from authorized_at with no gap claimed. Every addition or removal fires principal.changed with reason reporting_subscription_changed.
+   * Accounts this subscription covered whose authority the caller has since lost, in account_id byte order, so a revoked grant reads differently from a seller that stopped publishing. At most 1000 are listed inline; accounts_unauthorized_count gives the total, and the rest are read through get_principal reporting_subscription_page. Only accounts the subscription previously covered appear. Entries carry no current account data and nothing created after unauthorized_at. An entry is removed on re-grant and is otherwise retained for status_retention_days after unauthorized_at; after that it drops, and a later re-grant is a fresh coverage start from authorized_at with no gap claimed. Every addition or removal fires principal.changed with reason reporting_subscription_changed.
    *
    * @maxItems 1000
    */
-  accounts_unauthorized?: {
-    account_id: string;
-    /**
-     * When the caller's authority for the account ended. Nothing is delivered for periods ending after it, including on retries.
-     */
-    unauthorized_at: string;
-    /**
-     * Last period boundary at or before unauthorized_at: the end of the last period owed before authority ended.
-     */
-    last_owed_period_end?: string;
-    /**
-     * Owed periods that ended at or before unauthorized_at but were not delivered by then. They are withheld, not missing, and never count as seller delay. If authority returns, they are owed again, due at the re-grant time plus the offering's delivery_sla.
-     */
-    withheld_period_count: number;
-    /**
-     * Obligations of the withheld periods, when the seller lists them.
-     *
-     * @maxItems 1000
-     */
-    withheld_reporting_obligation_ids?: string[];
-  }[];
+  accounts_unauthorized?: ReportingSubscriptionUnauthorizedAccount[];
 };
 /**
  * The configuration this version had: its scope, selector, destination, and reconciliation_mode. Sellers MUST include it, so a buyer that lost local state can recompute this version's owed periods.
  */
 export type ReportingSubscription = {
 } & {
+} & {
+} & {
+} & {
+} & {
+} & {
   /**
    * Caller-selected stable key, unique within the authenticated principal and not equal to any delivery_config_id the caller uses on any account with this seller. Never . or .., because it may appear in a destination path.
    */
   subscription_id: string;
   /**
-   * Caller-selected immutable semantic generation, with its own accepted_at. Increment when the selector, reconciliation_mode, destination, scope, exclude_account_ids, or operator_domains change. active and replace_account_configs change in place. Sellers reject a reused version with different semantic content.
+   * Caller-selected immutable semantic generation, with its own accepted_at. Increment when the selector, reconciliation_mode, destination (including destination_overrides), the scope kind (all_authorized_accounts or account_ids), or operator_domains change. Membership edits, adding or removing account_ids and changing exclude_account_ids, apply in place without a new version (see membership), as do active and replace_account_configs. Sellers reject a reused version with different semantic content.
    */
   subscription_version: number;
   /**
@@ -36412,11 +36223,11 @@ export type ReportingSubscription = {
     dimensions?:
       ReportingDimension[];
     /**
-     * exact selects the offering whose dimension set equals dimensions; native dimensions that do not map to the vocabulary count as distinct, so package by device does not equal package. finest selects the single offering with the most mapped dimensions among those including every selector dimension. Ties under exact and finest go to the lowest offering_id in byte order. all selects every offering including every selector dimension, each with its own obligations. Defaults to exact when dimensions is present and finest when it is absent. With match exact and no dimensions, every candidate qualifies and the lowest offering_id wins. Matching reads each offering's standard_dimensions and unmapped_dimensions. Billing subscriptions SHOULD use exact.
+     * exact selects the offering whose dimension set equals dimensions; native dimensions that do not map to the vocabulary count as distinct, so package by device does not equal package. finest selects the single offering with the most mapped dimensions among those including every selector dimension. Ties under exact and finest go to the lowest offering_id in byte order. all selects every offering including every selector dimension, each with its own obligations. Defaults to exact when dimensions is present and finest when it is absent. With match exact and no dimensions, every candidate qualifies and the lowest offering_id wins. Matching reads each offering's standard_dimensions and unmapped_dimensions. Billing subscriptions MUST use exact with dimensions, so a billing feed's breakdown never depends on which offerings happen to exist.
      */
     match?: 'exact' | 'finest' | 'all';
     /**
-     * IANA timezone override for period boundaries. Only valid when scope.account_ids names exactly one account. An account_timezone offering matches and uses this zone in place of the account's. A utc offering matches only when this is a UTC alias (UTC or Etc/UTC). A source_timezone or fixed billing_cycle offering matches only when its published period_timezone equals this one. A billing_cycle offering whose anchor the buyer configures never matches a subscription, which has no way to supply the anchor.
+     * IANA timezone override for period boundaries. Only valid when scope.account_ids names exactly one account. An account_timezone offering matches and uses this zone in place of the account's. A utc offering matches only when this is exactly UTC or Etc/UTC; other names that tzdata links to UTC, such as Etc/GMT, GMT, Etc/Universal, or Zulu, do not match. A source_timezone or fixed billing_cycle offering matches only when its published period_timezone equals this one. A billing_cycle offering whose anchor the buyer configures never matches a subscription, which has no way to supply the anchor.
      */
     period_timezone?: string;
   };
@@ -36438,6 +36249,25 @@ export type ReportingSubscription = {
      */
     path_template?: string;
   };
+  /**
+   * Per-account routing inside one subscription, so an agency keeps advertisers apart without registering a subscription per destination. Each entry sends the accounts it selects, by account_ids or by operator domain, to its own destination; every other account uses destination. An account_ids entry wins over an operator_domains entry. An account may appear in at most one account_ids entry and an operator domain in at most one operator_domains entry; otherwise the whole request fails with INVALID_REQUEST. Every override destination MUST have the same pattern and transport as destination, so routing never changes which offering resolves. Changing overrides is a destination change and needs a new subscription_version. Requires destination.
+   *
+   * @minItems 1
+   * @maxItems 64
+   */
+  destination_overrides?: ({
+    } & (
+      | {
+        }
+      | {
+        }
+    ) &
+      (
+        | {
+          }
+        | {
+          }
+      ))[];
 };
 /**
  * Complete principal-scoped standing configuration visible after sync or read. Secrets are never returned. The seller keys this state by its own agent identity and the stable authenticated caller principal. Each section is present when and only when the seller advertises it in principal.supported_sections, so an empty supported array is distinguishable from an unsupported section.
@@ -36481,6 +36311,49 @@ export interface PrincipalState {
     revoked_at?: string;
   }[];
 }
+export interface ReportingSubscriptionPriorVersion {
+  subscription_version: number;
+  accepted_at: string;
+  /**
+   * The next version's accepted_at, the cutover instant: this version owes its periods that start before it, in full.
+   */
+  superseded_at: string;
+  configuration?: ReportingSubscription;
+}
+export interface ReportingSubscriptionAccountExceptions {
+  account_id: string;
+  /**
+   * Reasons of the open exceptions, account- or buy-level.
+   *
+   * @minItems 1
+   */
+  reasons: [
+    'offering_unsupported' | 'capacity' | 'overridden' | 'excluded_by_buyer' | 'action_required',
+    ...('offering_unsupported' | 'capacity' | 'overridden' | 'excluded_by_buyer' | 'action_required')[]
+  ];
+}
+export interface ReportingSubscriptionUnauthorizedAccount {
+  account_id: string;
+  /**
+   * When the caller's authority for the account ended. Nothing is delivered for periods ending after it, including on retries.
+   */
+  unauthorized_at: string;
+  /**
+   * Last period boundary at or before unauthorized_at: the end of the last period owed before authority ended.
+   */
+  last_owed_period_end?: string;
+  /**
+   * Owed periods that ended at or before unauthorized_at but were not delivered by then. They are withheld, not missing, and never count as seller delay. If authority returns, they are owed again, due at the re-grant time plus the offering's delivery_sla.
+   */
+  withheld_period_count: number;
+  /**
+   * Obligations of the withheld periods, when the seller lists them.
+   *
+   * @maxItems 1000
+   */
+  withheld_reporting_obligation_ids?: string[];
+}
+
 
 // core/product-audience-evidence-requirements.json
 /**
@@ -38091,7 +37964,7 @@ export interface AdditionalGoldenVector {
 
 // core/reporting-consumer-status.json
 /**
- * One immutable, authenticated consumer statement about whether the required reporting for an expected configuration period could actually be consumed. It is operational status, not measurement data, delivery totals, a billing receipt, or authority to overwrite the seller's obligation/revision ledger. New statements supersede the current statement for the same consumer, configuration generation, report definition, and period while preserving append-only history.
+ * One immutable, authenticated consumer statement about whether the required reporting for an expected configuration period could actually be consumed. It is operational status, not measurement data, delivery totals, a billing receipt, or authority to overwrite the seller's obligation/revision ledger. New statements supersede the current statement for the same consumer, configuration generation, report definition, offering_id when present, and period while preserving append-only history.
  */
 export interface ReportingConsumerStatus {
   /**
@@ -38102,7 +37975,7 @@ export interface ReportingConsumerStatus {
    */
   reporting_status_id: string;
   /**
-   * The authenticated consumer's current status leaf replaced by this statement. It must identify the same account, configuration generation, report definition, and period.
+   * The authenticated consumer's current status leaf replaced by this statement. It must identify the same account, configuration generation, report definition, offering_id when present, and period.
    * @minLength 16
    * @maxLength 255
    * @pattern ^[A-Za-z0-9_.:-]{16,255}$
@@ -38126,6 +37999,13 @@ export interface ReportingConsumerStatus {
    * @pattern ^[A-Za-z0-9_.:-]{1,255}$
    */
   report_definition_id: string;
+  /**
+   * The resolved offering, for a generation derived from a reporting subscription (media_buy.reporting_subscriptions). Part of the chain identity there, because one subscription version can resolve several offerings that share a report definition and period. Required when the period's obligation carries offering_id, or would carry one when the consumer reports obligation_missing; absent otherwise.
+   * @minLength 1
+   * @maxLength 128
+   * @pattern ^[A-Za-z0-9_.:-]{1,128}$
+   */
+  offering_id?: string;
   /**
    * Expected half-open reporting period derived from the accepted configuration generation. This identity works even when the seller omitted the corresponding obligation.
    */
@@ -38242,6 +38122,14 @@ export type ReportingDeliveryOffering = {
    */
   unmapped_dimensions?:
     string[];
+  /**
+   * Experimental (media_buy.reporting_subscriptions). When this offering became, or becomes, available. Before it the offering is not a candidate for subscription resolution or configuration. Absent: available since before any retained obligation.
+   */
+  available_from?: string;
+  /**
+   * Experimental (media_buy.reporting_subscriptions). When the seller withdrew, or will withdraw, this offering. From it the offering is not a candidate, and subscriptions that resolved it move to their next candidate as a resolution change, a cutover at withdrawn_at, so periods that started before it stay owed under it in full. A withdrawn offering stays in offerings, with withdrawn_at, while any obligation that resolved it is retained, so buyers can still read its schedule. Sellers advertising media_buy.reporting_subscriptions MUST NOT remove an offering from offerings any other way while such an obligation is retained.
+   */
+  withdrawn_at?: string;
   /**
    * Retrievable immutable reporting-report-definition.json document on the authenticated seller/provider or AdCP-registry origin.
    */
@@ -38403,7 +38291,7 @@ export interface ReportingDeliveryCapabilities {
   subscriptions?: {
     supported: true;
     /**
-     * Most accounts one subscription serves. Beyond it the seller excludes accounts with reason capacity, deterministically, and reports which. Absent means no declared limit.
+     * Most accounts one subscription serves. Admission is sticky and ordered by the account's authorization.authorized_at, then account_id in byte order, the same for every subscription of a principal, and accounts without covered buys count (reporting-subscription.json admission). Waiting accounts carry a capacity exception. Absent means no declared limit.
      * @minimum 1
      * @format int
      */
@@ -38454,7 +38342,7 @@ export interface ReportingDeliveryCapabilities {
    */
   automated_recovery_window_seconds: number;
   /**
-   * Minimum period for which obligation, revision, and materialization metadata remain queryable. Revision content is retained for this period only for the revisions named in reporting-revision.json content_retention; other superseded snapshot revisions MAY be compacted to metadata only.
+   * Minimum period, in exact 24-hour days (86,400 seconds each, not civil days, wherever it bounds a window such as unauthorized_at plus status_retention_days), for which obligation, revision, and materialization metadata remain queryable. Revision content is retained for this period only for the revisions named in reporting-revision.json content_retention; other superseded snapshot revisions MAY be compacted to metadata only.
    * @minimum 1
    * @format int
    */
@@ -38962,6 +38850,10 @@ export interface ReportingObligation {
    */
   offering_id?: string;
   feed_purpose: ReportingFeedPurpose;
+  /**
+   * Present, and true, only on a billing stub: the stretch [E, first incoming boundary after E) that a cutover hands to a billing feed whose schedule has no boundary at E (reporting-subscription.json cutover), on a billing reporting subscription or an account-level billing configuration (reporting-delivery-config.json billing_continuity). Its period starts off the schedule's grid and is shorter than one schedule period. It is otherwise an ordinary obligation: expected_at is period.end plus schedule.delivery_sla, and revisions, receipts, and consumer status key on its exact period. Absent on every other obligation.
+   */
+  stub?: true;
   /**
    * @minLength 1
    * @maxLength 128
@@ -39504,7 +39396,7 @@ export interface ReportingStatusChangedWebhook {
 
 // core/reporting-subscription-coverage.json
 /**
- * offering_unsupported: no offering matching the selector is available on this account's or buy's products. capacity: refused for a seller limit such as max_accounts. overridden: the caller's own sync_accounts delivery config, or its own account_ids subscription replacing an all-accounts one, takes this account and feed_purpose. excluded_by_buyer: listed in exclude_account_ids. action_required: the account is not served until pending_action completes; account-level only.
+ * offering_unsupported: no offering matching the selector is available on this account's or buy's products. capacity: refused for a seller limit such as max_accounts. overridden: the caller's own sync_accounts delivery config, or its own account_ids subscription replacing an all-accounts one, takes this account and feed_purpose; or, at buy level with package_ids, another of its pacing or analytics subscriptions with a lower subscription_id resolved the same offering for those packages. excluded_by_buyer: the buyer took the account out, in place, by listing it in exclude_account_ids or removing it from account_ids, or it joined account_ids after the version's accepted_at (reporting-subscription.json membership). action_required: the account is not served until pending_action completes; account-level only.
  */
 export type ReportingSubscriptionExclusionReason =
   | 'offering_unsupported'
@@ -39528,9 +39420,14 @@ export interface ReportingSubscriptionCoverage {
    */
   subscription_version: number;
   /**
-   * Current account-level state. active: no account-level exclusion is in effect; individual buys may still be excluded. excluded: an open account-level entry is in effect and none has reason action_required. action_required: an open account-level entry with reason action_required is in effect and pending_action says what must happen.
+   * Current account-level state. active: no account-level exclusion is in effect; individual buys may still be excluded. excluded: an open account-level entry is in effect and none has reason action_required. action_required: an open account-level entry with reason action_required is in effect and pending_action says what must happen. inactive: the subscription is deactivated (active false or omitted); periods that started before deactivated_at stay owed, and no later periods are. Takes precedence over the other values. An inactive subscription appears only while it still has retained obligations for this account; after that its entry is omitted.
    */
-  status: 'active' | 'excluded' | 'action_required';
+  status: 'active' | 'excluded' | 'action_required' | 'inactive';
+  /**
+   * When the subscription was deactivated. Present when and only when status is inactive.
+   * @format date-time
+   */
+  deactivated_at?: string;
   pending_action?: PendingAction;
   /**
    * Exceptions that remove periods. An entry without media_buy_id applies to the whole account. Opening or closing one fires principal.changed with reason reporting_subscription_changed. Retained for status_retention_days after until. When the account's covered offerings have different period boundaries, the seller lists one entry per offering_id, each with that offering's cutover instants, as for gaps and timezone_cutovers.
@@ -39555,7 +39452,7 @@ export interface ReportingSubscriptionCoverage {
      */
     until?: string;
     /**
-     * With media_buy_id and reason offering_unsupported: only these packages lack a matching offering. The buy stays covered for its other packages; these are removed from its coverage rather than its periods.
+     * With media_buy_id and reason offering_unsupported: only these packages lack a matching offering. With reason overridden: only these packages resolved an offering another subscription of the caller owes. The buy stays covered for its other packages; these are removed from its coverage rather than its periods.
      */
     package_ids?: ReportingPackageID[];
     /**
@@ -39575,7 +39472,7 @@ export interface ReportingSubscriptionCoverage {
     };
   }[];
   /**
-   * Account timezone changes affecting account_timezone-aligned periods, retained for status_retention_days. A cutover: periods under the old timezone are owed when they start before the change, so they end by effective_at; periods under the new timezone are owed when they start at or after effective_at. Any stretch from effective_at to the first new-timezone boundary is owed under neither. Period boundaries differ between offerings, so when the account's covered offerings have different boundaries the seller lists one entry per offering_id; an entry without offering_id applies to every offering on the account.
+   * Account timezone changes affecting account_timezone-aligned periods, retained for status_retention_days. A cutover: periods under the old timezone are owed when they start before the change, so they end by effective_at; periods under the new timezone are owed when they start at or after effective_at. Any stretch from effective_at to the first new-timezone boundary is owed under neither, except on a billing offering, where it is owed as one stub period [effective_at, first new-timezone boundary) whose obligation carries stub true, so no billable hour goes unreported. Period boundaries differ between offerings, so when the account's covered offerings have different boundaries the seller lists one entry per offering_id; an entry without offering_id applies to every offering on the account.
    */
   timezone_cutovers?: {
     /**
@@ -39618,7 +39515,7 @@ export interface ReportingSubscriptionCoverage {
      */
     from: string;
     /**
-     * First period boundary at or after the re-grant.
+     * First period boundary at or after the re-grant, authorization.regranted_at.
      * @format date-time
      */
     until: string;
@@ -40253,10 +40150,7 @@ export interface OfferingAssetConstraint {
  * Protocol-level response wrapper (MCP/A2A) - contains AdCP task data plus protocol fields
  */
 export interface ProtocolResponse {
-  /**
-   * Human-readable summary
-   */
-  message: string;
+  message: TaskMessage;
   /**
    * Transport-managed conversation identifier. Maps to native contextId on A2A; compatibility metadata only on MCP and not a continuation or authorization mechanism.
    */
@@ -40850,10 +40744,7 @@ export interface TasksGetRequest {
    * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
-  /**
-   * Unique identifier of the task to retrieve
-   */
-  task_id: string;
+  task_id: TaskID;
   account?: AccountReference;
   /**
    * Include full conversation history for this task (may increase response size)
@@ -40873,25 +40764,28 @@ export interface TasksGetRequest {
  */
 export interface TasksGetResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for this task
-   */
-  task_id: string;
+  task_id: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -40908,15 +40802,6 @@ export interface TasksGetResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   task_type: TaskType;
   protocol: AdCPProtocol;
   /**
@@ -41075,7 +40960,7 @@ export interface TasksListRequest {
      * Filter by specific task IDs
      * @maxItems 100
      */
-    task_ids?: string[];
+    task_ids?: TaskID[];
     /**
      * Filter tasks where context contains this text (searches media_buy_id, signal_id, etc.)
      */
@@ -41110,25 +40995,28 @@ export interface TasksListRequest {
  */
 export interface TasksListResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -41145,15 +41033,6 @@ export interface TasksListResponse {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Summary of the query that was executed
    */
@@ -41219,10 +41098,7 @@ export interface TasksListResponse {
    * Array of tasks matching the query criteria
    */
   tasks: {
-    /**
-     * Unique identifier for this task
-     */
-    task_id: string;
+    task_id: TaskID;
     task_type: TaskType;
     /**
      * AdCP domain this task belongs to
@@ -42296,6 +42172,72 @@ export interface CreativePurgedWebhook {
   ext?: ExtensionObject;
 }
 
+// creative/creative-staged-update-changed-webhook.json
+/**
+ * Experimental (creative.live_updates) account-level push notification fired when review decides a staged update to a live creative: the seller promoted it, or rejected it. Fires per registered subscriber against each `notification_configs[]` entry whose `event_types` includes `creative.staged_update_changed`, and only to those entries; a subscriber that did not ask for it never receives it. Distinct from `creative.status_changed` because a staged update does not move the creative through the status lifecycle: the approved prior version keeps serving, so there is no `approved → approved` transition. When a rejection under `on_rejection: stops` also moves the creative to `rejected`, the seller fires that ordinary `approved → rejected` transition on `creative.status_changed` as well. A staged update that the buyer supersedes or withdraws, or that the seller discards because the creative left `approved`, does not fire. Receivers MUST verify signing per the registered scheme and dedupe by `idempotency_key`. The current staged update and serving version are always authoritative on `list_creatives` (request `fields: ["staged_update"]`), which is the repair path for a missed or out-of-order fire.
+ */
+export interface CreativeStagedUpdateChangedWebhook {
+  /**
+   * Sender-generated key stable across retries of the same fire. Receivers MUST dedupe by this key, scoped to the authenticated sender identity. Distinct from `notification_id`.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
+   */
+  idempotency_key: string;
+  /**
+   * Stable identifier for this logical outcome, used to correlate fires to current snapshot state. Stable across re-emissions of the same outcome; a later outcome on the same creative receives a new id.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  notification_id: string;
+  /**
+   * Fixed notification type discriminator. Matches the value registered on the subscriber's `event_types`.
+   */
+  notification_type: 'creative.staged_update_changed';
+  /**
+   * ISO 8601 timestamp when the seller initiated this fire. Distinct from `observed_at`.
+   * @format date-time
+   */
+  fired_at: string;
+  /**
+   * Identifies which `notification_configs[]` entry on the recipient account is receiving this fire. Echoed verbatim from the entry's `subscriber_id`.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  subscriber_id: string;
+  /**
+   * Seller's identifier for the account this creative belongs to.
+   */
+  account_id: string;
+  /**
+   * Seller's identifier for the creative whose staged update was decided. References the same id space as `list_creatives` / `sync_creatives` responses.
+   */
+  creative_id: string;
+  revision_id?: CreativeRevisionID;
+  /**
+   * promoted: the staged content now serves on every assignment and `staged_update` is removed from `list_creatives`. rejected: review rejected the staged content; under `on_rejection: keeps_prior` the prior version keeps serving and `staged_update.status` becomes `rejected`, and under `stops` the creative moves to `rejected` and `staged_update` is removed.
+   */
+  outcome: 'promoted' | 'rejected';
+  /**
+   * Human-readable reason. Present only when `outcome` is `rejected`. Sellers MUST NOT include third-party PII in this field.
+   * @maxLength 500
+   */
+  rejection_reason?: string;
+  creative_status: CreativeStatus;
+  /**
+   * ISO 8601 timestamp when the seller observed the review decision. Distinct from `fired_at`, which may lag it.
+   * @format date-time
+   */
+  observed_at: string;
+  /**
+   * Who made the decision. `seller`: an explicit review decision. `system`: an automated seller-side review.
+   */
+  initiator: 'seller' | 'system';
+  ext?: ExtensionObject;
+}
+
 // creative/creative-status-changed-webhook.json
 /**
  * Account-level push notification fired when a creative in the library transitions status by seller or system initiative. Fires per registered subscriber against each `notification_configs[]` entry whose `event_types` includes `creative.status_changed`. Buyer-initiated transitions (archive, unarchive, resubmit) do NOT fire — those are acknowledged on the `sync_creatives` response path. Receivers MUST verify signing per the registered scheme (RFC 9421 webhook profile by default; legacy Bearer / HMAC-SHA256 when `authentication` was supplied at registration) and dedupe by `idempotency_key`. See docs/protocol/snapshot-and-log.mdx for the snapshot/log duality rules — the current status is always authoritative on `list_creatives`.
@@ -42679,6 +42621,22 @@ export interface ConflictDetails {
    * Current version or ETag on the server
    */
   current_version?: number | string;
+}
+
+
+// error-details/creative-live-update-unsupported.json
+/**
+ * Typed details for CREATIVE_LIVE_UPDATE_UNSUPPORTED. Names the kinds of change the seller refused on a live creative and the packages that make it live, so the buyer can sync the change as a new creative_id and replace it on those packages.
+ */
+export interface CreativeLiveUpdateUnsupportedDetails {
+  /**
+   * Change kinds in the item that the seller does not apply in place to this live creative.
+   */
+  refused_changes: CreativeChangeKind[];
+  /**
+   * Packages in the caller's account on which the creative is live. These are the packages on which to replace it.
+   */
+  live_package_ids?: string[];
 }
 
 
@@ -45751,25 +45709,28 @@ export type TargetingKvs = {
  */
 export interface ContextMatchResponseRouterPublisher {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -45786,15 +45747,6 @@ export interface ContextMatchResponseRouterPublisher {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Message type discriminator for deserialization.
    */
@@ -46043,24 +45995,27 @@ export interface IdentityMatchRequest {
  */
 export interface IdentityMatchResponseRouterPublisher {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -46077,15 +46032,6 @@ export interface IdentityMatchResponseRouterPublisher {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Message type discriminator for deserialization.
    */
@@ -46146,25 +46092,28 @@ export interface TMPXChunk {
  */
 export interface ContextMatchResponseProviderRouter {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -46181,15 +46130,6 @@ export interface ContextMatchResponseProviderRouter {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Message type discriminator for deserialization. Same const as the router→publisher variant so decoders can key off type before dispatching on hop shape.
    */
@@ -46227,24 +46167,27 @@ export interface ContextMatchResponseProviderRouter {
  */
 export interface IdentityMatchResponseProviderRouter {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * @deprecated
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
-  /**
-   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
-   */
-  task_id?: string;
+  task_id?: TaskID;
   status: TaskStatus;
-  /**
-   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
-   */
-  message?: string;
+  message?: TaskMessage;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed: true` appears only when the request actually resolved through the idempotency cache; an absent `replayed` means `false`, and a response MAY carry `replayed: false`. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -46261,15 +46204,6 @@ export interface IdentityMatchResponseProviderRouter {
    * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
    */
   payload?: {};
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   */
-  adcp_version?: string;
-  /**
-   * @deprecated
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   */
-  adcp_major_version?: number;
   /**
    * Message type discriminator for deserialization. Same const as the router→publisher variant so publisher-facing decoders can key off type before dispatching on shape.
    */

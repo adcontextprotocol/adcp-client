@@ -1588,7 +1588,7 @@ const servedReleaseRootAliases = new Map<string, ReadonlySet<string>>();
  * `get_adcp_capabilities` response.
  *
  * Keys are AdCP versions in any form the SDK accepts for a pin (`'3.2'`,
- * `'3.2.5'`, `'3.3.0-beta.2'`); values are schema-data roots in the same
+ * `'3.2.5'`, `'3.3.0-beta.3'`); values are schema-data roots in the same
  * shape as `schemaRoot` (a directory holding `bundled/`, e.g. a hosted
  * `dist/schemas/3.2.5`). Each root is checked against its key the same way
  * `withExternalSchemaRoot` checks one, and a malformed map throws before `fn`

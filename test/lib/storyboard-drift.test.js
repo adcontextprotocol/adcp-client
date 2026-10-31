@@ -26,6 +26,8 @@ const EnvelopeSchema = ProtocolEnvelopeSchema.merge(AdCPVersionEnvelopeSchema);
 
 // Runner-internal tasks with no agent-facing schema.
 const HARNESS_TASKS = new Set([
+  // The loader's pseudo-task for validation-only steps (AdCP 3.3.0-beta.3 storyboards use them).
+  '__validation_only__',
   'comply_test_controller',
   'protected_resource_metadata',
   'oauth_auth_server_metadata',

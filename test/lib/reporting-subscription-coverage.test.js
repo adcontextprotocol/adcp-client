@@ -32,6 +32,25 @@ const staleTzdata = typeof runtimeTzdata === 'string' && runtimeTzdata < TZDATA_
 const UTC_ZONES = new Set(['UTC', 'Etc/UTC']);
 const zoneDependent = testCase => (testCase.timezones ?? []).some(zone => !UTC_ZONES.has(zone));
 
+// Cases at this pin (AdCP 3.3.0-beta.3) that the coverage function does not satisfy yet, each with the spec
+// rule it needs. They still run: each must FAIL, so one that starts passing fails the suite until its entry
+// is removed. The engine follow-up (bokelley/reporting-subscription-beta3-engine) implements the rules and
+// empties this map. Never skip a case silently.
+const EXPECTED_FAILURES = new Map([
+  [
+    'cancellation-notice-period-is-owed-through-the-delivery-stop',
+    'adcp#8617: cancellation_effective_at stops delivery',
+  ],
+  ['billing-cutover-owes-a-stub', 'adcp#8617: a billing cutover owes the [E, first incoming boundary) stub'],
+  ['flight-extension-adds-only-unresolved-periods', 'adcp#8618: flight_history replaces prior_flights'],
+  ['reinstatement-after-cancellation', 'adcp#8618: flight_history replaces prior_flights'],
+  ['extension-of-an-empty-flight', 'adcp#8618: flight_history replaces prior_flights'],
+  ['a-newly-available-offering-never-re-resolves', 'adcp#8619: resolution is sticky per (buy, version)'],
+  ['reactivation-after-a-schedule-change-never-owes-twice', 'adcp#8622: reactivation never owes a period twice'],
+  ['havana-pt24h-equals-p1d-when-midnight-does-not-exist', 'adcp#8622: each local date starts with a boundary'],
+  ['havana-pt2h-nests-in-the-day', 'adcp#8622: each local date starts with a boundary'],
+]);
+
 const instant = value => Date.parse(value);
 const iso = value => new Date(value).toISOString();
 
@@ -65,7 +84,7 @@ describe('canonical coverage vectors (adcp#8616)', () => {
   });
 
   test('the vectors are non-trivial, uniquely identified and pinned to a tzdata release', () => {
-    assert.ok(table.cases.length >= 113);
+    assert.ok(table.cases.length >= 120);
     assert.equal(new Set(table.cases.map(c => c.id)).size, table.cases.length);
     assert.equal(new Set(table.cases.map(c => c.name)).size, table.cases.length);
     assert.match(table.tzdata.version, /^\d{4}[a-z]$/);
@@ -83,7 +102,23 @@ describe('canonical coverage vectors (adcp#8616)', () => {
     }
   });
 
-  for (const testCase of table.cases) {
+  test('every expected failure names a case at this pin', () => {
+    const ids = new Set(table.cases.map(c => c.id));
+    for (const id of EXPECTED_FAILURES.keys()) assert.ok(ids.has(id), `${id} is not in the pinned vectors`);
+  });
+
+  for (const testCase of table.cases.filter(c => EXPECTED_FAILURES.has(c.id))) {
+    const rule = EXPECTED_FAILURES.get(testCase.id);
+    test(`${testCase.id} (expected failure: ${rule})`, () => {
+      assert.throws(
+        () => runCase(testCase),
+        error => error instanceof assert.AssertionError,
+        `${testCase.id} now passes: remove it from EXPECTED_FAILURES`
+      );
+    });
+  }
+
+  for (const testCase of table.cases.filter(c => !EXPECTED_FAILURES.has(c.id))) {
     test(testCase.id, t => {
       try {
         runCase(testCase);

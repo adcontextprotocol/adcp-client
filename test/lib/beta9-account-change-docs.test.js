@@ -25,7 +25,10 @@ test('generated success-branch docs omit fields forbidden by the selected union 
     /^\s+(reason|suggestions|purchase_continuation|task_id):/m
   );
   assert.doesNotMatch(toolSection(docs, 'refine_proposals'), /^\s+task_id:/m);
-  assert.doesNotMatch(toolSection(docs, 'decline_proposals'), /^\s+(status|task_id):/m);
+  // AdCP 3.3.0-beta.3 composes the protocol envelope into decline_proposals, so the completed arm carries
+  // status: 'completed'; it still forbids task_id.
+  assert.doesNotMatch(toolSection(docs, 'decline_proposals'), /^\s+task_id:/m);
+  assert.match(toolSection(docs, 'decline_proposals'), /^\s+status: 'completed'/m);
 });
 
 test('generated request docs resolve JSON Pointer field references', () => {

@@ -635,10 +635,13 @@ async function startFakePublisher(config = {}) {
               task_type: 'create_media_buy',
               status: 'completed',
               timestamp: '2026-05-26T09:00:44.582Z',
+              // AdCP 3.3.0-beta.3: a completed create_media_buy carries confirmed_at and revision.
               result: {
                 status: 'completed',
                 media_buy_id: 'mb_1',
                 packages: [],
+                confirmed_at: '2026-05-26T09:00:44.000Z',
+                revision: 1,
               },
             }),
           });
@@ -653,7 +656,13 @@ async function startFakePublisher(config = {}) {
               task_id: taskId,
               task_type: 'create_media_buy',
               status: 'completed',
-              result: { status: 'completed', media_buy_id: 'mb_1', packages: [] },
+              result: {
+                status: 'completed',
+                media_buy_id: 'mb_1',
+                packages: [],
+                confirmed_at: '2026-05-26T09:00:44.000Z',
+                revision: 1,
+              },
             }),
           });
         } catch {}

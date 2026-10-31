@@ -408,6 +408,9 @@ function pickInPlace(subscription: ReportingSubscription): Partial<ReportingSubs
     : { replace_account_configs: subscription.replace_account_configs };
 }
 
+/** `prior_versions` `maxItems` (adcp#8619). */
+const MAX_INLINE_PRIOR_VERSIONS = 16;
+
 /**
  * Readback for one subscription. `accounts_with_exceptions` and `accounts_unauthorized`
  * are carried from the previous readback; the coverage engine maintains them.
@@ -455,7 +458,7 @@ export function projectReportingSubscriptionState(
     ...history.inactiveIntervals.map(interval => ({ deactivated_at: interval.from, reactivated_at: interval.until })),
     ...(history.deactivatedAt !== undefined ? [{ deactivated_at: history.deactivatedAt }] : []),
   ];
-  const prior = history.versions
+  const priorVersions = history.versions
     .slice(0, -1)
     .reverse()
     .map(version => ({
@@ -465,22 +468,31 @@ export function projectReportingSubscriptionState(
       // adcontextprotocol/adcp#8588: each prior version carries its configuration.
       configuration: structuredClone(version.configuration),
     }));
+  // adcp#8619: the 16 newest are listed inline, and prior_versions_count gives the total.
+  const prior = priorVersions.slice(0, MAX_INLINE_PRIOR_VERSIONS);
   return {
     subscription_id: history.subscriptionId,
     subscription_version: current.subscriptionVersion,
     state,
     accepted_at: current.acceptedAt,
-    ...(prior.length > 0 ? { prior_versions: prior } : {}),
+    ...(prior.length > 0 ? { prior_versions: prior, prior_versions_count: priorVersions.length } : {}),
     ...(history.deactivatedAt !== undefined ? { deactivated_at: history.deactivatedAt } : {}),
     ...(intervals.length > 0 ? { inactive_intervals: intervals } : {}),
     ...(destination ? { destination_ref: destination.destination_ref } : {}),
     configuration,
     ...(issues.length > 0 ? { issues: issues.slice(0, 16) } : {}),
     ...(previous?.accounts_with_exceptions?.length
-      ? { accounts_with_exceptions: structuredClone(previous.accounts_with_exceptions) }
+      ? {
+          accounts_with_exceptions: structuredClone(previous.accounts_with_exceptions),
+          accounts_with_exceptions_count:
+            previous.accounts_with_exceptions_count ?? previous.accounts_with_exceptions.length,
+        }
       : {}),
     ...(previous?.accounts_unauthorized?.length
-      ? { accounts_unauthorized: structuredClone(previous.accounts_unauthorized) }
+      ? {
+          accounts_unauthorized: structuredClone(previous.accounts_unauthorized),
+          accounts_unauthorized_count: previous.accounts_unauthorized_count ?? previous.accounts_unauthorized.length,
+        }
       : {}),
   };
 }

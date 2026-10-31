@@ -72,7 +72,6 @@ import type { PrincipalRef } from '../../server/principal/types';
 import type { PrincipalLifecycleRuntime } from '../../server/principal/runtime';
 import { isReportingStorage, requireDurable, type ReportingStorage } from '../../storage';
 import { reportingConfigurationCapabilitiesV1 } from '../subscriptions/capabilities';
-import type { ReportingDeliveryOfferingWithDimensionsV1 } from '../subscriptions/wire';
 import { type ReliableReportingSubscriptionsOptionsV1, withReportingSubscriptionCoverageV1 } from './subscriptions';
 import {
   createManagedReportingSubscriptions,
@@ -695,7 +694,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     }
     // Sellers advertising subscriptions MUST publish standard_dimensions on every offering
     // (adcontextprotocol/adcp#8585), so buyers resolve match from the wire as the engine does.
-    for (const offering of deliveryOfferings as ReportingDeliveryOfferingWithDimensionsV1[]) {
+    for (const offering of deliveryOfferings) {
       if (!Array.isArray(offering.standard_dimensions)) {
         throw new PlatformConfigError(
           `Reporting offering ${JSON.stringify(offering.offering_id)} must publish standard_dimensions when ` +

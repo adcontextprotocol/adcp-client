@@ -29,12 +29,11 @@
  * @packageDocumentation
  */
 import { CoverageInputError } from '../../errors';
-import type { ReportingSubscription } from '../../types/core.generated';
 import type {
-  ReportingSubscriptionCoverageWithOfferingsV1,
-  ReportingSubscriptionInactiveIntervalV1,
-  ReportingSubscriptionTimezoneCutoverV1,
-} from './wire';
+  ReportingSubscription,
+  ReportingSubscriptionCoverage,
+  ReportingSubscriptionState,
+} from '../../types/core.generated';
 import {
   assertReportingIanaTimezoneV1,
   createReportingPeriodCalendarV1,
@@ -174,9 +173,9 @@ export interface OwedSubscriptionPeriodsInputV1 {
    * that starts inside an interval is owed, and coverage resumes at the first boundary at or
    * after `reactivated_at`. An interval without `reactivated_at` is still open.
    */
-  inactive_intervals?: readonly ReportingSubscriptionInactiveIntervalV1[];
+  inactive_intervals?: ReportingSubscriptionState['inactive_intervals'];
   /** This subscription's `subscription_coverage` entry for the account, when one was read. */
-  coverage?: Pick<ReportingSubscriptionCoverageWithOfferingsV1, 'excluded' | 'gaps' | 'timezone_cutovers'>;
+  coverage?: Pick<ReportingSubscriptionCoverage, 'excluded' | 'gaps' | 'timezone_cutovers'>;
   /** The seller's `subscriptions.backfill_on_regrant`. Defaults to false. */
   backfill_on_regrant?: boolean;
   /** The seller's `status_retention_days`. Required when a grant was revoked and re-granted. */
@@ -539,7 +538,7 @@ function normalizeVersions(
 }
 
 /** The readback's `inactive_intervals` as half-open windows. */
-function inactiveWindows(intervals: readonly ReportingSubscriptionInactiveIntervalV1[] | undefined): Window[] {
+function inactiveWindows(intervals: ReportingSubscriptionState['inactive_intervals']): Window[] {
   if (intervals !== undefined && !Array.isArray(intervals))
     throw new CoverageInputError('COVERAGE_INPUT_INVALID', 'inactive_intervals must be an array', 'invalid_input');
   return (intervals ?? []).map(interval => {
@@ -645,7 +644,7 @@ interface TimezoneTimeline {
 
 function timezoneTimeline(
   current: string | undefined,
-  entries: readonly ReportingSubscriptionTimezoneCutoverV1[] | undefined
+  entries: ReportingSubscriptionCoverage['timezone_cutovers']
 ): TimezoneTimeline {
   if (current !== undefined) assertReportingIanaTimezoneV1(current, 'account.timezone');
   const cutovers = [...(entries ?? [])]

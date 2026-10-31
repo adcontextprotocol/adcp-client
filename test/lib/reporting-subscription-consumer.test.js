@@ -194,8 +194,15 @@ describe('buyer helpers', () => {
         [2, '2026-11-04T12:00:00.000Z', undefined],
       ]
     );
+    // The readback carries every prior version's configuration (adcp#8588), so the buyer's own copies
+    // are optional; a readback without them needs the buyer to have kept every version.
+    assert.deepEqual(reportingSubscriptionVersionRecordsV1({ state: second.subscriptions[0] }), versions);
+    const withoutConfigurations = {
+      ...second.subscriptions[0],
+      prior_versions: second.subscriptions[0].prior_versions.map(({ configuration: _c, ...prior }) => prior),
+    };
     assert.throws(
-      () => reportingSubscriptionVersionRecordsV1({ state: second.subscriptions[0], configurations: { 2: sent[2] } }),
+      () => reportingSubscriptionVersionRecordsV1({ state: withoutConfigurations, configurations: { 2: sent[2] } }),
       /keep every version/
     );
 

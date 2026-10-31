@@ -25,10 +25,7 @@ export function reportingSubscriptionVersionRecordsV1(input: {
   destinationMethods?: Readonly<Record<number, ReportingSubscriptionDestinationMethodV1>>;
 }): ReportingSubscriptionVersionRecordV1[] {
   const { state } = input;
-  // TODO(3.3.0-beta.2): read prior_versions[].configuration from the generated type.
-  const priors = (state.prior_versions ?? []) as ReadonlyArray<
-    NonNullable<ReportingSubscriptionState['prior_versions']>[number] & { configuration?: ReportingSubscription }
-  >;
+  const priors = state.prior_versions ?? [];
   const entries = [
     ...[...priors].reverse().map(prior => ({
       version: prior.subscription_version,

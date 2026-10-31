@@ -16,7 +16,7 @@
  * @packageDocumentation
  */
 
-// The calendar, selection, coverage function, capability builder and hand-modelled wire types.
+// The calendar, selection, coverage function and capability builder.
 export * from '../subscriptions';
 
 // Coverage onto the consumer runtime's expected periods (buyer).

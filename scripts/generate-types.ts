@@ -2416,6 +2416,34 @@ export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): 
   return schema;
 }
 
+/**
+ * A referenced arm can compose its own contract: AdCP 3.3.0-beta.3's
+ * core/compact-task-submitted.json is `allOf: [protocol-envelope, task-submitted]`
+ * plus its body fields, and core/task-submitted.json carries `status: submitted`
+ * and the required `task_id` (adcp#8547). Fold those members into the arm so the
+ * discriminator and the task handle survive. Members the root already composes
+ * (the protocol envelope) stay with the root.
+ */
+function foldComposedOverlay(overlay: any, rootAllOf: unknown): any {
+  if (!overlay || !Array.isArray(overlay.allOf)) return overlay;
+  const rootRefs = new Set(
+    (Array.isArray(rootAllOf) ? rootAllOf : [])
+      .map((member: any) => (typeof member?.$ref === 'string' ? member.$ref : undefined))
+      .filter(Boolean)
+  );
+  let properties = { ...(overlay.properties ?? {}) };
+  let required = [...(overlay.required ?? [])];
+  for (const member of overlay.allOf) {
+    if (typeof member?.$ref === 'string' && rootRefs.has(member.$ref)) continue;
+    const part =
+      typeof member?.$ref === 'string' ? foldComposedOverlay(loadCachedSchema(member.$ref), rootAllOf) : member;
+    if (!part || typeof part !== 'object') continue;
+    properties = { ...(part.properties ?? {}), ...properties };
+    required = [...required, ...(part.required ?? [])];
+  }
+  return { ...overlay, properties, required: [...new Set(required)] };
+}
+
 function materializeProposalResponseBranches(schema: any, schemaName: string): any {
   if (!schema?.properties || !Array.isArray(schema.anyOf) || schema.anyOf.length < 2) return schema;
 
@@ -2437,7 +2465,7 @@ function materializeProposalResponseBranches(schema: any, schemaName: string): a
   for (const member of schema.anyOf) {
     let overlay = member;
     if (typeof member?.$ref === 'string') {
-      overlay = loadCachedSchema(member.$ref);
+      overlay = foldComposedOverlay(loadCachedSchema(member.$ref), schema.allOf);
       if (!overlay?.properties) return schema;
     }
     const branch: any = {

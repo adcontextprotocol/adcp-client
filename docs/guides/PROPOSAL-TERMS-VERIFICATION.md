@@ -193,7 +193,7 @@ keep its external root registered throughout client creation and the workflow:
 import { ADCPMultiAgentClient } from '@adcp/sdk';
 import { withExternalSchemaRoot } from '@adcp/sdk/testing';
 
-const candidateVersion = '3.3.0-beta.2';
+const candidateVersion = '3.3.0-beta.3';
 const candidateSchemaRoot = '/absolute/path/to/extracted/candidate/schemas';
 
 await withExternalSchemaRoot(candidateVersion, candidateSchemaRoot, async () => {
@@ -219,6 +219,6 @@ For shape-only verification, pass `{ adcpVersion: actualServedSchemaVersion }`
 to `validateRefineProposalsResponseShape()` to pin the already-selected served
 contract explicitly.
 
-AdCP 3.3.0-beta.2 withdraws definition pins, purchase rights and installment selection from 3.3 (adcp#8537); they return through a `commercial_terms` extension point in 4.0. The verifier reads this from the selected schema: against beta.2, `definition_pins` and purchase `installments[]` / `rights[]` are unknown fields that the closed `commercial_terms` rejects, and publisher format references and placement, collection or signal targeting compare as ordinary snapshot terms. A snapshot verified against a retained beta.0 or beta.1 schema root still fails closed on definition pins and the references they covered, because that release required current-source pin verification. The verifier enforces collection-list uniqueness by reference identity.
+AdCP 3.3.0-beta.2 withdraws definition pins, purchase rights and installment selection from 3.3 (adcp#8537); they return through a `commercial_terms` extension point in 4.0. The verifier reads this from the selected schema: against beta.2 and later, `definition_pins` and purchase `installments[]` / `rights[]` are unknown fields that the closed `commercial_terms` rejects, and publisher format references and placement, collection or signal targeting compare as ordinary snapshot terms. A snapshot verified against a retained beta.0 or beta.1 schema root still fails closed on definition pins and the references they covered, because that release required current-source pin verification. The verifier enforces collection-list uniqueness by reference identity.
 
 AdCP 3.3 snapshot rules that need data the snapshot does not carry: the verifier fails closed on SLA windows that name a `business_calendar_id` (business-clock SLAs resolve against capability calendars). Elapsed-clock SLA windows verify normally. Against a retained beta.1 schema root it also fails closed on purchase `installments[]`. For `price_adjustments`, the accepted snapshot deliberately omits the discovery-time table, so the verifier checks schema validity and `pricing_option_id` identity but does not re-resolve `pricing.fixed_price`; a buyer holding the table must resolve it before accepting.

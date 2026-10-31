@@ -604,19 +604,23 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
       reportingSubscriptionCoverageForReleaseV1,
       reportingSubscriptionReleaseFieldsV1,
     } = require('../../dist/lib/server/reporting-subscription-release.js');
-    const beta1 = reportingSubscriptionCoverageForReleaseV1(
-      entry,
-      reportingSubscriptionReleaseFieldsV1('3.3.0-beta.2')
-    );
-    assert.equal(beta1.status, 'active', 'a release without the inactive value sees the account-level state');
-    assert.equal('deactivated_at' in beta1, false);
-    assert.equal(
-      reportingSubscriptionCoverageForReleaseV1(entry, {
-        ...reportingSubscriptionReleaseFieldsV1(undefined),
-        inactiveCoverageStatus: true,
-      }).status,
-      'inactive'
-    );
+    const { ADCP_VERSION } = require('../../dist/lib/version.js');
+    // The SDK's own pin (3.3.0-beta.3) defines inactive, and an absent served release is the pin.
+    for (const served of [ADCP_VERSION, undefined]) {
+      const fields = reportingSubscriptionReleaseFieldsV1(served);
+      assert.deepEqual(
+        Object.entries(fields).filter(([, defined]) => !defined),
+        [],
+        `${served}: every settled field`
+      );
+      const projected = reportingSubscriptionCoverageForReleaseV1(entry, fields);
+      assert.equal(projected.status, 'inactive', String(served));
+      assert.equal(projected.deactivated_at, '2026-11-04T12:00:00.000Z');
+    }
+    // A caller served an older release (3.2.7 has no inactive value) sees the account-level state.
+    const older = reportingSubscriptionCoverageForReleaseV1(entry, reportingSubscriptionReleaseFieldsV1('3.2.7'));
+    assert.equal(older.status, 'active', 'a release without the inactive value sees the account-level state');
+    assert.equal('deactivated_at' in older, false);
     // The 11-04 period started before the deactivation and is retained for 30 days after it ends.
     w.clock.now = new Date('2026-12-04T23:00:00.000Z');
     assert.equal((await w.engine.subscriptionCoverage(SCOPE, 'acct_1')).length, 1);
