@@ -31,7 +31,11 @@ const MIN_INSTANT = -62_135_596_800_000; // 0001-01-01T00:00:00Z
 const MAX_INSTANT = 253_402_300_799_999; // 9999-12-31T23:59:59.999Z
 const MAX_CORRECTION_STEPS = 4_096;
 
-/** A parsed ISO 8601 duration as the `reporting-schedule.json` pattern admits it. */
+/**
+ * A parsed ISO 8601 duration as the `reporting-schedule.json` pattern admits it.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingIsoDurationPartsV1 {
   years: number;
   months: number;
@@ -40,9 +44,14 @@ export interface ReportingIsoDurationPartsV1 {
   seconds: number;
 }
 
-/** Alignments defined by `core/reporting-schedule.json`. */
+/**
+ * Alignments defined by `core/reporting-schedule.json`.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export type ReportingPeriodAlignmentV1 = 'utc' | 'account_timezone' | 'source_timezone' | 'billing_cycle';
 
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export interface ReportingPeriodCalendarSpecV1 {
   /** Strictly positive ISO 8601 duration, such as `P1D`, `PT1H` or `P1M`. */
   period_duration: string;
@@ -57,7 +66,11 @@ export interface ReportingPeriodCalendarSpecV1 {
   period_anchor?: string;
 }
 
-/** Ordered, half-open reporting periods derived from one published schedule. */
+/**
+ * Ordered, half-open reporting periods derived from one published schedule.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingPeriodCalendarV1 {
   readonly spec: Readonly<ReportingPeriodCalendarSpecV1>;
   /**
@@ -84,7 +97,11 @@ export interface ReportingPeriodCalendarV1 {
 
 const DURATION = /^P(?=.*[1-9])(?=\d|T)(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)D)?(?:T(?=\d)(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/;
 
-/** Parse a strictly positive reporting `period_duration`. Throws on anything else. */
+/**
+ * Parse a strictly positive reporting `period_duration`. Throws on anything else.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function parseReportingPeriodDurationV1(value: string): ReportingIsoDurationPartsV1 {
   if (typeof value !== 'string' || value.length > 64) throw new TypeError('Invalid reporting period_duration');
   const match = DURATION.exec(value);
@@ -129,6 +146,8 @@ function formatterFor(timeZone: string): Intl.DateTimeFormat {
 /**
  * Validate an IANA zone name or link. Numeric offsets are refused: they define no DST
  * transitions, which is exactly the substitution `iana_timezone` forbids.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function assertReportingIanaTimezoneV1(value: unknown, field = 'timezone'): asserts value is string {
   if (typeof value !== 'string' || value.length === 0 || value.length > 255 || /^[+-]/.test(value)) {
@@ -200,6 +219,8 @@ function parseInstant(value: string, field: string): number {
 /**
  * Build the calendar a published schedule implies. Throws a `TypeError` for a schedule the
  * protocol does not define (a `billing_cycle` without anchor, a missing or numeric timezone).
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function createReportingPeriodCalendarV1(spec: ReportingPeriodCalendarSpecV1): ReportingPeriodCalendarV1 {
   const duration = parseReportingPeriodDurationV1(spec.period_duration);

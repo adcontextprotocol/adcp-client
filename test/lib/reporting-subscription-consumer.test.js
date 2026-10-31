@@ -7,14 +7,14 @@ const { InMemoryStateStore } = require('../../dist/lib/server/index.js');
 const {
   createReportingSubscriptionEngineStateStoreV1,
   createReportingSubscriptionEngineV1,
-} = require('../../dist/lib/reporting/service/index.js');
+} = require('../../dist/lib/reporting/advanced/index.js');
+const { createReliableReportingConsumerV1 } = require('../../dist/lib/reporting/consumer/index.js');
 const {
-  createReliableReportingConsumerV1,
   expectedSubscriptionPeriods,
   groupExpectedSubscriptionPeriodsV1,
   reportingSubscriptionVersionRecordsV1,
   subscriptionExpectedReportingPeriodsV1,
-} = require('../../dist/lib/reporting/consumer/index.js');
+} = require('../../dist/lib/reporting/advanced/index.js');
 const { syncReportingSubscriptionsV1 } = require('../../dist/lib/index.js');
 const { createTestPrincipalLifecycle } = require('../helpers/principal-runtime.js');
 

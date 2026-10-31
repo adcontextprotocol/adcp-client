@@ -7,11 +7,13 @@ const {
   REPORTING_MANAGED_DELIVERY_COMPOSITION_V1,
   ReportingConfigurationImmutableError,
   createReliableReportingService,
-  createReportingSubscriptionEngineV1,
   isReportingConfigurationImmutableError,
-  reportingConfigurationCapabilitiesV1,
   runReliableReportingServiceConformanceV1,
 } = require('../../dist/lib/reporting/service/index.js');
+const {
+  createReportingSubscriptionEngineV1,
+  reportingConfigurationCapabilitiesV1,
+} = require('../../dist/lib/reporting/advanced/index.js');
 const {
   createInlineReportingSourceExecutor,
   redactedReportingSourceOfferingV1,

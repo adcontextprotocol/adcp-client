@@ -66,6 +66,12 @@ import {
   type ReportingSourceOfferingV1,
 } from '../source';
 
+import type { ReportingSubscriptionFrozenOwedSetV1 } from '../subscriptions/engine';
+import type { PrincipalStoreScope } from '../../server/principal/types';
+import { reportingConfigurationCapabilitiesV1 } from '../subscriptions/capabilities';
+import type { ReportingDeliveryOfferingWithDimensionsV1 } from '../subscriptions/wire';
+import { type ReliableReportingSubscriptionsOptionsV1, withReportingSubscriptionCoverageV1 } from './subscriptions';
+
 const ADAPTER_SCOPE_KEY = '_adcp_reporting_adapter';
 
 /** The intentionally small provider boundary: one bounded slice fetch plus immutable metadata. */
@@ -281,104 +287,11 @@ export interface CreateReliableReportingServiceOptionsV1<TCtxMeta = Record<strin
    * `media_buy.reporting_subscriptions`, AdCP 3.3). Advertises `configuration_tasks` with
    * `sync_principal` and the `subscriptions` block, and adds `subscription_coverage[]` to
    * `get_reporting_status` summary and periods views. Pair it with a principal runtime
-   * created with `reportingSubscriptions` and a {@link ReportingSubscriptionEngineV1}. Without
-   * it capabilities and responses are unchanged.
+   * created with `reportingSubscriptions` and a reporting subscription engine from
+   * `@adcp/sdk/reporting/advanced`, where this option's type is also published. Without it
+   * capabilities and responses are unchanged.
    */
   reportingSubscriptions?: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>;
-}
-
-export interface ReliableReportingSubscriptionsOptionsV1<TCtxMeta = Record<string, unknown>> {
-  engine: Pick<ReportingSubscriptionEngineV1, 'subscriptionCoverage' | 'settings' | 'frozenOwedSets'> &
-    Partial<Pick<ReportingSubscriptionEngineV1, 'isAuthorized'>>;
-  /**
-   * The principal runtime. A composition that delivers managed subscription obligations (the
-   * production service in `@adcp/reporting-storage/service`) resolves each subscription's
-   * destination through it.
-   */
-  principal?: Pick<PrincipalLifecycleRuntimeSubscriptions, 'listReportingSubscriptions'> &
-    Pick<PrincipalLifecycleRuntime, 'resolveReportingDestination'>;
-  /**
-   * The same authenticated mapping the principal runtime uses. Never derive it from request content.
-   * It also scopes `get_reporting_status`, `get_media_buy_delivery` and `sync_reporting_status`: a
-   * caller sees account configurations plus only its own subscription generations.
-   */
-  resolvePrincipal(context: RequestContext<Account<TCtxMeta>>): PrincipalStoreScope | Promise<PrincipalStoreScope>;
-  /**
-   * Every principal whose subscription obligations `runCycle` writes into the ledger, for example
-   * `engine.listPrincipals(tenantId)` across your tenants. Each cycle plans the engine's frozen
-   * owed set of each of them (on the cycle's account) before it plans account configurations.
-   */
-  listSubscriptionPrincipals(): readonly PrincipalStoreScope[] | Promise<readonly PrincipalStoreScope[]>;
-  /**
-   * The account `resolveSource`, `resolveCurrency` and `resolveCoverage` receive for a subscription
-   * generation. Defaults to `{ id: accountId, ctx_metadata: {} }`.
-   */
-  resolveSubscriptionAccount?(
-    accountId: string
-  ): Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'> | Promise<Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'>>;
-  /**
-   * Seller policy for one subscription generation: the facts a host also supplies when it maps a
-   * `sync_accounts` configuration onto `installConfiguration`. The service takes identity, feed
-   * purpose, required finality, report definition and schedule from the subscription version and the
-   * resolved offering, and the source route, currency and authorized coverage from
-   * `resolveSource`, `resolveCurrency` and `resolveCoverage`, as for an account configuration.
-   */
-  resolveSubscriptionConfiguration(
-    input: ReliableReportingSubscriptionGenerationContextV1<TCtxMeta>
-  ): ReliableReportingSubscriptionPolicyV1 | Promise<ReliableReportingSubscriptionPolicyV1>;
-  /**
-   * Called for each subscription whose obligations a cycle could not write. One subscription never
-   * stops the others or the account's own configurations. Without it, `runCycle` rejects with an
-   * `AggregateError` of these failures after the rest of the cycle has run.
-   */
-  onPlanningError?(
-    error: unknown,
-    context: { principal: PrincipalStoreScope; accountId?: string; subscriptionId?: string }
-  ): void | Promise<void>;
-  /**
-   * Binds a managed subscription generation to its destination before its first obligation is
-   * written. Supplied by a composition that owns managed delivery, such as
-   * `createPostgresReliableReportingProductionService`; a subscription that resolves a managed
-   * offering without it fails to plan. A rejection writes nothing, and the next cycle tries again.
-   */
-  bindManagedGeneration?(input: ReliableReportingSubscriptionBindingInputV1): Promise<void>;
-  /** Standard dimensions the seller maps its report definitions onto (`subscriptions.dimensions`). */
-  dimensions?: readonly string[];
-  /** Keep serving `sync_accounts` `reporting_delivery_configs`. Defaults to true. */
-  accountConfigurations?: boolean;
-}
-
-/** One managed subscription generation to bind to its destination. */
-export interface ReliableReportingSubscriptionBindingInputV1 {
-  /** The owning principal. */
-  principal: PrincipalStoreScope;
-  /** The installed generation, with its `subscription` block. */
-  configuration: ReportingLedgerConfigurationV1;
-  /** The subscription version's configuration, naming `destination.destination_id` and `path_template`. */
-  subscription: ReportingSubscriptionFrozenOwedSetV1['versions'][number]['configuration'];
-  /** The destination's pattern and transport, frozen when the version was accepted. */
-  destinationMethod?: NonNullable<ReportingSubscriptionFrozenOwedSetV1['versions'][number]['destination_method']>;
-  /** The resolved managed offering. */
-  offering: ReportingDeliveryOffering;
-}
-
-/** What {@link ReliableReportingSubscriptionsOptionsV1.resolveSubscriptionConfiguration} is asked about. */
-export interface ReliableReportingSubscriptionGenerationContextV1<TCtxMeta = Record<string, unknown>> {
-  principal: PrincipalStoreScope;
-  account: Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'>;
-  /** The subscription version's configuration. */
-  subscription: ReportingSubscriptionFrozenOwedSetV1['versions'][number]['configuration'];
-  offering: ReportingDeliveryOffering;
-  sourceOffering: ReportingSourceOfferingV1;
-}
-
-/** Seller policy for one subscription generation. */
-export interface ReliableReportingSubscriptionPolicyV1 {
-  requestedMetrics: string[];
-  requestedDimensions: string[];
-  sourceSettings: Omit<ReportingLedgerConfigurationV1['sourceSettings'], 'currency'>;
-  finalityPolicy?: ReportingLedgerConfigurationV1['finalityPolicy'];
-  canonicalization?: ReportingLedgerConfigurationV1['canonicalization'];
 }
 
 /**
@@ -440,17 +353,6 @@ export type ReliableReportingMaintenanceFactoryV1 = (
  *
  * @experimental Storage-facing building block: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
-import type { ReportingSubscriptionEngineV1, ReportingSubscriptionFrozenOwedSetV1 } from '../subscriptions/engine';
-import type { PrincipalLifecycleRuntimeSubscriptions, PrincipalStoreScope } from '../../server/principal/types';
-import type { PrincipalLifecycleRuntime } from '../../server/principal/runtime';
-import { reportingConfigurationCapabilitiesV1 } from '../subscriptions/capabilities';
-import { isAdcpVersionAtLeast } from '../../utils/adcp-version-config';
-import type { ReportingDeliveryOfferingWithDimensionsV1 } from '../subscriptions/wire';
-import {
-  reportingSubscriptionCoverageForReleaseV1,
-  reportingSubscriptionReleaseFieldsV1,
-} from '../../server/reporting-subscription-release';
-
 export const REPORTING_MANAGED_DELIVERY_COMPOSITION_V1: unique symbol = Symbol.for(
   '@adcp/sdk/reporting/managed-delivery-composition'
 ) as never;
@@ -1219,36 +1121,6 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   };
 
   return service;
-}
-
-/**
- * Add `subscription_coverage[]` to a completed summary or periods response. The revision
- * view never carries it, and an account the caller cannot read has no entries. Exported for
- * compositions that serve `get_reporting_status` from their own handler, such as the production
- * service in `@adcp/reporting-storage/service`.
- *
- * @experimental Storage-facing building block: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
- */
-export async function withReportingSubscriptionCoverageV1<TCtxMeta>(
-  response: Awaited<ReturnType<ReliableReportingPlatform<TCtxMeta>['getReportingStatus']>>,
-  context: RequestContext<Account<TCtxMeta>>,
-  subscriptions: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>
-) {
-  const body = response as unknown as Record<string, unknown>;
-  if (body.status !== 'completed' || (body.view !== 'summary' && body.view !== 'periods')) return response;
-  // subscription_coverage is a 3.3 field; earlier response shapes are closed.
-  const served = (context as { servedAdcpVersion?: string }).servedAdcpVersion;
-  if (served !== undefined && !isAdcpVersionAtLeast(served, '3.3.0-beta.1')) return response;
-  const accountId = (context.account as { id?: unknown } | undefined)?.id;
-  if (typeof accountId !== 'string') return response;
-  const principal = await subscriptions.resolvePrincipal(context);
-  // Fields settled after 3.3.0-beta.1 only when the served bundle defines them.
-  const fields = reportingSubscriptionReleaseFieldsV1(served);
-  const coverage = (await subscriptions.engine.subscriptionCoverage(principal, accountId)).map(entry =>
-    reportingSubscriptionCoverageForReleaseV1(entry as unknown as Record<string, unknown>, fields)
-  );
-  if (coverage.length === 0) return response;
-  return { ...body, subscription_coverage: coverage } as unknown as typeof response;
 }
 
 function createRoutedSource(
@@ -2033,33 +1905,5 @@ function deepFreeze<T>(value: T): T {
 }
 
 export { ReportingConfigurationImmutableError, isReportingConfigurationImmutableError } from '../ledger';
-export {
-  reportingConfigurationCapabilitiesV1,
-  type ReportingConfigurationCapabilitiesInputV1,
-  type ReportingConfigurationCapabilitiesV1,
-} from '../subscriptions/capabilities';
-export {
-  createInMemoryReportingSubscriptionEngineStoreV1,
-  createReportingSubscriptionEngineV1,
-  type CreateReportingSubscriptionEngineOptionsV1,
-  type ReportingSubscriptionAccountConfigV1,
-  type ReportingSubscriptionAccountFactV1,
-  type ReportingSubscriptionCoverageEntryV1,
-  type ReportingSubscriptionEngineHooksV1,
-  type ReportingSubscriptionEngineStateV1,
-  type ReportingSubscriptionEngineStoreV1,
-  type ReportingSubscriptionEngineV1,
-  type ReportingSubscriptionExclusionReasonV1,
-  type ReportingSubscriptionExclusionV1,
-  type ReportingSubscriptionFrozenOwedSetV1,
-  type ReportingSubscriptionReadbackOverflowV1,
-  type ReportingSubscriptionReconcileResultV1,
-  reportingSubscriptionCoverageGrantedV1,
-} from '../subscriptions/engine';
-export {
-  DEFAULT_REPORTING_SUBSCRIPTION_ENGINE_COLLECTION,
-  createReportingSubscriptionEngineStateStoreV1,
-  type CreateReportingSubscriptionEngineStateStoreOptionsV1,
-} from '../subscriptions/engine-state-store';
 export * from './conformance';
 export * from './scheduler-support';

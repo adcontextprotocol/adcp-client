@@ -12,7 +12,7 @@ import type {
 import { ReportingDeliveryCapabilitiesSchema, ReportingMaterializationSchema } from '@adcp/sdk/schemas';
 import { canonicalize } from '@adcp/sdk';
 import { expandReportingSubscriptionPathTemplate } from '@adcp/sdk/server';
-import type { ReliableReportingSubscriptionBindingInputV1 } from '@adcp/sdk/reporting/service';
+import type { ReliableReportingSubscriptionBindingInputV1 } from '@adcp/sdk/reporting/advanced';
 import {
   isReportingAdjustmentReceiptEvidence,
   isReportingReceiptEvidence,

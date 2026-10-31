@@ -1,8 +1,11 @@
 const assert = require('node:assert/strict');
 const { describe, test } = require('node:test');
 const path = require('node:path');
+const advanced = require('@adcp/sdk/reporting/advanced');
 const consumer = require('@adcp/sdk/reporting/consumer');
 const ledger = require('@adcp/sdk/reporting/ledger');
+const service = require('@adcp/sdk/reporting/service');
+const root = require('@adcp/sdk');
 
 const {
   createReportingPeriodCalendarV1,
@@ -10,7 +13,7 @@ const {
   groupExpectedSubscriptionPeriodsV1,
   resolveReportingSubscriptionOfferingsV1,
   reportingSubscriptionScopeIncludesV1,
-} = consumer;
+} = advanced;
 
 // The JSON table is the cross-SDK parity contract (adcp-client-python mirrors it).
 const table = require(path.join(__dirname, '..', 'fixtures', 'reporting-subscriptions', 'coverage-cases.json'));
@@ -113,10 +116,12 @@ describe('expectedSubscriptionPeriods parity table', () => {
     }
   });
 
-  test('ledger and consumer entry points export the same rule', () => {
-    assert.equal(typeof ledger.expectedSubscriptionPeriods, 'function');
-    const input = structuredClone(table.cases[0].input);
-    assert.deepEqual(ledger.expectedSubscriptionPeriods(input), expectedSubscriptionPeriods(input));
+  test('only the advanced entry point exports the rule', () => {
+    assert.equal(typeof expectedSubscriptionPeriods, 'function');
+    for (const [name, surface] of Object.entries({ consumer, ledger, service, root })) {
+      assert.equal(surface.expectedSubscriptionPeriods, undefined, name);
+      assert.equal(surface.createReportingPeriodCalendarV1, undefined, name);
+    }
   });
 });
 

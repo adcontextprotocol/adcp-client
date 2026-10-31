@@ -9,6 +9,7 @@
  */
 import type { ReportingDeliveryCapabilities } from '../../types/tools.generated';
 
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export interface ReportingConfigurationCapabilitiesInputV1 {
   /**
    * Accept principal-level reporting subscriptions through `sync_principal`. Absent keeps
@@ -30,12 +31,17 @@ export interface ReportingConfigurationCapabilitiesInputV1 {
   accountConfigurations?: boolean;
 }
 
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export type ReportingConfigurationCapabilitiesV1 = Pick<
   ReportingDeliveryCapabilities,
   'configuration_task' | 'configuration_tasks' | 'subscriptions'
 >;
 
-/** The registration fields of a `reporting_delivery` capability block. */
+/**
+ * The registration fields of a `reporting_delivery` capability block.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function reportingConfigurationCapabilitiesV1(
   input: ReportingConfigurationCapabilitiesInputV1 = {}
 ): ReportingConfigurationCapabilitiesV1 {

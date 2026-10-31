@@ -15,6 +15,8 @@ import type { ReportingDeliveryOfferingWithDimensionsV1 } from './wire';
  * `enums/reporting-dimension.json`) and `unmapped_dimensions` (native dimensions with no
  * mapping, which count as distinct under `exact` and never toward `finest`), so buyer and
  * seller resolve `match` from the same wire facts.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export type ReportingSubscriptionOfferingV1 = ReportingDeliveryOfferingWithDimensionsV1 & {
   /**
@@ -28,15 +30,22 @@ export type ReportingSubscriptionOfferingV1 = ReportingDeliveryOfferingWithDimen
   withdrawn_at?: string;
 };
 
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export type ReportingSubscriptionSelectorV1 = ReportingSubscription['selector'];
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export type ReportingSubscriptionMatchV1 = 'exact' | 'finest' | 'all';
 
-/** `pattern` and `transport` of the principal `reporting_destinations` entry a subscription names. */
+/**
+ * `pattern` and `transport` of the principal `reporting_destinations` entry a subscription names.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingSubscriptionDestinationMethodV1 {
   pattern: string;
   transport: string;
 }
 
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export interface ResolveReportingSubscriptionOfferingsInputV1 {
   selector: ReportingSubscriptionSelectorV1;
   reconciliation_mode: ReportingSubscription['reconciliation_mode'];
@@ -56,14 +65,22 @@ export interface ResolveReportingSubscriptionOfferingsInputV1 {
   at?: number;
 }
 
-/** `match` defaults to `exact` when `dimensions` is present and `finest` when absent. */
+/**
+ * `match` defaults to `exact` when `dimensions` is present and `finest` when absent.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function effectiveReportingSubscriptionMatchV1(
   selector: ReportingSubscriptionSelectorV1
 ): ReportingSubscriptionMatchV1 {
   return selector.match ?? (selector.dimensions !== undefined ? 'exact' : 'finest');
 }
 
-/** UTF-8 byte-order comparison, as the spec's "lowest offering_id in byte order" requires. */
+/**
+ * UTF-8 byte-order comparison, as the spec's "lowest offering_id in byte order" requires.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function compareReportingIdsByteOrderV1(left: string, right: string): number {
   return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'));
 }
@@ -97,7 +114,11 @@ function canProduceTimezone(offering: ReportingDeliveryOffering, timezone: strin
   }
 }
 
-/** Candidate filter from `x-adcp-validation.selection`, before `match` applies. */
+/**
+ * Candidate filter from `x-adcp-validation.selection`, before `match` applies.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function isReportingSubscriptionCandidateV1(
   offering: ReportingSubscriptionOfferingV1,
   input: Omit<ResolveReportingSubscriptionOfferingsInputV1, 'offerings'>
@@ -134,6 +155,8 @@ export function isReportingSubscriptionCandidateV1(
  * Resolve a selector against one product's eligible offerings. Returns the resolved
  * offering IDs in byte order: at most one for `exact` and `finest`, every match for `all`,
  * none when nothing matches (the seller then records `offering_unsupported`).
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function resolveReportingSubscriptionOfferingsV1(input: ResolveReportingSubscriptionOfferingsInputV1): string[] {
   const match = effectiveReportingSubscriptionMatchV1(input.selector);
@@ -175,6 +198,7 @@ export function resolveReportingSubscriptionOfferingsV1(input: ResolveReportingS
   return best ? [best.offering_id] : [];
 }
 
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export interface ReportingSubscriptionScopeAccountV1 {
   account_id: string;
   /** The account's `operator` domain, needed when the scope names `operator_domains`. */
@@ -185,6 +209,8 @@ export interface ReportingSubscriptionScopeAccountV1 {
  * Whether a subscription's scope selects an account: `account_ids` naming it, or
  * `all_authorized_accounts` with the account outside `exclude_account_ids` and, when
  * `operator_domains` is present, its operator listed. Authorization is checked separately.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function reportingSubscriptionScopeIncludesV1(
   subscription: Pick<ReportingSubscription, 'scope' | 'exclude_account_ids' | 'operator_domains'>,

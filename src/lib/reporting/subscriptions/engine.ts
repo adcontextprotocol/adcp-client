@@ -69,6 +69,7 @@ const MAX_AUTHORIZED_ACCOUNT_PAGES = 10_000;
 const PRINCIPAL_KEY = 'principal';
 const ACCOUNT_KEY_PREFIX = 'account:';
 
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export type ReportingSubscriptionExclusionReasonV1 =
   | 'offering_unsupported'
   | 'capacity'
@@ -76,7 +77,11 @@ export type ReportingSubscriptionExclusionReasonV1 =
   | 'excluded_by_buyer'
   | 'action_required';
 
-/** One `subscription_coverage[].excluded[]` entry. */
+/**
+ * One `subscription_coverage[].excluded[]` entry.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingSubscriptionExclusionV1 {
   media_buy_id?: string;
   reason: ReportingSubscriptionExclusionReasonV1;
@@ -86,7 +91,11 @@ export interface ReportingSubscriptionExclusionV1 {
   overridden_by?: { subscription_id: string } | { delivery_config_id: string };
 }
 
-/** One `subscription_coverage[]` entry, typed. */
+/**
+ * One `subscription_coverage[]` entry, typed.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingSubscriptionCoverageEntryV1 {
   subscription_id: string;
   subscription_version: number;
@@ -103,7 +112,11 @@ export interface ReportingSubscriptionCoverageEntryV1 {
   gaps?: ReportingSubscriptionGapV1[];
 }
 
-/** Facts about one account the principal may currently read. */
+/**
+ * Facts about one account the principal may currently read.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingSubscriptionAccountFactV1 {
   account_id: string;
   /**
@@ -143,6 +156,8 @@ export interface ReportingSubscriptionAccountFactV1 {
  * `sync_reporting_receipts` and `sync_reporting_status`) keeps coverage; dropping
  * `get_reporting_status` from the grant ends it at that instant, as a loss of authority with an
  * `accounts_unauthorized` entry. The one place this rule lives.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function reportingSubscriptionCoverageGrantedV1(grant: {
   allowed_tasks?: readonly string[] | undefined;
@@ -150,7 +165,11 @@ export function reportingSubscriptionCoverageGrantedV1(grant: {
   return grant.allowed_tasks === undefined || grant.allowed_tasks.includes('get_reporting_status');
 }
 
-/** One of the caller's own `sync_accounts` `reporting_delivery_configs` entries, for precedence. */
+/**
+ * One of the caller's own `sync_accounts` `reporting_delivery_configs` entries, for precedence.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingSubscriptionAccountConfigV1 {
   delivery_config_id: string;
   feed_purpose: 'pacing' | 'analytics' | 'billing';
@@ -171,6 +190,7 @@ export interface ReportingSubscriptionAccountConfigV1 {
   };
 }
 
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export interface ReportingSubscriptionEngineHooksV1 {
   /** The accounts this principal may read now, paged. The host owns the answer; the SDK never infers it. */
   listAuthorizedAccounts(
@@ -256,7 +276,11 @@ interface BuyRevision {
   previous: ReportingSubscriptionBuyV1;
 }
 
-/** Durable engine state for one (principal, account). */
+/**
+ * Durable engine state for one (principal, account).
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingSubscriptionEngineAccountDocumentV1 {
   account: AccountState;
   subscriptions: Record<string, SubscriptionAccountState>;
@@ -264,12 +288,20 @@ export interface ReportingSubscriptionEngineAccountDocumentV1 {
   lastBuys?: ReportingSubscriptionBuyV1[];
 }
 
-/** Durable engine state for one principal: `max_accounts` slots per subscription. */
+/**
+ * Durable engine state for one principal: `max_accounts` slots per subscription.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingSubscriptionEnginePrincipalDocumentV1 {
   served: Record<string, string[]>;
 }
 
-/** Everything the engine holds for one principal, for inspection and conformance. */
+/**
+ * Everything the engine holds for one principal, for inspection and conformance.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingSubscriptionEngineStateV1 {
   principal: ReportingSubscriptionEnginePrincipalDocumentV1;
   accounts: Record<string, ReportingSubscriptionEngineAccountDocumentV1>;
@@ -278,6 +310,8 @@ export interface ReportingSubscriptionEngineStateV1 {
 /**
  * Engine persistence: small documents keyed per principal (`principal`) and per account
  * (`account:<id>`), each with its own compare-and-set revision.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReportingSubscriptionEngineStoreV1 {
   readonly durability: 'process-local' | 'durable';
@@ -297,7 +331,11 @@ export interface ReportingSubscriptionEngineStoreV1 {
   listPrincipals(tenantId: string): MaybePromise<PrincipalStoreScope[]>;
 }
 
-/** Process-local engine store for tests and single-process sellers. */
+/**
+ * Process-local engine store for tests and single-process sellers.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function createInMemoryReportingSubscriptionEngineStoreV1(): ReportingSubscriptionEngineStoreV1 {
   const rows = new Map<
     string,
@@ -338,6 +376,7 @@ export function createInMemoryReportingSubscriptionEngineStoreV1(): ReportingSub
   };
 }
 
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export interface CreateReportingSubscriptionEngineOptionsV1 {
   principal: PrincipalLifecycleRuntimeSubscriptions;
   hooks: ReportingSubscriptionEngineHooksV1;
@@ -366,14 +405,22 @@ export interface CreateReportingSubscriptionEngineOptionsV1 {
   ) => void | Promise<void>;
 }
 
-/** A subscription whose readback lists exceed the 1000-entry limit. */
+/**
+ * A subscription whose readback lists exceed the 1000-entry limit.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingSubscriptionReadbackOverflowV1 {
   subscription_id: string;
   accounts_with_exceptions: number;
   accounts_unauthorized: number;
 }
 
-/** What a reconcile pass could not publish. */
+/**
+ * What a reconcile pass could not publish.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingSubscriptionReconcileResultV1 {
   readback_overflow: ReportingSubscriptionReadbackOverflowV1[];
 }
@@ -381,6 +428,7 @@ export interface ReportingSubscriptionReconcileResultV1 {
 /** The readback's `maxItems` for `accounts_with_exceptions` and `accounts_unauthorized`. */
 const MAX_READBACK_ACCOUNTS = 1000;
 
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export interface ReportingSubscriptionEngineV1 {
   /** The commitments a capability document advertises for this engine. */
   readonly settings: { maxAccounts?: number; backfillOnRegrant: boolean; statusRetentionDays: number };
@@ -458,7 +506,11 @@ export interface ReportingSubscriptionEngineV1 {
   inspect(principal: Readonly<PrincipalStoreScope>): Promise<ReportingSubscriptionEngineStateV1>;
 }
 
-/** One subscription's frozen owed set on one account. */
+/**
+ * One subscription's frozen owed set on one account.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export interface ReportingSubscriptionFrozenOwedSetV1 {
   account_id: string;
   subscription_id: string;
@@ -532,6 +584,7 @@ function inactiveIntervals(history: StoredReportingSubscriptionHistory): Reporti
   return history.inactiveIntervals.map(interval => ({ deactivated_at: interval.from, reactivated_at: interval.until }));
 }
 
+/** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export function createReportingSubscriptionEngineV1(
   options: CreateReportingSubscriptionEngineOptionsV1
 ): ReportingSubscriptionEngineV1 {

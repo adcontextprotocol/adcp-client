@@ -23,11 +23,11 @@ import {
   createPrincipalStateStore,
   principalNotificationSubscriptionStore,
 } from '@adcp/sdk/server';
+import { createReliableReportingService } from '@adcp/sdk/reporting/service';
 import {
-  createReliableReportingService,
   createReportingSubscriptionEngineStateStoreV1,
   createReportingSubscriptionEngineV1,
-} from '@adcp/sdk/reporting/service';
+} from '@adcp/sdk/reporting/advanced';
 import { redactedReportingSourceOfferingV1, redactedReportingSourceRequestV1 } from '@adcp/sdk/reporting/source';
 
 export const REFERENCE_TENANT = 'reference-seller';

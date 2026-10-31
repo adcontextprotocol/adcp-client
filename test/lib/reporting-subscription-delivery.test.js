@@ -12,10 +12,12 @@ process.env.NODE_ENV = 'test';
 
 const {
   REPORTING_MANAGED_DELIVERY_COMPOSITION_V1,
-  createInMemoryReportingSubscriptionEngineStoreV1,
   createReliableReportingService,
-  createReportingSubscriptionEngineV1,
 } = require('../../dist/lib/reporting/service/index.js');
+const {
+  createInMemoryReportingSubscriptionEngineStoreV1,
+  createReportingSubscriptionEngineV1,
+} = require('../../dist/lib/reporting/advanced/index.js');
 const {
   redactedReportingSourceOfferingV1,
   redactedReportingSourceRequestV1,
