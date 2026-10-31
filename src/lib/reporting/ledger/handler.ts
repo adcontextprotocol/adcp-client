@@ -918,6 +918,8 @@ function wireObligation(
     // AdCP 3.3: a subscription obligation names the offering it resolved to, which is
     // authoritative for its timing. Account obligations keep their pre-3.3 shape.
     ...(emitsOfferingId && obligation.subscription ? { offering_id: obligation.offeringId } : {}),
+    // adcp#8617: a billing cutover stub period says so.
+    ...(emitsOfferingId && obligation.stub === true ? { stub: true } : {}),
     feed_purpose: obligation.feedPurpose,
     reporting_profile: obligation.contract.reportingProfile,
     account_id: obligation.account.account_id,

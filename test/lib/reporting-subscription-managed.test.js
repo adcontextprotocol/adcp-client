@@ -43,7 +43,7 @@ function deliveryOffering() {
       schema_dialect: source.contract.schemaDialect,
       schema_ref_policy: source.contract.schemaRefPolicy,
       grain: source.grain,
-      primary_keys: ['media_buy_id'],
+      primary_keys: ['account_id', 'media_buy_id'],
     },
     schedule: { period_duration: 'P1D', alignment: 'utc', delivery_sla: 'PT0S' },
     supported_finality: ['snapshot'],
@@ -291,6 +291,10 @@ describe('managed reporting subscriptions', () => {
       ).authorization.authorized_at;
     const first = await authorizedAt();
     assert.ok(first, 'an omitted authorized_at is stamped by the journal');
+    const listed = (await w.call('buyer-a', 'list_accounts', {})).structuredContent.accounts.find(
+      item => item.account_id === ACCOUNT
+    );
+    assert.equal(listed.authorization.regranted_at, undefined, 'a chain without a re-grant serves no regranted_at');
     assert.equal(await authorizedAt(), first, 'and served unchanged afterwards');
     // A host value that moves the open chain earlier is refused and logged.
     const warnings = [];
@@ -326,6 +330,10 @@ describe('managed reporting subscriptions', () => {
     });
     assert.equal(await engine.isAuthorized(principal, ACCOUNT), true);
     assert.equal(await authorizedAt(), chain, 'a re-grant inside status_retention_days continues the chain');
+    // adcp#8618: the continued chain's re-grant is served as authorization.regranted_at, from the journal.
+    const authorization = (await w.call('buyer-a', 'list_accounts', {})).structuredContent.accounts[0].authorization;
+    assert.ok(authorization.regranted_at, 'list_accounts serves regranted_at for a continued chain');
+    assert.ok(Date.parse(authorization.regranted_at) > Date.parse(w.day(5)), 'at the re-grant, after the revocation');
   });
 
   test('a cancelled reconcile stops before the derived reads', async () => {

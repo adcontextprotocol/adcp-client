@@ -135,7 +135,7 @@ describe('PostgreSQL managed subscription delivery', { skip: !DATABASE_URL && 'P
           schema_dialect: sourceOffering.contract.schemaDialect,
           schema_ref_policy: sourceOffering.contract.schemaRefPolicy,
           grain: sourceOffering.grain,
-          primary_keys: ['media_buy_id'],
+          primary_keys: ['account_id', 'media_buy_id'],
         },
         schedule: { period_duration: 'P1D', alignment: 'utc', delivery_sla: 'PT0S' },
         supported_finality: ['snapshot'],

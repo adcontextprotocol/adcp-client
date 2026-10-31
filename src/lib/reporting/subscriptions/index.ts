@@ -22,6 +22,7 @@ export {
   isReportingSubscriptionCandidateV1,
   reportingSubscriptionScopeIncludesV1,
   resolveReportingSubscriptionOfferingsV1,
+  resolveReportingSubscriptionPackageV1,
 } from './selection';
 export type {
   ReportingSubscriptionDestinationMethodV1,
@@ -47,7 +48,7 @@ export type {
   ReportingSubscriptionBuyV1,
   ReportingSubscriptionCoverageAccountV1,
   ReportingSubscriptionGrantV1,
-  ReportingSubscriptionPriorFlightV1,
+  ReportingSubscriptionFlightHistoryEntryV1,
   ReportingSubscriptionVersionRecordV1,
 } from './coverage';
 export { reportingConfigurationCapabilitiesV1 } from './capabilities';

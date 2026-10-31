@@ -86,7 +86,16 @@ interface Principal {
   destinations: Json[];
 }
 
-const SEMANTIC = ['selector', 'reconciliation_mode', 'destination', 'scope', 'exclude_account_ids', 'operator_domains'];
+// adcp#8619: membership (scope.account_ids, exclude_account_ids) changes in place; the scope kind does
+// not. destination_overrides is a destination change.
+const SEMANTIC = [
+  'selector',
+  'reconciliation_mode',
+  'destination',
+  'destination_overrides',
+  'scope',
+  'operator_domains',
+];
 const ROSTER_PAGES = 10;
 
 const canonical = (value: unknown): string =>
@@ -97,7 +106,24 @@ const canonical = (value: unknown): string =>
   );
 
 const semantic = (subscription: Json): string =>
-  canonical(Object.fromEntries(SEMANTIC.map(key => [key, subscription[key] ?? null])));
+  canonical(
+    Object.fromEntries(
+      SEMANTIC.map(key => [
+        key,
+        key === 'scope'
+          ? (subscription.scope as Json | undefined)?.all_authorized_accounts === true
+            ? 'all_authorized_accounts'
+            : 'account_ids'
+          : (subscription[key] ?? null),
+      ])
+    )
+  );
+
+/** The membership a subscription names: its `account_ids` or its `exclude_account_ids`, as sorted sets. */
+const membershipOf = (subscription: Json): Json => ({
+  account_ids: [...(((subscription.scope as Json | undefined)?.account_ids as string[] | undefined) ?? [])].sort(),
+  exclude_account_ids: [...((subscription.exclude_account_ids as string[] | undefined) ?? [])].sort(),
+});
 
 const activeSubscription = (state: ReportingSubscriptionState | undefined): boolean =>
   state !== undefined && state.state !== 'inactive';
@@ -210,9 +236,10 @@ interface Plan {
  * `client.reporting`: patch-shaped reporting-subscription writes.
  *
  * - `subscribe(subscription, { registerDestination })` upserts one subscription and keeps every
- *   other entry. `subscription_version` is optional: it is kept when only `active` or
- *   `replace_account_configs` change, and bumped when the selector, scope, destination,
- *   `reconciliation_mode`, `exclude_account_ids` or `operator_domains` change.
+ *   other entry. `subscription_version` is optional: it is kept when only `active`,
+ *   `replace_account_configs` or membership (`scope.account_ids`, `exclude_account_ids`; adcp#8619)
+ *   change, and bumped when the selector, the scope kind, the destination (including
+ *   `destination_overrides`), `reconciliation_mode` or `operator_domains` change.
  * - `unsubscribe(id)` is the only way to deactivate (`active: false`; obligations are retained).
  * - `replaceSubscriptions(list, { deactivateOmitted })` replaces the complete set (expert).
  * - `listSubscriptions()` and `preview(subscription)` (a seller dry run).
@@ -584,7 +611,9 @@ function chooseVersion(
   if (reactivating) return { version, action: 'reactivated' };
   if (
     (wanted.active === false) !== !activeSubscription(state) ||
-    (wanted.replace_account_configs ?? null) !== (current.replace_account_configs ?? null)
+    (wanted.replace_account_configs ?? null) !== (current.replace_account_configs ?? null) ||
+    // adcp#8619: a membership edit is written under the same version.
+    canonical(membershipOf(wanted)) !== canonical(membershipOf(current))
   ) {
     return { version, action: 'updated' };
   }

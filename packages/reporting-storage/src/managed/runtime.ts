@@ -1047,9 +1047,10 @@ export function reportingSubscriptionDeliveryPathV1(
  * `destination.destination_id`, the principal's current generation of that destination supplies
  * the `destination_ref` (`core/reporting-subscription.json`: "The seller binds the current
  * generation"), and it must be delivery-eligible and serve the offering's pattern and transport
- * (the version froze both). One destination serves every account the subscription covers, so
- * the account gets its own authorization of that `destination_ref`, created on first use. The
- * binding freezes the version's `path_template`. A destination that is not ready rejects the
+ * (the version froze both). The account's destination is the subscription's `destination`, or the
+ * `destination_overrides` entry routing it (adcp#8619), and the account gets its own authorization
+ * of that destination's `destination_ref`, created on first use. The binding freezes that
+ * destination's `path_template`. A destination that is not ready rejects the
  * bind, so the generation's obligations wait for the next cycle instead of becoming
  * undeliverable.
  *
@@ -1062,6 +1063,8 @@ export function createReportingSubscriptionManagedBindingV1(options: {
       states: ReadonlyArray<{
         subscription_id: string;
         destination_ref?: string;
+        /** The generation bound for each `destination_overrides` destination (adcp#8619). */
+        destination_override_refs?: ReadonlyArray<{ destination_id: string; destination_ref: string }>;
         configuration: { destination?: { destination_id: string } };
       }>;
     }>;
@@ -1087,7 +1090,8 @@ export function createReportingSubscriptionManagedBindingV1(options: {
   return async input => {
     const { principal, configuration, subscription, offering } = input;
     const method = offering.method as { pattern?: string; transport?: string } | undefined;
-    const destination = subscription.destination;
+    // adcp#8619: the account's destination, with destination_overrides applied by the SDK.
+    const destination = input.destination ?? subscription.destination;
     if (!method?.pattern || !method.transport || !destination) {
       throw new TypeError('A managed subscription generation needs a destination and a managed offering method');
     }
@@ -1108,10 +1112,16 @@ export function createReportingSubscriptionManagedBindingV1(options: {
     }
     const { states } = await options.principal.listReportingSubscriptions(principal);
     const state = states.find(value => value.subscription_id === subscription.subscription_id);
-    if (!state?.destination_ref || state.configuration.destination?.destination_id !== destination.destination_id) {
+    // The primary destination's generation is destination_ref; an override's is in destination_override_refs.
+    const destinationRef =
+      state?.configuration.destination?.destination_id === destination.destination_id
+        ? state.destination_ref
+        : state?.destination_override_refs?.find(item => item.destination_id === destination.destination_id)
+            ?.destination_ref;
+    if (!state || !destinationRef) {
       throw new Error('The subscription destination has no current generation to bind');
     }
-    const resolved = await options.principal.resolveReportingDestination(principal, state.destination_ref);
+    const resolved = await options.principal.resolveReportingDestination(principal, destinationRef);
     const resolvedMethod = (resolved?.configuration ?? {}) as { pattern?: unknown; transport?: unknown };
     if (!resolved || resolved.destinationId !== destination.destination_id || !resolved.deliveryEligible) {
       throw new Error('The subscription destination is not ready for delivery');

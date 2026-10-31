@@ -24,6 +24,7 @@ import {
   type SubscriptionOptions,
 } from '@adcp/sdk/reporting/service';
 import {
+  assertReportingTaskGrantedV1,
   withReportingSubscriptionCoverageV1,
   type ReliableReportingSubscriptionsOptionsV1,
 } from '@adcp/sdk/reporting/advanced';
@@ -379,6 +380,7 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     throw new TypeError('Pass subscriptions or the deprecated reportingSubscriptions, not both.');
   }
   const declaredBlock = options.subscriptions ?? options.reportingSubscriptions;
+  const subscriptionsEnabled = declaredBlock !== undefined;
   // With storage, the managed block's engine state and principal records live in it, and
   // `subscriptions.principal` builds the principal runtime over storage.principals here, so the managed
   // binding below can name it.
@@ -510,7 +512,11 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
       : {}),
     ...(managed.syncReportingReceipts
       ? {
-          syncReportingReceipts: (request, context) => managed.syncReportingReceipts!(request, context),
+          syncReportingReceipts: (request, context) => {
+            // adcp#8619: with subscriptions, a partial grant refuses the missing task with SCOPE_INSUFFICIENT.
+            if (subscriptionsEnabled) assertReportingTaskGrantedV1(context, 'sync_reporting_receipts');
+            return managed.syncReportingReceipts!(request, context);
+          },
         }
       : {}),
     async projectListAccounts(request, response, context) {

@@ -37,8 +37,21 @@ export interface AccountReady {
   readonly status?: string;
   readonly via: AccountVia;
   readonly request_id?: string;
-  /** The wire account, when the seller returned it. */
+  /**
+   * The wire account, when the seller returned it. A request resolved as `matched` or `created`
+   * always carries it, with the account's money terms (`billing`, `billing_entity`, `payment_terms`),
+   * which can differ from the terms requested (adcp#8620): read them here, not from the request.
+   */
   readonly account?: Readonly<Record<string, unknown>>;
+  /** How a `request_account` request resolved (`matched`, `created`, `updated`, ...), when it did. */
+  readonly resolution?: string;
+  /** When changed money terms take effect, for a request resolved as `updated` (adcp#8620). */
+  readonly effective_at?: string;
+  /**
+   * For a change request resolved as `created` (a separate new account): the named account's
+   * account-level configurations the new account does not have, to set up again (adcp#8620).
+   */
+  readonly not_carried_over?: readonly string[];
 }
 
 /**

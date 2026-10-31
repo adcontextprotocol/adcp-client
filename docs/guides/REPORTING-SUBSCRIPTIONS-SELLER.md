@@ -74,9 +74,10 @@ Not yet on the managed path. Use the advanced composition from `@adcp/sdk/report
 
 ## Grants and wind-down
 
-The SDK is the only source of `authorization.authorized_at`.
-- **Chain rule.** A re-grant before `unauthorized_at + status_retention_days` continues the chain, so `authorized_at` does not move. A later re-grant starts a new chain.
-- **Projection.** Served `list_accounts` and `sync_accounts` carry the journal's value, which is the value coverage uses. A host value that moves backwards is refused (`authorized_at_regressed`).
+The SDK is the only source of `authorization.authorized_at` and `authorization.regranted_at`.
+- **Chain rule.** A re-grant before `unauthorized_at + status_retention_days` continues the chain, so `authorized_at` does not move, and the re-grant is the chain's `regranted_at` (AdCP 3.3.0-beta.3). A later re-grant starts a new chain with no `regranted_at`.
+- **Projection.** Served `list_accounts` and `sync_accounts` carry the journal's values, which are the values coverage uses. A host value that moves backwards is refused (`authorized_at_regressed`).
+- **Partial grants.** Coverage depends only on `get_reporting_status`. A grant without `sync_reporting_receipts` or `sync_reporting_status` keeps the account covered, and the SDK refuses the missing task with `SCOPE_INSUFFICIENT` when your resolver returns the account with its `authorization`. Don't refuse it as an unknown account.
 - **Push.** `await reporting.grants!.changed({ principal, accountId, at, authorized, allowedTasks })` records a change at the moment your entitlement service knows it.
 
 `authorized_at` is when the *current authorization chain* began, not when access was last granted. Never set it to "now" on a re-grant, and never move it earlier.
@@ -89,6 +90,12 @@ import { windDownGrant } from '@adcp/sdk/server';
 // Keeps get_reporting_status, sync_reporting_receipts and sync_reporting_status, and authorized_at.
 account.authorization = windDownGrant(account.authorization);
 ```
+
+## What beta.3 asks of your platform
+
+- **Buys.** `get_media_buys` should carry each package's `reporting_delivery_offering_ids` (its offering set, fixed at confirmation), `cancellation_effective_at` when a cancellation stops delivery later than it was recorded, and `flight_history` for retroactive flight edits. The managed path reads all three. Resolution is sticky per (buy, version): an offering you add later never re-resolves a package, and withdrawing one (`withdrawn_at`) is a cutover.
+- **Offerings.** Every managed-delivery offering (one with `method`) declares `account_id` in `reporting_profile.primary_keys`, so rows of several accounts can share a destination. Creating the service refuses one that doesn't.
+- **Billing.** A cutover onto a billing feed owes the stretch to its first boundary as one stub period (`stub: true` on the obligation).
 
 ## Storage and migrations
 

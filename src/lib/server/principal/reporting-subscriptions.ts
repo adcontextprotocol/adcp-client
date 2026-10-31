@@ -23,6 +23,13 @@ export interface StoredReportingSubscriptionVersion {
   configuration: ReportingSubscription;
   /** Pattern and transport of the destination it named, frozen at acceptance. */
   destinationMethod?: ReportingSubscriptionDestinationMethodV1;
+  /**
+   * In-place membership edits to this version (adcp#8619), oldest first: adding or removing
+   * `account_ids`, or changing `exclude_account_ids`, keeps the version and is recorded per account.
+   * `member: false` removes the account at `at`; `member: true` adds it back (or adds it for the
+   * first time). The coverage engine turns them into `excluded_by_buyer` intervals.
+   */
+  membershipEdits?: Array<{ accountId: string; at: string; member: boolean }>;
 }
 
 /** Durable history the readback omits, retained so coverage can always be recomputed. */
@@ -102,12 +109,48 @@ function templatePlaceholders(template: string): string[] | undefined {
   return open === -1 ? found : undefined;
 }
 
-/** Fields whose change requires a new `subscription_version`. `active` and `replace_account_configs` change in place. */
+/**
+ * Fields whose change requires a new `subscription_version`. `active`, `replace_account_configs` and
+ * membership (`scope.account_ids`, `exclude_account_ids`; adcp#8619) change in place. Changing the
+ * scope kind or `operator_domains` still needs a new version.
+ */
 export function reportingSubscriptionSemanticFingerprint(subscription: ReportingSubscription): string {
-  const { active: _active, replace_account_configs: _replace, ...semantic } = subscription;
+  const {
+    active: _active,
+    replace_account_configs: _replace,
+    exclude_account_ids: _excluded,
+    scope,
+    ...semantic
+  } = subscription;
   void _active;
   void _replace;
-  return canonicalJsonSha256(semantic);
+  void _excluded;
+  return canonicalJsonSha256({
+    ...semantic,
+    scope_kind: scope?.all_authorized_accounts === true ? 'all_authorized_accounts' : 'account_ids',
+  });
+}
+
+/** Accounts a version's membership selects, as a predicate over its scope kind. */
+function membershipChanges(
+  before: ReportingSubscription,
+  after: ReportingSubscription
+): Array<{ accountId: string; member: boolean }> {
+  const changes: Array<{ accountId: string; member: boolean }> = [];
+  if (after.scope.account_ids !== undefined) {
+    const was = new Set(before.scope.account_ids ?? []);
+    const now = new Set(after.scope.account_ids);
+    for (const accountId of now) if (!was.has(accountId)) changes.push({ accountId, member: true });
+    for (const accountId of was) if (!now.has(accountId)) changes.push({ accountId, member: false });
+  } else {
+    const was = new Set(before.exclude_account_ids ?? []);
+    const now = new Set(after.exclude_account_ids ?? []);
+    for (const accountId of now) if (!was.has(accountId)) changes.push({ accountId, member: false });
+    for (const accountId of was) if (!now.has(accountId)) changes.push({ accountId, member: true });
+  }
+  return changes.sort((left, right) =>
+    left.accountId < right.accountId ? -1 : left.accountId > right.accountId ? 1 : 0
+  );
 }
 
 function isMultiAccount(subscription: ReportingSubscription): boolean {
@@ -193,6 +236,10 @@ export function validateReportingSubscription(
     }
   }
   if (selector.feed_purpose === 'billing') {
+    // adcp#8619: a billing feed's breakdown never depends on which offerings happen to exist.
+    if (selector.dimensions === undefined || (selector.match ?? 'exact') !== 'exact') {
+      fail('billing subscriptions require selector.match exact with selector.dimensions');
+    }
     if (selector.required_finality !== 'official') fail('billing subscriptions require official finality');
     if (subscription.reconciliation_mode !== 'consumer_receipt') {
       fail('billing subscriptions require consumer_receipt reconciliation');
@@ -200,6 +247,9 @@ export function validateReportingSubscription(
   }
   if (subscription.reconciliation_mode === 'consumer_receipt' && subscription.destination === undefined) {
     fail('consumer_receipt reconciliation requires a destination');
+  }
+  if (subscription.destination_overrides !== undefined && subscription.destination === undefined) {
+    fail('destination_overrides requires destination');
   }
   if (subscription.destination !== undefined) {
     const destination = destinations.find(item => item.destination_id === subscription.destination!.destination_id);
@@ -219,6 +269,7 @@ export function validateReportingSubscription(
         if (!PLACEHOLDERS.has(placeholder)) fail(`destination.path_template has unknown placeholder ${placeholder}`);
       }
     }
+    validateDestinationOverrides(subscription, destination!, destinations, fail);
     if (isMultiAccount(subscription)) {
       if (template === undefined && destinationPattern(destination!).pattern === 'file_transfer') {
         fail(
@@ -230,6 +281,113 @@ export function validateReportingSubscription(
       }
     }
   }
+}
+
+/**
+ * One `destination_overrides[]` entry. The generated type cannot express this item yet (its
+ * `anyOf`/`not`/`allOf` composition collapses to an empty object), so the shape is written out here.
+ */
+interface DestinationOverride {
+  destination_id: string;
+  account_ids?: string[];
+  operator_domains?: string[];
+  path_template?: string;
+}
+
+function destinationOverrides(
+  subscription: Pick<ReportingSubscription, 'destination_overrides'>
+): DestinationOverride[] {
+  return (subscription.destination_overrides ?? []) as unknown as DestinationOverride[];
+}
+
+/**
+ * `destination_overrides[]` (adcp#8619): each override names a destination in the caller's
+ * `reporting_destinations` after this request, with the same pattern and transport as `destination`,
+ * and selects accounts by `account_ids` or `operator_domains`, never both. An account appears in at
+ * most one `account_ids` entry and an operator domain in at most one `operator_domains` entry.
+ */
+function validateDestinationOverrides(
+  subscription: ReportingSubscription,
+  primary: PrincipalReportingDestination,
+  destinations: readonly PrincipalReportingDestination[],
+  fail: (message: string) => never
+): void {
+  if (subscription.destination_overrides === undefined) return;
+  const overrides = destinationOverrides(subscription);
+  if (!Array.isArray(subscription.destination_overrides) || overrides.length < 1 || overrides.length > 64) {
+    fail('destination_overrides must list 1-64 entries');
+  }
+  const method = destinationPattern(primary);
+  const accounts = new Set<string>();
+  const operators = new Set<string>();
+  for (const override of overrides) {
+    const destination = destinations.find(item => item.destination_id === override.destination_id);
+    if (!destination) {
+      fail(
+        `destination_overrides destination ${JSON.stringify(override.destination_id)} is not in reporting_destinations after this request`
+      );
+    }
+    const overrideMethod = destinationPattern(destination!);
+    if (overrideMethod.pattern !== method.pattern || overrideMethod.transport !== method.transport) {
+      fail(
+        `destination_overrides destination ${JSON.stringify(override.destination_id)} must have the same pattern and transport as destination`
+      );
+    }
+    if ((override.account_ids === undefined) === (override.operator_domains === undefined)) {
+      fail('each destination_overrides entry selects accounts by exactly one of account_ids or operator_domains');
+    }
+    for (const accountId of override.account_ids ?? []) {
+      if (accounts.has(accountId))
+        fail(`account ${JSON.stringify(accountId)} appears in two destination_overrides entries`);
+      accounts.add(accountId);
+    }
+    for (const domain of override.operator_domains ?? []) {
+      if (operators.has(domain))
+        fail(`operator domain ${JSON.stringify(domain)} appears in two destination_overrides entries`);
+      operators.add(domain);
+    }
+    const template = override.path_template;
+    if (template !== undefined) {
+      if (typeof template !== 'string' || template.length > 512 || !PATH_TEMPLATE.test(template)) {
+        fail('destination_overrides path_template must be a relative path without . or .. segments');
+      }
+      const placeholders = templatePlaceholders(template);
+      if (placeholders === undefined) fail('destination_overrides path_template has an unbalanced brace');
+      for (const placeholder of placeholders!) {
+        if (!PLACEHOLDERS.has(placeholder))
+          fail(`destination_overrides path_template has unknown placeholder ${placeholder}`);
+      }
+      const several = override.operator_domains !== undefined || (override.account_ids?.length ?? 0) > 1;
+      if (several && !template.includes('{account_id}')) {
+        fail(
+          'a destination_overrides path_template must contain {account_id} when the entry can select several accounts'
+        );
+      }
+    }
+  }
+}
+
+/**
+ * The destination one account's data goes to under a subscription (adcp#8619): the `account_ids`
+ * override naming it, else the `operator_domains` override naming its operator, else `destination`.
+ *
+ * @experimental Reporting subscriptions (`media_buy.reporting_subscriptions`, AdCP 3.3).
+ */
+export function reportingSubscriptionDestinationForAccount(
+  subscription: Pick<ReportingSubscription, 'destination' | 'destination_overrides'>,
+  account: { account_id: string; operator?: string }
+): { destination_id: string; path_template?: string } | undefined {
+  if (subscription.destination === undefined) return undefined;
+  const overrides = destinationOverrides(subscription);
+  const byAccount = overrides.find(item => item.account_ids?.includes(account.account_id));
+  const byOperator =
+    account.operator !== undefined
+      ? overrides.find(item => item.operator_domains?.includes(account.operator!))
+      : undefined;
+  const chosen = byAccount ?? byOperator;
+  if (!chosen) return { ...subscription.destination };
+  const template = chosen.path_template ?? subscription.destination.path_template;
+  return { destination_id: chosen.destination_id, ...(template !== undefined ? { path_template: template } : {}) };
 }
 
 /**
@@ -319,8 +477,25 @@ export function applyReportingSubscriptions(
             `subscription_version ${current.subscriptionVersion} of ${JSON.stringify(subscription.subscription_id)} is reused with different content; increment it`
           );
         }
-        // active and replace_account_configs change in place.
-        current.configuration = { ...current.configuration, ...pickInPlace(subscription) };
+        // active, replace_account_configs and membership change in place (adcp#8619). A membership edit
+        // keeps subscription_version and accepted_at and is recorded per account at this request.
+        const edits = membershipChanges(current.configuration, normalized);
+        if (edits.length > 0) {
+          current.membershipEdits = [
+            ...(current.membershipEdits ?? []),
+            ...edits.map(edit => ({ accountId: edit.accountId, at: now, member: edit.member })),
+          ];
+        }
+        const { exclude_account_ids: _previousExcluded, ...kept } = current.configuration;
+        void _previousExcluded;
+        current.configuration = {
+          ...kept,
+          scope: structuredClone(normalized.scope),
+          ...(normalized.exclude_account_ids !== undefined
+            ? { exclude_account_ids: [...normalized.exclude_account_ids] }
+            : {}),
+          ...pickInPlace(subscription),
+        };
       } else {
         current.supersededAt = now;
         history.versions.push({
@@ -470,6 +645,11 @@ export function projectReportingSubscriptionState(
     }));
   // adcp#8619: the 16 newest are listed inline, and prior_versions_count gives the total.
   const prior = priorVersions.slice(0, MAX_INLINE_PRIOR_VERSIONS);
+  // adcp#8619: the destination generation bound for each override's destination.
+  const overrideRefs = destinationOverrides(configuration).flatMap(override => {
+    const bound = destinations.find(item => item.destination_id === override.destination_id);
+    return bound ? [{ destination_id: override.destination_id, destination_ref: bound.destination_ref }] : [];
+  });
   return {
     subscription_id: history.subscriptionId,
     subscription_version: current.subscriptionVersion,
@@ -479,6 +659,7 @@ export function projectReportingSubscriptionState(
     ...(history.deactivatedAt !== undefined ? { deactivated_at: history.deactivatedAt } : {}),
     ...(intervals.length > 0 ? { inactive_intervals: intervals } : {}),
     ...(destination ? { destination_ref: destination.destination_ref } : {}),
+    ...(overrideRefs.length > 0 ? { destination_override_refs: overrideRefs } : {}),
     configuration,
     ...(issues.length > 0 ? { issues: issues.slice(0, 16) } : {}),
     ...(previous?.accounts_with_exceptions?.length
@@ -498,12 +679,15 @@ export function projectReportingSubscriptionState(
 }
 
 /**
- * Two active subscriptions at the same scope level must not both apply to one account and
- * feed purpose. All-accounts subscriptions overlap unless their `operator_domains` are
- * disjoint; account-scoped ones overlap when they share an account.
+ * Billing allows one active subscription per account at a scope level (adcp#8619): two active
+ * billing subscriptions at the same scope level must not both apply to one account. Pacing and
+ * analytics allow several, each resolving independently; where two resolve the same offering for a
+ * package, the lower `subscription_id` owes it (the engine records the other as `overridden`).
+ * All-accounts subscriptions overlap unless their `operator_domains` are disjoint; account-scoped
+ * ones overlap when they share an account.
  */
 function assertNoSameLevelOverlap(desired: readonly ReportingSubscription[]): void {
-  const active = desired.filter(item => item.active !== false);
+  const active = desired.filter(item => item.active !== false && item.selector.feed_purpose === 'billing');
   for (let left = 0; left < active.length; left += 1) {
     for (let right = left + 1; right < active.length; right += 1) {
       const a = active[left]!;

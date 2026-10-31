@@ -5,7 +5,8 @@
  * The host supplies only the facts it alone knows:
  *
  * - `listAuthorizedAccounts`: which accounts a principal may read now, with each account's
- *   chain-start `authorized_at`, and `granted_at` / `timezone_changed_at` when those changed;
+ *   chain-start `authorized_at`, its `regranted_at` (adcp#8618) and `timezone_changed_at` when
+ *   those changed;
  * - `listAccountBuys`: which buys an account holds, with each package's offering ids;
  * - `resolveRevocationInstant`: when a principal's authority over an account ended;
  * - `isPeriodDelivered`: whether an owed period was delivered, for `withheld_period_count`;
@@ -60,7 +61,7 @@ import {
 import {
   compareReportingIdsByteOrderV1,
   reportingSubscriptionScopeIncludesV1,
-  resolveReportingSubscriptionOfferingsV1,
+  resolveReportingSubscriptionPackageV1,
   type ReportingSubscriptionOfferingV1,
 } from './selection';
 
@@ -132,10 +133,11 @@ export interface ReportingSubscriptionAccountFactV1 {
    */
   authorized_at: string;
   /**
-   * When the current grant began, when it differs from `authorized_at` (a re-grant inside the
-   * chain). Required once the engine has recorded a revocation that the chain continues past.
+   * `authorization.regranted_at` (adcp#8618): the latest re-grant within the current chain, when the
+   * chain continues past a loss of authority. Required once the engine has recorded a revocation
+   * that the chain continues past.
    */
-  granted_at?: string;
+  regranted_at?: string;
   operator?: string;
   /** The account's IANA timezone as `list_accounts` shows it. */
   timezone?: string;
@@ -153,6 +155,18 @@ export interface ReportingSubscriptionAccountFactV1 {
    * task. See {@link reportingSubscriptionCoverageGrantedV1}.
    */
   allowed_tasks?: readonly string[];
+}
+
+/**
+ * What the grant journal serves on an account's `authorization` (adcp#8618).
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export interface ReportingSubscriptionServedGrantV1 {
+  /** When the current authorization chain began. */
+  authorized_at: string;
+  /** The latest re-grant within the current chain. Absent while the chain has had no re-grant. */
+  regranted_at?: string;
 }
 
 /**
@@ -396,11 +410,9 @@ export interface CreateReportingSubscriptionEngineOptionsV1 {
   now?: () => Date;
   maxCasAttempts?: number;
   /**
-   * Called when a subscription has more accounts to list in `accounts_with_exceptions` or
-   * `accounts_unauthorized` than the readback's 1000-entry limit (for example a small
-   * `max_accounts` against a large roster, where every account past the cap carries
-   * `capacity`). That subscription keeps its previous readback lists rather than publishing a
-   * silently cut one; every other subscription and all coverage state are still updated.
+   * @deprecated Never called. Since AdCP 3.3.0-beta.3 (adcp#8619) the readback lists 1000 accounts
+   * inline with each list's total, and `get_principal` `reporting_subscription_page` reads the rest,
+   * so no list overflows. Removed in a later beta.
    */
   onReadbackOverflow?: (
     principal: Readonly<PrincipalRef>,
@@ -410,6 +422,8 @@ export interface CreateReportingSubscriptionEngineOptionsV1 {
 
 /**
  * A subscription whose readback lists exceed the 1000-entry limit.
+ *
+ * @deprecated Never reported since AdCP 3.3.0-beta.3: lists page (adcp#8619). Removed in a later beta.
  *
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
@@ -427,9 +441,6 @@ export interface ReportingSubscriptionReadbackOverflowV1 {
 export interface ReportingSubscriptionReconcileResultV1 {
   readback_overflow: ReportingSubscriptionReadbackOverflowV1[];
 }
-
-/** The readback's `maxItems` for `accounts_with_exceptions` and `accounts_unauthorized`. */
-const MAX_READBACK_ACCOUNTS = 1000;
 
 /** @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md */
 export interface ReportingSubscriptionEngineV1 {
@@ -491,20 +502,28 @@ export interface ReportingSubscriptionEngineV1 {
     options?: { accountId?: string }
   ): Promise<ReportingSubscriptionFrozenOwedSetV1[]>;
   /**
-   * The grant journal's `authorized_at` for each account a caller was just shown with an
-   * authorization (a `list_accounts` or `sync_accounts` response), observing each grant first.
+   * The grant journal's `authorized_at`, and `regranted_at` when the current chain has a re-grant
+   * (adcp#8618), for each account a caller was just shown with an authorization (a `list_accounts`
+   * or `sync_accounts` response), observing each grant first.
    *
    * The journal is the one source of `authorized_at`: the value served to the buyer is the value
    * coverage uses. A host value is adopted the first time a chain is observed; an omitted one is
    * stamped with the observation time. A value that moves an open chain's start backwards is
    * refused and logged as `authorized_at_regressed`. A re-grant inside `status_retention_days` of
-   * the recorded revocation continues the chain; a later one starts a new chain. Accounts whose
-   * grant does not cover `get_reporting_status` are not observed and get no value.
+   * the recorded revocation continues the chain, and its re-grant instant is the chain's
+   * `regranted_at` (the host's value when it reports one inside the observation window, else the
+   * observation time); a later one starts a new chain with no `regranted_at`. Accounts whose grant
+   * does not cover `get_reporting_status` are not observed and get no value.
    */
   observeGrants(
     principal: Readonly<PrincipalRef>,
-    observations: ReadonlyArray<{ account_id: string; authorized_at?: string; allowed_tasks?: readonly string[] }>
-  ): Promise<Map<string, string>>;
+    observations: ReadonlyArray<{
+      account_id: string;
+      authorized_at?: string;
+      regranted_at?: string;
+      allowed_tasks?: readonly string[];
+    }>
+  ): Promise<Map<string, ReportingSubscriptionServedGrantV1>>;
   /**
    * Principals with engine state in one tenant, from the engine store: what the service's
    * `listSubscriptionPrincipals` returns across your tenants.
@@ -536,6 +555,8 @@ export interface ReportingSubscriptionEngineV1 {
  */
 export interface ReportingSubscriptionFrozenOwedSetV1 {
   account_id: string;
+  /** The account's operator domain, for `destination_overrides` routing (adcp#8619). */
+  operator?: string;
   subscription_id: string;
   /** The frozen horizon: every owed period ending at or before it is resolved and never recomputed. */
   through: string;
@@ -562,6 +583,45 @@ function latestPeriodEnd(periods: ReadonlyArray<{ period_end: string }>): string
 
 function iso(value: number): string {
   return new Date(value).toISOString();
+}
+
+/**
+ * One account's membership in a version (adcp#8619). `excluded` is the instant from which it is out
+ * by the buyer's choice: its latest in-place removal, or `accepted_at` when `exclude_account_ids`
+ * named it at acceptance. `joinedAt` is when an account the version did not select at acceptance was
+ * first added; `lastAddedAt` is the latest addition, which closes an open exclusion.
+ */
+function membershipOf(
+  version: StoredReportingSubscriptionVersion,
+  accountId: string
+): { excluded?: number; joinedAt?: number; lastAddedAt?: number } {
+  const configuration = version.configuration;
+  const edits = (version.membershipEdits ?? []).filter(edit => edit.accountId === accountId);
+  const byAccountIds = configuration.scope.account_ids !== undefined;
+  const memberNow = byAccountIds
+    ? configuration.scope.account_ids!.includes(accountId)
+    : configuration.exclude_account_ids?.includes(accountId) !== true;
+  const lastRemoval = [...edits].reverse().find(edit => !edit.member);
+  const lastAdded = [...edits].reverse().find(edit => edit.member);
+  const result: { excluded?: number; joinedAt?: number; lastAddedAt?: number } = {};
+  if (!memberNow) {
+    if (lastRemoval) result.excluded = Date.parse(lastRemoval.at);
+    else if (!byAccountIds) result.excluded = Date.parse(version.acceptedAt);
+  }
+  if (lastAdded) result.lastAddedAt = Date.parse(lastAdded.at);
+  // The first edit adding the account means the version did not select it at acceptance.
+  if (edits[0]?.member === true) result.joinedAt = Date.parse(edits[0].at);
+  return result;
+}
+
+/**
+ * The current chain's `regranted_at` (adcp#8618): the open grant's start, when the chain continued
+ * past a loss of authority. A chain whose open grant is its first grant has none.
+ */
+function servedRegrant(account: AccountState): { regranted_at?: string } {
+  const last = lastGrant(account);
+  if (!last || last.unauthorized_at !== undefined || account.chainStart === undefined) return {};
+  return Date.parse(last.authorized_at) > Date.parse(account.chainStart) ? { regranted_at: last.authorized_at } : {};
 }
 
 function lastGrant(account: AccountState | undefined): ReportingSubscriptionGrantV1 | undefined {
@@ -710,13 +770,21 @@ export function createReportingSubscriptionEngineV1(
     return new Map([...calendars].sort(([left], [right]) => compareReportingIdsByteOrderV1(left, right)));
   }
 
-  function resolvePackage(version: StoredReportingSubscriptionVersion, offeringIds: readonly string[], at: number) {
-    return resolveReportingSubscriptionOfferingsV1({
+  /** Sticky per-package resolution, as the coverage function resolves it (adcp#8619). */
+  function resolvePackage(
+    version: StoredReportingSubscriptionVersion,
+    buy: ReportingSubscriptionBuyV1,
+    pkg: ReportingSubscriptionBuyV1['packages'][number],
+    at: number
+  ) {
+    const confirmedAt = buy.confirmed_at ? Date.parse(buy.confirmed_at) : Number.NEGATIVE_INFINITY;
+    return resolveReportingSubscriptionPackageV1({
       selector: version.configuration.selector,
       reconciliation_mode: version.configuration.reconciliation_mode,
       ...(version.destinationMethod ? { destination_method: version.destinationMethod } : {}),
       offerings: [...offeringsById.values()],
-      eligible_offering_ids: offeringIds,
+      eligible_offering_ids: pkg.reporting_delivery_offering_ids,
+      resolves_at: Math.max(Date.parse(version.acceptedAt), confirmedAt),
       at,
     });
   }
@@ -724,7 +792,7 @@ export function createReportingSubscriptionEngineV1(
   function resolveBuy(version: StoredReportingSubscriptionVersion, buy: ReportingSubscriptionBuyV1, at: number) {
     const ids = new Set<string>();
     for (const pkg of buy.packages) {
-      for (const id of resolvePackage(version, pkg.reporting_delivery_offering_ids, at)) ids.add(id);
+      for (const id of resolvePackage(version, buy, pkg, at)) ids.add(id);
     }
     return [...ids].sort(compareReportingIdsByteOrderV1);
   }
@@ -956,13 +1024,13 @@ export function createReportingSubscriptionEngineV1(
         account.grants.push({ authorized_at: iso(chainStart) });
       } else {
         // The chain continues past a recorded revocation; only the host knows when.
-        if (fact.granted_at === undefined) {
+        if (fact.regranted_at === undefined) {
           throw new ReportingSubscriptionEngineError(
             'SUBSCRIPTION_HOST_FACT_INVALID',
-            `Account ${JSON.stringify(accountId)} was re-granted inside its authorization chain. Report granted_at on the account fact.`
+            `Account ${JSON.stringify(accountId)} was re-granted inside its authorization chain. Report authorization.regranted_at on the account fact.`
           );
         }
-        const grantedAt = parseInstant(fact.granted_at, `${accountId} granted_at`);
+        const grantedAt = parseInstant(fact.regranted_at, `${accountId} regranted_at`);
         account.grants.push({ authorized_at: iso(Math.min(Math.max(grantedAt, revokedAt), nowMs)) });
       }
       changed = true;
@@ -1075,17 +1143,27 @@ export function createReportingSubscriptionEngineV1(
             }
           }
           precedence.set(entry.subscriptionId, overrides);
-          const eligible = inScope.filter(
-            accountId => !overrides.has(accountId) && !facts.get(accountId)!.pending_action
-          );
-          const previous = document.served[entry.subscriptionId] ?? [];
+          // adcp#8619: admission is per subscription, deterministic and sticky. Candidates are the
+          // scope's authorized accounts, with or without covered buys, and an account with another
+          // open account-level exception still holds its place. An admitted account keeps its slot
+          // until it leaves coverage; waiting candidates are admitted in authorized_at order, then
+          // account_id in byte order, a key that does not depend on the subscription.
+          const candidates = inScope
+            .filter(accountId => !configuration.exclude_account_ids?.includes(accountId))
+            .sort(
+              (left, right) =>
+                Date.parse(facts.get(left)!.authorized_at) - Date.parse(facts.get(right)!.authorized_at) ||
+                compareReportingIdsByteOrderV1(left, right)
+            );
+          const previous = entry.deactivatedAt === undefined ? (document.served[entry.subscriptionId] ?? []) : [];
           const ordered = [
-            ...previous.filter(accountId => eligible.includes(accountId)),
-            ...eligible.filter(accountId => !previous.includes(accountId)),
+            ...previous.filter(accountId => candidates.includes(accountId)),
+            ...candidates.filter(accountId => !previous.includes(accountId)),
           ];
           const served = options.maxAccounts === undefined ? ordered : ordered.slice(0, options.maxAccounts);
           capacityBySubscription.set(entry.subscriptionId, new Set(ordered.slice(served.length)));
-          if (entry.deactivatedAt === undefined) document.served[entry.subscriptionId] = served;
+          // Deactivation leaves coverage: its slots go to the next candidates on reactivation.
+          document.served[entry.subscriptionId] = entry.deactivatedAt === undefined ? served : [];
         }
       }
     );
@@ -1144,27 +1222,83 @@ export function createReportingSubscriptionEngineV1(
     // Readback: accounts_with_exceptions and accounts_unauthorized. An exception that
     // opened or closed fires principal.changed even when the summary is unchanged.
     const state = await inspect(principal);
+    // adcp#8619: lists of any length are recorded; the readback lists 1000 inline with each total and
+    // get_principal reporting_subscription_page reads the rest, so nothing overflows any more.
     const updates = [];
-    const overflow: ReportingSubscriptionReadbackOverflowV1[] = [];
-    for (const entry of history) {
-      const update = await readbackFor(principal, entry, state, nowMs, buysByAccount);
-      if (
-        update.accountsWithExceptions.length > MAX_READBACK_ACCOUNTS ||
-        update.accountsUnauthorized.length > MAX_READBACK_ACCOUNTS
-      ) {
-        // Isolate the oversized subscription: it keeps its last published lists.
-        overflow.push({
-          subscription_id: update.subscriptionId,
-          accounts_with_exceptions: update.accountsWithExceptions.length,
-          accounts_unauthorized: update.accountsUnauthorized.length,
-        });
-        continue;
-      }
-      updates.push(update);
-    }
+    for (const entry of history) updates.push(await readbackFor(principal, entry, state, nowMs, buysByAccount));
     await options.principal.recordSubscriptionReadback(principal, updates, { forceNotification: notify });
-    if (overflow.length > 0) await options.onReadbackOverflow?.(principal, overflow);
-    return { readback_overflow: overflow };
+    return { readback_overflow: [] };
+
+    /**
+     * adcp#8619: several pacing or analytics subscriptions may apply to one account and purpose at a
+     * scope level. Where two resolve the same offering for a package, the lower subscription_id in
+     * byte order owes it, and each other records a package-level overridden exception for that buy
+     * naming the packages, with overridden_by that subscription_id. Billing allows one per account.
+     */
+    function overriddenPackages(
+      entry: StoredReportingSubscriptionHistory,
+      accountId: string,
+      account: AccountState,
+      buys: readonly ReportingSubscriptionBuyV1[],
+      accepted: number,
+      nowMs: number
+    ): DesiredExclusion[] {
+      const version = entry.versions.at(-1)!;
+      const purpose = version.configuration.selector.feed_purpose;
+      if (purpose === 'billing') return [];
+      const level = version.configuration.scope.account_ids !== undefined ? 'account_ids' : 'all';
+      const owners = history.filter(other => {
+        if (other.subscriptionId === entry.subscriptionId || other.deactivatedAt !== undefined) return false;
+        if (compareReportingIdsByteOrderV1(other.subscriptionId, entry.subscriptionId) >= 0) return false;
+        const configuration = other.versions.at(-1)!.configuration;
+        if (configuration.selector.feed_purpose !== purpose) return false;
+        if ((configuration.scope.account_ids !== undefined ? 'account_ids' : 'all') !== level) return false;
+        // The owner must itself cover the account: in scope, not excluded, and not overridden there.
+        return (
+          (inScopeBySubscription.get(other.subscriptionId) ?? []).includes(accountId) &&
+          membershipOf(other.versions.at(-1)!, accountId).excluded === undefined &&
+          !precedence.get(other.subscriptionId)?.has(accountId)
+        );
+      });
+      if (owners.length === 0) return [];
+      const desired: DesiredExclusion[] = [];
+      for (const buy of buys) {
+        if (buy.confirmed_at === undefined || buy.confirmed_at === null) continue;
+        const byOwner = new Map<string, string[]>();
+        for (const pkg of buy.packages) {
+          const mine = resolvePackage(version, buy, pkg, nowMs);
+          if (mine.length === 0) continue;
+          // The lowest subscription_id resolving a shared offering owes it.
+          const owner = owners
+            .map(other => other.subscriptionId)
+            .sort(compareReportingIdsByteOrderV1)
+            .find(id => {
+              const other = history.find(item => item.subscriptionId === id)!;
+              const theirs = resolvePackage(other.versions.at(-1)!, buy, pkg, nowMs);
+              return theirs.some(offeringId => mine.includes(offeringId));
+            });
+          if (owner === undefined) continue;
+          byOwner.set(owner, [...(byOwner.get(owner) ?? []), pkg.package_id]);
+        }
+        for (const [owner, packageIds] of byOwner) {
+          const ids = packageIds.sort(compareReportingIdsByteOrderV1);
+          const ownerAccepted = Date.parse(
+            history.find(item => item.subscriptionId === owner)!.versions.at(-1)!.acceptedAt
+          );
+          desired.push({
+            key: `overridden:${owner}:${buy.media_buy_id}:${ids.join(',')}`,
+            reason: 'overridden',
+            media_buy_id: buy.media_buy_id,
+            package_ids: ids,
+            overridden_by: { subscription_id: owner },
+            at: Math.max(accepted, ownerAccepted, Date.parse(buy.confirmed_at)),
+            // Periods of those packages that started before the owner took them stay owed: open at E.
+            openCalendars: offeringCalendars(version, account, [buy], nowMs).values(),
+          });
+        }
+      }
+      return desired;
+    }
 
     function settleSubscription(
       current: ReportingSubscriptionEngineAccountDocumentV1,
@@ -1178,7 +1312,8 @@ export function createReportingSubscriptionEngineV1(
       const configuration = version.configuration;
       const active = entry.deactivatedAt === undefined;
       const inScope = inScopeBySubscription.get(entry.subscriptionId) ?? [];
-      const excludedByBuyer = configuration.exclude_account_ids?.includes(accountId) === true;
+      const membership = membershipOf(version, accountId);
+      const excludedByBuyer = membership.excluded !== undefined;
       if (!current.subscriptions[entry.subscriptionId] && !inScope.includes(accountId) && !excludedByBuyer)
         return false;
       const isNew = current.subscriptions[entry.subscriptionId] === undefined;
@@ -1192,12 +1327,32 @@ export function createReportingSubscriptionEngineV1(
       const coverageStart = Math.max(accepted, Date.parse(account.chainStart ?? lastGrant(account)!.authorized_at));
       const firstObserved = isNew || (!target.covered && target.exclusions.length === 0);
       const desired: DesiredExclusion[] = [];
+      let joined = false;
       if (active) {
+        // adcp#8619: an account added to the version after acceptance was not owed before it joined:
+        // one closed entry from the first boundary at or after accepted_at to the one at or after the edit.
+        if (membership.joinedAt !== undefined && membership.joinedAt + retentionMs > nowMs) {
+          // Any account-level excluded_by_buyer entry already covers the stretch before it joined.
+          const recorded = target.exclusions.some(
+            item => item.reason === 'excluded_by_buyer' && item.media_buy_id === undefined
+          );
+          if (!recorded) {
+            target.exclusions.push({
+              key: 'excluded_by_buyer:joined',
+              reason: 'excluded_by_buyer',
+              from: iso(cutoverInstant(calendars.values(), accepted)),
+              until: iso(cutoverInstant(calendars.values(), membership.joinedAt)),
+            });
+            joined = true;
+          }
+        }
         if (excludedByBuyer) {
+          // A removal (or an exclusion at acceptance) opens at the edit's E, so periods that started
+          // before it stay owed in full.
           desired.push({
             key: 'excluded_by_buyer',
             reason: 'excluded_by_buyer',
-            at: accepted,
+            at: membership.excluded!,
             openCalendars: calendars.values(),
             openByOffering: calendars,
           });
@@ -1237,12 +1392,20 @@ export function createReportingSubscriptionEngineV1(
             });
           }
           desired.push(...unsupportedBuys(version, target, account, buys, accepted, nowMs));
+          desired.push(...overriddenPackages(entry, accountId, account, buys, accepted, nowMs));
         }
       }
       // Only accounts the subscription actually served can later appear in accounts_unauthorized.
       if (inScope.includes(accountId) && !desired.some(item => item.media_buy_id === undefined)) target.covered = true;
       if (!options.backfillOnRegrant) recordRegrantGaps(target, account, calendars);
-      return settleExclusions(target, desired, calendars, nowMs, closing => {
+      const settled = settleExclusions(target, desired, calendars, nowMs, closing => {
+        // An account added back closes its entry at the first boundary at or after the edit (adcp#8619).
+        if (closing.reason === 'excluded_by_buyer' && closing.media_buy_id === undefined) {
+          const rejoined = membership.lastAddedAt;
+          if (rejoined === undefined) return undefined;
+          const own = closing.offering_id !== undefined ? calendars.get(closing.offering_id) : undefined;
+          return cutoverInstant(own ? [own] : calendars.values(), rejoined);
+        }
         if (
           closing.reason !== 'overridden' ||
           !closing.overridden_by ||
@@ -1254,6 +1417,7 @@ export function createReportingSubscriptionEngineV1(
         const config = configsByAccount.get(accountId)?.find(item => item.delivery_config_id === id);
         return closingInstantFor(config, calendars, account);
       });
+      return settled || joined;
     }
   }
 
@@ -1278,7 +1442,7 @@ export function createReportingSubscriptionEngineV1(
       const resolved = resolveBuy(version, buy, nowMs);
       resolvedNow[buy.media_buy_id] = resolved;
       const unsupported = buy.packages
-        .filter(pkg => resolvePackage(version, pkg.reporting_delivery_offering_ids, nowMs).length === 0)
+        .filter(pkg => resolvePackage(version, buy, pkg, nowMs).length === 0)
         .map(pkg => pkg.package_id)
         .sort(compareReportingIdsByteOrderV1);
       if (unsupported.length === 0) continue;
@@ -1694,12 +1858,14 @@ export function createReportingSubscriptionEngineV1(
     }),
     reconcile: (principal, reconcileOptions) => reconcile(principal, reconcileOptions ?? {}),
     async observeGrants(principal, observations) {
-      const served = new Map<string, string>();
+      const served = new Map<string, ReportingSubscriptionServedGrantV1>();
       const nowMs = now().getTime();
       for (const observation of observations) {
         if (!reportingSubscriptionCoverageGrantedV1(observation)) continue;
         const reported = observation.authorized_at !== undefined ? Date.parse(observation.authorized_at) : Number.NaN;
-        let start: string | undefined;
+        const reportedRegrant =
+          observation.regranted_at !== undefined ? Date.parse(observation.regranted_at) : Number.NaN;
+        let start: ReportingSubscriptionServedGrantV1 | undefined;
         await mutate<ReportingSubscriptionEngineAccountDocumentV1 & Record<string, unknown>>(
           principal,
           `${ACCOUNT_KEY_PREFIX}${observation.account_id}`,
@@ -1715,8 +1881,14 @@ export function createReportingSubscriptionEngineV1(
             } else if (last.unauthorized_at !== undefined) {
               // A re-grant: inside retention it continues the chain, later it starts a new one.
               const revokedAt = Date.parse(last.unauthorized_at);
-              account.grants.push({ authorized_at: iso(Math.max(nowMs, revokedAt)) });
-              if (account.chainStart === undefined || nowMs >= revokedAt + retentionMs) {
+              // The host's regranted_at dates the re-grant when it falls inside the window in which
+              // it can have happened: after the revocation, and not later than now.
+              const regrantedAt =
+                Number.isFinite(reportedRegrant) && reportedRegrant > revokedAt
+                  ? Math.min(reportedRegrant, nowMs)
+                  : nowMs;
+              account.grants.push({ authorized_at: iso(Math.max(regrantedAt, revokedAt)) });
+              if (account.chainStart === undefined || regrantedAt >= revokedAt + retentionMs) {
                 account.chainStart = iso(
                   Number.isFinite(reported) && reported > revokedAt ? Math.min(reported, nowMs) : nowMs
                 );
@@ -1732,7 +1904,7 @@ export function createReportingSubscriptionEngineV1(
             }
             account.chainStart ??= last?.authorized_at ?? iso(nowMs);
             account.lastObservedAt = iso(nowMs);
-            start = account.chainStart;
+            start = { authorized_at: account.chainStart, ...servedRegrant(account) };
           }
         );
         if (start !== undefined) served.set(observation.account_id, start);
@@ -1800,7 +1972,12 @@ export function createReportingSubscriptionEngineV1(
               account_id: accountId,
               ...(document.account.operator !== undefined ? { operator: document.account.operator } : {}),
             }
-          ) || configuration.exclude_account_ids?.includes(accountId) === true;
+          ) ||
+          configuration.exclude_account_ids?.includes(accountId) === true ||
+          // adcp#8619: an account removed by an in-place edit stays listed while its open entry is retained.
+          target.exclusions.some(
+            item => item.reason === 'excluded_by_buyer' && item.media_buy_id === undefined && item.until === undefined
+          );
         const deactivatedAt = entry.deactivatedAt;
         if (deactivatedAt !== undefined) {
           // adcp#8613: listed only while it still has retained obligations for the account.
@@ -1850,6 +2027,7 @@ export function createReportingSubscriptionEngineV1(
             .map(period => ({ ...period, subscription_id: entry.subscriptionId, account_id: accountId }));
           sets.push({
             account_id: accountId,
+            ...(document.account.operator !== undefined ? { operator: document.account.operator } : {}),
             subscription_id: entry.subscriptionId,
             through: target.frozen.through,
             obligations: groupOwedSubscriptionPeriodsV1(periods),

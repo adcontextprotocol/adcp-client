@@ -20,7 +20,7 @@ result.action; // 'created' | 'updated' | 'unchanged' | 'reactivated'
 result.subscriptionVersion;
 ```
 
-- **Versioning.** The version is bumped only when the selector, scope, destination, `reconciliation_mode`, `exclude_account_ids` or `operator_domains` change. `active` and `replace_account_configs` change in place. A supplied `subscription_version` is validated.
+- **Versioning.** The version is bumped only when the selector, the scope kind, the destination (including `destination_overrides`), `reconciliation_mode` or `operator_domains` change. `active`, `replace_account_configs` and membership (adding or removing `account_ids`, changing `exclude_account_ids`; adcp#8619) change in place: the seller records each membership edit per account as an `excluded_by_buyer` interval. A supplied `subscription_version` is validated.
 - **Pre-dispatch checks.** These throw `ReportingSubscriptionError` with `dispatched: false`, so nothing reached the seller:
   - the scope must be explicit;
   - the destination must exist and be active;

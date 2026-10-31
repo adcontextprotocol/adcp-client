@@ -52,7 +52,7 @@ function deliveryOffering() {
       schema_dialect: source.contract.schemaDialect,
       schema_ref_policy: source.contract.schemaRefPolicy,
       grain: source.grain,
-      primary_keys: ['media_buy_id'],
+      primary_keys: ['account_id', 'media_buy_id'],
     },
     schedule: { period_duration: 'P1D', alignment: 'utc', delivery_sla: 'PT0S' },
     supported_finality: ['snapshot'],
@@ -189,10 +189,25 @@ async function world() {
     accounts: {
       resolution: 'explicit',
       // The seller's own resolver enforces its grants per task: no grant for the task, no account.
-      resolve: async (ref, ctx) =>
-        ref?.account_id === ACCOUNT && permits(principalOf(ctx)?.principalId, ctx.toolName)
-          ? { id: ACCOUNT, name: 'Account A', status: 'active', ctx_metadata: {} }
-          : null,
+      // A partial grant that keeps coverage (it lists get_reporting_status) still knows the account
+      // for the reconciliation tasks, with its authorization, so the missing task is refused with
+      // SCOPE_INSUFFICIENT rather than as an unknown identifier (adcp#8619).
+      resolve: async (ref, ctx) => {
+        const principalId = principalOf(ctx)?.principalId;
+        if (ref?.account_id !== ACCOUNT) return null;
+        const partial =
+          ['sync_reporting_status', 'sync_reporting_receipts'].includes(ctx.toolName) &&
+          permits(principalId, 'get_reporting_status');
+        if (!permits(principalId, ctx.toolName) && !partial) return null;
+        const tasks = grants.get(principalId);
+        return {
+          id: ACCOUNT,
+          name: 'Account A',
+          status: 'active',
+          ctx_metadata: {},
+          ...(tasks ? { authorization: { allowed_tasks: [...tasks] } } : {}),
+        };
+      },
       upsert: async () => [],
     },
   });
@@ -285,6 +300,20 @@ describe('grants and reporting subscriptions', () => {
       refused.structuredContent.adcp_error?.code ?? refused.structuredContent.errors?.[0]?.code,
       'ACCOUNT_NOT_FOUND'
     );
+  });
+
+  test('a partial grant keeps coverage and refuses the missing task with SCOPE_INSUFFICIENT (adcp#8619)', async () => {
+    const { engine, lifecycle, syncStatus, statusFor, grants, reconcileAt } = await world();
+    grants.set('principal-a', ['get_reporting_status']);
+    await reconcileAt();
+    const refused = await syncStatus('buyer-a', statusFor(A, 'partial-grant-status-1'));
+    assert.equal(
+      refused.structuredContent.adcp_error?.code ?? refused.structuredContent.errors?.[0]?.code,
+      'SCOPE_INSUFFICIENT',
+      JSON.stringify(refused.structuredContent)
+    );
+    assert.equal((await engine.subscriptionCoverage(A, ACCOUNT)).length, 1, 'coverage continues');
+    assert.deepEqual(await unauthorizedOf(lifecycle, A), []);
   });
 
   test('a full revocation makes the account unknown to statuses too', async () => {

@@ -413,6 +413,10 @@ export function createReportingPeriodCalendarV1(spec: ReportingPeriodCalendarSpe
  * instants whose local wall-clock time is a whole multiple of the duration after local
  * midnight, counted afresh each local day. A wall time inside a DST gap yields no boundary;
  * one inside a fold yields one boundary per offset. The duration must divide 24 hours.
+ *
+ * Each local date's day start, its first instant, is always a boundary (adcontextprotocol/adcp#8622):
+ * local midnight, or the first instant after a DST gap at midnight (Havana, Santiago, Cairo). Days
+ * therefore nest in every sub-daily schedule, and `PT24H` equals `P1D`.
  */
 function createSubDailyLocalCalendar(spec: ReportingPeriodCalendarSpecV1, stepMs: number): ReportingPeriodCalendarV1 {
   if (spec.alignment === 'billing_cycle') {
@@ -435,6 +439,8 @@ function createSubDailyLocalCalendar(spec: ReportingPeriodCalendarSpecV1, stepMs
     const cached = dayCache.get(day);
     if (cached) return cached;
     const values: number[] = [];
+    // The day start: midnight, or the first instant after a gap at midnight (adcp#8622).
+    if (instantsForWall(day * DAY_MS, timeZone).length === 0) values.push(instantForWall(day * DAY_MS, timeZone));
     for (let slot = 0; slot < slots; slot += 1) {
       for (const value of instantsForWall(day * DAY_MS + slot * stepMs, timeZone)) {
         if (value < MIN_INSTANT || value > MAX_INSTANT) {
@@ -448,6 +454,9 @@ function createSubDailyLocalCalendar(spec: ReportingPeriodCalendarSpecV1, stepMs
       }
     }
     values.sort((left, right) => left - right);
+    // A day start inside the gap can coincide with a slot boundary after it; keep one.
+    for (let index = values.length - 1; index > 0; index -= 1)
+      if (values[index] === values[index - 1]) values.splice(index, 1);
     if (dayCache.size > 512) dayCache.clear();
     dayCache.set(day, values);
     return values;

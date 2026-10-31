@@ -1133,6 +1133,7 @@ function planOwedSetObligation(
     coverageRequirement: 'full',
   };
   return {
+    ...(input.stub === true ? { stub: true as const } : {}),
     reporting_obligation_id: `robl_${digest(semantic).slice(0, 32)}`,
     configurationId: configuration.configurationId,
     account: structuredClone(configuration.account),

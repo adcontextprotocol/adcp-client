@@ -150,7 +150,7 @@
       "steps": [
         { "at": "2026-09-01T18:00:00Z", "allowed_tasks": null },
         { "at": "2026-09-04T12:00:00Z", "allowed_tasks": ["sync_reporting_receipts", "sync_reporting_status"] },
-        { "at": "2026-09-06T12:00:00Z", "allowed_tasks": null, "granted_at": "2026-09-06T12:00:00Z" }
+        { "at": "2026-09-06T12:00:00Z", "allowed_tasks": null, "regranted_at": "2026-09-06T12:00:00Z" }
       ],
       "evaluate_at": "2026-09-13T00:00:00Z",
       "expected": {
