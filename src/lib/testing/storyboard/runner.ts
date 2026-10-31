@@ -4855,7 +4855,7 @@ async function executeStoryboardPass(
     stepId: string;
     reason: RunnerSkipReason | RunnerDetailedSkipReason;
     substitution_chain?: string;
-    /** The trigger is an explicit phase capability gate, not a failed setup. */
+    /** The trigger is unavailable coverage (capability or forcing), not a failed setup. */
     capabilityUnavailable?: boolean;
   };
   const phaseStatefulCascades = new Map<string, CascadeTrigger | null>();
@@ -6137,7 +6137,9 @@ async function executeStoryboardPass(
         }
         if (capabilityUnavailable) {
           recordUnavailableOutputs(phase.id, step);
-          if (routingContext) phaseInheritedCapabilityTrigger ??= trigger ?? undefined;
+          if (routingContext || trigger?.reason === 'force_scenario_unsupported') {
+            phaseInheritedCapabilityTrigger ??= trigger ?? undefined;
+          }
         } else if (routingContext) {
           recordUnavailableOutputs(phase.id, step, missingPrerequisiteContextKeysByPhase);
           recordHardPrerequisiteFailure(step, trigger === null);
@@ -6392,6 +6394,19 @@ async function executeStoryboardPass(
         if (step.stateful) {
           if (isHardMissingStateSkipReason(result.skip_reason)) {
             recordHardMissingState(step, result);
+          } else if (result.skip_reason === 'force_scenario_unsupported') {
+            // An unsupported force_* call never established the controlled state
+            // its observations require. Unlike ordinary implicit-account setup,
+            // it cannot use the sole-stateful-step exemption. Skip dependent
+            // coverage neutrally, while retaining any earlier hard failure.
+            recordUnavailableOutputs(phase.id, step);
+            if (!phaseStatefulCascades.has(phase.id)) {
+              phaseStatefulCascades.set(phase.id, {
+                stepId: step.id,
+                reason: result.skip_reason,
+                capabilityUnavailable: true,
+              });
+            }
           } else if (
             result.skip_reason === 'not_applicable' ||
             result.skip_reason === 'capability_prerequisite_unavailable'
@@ -6535,7 +6550,7 @@ async function executeStoryboardPass(
     if (
       phasePendingMissingTool.trigger &&
       !phaseRescuedTargets.has(phasePendingMissingTool.trigger.stepId) &&
-      !phaseStatefulCascades.has(phase.id)
+      (!phaseStatefulCascades.has(phase.id) || phaseStatefulCascades.get(phase.id)?.capabilityUnavailable === true)
     ) {
       const subs = phasePendingMissingTool.trigger.substitutes;
       const subsList = subs.length === 1 ? `"${subs[0]}"` : subs.map(s => `"${s}"`).join(', ');
@@ -6567,7 +6582,13 @@ async function executeStoryboardPass(
     // simply doesn't use this sync pathway — which is valid. Cascading on a
     // sole not_applicable would incorrectly penalise adapters that manage
     // state implicitly and have no list_accounts peer (adcp-client#1146).
-    if (phasePendingNotApplicable && !phaseEstablishedStatefulState && !phaseStatefulCascades.has(phase.id)) {
+    if (
+      phasePendingNotApplicable &&
+      !phaseEstablishedStatefulState &&
+      (!phaseStatefulCascades.has(phase.id) ||
+        (phasePendingNotApplicable.capabilityUnavailable !== true &&
+          phaseStatefulCascades.get(phase.id)?.capabilityUnavailable === true))
+    ) {
       const hadStatefulPeers = phaseStatefulStepIds.some(id => id !== phasePendingNotApplicable!.stepId);
       if (hadStatefulPeers) {
         phaseStatefulCascades.set(phase.id, phasePendingNotApplicable);
