@@ -240,6 +240,52 @@ describe('ensure routes to request_account when the seller advertises account.re
   });
 });
 
+test('refresh reports a resolved request even when another account fails to re-read', async () => {
+  const seller = requestSeller({
+    request: (params, s) => {
+      s.state = wireRequest('in_review');
+      return s.state;
+    },
+  });
+  const registry = new BuyerAccountRegistry(
+    () => 'seller:caller',
+    async () => ({
+      success: true,
+      status: 'completed',
+      metadata: {},
+      data: {
+        accounts: [
+          {
+            brand: { domain: 'other.example' },
+            operator: 'wppmedia.fr',
+            account_id: 'acc-2',
+            status: 'pending_approval',
+            action: 'created',
+          },
+        ],
+      },
+    }),
+    undefined,
+    async () => {
+      throw new Error('list_accounts unavailable');
+    },
+    { requests: { ...seller.requests, supported: async () => false } }
+  );
+  // A sync-path account pending approval, whose re-read will fail...
+  await registry.ensure({ brand: { domain: 'other.example' }, operator: 'wppmedia.fr' }, { billing: 'operator' });
+  // ...and an open request, through a registry option that now advertises account.requests.
+  const requestRegistry = registry;
+  requestRegistry['registryOptions'].requests.supported = async () => true;
+  assert.equal((await requestRegistry.ensure(KEY, { billing: 'operator' })).kind, 'pending');
+  seller.state = wireRequest('resolved', { account_id: 'acc-renault' });
+  const moved = await requestRegistry.refresh();
+  assert.deepEqual(
+    moved.map(item => [item.kind, item.account_id]),
+    [['ready', 'acc-renault']]
+  );
+  assert.equal((await requestRegistry.pending()).length, 1, 'the account that failed to re-read stays pending');
+});
+
 describe('ensure on the sync_accounts path returns the same outcome type', () => {
   function syncRegistry(row, repair) {
     return new BuyerAccountRegistry(

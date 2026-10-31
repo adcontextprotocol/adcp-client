@@ -891,7 +891,14 @@ export class BuyerAccountRegistry {
     }
     for (const record of pendingAccounts) {
       if (!this.repair) break;
-      await this.repairStatus(record.account_id!, taskOptions, false);
+      try {
+        await this.repairStatus(record.account_id!, taskOptions, false);
+      } catch (error) {
+        throwIfAborted(taskOptions?.signal);
+        // One account's failed re-read must not discard moves already recorded above: a request
+        // persisted as resolved would otherwise never be reported. It stays pending for the next refresh.
+        continue;
+      }
       const latest = await this.get(record.account);
       if (latest && latest.status !== record.status) moved.push(this.syncOutcome(latest));
     }

@@ -151,8 +151,9 @@ test('@adcp/sdk/client/core keeps heavy generated-schema surfaces out of its eag
   // or registry module is added to the eager graph.
   // #3504 adds the reporting-subscription write facade (client.reporting and the raw sync_principal
   // guard); offering selection inside it loads on demand.
+  // #3504 (T9) adds the account-outcomes module behind client.accounts.ensure (nextStep, formatPendingAction).
   // Schema compaction stays lazy. Keep heavy schema/registry exclusions intact.
-  assert.ok(visited.size <= 215, `focused client eager graph grew to ${visited.size} internal modules`);
+  assert.ok(visited.size <= 216, `focused client eager graph grew to ${visited.size} internal modules`);
   for (const excluded of [
     'types/schemas.generated.mjs',
     'utils/response-schemas.mjs',
