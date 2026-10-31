@@ -107,7 +107,11 @@ describe('PostgreSQL reporting storage facade', { skip: !DATABASE_URL && 'Postgr
 
     // The buyer consumer's leases and cursors.
     const key = { consumerScope: 'seller:principal-a', accountId: 'acc-1' };
-    const lease = await storage.consumer.workLeases.claim({ key, ownerToken: 'owner-token-a', leaseMilliseconds: 30_000 });
+    const lease = await storage.consumer.workLeases.claim({
+      key,
+      ownerToken: 'owner-token-a',
+      leaseMilliseconds: 30_000,
+    });
     assert.equal(lease.generation, 1);
     assert.equal(await storage.consumer.changesCheckpointStore.compareAndSet(key, null, 'cursor-1', lease), 'applied');
     assert.equal((await storage.consumer.changesCheckpointStore.get(key)).checkpoint, 'cursor-1');
