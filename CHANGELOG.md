@@ -1,5 +1,268 @@
 # Changelog
 
+## 17.0.0-beta.11
+
+### Major Changes
+
+- 201e6dc: **Breaking (SDK 17, AdCP 3.3):** `client.accounts.ensure` now resolves to a discriminated `AccountOutcome` instead of the registry's `ProvisionedAccount`.
+  - **Outcomes.** `ensure` resolves to `ready | pending | ambiguous | rejected`, switched on `kind`. `pending` is a value, not an exception: it carries the seller's `action` (`PendingAction`: `waiting_on`, `kind`, `message`, `url?`, `expires_at?`) and the open `request_id`. `ambiguous` carries `candidates` and `choose(accountId)`. `rejected` carries the wire `errors`. Only a failure to process the call throws: `AccountRequestError` (new, with the wire `code` and `recovery`) on the `request_account` path, and the existing typed account errors on `sync_accounts`.
+  - **Capability routing.** When the seller advertises `account.requests`, `ensure` calls `request_account`; otherwise it calls `sync_accounts` as before. It is idempotent per (seller, caller, natural key): a repeat call returns the open request's state and never opens a duplicate, and registries that share storage send one deterministic idempotency key. `currency` and `timezone` options join the natural key. `AccountCapabilities.requestsSupported` is new.
+  - **`client.accounts.refresh()`** re-reads open requests and accounts pending approval, and resolves to the outcomes that moved. **`client.accounts.pending()`** lists what is still waiting, with no network call. `BuyerAccountStorage.list?(scope)` lets both see rows another process stored.
+  - **`nextStep(outcome)`** (`'wait_for_seller' | 'send_human_to_url' | 'pick_candidate' | 'contact_seller' | 'none'`) and **`formatPendingAction(action)`**, which renders the untrusted seller message as safe text, are exported from the root. Names match the Python SDK (`next_step`, `format_pending_action`).
+  - **Migration:** code that read `status` or `account_id` from `ensure`'s result should switch on `outcome.kind`. The old call, with its `ProvisionedAccount` result, is now `client.accounts.provision(account, options)`, with the same arguments.
+
+### Minor Changes
+
+- 6fef3b8: Expose fitCreativeToPackages with per-package acceptance verdicts, measured primary-asset facts, and a shared wire decision used by sync creative projection.
+- eeeb370: Reporting subscriptions (experimental `media_buy.reporting_subscriptions`): the coverage function, engine, principal runtime, ledger and managed delivery follow the AdCP 3.3.0-beta.3 rules. All 120 canonical coverage vectors pass.
+  - **Flights and cancellation (adcp#8617, #8618).** A buy's stop time uses `cancellation_effective_at`, the delivery stop under a cancellation, when present. Flight values at each period's end come from the buy's wire `flight_history`. **Breaking:** the non-wire `prior_flights` coverage input and `ReportingSubscriptionPriorFlightV1` are removed. Pass `flight_history` (`ReportingSubscriptionFlightHistoryEntryV1`) from `get_media_buys` instead.
+  - **Billing stubs (adcp#8617).** A cutover onto a billing feed whose schedule has no boundary at E owes `[E, first boundary)` as one stub period. Owed rows, grouped obligations, ledger obligations and the wire `reporting_obligation` carry `stub: true`.
+  - **Re-grants (adcp#8618).** The grant journal serves `authorization.regranted_at` on `list_accounts` and `sync_accounts` for a chain that continued past a loss of authority. **Breaking:**
+    - `engine.observeGrants` now returns `{ authorized_at, regranted_at? }` per account.
+    - The host account fact's `granted_at` is renamed `regranted_at`, the wire name.
+  - **Sticky resolution (adcp#8619).** Each package resolves once per (buy, version), at the later of `accepted_at` and `confirmed_at`, among the offerings available then. It keeps that resolution until the offering is withdrawn. New: `resolveReportingSubscriptionPackageV1`. The managed path reads each package's `reporting_delivery_offering_ids` snapshot from `get_media_buys`.
+  - **Admission (adcp#8619).** Under `max_accounts`, admission is sticky and ordered by `authorized_at`, then `account_id`. Accounts with another open exception keep their place. A deactivation releases its slots.
+  - **Membership in place (adcp#8619).** Adding or removing `account_ids`, or changing `exclude_account_ids`, keeps the version. The engine records each edit per account as an `excluded_by_buyer` interval. Changing the scope kind or `operator_domains` still needs a new version, and `client.reporting.subscribe` auto-versions accordingly.
+  - **Several feeds per purpose (adcp#8619).**
+    - Pacing and analytics allow several subscriptions per account and purpose. Where two resolve one offering for a package, the lower `subscription_id` owes it, and the other records a package-level `overridden` exception.
+    - Billing stays one per account at a scope level, and must use `match: exact` with `dimensions`.
+  - **`destination_overrides` (adcp#8619).**
+    - Each override is validated.
+    - The readback carries `destination_override_refs`.
+    - Managed delivery binds each account to its routed destination and template. New: `reportingSubscriptionDestinationForAccount`, plus `ReliableReportingSubscriptionBindingInputV1.destination`.
+  - **Paged readback (adcp#8619).**
+    - Lists of any length are kept.
+    - The response lists 1,000 accounts inline, each list with its total.
+    - `get_principal` `reporting_subscription_page` pages `accounts_with_exceptions`, `accounts_unauthorized` and `prior_versions`.
+    - `onReadbackOverflow` and `readback_overflow` are deprecated and never report.
+  - **Partial grants (adcp#8619).** With subscriptions, `sync_reporting_status` (SDK service) and `sync_reporting_receipts` (`@adcp/reporting-storage` service) refuse a task that the account's `authorization.allowed_tasks` leaves out with `SCOPE_INSUFFICIENT`. New: `assertReportingTaskGrantedV1`.
+  - **Delivered rows (adcp#8619).** Creating a service with subscriptions refuses a managed-delivery offering whose `reporting_profile.primary_keys` omit `account_id`.
+  - **Period arithmetic (adcp#8622).**
+    - Each local date's first instant is always a boundary of a sub-daily local schedule, so `PT24H` equals `P1D` where midnight doesn't exist.
+    - Reactivation resumes at the later of the reactivation instant and the end of the last period owed before the deactivation.
+  - **Account requests (adcp#8620).** `accounts.ensure` outcomes carry the request's `resolution`, `effective_at` and `not_carried_over`. The account's money terms are on `account`.
+
+- 5e35609: **Beta-channel break:** this SDK advertises and negotiates only the AdCP `3.3-beta.3` preview and no longer packages or advertises `3.3-beta.2`. A buyer or seller still on beta.2 (SDK 17.0.0-beta.10) will not select the 3.3 preview with this release; the pair negotiates a shared stable release (3.2.7, 3.1.31 or 3.0.25) instead. Upgrade both sides together to keep exercising 3.3 preview features. An explicit `adcpVersion: '3.3.0-beta.2'` pin now fails with a configuration error.
+
+  Adopt the signed AdCP 3.3.0-beta.3 bundle, replacing 3.3.0-beta.2. Public types, Zod schemas, tool metadata and the packaged compliance corpus are regenerated from the beta.3 release.
+  - Every 3.3 task response composes the protocol envelope (adcp#8547): `status` is required on every response, and the generated response types no longer restate envelope fields.
+  - Account requests (adcp#8620): resolved `matched`/`created` records carry `account` with its money terms, an `updated` money change carries `effective_at`, and a change that `created` a separate account carries `not_carried_over`.
+  - Experimental live creative updates: `creative.live_updates` types, `CREATIVE_LIVE_UPDATE_UNSUPPORTED`, and the `creative.staged_update_changed` notification type, which joins `ACCOUNT_NOTIFICATION_TYPES`.
+  - Reporting subscriptions: `authorization.regranted_at` joins the account authorization fields (`toWireAccount` and `windDownGrant` keep it); media buys carry `cancellation_effective_at` and `flight_history`, packages `reporting_delivery_offering_ids`, offerings `available_from`/`withdrawn_at`, billing obligations `stub`, and `subscription_coverage[].status` is served as `inactive` with `deactivated_at`. Readbacks list at most 16 `prior_versions` and carry `prior_versions_count`, `accounts_with_exceptions_count` and `accounts_unauthorized_count`. A subscription response served without a negotiated release uses the pinned release, as in the Python SDK.
+
+  **Removed from `@adcp/sdk/reporting/advanced`:** the hand-modelled wire types `ReportingDeliveryOfferingWithDimensionsV1`, `ReportingSubscriptionCoverageWithOfferingsV1`, `ReportingSubscriptionExclusionEntryV1`, `ReportingSubscriptionGapV1`, `ReportingSubscriptionInactiveIntervalV1`, `ReportingSubscriptionStateWithIntervalsV1` and `ReportingSubscriptionTimezoneCutoverV1`. The generated `ReportingDeliveryOffering`, `ReportingSubscriptionCoverage` and `ReportingSubscriptionState` carry every field; `ReportingSubscriptionOfferingV1` is now an alias of `ReportingDeliveryOffering`.
+
+  Codegen follows the beta.3 envelope layout: the `request_proposals`, `refine_proposals` and `decline_proposals` submitted arms keep `status: 'submitted'` and the required `task_id` (folded from `core/task-submitted.json`), and generated Zod response schemas keep the `adcp_version`, `adcp_major_version`, `task_id` and `message` constraints they inherit through the composed envelopes.
+
+  A terminal task webhook's `result` is the task's full response, so on 3.1+ it now carries the task `status` (`completed` or `rejected`) like a synchronous response, and a media-buy lifecycle value a platform returned in `status` moves to `media_buy_status`, as on the synchronous path. A 3.2 `list_products` / `decline_proposals` result and a 3.0 result are left as returned.
+
+- 9d917bc: Buyer runtime and durable storage for AdCP 3.3 principal-level reporting subscriptions (experimental `media_buy.reporting_subscriptions`, #3504).
+  - `syncReportingSubscriptionsV1(client, subscriptions, options)` writes the complete `reporting_subscriptions` set through the guarded `sync_principal` lifecycle.
+    - It refuses, before writing, to deactivate an active subscription by omission unless `allowDeactivation: true`. Sending `active: false` is always allowed.
+    - It checks that every submitted subscription reads back at its version and activation state, and that every submitted configuration field is stored unchanged.
+  - `reportingSubscriptionVersionRecordsV1({ state, configurations? })` rebuilds the coverage function's version records from the readback (`accepted_at`, `prior_versions`, `deactivated_at`). Each version's configuration comes from the buyer's own records, or else from the readback: the current `configuration`, and `prior_versions[].configuration` from sellers on 3.3.0-beta.2 (adcp#8588). Pass the readback's `inactive_intervals` to `expectedSubscriptionPeriods` unchanged.
+  - `subscriptionExpectedReportingPeriodsV1(obligations, template)` turns owed obligations into the consumer runtime's `ExpectedReportingPeriod`s. The template must supply `coverage`; no default could match an obligation that reports packages or partial coverage.
+  - The reliable reporting consumer runtime accepts a per-account `subscriptionExpectations` hook. It reads the summary view's `subscription_coverage[]` before each reconciliation and reconciles the returned periods alongside configuration-derived ones.
+    - The hook's `now` is the summary's `ledger_as_of` minus `subscriptionExpectationGraceMs`, never the wall clock.
+    - Use it only against a seller that materializes subscription obligations in its ledger.
+  - `handleAuthenticatedPrincipalChanged` calls `onPrincipalChanged` (for example to re-read `get_principal` and `accounts_unauthorized` and replace the roster) and then reconciles every account of the consumer scope.
+    - It drops a redelivery with an already seen `idempotency_key`.
+    - Notifications that arrive during a run share one trailing run.
+  - `createReportingSubscriptionEngineStateStoreV1({ store })` persists the engine's sharded state on any `AdcpStateStore`: one CAS document per principal and one per (principal, account), listed per tenant. With `PostgresStateStore` it is durable and needs no migration beyond `ADCP_STATE_MIGRATION`. Subscription version history stays in the principal row and is never pruned, so `prior_versions` remain answerable for retained obligations.
+
+- 3dcbf64: Add the buyer-computable coverage rule for AdCP 3.3 principal-level reporting subscriptions (experimental `media_buy.reporting_subscriptions`, #3504). `expectedSubscriptionPeriods(input)`, exported from `@adcp/sdk/reporting/consumer` and `@adcp/sdk/reporting/ledger`, is a pure function of the buyer's own records: subscription versions with their `accepted_at`, visible confirmed buys and their earlier flight values, the account's grants and timezone, the seller's published offerings (matching reads each offering's `standard_dimensions` and `unmapped_dimensions`), the readback's `inactive_intervals`, and the published `subscription_coverage` exceptions, including per-offering `gaps[]` and `timezone_cutovers[]` with `previous_timezone`. It returns every owed (buy, offering, period), and `groupExpectedSubscriptionPeriodsV1` groups them into the obligations that must carry them. It implements the start rule of adcp#8593 (the first boundary at or after the later of `accepted_at` and `authorized_at`, and every period ending after the buy's `confirmed_at`, so the period in which a buy is confirmed is owed in full), flight overlap as of each period's resolution, unclipped periods, the single cutover rule for new versions, deactivation, resolution changes and account timezone changes, revocation and re-grant with and without `backfill_on_regrant`, and exceptions that only remove periods.
+
+  Also exported: `createReportingPeriodCalendarV1`, the normative `period_generation` calendar for `utc`, `account_timezone`, `source_timezone` and `billing_cycle` schedules; `resolveReportingSubscriptionOfferingsV1` for `exact`, `finest` and `all` selector resolution with byte-order ties; `reportingSubscriptionScopeIncludesV1`; and `reportingConfigurationCapabilitiesV1`, which builds `configuration_tasks`, the deprecated `configuration_task` and the `subscriptions` block consistently.
+
+  `installConfiguration` now throws a typed `ReportingConfigurationImmutableError` (`code: 'REPORTING_CONFIGURATION_IMMUTABLE'`, with `accountId`, `deliveryConfigId` and `deliveryConfigVersion`) when an existing generation is reinstalled with different content. The message is unchanged; use `isReportingConfigurationImmutableError` instead of matching it.
+
+  The rules follow adcontextprotocol/adcp#8585. The fields it added after 3.3.0-beta.1 (`standard_dimensions`, `unmapped_dimensions`, `inactive_intervals`, `previous_timezone`, and per-offering `offering_id` on gaps and cutovers) are hand-modeled until 3.3.0-beta.2 ships. The cross-SDK parity table is `test/fixtures/reporting-subscriptions/coverage-cases.json`.
+
+  Sub-daily periods under a local alignment restart at each local midnight on wall-clock multiples (adcontextprotocol/adcp#8588). A gap yields no boundary and a fold one per offset, and the duration must divide 24 hours; mixed date and time components are refused. Calendars gain `next()`. An empty flight overlaps nothing, and a cutover carries the outgoing stretch's own start, so two cutovers in one period never owe a period twice. A billing anchor inside a DST fold is interval zero itself. A wire `authorized_at` equal to the chain start continues the chain. The walk has an iteration budget. The SDK's schema validation accepts dimension values outside the published `enums/reporting-dimension.json` vocabulary, which is extensible.
+
+- ff2feb6: Managed delivery for AdCP 3.3 subscription obligations (experimental `media_buy.reporting_subscriptions`, #3504).
+  - `reportingSubscriptions.bindManagedGeneration` binds a managed subscription generation to its destination before the generation's first obligation is written. The planner calls it through `planSubscriptionObligations({ bindGeneration })`. A rejection writes nothing, and the next cycle tries again. A subscription that resolves a managed offering without a binding composition fails to plan.
+  - Every row of a subscription revision carries `account_id`. It is stamped before the revision is bound, and a row naming another account is refused. Account revisions are unchanged.
+  - `ReportingLedgerSubscriberV1.principal` scopes status subscribers: a subscription obligation's transitions reach only its owning principal.
+  - The engine gains `isAuthorized(principal, accountId)`, and `frozenOwedSets` versions carry the frozen `destination_method`. `withReportingSubscriptionCoverageV1` is exported for compositions.
+  - `@adcp/reporting-storage`:
+    - `createPostgresReliableReportingProductionService` delivers managed subscription obligations. Pass the principal runtime as `reportingSubscriptions.principal`; the engine must have `isAuthorized`.
+    - `createReportingSubscriptionManagedBindingV1` resolves the owner's current destination generation, authorizes it per account (`ensureDestinationAuthorization`), and installs a binding that freezes the version's `path_template`.
+    - The managed worker passes the expanded `delivery_path` to adapters. It re-checks the owner's account authority before delivering and before settling, and releases a lost claim with `holdMaterialization` without failing it. Reads are scoped with `resolveSubscriptionPrincipal`.
+    - `REPORTING_MANAGED_DELIVERY_MIGRATION` drops the three-column `adcp_reporting_managed_bindings` key, found by its columns, so bindings are keyed by their Core configuration. It is additive and idempotent.
+    - `reportingObjectWriteName` takes an optional delivery path that sits inside the generation prefix, and `isReportingObjectWriteName` recognizes it. The GCS adapter writes there, and status reads scope to the owner.
+    - Notification activity for a subscription obligation is fanned out only to its owning principal.
+
+- d942a1f: Reporting subscriptions (experimental `media_buy.reporting_subscriptions`, AdCP 3.3): the low-level building blocks move to a new `@adcp/sdk/reporting/advanced` subpath, tagged `@experimental`.
+  - `@adcp/sdk/reporting/advanced` exports the coverage engine (`createReportingSubscriptionEngineV1`) and its stores (`createInMemoryReportingSubscriptionEngineStoreV1`, `createReportingSubscriptionEngineStateStoreV1`), the coverage function (`expectedSubscriptionPeriods`, `groupExpectedSubscriptionPeriodsV1`, `reportingSubscriptionCoverageGrantedV1`), the period calendar, offering selection, the capability builder (`reportingConfigurationCapabilitiesV1`), the consumer bridge (`reportingSubscriptionVersionRecordsV1`, `subscriptionExpectedReportingPeriodsV1`), and the service's subscription hooks (`ReliableReportingSubscriptionsOptionsV1` and its input types, `withReportingSubscriptionCoverageV1`).
+  - `@adcp/sdk/reporting/service`, `/consumer` and `/ledger` no longer re-export them. Change the import path; the symbols are unchanged. The `reportingSubscriptions` option on `createReliableReportingService` is unchanged.
+  - `@adcp/reporting-storage` imports `withReportingSubscriptionCoverageV1` and `ReliableReportingSubscriptionBindingInputV1` from the new subpath, so it needs an `@adcp/sdk` that has it.
+
+- 989e83b: Reporting subscriptions (experimental `media_buy.reporting_subscriptions`, AdCP 3.3): the buyer write facade and the raw `syncPrincipal` guard.
+  - **`client.reporting`** (`ReportingClient`, on `AgentClient` and `SingleAgentClient`) offers `subscribe`, `unsubscribe`, `replaceSubscriptions`, `listSubscriptions` and `preview`.
+    - Writes are patch-shaped over the replace-shaped wire: other entries are kept byte for byte.
+    - `subscription_version` is optional. It is kept for in-place changes and bumped on a semantic change.
+    - `registerDestination` upserts a destination in the same write.
+  - **Pre-dispatch refusals.** A `ReportingSubscriptionError` with `dispatched: false` is thrown for: an implicit scope, an unregistered destination, a missing `{account_id}`, `SUBSCRIPTION_ID_CLASH`, `SUBSCRIPTION_OPERATOR_SCOPE_REQUIRED` and `SUBSCRIPTION_SELECTOR_UNMATCHED` (with `nearest`).
+  - **Retries and readback.** On `CONFLICT` the facade re-reads, re-merges and retries with a fresh key (3 attempts), then throws `SUBSCRIPTION_CONFLICT_EXHAUSTED`. A transport failure retries the same key and body. The readback is verified, and a mismatch throws `SUBSCRIPTION_READBACK_MISMATCH`. Names follow the Python SDK's `ReportingClient`; the preview result type is `SubscriptionPreviewResult`.
+  - **Raw `syncPrincipal` guard.** A raw `client.syncPrincipal` that submits `reporting_subscriptions` or `reporting_destinations` reads the principal once. It refuses, before sending, a write that would deactivate a subscription (`SUBSCRIPTION_WOULD_DEACTIVATE`) or revoke a destination (`DESTINATION_WOULD_REVOKE`) unless you pass `allowDeactivation` / `allowRevocation`. Dry runs, the lifecycle helpers and storyboard runs are not guarded.
+  - `guardSyncPrincipal` is exported, and `ReportingSubscriptionError` accepts a seller's wire code or a local `INVALID_REQUEST`.
+
+- edff7a7: Typed reporting-subscription errors (experimental `media_buy.reporting_subscriptions`, AdCP 3.3), using the shared error vocabulary (`error-codes.json` in the spec repository).
+  - `ReportingSubscriptionError` (package root) carries `code`, `recovery` and the vector context fields (`wouldDeactivate`, `wouldRevoke`, `deliveryConfigId`, `accountId`, `nearest`, `readback`). The five refusal codes the SDK raises before sending always carry `dispatched: false`. Its codes are `SUBSCRIPTION_WOULD_DEACTIVATE`, `DESTINATION_WOULD_REVOKE`, `SUBSCRIPTION_ID_CLASH`, `SUBSCRIPTION_OPERATOR_SCOPE_REQUIRED`, `SUBSCRIPTION_SELECTOR_UNMATCHED`, `SUBSCRIPTION_CONFLICT_EXHAUSTED` and `SUBSCRIPTION_READBACK_MISMATCH`. `syncReportingSubscriptionsV1` throws it for its deactivation guard (with `wouldDeactivate`), for conflict exhaustion and for a readback mismatch (with `readback`), where it used to throw `PrincipalLifecycleError`.
+  - `PrincipalLifecycleError` is now an `ADCPError`, with `code` (`PRINCIPAL_CONFLICT_EXHAUSTED`, `PRINCIPAL_TRANSPORT_FAILED`, `PRINCIPAL_SETUP_TIMEOUT`, ...), `recovery`, and `dispatched: false` when no `sync_principal` write was sent. `applied` is renamed `appliedResponse` so it can't be read as a boolean next to `dispatched`. `applied` stays as a deprecated alias, and the constructor still accepts it.
+  - `CoverageInputError` (`COVERAGE_INPUT_INCOMPLETE`, `COVERAGE_INPUT_INVALID`, `COVERAGE_BUDGET_EXCEEDED`, with a `detail` such as `missing_account_timezone` or `invalid_period_duration`) replaces the `TypeError` and `RangeError` the coverage function and the period calendar threw.
+  - The engine throws `ReportingSubscriptionEngineError` (`SUBSCRIPTION_STATE_CONFLICT`, `SUBSCRIPTION_STATE_CORRUPT`, `SUBSCRIPTION_ROSTER_INCOMPLETE`, `SUBSCRIPTION_HOST_FACT_INVALID`) at run time, and `PlatformConfigError` for configuration mistakes. `PlatformConfigError` gains `code` (`PLATFORM_CONFIG_INVALID` by default; `REPORTING_STORAGE_NOT_DURABLE` and `SUBSCRIPTIONS_REQUIRE_STANDARD_DIMENSIONS` where they apply), `configField` and `recovery: 'correctable'`.
+
+- 8997e1d: Reporting subscriptions (experimental `media_buy.reporting_subscriptions`, AdCP 3.3): the engine writes per-offering exclusions.
+
+  When the offerings a condition covers have different period boundaries, the engine writes one `excluded[]` entry per offering, with `offering_id` and that offering's own cutover instants. This covers `capacity`, `excluded_by_buyer`, `action_required` and `overridden` across calendars, and a buy's `offering_unsupported` after a resolution change. Before, it wrote one account-wide entry cut at the latest end. One calendar, or several with the same schedule, still gets a single entry. A per-offering entry closes at its own offering's cutover. Callers served a release whose `excluded[]` has no `offering_id` get the entries folded back into one entry cut at the latest instant, as before.
+
+- ebb6cc7: Reporting subscriptions (experimental `media_buy.reporting_subscriptions`, AdCP 3.3): the grant journal is the one source of `authorized_at`.
+  - **Served value.** With the managed `subscriptions` block, the service serves the journal's `authorization.authorized_at` on `list_accounts` and `sync_accounts` to callers holding subscriptions. The derived roster reads the same value, so buyers read what coverage uses.
+  - **Journal rules.** A host value is adopted the first time a chain is observed, and an omitted one is stamped. A value that moves an open chain earlier is refused and logged as `authorized_at_regressed`. A re-grant inside `status_retention_days` continues the chain; a later one starts a new chain.
+  - **`service.grants.changed({ principal, accountId, at, authorized, allowedTasks?, timezone?, operator? })`** pushes a grant change for an exact instant.
+  - **Engine.** `engine.observeGrants(principal, observations)` exposes the journal (`@adcp/sdk/reporting/advanced`). `authorizationChanged` applies the chain rule to pushed re-grants. `resolveRevocationInstant` is optional: without it, a revocation is dated when it was observed.
+
+- 18a1c0e: Reporting subscriptions (experimental `media_buy.reporting_subscriptions`, AdCP 3.3): the managed seller path.
+  - `createReliableReportingService({ subscriptions: SubscriptionOptions })` enables the feature without assembling the engine by hand. The service:
+    - builds the coverage engine;
+    - installs the `reporting_subscriptions` section on the principal runtime (`subscriptions.principals`, created without `reportingSubscriptions`);
+    - fills in `capabilities.principal` in `install()`;
+    - reconciles a principal after each `sync_principal` write that submits subscriptions (`reconcileOnWrite`, on by default);
+    - sweeps every subscribed principal at the start of each `runCycle`.
+  - **Derived inputs.** The roster comes from the platform's `accounts.list` and the buys from `sales.getMediaBuys`, read under the principal's identity. `accounts`, `buys`, `buyOfferings`, `accountDeliveryConfigs`, `endAccountConfigs`, `isPeriodDelivered` and `resolvePrincipal` override them. `configure` is required.
+  - **Failures.** A roster that can't be read is a `PlatformConfigError` coded `SUBSCRIPTION_ROSTER_UNAVAILABLE`. Reconcile and planning failures are returned in `runCycle`'s `subscriptionPlanningFailures` and passed to `planningErrorHandler`; they are never thrown as an `AggregateError`.
+  - **Options.** The names follow the Python SDK's `SubscriptionOptions`. The advanced block with your own `engine` still works, as before.
+  - **Principal runtime.** The runtime gains `installReportingSubscriptions` (internal) and `PrincipalReportingSubscriptionSupport.onApplied`. Its `capabilities` reflects a section installed later.
+  - **Service.** `service.subscriptionWiring` exposes the resolved wiring to compositions.
+  - **`@adcp/reporting-storage`.** The production service accepts the managed block.
+
+- 1e7a5c3: Reporting subscriptions (experimental `media_buy.reporting_subscriptions`, AdCP 3.3): names frozen before beta.3. Every old name stays as a deprecated alias for one beta.
+  - `PrincipalRef { tenantId, principalId }` (package root, `@adcp/sdk/server`, `/reporting/advanced`, `/reporting/ledger`) is the one principal identity type. `PrincipalStoreScope` and `ReportingLedgerSubscriptionPrincipalV1` are deprecated aliases.
+  - "Owed" is the one word for what a seller must deliver (`@adcp/sdk/reporting/advanced`):
+    - `expectedSubscriptionPeriods` → `owedSubscriptionPeriodsV1`, which also gains the `V1` suffix the module's other low-level symbols carry;
+    - `groupExpectedSubscriptionPeriodsV1` → `groupOwedSubscriptionPeriodsV1`;
+    - `ExpectedSubscriptionPeriodV1`, `ExpectedSubscriptionObligationV1` and `ExpectedSubscriptionPeriodsInputV1` → `OwedSubscriptionPeriodV1`, `OwedSubscriptionObligationV1` and `OwedSubscriptionPeriodsInputV1`;
+    - `subscriptionExpectedReportingPeriodsV1` → `toExpectedReportingPeriodsV1`, which keeps "expected" because it feeds the consumer's `ExpectedReportingPeriod`.
+  - The principal runtime's `recordReportingSubscriptionCoverage` → `recordSubscriptionReadback`, because it writes readback lists, not `subscription_coverage`. The engine's `listPrincipals` → `listSubscriptionPrincipals`, which matches the service hook it feeds.
+  - `createReliableReportingService({ subscriptions })` and `createPostgresReliableReportingProductionService({ subscriptions })` replace `reportingSubscriptions`, which stays as a deprecated alias. Passing both is a `PlatformConfigError`.
+
+- ed8ed37: Reporting subscriptions (experimental `media_buy.reporting_subscriptions`, AdCP 3.3): wind down instead of revoking (adcp#8607).
+  - `windDownGrant(current?)` and `REPORTING_WIND_DOWN_TASKS` (`@adcp/sdk/server`). The grant lists only `get_reporting_status`, `sync_reporting_receipts` and `sync_reporting_status`, with `read_only: false`. Passing the current authorization keeps its `authorized_at`, because a reduced grant continues the chain. Revocation now means no access, receipts and statuses included, so set `account.authorization = windDownGrant(account.authorization)` to end a relationship while the buyer finishes reconciling. Coverage continues while the grant lists `get_reporting_status`.
+  - New shared vectors, `test/fixtures/reporting-subscriptions/grant-cases.json`, cover the coverage grant rule and grant transitions through the engine: wind-down, a reduced grant without `get_reporting_status` (which reads as a revocation), dropping it from a wind-down grant, and restoring it inside retention.
+
+- f8368e7: Reporting storage facade (experimental, AdCP 3.3): one storage decision covers the reporting ledger, `sync_principal` principal records, the reporting-subscription engine state and the buyer consumer's checkpoints and leases.
+  - **`@adcp/sdk/storage`** (new subpath): `memoryStorage()` returns a process-local `ReportingStorage` (ledger, `principals`, `subscriptions`, `consumer`, `checkSchema()`, `close()`). It is refused outside `NODE_ENV=test|development` with `REPORTING_STORAGE_NOT_DURABLE`. Also exports `developmentEnvironment`, `requireDurable`, `isReportingStorage` and `DEVELOPMENT_ENVIRONMENTS`.
+  - **`postgresStorage({ pool })`** in `@adcp/reporting-storage`: the durable storage over one pool. Its `checkSchema()` refuses a schema that is behind with `REPORTING_SCHEMA_BEHIND`, naming the pending versions and the command to run.
+  - **Versioned migrations** in `@adcp/reporting-storage`: `migrations()`, `migrate(pool)`, `migrationStatus`, `pendingMigrations` and the `npx adcp-reporting-storage migrate [--status | --dry-run]` command. Versions are recorded in `adcp_schema_migrations`, the table the Python SDK uses. A schema set up by hand from the old constants migrates cleanly. `REPORTING_LEDGER_MIGRATION`, `REPORTING_MANAGED_DELIVERY_MIGRATION` and the other constants the migrations cover are deprecated re-exports for one beta.
+  - **`createReliableReportingService({ storage })`** takes the storage instead of `store`, and passing both is refused. The first cycle runs `checkSchema()`. With the managed `subscriptions` block, engine state defaults to `storage.subscriptions`. `subscriptions.principals` is now optional: pass `subscriptions.principal` (the principal runtime's options) and the service builds the runtime over `storage.principals`, exposed as `service.principals`. `createPostgresReliableReportingProductionService({ storage })` accepts the same storage instead of `db`, and `createReliableReportingConsumerV1({ storage })` uses `storage.consumer` as its persistence.
+  - **Durability is intrinsic.** `AdcpStateStore` declares `durability` (`InMemoryStateStore` is process-local, `PostgresStateStore` is durable). The `durability` option of `createPrincipalStateStore` and `createReportingSubscriptionEngineStateStoreV1` is deprecated: a value that agrees with the store is ignored, and one that contradicts it is refused.
+
+- 3428a00: Reporting subscriptions (experimental `media_buy.reporting_subscriptions`, AdCP 3.3): the coverage function now runs the canonical spec vectors (adcp#8616), and two bugs they exposed are fixed.
+  - An `excluded[]` entry with `offering_id` removes only that offering's periods. It used to be applied to every offering, so a per-offering capacity exclusion dropped periods it didn't cover. The coverage input type gains `ReportingSubscriptionExclusionEntryV1` (`offering_id?`), and the engine's `ReportingSubscriptionExclusionV1` carries it.
+  - A selector `period_duration` the schedule pattern refuses, such as `P1W`, now throws `CoverageInputError` (`COVERAGE_INPUT_INVALID`, `invalid_period_duration`). It used to compute an empty owed set.
+
+- 209ded8: `createReliableReportingService({ reportingSubscriptions })` now writes the subscription engine's obligations into the reporting ledger and executes them (experimental `media_buy.reporting_subscriptions`, #3504).
+  - Every `runCycle` plans each listed principal's frozen owed sets from `engine.frozenOwedSets` before it plans account configurations. It uses the same trusted path as `installConfiguration`: the subscription version gives identity, feed purpose and required finality, the resolved offering gives report definition and schedule, and `resolveSource`, `resolveCurrency` and `resolveCoverage` give route, currency and authorized constituents. Each obligation freezes the constituents of exactly the media buys it owes.
+  - New required options when subscriptions are advertised: `listSubscriptionPrincipals()` (for example `engine.listPrincipals(tenantId)` across your tenants) and `resolveSubscriptionConfiguration(...)` (requested metrics and dimensions, source settings, and the finality policy or canonicalization a subscription needs). New optional ones: `resolveSubscriptionAccount(accountId)` and `onPlanningError(error, context)`. A subscription that cannot be planned never stops another one or the account's own configurations. Without `onPlanningError`, `runCycle` rejects with an `AggregateError` after the rest of the cycle has run.
+  - The service scopes `get_reporting_status`, `get_media_buy_delivery` and `sync_reporting_status` with `resolvePrincipal`. A principal sees the account's configurations plus only its own subscription generations.
+  - The engine gains `frozenOwedSets(principal, { accountId? })` and `listPrincipals(tenantId)`.
+  - Without `reportingSubscriptions` the service is byte-for-byte unchanged. A golden transcript captured from the service before this change covers it.
+
+- a74b552: The reporting ledger now holds subscription obligations for AdCP 3.3 principal-level reporting subscriptions (experimental `media_buy.reporting_subscriptions`, #3504).
+  - `producer.planSubscriptionObligations({ account_id, principal, subscriptionId, configurations, obligations, owedThrough })` writes one subscription's frozen owed set into the ledger.
+    - It installs one generation per (account, owning principal, subscription_id, subscription_version, resolved offering). The generation's `delivery_config_id` is the `subscription_id` and its `delivery_config_version` is the `subscription_version`. A changed generation throws `ReportingConfigurationImmutableError`.
+    - Each obligation carries its own period, `media_buy_ids` frozen at its `scope_resolved_at` (the period end) and constituents. Its `periodOrdinal` is the period start in whole seconds. Periods are never grid-filled.
+    - It then advances the mutable `owedSet.through` horizon on every generation the subscription owns on the account.
+  - Subscription generations carry an immutable `subscription` block (`tenantId`, `principalId`, `subscriptionId`, `offeringId`, `ownership: 'owed_set'`) and a mutable `owedSet`. Account generations keep exactly their previous ids and fingerprints.
+  - Completeness of an owed-set generation is its `owedSet.through` horizon, not ordinal counting. A gap is a period that is not owed, so it never raises a continuity error. A scope whose end is past the horizon reports `scope_closed: false` and keeps `coverage_complete: true`.
+  - Caller isolation: `get_reporting_status`, `get_media_buy_delivery` and `sync_reporting_status` take `resolveSubscriptionPrincipal`. A caller sees account generations plus only its own subscription generations and obligations, and nothing of another principal's. Without it no subscription generation is visible. Snapshot queries carry `subscription_principal`.
+  - Subscription obligations emit `offering_id` to callers served AdCP 3.3. `sync_reporting_status` accepts a status without `reporting_obligation_id` against a subscription generation only when it names an existing owed obligation.
+  - `ReportingLedgerStore` gains optional `recordOwedSetProgress` and `findObligationByOrdinal` methods. A store must implement `recordOwedSetProgress` to hold subscription generations.
+  - `@adcp/reporting-storage`: `REPORTING_LEDGER_MIGRATION` adds `adcp_reporting_configurations.subscription_key` (empty for account generations). It replaces the three-column generation constraint with a unique index on `(account_id, delivery_config_id, delivery_config_version, subscription_key)`. The migration is additive and idempotent, and existing rows keep their uniqueness. `PostgresReportingLedgerStore` implements the new methods and applies `subscription_principal` to every snapshot.
+
+- 331d732: Owner-scoped receipts and statuses, and grant-aware coverage, for AdCP 3.3 reporting subscriptions (experimental `media_buy.reporting_subscriptions`, #3504).
+  - **Owner-only receipts and statuses.** A subscription obligation accepts `sync_reporting_receipts` and `sync_reporting_status` only from its owning principal. Account obligations stay open to every consumer of the account. `reportingSubscriptionReceiptAdmissibleV1` is the single rule.
+    - `createSyncReportingReceiptsHandler` takes `{ resolveSubscriptionPrincipal }` and passes an `admission` to stores that declare `receiptAdmission`.
+    - `PostgresReportingManagedDeliveryStore` enforces it, and a refused receipt reads exactly like an unknown reference.
+    - The production service wires it from `reportingSubscriptions.resolvePrincipal`.
+  - **No post-revocation window.** This follows the owner's decision, ahead of the 3.3.0-beta.3 spec text; beta.2 still describes the old window. Once authority for an account ends, every task treats the account as unknown, receipts and statuses included. A seller that wants a buyer to finish reconciling keeps a reduced grant instead, for example `allowed_tasks` limited to `get_reporting_status`, `sync_reporting_receipts` and `sync_reporting_status`.
+  - **Coverage follows the grant.** `ReportingSubscriptionAccountFactV1.allowed_tasks` carries the grant's `authorization.allowed_tasks`. The engine covers an account only while that list includes `get_reporting_status`; `reportingSubscriptionCoverageGrantedV1` holds the rule, and a grant with no task restriction counts as all tasks. Dropping `get_reporting_status` from the grant is a loss of authority for coverage at that instant, with an `accounts_unauthorized` entry. The same applies to an `authorizationChanged` push.
+  - **Subscriptions off.** Nothing changes.
+
+- b6d741d: Serve AdCP 3.3 principal-level reporting subscriptions (experimental `media_buy.reporting_subscriptions`, #3504), opt-in. Without the new options every response is byte-for-byte unchanged.
+
+  **Principal runtime.** `createPrincipalLifecycle({ reportingSubscriptions: { listDeliveryConfigIds, replaceAccountConfigs?, maxSubscriptions?, accountConfigurations? } })` accepts the `sync_principal` `reporting_subscriptions` section. It validates the cross-field rules of `core/reporting-subscription.json`:
+  - scope shape and `exclude_account_ids`
+  - single-account `period_timezone`
+  - billing requiring official finality and `consumer_receipt`, and `consumer_receipt` requiring a destination
+  - a destination that exists after the same request, with `path_template` placeholders and `{account_id}` rules for multi-account and shared destinations
+  - duplicate ids, the `delivery_config_id` namespace clash, and same-level overlap
+
+  Versioning follows the spec: a version changes only for semantic changes; each version records `accepted_at`, and earlier versions stay readable in `prior_versions`; `active` and `replace_account_configs` change in place. Omission or `active: false` deactivates as a cutover, and a reactivation is recorded. `replace_account_configs` is applied once per version through the host hook. `dry_run` and `expected_configuration_version` behave as for the other sections. The readback is `core/reporting-subscription-state.json`, including `action_required` when the destination needs action. `principal.changed` gains reason `reporting_subscription_changed`. The runtime exposes `capabilities` (the `adcp.principal` block), `listReportingSubscriptions`, `reportingSubscriptionIds` (for the reverse namespace check in `sync_accounts`) and `recordReportingSubscriptionCoverage`.
+
+  **Coverage engine.** `createReportingSubscriptionEngineV1` (from `@adcp/sdk/reporting/service`) takes host hooks `listAuthorizedAccounts`, `listAccountBuys`, `resolveRevocationInstant`, `isPeriodDelivered` and, optionally, `listAccountDeliveryConfigs`, over a store sharded into one CAS document per principal and per account. From them it maintains:
+  - grants and revocations
+  - `max_accounts` slots, kept in a deterministic order (served accounts keep their slots, then byte order)
+  - precedence: the caller's own account-level configuration, then its own `account_ids` subscription
+  - `offering_unsupported` (buy- and package-level), `excluded_by_buyer`, `capacity`, `overridden` and `action_required` exceptions opened and closed at cutover instants
+  - timezone cutovers, and re-grant gaps unless `backfill_on_regrant`
+
+  It publishes `accounts_with_exceptions` and `accounts_unauthorized`, with `last_owed_period_end` and `withheld_period_count`. It serves `subscription_coverage[]`, `owedPeriods`/`owedObligations` (computed with the same `expectedSubscriptionPeriods` rule buyers run), and the receipt roster. There is no post-loss receipt window: once authority is lost the account is unknown to every task (adcontextprotocol/adcp#8607).
+
+  **Service and capabilities.** `createReliableReportingService({ reportingSubscriptions: { engine, resolvePrincipal } })` advertises `configuration_tasks` and the `subscriptions` block and adds `subscription_coverage[]` to summary and periods views. `createAdcpServerFromPlatform` passes `capabilities.principal` through as `adcp.principal`, adds `protocol.principal` and `media_buy.reporting_subscriptions` to `experimental_features`, and refuses to construct when subscriptions are advertised without the `reporting_subscriptions` section. Callers pinned below 3.3 see neither the 3.3 registration fields nor that section. `createAdcpServer` accepts `capabilities.principal`.
+
+  Conforms to adcontextprotocol/adcp#8585:
+  - The readback lists `inactive_intervals`.
+  - The engine publishes per-offering `gaps[]` and `timezone_cutovers[]`, with `previous_timezone`, when offerings' boundaries differ.
+  - A host's `authorized_at` is the start of the authorization chain, so a re-grant inside retention is stamped when authority is observed again.
+  - `createReliableReportingService({ reportingSubscriptions })` requires `standard_dimensions` on every offering.
+
+  Elapsed history is immutable:
+  - Owed periods are frozen as they elapse and never recomputed. Pruning retained exceptions and obligations past `status_retention_days` never re-owes or drops an elapsed period.
+  - A product or package edit, or a withdrawn offering, applies from the E of its observation; periods of that buy starting earlier keep resolving from the buy as it was.
+  - Change instants come from source data: `granted_at` on a re-grant, `timezone_changed_at` on a zone change, `resolveRevocationInstant` for a revocation, and the overriding configuration's `active_until`. Reconcile time is used only where the change itself is first observed.
+
+  Also in this release:
+  - The runtime requires `listDeliveryConfigIds`, the namespace clash check. Pass `accountConfigurations: false` to opt out.
+  - It applies `replace_account_configs` only after the section commits, and retries the hook on the next sync if it failed.
+  - It rejects a destination transport change without a version change.
+  - It rejects more than 64 inactive intervals rather than truncating.
+  - It rejects shared `path_template`s that can expand to the same path.
+  - `prior_versions[]` carries each version's `configuration` (adcp#8588).
+  - `recordReportingSubscriptionCoverage` rejects lists over the readback's 1000-entry limit and does not bump `configuration_version`. `engine.reconcile` isolates a subscription that exceeds the limit: that subscription keeps its last published lists, the others still update, and the pass reports it in `readback_overflow` and through `onReadbackOverflow`.
+  - The receipt roster is scoped by tenant.
+
+  A deactivated subscription reads `status: "inactive"` with `deactivated_at` in `subscription_coverage[]`, and is listed only while it still has retained obligations for the account (adcontextprotocol/adcp#8613, decided for beta.3). Callers served a release whose schema lacks that value see the account-level status as before, without `deactivated_at`.
+
+  Responses served at 3.3.0-beta.1 omit the fields that release's closed schemas don't define (`standard_dimensions`, `unmapped_dimensions`, `inactive_intervals`, `previous_timezone`, per-offering `offering_id`). Each field is emitted only when the schema bundle the caller is served defines it, so a bundle that lacks it, or an unknown served version, never emits it.
+
+- 4084b81: Add a reporting-subscriptions conformance storyboard and a reference seller that passes it (experimental `media_buy.reporting_subscriptions`, AdCP 3.3). `examples/storyboards/reporting-subscriptions.yaml` checks capability discovery, a dry run, the applied lifecycle with readback and idempotent replay, rejections, versioning with `prior_versions`, `get_reporting_status` `subscription_coverage`, and deactivation by omission. `examples/reporting-subscriptions-seller/seller.mjs` composes the principal runtime, the coverage engine and the Reliable Reporting service behind `createAdcpServerFromPlatform`. Owed periods, grant changes and the `delivery_config_id` clash are not covered: the runner cannot move the seller's clock, change a grant or seed an account-level configuration.
+
+### Patch Changes
+
+- aa6f26c: Zod codegen no longer hard-codes the layout of `core/compact-task-submitted.json` (#3512). The `postProcessCompactTaskSubmittedEnvelope` pass is removed. The generic object-intersection rewrite now proves each `A.and(B)` → `A.merge(B)` exact on its own:
+  - it recognizes narrowings (a literal inside the envelope's union, a required field over an optional one, a string with extra refinements);
+  - it compares unknown-key policies and never merges a `.strict()` operand;
+  - it follows merge chains;
+  - after the last refinement pass, it reruns with propagation, so schemas composed from composed schemas also merge.
+
+  `CompactTaskSubmittedSchema` and `RefineProposalsAsyncSubmittedSchema` therefore stay ZodObjects for the current 3.3.0-beta.2 layout and for the adcp#8547 layout, where every task response composes the protocol envelope and `core/task-submitted.json`. Generation from an adcp#8547 bundle previously failed with `expected the generated envelope intersection`.
+
+  A few more generated schemas now merge into ZodObjects instead of intersections. Validation is the same, and they gain `.shape` / `.extend()`. They are `GetProductsRejectedSchema`, `MediaBuyFrequencyCapSchema`, `ProposalOfferedWebhookSchema`, and nested references to `FrequencyCap`, `OpportunityContext`, `RightsConstraint`, `ReportingAdjustmentReceipt`, `CollectionPayload`, `PackageRequest`, `DemographicAgeRange` and `CanonicalMediaBuyActionFields`. `ProposalOfferedWebhook_NotificationTypeValues` and `GetProductsRejected_StatusValues` are now exported.
+
+- ff77a2d: Reconcile each supplied package's legacy creative format when a sync request has no assignments and every selector identifies its package. Compatible package references now share one format ID, while incompatible packages are refused with package-specific diagnostics. Mixed or unkeyed contexts retain their existing handling, and the projection preserves the request's assignment field.
+- e1b1fd3: Reporting subscriptions docs (AdCP 3.3, experimental):
+  - A README section.
+  - The seller and buyer guides (`docs/guides/REPORTING-SUBSCRIPTIONS-SELLER.md`, `REPORTING-SUBSCRIPTIONS-BUYER.md`), with titles and sections matching the Python SDK.
+  - A `reporting-subscriptions` skill with do/don't anti-patterns.
+  - The reporting guides and the `@adcp/reporting-storage` README now show `postgresStorage({ pool })` and `npx adcp-reporting-storage migrate` instead of the migration constants.
+
+  The generated `Agent` / `AgentCollection` `syncPrincipal` and `ADCPMultiAgentClient.syncPrincipal` TSDoc now start "Replaces each submitted section. To add a reporting subscription, use `client.reporting.subscribe`."
+
+- 00b957a: Skip dependent storyboard observations when a stateful test-controller force scenario is unsupported, including when forcing is the only stateful step in its phase. Preserve a not-applicable coverage result without dispatching unforced observations or awarding passing-step credit; independent phases and genuine failures retain their normal grading.
+
 ## 17.0.0-beta.10
 
 ### Minor Changes
