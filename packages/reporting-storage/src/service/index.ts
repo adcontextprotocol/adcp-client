@@ -22,6 +22,7 @@ import {
   type ReliableReportingSchedulerOptionsV1,
   type ReliableReportingServiceV1,
 } from '@adcp/sdk/reporting/service';
+import { withReportingSubscriptionCoverageV1 } from '@adcp/sdk/reporting/advanced';
 import {
   composeNotificationDeliveryAttemptCheckpoints,
   composeWebhookAttemptResultObservers,
@@ -61,6 +62,7 @@ import {
   PostgresReportingManagedDeliveryStore,
   REPORTING_MANAGED_DELIVERY_MIGRATION,
   createReportingManagedDeliveryRuntime,
+  createReportingSubscriptionManagedBindingV1,
   type PostgresReportingManagedDeliveryStoreOptions,
   type ReportingManagedDeliveryAdapterV1,
   type ReportingManagedDeliveryRuntimeV1,
@@ -320,8 +322,42 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     advertisedRecoveryWindowSeconds: options.automatedRecoveryWindowSeconds,
     notificationActivityPort: notificationActivity.port,
   });
+  // Principal-level reporting subscriptions (AdCP 3.3): a managed subscription generation is bound
+  // to the owner's destination before its first obligation, every delivery re-checks the owner's
+  // authority for the account, and reads are scoped to the caller's principal. Without
+  // `subscriptions` (or the deprecated `reportingSubscriptions`) nothing here is wired.
+  if (options.subscriptions !== undefined && options.reportingSubscriptions !== undefined) {
+    throw new TypeError('Pass subscriptions or the deprecated reportingSubscriptions, not both.');
+  }
+  const subscriptions = options.subscriptions ?? options.reportingSubscriptions;
+  if (subscriptions && typeof subscriptions.engine?.isAuthorized !== 'function') {
+    throw new TypeError(
+      'subscriptions on the production service requires an engine with isAuthorized, so every ' +
+        'managed delivery re-checks the owner principal’s account authority'
+    );
+  }
+  const bindManagedGeneration =
+    subscriptions?.bindManagedGeneration ??
+    (subscriptions?.principal
+      ? createReportingSubscriptionManagedBindingV1({
+          store: managedStore,
+          principal: subscriptions.principal as never,
+          resourceRetentionDays: options.managedDelivery.resourceRetentionDays,
+          verificationProfiles: options.managedDelivery.adapter.verificationProfiles,
+        })
+      : undefined);
+  const { reportingSubscriptions: _deprecatedSubscriptions, ...rest } = options;
+  void _deprecatedSubscriptions;
   const coreOptions = {
-    ...options,
+    ...rest,
+    ...(subscriptions
+      ? {
+          subscriptions: {
+            ...subscriptions,
+            ...(bindManagedGeneration ? { bindManagedGeneration } : {}),
+          },
+        }
+      : {}),
     store: coreStore,
     // The composer's assertion that this service is served by a managed-delivery runtime: it names the store itself.
     [REPORTING_MANAGED_DELIVERY_COMPOSITION_V1]: coreStore,
@@ -349,13 +385,34 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     ...(options.legacyRevisionReader ? { legacyRevisionReader: options.legacyRevisionReader } : {}),
     store: managedStore,
     adapter: options.managedDelivery.adapter,
-    offerings: core.capabilities.offerings,
+    // `standard_dimensions` and `unmapped_dimensions` (published with reporting subscriptions) are
+    // defined after the offering schema the managed runtime validates against, which is closed.
+    offerings: core.capabilities.offerings.map(offering => {
+      const {
+        standard_dimensions: _standard,
+        unmapped_dimensions: _unmapped,
+        ...rest
+      } = offering as typeof offering & { standard_dimensions?: unknown; unmapped_dimensions?: unknown };
+      void _standard;
+      void _unmapped;
+      return rest;
+    }) as typeof core.capabilities.offerings,
     automatedRecoveryWindowSeconds: options.automatedRecoveryWindowSeconds,
     statusRetentionDays: options.statusRetentionDays,
     resourceRetentionDays: options.managedDelivery.resourceRetentionDays,
     authorizationRevocationSeconds: options.managedDelivery.authorizationRevocationSeconds,
     ...(options.resolveConsumerId ? { resolveConsumerId: options.resolveConsumerId } : {}),
     ...(options.consumerMismatchEscalation ? { consumerMismatchEscalation: options.consumerMismatchEscalation } : {}),
+    ...(subscriptions
+      ? {
+          resolveSubscriptionPrincipal: async (context: RequestContext<Account<TCtxMeta>>) => {
+            const principal = await subscriptions.resolvePrincipal(context);
+            return { tenantId: principal.tenantId, principalId: principal.principalId };
+          },
+          authorizeSubscriptionDelivery: ({ principal, account_id }) =>
+            subscriptions.engine.isAuthorized!(principal, account_id),
+        }
+      : {}),
   });
   const capabilities = deepFreeze(
     ReportingDeliveryCapabilitiesSchema.parse({
@@ -369,7 +426,14 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   );
   const platform: ReliableReportingPlatform<TCtxMeta> = {
     capabilities,
-    getReportingStatus: (request, context) => managed.getReportingStatus(request, context as never),
+    getReportingStatus: subscriptions
+      ? async (request, context) =>
+          withReportingSubscriptionCoverageV1(
+            await managed.getReportingStatus(request, context as never),
+            context as never,
+            subscriptions
+          )
+      : (request, context) => managed.getReportingStatus(request, context as never),
     getMediaBuyDelivery: (request, context) => managed.getMediaBuyDelivery(request, context as never),
     ...(core.platform.syncReportingStatus
       ? {

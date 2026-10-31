@@ -9,6 +9,10 @@ import {
   assertReportingLedgerHistoryDoesNotOverlap,
   reportingLedgerEffectivePeriod,
   reportingLedgerScopeClosed,
+  reportingLedgerCoverageClosedV1,
+  reportingLedgerSubscriptionKeyV1,
+  mergeReportingLedgerOwedSetV1,
+  isReportingLedgerOwedSetV1,
   assertReportingConsumerMismatchEscalation,
   projectReportingConsumerStatusMismatchV1,
   projectReportingObligationHealthV1,
@@ -46,6 +50,7 @@ import type {
   ReportingLedgerIssueV1,
   ReportingLedgerLeaseV1,
   ReportingLedgerObligationV1,
+  ReportingLedgerOwedSetProgressV1,
   ReportingLedgerPageV1,
   ReportingLedgerRevisionV1,
   ReportingLedgerRevisionSnapshotV1,
@@ -115,11 +120,54 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_configurations (
   semantic_fingerprint TEXT NOT NULL,
   data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
-  UNIQUE (account_id, delivery_config_id, delivery_config_version)
+  subscription_key TEXT NOT NULL DEFAULT ''
 );
 
 -- History ownership is independent of the immutable generation and real install time.
 ALTER TABLE adcp_reporting_configurations ADD COLUMN IF NOT EXISTS history_start TIMESTAMPTZ;
+
+-- Principal-level reporting subscriptions (AdCP 3.3) install one generation per owning principal
+-- and resolved offering under the same (account, delivery_config_id, delivery_config_version):
+-- subscription_key digests the owner and offering, and stays empty for every account generation,
+-- so existing rows keep exactly their uniqueness. The column is added under a catalog guard
+-- because ADD COLUMN IF NOT EXISTS takes ACCESS EXCLUSIVE even when the column exists. The
+-- widened unique index is built before the published three-column constraint is dropped, and that
+-- constraint is found by its columns rather than by a guessed name.
+DO $subscription_key$
+DECLARE
+  configurations regclass := to_regclass('adcp_reporting_configurations');
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_attribute
+     WHERE attrelid = configurations AND attname = 'subscription_key' AND NOT attisdropped
+  ) THEN
+    ALTER TABLE adcp_reporting_configurations ADD COLUMN subscription_key TEXT NOT NULL DEFAULT '';
+  END IF;
+END
+$subscription_key$;
+CREATE UNIQUE INDEX IF NOT EXISTS adcp_reporting_configurations_generation
+  ON adcp_reporting_configurations (account_id, delivery_config_id, delivery_config_version, subscription_key);
+DO $subscription_unique$
+DECLARE
+  configurations regclass := to_regclass('adcp_reporting_configurations');
+  legacy RECORD;
+BEGIN
+  FOR legacy IN
+    SELECT constraint_row.conname
+      FROM pg_constraint constraint_row
+     WHERE constraint_row.conrelid = configurations
+       AND constraint_row.contype = 'u'
+       AND (
+         SELECT array_agg(attribute.attname::text ORDER BY attribute.attname::text)
+           FROM unnest(constraint_row.conkey) AS key(attnum)
+           JOIN pg_attribute attribute
+             ON attribute.attrelid = constraint_row.conrelid AND attribute.attnum = key.attnum
+       ) = ARRAY['account_id', 'delivery_config_id', 'delivery_config_version']::text[]
+  LOOP
+    EXECUTE format('ALTER TABLE adcp_reporting_configurations DROP CONSTRAINT %I', legacy.conname);
+  END LOOP;
+END
+$subscription_unique$;
 
 CREATE TABLE IF NOT EXISTS adcp_reporting_obligations (
   obligation_id TEXT PRIMARY KEY,
@@ -822,17 +870,25 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
           `adcp-reporting-config:${configuration.account.account_id}:${configuration.delivery_config_id}`,
         ]);
-        const newer = await client.query<QueryResultRow & { highest: number | null }>(
-          `SELECT MAX(delivery_config_version)::integer AS highest
-           FROM adcp_reporting_configurations WHERE account_id = $1 AND delivery_config_id = $2`,
-          [configuration.account.account_id, configuration.delivery_config_id]
-        );
-        if ((newer.rows[0]?.highest ?? -1) > configuration.delivery_config_version) {
-          throw new Error('Reporting configuration version cannot regress');
+        const subscriptionKey = reportingLedgerSubscriptionKeyV1(configuration);
+        // Version order is a property of an account configuration's lineage. A subscription
+        // installs one generation per resolved offering as its periods freeze, so an older
+        // version's offering can legitimately arrive after a newer one.
+        if (subscriptionKey === '') {
+          const newer = await client.query<QueryResultRow & { highest: number | null }>(
+            `SELECT MAX(delivery_config_version)::integer AS highest
+             FROM adcp_reporting_configurations
+            WHERE account_id = $1 AND delivery_config_id = $2 AND subscription_key = ''`,
+            [configuration.account.account_id, configuration.delivery_config_id]
+          );
+          if ((newer.rows[0]?.highest ?? -1) > configuration.delivery_config_version) {
+            throw new Error('Reporting configuration version cannot regress');
+          }
         }
         if (configuration.historyStart !== undefined) {
           const generations = await client.query<JsonRow<ReportingLedgerConfigurationV1>>(
-            'SELECT data FROM adcp_reporting_configurations WHERE account_id = $1 AND delivery_config_id = $2',
+            `SELECT data FROM adcp_reporting_configurations
+              WHERE account_id = $1 AND delivery_config_id = $2 AND subscription_key = ''`,
             [configuration.account.account_id, configuration.delivery_config_id]
           );
           assertReportingLedgerHistoryDoesNotOverlap(
@@ -843,8 +899,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         const inserted = await client.query<JsonRow<ReportingLedgerConfigurationV1>>(
           `INSERT INTO adcp_reporting_configurations
            (configuration_id, account_id, delivery_config_id, delivery_config_version,
-            semantic_fingerprint, data, created_at, history_start)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, clock_timestamp(), $7)
+            semantic_fingerprint, data, created_at, history_start, subscription_key)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, clock_timestamp(), $7, $8)
          ON CONFLICT DO NOTHING RETURNING data`,
           [
             configuration.configurationId,
@@ -854,6 +910,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             configuration.semanticFingerprint,
             JSON.stringify(configuration),
             configuration.historyStart ?? null,
+            subscriptionKey,
           ]
         );
         const value =
@@ -861,11 +918,13 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           (
             await client.query<JsonRow<ReportingLedgerConfigurationV1>>(
               `SELECT data FROM adcp_reporting_configurations
-              WHERE account_id = $1 AND delivery_config_id = $2 AND delivery_config_version = $3`,
+              WHERE account_id = $1 AND delivery_config_id = $2 AND delivery_config_version = $3
+                AND subscription_key = $4`,
               [
                 configuration.account.account_id,
                 configuration.delivery_config_id,
                 configuration.delivery_config_version,
+                subscriptionKey,
               ]
             )
           ).rows[0]?.data;
@@ -894,7 +953,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
       async client => {
         // The account fence also serializes generation installation and history extension.
         const result = await client.query<JsonRow<ReportingLedgerConfigurationV1>>(
-          'SELECT data FROM adcp_reporting_configurations WHERE account_id = $1 AND delivery_config_id = $2',
+          `SELECT data FROM adcp_reporting_configurations
+            WHERE account_id = $1 AND delivery_config_id = $2 AND subscription_key = ''`,
           [target.account.account_id, target.delivery_config_id]
         );
         const configurations = result.rows.map(row => row.data);
@@ -927,6 +987,47 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         return clone(value);
       },
       { preBeginAdvisoryLock: accountLock(target.account.account_id) }
+    );
+  }
+
+  async recordOwedSetProgress(input: ReportingLedgerOwedSetProgressV1): Promise<ReportingLedgerConfigurationV1> {
+    const { configurationId, account_id, ...progress } = input;
+    return this.transaction(
+      async client => {
+        const found = await client.query<JsonRow<ReportingLedgerConfigurationV1>>(
+          `SELECT data FROM adcp_reporting_configurations
+            WHERE configuration_id = $1 AND account_id = $2 AND subscription_key <> ''
+            FOR UPDATE`,
+          [configurationId, account_id]
+        );
+        const stored = found.rows[0]?.data;
+        if (!stored || !isReportingLedgerOwedSetV1(stored)) {
+          throw new Error('Unknown subscription reporting configuration');
+        }
+        const owedSet = mergeReportingLedgerOwedSetV1(stored.owedSet, progress);
+        if (JSON.stringify(owedSet) === JSON.stringify(stored.owedSet ?? null)) return clone(stored);
+        const value = { ...stored, owedSet };
+        // Mutable progress only: the fingerprint and every immutable field are untouched.
+        await client.query(
+          `UPDATE adcp_reporting_configurations SET data = jsonb_set(data, '{owedSet}', $2::jsonb, true)
+            WHERE configuration_id = $1`,
+          [configurationId, JSON.stringify(owedSet)]
+        );
+        return clone(value);
+      },
+      { preBeginAdvisoryLock: accountLock(account_id) }
+    );
+  }
+
+  async findObligationByOrdinal(input: {
+    account_id: string;
+    configurationId: string;
+    periodOrdinal: number;
+  }): Promise<ReportingLedgerObligationV1 | null> {
+    return this.one<ReportingLedgerObligationV1>(
+      `SELECT data FROM adcp_reporting_obligations
+        WHERE account_id = $1 AND configuration_id = $2 AND period_ordinal = $3`,
+      [input.account_id, input.configurationId, input.periodOrdinal]
     );
   }
 
@@ -3903,6 +4004,8 @@ ${managedDueArm}       )
           throw new Error('Reporting ledger snapshot exceeds the item limit');
         }
         const frozenCalendarProofRequired = configurations.some(configuration => {
+          // Owed-set generations never resolve a period grid.
+          if (isReportingLedgerOwedSetV1(configuration)) return false;
           try {
             reportingPeriodSchedule(configuration);
             return false;
@@ -3927,6 +4030,7 @@ ${managedDueArm}       )
                         // prove the handoff exclusively from frozen obligations.
                         period: {
                           start: configurations
+                            .filter(configuration => !isReportingLedgerOwedSetV1(configuration))
                             .map(configuration => configuration.historyStart ?? configuration.installedAt)
                             .sort(compareReportingInstants)[0],
                           end: ledgerAsOf,
@@ -4076,7 +4180,7 @@ ${managedDueArm}       )
                   value,
                   obligationRevisions,
                   ledgerAsOf,
-                  reportingLedgerScopeClosed(query, ledgerAsOf, ledgerCoverage.complete)
+                  reportingLedgerScopeClosed(query, ledgerAsOf, reportingLedgerCoverageClosedV1(ledgerCoverage))
                 );
                 const sellerHealth = projectReportingUnreadableRevisionHealthV1(
                   value,
@@ -4316,19 +4420,28 @@ ${managedDueArm}       )
   ): Promise<ReportingLedgerConsumerStatementV1[]> {
     const period = reportingLedgerEffectivePeriod(query, ledgerAsOf);
     const result = await client.query<JsonRow<ReportingLedgerConsumerStatementV1>>(
+      // EXISTS rather than a join: one subscription version owns one generation per resolved
+      // offering, so several visible generations can share a status's (id, version).
       `SELECT status.data FROM adcp_reporting_consumer_statuses status
-        JOIN adcp_reporting_configurations configuration
-          ON configuration.account_id = status.account_id
-         AND configuration.delivery_config_id = status.data->>'delivery_config_id'
-         AND configuration.delivery_config_version = (status.data->>'delivery_config_version')::integer
        WHERE status.account_id = $1 AND status.consumer_id = $2
          AND status.recorded_at <= $3
          AND ($4::timestamptz IS NULL OR status.recorded_at > $4)
          AND ($5::text[] IS NULL OR status.data->>'delivery_config_id' = ANY($5))
          AND ($10::text IS NOT NULL OR (status.data->'period'->>'end')::timestamptz > $6)
          AND ($10::text IS NOT NULL OR (status.data->'period'->>'start')::timestamptz < $7)
-         AND ($8::text[] IS NULL OR configuration.data->>'feedPurpose' = ANY($8))
-         AND ($9::text[] IS NULL OR configuration.data->'mediaBuyIds' ?| $9::text[])
+         AND EXISTS (
+           SELECT 1 FROM adcp_reporting_configurations configuration
+            WHERE configuration.account_id = status.account_id
+              AND configuration.delivery_config_id = status.data->>'delivery_config_id'
+              AND configuration.delivery_config_version = (status.data->>'delivery_config_version')::integer
+              AND (configuration.subscription_key = ''
+                OR (configuration.data->'subscription'->>'tenantId' = $13
+                  AND configuration.data->'subscription'->>'principalId' = $14))
+              AND ($8::text[] IS NULL OR configuration.data->>'feedPurpose' = ANY($8))
+              AND ($9::text[] IS NULL OR (CASE WHEN configuration.subscription_key = ''
+                THEN configuration.data->'mediaBuyIds'
+                ELSE COALESCE(configuration.data->'owedSet'->'mediaBuyIds', '[]'::jsonb) END) ?| $9::text[])
+         )
          AND ($10::text IS NULL OR status.data->>'reporting_revision_id' = $10)
          AND (NOT $11::boolean OR status.is_current)
        ORDER BY status.recorded_at, status.consumer_status_id
@@ -4346,6 +4459,8 @@ ${managedDueArm}       )
         query.reporting_revision_id ?? null,
         currentOnly,
         limit,
+        query.subscription_principal?.tenantId ?? null,
+        query.subscription_principal?.principalId ?? null,
       ]
     );
     return result.rows.map(row => clone(row.data));
@@ -4418,6 +4533,8 @@ ${managedDueArm}       )
              WHERE exact_revision.obligation_id = adcp_reporting_obligations.obligation_id
                AND exact_revision.revision_id = $9 AND exact_revision.recorded_at <= $2
           ))
+          AND (NOT (data ? 'subscription')
+            OR (data->'subscription'->>'tenantId' = $12 AND data->'subscription'->>'principalId' = $13))
         ORDER BY period_start, obligation_id
         LIMIT $11`,
       [
@@ -4432,6 +4549,8 @@ ${managedDueArm}       )
         query.reporting_revision_id ?? null,
         query.consumer_id ?? null,
         MAX_SNAPSHOT_ITEMS + 1,
+        query.subscription_principal?.tenantId ?? null,
+        query.subscription_principal?.principalId ?? null,
       ]
     );
     return result.rows.map(row => row.data);
@@ -4446,9 +4565,18 @@ ${managedDueArm}       )
       `SELECT data FROM adcp_reporting_configurations
         WHERE account_id = $1 AND created_at <= $2
           AND ($3::text[] IS NULL OR delivery_config_id = ANY($3))
-        ORDER BY delivery_config_id, delivery_config_version
+          AND (subscription_key = ''
+            OR (data->'subscription'->>'tenantId' = $5 AND data->'subscription'->>'principalId' = $6))
+        ORDER BY delivery_config_id, delivery_config_version, subscription_key
         LIMIT $4`,
-      [query.account_id, ledgerAsOf, query.delivery_config_ids ?? null, MAX_SNAPSHOT_ITEMS + 1]
+      [
+        query.account_id,
+        ledgerAsOf,
+        query.delivery_config_ids ?? null,
+        MAX_SNAPSHOT_ITEMS + 1,
+        query.subscription_principal?.tenantId ?? null,
+        query.subscription_principal?.principalId ?? null,
+      ]
     );
     return result.rows.map(row => row.data);
   }
@@ -6065,6 +6193,14 @@ function checkpointScopeFingerprint(query: ReportingLedgerSnapshotQueryV1): stri
   return digest({
     account_id: query.account_id,
     ...(query.consumer_id ? { consumer_id: query.consumer_id } : {}),
+    ...(query.subscription_principal
+      ? {
+          subscription_principal: {
+            tenantId: query.subscription_principal.tenantId,
+            principalId: query.subscription_principal.principalId,
+          },
+        }
+      : {}),
     ...(query.media_buy_ids ? { media_buy_ids: sorted(query.media_buy_ids) } : {}),
     ...(query.delivery_config_ids ? { delivery_config_ids: sorted(query.delivery_config_ids) } : {}),
     ...(query.feed_purposes ? { feed_purposes: sorted(query.feed_purposes) } : {}),
