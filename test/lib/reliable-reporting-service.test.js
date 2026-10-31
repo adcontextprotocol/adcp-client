@@ -5,9 +5,15 @@ process.env.NODE_ENV = 'test';
 
 const {
   REPORTING_MANAGED_DELIVERY_COMPOSITION_V1,
+  ReportingConfigurationImmutableError,
   createReliableReportingService,
+  isReportingConfigurationImmutableError,
   runReliableReportingServiceConformanceV1,
 } = require('../../dist/lib/reporting/service/index.js');
+const {
+  createReportingSubscriptionEngineV1,
+  reportingConfigurationCapabilitiesV1,
+} = require('../../dist/lib/reporting/advanced/index.js');
 const {
   createInlineReportingSourceExecutor,
   redactedReportingSourceOfferingV1,
@@ -16,6 +22,7 @@ const {
 } = require('../../dist/lib/reporting/source/index.js');
 const { createAdcpServerFromPlatform } = require('../../dist/lib/server/decisioning/runtime/from-platform.js');
 const { MemoryLedgerStore } = require('../helpers/memory-reporting-ledger-store.js');
+const { createTestPrincipalLifecycle } = require('../helpers/principal-runtime.js');
 const { canonicalize } = require('../../dist/lib/utils/jcs.js');
 const { createHash } = require('node:crypto');
 
@@ -270,7 +277,16 @@ describe('ReliableReportingService', () => {
     assert.equal(store.revisions.size, 1, 'dynamic products must produce a validated revision');
 
     products.push('per_buy_awareness_buy2__product_c');
-    await assert.rejects(service.installConfiguration(configuration(), context), /immutable/i);
+    await assert.rejects(service.installConfiguration(configuration(), context), error => {
+      // Typed so successor-installing hosts need not match on message text.
+      assert.ok(error instanceof ReportingConfigurationImmutableError);
+      assert.ok(isReportingConfigurationImmutableError(error));
+      assert.equal(error.code, 'REPORTING_CONFIGURATION_IMMUTABLE');
+      assert.equal(error.accountId, 'account-a');
+      assert.equal(error.deliveryConfigVersion, configuration().delivery_config_version);
+      assert.match(error.message, /Reporting configuration generation is immutable/);
+      return true;
+    });
     const next = await service.installConfiguration(configuration({ delivery_config_version: 2 }), context);
     assert.deepEqual(
       next.constituents.map(value => value.productId),
@@ -560,6 +576,217 @@ describe('ReliableReportingService', () => {
     );
     assert.notEqual(wireExact.isError, true, JSON.stringify(wireExact.structuredContent));
     assert.equal(wireExact.structuredContent.reporting_revision.reporting_revision_id, revision.reporting_revision_id);
+  });
+
+  test('builds 3.3 registration capabilities without changing the default shape', async () => {
+    const { service } = serviceFixture();
+    assert.deepEqual(reportingConfigurationCapabilitiesV1(), { configuration_task: 'sync_accounts' });
+    assert.equal(service.capabilities.configuration_task, 'sync_accounts');
+    assert.equal(service.capabilities.configuration_tasks, undefined, 'the default shape is unchanged');
+    const registration = reportingConfigurationCapabilitiesV1({ subscriptions: { maxAccounts: 500 } });
+    assert.deepEqual(registration, {
+      configuration_task: 'sync_accounts',
+      configuration_tasks: ['sync_principal', 'sync_accounts'],
+      subscriptions: { supported: true, max_accounts: 500 },
+    });
+    assert.deepEqual(
+      reportingConfigurationCapabilitiesV1({ subscriptions: {}, accountConfigurations: false }),
+      { configuration_tasks: ['sync_principal'], subscriptions: { supported: true } },
+      'configuration_task appears only when configuration_tasks lists sync_accounts'
+    );
+    assert.throws(() => reportingConfigurationCapabilitiesV1({ accountConfigurations: false }), {
+      name: 'PlatformConfigError',
+      code: 'PLATFORM_CONFIG_INVALID',
+      configField: 'accountConfigurations',
+    });
+    assert.throws(() => reportingConfigurationCapabilitiesV1({ subscriptions: { maxAccounts: 0 } }), {
+      name: 'PlatformConfigError',
+      configField: 'subscriptions.maxAccounts',
+    });
+  });
+
+  test('advertises reporting subscriptions end to end, valid under strict 3.3 validation', async () => {
+    const { lifecycle } = createTestPrincipalLifecycle({
+      reportingSubscriptions: {},
+      includeCompatibilityNotificationTask: true,
+    });
+    const capabilityChanges = {
+      capabilities_version: 'caps-1',
+      cache_ttl_seconds: 3600,
+      notifications: { supported: true, registration_task: 'sync_principal', event_types: ['capabilities.changed'] },
+    };
+    const engine = createReportingSubscriptionEngineV1({
+      principal: lifecycle,
+      offerings: [],
+      statusRetentionDays: redactedReportingSourceOfferingV1.retentionDays,
+      maxAccounts: 100,
+      hooks: {
+        listAuthorizedAccounts: () => ({
+          accounts: [{ account_id: 'account-a', authorized_at: '2026-10-01T00:00:00.000Z' }],
+        }),
+        listAccountBuys: () => [],
+        resolveRevocationInstant: (_principal, _account, input) => input.observedAt,
+        isPeriodDelivered: () => false,
+      },
+    });
+    const request = redactedReportingSourceRequestV1();
+    const { currency: _currency, ...sourceSettings } = request.sourceSettings;
+    const subscriptionOptions = {
+      engine,
+      resolvePrincipal: () => ({ tenantId: 't', principalId: 'p' }),
+      listSubscriptionPrincipals: () => [{ tenantId: 't', principalId: 'p' }],
+      resolveSubscriptionConfiguration: () => ({
+        requestedMetrics: request.requestedMetrics,
+        requestedDimensions: request.requestedDimensions,
+        sourceSettings,
+      }),
+    };
+    assert.throws(
+      () => serviceFixture({ reportingSubscriptions: subscriptionOptions }),
+      /standard_dimensions/,
+      'sellers advertising subscriptions publish standard_dimensions on every offering'
+    );
+    const reportingAdapter = adapter();
+    reportingAdapter.deliveryOffering.standard_dimensions = ['package'];
+    const { service } = serviceFixture({
+      adapters: { fixture: reportingAdapter },
+      reportingSubscriptions: subscriptionOptions,
+    });
+    assert.deepEqual(service.capabilities.offerings[0].standard_dimensions, ['package']);
+    assert.deepEqual(service.capabilities.configuration_tasks, ['sync_principal', 'sync_accounts']);
+    assert.equal(service.capabilities.configuration_task, 'sync_accounts');
+    assert.deepEqual(service.capabilities.subscriptions, {
+      supported: true,
+      max_accounts: 100,
+      backfill_on_regrant: false,
+    });
+    assert.deepEqual(lifecycle.capabilities.supported_sections, ['notification_configs', 'reporting_subscriptions']);
+    const accounts = {
+      resolution: 'explicit',
+      resolve: async ref => ({ id: ref?.account_id ?? 'account-a', ctx_metadata: {} }),
+      upsert: async () => [],
+    };
+    assert.throws(
+      () =>
+        createAdcpServerFromPlatform(service.install({ capabilities: { specialisms: [], config: {} }, accounts }), {
+          name: 'reporting-subscriptions-without-principal',
+          version: '1.0.0',
+        }),
+      /capabilities\.principal/,
+      'subscriptions without the principal section fail at construction, not on the wire'
+    );
+    const { service: plain } = serviceFixture();
+    assert.throws(
+      () =>
+        createAdcpServerFromPlatform(
+          plain.install({ capabilities: { specialisms: [], config: {}, principal: lifecycle.capabilities }, accounts }),
+          { name: 'reporting-subscriptions-section-without-task', version: '1.0.0' }
+        ),
+      /does not list sync_principal/,
+      'the principal section without the registration task is refused too'
+    );
+    const platform = service.install({
+      capabilities: {
+        specialisms: [],
+        config: {},
+        principal: lifecycle.capabilities,
+        capability_changes: capabilityChanges,
+      },
+      accounts,
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'reporting-subscriptions-capabilities-test',
+      version: '1.0.0',
+      protocol: lifecycle.protocol,
+      validation: { requests: 'strict', responses: 'strict' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: {} },
+    });
+    assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepEqual(result.structuredContent.experimental_features, [
+      'media_buy.reporting_delivery',
+      'media_buy.reporting_subscriptions',
+      'protocol.principal',
+    ]);
+    assert.deepEqual(result.structuredContent.adcp.principal.supported_sections, [
+      'notification_configs',
+      'reporting_subscriptions',
+    ]);
+    // standard_dimensions is defined from 3.3.0-beta.2 (adcp#8585), so the offerings are served whole.
+    assert.deepEqual(result.structuredContent.media_buy.reporting_delivery, structuredClone(service.capabilities));
+
+    // Callers pinned to 3.2 see neither the 3.3 registration fields nor the 3.3 section.
+    const legacy = createAdcpServerFromPlatform(platform, {
+      name: 'reporting-subscriptions-capabilities-3-2',
+      version: '1.0.0',
+      adcpVersion: '3.2.1',
+      protocol: lifecycle.protocol,
+      validation: { requests: 'strict', responses: 'strict' },
+    });
+    const legacyResult = await legacy.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: {} },
+    });
+    assert.notEqual(legacyResult.isError, true, JSON.stringify(legacyResult.structuredContent));
+    assert.equal(legacyResult.structuredContent.media_buy.reporting_delivery.configuration_tasks, undefined);
+    assert.equal(legacyResult.structuredContent.media_buy.reporting_delivery.subscriptions, undefined);
+    assert.equal(
+      legacyResult.structuredContent.experimental_features.includes('media_buy.reporting_subscriptions'),
+      false
+    );
+    assert.deepEqual(legacyResult.structuredContent.adcp.principal.supported_sections, ['notification_configs']);
+
+    // Below 3.2 neither the principal block nor its feature id is advertised.
+    const pinned31 = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: { adcp_version: '3.1' } },
+    });
+    assert.notEqual(pinned31.isError, true, JSON.stringify(pinned31.structuredContent));
+    assert.equal(pinned31.structuredContent.adcp.principal, undefined);
+    assert.equal(pinned31.structuredContent.experimental_features?.includes('protocol.principal') ?? false, false);
+
+    // subscription_coverage reaches 3.3 callers only; 3.2 response shapes are closed.
+    const subscribed = await lifecycle.protocol.syncPrincipal(
+      {
+        idempotency_key: 'subscription-coverage-0001',
+        configuration: {
+          reporting_subscriptions: [
+            {
+              subscription_id: 'analytics-daily',
+              subscription_version: 1,
+              active: true,
+              scope: { all_authorized_accounts: true },
+              selector: { feed_purpose: 'analytics', period_duration: 'P1D', required_finality: 'official' },
+              reconciliation_mode: 'delivery_only',
+            },
+          ],
+        },
+      },
+      { callerMutationScope: { tenant_id: 't', principal_id: 'p', principal_kind: 'buyer_agent' } }
+    );
+    assert.equal(subscribed.result.kind, 'applied', JSON.stringify(subscribed));
+    await engine.reconcile({ tenantId: 't', principalId: 'p' });
+    const statusFor = async target =>
+      target.dispatchTestRequest(
+        {
+          method: 'tools/call',
+          params: {
+            name: 'get_reporting_status',
+            arguments: { account: { account_id: 'account-a' }, view: 'summary' },
+          },
+        },
+        { authInfo: { clientId: 'buyer-a' } }
+      );
+    const current = await statusFor(server);
+    assert.notEqual(current.isError, true, JSON.stringify(current.structuredContent));
+    assert.deepEqual(current.structuredContent.subscription_coverage, [
+      { subscription_id: 'analytics-daily', subscription_version: 1, status: 'active', excluded: [] },
+    ]);
+    const older = await statusFor(legacy);
+    assert.notEqual(older.isError, true, JSON.stringify(older.structuredContent));
+    assert.equal(older.structuredContent.subscription_coverage, undefined);
   });
 
   test('derives Core-only capabilities and installs native server handlers', async () => {
