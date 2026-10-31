@@ -141,6 +141,8 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // selection, coverage, capability and engine modules plus the principal
 // subscription runtime. Measured 26,423,860 packed bytes after merging main;
 // allow about 40 KB above that for compressor variance.
+// The buyer runtime, engine store and expectations (#3504) measured 26,470,249
+// packed bytes after merging main's 3.3.0-beta.2 adoption; allow about 40 KB.
 // AdCP 3.3 reporting subscription coverage (#3504) adds the calendar,
 // selection, coverage and capability modules and the parity table. Measured
 // 26,370,041 packed bytes; allow about 40 KB above that for compressor variance.
@@ -149,7 +151,7 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // after #3510 and 26,369,089 after #3541 on main, about 9 KB over the beta.1
 // cap. Allow about 50 KB of compressor variance; the unpacked, file-count,
 // bundled-schema and declaration budgets are unchanged and still pass.
-const MAX_PACKED_TARBALL_BYTES = 26_465_000;
+const MAX_PACKED_TARBALL_BYTES = 26_510_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 144 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -318,7 +320,8 @@ const MAX_PACKED_FILE_COUNT =
   20 + // Reporting subscription calendar, selection, coverage, capabilities and index (five dual-format sets).
   4 + // Reporting subscription hand-modeled wire types until 3.3.0-beta.2 (one dual-format set).
   8 + // Reporting subscription engine and principal subscription runtime (two dual-format sets).
-  4; // Reporting subscription release gate (one dual-format set).
+  4 + // Reporting subscription release gate (one dual-format set).
+  12; // Reporting subscription engine store, buyer expectations and client helper (three dual-format sets).
 const MAX_BUNDLED_SCHEMA_BYTES = 2000 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

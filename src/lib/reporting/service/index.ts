@@ -1682,5 +1682,10 @@ export {
   type ReportingSubscriptionReadbackOverflowV1,
   type ReportingSubscriptionReconcileResultV1,
 } from '../subscriptions/engine';
+export {
+  DEFAULT_REPORTING_SUBSCRIPTION_ENGINE_COLLECTION,
+  createReportingSubscriptionEngineStateStoreV1,
+  type CreateReportingSubscriptionEngineStateStoreOptionsV1,
+} from '../subscriptions/engine-state-store';
 export * from './conformance';
 export * from './scheduler-support';

@@ -106,3 +106,8 @@ export type {
 
 // Principal-level reporting subscriptions (experimental, AdCP 3.3): buyer-computable coverage.
 export * from '../subscriptions';
+export {
+  reportingSubscriptionVersionRecordsV1,
+  subscriptionExpectedReportingPeriodsV1,
+  type SubscriptionExpectationTemplateV1,
+} from '../subscriptions/expectations';
