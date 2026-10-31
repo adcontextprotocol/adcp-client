@@ -7,12 +7,17 @@ import { getSchemaDocumentByRef } from '../../validation/schema-loader';
 import type { GetReportingStatusResponse } from '../../types';
 import type { ReportingAdjustmentReceipt, ReportingMaterialization, ReportingReceipt } from '../../types';
 import { canonicalJsonV1 } from '../source';
+import { isAdcpVersionAtLeast } from '../../utils/adcp-version-config';
 import {
   evaluateReportingLedgerCoverageV1,
+  isReportingLedgerOwedSetV1,
   relevantReportingLedgerConfigurations,
   reportingLedgerConfigurationMatchesScope,
+  reportingLedgerConfigurationMediaBuyIdsV1,
+  reportingLedgerCoverageClosedV1,
   reportingLedgerEffectivePeriod,
   reportingLedgerScopeClosed,
+  reportingLedgerSubscriptionVisibleV1,
   reportingLedgerSuccessor,
 } from './coverage';
 import {
@@ -40,6 +45,7 @@ import type {
   ReportingLedgerRevisionSnapshotV1,
   ReportingLedgerSnapshotQueryV1,
   ReportingLedgerStore,
+  PrincipalRef,
   ReportingManagedDeliveryBindingV1,
   CreateReportingDeliveryHandlerOptionsV1,
   ReportingDeliveryHandlerV1,
@@ -57,6 +63,50 @@ export interface ReportingStatusConsumerScopeOptionsV1<TContext = unknown> {
    * (or honoring one the document doesn't advertise) is worse than silence.
    */
   consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
+  /**
+   * The authenticated principal whose subscription generations this caller may see
+   * (experimental, AdCP 3.3). Without it no subscription generation or obligation is visible.
+   * Derive it from authenticated transport only, as the principal runtime does.
+   */
+  resolveSubscriptionPrincipal?: ReportingSubscriptionPrincipalResolverV1<TContext>;
+}
+
+/**
+ * Status reader without consumer-attributed readback that still scopes subscription generations
+ * to the authenticated principal.
+ */
+export interface ReportingStatusSubscriptionScopeOptionsV1<TContext = unknown> {
+  resolveConsumerId?: undefined;
+  consumerMismatchEscalation?: undefined;
+  resolveSubscriptionPrincipal: ReportingSubscriptionPrincipalResolverV1<TContext>;
+}
+
+/**
+ * Resolves the authenticated principal whose subscription generations a read may see.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export type ReportingSubscriptionPrincipalResolverV1<TContext = unknown> = (
+  context: TContext
+) => PrincipalRef | Promise<PrincipalRef>;
+
+/** Resolve and shape-check the caller's subscription principal. */
+export async function resolveReportingSubscriptionPrincipalV1<TContext>(
+  resolver: ReportingSubscriptionPrincipalResolverV1<TContext> | undefined,
+  context: TContext
+): Promise<PrincipalRef | undefined> {
+  if (!resolver) return undefined;
+  const principal = await resolver(context);
+  if (
+    !principal ||
+    typeof principal.tenantId !== 'string' ||
+    typeof principal.principalId !== 'string' ||
+    principal.tenantId.length === 0 ||
+    principal.principalId.length === 0
+  ) {
+    throw new TypeError('resolveSubscriptionPrincipal must return a tenantId and principalId');
+  }
+  return { tenantId: principal.tenantId, principalId: principal.principalId };
 }
 
 // The no-consumer-scope reader needs only a resolved account; transport state is unused.
@@ -68,11 +118,11 @@ export function createReportingStatusHandler(
 ) => ReturnType<ReportingStatusHandlerV1>;
 export function createReportingStatusHandler<TContext = unknown>(
   store: ReportingLedgerStore,
-  options?: ReportingStatusConsumerScopeOptionsV1<TContext>
+  options?: ReportingStatusConsumerScopeOptionsV1<TContext> | ReportingStatusSubscriptionScopeOptionsV1<TContext>
 ): ReportingStatusHandlerV1;
 export function createReportingStatusHandler<TContext = unknown>(
   store: ReportingLedgerStore,
-  options?: ReportingStatusConsumerScopeOptionsV1<TContext>
+  options?: ReportingStatusConsumerScopeOptionsV1<TContext> | ReportingStatusSubscriptionScopeOptionsV1<TContext>
 ): ReportingStatusHandlerV1 {
   // Fail at wiring time, not on the first escalated read. Inherit the store's
   // setting when the handler was not given one, and refuse a disagreement
@@ -103,8 +153,18 @@ export function createReportingStatusHandler<TContext = unknown>(
           : undefined;
     if (!resolvedAccountId) throw new Error('get_reporting_status requires a resolved account');
     const accountId = resolvedAccountId;
-    const consumerId = options ? await options.resolveConsumerId(context as TContext) : undefined;
-    if (options && !consumerId) throw new Error('get_reporting_status requires an authenticated consumer');
+    const consumerId = options?.resolveConsumerId ? await options.resolveConsumerId(context as TContext) : undefined;
+    if (options?.resolveConsumerId && !consumerId) {
+      throw new Error('get_reporting_status requires an authenticated consumer');
+    }
+    const subscriptionPrincipal = await resolveReportingSubscriptionPrincipalV1(
+      options?.resolveSubscriptionPrincipal,
+      context as TContext
+    );
+    // `offering_id` on an obligation is a 3.3 field; earlier response shapes are closed.
+    const servedAdcpVersion = (context as { servedAdcpVersion?: unknown }).servedAdcpVersion;
+    const emitsOfferingId =
+      typeof servedAdcpVersion !== 'string' || isAdcpVersionAtLeast(servedAdcpVersion, '3.3.0-beta.1');
     const view = raw.view;
     if (view !== 'summary' && view !== 'periods' && view !== 'revision') {
       throw new Error('Unsupported reporting status view');
@@ -120,6 +180,7 @@ export function createReportingStatusHandler<TContext = unknown>(
       const query: ReportingLedgerSnapshotQueryV1 = {
         account_id: accountId,
         ...(consumerId ? { consumer_id: consumerId } : {}),
+        ...(subscriptionPrincipal ? { subscription_principal: subscriptionPrincipal } : {}),
         view,
         ...copyArray(raw, 'media_buy_ids'),
         ...copyArray(raw, 'delivery_config_ids'),
@@ -184,6 +245,17 @@ export function createReportingStatusHandler<TContext = unknown>(
         };
       }
       if (canonicalJsonV1(page.snapshot.query) !== canonicalJsonV1(query)) return lookupUnavailable(view);
+      // Defense in depth for caller isolation: a store that returned another principal's
+      // subscription generation or obligation has broken `subscription_principal`.
+      if (
+        page.snapshot.configurations.some(
+          value => !reportingLedgerSubscriptionVisibleV1(value, subscriptionPrincipal)
+        ) ||
+        page.snapshot.obligations.some(value => !reportingLedgerSubscriptionVisibleV1(value, subscriptionPrincipal)) ||
+        page.obligations.some(value => !reportingLedgerSubscriptionVisibleV1(value, subscriptionPrincipal))
+      ) {
+        throw new Error('Reporting ledger snapshot exposed a subscription generation the caller does not own');
+      }
       if (
         query.delivery_config_ids &&
         query.delivery_config_ids.some(
@@ -197,7 +269,9 @@ export function createReportingStatusHandler<TContext = unknown>(
         query.media_buy_ids &&
         query.media_buy_ids.some(
           mediaBuyId =>
-            !page.snapshot.configurations.some(configuration => configuration.mediaBuyIds.includes(mediaBuyId))
+            !page.snapshot.configurations.some(configuration =>
+              reportingLedgerConfigurationMediaBuyIdsV1(configuration).includes(mediaBuyId)
+            )
         )
       ) {
         return lookupUnavailable(view);
@@ -216,7 +290,7 @@ export function createReportingStatusHandler<TContext = unknown>(
           obligation,
           revisions,
           page.snapshot.ledgerAsOf,
-          reportingLedgerScopeClosed(query, page.snapshot.ledgerAsOf, ledgerCoverage.complete)
+          reportingLedgerScopeClosed(query, page.snapshot.ledgerAsOf, reportingLedgerCoverageClosedV1(ledgerCoverage))
         );
         const persistedIssues = page.snapshot.issues.filter(
           issue =>
@@ -482,7 +556,8 @@ export function createReportingStatusHandler<TContext = unknown>(
               value.projection,
               value.currentConsumerStatus,
               consumerId ? value.consumerStatusProjection.length : undefined,
-              value.managed
+              value.managed,
+              emitsOfferingId
             )
           ),
           revisions: page.revisions
@@ -520,7 +595,11 @@ export function createReportingStatusHandler<TContext = unknown>(
       const issues = selected.flatMap(value => value.projection.issues);
       if (!ledgerCoverage.complete) issues.push(historyUnavailableIssue(query, page.snapshot.ledgerAsOf));
       const summaryHealth = aggregateReportingHealthV1(healthValues, {
-        closed: reportingLedgerScopeClosed(query, page.snapshot.ledgerAsOf, ledgerCoverage.complete),
+        closed: reportingLedgerScopeClosed(
+          query,
+          page.snapshot.ledgerAsOf,
+          reportingLedgerCoverageClosedV1(ledgerCoverage)
+        ),
         coverageComplete: ledgerCoverage.complete,
       });
       return {
@@ -692,6 +771,17 @@ export function createReportingDeliveryHandler(
       if (!revision) return SDK_REVISION_NOT_OWNED;
       const obligation = await store.getObligation(revision.reporting_obligation_id);
       if (!obligation || obligation.account.account_id !== accountId) return SDK_REVISION_NOT_OWNED;
+      // Another principal's subscription revision reads exactly like an unknown one, and is never
+      // offered to the legacy reader: the SDK owns this id.
+      if (
+        obligation.subscription &&
+        !reportingLedgerSubscriptionVisibleV1(
+          obligation,
+          await resolveReportingSubscriptionPrincipalV1(options.resolveSubscriptionPrincipal, context)
+        )
+      ) {
+        throw reportingRevisionNotFound();
+      }
       const totalCount = revision.binding.rowCount;
       let offset = 0;
       if (typeof pagination.cursor === 'string') {
@@ -817,13 +907,17 @@ function wireObligation(
   projection: ReturnType<typeof projectReportingObligationHealthV1>,
   currentConsumerStatus?: ReportingLedgerConsumerStatementV1,
   consumerStatusCount?: number,
-  managed?: ReturnType<typeof projectManagedDelivery>
+  managed?: ReturnType<typeof projectManagedDelivery>,
+  emitsOfferingId = false
 ) {
   return {
     reporting_obligation_id: obligation.reporting_obligation_id,
     delivery_config_id: obligation.delivery_config_id,
     delivery_config_version: obligation.delivery_config_version,
     report_definition_id: obligation.report_definition_id,
+    // AdCP 3.3: a subscription obligation names the offering it resolved to, which is
+    // authoritative for its timing. Account obligations keep their pre-3.3 shape.
+    ...(emitsOfferingId && obligation.subscription ? { offering_id: obligation.offeringId } : {}),
     feed_purpose: obligation.feedPurpose,
     reporting_profile: obligation.contract.reportingProfile,
     account_id: obligation.account.account_id,
@@ -1316,6 +1410,9 @@ function nextActivePeriodStart(
   configurations: ReportingLedgerConfigurationV1[],
   ledgerAsOf: string
 ): string[] {
+  // An owed set has no schedule grid to project: which future periods are owed depends on
+  // buys the ledger does not see. Only its written obligations count.
+  if (isReportingLedgerOwedSetV1(configuration)) return [];
   const asOf = Date.parse(ledgerAsOf);
   const installed = Date.parse(configuration.historyStart ?? configuration.installedAt);
   const ownershipEnd = reportingLedgerConfigurationOwnershipEnd(configuration, configurations);
@@ -1337,6 +1434,7 @@ function nextObligationDue(
   query: ReportingLedgerSnapshotQueryV1,
   ledgerAsOf: string
 ): string[] {
+  if (isReportingLedgerOwedSetV1(configuration)) return [];
   const schedule = reportingPeriodSchedule(configuration);
   const installed = Date.parse(configuration.historyStart ?? configuration.installedAt);
   const ownershipEnd = reportingLedgerConfigurationOwnershipEnd(configuration, configurations);
@@ -1399,7 +1497,7 @@ function publicScope(
   query: ReportingLedgerSnapshotQueryV1,
   configurations: ReportingLedgerConfigurationV1[],
   ledgerAsOf: string,
-  coverage: { complete: boolean; retainedFrom: string }
+  coverage: { complete: boolean; retainedFrom: string; owedSetOpen?: true }
 ) {
   const { start: periodStart, end: periodEnd } = reportingLedgerEffectivePeriod(query, ledgerAsOf);
   configurations = scopedConfigurations(query, configurations, ledgerAsOf);
@@ -1418,7 +1516,7 @@ function publicScope(
   return {
     period_start: periodStart,
     period_end: periodEnd,
-    scope_closed: Date.parse(periodEnd) <= Date.parse(ledgerAsOf) && coverage.complete,
+    scope_closed: Date.parse(periodEnd) <= Date.parse(ledgerAsOf) && reportingLedgerCoverageClosedV1(coverage),
     ...(query.media_buy_ids ? { media_buy_ids: [...query.media_buy_ids].sort() } : {}),
     all_accessible_media_buys: query.media_buy_ids === undefined,
     delivery_config_generations: generations,
