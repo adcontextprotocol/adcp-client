@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { canonicalJsonV1 } from '../source';
 import type {
+  ReportingSubscriptionReceiptAdmissionV1,
   ReportingLedgerConfigurationV1,
   ReportingLedgerOwedSetProgressV1,
   ReportingLedgerOwedSetV1,
@@ -372,4 +373,33 @@ export function assertReportingLedgerHistoryDoesNotOverlap(
       throw new RangeError('Reporting history overlaps another configuration generation');
     }
   }
+}
+
+/**
+ * The single admission rule for receipts and consumer statuses against subscription
+ * obligations (experimental, AdCP 3.3). Change it here and nowhere else.
+ *
+ * - Without an admission, nothing is scoped: subscriptions are off.
+ * - An account obligation accepts any consumer of the account; a subscription obligation only
+ *   its owning principal.
+ *
+ * Access means access: there is no post-revocation window. Once a principal loses authority for
+ * an account, the host's account resolution refuses every task on it, `sync_reporting_receipts`
+ * and `sync_reporting_status` included, so this rule never sees such a caller. A seller that
+ * wants a buyer to finish reconciling keeps a reduced grant instead of revoking (for example
+ * `allowed_tasks` limited to `get_reporting_status`, `sync_reporting_receipts` and
+ * `sync_reporting_status`), and this rule then applies as usual.
+ * @experimental Storage-facing building block; see docs/guides/REPORTING-STABILITY.md.
+ */
+export function reportingSubscriptionReceiptAdmissibleV1(input: {
+  obligation: { subscription?: ReportingLedgerSubscriptionV1 | undefined };
+  admission?: ReportingSubscriptionReceiptAdmissionV1;
+}): boolean {
+  const { admission, obligation } = input;
+  if (!admission) return true;
+  const owner = obligation.subscription;
+  return (
+    owner === undefined ||
+    (owner.tenantId === admission.principal.tenantId && owner.principalId === admission.principal.principalId)
+  );
 }
