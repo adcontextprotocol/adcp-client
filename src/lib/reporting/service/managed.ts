@@ -631,8 +631,10 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
     async projectAccounts(items, ctx) {
       const context = ctx as { reportingServiceContext?: boolean } | undefined;
       if (!Array.isArray(items) || items.length === 0 || context?.reportingServiceContext) return items;
+      let projected: PrincipalRef | undefined;
       try {
         const principal = await resolvePrincipal(ctx as RequestContext<Account<TCtxMeta>>);
+        projected = principal;
         const { states } = await principals.listReportingSubscriptions(principal);
         if (states.length === 0) return items;
         const observations = items.flatMap(raw => {
@@ -662,8 +664,13 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
             authorization: { ...(account.authorization as Record<string, unknown>), authorized_at: start },
           } as typeof raw;
         });
-      } catch {
-        // The projection never fails the read.
+      } catch (error) {
+        // The projection never fails the read, but a journal write that failed is reported: the
+        // buyer was served the host's value, which coverage may not use.
+        console.warn(
+          `[adcp/reporting] authorized_at projection failed; served the platform's values: ${error instanceof Error ? error.message : String(error)}`
+        );
+        if (projected) await report({ principal: projected, error });
         return items;
       }
     },
