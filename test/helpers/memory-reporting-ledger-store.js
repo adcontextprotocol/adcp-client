@@ -17,6 +17,10 @@ const {
   reportingPeriodSchedule,
   projectReportingObligationHealthV1,
   reportingLedgerScopeClosed,
+  reportingLedgerCoverageClosedV1,
+  reportingLedgerSubscriptionKeyV1,
+  reportingLedgerSubscriptionVisibleV1,
+  mergeReportingLedgerOwedSetV1,
 } = require('@adcp/sdk/reporting/ledger');
 const { canonicalJsonV1 } = require('@adcp/sdk/reporting/source');
 
@@ -50,11 +54,13 @@ class MemoryLedgerStore {
     } else if (value.historyStartOrdinal !== undefined) {
       throw new TypeError('Reporting historyStartOrdinal requires historyStart');
     }
+    // Mirrors the PostgreSQL unique key: subscription generations add the owner and offering.
     const existing = [...this.configurations.values()].find(
       item =>
         item.account.account_id === value.account.account_id &&
         item.delivery_config_id === value.delivery_config_id &&
-        item.delivery_config_version === value.delivery_config_version
+        item.delivery_config_version === value.delivery_config_version &&
+        reportingLedgerSubscriptionKeyV1(item) === reportingLedgerSubscriptionKeyV1(value)
     );
     if (existing && existing.semanticFingerprint !== value.semanticFingerprint) throw new Error('immutable conflict');
     if (!existing) {
@@ -87,6 +93,24 @@ class MemoryLedgerStore {
     assertReportingLedgerHistoryDoesNotOverlap(value, [...this.configurations.values()]);
     this.configurations.set(input.configurationId, structuredClone(value));
     return structuredClone(value);
+  }
+  async recordOwedSetProgress({ configurationId, account_id, ...progress }) {
+    const stored = this.configurations.get(configurationId);
+    if (!stored || stored.account.account_id !== account_id || !stored.subscription) {
+      throw new Error('Unknown subscription reporting configuration');
+    }
+    const value = { ...stored, owedSet: mergeReportingLedgerOwedSetV1(stored.owedSet, progress) };
+    this.configurations.set(configurationId, structuredClone(value));
+    return structuredClone(value);
+  }
+  async findObligationByOrdinal({ account_id, configurationId, periodOrdinal }) {
+    const value = [...this.obligations.values()].find(
+      item =>
+        item.account.account_id === account_id &&
+        item.configurationId === configurationId &&
+        item.periodOrdinal === periodOrdinal
+    );
+    return value ? structuredClone(value) : null;
   }
   async listConfigurations(accountId) {
     return [...this.configurations.values()].filter(value => !accountId || value.account.account_id === accountId);
@@ -303,8 +327,11 @@ class MemoryLedgerStore {
       .map(value => structuredClone(value));
   }
   async createSnapshot(query) {
+    // Caller isolation: account generations plus the caller's own subscription generations.
+    const visible = value => reportingLedgerSubscriptionVisibleV1(value, query.subscription_principal);
     let obligations = (await this.listObligations(query.account_id)).filter(
       value =>
+        visible(value) &&
         Date.parse(value.period.end) <= Date.parse(this.ledgerAsOf ?? new Date().toISOString()) &&
         (!query.delivery_config_ids || query.delivery_config_ids.includes(value.delivery_config_id))
     );
@@ -316,8 +343,10 @@ class MemoryLedgerStore {
       .flat()
       .map(({ rows: _rows, ...value }) => value);
     const ledgerAsOf = this.ledgerAsOf ?? new Date().toISOString();
-    const configurations = (await this.listConfigurations(query.account_id)).map(value => structuredClone(value));
-    const coverageOrdinals = (await this.listObligations(query.account_id)).map(value => ({
+    const configurations = (await this.listConfigurations(query.account_id))
+      .filter(visible)
+      .map(value => structuredClone(value));
+    const coverageOrdinals = (await this.listObligations(query.account_id)).filter(visible).map(value => ({
       configurationId: value.configurationId,
       periodOrdinal: value.periodOrdinal,
       period: { start: value.period.start, end: value.period.end },
@@ -337,7 +366,7 @@ class MemoryLedgerStore {
                 value,
                 revisions.filter(item => item.reporting_obligation_id === value.reporting_obligation_id),
                 ledgerAsOf,
-                reportingLedgerScopeClosed(query, ledgerAsOf, ledgerCoverage.complete)
+                reportingLedgerScopeClosed(query, ledgerAsOf, reportingLedgerCoverageClosedV1(ledgerCoverage))
               ).health
             )
           )
