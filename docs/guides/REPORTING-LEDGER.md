@@ -343,11 +343,24 @@ principal (`reportingSubscriptionReceiptAdmissibleV1`, the one rule). Account
 obligations stay open to every consumer of the account. This applies on top of
 the host's own account resolution and `allowed_tasks` checks.
 
-Access means access: there is no post-revocation window. Once authority for an
-account ends, the account is unknown to every task, receipts and statuses
-included. A seller that wants a buyer to finish reconciling keeps a reduced
-grant instead of revoking, for example `allowed_tasks` limited to
-`get_reporting_status`, `sync_reporting_receipts` and `sync_reporting_status`.
+**To end a relationship, wind down; don't revoke.** Revocation means no access
+(adcp#8607): there is no post-revocation window. Once authority for an account
+ends, the account is unknown to every task, receipts and statuses included, and
+the principal's subscriptions stop covering it, so final revisions and
+adjustments for its buys never reach it. Revoke only for fraud or a compromise.
+A seller that wants a buyer to finish reconciling, for example after an agency
+change, replaces the grant with `windDownGrant()` from `@adcp/sdk/server`:
+
+```ts
+import { windDownGrant, REPORTING_WIND_DOWN_TASKS } from '@adcp/sdk/server';
+
+// allowed_tasks: get_reporting_status, sync_reporting_receipts, sync_reporting_status; read_only: false.
+// Passing the current grant keeps its authorized_at: a reduced grant continues the chain.
+account.authorization = windDownGrant(account.authorization);
+```
+
+Your account resolver must then refuse every task outside
+`REPORTING_WIND_DOWN_TASKS` for that principal, as it does for any grant.
 
 The engine counts an account as covered only while its grant lists
 `get_reporting_status` (`reportingSubscriptionCoverageGrantedV1`; a grant with
