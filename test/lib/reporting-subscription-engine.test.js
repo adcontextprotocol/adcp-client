@@ -891,7 +891,20 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
           statusRetentionDays: 30,
           hooks: { listAuthorizedAccounts: () => ({ accounts: [] }), listAccountBuys: () => [] },
         }),
-      /resolveRevocationInstant/
+      /isPeriodDelivered/
+    );
+    // resolveRevocationInstant is optional: a revocation is then dated when it was observed.
+    assert.doesNotThrow(() =>
+      createReportingSubscriptionEngineV1({
+        principal: w.lifecycle,
+        offerings: OFFERINGS,
+        statusRetentionDays: 30,
+        hooks: {
+          listAuthorizedAccounts: () => ({ accounts: [] }),
+          listAccountBuys: () => [],
+          isPeriodDelivered: () => false,
+        },
+      })
     );
   });
 
@@ -973,6 +986,40 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     assert.equal(refreshed.until, undefined);
     assert.ok(w.emitted.length > notified, 'the change fires principal.changed');
     assert.equal(w.emitted.at(-1).payload.reason, 'reporting_subscription_changed');
+  });
+
+  test('the grant journal continues a chain inside retention and starts a new one after it', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [buy('mb_1')]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    const served = async at => {
+      w.clock.now = new Date(at);
+      return (await w.engine.observeGrants(SCOPE, [{ account_id: 'acct_1' }])).get('acct_1');
+    };
+    assert.equal(await served('2026-11-02T00:00:00.000Z'), '2026-10-01T00:00:00.000Z');
+    // Pushed: revoked on 11-05, re-granted on 11-20, inside the 30-day retention: the chain continues.
+    // Listings agree with what was pushed.
+    const push = async (at, authorized, hostFacts) => {
+      w.clock.now = new Date(at);
+      if (hostFacts) w.grant('acct_1', hostFacts.authorized_at, hostFacts.extra ?? {});
+      else w.host.accounts.delete('acct_1');
+      await w.engine.authorizationChanged(SCOPE, 'acct_1', { authorized, at });
+    };
+    await push('2026-11-05T00:00:00.000Z', false);
+    await push('2026-11-20T00:00:00.000Z', true, {
+      authorized_at: '2026-10-01T00:00:00.000Z',
+      extra: { granted_at: '2026-11-20T00:00:00.000Z' },
+    });
+    assert.equal(await served('2026-11-20T00:00:00.000Z'), '2026-10-01T00:00:00.000Z');
+    // Revoked again on 11-21, re-granted on 12-30, after retention: a new chain starts then.
+    await push('2026-11-21T00:00:00.000Z', false);
+    await push('2026-12-30T00:00:00.000Z', true, { authorized_at: '2026-12-30T00:00:00.000Z' });
+    assert.equal(await served('2026-12-30T00:00:00.000Z'), '2026-12-30T00:00:00.000Z');
+    // Observed by a listing: revoked on 12-31, first seen again on 2027-02-15, after retention.
+    await push('2026-12-31T00:00:00.000Z', false);
+    assert.equal(await served('2027-02-15T00:00:00.000Z'), '2027-02-15T00:00:00.000Z');
   });
 
   test('a pending account action is an account-level action_required exception', async () => {

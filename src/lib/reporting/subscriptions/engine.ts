@@ -216,7 +216,7 @@ export interface ReportingSubscriptionEngineHooksV1 {
    * authorized list, or reappears under a later chain without the revocation being observed.
    * The answer is clamped to `[lastObservedAt, observedAt]`.
    */
-  resolveRevocationInstant(
+  resolveRevocationInstant?(
     principal: Readonly<PrincipalRef>,
     accountId: string,
     input: { lastObservedAt?: string; observedAt: string }
@@ -488,6 +488,21 @@ export interface ReportingSubscriptionEngineV1 {
     options?: { accountId?: string }
   ): Promise<ReportingSubscriptionFrozenOwedSetV1[]>;
   /**
+   * The grant journal's `authorized_at` for each account a caller was just shown with an
+   * authorization (a `list_accounts` or `sync_accounts` response), observing each grant first.
+   *
+   * The journal is the one source of `authorized_at`: the value served to the buyer is the value
+   * coverage uses. A host value is adopted the first time a chain is observed; an omitted one is
+   * stamped with the observation time. A value that moves an open chain's start backwards is
+   * refused and logged as `authorized_at_regressed`. A re-grant inside `status_retention_days` of
+   * the recorded revocation continues the chain; a later one starts a new chain. Accounts whose
+   * grant does not cover `get_reporting_status` are not observed and get no value.
+   */
+  observeGrants(
+    principal: Readonly<PrincipalRef>,
+    observations: ReadonlyArray<{ account_id: string; authorized_at?: string; allowed_tasks?: readonly string[] }>
+  ): Promise<Map<string, string>>;
+  /**
    * Principals with engine state in one tenant, from the engine store: what the service's
    * `listSubscriptionPrincipals` returns across your tenants.
    */
@@ -604,12 +619,7 @@ export function createReportingSubscriptionEngineV1(
       { configField: 'principal' }
     );
   }
-  for (const hook of [
-    'listAuthorizedAccounts',
-    'listAccountBuys',
-    'resolveRevocationInstant',
-    'isPeriodDelivered',
-  ] as const) {
+  for (const hook of ['listAuthorizedAccounts', 'listAccountBuys', 'isPeriodDelivered'] as const) {
     if (typeof options.hooks?.[hook] !== 'function') {
       throw new PlatformConfigError(
         `createReportingSubscriptionEngineV1 requires the ${hook} hook. Supply hooks.${hook}.`,
@@ -892,10 +902,14 @@ export function createReportingSubscriptionEngineV1(
     account: AccountState,
     upperBound: number
   ): Promise<number> {
-    const answer = await options.hooks.resolveRevocationInstant(principal, accountId, {
-      ...(account.lastObservedAt !== undefined ? { lastObservedAt: account.lastObservedAt } : {}),
-      observedAt: iso(upperBound),
-    });
+    // Without the hook the revocation is dated when it was observed: periods between the true
+    // revocation and the observation are withheld, which never counts against the seller.
+    const answer = options.hooks.resolveRevocationInstant
+      ? await options.hooks.resolveRevocationInstant(principal, accountId, {
+          ...(account.lastObservedAt !== undefined ? { lastObservedAt: account.lastObservedAt } : {}),
+          observedAt: iso(upperBound),
+        })
+      : iso(upperBound);
     const at = parseInstant(answer, 'resolveRevocationInstant result');
     const lower = Math.max(
       Date.parse(lastGrant(account)!.authorized_at),
@@ -1676,6 +1690,52 @@ export function createReportingSubscriptionEngineV1(
       statusRetentionDays: options.statusRetentionDays,
     }),
     reconcile: (principal, reconcileOptions) => reconcile(principal, reconcileOptions ?? {}),
+    async observeGrants(principal, observations) {
+      const served = new Map<string, string>();
+      const nowMs = now().getTime();
+      for (const observation of observations) {
+        if (!reportingSubscriptionCoverageGrantedV1(observation)) continue;
+        const reported = observation.authorized_at !== undefined ? Date.parse(observation.authorized_at) : Number.NaN;
+        let start: string | undefined;
+        await mutate<ReportingSubscriptionEngineAccountDocumentV1 & Record<string, unknown>>(
+          principal,
+          `${ACCOUNT_KEY_PREFIX}${observation.account_id}`,
+          () => emptyAccountDocument() as ReportingSubscriptionEngineAccountDocumentV1 & Record<string, unknown>,
+          current => {
+            const account = current.account;
+            const last = lastGrant(account);
+            if (!last) {
+              // First observation: adopt the host's value, or stamp the observation.
+              const first = Number.isFinite(reported) ? Math.min(reported, nowMs) : nowMs;
+              account.grants.push({ authorized_at: iso(first) });
+              account.chainStart = iso(first);
+            } else if (last.unauthorized_at !== undefined) {
+              // A re-grant: inside retention it continues the chain, later it starts a new one.
+              const revokedAt = Date.parse(last.unauthorized_at);
+              account.grants.push({ authorized_at: iso(Math.max(nowMs, revokedAt)) });
+              if (account.chainStart === undefined || nowMs >= revokedAt + retentionMs) {
+                account.chainStart = iso(
+                  Number.isFinite(reported) && reported > revokedAt ? Math.min(reported, nowMs) : nowMs
+                );
+              }
+            } else if (
+              Number.isFinite(reported) &&
+              account.chainStart !== undefined &&
+              reported < Date.parse(account.chainStart)
+            ) {
+              console.warn(
+                `[adcp/reporting] authorized_at_regressed: account ${JSON.stringify(observation.account_id)} reported authorized_at ${observation.authorized_at}, earlier than the journal's ${account.chainStart}; serving the journal's value`
+              );
+            }
+            account.chainStart ??= last?.authorized_at ?? iso(nowMs);
+            account.lastObservedAt = iso(nowMs);
+            start = account.chainStart;
+          }
+        );
+        if (start !== undefined) served.set(observation.account_id, start);
+      }
+      return served;
+    },
     async authorizationChanged(principal, accountId, reported) {
       // A grant that leaves out get_reporting_status is no authority for coverage.
       const change =
@@ -1696,10 +1756,17 @@ export function createReportingSubscriptionEngineV1(
           const last = lastGrant(account);
           if (change.authorized) {
             if (last && last.unauthorized_at === undefined) return;
-            account.grants.push({
-              authorized_at: iso(Math.max(at, last?.unauthorized_at ? Date.parse(last.unauthorized_at) : at)),
-            });
-            account.chainStart ??= iso(at);
+            const grantedAt = Math.max(at, last?.unauthorized_at ? Date.parse(last.unauthorized_at) : at);
+            account.grants.push({ authorized_at: iso(grantedAt) });
+            // The chain rule: a re-grant inside status_retention_days of the revocation continues
+            // the chain (authorized_at stays); a later one starts a new chain.
+            if (
+              account.chainStart === undefined ||
+              !last?.unauthorized_at ||
+              grantedAt >= Date.parse(last.unauthorized_at) + retentionMs
+            ) {
+              account.chainStart = iso(grantedAt);
+            }
             changed = true;
           } else {
             if (!last || last.unauthorized_at !== undefined) return;
