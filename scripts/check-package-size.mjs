@@ -330,7 +330,8 @@ const MAX_PACKED_FILE_COUNT =
   4 + // Reporting subscription release gate (one dual-format set).
   12 + // Reporting subscription engine store, buyer expectations and client helper (three dual-format sets).
   2 + // Reporting subscriptions example storyboard and reference seller.
-  8; // `reporting/advanced` subpath and the service's subscription-hook module (two dual-format sets).
+  8 + // `reporting/advanced` subpath and the service's subscription-hook module (two dual-format sets).
+  4; // Managed reporting-subscription block for the Reliable Reporting service (one dual-format set).
 const MAX_BUNDLED_SCHEMA_BYTES = 2000 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

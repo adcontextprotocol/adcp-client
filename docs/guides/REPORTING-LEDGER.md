@@ -232,6 +232,40 @@ capability truthfulness.
 
 ### Principal-level reporting subscriptions (experimental, AdCP 3.3)
 
+**The managed block (start here).** Add a `subscriptions` block to the service and pass the
+principal runtime your server already serves `get_principal`/`sync_principal` with, created
+without `reportingSubscriptions`. The service builds the coverage engine, installs the
+`reporting_subscriptions` section on that runtime, advertises the principal capability in
+`install()`, reconciles a principal after each `sync_principal` write that submits
+subscriptions, and sweeps every subscribed principal at the start of each `runCycle`:
+
+```ts
+const lifecycle = createPrincipalLifecycle({ store, notifications, agentUrl, resolvePrincipal /* ... */ });
+const service = createReliableReportingService({
+  // ...store, adapters, resolveSource, resolveCurrency, resolveCoverage as above
+  subscriptions: {
+    principals: lifecycle,
+    stateStore, // durable engine state; in-memory is refused outside test/development
+    maxAccounts: 500,
+    configure: ({ subscription, offering }) => ({
+      requestedMetrics: metricsFor(offering.report_definition_id),
+      requestedDimensions: dimensionsFor(offering.report_definition_id),
+      sourceSettings: settingsFor(offering.offering_id),
+    }),
+  },
+});
+const platform = service.install(myPlatform); // capabilities.principal is filled in
+```
+
+The roster comes from the platform's `accounts.list` and the buys from `sales.getMediaBuys`, read
+under the principal's identity (a non-secret snapshot of its last authenticated request, never a
+token). Override either with `subscriptions.accounts` / `subscriptions.buys` when access depends on
+a live upstream credential; a roster the service cannot read is a `PlatformConfigError` coded
+`SUBSCRIPTION_ROSTER_UNAVAILABLE`. Reconcile and planning failures never reject a cycle:
+`runCycle` returns them in `subscriptionPlanningFailures`, and `planningErrorHandler` hears each.
+
+The advanced block below, with your own `engine`, is rung 3.
+
 With `subscriptions` (formerly `reportingSubscriptions`, kept as a deprecated
 alias), every `runCycle` first writes the subscription
 engine's frozen owed sets into the ledger, then plans account configurations as

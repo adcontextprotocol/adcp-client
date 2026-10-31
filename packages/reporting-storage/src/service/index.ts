@@ -22,7 +22,10 @@ import {
   type ReliableReportingSchedulerOptionsV1,
   type ReliableReportingServiceV1,
 } from '@adcp/sdk/reporting/service';
-import { withReportingSubscriptionCoverageV1 } from '@adcp/sdk/reporting/advanced';
+import {
+  withReportingSubscriptionCoverageV1,
+  type ReliableReportingSubscriptionsOptionsV1,
+} from '@adcp/sdk/reporting/advanced';
 import {
   composeNotificationDeliveryAttemptCheckpoints,
   composeWebhookAttemptResultObservers,
@@ -329,19 +332,27 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   if (options.subscriptions !== undefined && options.reportingSubscriptions !== undefined) {
     throw new TypeError('Pass subscriptions or the deprecated reportingSubscriptions, not both.');
   }
-  const subscriptions = options.subscriptions ?? options.reportingSubscriptions;
-  if (subscriptions && typeof subscriptions.engine?.isAuthorized !== 'function') {
+  const block = options.subscriptions ?? options.reportingSubscriptions;
+  // The managed block (no engine) lets the core service build the engine; the advanced block brings one.
+  const advancedBlock =
+    block && 'engine' in block && block.engine !== undefined
+      ? (block as ReliableReportingSubscriptionsOptionsV1<TCtxMeta>)
+      : undefined;
+  if (advancedBlock && typeof advancedBlock.engine?.isAuthorized !== 'function') {
     throw new TypeError(
       'subscriptions on the production service requires an engine with isAuthorized, so every ' +
         'managed delivery re-checks the owner principal’s account authority'
     );
   }
+  const principalRuntime = advancedBlock
+    ? advancedBlock.principal
+    : (block as { principals?: unknown } | undefined)?.principals;
   const bindManagedGeneration =
-    subscriptions?.bindManagedGeneration ??
-    (subscriptions?.principal
+    block?.bindManagedGeneration ??
+    (principalRuntime
       ? createReportingSubscriptionManagedBindingV1({
           store: managedStore,
-          principal: subscriptions.principal as never,
+          principal: principalRuntime as never,
           resourceRetentionDays: options.managedDelivery.resourceRetentionDays,
           verificationProfiles: options.managedDelivery.adapter.verificationProfiles,
         })
@@ -350,10 +361,10 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   void _deprecatedSubscriptions;
   const coreOptions = {
     ...rest,
-    ...(subscriptions
+    ...(block
       ? {
           subscriptions: {
-            ...subscriptions,
+            ...block,
             ...(bindManagedGeneration ? { bindManagedGeneration } : {}),
           },
         }
@@ -365,6 +376,8 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     [REPORTING_MANAGED_DELIVERY_COMPOSITION_V1]: PostgresReportingLedgerStore;
   };
   const core = createReliableReportingService(coreOptions);
+  // The resolved wiring: the engine and principal resolver the core service runs.
+  const subscriptions = core.subscriptionWiring;
   const migrations = Object.freeze([
     REPORTING_LEDGER_MIGRATION,
     ...(options.rowStorage ? [REPORTING_ROW_STORAGE_MIGRATION] : []),
