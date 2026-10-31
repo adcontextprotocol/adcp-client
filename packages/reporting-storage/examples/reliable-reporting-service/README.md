@@ -8,7 +8,7 @@ evidence. It never manufactures fallback delivery.
 ```ts
 import { Pool } from 'pg';
 import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
-import { PostgresReportingLedgerStore } from '@adcp/reporting-storage';
+import { postgresStorage } from '@adcp/reporting-storage';
 import { createReliableReportingService, type ReliableReportingAdapterV1 } from '@adcp/sdk/reporting/service';
 
 // Your provider integration owns these immutable declarations and the real
@@ -24,11 +24,10 @@ const providerAdapter: ReliableReportingAdapterV1 = {
     }),
 };
 
+// Apply the schema first: npx adcp-reporting-storage migrate
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const reporting = createReliableReportingService({
-  store: new PostgresReportingLedgerStore(pool, {
-    acknowledgeIsolatedDatabase: true,
-  }),
+  storage: postgresStorage({ pool, acknowledgeIsolatedDatabase: true }), // the first cycle checks the schema
   adapters: { provider: providerAdapter },
   contact: { name: 'Reporting operations', email: 'reporting@example.com' },
   automatedRecoveryWindowSeconds: 86_400,
@@ -50,7 +49,6 @@ const reporting = createReliableReportingService({
   },
 });
 
-for (const sql of reporting.setup.migrations) await pool.query(sql);
 const installedPlatform = reporting.install(platform);
 const server = createAdcpServerFromPlatform(installedPlatform, serverOptions);
 
@@ -104,13 +102,14 @@ conformance helper.
 For Managed Delivery and Reconciled Billing, compose the real provider,
 authorization, notification, and migration adapters in one probed service.
 The host-owned dependencies below must use live systems and bounded network
-timeouts; `applyMigrations` runs before any capability is published.
+timeouts. Run `npx adcp-reporting-storage migrate` first; with `storage` the constructor refuses a schema that is
+behind, and `applyMigrations` receives the notification outbox and activity SQL before any capability is published.
 
 ```ts
 import { createPostgresReliableReportingProductionService } from '@adcp/reporting-storage/service';
 
 const production = await createPostgresReliableReportingProductionService({
-  db: pool,
+  storage: postgresStorage({ pool, acknowledgeIsolatedDatabase: true }),
   namespace: 'reporting-prod',
   publisherScope: 'seller-prod',
   acknowledgeIsolatedDatabase: true,

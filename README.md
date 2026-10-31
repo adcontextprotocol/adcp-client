@@ -515,6 +515,36 @@ function handleCreateMediaBuy(rawParams: unknown): CreateMediaBuyResponse {
 
 Migration path from 6.6 → 6.7: see [`docs/migration-6.6-to-6.7.md`](docs/migration-6.6-to-6.7.md) (fifteen recipes, two breaking — `'implicit'`-resolution platforms now actually enforce the inline-`account_id` refusal the docstring has long claimed (pre-6.7 it was silent-pass, so audit your callers); `SalesPlatform` split into `SalesCorePlatform & SalesIngestionPlatform`). 5.x → 6.x: [`docs/migration-5.x-to-6.x.md`](docs/migration-5.x-to-6.x.md). Note: `PackageRequest` (creation-shaped, required fields) differs from `Package` (response-shaped). See the [type catalog](docs/ZOD-SCHEMAS.md#type-catalog) for all request types and their required fields.
 
+## Reporting subscriptions (AdCP 3.3, experimental)
+
+A buyer registers reporting once on its principal, and the subscription follows its grants across every account. **Sellers** add one block to the Reliable Reporting service they already run:
+
+```typescript
+import { postgresStorage } from '@adcp/reporting-storage'; // memoryStorage() from '@adcp/sdk/storage' in development
+import { createReliableReportingService } from '@adcp/sdk/reporting/service';
+
+const reporting = createReliableReportingService({
+  storage: postgresStorage({ pool, acknowledgeIsolatedDatabase: true }),
+  ...producerConfig, // adapters, resolveSource, resolveCurrency, resolveCoverage, retention
+  subscriptions: { principal: { agentUrl, notifications, resolvePrincipal }, maxAccounts: 500, configure },
+});
+const server = createAdcpServerFromPlatform(reporting.install(platform), { protocol: reporting.principals!.protocol });
+```
+
+**Buyers** use patch-shaped writes that never deactivate by omission:
+
+```typescript
+await client.reporting.subscribe(analyticsDaily, { registerDestination: archive });
+await client.reporting.unsubscribe('pacing-hourly');
+const outcome = await client.accounts.ensure(key, { billing: 'operator' }); // ready | pending | ambiguous | rejected
+```
+
+- **Storage.** One object; process-local storage is refused in production. Apply schema changes with `npx adcp-reporting-storage migrate`.
+- **Grants.** The SDK is the only source of `authorized_at`. End a relationship with `windDownGrant()` instead of revoking.
+- **Coming in later betas:** buyer `reconcile`, `explain` and events, the test kit, and explain traces.
+
+Guides: [seller](docs/guides/REPORTING-SUBSCRIPTIONS-SELLER.md) · [buyer](docs/guides/REPORTING-SUBSCRIPTIONS-BUYER.md) · [accounts](docs/guides/FIRST-CALL-TO-A-SELLER.md) · [ledger and building blocks](docs/guides/REPORTING-LEDGER.md) · [storage package](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/README.md)
+
 ## Multi-Agent Operations
 
 Execute across multiple agents simultaneously:

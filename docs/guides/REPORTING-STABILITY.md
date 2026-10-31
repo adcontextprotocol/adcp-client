@@ -71,7 +71,7 @@ These pins select SDK 16 and storage 0.1 stable versions. A stable range such as
 
 ## Migrations
 
-Database migrations exported by `@adcp/reporting-storage` (`REPORTING_LEDGER_MIGRATION`, `REPORTING_ROW_STORAGE_MIGRATION` and the others) stay idempotent where practical, and a changeset says when you must re-apply one. See [Reliable Reporting production operations](REPORTING-OPERATIONS.md) and the [ledger guide](REPORTING-LEDGER.md).
+Database migrations shipped by `@adcp/reporting-storage` are versioned (`npx adcp-reporting-storage migrate`, recorded in `adcp_schema_migrations`; a stopped-worker version says so in `--status`). Their SQL, also exported as the deprecated constants (`REPORTING_LEDGER_MIGRATION`, `REPORTING_ROW_STORAGE_MIGRATION` and the others), stays idempotent where practical, and a changeset says when you must re-apply one. See [Reliable Reporting production operations](REPORTING-OPERATIONS.md) and the [ledger guide](REPORTING-LEDGER.md).
 
 Coming from the single-package layout (`@adcp/sdk/reporting/ledger`, `/gcs`, `/s3`, `/azure`, `/bigquery`)? See [Reliable Reporting storage moved to `@adcp/reporting-storage`](../migration-reporting-storage-package.md).
 

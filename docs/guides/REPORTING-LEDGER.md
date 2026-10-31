@@ -15,17 +15,18 @@ producer, handlers, and decisioning-platform account resolver.
 
 ```ts
 import { Pool } from 'pg';
-import { PostgresReportingLedgerStore } from '@adcp/reporting-storage';
+import { postgresStorage } from '@adcp/reporting-storage';
 import { createReliableReportingService } from '@adcp/sdk/reporting/service';
 import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const store = new PostgresReportingLedgerStore(pool, {
-  acknowledgeIsolatedDatabase: true,
-});
+// One storage decision: the ledger, principal records, reporting-subscription state and the buyer
+// consumer's state. memoryStorage() from '@adcp/sdk/storage' in development.
+const storage = postgresStorage({ pool, acknowledgeIsolatedDatabase: true });
+await storage.checkSchema(); // REPORTING_SCHEMA_BEHIND: run "npx adcp-reporting-storage migrate"
 
 const reporting = createReliableReportingService({
-  store,
+  storage,
   adapters: {
     // These descriptions are immutable declarations owned by your adapter.
     gam: { sourceOffering: gamSourceOffering, deliveryOffering: gamDeliveryOffering,
@@ -55,13 +56,22 @@ const reporting = createReliableReportingService({
   },
 });
 
-for (const sql of reporting.setup.migrations) await pool.query(sql);
 const installedPlatform = reporting.install(platform);
 const server = createAdcpServerFromPlatform(installedPlatform, serverOptions);
 
 reporting.start({ intervalMilliseconds: 60_000, deploymentWide: true });
 process.once('SIGTERM', () => void reporting.stop());
 ```
+
+Apply the schema before starting a release with `npx adcp-reporting-storage migrate`
+(`--status` lists applied and pending versions, `--dry-run` prints the plan; it reads
+`--database-url`, `$ADCP_DATABASE_URL` or `$DATABASE_URL`, and `--schema`). The migrations are
+versioned and recorded in `adcp_schema_migrations`; `storage.checkSchema()`, which the service also
+runs before its first cycle, refuses a schema that is behind and names the pending versions. A
+schema set up by applying the migration constants by hand migrates cleanly. The constants
+(`REPORTING_LEDGER_MIGRATION`, `REPORTING_ROW_STORAGE_MIGRATION`, `REPORTING_LEDGER_CHANGES_MIGRATION`,
+`REPORTING_MANAGED_DELIVERY_MIGRATION` and the others below) stay exported as deprecated re-exports
+for one beta; where this guide says to apply or re-apply one, `migrate` does it.
 
 The service advertises Reliable Reporting Core only. `sync_reporting_status` is advertised only when
 `resolveConsumerId` is installed and the supplied ledger implements its
@@ -73,8 +83,10 @@ For the complete seller deployment, use the async
 Delivery, reconciled receipts when the offering requests them, all three
 reporting notification types, durable webhook retries, principal-scoped
 webhook activity, fair per-account delivery work, and coordinated shutdown.
-Pass `applyMigrations` to bridge the returned ordered SQL into your migration
-runner; the constructor publishes no capability object until every table and
+Pass it `storage: postgresStorage({ pool, acknowledgeIsolatedDatabase: true })` instead of `db`: the
+constructor then refuses a schema that is behind. Its notification outbox and activity tables
+(configurable names) are still returned in `setup.migrations`; pass `applyMigrations` to bridge them
+into your migration runner. The constructor publishes no capability object until every table and
 worker dependency probes successfully and the advertised managed policy is
 durably adopted. Its `platform` mounts `sync_reporting_receipts` through
 `createAdcpServerFromPlatform`, and its scheduler drives production, managed
@@ -232,20 +244,23 @@ capability truthfulness.
 
 ### Principal-level reporting subscriptions (experimental, AdCP 3.3)
 
-**The managed block (start here).** Add a `subscriptions` block to the service and pass the
-principal runtime your server already serves `get_principal`/`sync_principal` with, created
+The [seller guide](REPORTING-SUBSCRIPTIONS-SELLER.md) walks through this path end to end.
+
+**The managed block (start here).** Add a `subscriptions` block to the service. With `storage`, pass
+`principal` (the principal runtime's options) and the service builds the runtime over
+`storage.principals` (serve it with `protocol: service.principals.protocol`); or pass the principal
+runtime your server already serves `get_principal`/`sync_principal` with as `principals`, created
 without `reportingSubscriptions`. The service builds the coverage engine, installs the
 `reporting_subscriptions` section on that runtime, advertises the principal capability in
 `install()`, reconciles a principal after each `sync_principal` write that submits
 subscriptions, and sweeps every subscribed principal at the start of each `runCycle`:
 
 ```ts
-const lifecycle = createPrincipalLifecycle({ store, notifications, agentUrl, resolvePrincipal /* ... */ });
 const service = createReliableReportingService({
-  // ...store, adapters, resolveSource, resolveCurrency, resolveCoverage as above
+  storage, // postgresStorage({ pool }); engine state and principal records live here too
+  // ...adapters, resolveSource, resolveCurrency, resolveCoverage as above
   subscriptions: {
-    principals: lifecycle,
-    stateStore, // durable engine state; in-memory is refused outside test/development
+    principal: { notifications, agentUrl, resolvePrincipal }, // or principals: your runtime
     maxAccounts: 500,
     configure: ({ subscription, offering }) => ({
       requestedMetrics: metricsFor(offering.report_definition_id),
@@ -255,6 +270,7 @@ const service = createReliableReportingService({
   },
 });
 const platform = service.install(myPlatform); // capabilities.principal is filled in
+const server = createAdcpServerFromPlatform(platform, { ...serverOptions, protocol: service.principals!.protocol });
 ```
 
 The roster comes from the platform's `accounts.list` and the buys from `sales.getMediaBuys`, read
@@ -429,11 +445,7 @@ lists the receipt task.
 
 ```ts
 import { Pool } from 'pg';
-import {
-  PostgresReportingLedgerStore,
-  REPORTING_LEDGER_MIGRATION,
-  sweepExpiredReportingLedgerState,
-} from '@adcp/reporting-storage';
+import { PostgresReportingLedgerStore, sweepExpiredReportingLedgerState } from '@adcp/reporting-storage';
 import {
   createReportingDeliveryHandler,
   createReportingProducer,
@@ -442,8 +454,7 @@ import {
   type ReportingConsumerStatusLedgerStore,
 } from '@adcp/sdk/reporting/ledger';
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-await pool.query(REPORTING_LEDGER_MIGRATION);
+const pool = new Pool({ connectionString: process.env.DATABASE_URL }); // after `npx adcp-reporting-storage migrate`
 
 const store = new PostgresReportingLedgerStore(pool, {
   acknowledgeIsolatedDatabase: true,
@@ -591,9 +602,7 @@ rows as verified canonical JSONL chunks (the shared SDK persistence layout,
 adcontextprotocol/adcp#7996):
 
 ```ts
-import { REPORTING_ROW_STORAGE_MIGRATION } from '@adcp/reporting-storage';
-
-await pool.query(REPORTING_ROW_STORAGE_MIGRATION); // after REPORTING_LEDGER_MIGRATION; PostgreSQL 13+
+// `npx adcp-reporting-storage migrate` installs the row-storage tables (version 0004, PostgreSQL 13+).
 const store = new PostgresReportingLedgerStore(pool, {
   acknowledgeIsolatedDatabase: true,
   rowStorage: true,
@@ -1066,16 +1075,10 @@ partial-failure reporting, the `maxFeedHoldDays` that retention honours, per-tas
 limits and abort handling are identical.
 
 ```ts
-import {
-  PostgresReportingLedgerStore,
-  REPORTING_LEDGER_MIGRATION,
-  REPORTING_ROW_STORAGE_MIGRATION,
-  REPORTING_LEDGER_CHANGES_MIGRATION,
-  reportingLedgerMaintenance,
-} from '@adcp/reporting-storage';
+import { PostgresReportingLedgerStore, reportingLedgerMaintenance } from '@adcp/reporting-storage';
 import { createReliableReportingService } from '@adcp/sdk/reporting/service';
 
-// Apply the three migrations, then:
+// Run `npx adcp-reporting-storage migrate` (ledger, row storage and change feed), then:
 const store = new PostgresReportingLedgerStore(pool, {
   acknowledgeIsolatedDatabase: true,
   rowStorage, // verified chunked rows in your object store
@@ -1154,9 +1157,7 @@ In-process consumers such as pacing, alerts and warehouse loaders read from the
 ledger, never from a warehouse copy.
 
 ```ts
-import { REPORTING_LEDGER_CHANGES_MIGRATION } from '@adcp/reporting-storage';
-
-await pool.query(REPORTING_LEDGER_CHANGES_MIGRATION); // PostgreSQL 13+
+// `npx adcp-reporting-storage migrate` installs the change feed (version 0005, PostgreSQL 13+).
 const store = new PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true, changeFeed: true });
 
 const current = await store.getCurrentRevision({ account_id, reporting_obligation_id });
@@ -1461,14 +1462,13 @@ import {
 } from '@adcp/reporting-storage';
 import {
   PostgresReportingManagedDeliveryStore,
-  REPORTING_MANAGED_DELIVERY_MIGRATION,
   createReportingManagedDeliveryRuntime,
 } from '@adcp/reporting-storage/managed';
 import {
   reportingManagedDeliveryBindingV1,
 } from '@adcp/sdk/reporting/ledger';
 
-await pool.query(REPORTING_MANAGED_DELIVERY_MIGRATION);
+// `npx adcp-reporting-storage migrate` installs the managed-delivery tables (version 0006).
 const managedStore = new PostgresReportingManagedDeliveryStore(pool);
 const managedCoreStore = new PostgresReportingLedgerStore(pool, {
   acknowledgeIsolatedDatabase: true,
@@ -1614,11 +1614,7 @@ only for health changes:
 
 ```ts
 import { createPostgresPersistentNotificationRuntime } from '@adcp/sdk/server';
-import {
-  PostgresReportingLedgerStore,
-  REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION,
-  REPORTING_LEDGER_MIGRATION,
-} from '@adcp/reporting-storage';
+import { PostgresReportingLedgerStore } from '@adcp/reporting-storage';
 import {
   createPostgresReportingNotificationActivityRuntime,
   createPostgresReportingNotificationAttemptCheckpoint,
@@ -1653,7 +1649,7 @@ const reportingActivity = createPostgresReportingNotificationActivityRuntime({
 
 // Rolling-deployment order: ledger and notification tables, activity table,
 // drain legacy pending transitions, then application code configured with the port.
-await pool.query(REPORTING_LEDGER_MIGRATION);
+// `npx adcp-reporting-storage migrate` applies the ledger tables.
 for (const sql of notifications.migrations.all) await pool.query(sql);
 for (const sql of reportingActivity.migrations.all) await pool.query(sql);
 
@@ -1664,7 +1660,8 @@ for (const sql of reportingActivity.migrations.all) await pool.query(sql);
 // Last cutover step, only once no pre-SDK-14 writer is still serving: fence
 // finality-less transitions out of the log. A surviving legacy writer now fails
 // closed on append instead of silently adding another redundant finality event.
-await pool.query(REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION);
+// `migrate` applies this fence as the stopped-worker version 0003; on such a cutover, stop every
+// pre-SDK-14 writer before running it.
 
 const store = new PostgresReportingLedgerStore(pool, {
   acknowledgeIsolatedDatabase: true,

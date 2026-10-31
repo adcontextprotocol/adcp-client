@@ -21,7 +21,8 @@ and SQL migrations matched `0.2.0` and whose peer range was `^17.0.0-beta.0`.
 A stable range such as `~0.2.0` does not select either storage prerelease.
 
 Storage `0.3.0-beta.1` also includes reporting configuration history. Reapply
-`REPORTING_LEDGER_MIGRATION` before starting the new workers: it adds the
+`REPORTING_LEDGER_MIGRATION` (from the next storage beta, run `npx adcp-reporting-storage migrate`,
+which applies it as version `0002`) before starting the new workers: it adds the
 nullable `adcp_reporting_configurations.history_start` audit column and
 live-priority indexes idempotently. Upgrade all workers before granting or
 extending historical ownership. Existing configurations retain their original

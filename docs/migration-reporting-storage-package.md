@@ -153,6 +153,21 @@ createReliableReportingService({
 
 Passing the old options object now fails at construction with `maintenance must be a factory, not an options object` (and in TypeScript as `Type '{ retention: ... }' provides no match for the signature '(context: ReliableReportingMaintenanceContextV1): ReliableReportingMaintenanceV1'`). The options are unchanged. The service still hands the factory the retention and recovery-window commitments it advertises, so retention still cannot disagree with what buyers were told, and a configuration the store cannot serve still fails when the service is constructed, not on the first scheduled pass. `service.runMaintenance()` returns the same per-task results, typed as `ReliableReportingMaintenanceTaskResultV1` (`{ task, status, result | error, partialFailure? }`). A store from another package can supply its own factory. `createPostgresReliableReportingProductionService` is unchanged: it takes `retention`, `compaction`, `changeFeed` and `orphanCollection` directly.
 
+### One storage object and versioned migrations (storage `0.3`, SDK 17 beta)
+
+Reporting storage is now one decision. `postgresStorage({ pool })` (this package) and `memoryStorage()` (`@adcp/sdk/storage`) return a `ReportingStorage` holding the ledger, principal records, reporting-subscription engine state and the buyer consumer's state, and the schema is applied by versioned migrations.
+
+| Before | Now |
+| --- | --- |
+| `createReliableReportingService({ store: new PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true }) })` | `createReliableReportingService({ storage: postgresStorage({ pool, acknowledgeIsolatedDatabase: true }) })` (`store` still works; passing both is refused) |
+| `for (const sql of reporting.setup.migrations) await pool.query(sql)`, `pool.query(REPORTING_LEDGER_MIGRATION)` and friends | `npx adcp-reporting-storage migrate` (`--status`, `--dry-run`) or `migrate(pool)`; startup refuses a schema that is behind (`REPORTING_SCHEMA_BEHIND`) |
+| `createPostgresReliableReportingProductionService({ db: pool, ... })` | `createPostgresReliableReportingProductionService({ storage, ... })` |
+| `createPrincipalStateStore({ store, durability: 'durable' })`, `createReportingSubscriptionEngineStateStoreV1({ store, durability })` | `storage.principals`, `storage.subscriptions`; the `durability` option is deprecated (the state store declares it) |
+| `subscriptions: { principals: createPrincipalLifecycle({ store, notifications, agentUrl, resolvePrincipal }), stateStore }` | `subscriptions: { principal: { notifications, agentUrl, resolvePrincipal } }` with `storage`; serve `protocol: reporting.principals.protocol` |
+| `createReliableReportingConsumerV1({ persistence: createPostgresReportingConsumerRuntimeV1({ db, namespace }) })` | `createReliableReportingConsumerV1({ storage })` |
+
+The migration constants (`REPORTING_LEDGER_MIGRATION`, `REPORTING_ROW_STORAGE_MIGRATION`, `REPORTING_LEDGER_CHANGES_MIGRATION`, `REPORTING_MANAGED_DELIVERY_MIGRATION`, the object-write and finality-fence constants) are deprecated re-exports for one beta. A schema they set up migrates cleanly: the first `migrate` re-runs them as no-ops and records versions `0001`–`0008`. See the [package README](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/README.md#apply-migrations-npx-adcp-reporting-storage-migrate) for the version table.
+
 ### `service.setup.migrations` comes from the store
 
 `createReliableReportingService` no longer names the PostgreSQL migration. `service.setup.migrations` is the store's own `migrations` list (`ReportingLedgerStore.migrations`, optional). `PostgresReportingLedgerStore` lists `[REPORTING_LEDGER_MIGRATION]`. A store with nothing to install (an in-memory test double), or a decorator over the PostgreSQL store that does not forward `migrations`, gives an empty list.

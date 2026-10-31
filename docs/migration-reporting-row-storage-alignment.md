@@ -14,7 +14,7 @@ the row-storage tables.
 
 ## Upgrading
 
-Apply the new `REPORTING_ROW_STORAGE_MIGRATION` before starting any binary that
+Apply the new `REPORTING_ROW_STORAGE_MIGRATION` (today: `npx adcp-reporting-storage migrate`, version `0004`) before starting any binary that
 contains this change, and stop older writers first: they read the old column
 names and fail against the renamed tables. A new binary refuses to start row
 storage against an un-migrated database (`probeReportingRowStorageSchemaV1`

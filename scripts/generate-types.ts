@@ -4239,6 +4239,17 @@ function isMutatingTool(tool: ToolDefinition): boolean {
   return Array.isArray(required) && required.includes('idempotency_key');
 }
 
+/** Extra TSDoc for raw generated callers whose task replaces state (DX plan, section 4.1). */
+const AGENT_TOOL_NOTES: Record<string, string> = {
+  sync_principal:
+    'Replaces each submitted section. To add a reporting subscription, use `client.reporting.subscribe`. This raw call is not guarded: omitting an active subscription deactivates it, and omitting a destination revokes it.',
+};
+
+function agentToolNote(toolName: string): string {
+  const note = AGENT_TOOL_NOTES[toolName];
+  return note ? `\n   *\n   * ${note}` : '';
+}
+
 function generateAgentClasses(tools: ToolDefinition[]) {
   console.log('🔧 Generating Agent and AgentCollection classes...');
 
@@ -4340,7 +4351,7 @@ export class Agent {
     const paramDecl = paramType === 'void' ? '' : `params: ${paramTypeAnnotation}`;
 
     agentClass += `  /**
-   * ${tool.description}
+   * ${tool.description}${agentToolNote(tool.name)}
    */
   async ${tool.methodName}(${paramDecl}): Promise<${responseType}> {
     return this.callTool<${responseType}>('${tool.name}', ${paramType === 'void' ? '{}' : 'params'});
@@ -4380,7 +4391,7 @@ export class AgentCollection {
     const paramDecl = paramType === 'void' ? '' : `params: ${paramTypeAnnotation}`;
 
     agentClass += `  /**
-   * ${tool.description} (across multiple agents)
+   * ${tool.description} (across multiple agents)${agentToolNote(tool.name)}
    */
   async ${tool.methodName}(${paramDecl}): Promise<${responseType}[]> {
     return this.callToolOnAll<${responseType}>('${tool.name}', ${paramType === 'void' ? '{}' : 'params'});

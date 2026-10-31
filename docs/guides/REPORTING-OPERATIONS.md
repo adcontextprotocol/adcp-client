@@ -46,7 +46,16 @@ manager and bind authorization to authenticated transport context.
 1. Back up the database and record the current application and schema versions.
 2. Stop old writers when the release notes declare a writer fence. Additive,
    idempotent migrations may otherwise be applied before rolling processes.
-3. On first deploy, construct the service with `applyMigrations`. The callback
+3. Apply the versioned storage migrations with the deployment's migration owner:
+   `npx adcp-reporting-storage migrate --database-url "$DATABASE_URL" [--schema NAME]`
+   (`--status` lists applied and pending versions; `--dry-run` prints the plan). Each
+   version commits on its own under the reporting schema lock and is recorded in
+   `adcp_schema_migrations`; a stopped-worker version (`0003`) needs every older
+   reporting worker stopped first. Pass `storage: postgresStorage({ pool })` to the
+   service: startup then refuses a schema that is behind (`REPORTING_SCHEMA_BEHIND`)
+   and names the pending versions. The production service's notification outbox and
+   activity tables are configurable, so they still come through `applyMigrations`:
+   construct the service with `applyMigrations` on first deploy. The callback
    receives the complete ordered SQL list before any probe, so hand it to your
    migration runner and execute it with the deployment's migration owner.
    `service.setup.migrations` is available only after successful construction;
@@ -87,9 +96,9 @@ the retention, change-feed pruning and abandoned-upload sweeps the production
 service runs for you. See
 [Core-only setup](REPORTING-LEDGER.md#core-only-setup-with-row-storage-change-feed-and-retention).
 
-1. **Row storage.** Apply `REPORTING_ROW_STORAGE_MIGRATION` (PostgreSQL 13+),
-   or pass `rowStorage` to the production service, which adds it to
-   `setup.migrations`. Roll out with `rowStorage` set. New revisions store
+1. **Row storage.** `npx adcp-reporting-storage migrate` installs its tables
+   (version `0004`, PostgreSQL 13+; the deprecated `REPORTING_ROW_STORAGE_MIGRATION`
+   is the same SQL). Roll out with `rowStorage` set. New revisions store
    verified chunks. Existing revisions keep their inline rows, and every
    binary built with row storage reads both forms. Do not run a writer older
    than this release once chunked revisions exist: it cannot read them.
@@ -115,8 +124,8 @@ service runs for you. See
    `max(statusRetentionDays, recordRetentionDays)` plus the restatement window.
    The GCS probe refuses them; for S3 and Azure, policies outside the client's
    view are the operator's responsibility.
-4. **Change feed.** Apply `REPORTING_LEDGER_CHANGES_MIGRATION` (PostgreSQL 13+)
-   or pass `changeFeed`. Register each durable consumer with
+4. **Change feed.** `npx adcp-reporting-storage migrate` installs it (version
+   `0005`, PostgreSQL 13+); then pass `changeFeed`. Register each durable consumer with
    `saveFeedConsumerCursor` (checkpoints are forward-only; pass `{ rewind: true }`
    to move a consumer back), and size `maxFeedHoldDays` so one stalled consumer
    cannot hold the table indefinitely.
