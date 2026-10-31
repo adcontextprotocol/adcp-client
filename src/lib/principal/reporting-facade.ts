@@ -7,10 +7,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { InputHandler, TaskOptions, TaskResult } from '../core/ConversationTypes';
 import { ReportingSubscriptionError } from '../errors';
-import {
-  resolveReportingSubscriptionOfferingsV1,
-  type ReportingSubscriptionOfferingV1,
-} from '../reporting/subscriptions/selection';
+import type { ReportingSubscriptionOfferingV1 } from '../reporting/subscriptions/selection';
 import type { ReportingSubscription, ReportingSubscriptionState } from '../types/core.generated';
 import type {
   GetPrincipalRequest,
@@ -19,7 +16,6 @@ import type {
   SyncPrincipalResponse,
 } from '../types/tools.generated';
 import type { MutatingRequestInput } from '../utils/idempotency';
-import { differingPath } from './reporting-subscriptions';
 
 type Json = Record<string, unknown>;
 
@@ -431,6 +427,8 @@ export class ReportingClient {
     };
     let resolved: string[];
     try {
+      // Loaded on demand: offering selection stays out of the focused client's eager graph.
+      const { resolveReportingSubscriptionOfferingsV1 } = await import('../reporting/subscriptions/selection');
       resolved = resolveReportingSubscriptionOfferingsV1(input);
     } catch {
       return [];
@@ -686,4 +684,29 @@ function mismatches(offering: ReportingSubscriptionOfferingV1, wanted: Json, des
   if (((selector.dimensions as string[] | undefined) ?? []).some(item => !dimensions.has(item)))
     failed.push('dimensions');
   return failed;
+}
+
+/**
+ * The first path at which `stored` lacks or changes a value the buyer sent. Fields the seller adds
+ * are ignored; arrays must match element for element.
+ */
+function differingPath(sent: unknown, stored: unknown, path: string): string | undefined {
+  if (Array.isArray(sent)) {
+    if (!Array.isArray(stored) || stored.length !== sent.length) return path;
+    for (let index = 0; index < sent.length; index += 1) {
+      const differing = differingPath(sent[index], stored[index], `${path}/${index}`);
+      if (differing !== undefined) return differing;
+    }
+    return undefined;
+  }
+  if (sent !== null && typeof sent === 'object') {
+    if (stored === null || typeof stored !== 'object' || Array.isArray(stored)) return path;
+    for (const [key, value] of Object.entries(sent)) {
+      if (value === undefined) continue;
+      const differing = differingPath(value, (stored as Record<string, unknown>)[key], `${path}/${key}`);
+      if (differing !== undefined) return differing;
+    }
+    return undefined;
+  }
+  return Object.is(sent, stored) ? undefined : path;
 }

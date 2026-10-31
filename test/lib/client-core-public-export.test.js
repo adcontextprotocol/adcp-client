@@ -149,8 +149,10 @@ test('@adcp/sdk/client/core keeps heavy generated-schema surfaces out of its eag
   // webhooks barrel; all of its transitive dependencies were already present.
   // #3530 adds one internal shared MCP validator module. No generated schema
   // or registry module is added to the eager graph.
+  // #3504 adds the reporting-subscription write facade (client.reporting and the raw sync_principal
+  // guard); offering selection inside it loads on demand.
   // Schema compaction stays lazy. Keep heavy schema/registry exclusions intact.
-  assert.ok(visited.size <= 214, `focused client eager graph grew to ${visited.size} internal modules`);
+  assert.ok(visited.size <= 215, `focused client eager graph grew to ${visited.size} internal modules`);
   for (const excluded of [
     'types/schemas.generated.mjs',
     'utils/response-schemas.mjs',
