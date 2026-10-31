@@ -335,7 +335,8 @@ const MAX_PACKED_FILE_COUNT =
   8 + // `reporting/advanced` subpath and the service's subscription-hook module (two dual-format sets).
   4 + // Managed reporting-subscription block for the Reliable Reporting service (one dual-format set).
   4 + // Buyer reporting-subscription write facade, client.reporting (one dual-format set).
-  8; // `storage` subpath: memoryStorage() and its in-memory ledger (two dual-format sets).
+  8 + // `storage` subpath: memoryStorage() and its in-memory ledger (two dual-format sets).
+  4; // Account outcomes for client.accounts.ensure: AccountOutcome, nextStep, formatPendingAction (one dual-format set).
 const MAX_BUNDLED_SCHEMA_BYTES = 2000 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

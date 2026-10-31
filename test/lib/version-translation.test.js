@@ -764,10 +764,10 @@ describe("account keys under accountIdentityDowngrade: 'reduce'", () => {
     });
   }
 
-  test('accounts.ensure provisions a reduced account', async t => {
+  test('accounts.provision provisions a reduced account', async t => {
     seller(t);
     const { client } = reducingClient({ accountPolicy: 'auto' });
-    const entry = await client.accounts.ensure(CAD, { billing: 'operator' });
+    const entry = await client.accounts.provision(CAD, { billing: 'operator' });
     assert.equal(entry.account_id, 'acc_nike');
     assert.deepEqual((await client.accounts.reductionFor(CAD)).account, REDUCED);
   });

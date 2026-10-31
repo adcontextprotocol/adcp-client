@@ -81,10 +81,10 @@ const client = new AgentClient(agent, {
     onResult: async dispatch => ledger.recordResult(dispatch),
   },
 });
-await client.accounts.ensure(reference, {
+const outcome = await client.accounts.ensure(reference, {
   billing: 'operator',
   idempotencyKey: persistedProvisioningKey,
-});
+}); // AccountOutcome; accounts.provision() returns the registry record instead
 ```
 
 Scope storage by trusted principal; keys also include seller/account identity.

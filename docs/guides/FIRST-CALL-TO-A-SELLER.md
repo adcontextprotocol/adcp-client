@@ -5,7 +5,7 @@ does not provision it. Until setup is complete, send a top-level `brand` on
 tools that support public discovery, and omit `account`, when your account policy permits it.
 
 ```ts
-import { AgentClient, createProductCache } from '@adcp/sdk';
+import { AgentClient, createProductCache, formatPendingAction, nextStep } from '@adcp/sdk';
 
 const client = new AgentClient(sellerConfig, {
   accountPolicy: 'auto',
@@ -21,21 +21,46 @@ if (!capabilities.account?.requiredForProducts) {
   if (!publicCatalog.success) console.error(publicCatalog.adcpError);
 }
 
-// Choose billing terms before accepting them. This returns seller status and handle.
-const setup = await client.accounts.ensure(account, {
+// Choose billing terms before accepting them. ensure() returns an AccountOutcome:
+// ready | pending | ambiguous | rejected. Pending is a value, not an exception.
+const outcome = await client.accounts.ensure(account, {
   billing: 'operator',
   paymentTerms: 'net_30',
 });
-if (setup.status === 'active') {
-  const pricedCatalog = await client.getProducts({ account, brand, brief: 'Display inventory' });
-  if (!pricedCatalog.success) console.error(pricedCatalog.adcpError);
+switch (outcome.kind) {
+  case 'ready': {
+    const pricedCatalog = await client.getProducts({ account, brand, brief: 'Display inventory' });
+    if (!pricedCatalog.success) console.error(pricedCatalog.adcpError);
+    break;
+  }
+  case 'pending':
+    // Show it to a person; never fetch outcome.action.url.
+    if (nextStep(outcome) === 'send_human_to_url') console.log(formatPendingAction(outcome.action));
+    break;
+  case 'ambiguous':
+    await outcome.choose(outcome.candidates[0].account_id);
+    break;
+  case 'rejected':
+    console.error(outcome.errors);
+    break;
 }
+// Later, from a cron job or an account_request.changed webhook:
+for (const moved of await client.accounts.refresh()) console.log(moved.kind, moved.account_id);
 ```
+
+`ensure()` routes by capability: when the seller advertises `account.requests`
+it calls `request_account` (and a repeat call returns the open request's state,
+never a duplicate); otherwise it calls `sync_accounts`. Agents should switch on
+`nextStep(outcome)` (`'wait_for_seller' | 'send_human_to_url' | 'pick_candidate' |
+'contact_seller' | 'none'`), not on `action.kind`, which is extensible.
+`accounts.pending()` lists what is still waiting without a network call.
+Before SDK 17 `ensure()` resolved to the registry record; that call is now
+`accounts.provision()`, with the same arguments.
 
 For agent-billed provisioning, pass `billingEntity` with the seller's required
 business identity. `paymentTerms` and `billingEntity` are also accepted by
 `resolveAccount()`. That helper keeps its existing pending-approval exception;
-`accounts.ensure()` returns the status so callers can present the setup flow.
+`accounts.ensure()` returns a `pending` outcome so callers can present the setup flow.
 Non-active entries refresh through `list_accounts` when a seller handle is known.
 An existing registry entry prevents repeated provisioning and silent acceptance
 of new terms. To change terms, explicitly call `syncAccounts()`.
