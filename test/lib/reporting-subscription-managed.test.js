@@ -10,6 +10,7 @@ const { describe, test } = require('node:test');
 process.env.NODE_ENV = 'test';
 
 const { createReliableReportingService } = require('../../dist/lib/reporting/service/index.js');
+const { createInMemoryReportingSubscriptionEngineStoreV1 } = require('../../dist/lib/reporting/advanced/index.js');
 const {
   redactedReportingSourceOfferingV1,
   redactedReportingSourceRequestV1,
@@ -293,5 +294,37 @@ describe('managed reporting subscriptions', () => {
     });
     assert.equal(await engine.isAuthorized(principal, ACCOUNT), true);
     assert.equal(await authorizedAt(), chain, 'a re-grant inside status_retention_days continues the chain');
+  });
+
+  test('a cancelled reconcile stops before the derived reads', async () => {
+    const w = world();
+    await w.subscribe();
+    const reads = { ...w.reads };
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(
+      w.service.subscriptionWiring.engine.reconcile(
+        { tenantId: TENANT, principalId: 'principal-a' },
+        { signal: controller.signal }
+      ),
+      error => error.name === 'AbortError'
+    );
+    assert.deepEqual(w.reads, reads, 'no accounts.list or getMediaBuys read after cancellation');
+  });
+
+  test('the identity snapshot kept for service-context reads holds no secrets', async () => {
+    const stateStore = createInMemoryReportingSubscriptionEngineStoreV1();
+    const w = world({ managed: { stateStore } });
+    await w.subscribe();
+    await w.server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: { name: 'get_reporting_status', arguments: { account: { account_id: ACCOUNT }, view: 'summary' } },
+      },
+      { authInfo: { clientId: 'buyer-a', token: 'bearer-secret', apiKey: 'key-secret', scopes: ['reporting'] } }
+    );
+    const binding = await stateStore.get({ tenantId: TENANT, principalId: 'principal-a' }, 'binding');
+    assert.deepEqual(binding.value.authInfo, { clientId: 'buyer-a', scopes: ['reporting'] });
+    assert.ok(!JSON.stringify(binding.value).includes('secret'));
   });
 });
