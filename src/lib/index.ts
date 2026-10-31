@@ -757,6 +757,7 @@ export {
   AccountAmbiguousError,
   BuyerSetupError,
   AccountNotFoundError,
+  AccountRequestError,
   AccountSetupRequiredError,
   AccountPaymentRequiredError,
   AccountNotProvisionedError,
@@ -2392,6 +2393,17 @@ export {
   type EnsureAccountOptions,
   type ProvisionedAccount,
 } from './core/buyer-account-registry';
+export {
+  nextStep,
+  formatPendingAction,
+  type AccountOutcome,
+  type AccountReady,
+  type AccountPending,
+  type AccountAmbiguous,
+  type AccountRejected,
+  type AccountVia,
+  type NextStep,
+} from './core/account-outcomes';
 export { createProductCache, ProductCache, type ProductCacheOptions } from './core/product-cache';
 
 export type { AssetVariant, DaypartTarget, TargetingOverlaySupport } from './types/core.generated';

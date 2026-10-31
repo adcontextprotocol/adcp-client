@@ -328,6 +328,7 @@ import {
   AccountRequiredError,
   AccountNotProvisionedError,
   AccountNotFoundError,
+  AccountRequestError,
   AccountSetupRequiredError,
   AccountPaymentRequiredError,
   UnsupportedBuyingModeError,
@@ -2223,6 +2224,37 @@ export class SingleAgentClient {
         provisionOwnsDispatchBoundary: true,
         maxEntries: this.config.accountRegistryMaxEntries,
         evictAtCapacity: () => !this.accountRegistryOptedIn(),
+        requests: {
+          supported: async taskOptions => (await this.getCapabilities(taskOptions)).account?.requestsSupported === true,
+          request: (params, taskOptions) =>
+            this.requestAccount(params as MutatingRequestInput<ToolTypes.RequestAccountRequest>, undefined, {
+              ...childTaskOptions(taskOptions),
+              [SKIP_ACCOUNT_REGISTRY_OBSERVATION]: true,
+            } as TaskOptions),
+          read: async (requestIds, taskOptions) => {
+            const found: ToolTypes.AccountRequest[] = [];
+            const cursors = new Set<string>();
+            let cursor: string | undefined;
+            for (let page = 0; page < 100; page++) {
+              const result = await this.listAccounts(
+                { request_ids: [...requestIds], ...(cursor && { requests_pagination: { cursor } }) },
+                undefined,
+                { ...childTaskOptions(taskOptions), [SKIP_ACCOUNT_REGISTRY_OBSERVATION]: true } as TaskOptions
+              );
+              if (!result.success || result.status !== 'completed' || !result.data || !('accounts' in result.data))
+                throw new AccountRequestError('list_accounts', [
+                  result.adcpError ?? { code: 'SERVICE_UNAVAILABLE', message: result.error ?? 'list_accounts failed' },
+                ]);
+              found.push(...(result.data.account_requests ?? []));
+              const pagination = result.data.account_requests_pagination;
+              const next = pagination?.has_more ? pagination.cursor : undefined;
+              if (!next || cursors.has(next)) return found;
+              cursors.add(next);
+              cursor = next;
+            }
+            return found;
+          },
+        },
         normalizeOptions: async (options, taskOptions) => {
           if (options.billing) return options;
           const caps = await this.getCapabilities(taskOptions);
@@ -10326,7 +10358,7 @@ export class SingleAgentClient {
       }
       let synced;
       try {
-        synced = await this.getAccountRegistry().ensure(
+        synced = await this.getAccountRegistry().provision(
           account,
           {
             billing,
