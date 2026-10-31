@@ -1561,5 +1561,11 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
+export { ReportingConfigurationImmutableError, isReportingConfigurationImmutableError } from '../ledger';
+export {
+  reportingConfigurationCapabilitiesV1,
+  type ReportingConfigurationCapabilitiesInputV1,
+  type ReportingConfigurationCapabilitiesV1,
+} from '../subscriptions/capabilities';
 export * from './conformance';
 export * from './scheduler-support';

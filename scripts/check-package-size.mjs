@@ -137,6 +137,9 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // 26,314,876 packed bytes, 144,462,916 unpacked bytes and 8,411 files. Allow
 // about 45 KB of compressor variance; the unpacked, file-count, bundled-schema
 // and declaration budgets are unchanged and still pass.
+// AdCP 3.3 reporting subscription coverage (#3504) adds the calendar,
+// selection, coverage and capability modules and the parity table. Measured
+// 26,370,041 packed bytes; allow about 40 KB above that for compressor variance.
 // AdCP 3.3.0-beta.2 (#3541) and the creative-delivery legacy-ref
 // reconciliation (#3510) landed together. CI measured 26,363,856 packed bytes
 // after #3510 and 26,369,089 after #3541 on main, about 9 KB over the beta.1
@@ -307,7 +310,9 @@ const MAX_PACKED_FILE_COUNT =
   4 + // Property-list reference probe (one dual-format runtime/declaration module set).
   5 + // Creative build probe: one dual-format runtime/declaration module (+4) and one guide (+1).
   8 + // Discovery currency and required-metric invariants (two dual-format runtime/declaration sets).
-  1840; // SDK 17: 3.3 schemas/compliance, per-tool type entrypoints and migration/release notes.
+  1840 + // SDK 17: 3.3 schemas/compliance, per-tool type entrypoints and migration/release notes.
+  20 + // Reporting subscription calendar, selection, coverage, capabilities and index (five dual-format sets).
+  4; // Reporting subscription hand-modeled wire types until 3.3.0-beta.2 (one dual-format set).
 const MAX_BUNDLED_SCHEMA_BYTES = 2000 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

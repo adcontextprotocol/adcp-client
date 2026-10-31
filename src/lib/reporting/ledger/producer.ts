@@ -36,6 +36,7 @@ import {
   retryReportingStatusNotificationsV1,
 } from './lifecycle';
 import { listAdjustmentMetadataFromStore, listRevisionMetadataFromStore } from './revision-metadata';
+import { ReportingConfigurationImmutableError } from './types';
 import type {
   CreateReportingProducerOptionsV1,
   ReportingLedgerAdjustmentMetadataV1,
@@ -110,7 +111,11 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           }
         }
         if (!replayFingerprints.includes(replay.semanticFingerprint)) {
-          throw new Error('Reporting configuration generation is immutable');
+          throw new ReportingConfigurationImmutableError({
+            accountId: normalizedInput.account.account_id,
+            deliveryConfigId: normalizedInput.delivery_config_id,
+            deliveryConfigVersion: normalizedInput.delivery_config_version,
+          });
         }
         if (installOptions.historyStart !== undefined) {
           const requested = historyInstant(installOptions.historyStart);
