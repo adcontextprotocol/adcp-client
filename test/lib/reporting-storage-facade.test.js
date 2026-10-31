@@ -294,6 +294,16 @@ describe('the service and the consumer take one storage', () => {
         code: 'REPORTING_STORAGE_NOT_DURABLE',
         message: /postgresStorage/,
       });
+      // Fail closed, like the seller: storage that does not declare itself durable is refused too.
+      assert.throws(
+        () =>
+          createReliableReportingConsumerV1({
+            accounts: [],
+            storage: { consumer: storage.consumer },
+            ownerToken: 'owner-token-1',
+          }),
+        { code: 'REPORTING_STORAGE_NOT_DURABLE' }
+      );
     });
   });
 });
