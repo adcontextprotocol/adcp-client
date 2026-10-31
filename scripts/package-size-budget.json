@@ -1,0 +1,39 @@
+{
+  "$comment": "Publish-size budgets, enforced by scripts/check-package-size.mjs (policy in its header). A ceiling is the measured size plus deliberate headroom, so parallel PRs do not collide on main; perPullRequest caps what one PR may add against its merge base. A PR that needs more raises the ceiling here, which reviewers then see in the diff.",
+  "packages": {
+    "@adcp/sdk": {
+      "ceiling": {
+        "packedBytes": 26000000,
+        "unpackedBytes": 135000000,
+        "files": 8450
+      },
+      "perPullRequest": {
+        "packedBytes": 100000,
+        "files": 25
+      },
+      "measuredWhenSet": {
+        "packedBytes": 24993401,
+        "unpackedBytes": 129047083,
+        "files": 8176,
+        "at": "17.0.0-beta.11 after the package-size trim"
+      }
+    },
+    "@adcp/reporting-storage": {
+      "ceiling": {
+        "packedBytes": 490000,
+        "unpackedBytes": 2250000,
+        "files": 150
+      },
+      "perPullRequest": {
+        "packedBytes": 15000,
+        "files": 8
+      },
+      "measuredWhenSet": {
+        "packedBytes": 447064,
+        "unpackedBytes": 2039835,
+        "files": 129,
+        "at": "@adcp/reporting-storage 0.3.0-beta.2"
+      }
+    }
+  }
+}

@@ -261,6 +261,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          # A pull request checks out its merge commit; depth 2 keeps the first
+          # parent (the merge base) so its package-size measurement can be found.
+          fetch-depth: 2
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -309,8 +313,36 @@ jobs:
       - name: Guard browser schema portability and tree-shaking budgets
         run: npm run test:schemas-browser
 
+      # main records each commit's package measurement. A pull request compares
+      # itself with the record for its exact merge base, so the per-PR growth
+      # allowance sees only this PR's change. A missing record (the base's main
+      # run has not finished, or the cache was evicted) skips that comparison;
+      # the ceilings in scripts/package-size-budget.json still apply.
+      - name: Resolve package-size merge base
+        id: size-base
+        if: github.event_name == 'pull_request'
+        run: echo "sha=$(git rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore merge-base package measurement
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: .context/package-size.json
+          key: package-size-${{ runner.os }}-${{ steps.size-base.outputs.sha }}
+
       - name: Enforce publish-size budgets
         run: npm run check:package-size
+        env:
+          PACKAGE_SIZE_BASE_SHA: ${{ steps.size-base.outputs.sha }}
+          PACKAGE_SIZE_BASELINE: ${{ github.event_name == 'pull_request' && '.context/package-size.json' || '' }}
+          PACKAGE_SIZE_REPORT: ${{ github.event_name == 'pull_request' && '.context/package-size-head.json' || '.context/package-size.json' }}
+
+      - name: Record package measurement for pull requests
+        if: github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: .context/package-size.json
+          key: package-size-${{ runner.os }}-${{ github.sha }}
 
       - name: Typecheck reporting storage package
         run: npm run typecheck:reporting-storage
