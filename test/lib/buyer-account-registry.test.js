@@ -29,12 +29,16 @@ test('ensure coalesces concurrent provisioning and returns the seller handle and
       return provisionResult();
     }
   );
-  const results = await Promise.all([registry.ensure(account), registry.ensure(account), registry.ensure(account)]);
+  const results = await Promise.all([
+    registry.provision(account),
+    registry.provision(account),
+    registry.provision(account),
+  ]);
   assert.equal(calls, 1);
   assert.equal(results[0].account_id, 'seller-id');
   results[0].account.brand.domain = 'mutated.example';
   assert.equal((await registry.get(account)).account.brand.domain, 'brand.example');
-  await registry.ensure(account);
+  await registry.provision(account);
   assert.equal(calls, 1);
 });
 test('registry storage isolates sellers and callers and survives a new client (#3093)', async () => {
@@ -45,7 +49,7 @@ test('registry storage isolates sellers and callers and survives a new client (#
     async () => provisionResult(),
     storage
   );
-  await first.ensure(account);
+  await first.provision(account);
   const restarted = new BuyerAccountRegistry(
     () => 'seller:caller-a',
     async () => {
@@ -53,7 +57,7 @@ test('registry storage isolates sellers and callers and survives a new client (#
     },
     storage
   );
-  assert.equal((await restarted.ensure(account)).status, 'active');
+  assert.equal((await restarted.provision(account)).status, 'active');
   for (const scope of ['other-seller:caller-a', 'seller:caller-b']) {
     assert.equal(
       await new BuyerAccountRegistry(
@@ -86,7 +90,7 @@ test('account status notifications repair from list_accounts instead of trusting
       return [{ ...account, account_id: id, status: 'suspended' }];
     }
   );
-  await registry.ensure(account);
+  await registry.provision(account);
   await registry.applyStatusChange({ account_id: 'seller-id', status: 'active' });
   assert.equal((await registry.get(account)).status, 'suspended');
 });
@@ -146,8 +150,8 @@ test('ensure sends billing terms and entity once; wrapper exposes the same regis
     return provisionResult();
   };
   const billingEntity = { legal_name: 'Buyer Ltd' };
-  await c.accounts.ensure(account, { billing: 'operator', paymentTerms: 'net_30', billingEntity });
-  await c.accounts.ensure(account);
+  await c.accounts.provision(account, { billing: 'operator', paymentTerms: 'net_30', billingEntity });
+  await c.accounts.provision(account);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].accounts[0].payment_terms, 'net_30');
   assert.deepEqual(calls[0].accounts[0].billing_entity, billingEntity);
@@ -283,8 +287,8 @@ test('buyer registry and cache operate through the official MCP client (#3093)',
   const publicResult = await buyer.getProducts({ buying_mode: 'wholesale', account });
   assert.equal(publicResult.success, true);
   assert.equal(catalogCalls[0].account, undefined);
-  await buyer.accounts.ensure(account, { billing: 'operator', paymentTerms: 'net_30' });
-  await buyer.accounts.ensure(account);
+  await buyer.accounts.provision(account, { billing: 'operator', paymentTerms: 'net_30' });
+  await buyer.accounts.provision(account);
   assert.equal(syncCalls, 1);
   await buyer.getProducts({ buying_mode: 'wholesale', account });
   await buyer.getProducts({ buying_mode: 'wholesale', account });
@@ -333,7 +337,7 @@ test('authoritative repair updates original aliases after restart and invalidate
     async () => provisionResult(),
     storage
   );
-  await first.ensure(account);
+  await first.provision(account);
   let rows = [{ account_id: 'seller-id', status: 'suspended', currency: 'USD' }];
   const restarted = new BuyerAccountRegistry(
     () => 'seller',
@@ -383,8 +387,8 @@ test('provisioning capacity is bounded before sending another setup request (#30
     undefined,
     { maxEntries: 2 }
   );
-  await registry.ensure(account);
-  await assert.rejects(registry.ensure({ ...account, operator: 'other.example' }), /capacity/);
+  await registry.provision(account);
+  await assert.rejects(registry.provision({ ...account, operator: 'other.example' }), /capacity/);
   assert.equal(calls, 1);
 });
 test('a caller pricing validator bypasses automatic cache conditions and cache entries are bounded (#3093)', () => {
@@ -412,8 +416,8 @@ test('pending ensure repairs approval without accepting billing terms again (#30
     undefined,
     async () => [{ ...account, account_id: 'seller-id', status: 'active', currency: 'USD' }]
   );
-  assert.equal((await registry.ensure(account)).status, 'pending_approval');
-  assert.equal((await registry.ensure(account)).status, 'active');
+  assert.equal((await registry.provision(account)).status, 'pending_approval');
+  assert.equal((await registry.provision(account)).status, 'active');
   assert.equal(syncCalls, 1);
 });
 test('client-credentials scope survives token rotation and isolates other principals (#3093)', async () => {
@@ -544,7 +548,7 @@ test('overlapping status repairs discard an older active snapshot (#3093)', asyn
     undefined,
     () => new Promise(resolve => replies.push(resolve))
   );
-  await registry.ensure(account);
+  await registry.provision(account);
   const first = registry.applyStatusChange({ account_id: 'seller-id' });
   while (replies.length < 1) await new Promise(resolve => setImmediate(resolve));
   const second = registry.applyStatusChange({ account_id: 'seller-id' });
@@ -570,11 +574,11 @@ test('cancelling one provisioning wait preserves single-flight and rejects confl
     }
   );
   const controller = new AbortController();
-  const first = registry.ensure(account, { billing: 'operator' }, { signal: controller.signal });
+  const first = registry.provision(account, { billing: 'operator' }, { signal: controller.signal });
   const aborted = assert.rejects(first, /aborted/);
   while (!complete) await new Promise(resolve => setImmediate(resolve));
-  const second = registry.ensure(account, { billing: 'operator' }, { signal: new AbortController().signal });
-  await assert.rejects(registry.ensure(account, { billing: 'agent' }, { timeout: 100 }), /different billing/);
+  const second = registry.provision(account, { billing: 'operator' }, { signal: new AbortController().signal });
+  await assert.rejects(registry.provision(account, { billing: 'agent' }, { timeout: 100 }), /different billing/);
   controller.abort();
   await aborted;
   complete(provisionResult());
@@ -604,8 +608,8 @@ test('terminal submitted setup failure permits a deliberate retry (#3093)', asyn
       };
     }
   );
-  await assert.rejects(registry.ensure(account), { code: 'ACCOUNT_SETUP_REQUIRED' });
-  assert.equal((await registry.ensure(account)).status, 'active');
+  await assert.rejects(registry.provision(account), { code: 'ACCOUNT_SETUP_REQUIRED' });
+  assert.equal((await registry.provision(account)).status, 'active');
   assert.equal(calls, 2);
 });
 
@@ -676,8 +680,8 @@ test('pending approval survives unavailable list_accounts without accepting term
       throw Error('list unavailable');
     }
   );
-  await registry.ensure(account);
-  assert.equal((await registry.ensure(account)).status, 'pending_approval');
+  await registry.provision(account);
+  assert.equal((await registry.provision(account)).status, 'pending_approval');
   assert.equal((await registry.get(account)).status, 'pending_approval');
   assert.equal(calls, 1);
 });
@@ -705,8 +709,8 @@ test('a stale storage miss cannot trigger provisioning twice (#3093)', async () 
     },
     storage
   );
-  const first = registry.ensure(account);
-  const second = registry.ensure(account);
+  const first = registry.provision(account);
+  const second = registry.provision(account);
   while (!releaseRead) await new Promise(resolve => setImmediate(resolve));
   await first;
   releaseRead();
@@ -735,8 +739,8 @@ test('completed async setup with a failed account row is retryable (#3093)', asy
       };
     }
   );
-  await assert.rejects(registry.ensure(account), { code: 'ACCOUNT_SETUP_REQUIRED' });
-  assert.equal((await registry.ensure(account)).status, 'active');
+  await assert.rejects(registry.provision(account), { code: 'ACCOUNT_SETUP_REQUIRED' });
+  assert.equal((await registry.provision(account)).status, 'active');
   assert.equal(calls, 2);
 });
 
@@ -750,12 +754,12 @@ test('a throwing result callback cannot lose successful provisioning (#3093)', a
     }
   );
   await assert.rejects(
-    registry.ensure(account, {}, undefined, () => {
+    registry.provision(account, {}, undefined, () => {
       throw Error('callback failure');
     }),
     /callback failure/
   );
-  assert.equal((await registry.ensure(account)).status, 'active');
+  assert.equal((await registry.provision(account)).status, 'active');
   assert.equal(calls, 1);
 });
 
@@ -789,13 +793,13 @@ test('known setup terms cannot silently change and survive authoritative status 
     undefined,
     async () => [{ ...account, account_id: 'seller-id', status: 'active' }]
   );
-  await registry.ensure(account, { billing: 'operator', paymentTerms: 'net_30' });
+  await registry.provision(account, { billing: 'operator', paymentTerms: 'net_30' });
   await registry.applyStatusChange({ account_id: 'seller-id' });
   await assert.rejects(
-    registry.ensure(account, { billing: 'agent', paymentTerms: 'net_60' }),
+    registry.provision(account, { billing: 'agent', paymentTerms: 'net_60' }),
     /different billing terms/
   );
-  assert.equal((await registry.ensure(account, { billing: 'operator' })).status, 'active');
+  assert.equal((await registry.provision(account, { billing: 'operator' })).status, 'active');
 });
 
 test('default-off clients do not accumulate unsolicited list observations (#3093)', () => {
@@ -812,7 +816,7 @@ test('ensure and resolveAccount share the seller default billing choice (#3093)'
     calls++;
     return provisionResult();
   };
-  await Promise.all([c.accounts.ensure(account), c.resolveAccount(account)]);
+  await Promise.all([c.accounts.provision(account), c.resolveAccount(account)]);
   assert.equal(calls, 1);
 });
 
@@ -823,9 +827,9 @@ test('seller-confirmed absence exposes a buyer-setup error and an explicit recov
     undefined,
     async () => []
   );
-  await registry.ensure(account);
+  await registry.provision(account);
   await assert.rejects(
-    registry.ensure(account),
+    registry.provision(account),
     error => error.fault === 'buyer_setup' && /syncAccounts/.test(error.message)
   );
 });
@@ -833,7 +837,7 @@ test('seller-confirmed absence exposes a buyer-setup error and an explicit recov
 test('partial list pages do not invalidate a filtered account and repair skips unrelated rows (#3093)', async () => {
   const c = client('auto');
   c.syncAccounts = async () => provisionResult();
-  await c.accounts.ensure(account);
+  await c.accounts.provision(account);
   const page = {
     success: true,
     status: 'completed',
@@ -882,7 +886,7 @@ test('old handle notifications cannot undo an explicitly replaced natural accoun
     async () => provisionResult(),
     storage
   );
-  await registry.ensure(account);
+  await registry.provision(account);
   await registry.observeSync([account], [{ ...account, account_id: 'replacement-id', status: 'suspended' }]);
   assert.deepEqual((await registry.get({ account_id: 'seller-id' })).aliases, []);
   const restarted = new BuyerAccountRegistry(
@@ -916,7 +920,7 @@ test('provisioning term persistence merges into the latest authoritative status 
     }
     return entry;
   };
-  const settled = await registry.ensure(account, { billing: 'operator' });
+  const settled = await registry.provision(account, { billing: 'operator' });
   assert.equal(settled.status, 'suspended');
   assert.equal((await get(account)).status, 'suspended');
   const handle = await get({ account_id: 'seller-id' });
@@ -964,7 +968,7 @@ for (const observation of ['sync', 'list']) {
         });
       }
     );
-    await registry.ensure(account);
+    await registry.provision(account);
     const repair = registry.applyStatusChange({ account_id: 'seller-id' });
     await started;
     const row = { ...account, account_id: 'seller-id', status: 'suspended' };
@@ -1002,9 +1006,9 @@ test('pending legacy rows without a handle can be refreshed with identical setup
     undefined,
     { maxEntries: 2 }
   );
-  assert.equal((await registry.ensure(account, { billing: 'operator' })).status, 'pending_approval');
-  await assert.rejects(registry.ensure(account), /original billing options/);
-  assert.equal((await registry.ensure(account, { billing: 'operator' })).status, 'active');
+  assert.equal((await registry.provision(account, { billing: 'operator' })).status, 'pending_approval');
+  await assert.rejects(registry.provision(account), /original billing options/);
+  assert.equal((await registry.provision(account, { billing: 'operator' })).status, 'active');
   assert.equal(calls, 2);
 });
 
@@ -1035,7 +1039,7 @@ for (const observation of ['list', 'sync']) {
         });
       }
     );
-    await registry.ensure(account);
+    await registry.provision(account);
     const epoch = registry.captureObservation();
     const repair = registry.applyStatusChange({ account_id: 'seller-id' });
     await started;
@@ -1105,7 +1109,7 @@ test('a handle repair before async provisioning completion preserves the origina
     undefined,
     async () => [{ ...account, currency: 'USD', account_id: 'seller-id', status: 'active' }]
   );
-  const setup = registry.ensure(account, { billing: 'operator' });
+  const setup = registry.provision(account, { billing: 'operator' });
   while (!finish) await new Promise(resolve => setImmediate(resolve));
   await registry.applyStatusChange({ account_id: 'seller-id' });
   finish(provisionResult('pending_approval'));
@@ -1125,8 +1129,8 @@ test('approval status repair is shared by concurrent ensure callers (#3093)', as
       return [{ account_id: 'seller-id', status: 'active' }];
     }
   );
-  await registry.ensure(account);
-  const entries = await Promise.all([registry.ensure(account), registry.ensure(account)]);
+  await registry.provision(account);
+  const entries = await Promise.all([registry.provision(account), registry.provision(account)]);
   assert.equal(repairs, 1);
   assert.ok(entries.every(entry => entry.status === 'active'));
 });
@@ -1151,9 +1155,9 @@ test('failed async refresh of a pending legacy account retains the original bill
       };
     }
   );
-  await registry.ensure(account, { billing: 'operator' });
-  await assert.rejects(registry.ensure(account, { billing: 'operator' }));
-  await assert.rejects(registry.ensure(account, { billing: 'agent' }), /different billing terms/);
+  await registry.provision(account, { billing: 'operator' });
+  await assert.rejects(registry.provision(account, { billing: 'operator' }));
+  await assert.rejects(registry.provision(account, { billing: 'agent' }), /different billing terms/);
   assert.equal(calls, 2);
 });
 
@@ -1167,7 +1171,7 @@ test('custom repair callbacks cannot overwrite accounts outside the requested ha
       { account_id: 'other-id', status: 'active' },
     ]
   );
-  await registry.ensure(account);
+  await registry.provision(account);
   await registry.observeSync([{ account_id: 'other-id' }], [{ account_id: 'other-id', status: 'suspended' }]);
   await registry.applyStatusChange({ account_id: 'seller-id' });
   assert.equal((await registry.get({ account_id: 'other-id' })).status, 'suspended');
@@ -1180,7 +1184,7 @@ test('status notifications block cached authorization immediately while queued p
     undefined,
     async () => [{ account_id: 'seller-id', status: 'suspended' }]
   );
-  await registry.ensure(account);
+  await registry.provision(account);
   let release;
   registry.writes = new Promise(resolve => {
     release = resolve;

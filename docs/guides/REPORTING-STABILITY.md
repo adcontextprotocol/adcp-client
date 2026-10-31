@@ -23,6 +23,8 @@ This follows how the AdCP protocol treats experimental surfaces (`x-status: expe
 
 **Storage-facing building blocks in `@adcp/sdk`.** A few exports exist so a store can be written against public API only, and they are covered by the same policy even where their TSDoc is silent: the schedule, instant and evidence helpers on `@adcp/sdk/reporting/ledger` (`compareReportingInstants`, `reportingPeriodDate`, `reportingPeriodSchedule`, `isFrozenCalendarRulesMismatch`, `assertReportingLedgerHistoryDoesNotOverlap`, the receipt and verification evidence guards, `isWellFormedUnicodeString`, `getReportingDeliveryOfferingValidatorV1`), and the scheduler primitives and `REPORTING_MANAGED_DELIVERY_COMPOSITION_V1` on `@adcp/sdk/reporting/service`. Application code should not depend on them.
 
+**Everything exported by `@adcp/sdk/reporting/advanced`.** The low-level building blocks for principal-level reporting subscriptions (experimental `media_buy.reporting_subscriptions`, AdCP 3.3) live there: the coverage engine and its stores, the coverage function, the period calendar, offering selection, the capability builder, the consumer-runtime bridge and the Reliable Reporting service's subscription hooks. The subpath is tagged `@experimental` as a whole, and a breaking change to it ships as a minor of `@adcp/sdk`. The managed seller path and the buyer facade sit on top of it; reach for it only when you compose these pieces yourself.
+
 ### Not experimental
 
 These follow normal semver. A breaking change to them ships in a major release of `@adcp/sdk`.
@@ -69,7 +71,7 @@ These pins select SDK 16 and storage 0.1 stable versions. A stable range such as
 
 ## Migrations
 
-Database migrations exported by `@adcp/reporting-storage` (`REPORTING_LEDGER_MIGRATION`, `REPORTING_ROW_STORAGE_MIGRATION` and the others) stay idempotent where practical, and a changeset says when you must re-apply one. See [Reliable Reporting production operations](REPORTING-OPERATIONS.md) and the [ledger guide](REPORTING-LEDGER.md).
+Database migrations shipped by `@adcp/reporting-storage` are versioned (`npx adcp-reporting-storage migrate`, recorded in `adcp_schema_migrations`; a stopped-worker version says so in `--status`). Their SQL, also exported as the deprecated constants (`REPORTING_LEDGER_MIGRATION`, `REPORTING_ROW_STORAGE_MIGRATION` and the others), stays idempotent where practical, and a changeset says when you must re-apply one. See [Reliable Reporting production operations](REPORTING-OPERATIONS.md) and the [ledger guide](REPORTING-LEDGER.md).
 
 Coming from the single-package layout (`@adcp/sdk/reporting/ledger`, `/gcs`, `/s3`, `/azure`, `/bigquery`)? See [Reliable Reporting storage moved to `@adcp/reporting-storage`](../migration-reporting-storage-package.md).
 

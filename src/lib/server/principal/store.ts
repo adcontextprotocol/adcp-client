@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { InMemoryStateStore, type AdcpStateStore } from '../state-store';
+import { resolveStoreDurability, type AdcpStateStore } from '../state-store';
 import {
   NotificationSubscriptionValidationError,
   type NotificationSubscriptionMatch,
@@ -12,7 +12,7 @@ import { projectStoredNotificationSubscriptionReadback } from '../notification-s
 import type {
   PrincipalStateStore,
   PrincipalConfiguration,
-  PrincipalStoreScope,
+  PrincipalRef,
   PrincipalStoreReplaceResult,
   StoredPrincipalRecord,
   VersionedPrincipalRecord,
@@ -23,7 +23,11 @@ export const DEFAULT_PRINCIPAL_STORE_COLLECTION = 'adcp_principals';
 export interface CreatePrincipalStateStoreOptions {
   store: AdcpStateStore;
   collection?: string;
-  /** Set to durable only when the supplied backend survives process loss. */
+  /**
+   * @deprecated Durability is read from `store` (`InMemoryStateStore` is process-local,
+   * `PostgresStateStore` durable). A value that agrees is ignored; one that contradicts the store is
+   * refused. Remove it, or use `memoryStorage()` / `postgresStorage({ pool })`.
+   */
   durability?: 'process-local' | 'durable';
   /** Observe malformed scanned rows that are skipped during fanout/recovery. */
   onMalformedRecord?: (error: Error) => void;
@@ -35,7 +39,7 @@ type PrincipalOwnedNotificationStore = NotificationSubscriptionStore & {
   [PRINCIPAL_NOTIFICATION_STORE_OWNER]: PrincipalStateStore;
 };
 
-function scopeDocumentId(scope: Readonly<PrincipalStoreScope>): string {
+function scopeDocumentId(scope: Readonly<PrincipalRef>): string {
   return `principal_${createHash('sha256')
     .update(JSON.stringify([scope.tenantId, scope.principalId]))
     .digest('hex')}`;
@@ -45,7 +49,7 @@ function cloneRecord(record: Readonly<StoredPrincipalRecord>): StoredPrincipalRe
   return structuredClone(record);
 }
 
-function assertRecordScope(record: Readonly<StoredPrincipalRecord>, scope: Readonly<PrincipalStoreScope>): void {
+function assertRecordScope(record: Readonly<StoredPrincipalRecord>, scope: Readonly<PrincipalRef>): void {
   assertRecordShape(record);
   if (record.tenantId !== scope.tenantId || record.scopePrincipalId !== scope.principalId) {
     throw new Error('Principal store scope mismatch');
@@ -73,11 +77,9 @@ export function createPrincipalStateStore(options: CreatePrincipalStateStoreOpti
   if (!options.store.getWithVersion || !options.store.putIfMatch) {
     throw new TypeError('Principal state requires an AdcpStateStore with getWithVersion and putIfMatch');
   }
-  if (options.durability === 'durable' && options.store instanceof InMemoryStateStore) {
-    throw new TypeError('InMemoryStateStore cannot be declared durable');
-  }
+  const durability = resolveStoreDurability(options.store, options.durability, message => new TypeError(message));
   const collection = options.collection ?? DEFAULT_PRINCIPAL_STORE_COLLECTION;
-  const getRecord = async (scope: Readonly<PrincipalStoreScope>): Promise<VersionedPrincipalRecord | null> => {
+  const getRecord = async (scope: Readonly<PrincipalRef>): Promise<VersionedPrincipalRecord | null> => {
     const row = await options.store.getWithVersion!<StoredPrincipalRecord>(collection, scopeDocumentId(scope));
     if (!row) return null;
     assertRecordScope(row.data, scope);
@@ -85,7 +87,7 @@ export function createPrincipalStateStore(options: CreatePrincipalStateStoreOpti
   };
 
   return {
-    durability: options.durability ?? 'process-local',
+    durability,
     async get(scope) {
       return getRecord(scope);
     },
@@ -147,7 +149,7 @@ export function createPrincipalStateStore(options: CreatePrincipalStateStoreOpti
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
         throw new TypeError('principal notification recovery limit must be 1 through 10000');
       }
-      const scopes: PrincipalStoreScope[] = [];
+      const scopes: PrincipalRef[] = [];
       const scanLimit = Math.min(10_000, limit * 10);
       let scanned = 0;
       let pages = 0;
@@ -276,7 +278,7 @@ export function principalNotificationSubscriptionStore(store: PrincipalStateStor
   return projection;
 }
 
-function callerScope(scope: Readonly<NotificationSubscriptionScope>): PrincipalStoreScope {
+function callerScope(scope: Readonly<NotificationSubscriptionScope>): PrincipalRef {
   if (scope.kind !== 'caller') throw new TypeError('Principal notifications require caller scope');
   return { tenantId: scope.tenantId, principalId: scope.principalId };
 }

@@ -72,6 +72,63 @@ the helper throws `PrincipalLifecycleError` with the original `taskResult`
 attached. Use its `submitted` or `deferred` continuation when present; do not
 start a second logical replacement with a new idempotency key.
 
+Every `PrincipalLifecycleError` is an `ADCPError` with a stable `code` and a
+`recovery` (`transient`, `correctable` or `terminal`):
+
+| `code` | When | `recovery` |
+|---|---|---|
+| `PRINCIPAL_TASK_INCOMPLETE` | A `get_principal` or `sync_principal` task did not complete (see `taskResult`) | `transient` |
+| `PRINCIPAL_READ_FAILED` / `PRINCIPAL_WRITE_FAILED` | The seller returned a failed result (see `protocolErrors`) | the seller's, else `terminal` |
+| `PRINCIPAL_CONFLICT_EXHAUSTED` | Every guarded attempt met `CONFLICT` | `transient` |
+| `PRINCIPAL_TRANSPORT_FAILED` | The write threw; replay `attemptedRequest` exactly | `transient` |
+| `PRINCIPAL_IDENTITY_CHANGED` | The principal changed, or its kind did not match `expectedPrincipalKind` | `terminal` |
+| `PRINCIPAL_INVALID_RESPONSE` | The seller answered a write with a dry run, or applied nothing | `terminal` |
+| `PRINCIPAL_INVALID_OPTIONS` | `createIdempotencyKey` reused a key | `correctable` |
+| `PRINCIPAL_SETUP_TIMEOUT` | Destination setup did not finish in time (`PrincipalLifecycleTimeoutError`) | `transient` |
+| `PRINCIPAL_SETUP_INTERRUPTED` | The configuration disappeared or changed while setup was pending | `transient` |
+
+`dispatched` is `false` when the helper refused before sending any
+`sync_principal` write, so nothing changed at the seller; check it with
+`isPreDispatchError(error)`. It is absent whenever a write may have reached the
+seller. When the write was applied and a later step failed, the applied result
+is on `appliedResponse`. The older `applied` property is a deprecated alias.
+
+**Subscribing to reports: use `client.reporting`, not raw `syncPrincipal`.** Each
+`sync_principal` section is the complete desired state, so a raw write that sends one
+subscription deactivates every other one, and one that omits a destination revokes it for
+every account. The facade is patch-shaped:
+
+```ts
+const result = await client.reporting.subscribe({
+  subscription_id: 'analytics-daily',
+  scope: { all_authorized_accounts: true },
+  operator_domains: ['wppmedia.fr'],
+  selector: { feed_purpose: 'analytics', period_duration: 'P1D', required_finality: 'official' },
+  reconciliation_mode: 'delivery_only',
+});
+result.action; // 'created' | 'updated' | 'unchanged' | 'reactivated'
+await client.reporting.unsubscribe('pacing-hourly'); // the only deactivation path
+await client.reporting.listSubscriptions();
+await client.reporting.preview(input); // a seller dry run plus local offering resolution
+await client.reporting.replaceSubscriptions(list, { deactivateOmitted: true }); // expert
+```
+
+`subscription_version` is optional: the SDK keeps it when only `active` or
+`replace_account_configs` change and bumps it on a semantic change. Before sending it refuses an
+implicit scope, an unregistered destination, a `path_template` without `{account_id}` on a
+multi-account scope, a `subscription_id` that clashes with a `delivery_config_id`
+(`SUBSCRIPTION_ID_CLASH`), an all-accounts subscription into a destination without
+`operator_domains` (`SUBSCRIPTION_OPERATOR_SCOPE_REQUIRED`), and a selector no advertised offering
+matches (`SUBSCRIPTION_SELECTOR_UNMATCHED`, with the nearest offerings). A raw
+`client.syncPrincipal` that would deactivate or revoke by omission is refused before sending unless
+you pass `allowDeactivation` / `allowRevocation`.
+
+`syncReportingSubscriptionsV1` throws `ReportingSubscriptionError` for its own
+refusals: `SUBSCRIPTION_WOULD_DEACTIVATE` (with `wouldDeactivate` and
+`dispatched: false`), `SUBSCRIPTION_CONFLICT_EXHAUSTED`
+and `SUBSCRIPTION_READBACK_MISMATCH` (with `readback`). The codes and recovery
+classes are the shared vocabulary the Python SDK uses.
+
 ## Seller runtime
 
 `createPrincipalLifecycle()` is the server-side owner for `get_principal`,
@@ -91,11 +148,10 @@ import {
   principalNotificationSubscriptionStore,
 } from '@adcp/sdk/server';
 
+// Durability is read from the state store: PostgresStateStore is durable. With reporting, use the
+// one storage object instead: postgresStorage({ pool }).principals (@adcp/reporting-storage).
 const state = new PostgresStateStore(pool);
-const principalStore = createPrincipalStateStore({
-  store: state,
-  durability: 'durable',
-});
+const principalStore = createPrincipalStateStore({ store: state });
 
 let principalWebhooks: ReturnType<typeof createPostgresWebhookRuntime>;
 const notifications = createPersistentNotificationRuntime({
@@ -189,7 +245,11 @@ do {
   the complete record. Custom stores must preserve the trusted
   `(tenantId, principalId)` scope, return opaque revisions, enumerate pending
   notification scopes, and report `durability: 'durable'` only when records
-  survive process loss. Production rejects process-local stores.
+  survive process loss. Production rejects process-local stores. A store built
+  with `createPrincipalStateStore` inherits the backing `AdcpStateStore`'s own
+  `durability` (`InMemoryStateStore` is process-local, `PostgresStateStore`
+  durable); its `durability` option is deprecated, accepted only when it agrees
+  with the backend and refused when it contradicts it.
 - Use exactly one notification writer. The notification runtime must use
   `principalNotificationSubscriptionStore(principalStore)`; do not pair the
   principal lifecycle with a second subscription table or the standalone

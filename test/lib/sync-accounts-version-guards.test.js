@@ -193,7 +193,7 @@ describe('sync_accounts provisioning identity version guards', () => {
     });
   }
 
-  test('accounts.ensure refusal leaves no registry or pending entry and permits a fresh retry', async t => {
+  test('accounts.provision refusal leaves no registry or pending entry and permits a fresh retry', async t => {
     const stored = new Map();
     const { client, discovered } = makeClient(
       {
@@ -210,11 +210,11 @@ describe('sync_accounts provisioning identity version guards', () => {
     for (let attempt = 0; attempt < 2; attempt++) {
       const discoveriesBefore = discovered.length;
       await assert.rejects(
-        registry.ensure(account, { billing: 'operator' }, { timeout: 1000 }),
+        registry.provision(account, { billing: 'operator' }, { timeout: 1000 }),
         unsupported('accounts[0].currency')
       );
       assert.equal(await registry.get(account), undefined);
-      assert.equal(registry.pending.size, 0);
+      assert.equal(registry.inFlight.size, 0);
       assert.equal(stored.size, 0);
       assert.ok(discovered.length > discoveriesBefore, 'each attempt must retry the guarded provisioning path');
     }

@@ -1,5 +1,6 @@
 /**
- * Reliable Reporting storage for PostgreSQL: the ledger store and its migrations, row storage (PostgreSQL
+ * Reliable Reporting storage for PostgreSQL: `postgresStorage({ pool })` (the durable half of `@adcp/sdk/storage`),
+ * the versioned migrations behind `npx adcp-reporting-storage migrate`, the ledger store, row storage (PostgreSQL
  * and object kinds, with the provider contract, conformance suite and filesystem provider), object
  * writes, the host change feed and ledger maintenance.
  *
@@ -17,3 +18,5 @@ export * from './row-storage-object';
 export * from './object-writes';
 export * from './change-feed';
 export * from './maintenance';
+export * from './migrations';
+export * from './storage';

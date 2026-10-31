@@ -34,38 +34,74 @@ ones you use.
 
 ## Subpaths
 
-| Import                                  | What it holds                                                                                                    |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `@adcp/reporting-storage`               | `PostgresReportingLedgerStore` and its migrations, row storage, object writes, the host change feed, maintenance |
-| `@adcp/reporting-storage/managed`       | managed-delivery runtime, `PostgresReportingManagedDeliveryStore`, the adapter contract and router               |
-| `@adcp/reporting-storage/notifications` | notification activity stores, checkpoints and runtime                                                            |
-| `@adcp/reporting-storage/service`       | `createPostgresReliableReportingProductionService`                                                               |
-| `@adcp/reporting-storage/gcs`           | GCS fence, reader, managed-delivery adapter and row-object provider                                              |
-| `@adcp/reporting-storage/s3`            | S3 row-object provider                                                                                           |
-| `@adcp/reporting-storage/azure`         | Azure Blob row-object provider                                                                                   |
-| `@adcp/reporting-storage/bigquery`      | BigQuery warehouse sink                                                                                          |
+| Import                                  | What it holds                                                                                                                              |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `@adcp/reporting-storage`               | `postgresStorage`, the versioned migrations, `PostgresReportingLedgerStore`, row storage, object writes, the host change feed, maintenance |
+| `@adcp/reporting-storage/managed`       | managed-delivery runtime, `PostgresReportingManagedDeliveryStore`, the adapter contract and router                                         |
+| `@adcp/reporting-storage/notifications` | notification activity stores, checkpoints and runtime                                                                                      |
+| `@adcp/reporting-storage/service`       | `createPostgresReliableReportingProductionService`                                                                                         |
+| `@adcp/reporting-storage/gcs`           | GCS fence, reader, managed-delivery adapter and row-object provider                                                                        |
+| `@adcp/reporting-storage/s3`            | S3 row-object provider                                                                                                                     |
+| `@adcp/reporting-storage/azure`         | Azure Blob row-object provider                                                                                                             |
+| `@adcp/reporting-storage/bigquery`      | BigQuery warehouse sink                                                                                                                    |
 
 The protocol layer stays in `@adcp/sdk`: the `ReportingLedgerStore` interface, the protocol handlers, the producer,
 `createReliableReportingService`, row encoding and digests, `@adcp/sdk/reporting/consumer` and `@adcp/sdk/reporting/source`.
 
-## Apply migrations in this order
+## One storage decision: `postgresStorage({ pool })`
 
-Migrations are idempotent SQL strings. Apply them to the ledger database with your migration tool, in this order, and
-only the ones whose feature you turn on.
+`postgresStorage` is the durable half of `@adcp/sdk/storage` (whose `memoryStorage()` is for development). One object
+holds the reporting ledger, `sync_principal` principal records, the reporting-subscription engine state (grant journal,
+exceptions, frozen owed periods) and the buyer consumer's checkpoints and leases; managed delivery's tables live in the
+same schema. Durability is a property of the storage, never a flag.
 
-| Order | Constant                                                                         | Import                                  | Needed for                                |
-| ----- | -------------------------------------------------------------------------------- | --------------------------------------- | ----------------------------------------- |
-| 1     | `REPORTING_LEDGER_MIGRATION`                                                     | `@adcp/reporting-storage`               | always                                    |
-| 2     | `REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION`                               | `@adcp/reporting-storage`               | the finality writer fence                 |
-| 3     | `REPORTING_ROW_STORAGE_MIGRATION`                                                | `@adcp/reporting-storage`               | `rowStorage` (PostgreSQL 13+)             |
-| 4     | `REPORTING_LEDGER_CHANGES_MIGRATION`                                             | `@adcp/reporting-storage`               | `changeFeed: true` (PostgreSQL 13+)       |
-| 5     | `REPORTING_MANAGED_DELIVERY_MIGRATION`                                           | `@adcp/reporting-storage/managed`       | managed delivery                          |
-| 6     | `REPORTING_OBJECT_WRITE_MIGRATION`, `REPORTING_OBJECT_WRITE_AUTHORITY_MIGRATION` | `@adcp/reporting-storage`               | the GCS write fence                       |
-| 7     | `REPORTING_NOTIFICATION_ACTIVITY_MIGRATION`                                      | `@adcp/reporting-storage/notifications` | notification activity                     |
-| 8     | `REPORTING_WAREHOUSE_SINK_MIGRATION`                                             | `@adcp/reporting-storage/bigquery`      | the BigQuery sink (after the change feed) |
+```ts
+import { Pool } from 'pg';
+import { postgresStorage } from '@adcp/reporting-storage';
+import { createReliableReportingService } from '@adcp/sdk/reporting/service';
 
-`createPostgresReliableReportingProductionService` returns the ordered list it needs as `service.setup.migrations`, and
-`applyMigrations` bridges it into your runner.
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const storage = postgresStorage({ pool, acknowledgeIsolatedDatabase: true });
+await storage.checkSchema(); // refuses a schema that is behind: REPORTING_SCHEMA_BEHIND
+const reporting = createReliableReportingService({ storage /* , adapters, contact, resolvers ... */ });
+```
+
+`createPostgresReliableReportingProductionService({ storage })` takes the same object instead of `db`, and
+`createReliableReportingConsumerV1({ storage })` uses its `consumer` stores on the buyer side.
+
+## Apply migrations: `npx adcp-reporting-storage migrate`
+
+```bash
+npx adcp-reporting-storage migrate --database-url "$DATABASE_URL" [--schema NAME]   # apply pending versions
+npx adcp-reporting-storage migrate --status                                         # applied and pending
+npx adcp-reporting-storage migrate --dry-run                                        # print the plan
+```
+
+The URL defaults to `$ADCP_DATABASE_URL`, then `$DATABASE_URL`; the command needs the `pg` driver. Each version
+commits on its own under the reporting schema lock and is recorded in `adcp_schema_migrations` (the table the Python
+SDK's `python -m adcp migrate` uses), so concurrent runners serialize. `migrate(pool)`, `migrationStatus(pool)`,
+`pendingMigrations(pool)` and `migrations()` are the same operations in code. Startup never changes the schema:
+`storage.checkSchema()` names the pending versions and this command.
+
+| Version | Name                              | Contents (the deprecated constant that holds the same SQL)                                                 |
+| ------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| 0001    | `adcp_state`                      | principal records and reporting-subscription engine state (`ADCP_STATE_MIGRATION` from `@adcp/sdk/server`) |
+| 0002    | `reporting_ledger`                | the ledger (`REPORTING_LEDGER_MIGRATION`)                                                                  |
+| 0003    | `reporting_ledger_finality_fence` | **stopped-worker:** fences pre-SDK-14 writers (`REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION`)         |
+| 0004    | `reporting_row_storage`           | row storage, PostgreSQL 13+ (`REPORTING_ROW_STORAGE_MIGRATION`)                                            |
+| 0005    | `reporting_ledger_changes`        | the host change feed, PostgreSQL 13+ (`REPORTING_LEDGER_CHANGES_MIGRATION`)                                |
+| 0006    | `reporting_managed_delivery`      | managed delivery (`REPORTING_MANAGED_DELIVERY_MIGRATION`)                                                  |
+| 0007    | `reporting_object_writes`         | the GCS write fence (`REPORTING_OBJECT_WRITE_MIGRATION`, `REPORTING_OBJECT_WRITE_AUTHORITY_MIGRATION`)     |
+| 0008    | `reporting_consumer`              | the buyer consumer (`REPORTING_CONSUMER_POSTGRES_MIGRATION` from `@adcp/sdk/reporting/consumer`)           |
+
+A schema set up by applying those constants by hand migrates cleanly: the statements are idempotent, re-run as no-ops,
+and the versions are recorded. The constants stay exported as deprecated re-exports for one beta.
+
+Two migrations are configured per deployment and stay outside the versioned set: `REPORTING_NOTIFICATION_ACTIVITY_MIGRATION`
+(`@adcp/reporting-storage/notifications`, table names are configurable) and `REPORTING_WAREHOUSE_SINK_MIGRATION`
+(`@adcp/reporting-storage/bigquery`, after the change feed). `createPostgresReliableReportingProductionService` returns
+the notification outbox and activity SQL it needs as `service.setup.migrations`, and `applyMigrations` bridges it into
+your runner.
 
 ## Which import?
 
@@ -81,18 +117,12 @@ only the ones whose feature you turn on.
 ```ts
 import { Pool } from 'pg';
 import { createReliableReportingService } from '@adcp/sdk/reporting/service';
-import {
-  PostgresReportingLedgerStore,
-  REPORTING_LEDGER_MIGRATION,
-  reportingLedgerMaintenance,
-} from '@adcp/reporting-storage';
+import { postgresStorage, reportingLedgerMaintenance } from '@adcp/reporting-storage';
 
+// After `npx adcp-reporting-storage migrate`:
 const pool = new Pool({ connectionString: process.env.REPORTING_LEDGER_URL });
-await pool.query(REPORTING_LEDGER_MIGRATION);
-
-const store = new PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });
 const reporting = createReliableReportingService({
-  store,
+  storage: postgresStorage({ pool, acknowledgeIsolatedDatabase: true }),
   // ...adapters, contact, retention commitments, resolvers
   maintenance: reportingLedgerMaintenance({ retention: { enabled: true } }),
 });

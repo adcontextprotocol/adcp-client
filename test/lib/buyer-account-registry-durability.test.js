@@ -38,14 +38,14 @@ test('two processes sharing CAS storage dispatch only once and reload results', 
   };
   const first = new BuyerAccountRegistry(() => 'principal:seller', provision, store);
   const second = new BuyerAccountRegistry(() => 'principal:seller', provision, store);
-  const pending = first.ensure(account, { idempotencyKey: 'caller-owned-key-0001' });
+  const pending = first.provision(account, { idempotencyKey: 'caller-owned-key-0001' });
   while (!release) await new Promise(resolve => setImmediate(resolve));
-  await assert.rejects(second.ensure(account, { idempotencyKey: 'caller-owned-key-0001' }), /claimed|in doubt/);
+  await assert.rejects(second.provision(account, { idempotencyKey: 'caller-owned-key-0001' }), /claimed|in doubt/);
   assert.equal(calls, 1);
   release();
   const settled = await pending;
   assert.equal(settled.account_id, 'seller-id');
-  assert.equal((await second.ensure(account)).account_id, 'seller-id');
+  assert.equal((await second.provision(account)).account_id, 'seller-id');
   assert.equal(calls, 1);
 });
 test('dispatch ledger is awaited after claim, before transport, and before outcome storage', async () => {
@@ -75,7 +75,7 @@ test('dispatch ledger is awaited after claim, before transport, and before outco
       },
     }
   );
-  await registry.ensure(account, { idempotencyKey: 'caller-owned-key-0002' });
+  await registry.provision(account, { idempotencyKey: 'caller-owned-key-0002' });
   assert.deepEqual(order, ['start', 'transport', 'result']);
 });
 test('crash uncertainty survives restart and caller-owned expired keys are never rotated', async () => {
@@ -88,15 +88,15 @@ test('crash uncertainty survives restart and caller-owned expired keys are never
     },
     store
   );
-  await assert.rejects(registry.ensure(account, { idempotencyKey: 'caller-owned-key-0002' }), /connection reset/);
+  await assert.rejects(registry.provision(account, { idempotencyKey: 'caller-owned-key-0002' }), /connection reset/);
   const restarted = new BuyerAccountRegistry(
     () => 'scope',
     async () => assert.fail('no automatic retry'),
     store
   );
-  await assert.rejects(restarted.ensure(account, { idempotencyKey: 'caller-owned-key-0003' }), /claimed|in doubt/);
+  await assert.rejects(restarted.provision(account, { idempotencyKey: 'caller-owned-key-0003' }), /claimed|in doubt/);
   await restarted.observeSync([account], response().data.accounts);
-  assert.equal((await restarted.ensure(account)).status, 'active');
+  assert.equal((await restarted.provision(account)).status, 'active');
   let calls = 0;
   const expired = new BuyerAccountRegistry(
     () => 'other',
@@ -111,7 +111,7 @@ test('crash uncertainty survives restart and caller-owned expired keys are never
       };
     }
   );
-  await assert.rejects(expired.ensure(account, { idempotencyKey: 'caller-expired-key-01' }), /expired/i);
+  await assert.rejects(expired.provision(account, { idempotencyKey: 'caller-expired-key-01' }), /expired/i);
   assert.equal(calls, 1);
 });
 test('stale row writes cannot undo a competing authoritative repair', async () => {
@@ -121,7 +121,7 @@ test('stale row writes cannot undo a competing authoritative repair', async () =
     async () => response(),
     store
   );
-  await registry.ensure(account);
+  await registry.provision(account);
   const entry = await registry.get(account);
   const [key] = [...store.rows].find(([, row]) => row.account.brand);
   assert.equal(await store.compareAndSet(key, entry.revision, { ...entry, status: 'suspended' }), true);
@@ -141,7 +141,7 @@ test('dispatch-hook failure releases its claim before transport', async () => {
       },
     }
   );
-  await assert.rejects(registry.ensure(account), /ledger unavailable/);
+  await assert.rejects(registry.provision(account), /ledger unavailable/);
   const [claim] = store.rows.values();
   assert.equal(claim.status, 'failed_provisioning');
   assert.equal(claim.dispatch, undefined);
@@ -158,7 +158,7 @@ test('submitted task identity is durable before the registry returns', async () 
     }),
     store
   );
-  await registry.ensure(account);
+  await registry.provision(account);
   const entry = await registry.get(account);
   assert.equal(entry.pendingTaskId, 'seller-task');
   assert.ok(entry.dispatch.idempotencyKey);
@@ -167,7 +167,7 @@ test('submitted task identity is durable before the registry returns', async () 
     async () => assert.fail('no second dispatch'),
     store
   );
-  await assert.rejects(restarted.ensure(account), /claimed|in doubt/);
+  await assert.rejects(restarted.provision(account), /claimed|in doubt/);
 });
 test('definitive initial rejection releases the claim; unknown failures retain it', async () => {
   for (const recovery of ['correctable', 'terminal', 'transient']) {
@@ -182,7 +182,7 @@ test('definitive initial rejection releases the claim; unknown failures retain i
       }),
       store
     );
-    await assert.rejects(registry.ensure(account), /rejected/);
+    await assert.rejects(registry.provision(account), /rejected/);
     assert.equal(
       (await registry.get(account)).status,
       recovery === 'transient' ? 'provisioning' : 'failed_provisioning'
@@ -196,7 +196,7 @@ test('caller keys are validated before any storage claim or dispatch', async () 
     async () => assert.fail('no dispatch'),
     store
   );
-  await assert.rejects(registry.ensure(account, { idempotencyKey: 'invalid key' }), /must match/);
+  await assert.rejects(registry.provision(account, { idempotencyKey: 'invalid key' }), /must match/);
   assert.equal(store.rows.size, 0);
 });
 test('late provisioning cannot overwrite a cross-process account repair', async () => {
@@ -210,7 +210,7 @@ test('late provisioning cannot overwrite a cross-process account repair', async 
       }),
     store
   );
-  const pending = first.ensure(account);
+  const pending = first.provision(account);
   while (!finish) await new Promise(resolve => setImmediate(resolve));
   const second = new BuyerAccountRegistry(
     () => 'scope',
@@ -240,7 +240,7 @@ test('ambiguous submitted completion keeps the durable claim and seller task ID'
     }),
     store
   );
-  await assert.rejects(registry.ensure(account), /connection reset/);
+  await assert.rejects(registry.provision(account), /connection reset/);
   const entry = await registry.get(account);
   assert.equal(entry.status, 'provisioning');
   assert.equal(entry.pendingTaskId, 'seller-task');
@@ -264,7 +264,7 @@ test('an older completion cannot clear a newer dispatch claim', async () => {
     }),
     store
   );
-  const old = first.ensure(account, { idempotencyKey: 'older-dispatch-key-01' });
+  const old = first.provision(account, { idempotencyKey: 'older-dispatch-key-01' });
   while (!complete) await new Promise(resolve => setImmediate(resolve));
   // The caller has explicitly settled the old dispatch and authorizes a new one.
   const [key, entry] = [...store.rows][0];
@@ -277,7 +277,7 @@ test('an older completion cannot clear a newer dispatch claim', async () => {
       }),
     store
   );
-  const newer = second.ensure(account, { idempotencyKey: 'newer-dispatch-key-01' });
+  const newer = second.provision(account, { idempotencyKey: 'newer-dispatch-key-01' });
   while (!secondComplete) await new Promise(resolve => setImmediate(resolve));
   complete({ success: true, status: 'completed', metadata: {}, data: { accounts: [] } });
   await assert.rejects(old, /did not establish/);
@@ -336,7 +336,7 @@ test('built-in registry persists dispatch and result hooks at the official MCP b
       },
     },
   });
-  const settled = await buyer.accounts.ensure(account, {
+  const settled = await buyer.accounts.provision(account, {
     billing: 'operator',
     idempotencyKey: 'persisted-mcp-dispatch-key',
   });
@@ -368,13 +368,13 @@ test('synthetic MCP errors retain immediate and submitted dispatch claims', asyn
       store
     );
     await assert.rejects(
-      registry.ensure(account, { idempotencyKey: 'synthetic-error-dispatch-key' }),
+      registry.provision(account, { idempotencyKey: 'synthetic-error-dispatch-key' }),
       /handler crashed/
     );
     const entry = await registry.get(account);
     assert.equal(entry.status, 'provisioning');
     assert.equal(entry.dispatch.idempotencyKey, 'synthetic-error-dispatch-key');
-    await assert.rejects(registry.ensure(account), /claimed|in doubt/);
+    await assert.rejects(registry.provision(account), /claimed|in doubt/);
   }
 });
 
@@ -405,10 +405,10 @@ test('expired replay keys preserve immediate and submitted claims until caller r
           : failure,
       store
     );
-    await assert.rejects(registry.ensure(account, { idempotencyKey: 'expired-caller-owned-key' }), /expired/);
+    await assert.rejects(registry.provision(account, { idempotencyKey: 'expired-caller-owned-key' }), /expired/);
     const entry = await registry.get(account);
     assert.equal(entry.status, 'provisioning');
     assert.equal(entry.dispatch.idempotencyKey, 'expired-caller-owned-key');
-    await assert.rejects(registry.ensure(account), /claimed|in doubt/);
+    await assert.rejects(registry.provision(account), /claimed|in doubt/);
   }
 });

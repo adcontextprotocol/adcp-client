@@ -4,6 +4,7 @@ import {
   assertReportingObjectWriteScope,
   reportingObjectWritePlanFingerprint,
   reportingObjectWriteName,
+  isReportingObjectWriteName,
   reportingObjectWriteScopeKey,
   type ReportingObjectWriteScopeV1,
   type ReportingObjectWritePlanV1,
@@ -28,7 +29,8 @@ export interface GcsReportingObjectFenceV1 {
     scope: ReportingObjectWriteScopeV1,
     deliveryId: string,
     bodies: readonly Uint8Array[],
-    context?: { signal?: AbortSignal }
+    /** `path` places the objects under a delivery path inside the scope prefix; see `reportingObjectWriteName`. */
+    context?: { signal?: AbortSignal; path?: string }
   ): Promise<ReportingObjectWritePlanV1>;
   write(
     plan: ReportingObjectWritePlanV1,
@@ -120,7 +122,8 @@ export function createGcsReportingObjectFenceV1(options: {
     scope: ReportingObjectWriteScopeV1,
     deliveryId: string,
     bodies: readonly Uint8Array[],
-    signal: AbortSignal
+    signal: AbortSignal,
+    path?: string
   ): Promise<ReportingObjectWritePlanV1> {
     assertScope(scope);
     if (
@@ -146,7 +149,13 @@ export function createGcsReportingObjectFenceV1(options: {
       plan_id: planId,
       objects: bodies.map((b, i) => ({
         bucket: bucketName,
-        object_name: reportingObjectWriteName(scopeCopy, provider, planId, i),
+        object_name: (() => {
+          try {
+            return reportingObjectWriteName(scopeCopy, provider, planId, i, path);
+          } catch {
+            throw new ReportingGcsFenceError('INVALID_INPUT');
+          }
+        })(),
         sha256: hash(b),
         size_bytes: b.byteLength,
       })),
@@ -241,7 +250,7 @@ export function createGcsReportingObjectFenceV1(options: {
       active(signal);
       if (
         object.bucket !== binding.bucket ||
-        object.object_name !== reportingObjectWriteName(scope, binding, object.plan_id, object.object_index)
+        !isReportingObjectWriteName(scope, binding, object.plan_id, object.object_index, object.object_name)
       )
         throw new ReportingGcsFenceError('STATE_UNAVAILABLE');
       const file = bucket.file(object.object_name);
@@ -309,8 +318,8 @@ export function createGcsReportingObjectFenceV1(options: {
       scope: ReportingObjectWriteScopeV1,
       deliveryId: string,
       bodies: readonly Uint8Array[],
-      context?: { signal?: AbortSignal }
-    ) => bounded(signal => register(scope, deliveryId, bodies, signal), context?.signal),
+      context?: { signal?: AbortSignal; path?: string }
+    ) => bounded(signal => register(scope, deliveryId, bodies, signal, context?.path), context?.signal),
     write: async (
       plan: ReportingObjectWritePlanV1,
       index: number,
