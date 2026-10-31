@@ -2948,6 +2948,17 @@ export function projectSyncCreativesForDelivery<T>(
     return request as ProjectedSyncCreativeRequest<T, 'canonical'>;
   }
   const assignments = Array.isArray(requestRecord.assignments) ? requestRecord.assignments : [];
+  // Without request assignments, a fully identified package context is the
+  // delivery scope. Keep mixed/unkeyed context on the combined path so none
+  // of its constraints are dropped when grouping selectors by package ID.
+  const implicitPackageIds =
+    assignments.length === 0 && selectorContainers.every(container => typeof container.package_id === 'string')
+      ? new Set(
+          selectorContainers.flatMap(container =>
+            typeof container.package_id === 'string' ? [container.package_id] : []
+          )
+        )
+      : undefined;
   let changed = false;
   const creatives = requestRecord.creatives.map(creativeValue => {
     const creative = record(creativeValue);
@@ -2968,10 +2979,11 @@ export function projectSyncCreativesForDelivery<T>(
     // Legacy wire only: one format_id must satisfy every assigned package. The
     // canonical wire checks each package's format_kind + params on its own.
     // `unknown` peers receive the legacy projection, so they reconcile too.
-    if (wireMode !== 'canonical' && assignedPackageIds.size > 1) {
+    const reconciliationPackageIds = assignedPackageIds.size > 0 ? assignedPackageIds : implicitPackageIds;
+    if (wireMode !== 'canonical' && reconciliationPackageIds && reconciliationPackageIds.size > 1) {
       const projected = projectAssignedCreative(
         creative,
-        assignedPackageIds,
+        reconciliationPackageIds,
         relevant,
         legacyFormatConverter,
         canonicalFormatLegacyResolver,
