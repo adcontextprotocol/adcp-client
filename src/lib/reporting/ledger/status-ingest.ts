@@ -10,11 +10,19 @@ import { ADCP_MAJOR_VERSION, ADCP_VERSION, toReleasePrecisionVersion } from '../
 import { isWellFormedUnicodeString } from '../../utils/well-formed-unicode';
 import { jsonPointerToJsonPathLite } from '../../utils/pointer-utils';
 import {
+  isReportingLedgerOwedSetV1,
   reportingLedgerConfigurationMatchesScope,
   reportingLedgerEffectivePeriod,
+  reportingLedgerOwedSetOrdinalV1,
+  reportingLedgerSubscriptionVisibleV1,
   reportingLedgerSuccessor,
 } from './coverage';
-import { acquireAccountReadSlot, ReportingReadCapacityError } from './handler';
+import {
+  acquireAccountReadSlot,
+  ReportingReadCapacityError,
+  resolveReportingSubscriptionPrincipalV1,
+  type ReportingSubscriptionPrincipalResolverV1,
+} from './handler';
 import { isReportingCalendarDay, reportingPeriodSchedule } from './schedule';
 import {
   canonicalReportingInstant,
@@ -36,6 +44,7 @@ import {
   type ReportingLedgerConfigurationV1,
   type ReportingLedgerConsumerStatementV1,
   type ReportingLedgerObligationV1,
+  type ReportingLedgerSubscriptionPrincipalV1,
 } from './types';
 
 const statusId = z
@@ -161,6 +170,12 @@ export interface SyncReportingStatusHandlerOptionsV1<TContext = unknown> {
   resolveConsumerId(context: TContext): string | Promise<string>;
   now?: () => Date;
   clockSkewMilliseconds?: number;
+  /**
+   * The authenticated principal whose subscription generations this caller may report on
+   * (experimental, AdCP 3.3). Without it, statuses naming a subscription generation are
+   * ineligible, exactly like an unknown generation.
+   */
+  resolveSubscriptionPrincipal?: ReportingSubscriptionPrincipalResolverV1<TContext>;
 }
 
 type ReportingStatusValidationReason =
@@ -254,8 +269,14 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
       ) {
         throw new RangeError('clockSkewMilliseconds must be a safe integer between 0 and 3600000');
       }
+      const subscriptionPrincipal = await resolveReportingSubscriptionPrincipalV1(
+        options.resolveSubscriptionPrincipal,
+        context
+      );
+      // Another principal's subscription generations are invisible here, exactly as in reads.
       const configurations = (await store.listConfigurations(accountId)).filter(
-        value => value?.account?.account_id === accountId
+        value =>
+          value?.account?.account_id === accountId && reportingLedgerSubscriptionVisibleV1(value, subscriptionPrincipal)
       );
       try {
         const entries: ReportingConsumerStatusBatchEntryV1[] = [];
@@ -284,7 +305,16 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
           let validationError: string | undefined;
           let validationField: string | undefined;
           try {
-            await validateStatus(store, configurations, accountId, consumerId, status, now, clockSkewMilliseconds);
+            await validateStatus(
+              store,
+              configurations,
+              accountId,
+              consumerId,
+              status,
+              now,
+              clockSkewMilliseconds,
+              subscriptionPrincipal
+            );
           } catch (error) {
             if (!(error instanceof ReportingStatusValidationError)) throw error;
             const diagnostic = reportingStatusValidationDiagnostic(error.reason, index);
@@ -330,25 +360,31 @@ async function validateStatus(
   consumerId: string,
   status: ReportingConsumerStatusV1,
   now: Date,
-  clockSkewMilliseconds = 5 * 60_000
+  clockSkewMilliseconds = 5 * 60_000,
+  subscriptionPrincipal?: ReportingLedgerSubscriptionPrincipalV1
 ): Promise<void> {
   if (compareReportingInstantToOffset(status.status_as_of, now.toISOString(), clockSkewMilliseconds) > 0) {
     throw new ReportingStatusValidationError('future status');
   }
-  const configuration = configurations.find(
+  // One account generation per (id, version), but a subscription version may own one
+  // generation per resolved offering, so several can share the chain identity.
+  const candidates = configurations.filter(
     value =>
       value.delivery_config_id === status.delivery_config_id &&
       value.delivery_config_version === status.delivery_config_version &&
-      value.report_definition_id === status.report_definition_id
+      value.report_definition_id === status.report_definition_id &&
+      value.account.account_id === accountId
   );
-  if (!configuration || configuration.account.account_id !== accountId) {
-    throw new ReportingStatusValidationError('ineligible period');
-  }
+  if (candidates.length === 0) throw new ReportingStatusValidationError('ineligible period');
+  let configuration: ReportingLedgerConfigurationV1 | undefined = candidates[0];
   let obligation: ReportingLedgerObligationV1 | null = null;
   if (status.reporting_obligation_id) {
     obligation = await store.getObligation(status.reporting_obligation_id, accountId);
+    configuration = candidates.find(value => value.configurationId === obligation?.configurationId) ?? configuration;
     if (
       !obligation ||
+      !configuration ||
+      !reportingLedgerSubscriptionVisibleV1(obligation, subscriptionPrincipal) ||
       obligation.configurationId !== configuration.configurationId ||
       obligation.account.account_id !== accountId ||
       obligation.delivery_config_id !== status.delivery_config_id ||
@@ -359,8 +395,19 @@ async function validateStatus(
       obligation.period.sourceTimezone !== status.period.source_timezone
     )
       throw new ReportingStatusValidationError('obligation mismatch');
-  } else if (!isExactPeriod(configuration, configurations, status.period)) {
-    throw new ReportingStatusValidationError('ineligible period');
+  } else {
+    configuration = undefined;
+    for (const candidate of candidates) {
+      if (
+        isReportingLedgerOwedSetV1(candidate)
+          ? await isOwedPeriod(store, candidate, accountId, status.period)
+          : isExactPeriod(candidate, configurations, status.period)
+      ) {
+        configuration = candidate;
+        break;
+      }
+    }
+    if (!configuration) throw new ReportingStatusValidationError('ineligible period');
   }
   // Consumer absence is legal only at or after the protocol expected_at,
   // which is period.end + delivery_sla for every finality.
@@ -450,6 +497,8 @@ async function validateStatus(
     if (
       page.snapshot.query.account_id !== accountId ||
       page.snapshot.query.consumer_id !== consumerId ||
+      page.snapshot.query.subscription_principal?.tenantId !== subscriptionPrincipal?.tenantId ||
+      page.snapshot.query.subscription_principal?.principalId !== subscriptionPrincipal?.principalId ||
       page.snapshot.ledgerAsOf !== status.seller_ledger_as_of ||
       !configurationInScope ||
       !periodInScope ||
@@ -459,6 +508,37 @@ async function validateStatus(
       throw new ReportingStatusValidationError('snapshot provenance mismatch');
     }
   }
+}
+
+/**
+ * An owed-set generation owns only the obligations written into it, so a period is eligible
+ * exactly when it names an existing owed obligation, never a slot of a grid.
+ */
+async function isOwedPeriod(
+  store: ReportingConsumerStatusLedgerStore,
+  configuration: ReportingLedgerConfigurationV1,
+  accountId: string,
+  period: ReportingConsumerStatusV1['period']
+): Promise<boolean> {
+  if (period.source_timezone !== configuration.sourceTimezone) return false;
+  const periodOrdinal = reportingLedgerOwedSetOrdinalV1(period.start);
+  const lookup = { account_id: accountId, configurationId: configuration.configurationId, periodOrdinal };
+  const listObligations = (store as Partial<Pick<ReportingLedgerStore, 'listObligations'>>).listObligations;
+  const obligation = store.findObligationByOrdinal
+    ? await store.findObligationByOrdinal(lookup)
+    : listObligations
+      ? ((await listObligations.call(store, accountId)).find(
+          value => value.configurationId === configuration.configurationId && value.periodOrdinal === periodOrdinal
+        ) ?? null)
+      : null;
+  return (
+    obligation !== null &&
+    obligation.account.account_id === accountId &&
+    obligation.configurationId === configuration.configurationId &&
+    compareReportingInstants(obligation.period.start, period.start) === 0 &&
+    compareReportingInstants(obligation.period.end, period.end) === 0 &&
+    obligation.period.sourceTimezone === period.source_timezone
+  );
 }
 
 function isExactPeriod(
