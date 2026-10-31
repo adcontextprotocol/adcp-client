@@ -97,13 +97,68 @@ export function reportingObjectWriteScopeKey(scope: ReportingObjectWriteScopeV1)
 /**
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
+/**
+ * Object name of one write. `adcp-reporting/{namespace_key}/{scope_key}/` is the collision-free,
+ * account- and generation-scoped prefix every reader and cleanup is fenced to, and
+ * `{plan_id}/{index}` keeps each logical delivery distinct across retries. A subscription
+ * delivery's expanded `path_template` (`delivery_path`) goes between them:
+ * `adcp-reporting/{namespace_key}/{scope_key}/{delivery_path}/{plan_id}/{index}`, so the template
+ * names where the data sits inside the generation's prefix without ever escaping it or making
+ * two deliveries collide.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
 export function reportingObjectWriteName(
   scope: ReportingObjectWriteScopeV1,
   binding: ReportingObjectWriteBindingV1,
   planId: string,
-  index: number
+  index: number,
+  path?: string
 ): string {
-  return `adcp-reporting/${binding.namespace_key}/${reportingObjectWriteScopeKey(scope)}/${planId}/${index}`;
+  const prefix = `adcp-reporting/${binding.namespace_key}/${reportingObjectWriteScopeKey(scope)}/`;
+  if (path === undefined) return `${prefix}${planId}/${index}`;
+  assertReportingObjectWritePath(path);
+  return `${prefix}${path}/${planId}/${index}`;
+}
+
+/**
+ * Whether `name` is the object name of write `index` of plan `planId` in this scope, with or
+ * without a delivery path. Cleanup and readers use it instead of recomputing a name.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export function isReportingObjectWriteName(
+  scope: ReportingObjectWriteScopeV1,
+  binding: ReportingObjectWriteBindingV1,
+  planId: string,
+  index: number,
+  name: string
+): boolean {
+  if (typeof name !== 'string') return false;
+  if (name === reportingObjectWriteName(scope, binding, planId, index)) return true;
+  const prefix = `adcp-reporting/${binding.namespace_key}/${reportingObjectWriteScopeKey(scope)}/`;
+  const suffix = `/${planId}/${index}`;
+  if (!name.startsWith(prefix) || !name.endsWith(suffix) || name.length <= prefix.length + suffix.length) return false;
+  try {
+    assertReportingObjectWritePath(name.slice(prefix.length, name.length - suffix.length));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A relative path of non-empty segments, none `.` or `..`, from the expanded-template alphabet. */
+function assertReportingObjectWritePath(path: string): void {
+  if (
+    typeof path !== 'string' ||
+    path.length < 1 ||
+    path.length > 1024 ||
+    path
+      .split('/')
+      .some(segment => !/^[A-Za-z0-9\-._~!$&'()*+,;=:@%]+$/.test(segment) || segment === '.' || segment === '..')
+  ) {
+    throw new TypeError('Reporting object-write path must be relative segments without . or ..');
+  }
 }
 
 /**
@@ -155,6 +210,7 @@ export interface ReportingObjectWriteStoreV1 {
  * Apply after REPORTING_MANAGED_DELIVERY_MIGRATION. Additive and independently opt-in.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ * @deprecated Applied by the versioned migrations: run `npx adcp-reporting-storage migrate` (or `migrate(pool)`), which records each version and lets `postgresStorage().checkSchema()` refuse a schema that is behind. Kept for one beta.
  */
 export const REPORTING_OBJECT_WRITE_MIGRATION = `
 CREATE TABLE IF NOT EXISTS adcp_reporting_object_write_bindings (
@@ -286,6 +342,7 @@ export interface ReportingObjectWriteAuthorityStoreV1 extends ReportingObjectWri
  * PostgreSQL 13+; apply after REPORTING_OBJECT_WRITE_MIGRATION. Identity survives replica/worker restart.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ * @deprecated Applied by the versioned migrations: run `npx adcp-reporting-storage migrate` (or `migrate(pool)`), which records each version and lets `postgresStorage().checkSchema()` refuse a schema that is behind. Kept for one beta.
  */
 export const REPORTING_OBJECT_WRITE_AUTHORITY_MIGRATION = `
 CREATE TABLE IF NOT EXISTS adcp_reporting_object_write_authority (

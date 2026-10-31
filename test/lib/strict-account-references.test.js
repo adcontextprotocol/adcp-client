@@ -8,6 +8,7 @@ const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server.j
 const { createAdcpServerFromPlatform } = require('../../dist/lib/server/decisioning/runtime/from-platform.js');
 const { InMemoryStateStore } = require('../../dist/lib/server/state-store.js');
 const { _resetAccountReferenceWarnings } = require('../../dist/lib/server/account-reference-warnings.js');
+const { ADCP_VERSION, toReleasePrecisionVersion } = require('../../dist/lib/version.js');
 
 const a = { brand: { domain: 'a.example' }, operator: 'agency.example' };
 const b = { brand: { domain: 'b.example' }, operator: 'agency.example' };
@@ -464,9 +465,13 @@ test('implicit identity mismatch on comply_test_controller: default warns and di
 
 test('3.3 implicit identity mismatches fail closed while an explicit 3.2 route retains compatibility', async t => {
   const w = captureWarnings(t);
-  const server = implicitServer(w.logger, { opts: { adcpVersion: '3.3.0-beta.2' } });
+  const server = implicitServer(w.logger, { opts: { adcpVersion: ADCP_VERSION } });
   try {
-    const refused = await call(server, 'get_products', { account: a, brief: 'catalog', adcp_version: '3.3-beta.2' });
+    const refused = await call(server, 'get_products', {
+      account: a,
+      brief: 'catalog',
+      adcp_version: toReleasePrecisionVersion(ADCP_VERSION),
+    });
     assert.equal(refused.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
     assertNoAccountIdLeak(refused);
     const legacy = await call(server, 'get_products', { account: a, brief: 'catalog', adcp_version: '3.2' });

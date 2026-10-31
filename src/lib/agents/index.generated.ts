@@ -680,6 +680,8 @@ export class Agent {
 
   /**
    * Official AdCP sync_principal tool schema
+   *
+   * Replaces each submitted section. To add a reporting subscription, use `client.reporting.subscribe`. This raw call is not guarded: omitting an active subscription deactivates it, and omitting a destination revokes it.
    */
   async syncPrincipal(params: MutatingRequestInput<SyncPrincipalRequest>): Promise<SyncPrincipalResponse> {
     return this.callTool<SyncPrincipalResponse>('sync_principal', params);
@@ -1159,6 +1161,8 @@ export class AgentCollection {
 
   /**
    * Official AdCP sync_principal tool schema (across multiple agents)
+   *
+   * Replaces each submitted section. To add a reporting subscription, use `client.reporting.subscribe`. This raw call is not guarded: omitting an active subscription deactivates it, and omitting a destination revokes it.
    */
   async syncPrincipal(params: MutatingRequestInput<SyncPrincipalRequest>): Promise<SyncPrincipalResponse[]> {
     return this.callToolOnAll<SyncPrincipalResponse>('sync_principal', params);

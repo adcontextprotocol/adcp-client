@@ -8,6 +8,9 @@ import type {
   ReportingRevision,
 } from '../../types';
 import type { AdcpToolMap, HandlerContext } from '../../server/create-adcp-server';
+import type { PrincipalRef } from '../../server/principal/types';
+
+export type { PrincipalRef };
 import type { ErrorRecovery } from '../../types/error-codes';
 import type { ReportingScheduleAlignment } from '../../types/core.generated';
 import type {
@@ -140,6 +143,107 @@ export interface ReportingLedgerConfigurationV1 {
   historyStartOrdinal?: number;
   supersededAt?: string;
   semanticFingerprint: string;
+  /**
+   * Present only on a generation materialized from a principal-level reporting subscription
+   * (experimental, AdCP 3.3). Immutable and part of the semantic fingerprint. See
+   * {@link ReportingLedgerSubscriptionV1}.
+   */
+  subscription?: ReportingLedgerSubscriptionV1;
+  /**
+   * Mutable owed-set progress of a subscription generation. Never part of the semantic
+   * fingerprint, the same way `historyStart` is not. See {@link ReportingLedgerOwedSetV1}.
+   */
+  owedSet?: ReportingLedgerOwedSetV1;
+}
+
+/**
+ * Owner and identity of a ledger generation materialized from a principal-level reporting
+ * subscription (experimental `media_buy.reporting_subscriptions`, AdCP 3.3).
+ *
+ * One generation exists per (account, owning principal, `subscription_id`,
+ * `subscription_version`, resolved `offering_id`). Its `delivery_config_id` is the
+ * `subscription_id` and its `delivery_config_version` is the `subscription_version`, as
+ * `get-reporting-status-response.json` `subscription_coverage` requires. Subscription ids are
+ * unique per principal, not per account, so the owner is part of the identity: two principals
+ * may both own `analytics-daily` on one account.
+ *
+ * `ownership: 'owed_set'` means the generation owns exactly the obligations written into it
+ * (the seller's frozen owed set), never a contiguous grid of periods. Its obligations carry
+ * their own period, frozen `media_buy_ids` and constituents, and `periodOrdinal` is
+ * `floor(period_start_ms / 1000)`. Periods of one (version, offering) never overlap, even
+ * across a timezone cutover, because the cutover rule in `core/reporting-subscription.json`
+ * hands periods from the outgoing calendar to the incoming one at the end of the last
+ * outgoing period, so the start second is a unique key.
+ *
+ * Only the owner can see such a generation and its obligations: a snapshot or status read
+ * names the caller's principal in `subscription_principal`, and stores return account
+ * generations plus that principal's subscription generations only.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export interface ReportingLedgerSubscriptionV1 {
+  tenantId: string;
+  principalId: string;
+  /** Equals the generation's `delivery_config_id`. */
+  subscriptionId: string;
+  /** Equals the generation's `offeringId`. */
+  offeringId: string;
+  ownership: 'owed_set';
+}
+
+/**
+ * Mutable completeness horizon of an owed-set generation.
+ *
+ * The planner advances it only after every owed obligation ending at or before `through` is
+ * durable, so a snapshot is complete for the generation up to `through` by construction and a
+ * missing period is simply not owed. `from`, `until` and `mediaBuyIds` summarize the written
+ * obligations (earliest start, latest end, union of frozen `media_buy_ids`) for scope matching;
+ * they only ever widen.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export interface ReportingLedgerOwedSetV1 {
+  /** Every owed obligation that ends at or before this instant is written. Absent until the first advance. */
+  through?: string;
+  from?: string;
+  until?: string;
+  mediaBuyIds: string[];
+}
+
+/**
+ * One owed-set progress update for {@link ReportingLedgerStore.recordOwedSetProgress}. Stores merge
+ * it monotonically: `through` and `until` only move later, `from` only earlier, and `mediaBuyIds`
+ * is a union.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export interface ReportingLedgerOwedSetProgressV1 {
+  configurationId: string;
+  account_id: string;
+  through?: string;
+  from?: string;
+  until?: string;
+  mediaBuyIds?: string[];
+}
+
+/**
+ * @deprecated Use {@link PrincipalRef}, the same shape: the authenticated principal a
+ * subscription-aware read is scoped to, never derived from request content.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export type ReportingLedgerSubscriptionPrincipalV1 = PrincipalRef;
+
+/**
+ * Who may file a receipt or status against an obligation (experimental, AdCP 3.3): the
+ * authenticated principal. Subscription obligations accept only their owner; account obligations
+ * accept any consumer of the account, as before. It applies on top of the host's ordinary account
+ * resolution and `allowed_tasks` checks, never instead of them.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export interface ReportingSubscriptionReceiptAdmissionV1 {
+  principal: PrincipalRef;
 }
 
 export interface ReportingLedgerObligationV1 {
@@ -179,6 +283,13 @@ export interface ReportingLedgerObligationV1 {
   state: 'pending' | 'terminal';
   semanticFingerprint: string;
   createdAt: string;
+  /** Copied from a subscription generation, so ownership is checkable from the obligation alone. */
+  subscription?: ReportingLedgerSubscriptionV1;
+  /**
+   * A billing cutover stub (adcp#8617): the stretch from a cutover's E to the incoming schedule's
+   * first boundary, owed as one period. Served as the wire obligation's `stub: true`.
+   */
+  stub?: true;
 }
 
 export interface ReportingRevisionBindingV1 {
@@ -562,6 +673,12 @@ export interface ReportingLedgerNotificationActivityPortV1<TTransaction = unknow
 export interface ReportingLedgerSubscriberV1 {
   subscriberId: string;
   account_id: string;
+  /**
+   * The principal this subscriber notifies (experimental, AdCP 3.3). A transition of a
+   * subscription obligation reaches only subscribers of its owning principal; account obligations
+   * reach every subscriber of the account, as before.
+   */
+  principal?: ReportingLedgerSubscriptionPrincipalV1;
   notify(transition: Readonly<ReportingLedgerStatusTransitionV1>): void | Promise<void>;
 }
 
@@ -569,6 +686,13 @@ export interface ReportingLedgerSnapshotQueryV1 {
   account_id: string;
   /** Authenticated consumer scope used only for caller-attributed status readback. */
   consumer_id?: string;
+  /**
+   * Authenticated principal whose subscription generations this read may see. Stores return
+   * account generations (no `subscription`) plus subscription generations and obligations this
+   * principal owns, and nothing of another principal's. Absent means no subscription generation
+   * is visible.
+   */
+  subscription_principal?: ReportingLedgerSubscriptionPrincipalV1;
   view: 'summary' | 'periods' | 'revision';
   media_buy_ids?: string[];
   delivery_config_ids?: string[];
@@ -661,6 +785,12 @@ export interface ReportingManagedDeliveryBindingV1 {
   verification_profile: NonNullable<ReportingMaterialization['verification']>['verification_profile'];
   reconciliation_mode: 'delivery_only' | 'consumer_receipt';
   resource_retention_days: number;
+  /**
+   * A subscription's `destination.path_template` (experimental, AdCP 3.3), frozen with the
+   * binding. Each delivery expands it per obligation into a relative path under the destination.
+   * Absent on account bindings, whose fingerprint it therefore never changes.
+   */
+  path_template?: string;
   created_at: string;
   semantic_fingerprint: string;
 }
@@ -838,6 +968,38 @@ export class ReportingLedgerContinuityError extends Error {
   }
 }
 
+/**
+ * `installConfiguration` was asked to install an existing `(delivery_config_id,
+ * delivery_config_version)` generation with different semantic content. A generation is
+ * immutable: install a higher `delivery_config_version` instead.
+ *
+ * The message is unchanged from earlier releases, so hosts that matched on it keep working;
+ * match on `code` (or `instanceof`, or `name` across SDK copies) instead.
+ */
+export class ReportingConfigurationImmutableError extends Error {
+  readonly code = 'REPORTING_CONFIGURATION_IMMUTABLE' as const;
+  readonly accountId: string;
+  readonly deliveryConfigId: string;
+  readonly deliveryConfigVersion: number;
+  constructor(details: { accountId: string; deliveryConfigId: string; deliveryConfigVersion: number }) {
+    super('Reporting configuration generation is immutable');
+    this.name = 'ReportingConfigurationImmutableError';
+    this.accountId = details.accountId;
+    this.deliveryConfigId = details.deliveryConfigId;
+    this.deliveryConfigVersion = details.deliveryConfigVersion;
+  }
+}
+
+/** Whether an error is a {@link ReportingConfigurationImmutableError}, including one from another SDK copy. */
+export function isReportingConfigurationImmutableError(error: unknown): error is ReportingConfigurationImmutableError {
+  return (
+    error instanceof ReportingConfigurationImmutableError ||
+    (error instanceof Error &&
+      error.name === 'ReportingConfigurationImmutableError' &&
+      (error as { code?: unknown }).code === 'REPORTING_CONFIGURATION_IMMUTABLE')
+  );
+}
+
 export class ReportingLedgerSnapshotUnavailableError extends Error {
   constructor() {
     super('Reporting ledger snapshot is unavailable');
@@ -946,10 +1108,28 @@ export interface ReportingLedgerStore {
     historyStart: string;
     historyStartOrdinal: number;
   }): Promise<ReportingLedgerConfigurationV1>;
+  /**
+   * Merge owed-set progress into a subscription generation's mutable `owedSet`, under the same
+   * account fence as generation writes, and return the stored generation. Refuse an unknown
+   * configuration, another account's, and a generation without `subscription`. Never changes the
+   * fingerprint or any immutable field.
+   *
+   * Optional: a store that implements it also accepts subscription generations (keyed by
+   * account, `delivery_config_id`, `delivery_config_version` and
+   * {@link reportingLedgerSubscriptionKeyV1}) and honors `subscription_principal` on every
+   * snapshot. The producer refuses to plan subscription obligations into a store without it.
+   */
+  recordOwedSetProgress?(input: ReportingLedgerOwedSetProgressV1): Promise<ReportingLedgerConfigurationV1>;
   putObligation(
     obligation: ReportingLedgerObligationV1
   ): Promise<{ inserted: boolean; value: ReportingLedgerObligationV1 }>;
   getObligation(reporting_obligation_id: string, account_id?: string): Promise<ReportingLedgerObligationV1 | null>;
+  /** Optional point lookup by `(configurationId, periodOrdinal)`, scoped to the account. */
+  findObligationByOrdinal?(input: {
+    account_id: string;
+    configurationId: string;
+    periodOrdinal: number;
+  }): Promise<ReportingLedgerObligationV1 | null>;
   listObligations(account_id?: string): Promise<ReportingLedgerObligationV1[]>;
   /**
    * Optional: periods whose ledger records were retired by retention. The
@@ -1147,6 +1327,17 @@ export interface ReportingLedgerStore {
 export interface ReportingConsumerStatusLedgerStore {
   listConfigurations(account_id: string): Promise<ReportingLedgerConfigurationV1[]>;
   getObligation(reporting_obligation_id: string, account_id: string): Promise<ReportingLedgerObligationV1 | null>;
+  /**
+   * Point lookup of an obligation by `(configurationId, periodOrdinal)`. A status without
+   * `reporting_obligation_id` against an owed-set (subscription) generation is accepted only when
+   * it names an existing owed obligation, never a bare grid slot; without this (or
+   * `listObligations`) such a status is rejected.
+   */
+  findObligationByOrdinal?(input: {
+    account_id: string;
+    configurationId: string;
+    periodOrdinal: number;
+  }): Promise<ReportingLedgerObligationV1 | null>;
   /** Loads revision identity and binding for ingest validation without materializing rows. */
   getRevisionMetadata(
     reporting_revision_id: string,
@@ -1189,6 +1380,74 @@ export interface ReportingProducerContactV1 {
   url?: string;
 }
 
+/**
+ * One subscription generation to install: everything a configuration carries except the
+ * identity, install metadata, mutable owed-set progress and the per-obligation denominator.
+ * `subscription` is required, and `delivery_config_id`/`offeringId` must equal its
+ * `subscriptionId`/`offeringId`.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export type ReportingSubscriptionConfigurationInputV1 = Omit<
+  ReportingLedgerConfigurationV1,
+  | 'configurationId'
+  | 'installedAt'
+  | 'semanticFingerprint'
+  | 'calendarRules'
+  | 'historyStart'
+  | 'historyStartOrdinal'
+  | 'owedSet'
+  | 'constituents'
+  | 'mediaBuyIds'
+  | 'subscription'
+> & { subscription: ReportingLedgerSubscriptionV1 };
+
+/**
+ * One owed obligation of a subscription, as the engine froze it.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export interface ReportingSubscriptionLedgerObligationInputV1 {
+  /** The `subscription_version` that owes it. */
+  delivery_config_version: number;
+  offeringId: string;
+  period: { start: string; end: string };
+  /** Frozen at the period end (`scope_resolved_at`). Must equal the constituents' media buys. */
+  mediaBuyIds: string[];
+  constituents: ReportingSourceSliceRequestV1['coverage']['constituents'];
+  /** A billing cutover stub (adcp#8617): `period` is [E, first incoming boundary). */
+  stub?: true;
+}
+
+/**
+ * Input of {@link ReportingProducerV1.planSubscriptionObligations}: one subscription of one
+ * principal on one account.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export interface ReportingSubscriptionLedgerPlanV1 {
+  account_id: string;
+  /** The principal that owns the subscription. */
+  principal: ReportingLedgerSubscriptionPrincipalV1;
+  subscriptionId: string;
+  /** One per (version, offering) the obligations name, each naming this account, owner and subscription. */
+  configurations: ReportingSubscriptionConfigurationInputV1[];
+  obligations: ReportingSubscriptionLedgerObligationInputV1[];
+  /**
+   * The engine's frozen horizon: every owed period of this subscription on the account that ends
+   * at or before it is in `obligations` or already written. Advanced on every generation the
+   * subscription owns on the account, after the obligations are durable.
+   */
+  owedThrough: string;
+  now?: string;
+  /**
+   * Called for each generation about to receive its first obligations, after it is installed and
+   * before any obligation is written: a managed binding must exist before the first obligation.
+   * A rejection writes nothing for the plan, and the hook runs again on the next plan.
+   */
+  bindGeneration?(configuration: ReportingLedgerConfigurationV1): Promise<void>;
+}
+
 export interface ReportingProducerV1 {
   installConfiguration(
     input: Omit<
@@ -1199,6 +1458,8 @@ export interface ReportingProducerV1 {
       | 'calendarRules'
       | 'historyStart'
       | 'historyStartOrdinal'
+      | 'subscription'
+      | 'owedSet'
     >,
     options?: { historyStart?: string }
   ): Promise<ReportingLedgerConfigurationV1>;
@@ -1211,6 +1472,19 @@ export interface ReportingProducerV1 {
     now?: string,
     options?: { account_id?: string; maxObligations?: number; maxHistoryObligationsPerSource?: number }
   ): Promise<ReportingLedgerObligationV1[]>;
+  /**
+   * Write one subscription's frozen owed set into the ledger (experimental, AdCP 3.3).
+   *
+   * Installs each (version, offering) generation once, idempotently and immutably (a changed
+   * input for an existing generation throws `ReportingConfigurationImmutableError`), writes every
+   * obligation with its own period, frozen `media_buy_ids` and constituents, and then advances
+   * `owedSet.through` to `owedThrough` on every generation this subscription owns on the account.
+   * Obligations are never grid-filled. Every obligation must end at or before `owedThrough`, and
+   * `owedThrough` must not be in the future. Requires a store with `recordOwedSetProgress`.
+   */
+  planSubscriptionObligations(
+    input: ReportingSubscriptionLedgerPlanV1
+  ): Promise<{ configurations: ReportingLedgerConfigurationV1[]; created: ReportingLedgerObligationV1[] }>;
   runWorker(options?: {
     signal?: AbortSignal;
     now?: () => Date;
@@ -1277,6 +1551,14 @@ export interface CreateReportingDeliveryHandlerOptionsV1 {
    * propagates unchanged.
    */
   legacyRevisionReader?: ReportingLegacyRevisionReaderV1;
+  /**
+   * The authenticated principal whose subscription revisions this caller may read
+   * (experimental, AdCP 3.3). A revision of another principal's subscription obligation, or of
+   * any subscription obligation when this is absent, is `REFERENCE_NOT_FOUND`.
+   */
+  resolveSubscriptionPrincipal?: (
+    context: HandlerContext<unknown>
+  ) => ReportingLedgerSubscriptionPrincipalV1 | Promise<ReportingLedgerSubscriptionPrincipalV1>;
 }
 
 export interface CreateReportingProducerOptionsV1 {

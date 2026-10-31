@@ -1,11 +1,49 @@
 /**
  * Reviewed non-JSON-Schema semantics from the 3.2 beta.8 / rc.2 / rc.3 / rc.4 / rc.6 / rc.7 / 3.2.1 / 3.2.3 /
- * 3.2.4 / 3.2.5 / 3.2.6 / 3.2.7 / 3.3.0-beta.0 / 3.3.0-beta.1 / 3.3.0-beta.2 bundles.
+ * 3.2.4 / 3.2.5 / 3.2.6 / 3.2.7 / 3.3.0-beta.0 / 3.3.0-beta.1 / 3.3.0-beta.2 / 3.3.0-beta.3 bundles.
  * These are semantic contracts, NOT a binding-field allowlist: properties and
  * comparison always come from the selected runtime schema. Additions to these
  * annotations require a deliberate implementation/review instead of AJV silently
  * ignoring a new contract. See docs/guides/PROPOSAL-TERMS-VERIFICATION.md.
  */
+// adcp#8537 withdrew definition pins, purchase rights and installment selection
+// from 3.3 after beta.1, so beta.2 carries none of their verifier contracts.
+// The pin and installment fail-closed checks therefore never fire for it.
+// beta.3 carries the same commercial-term contracts as beta.2 (checked against the bundle).
+const SEMANTICS_3_3_BETA_2: Readonly<Record<string, unknown>> = {
+  'core/sla-window.json': {
+    verifier_constraints: {
+      calendar_reference:
+        'A business_calendar_id resolves to exactly one immutable get_adcp_capabilities.business_calendars declaration whose coverage includes receipt and the computed deadline. Invalid or unresolved calendars never fall back to elapsed time.',
+      request_snapshot:
+        'Pending requests retain the SLA and calendar resolved at receipt. Maxima are independent upper bounds; a completion maximum shorter than the response maximum does not invalidate either commitment.',
+    },
+  },
+  'core/targeting.json/properties/collection_lists': {
+    unique_by: ['agent_url', 'list_id'],
+    spec: 'docs/governance/collection/index.mdx#combining-several-collection-lists-experimental',
+  },
+  'core/targeting.json/properties/collection_lists_exclude': {
+    unique_by: ['agent_url', 'list_id'],
+    spec: 'docs/governance/collection/index.mdx#combining-several-collection-lists-experimental',
+  },
+  'media-buy/product-purchase.json': {
+    verifier_constraints: {
+      accepted_snapshot_terms:
+        'Inside canonical-proposal.commercial_terms, each purchase MUST carry resolved start_time and end_time and MUST preserve every applicable measurement term and performance standard. Omission of measurement_terms or performance_standards means the accepted offer declared none.',
+      // Requires the discovery-time price_adjustments table, which the accepted
+      // snapshot deliberately does not embed. The snapshot verifier checks
+      // schema validity and pricing identity; callers holding the table resolve it.
+      price_adjustments_resolution:
+        "When the option identified by pricing_option_id declares price_adjustments, pricing.fixed_price MUST equal the resolution of that option's table over this purchase's format_option_refs, placement selection and flight, and pricing.price_breakdown MUST record the declared adjustments followed by each fired row in declared order (a rate row as its rate when below 1, otherwise and for an amount row as its currency amount). The table itself is not embedded in the snapshot: pricing_option_id, covered by terms_digest, identifies exactly one immutable table.",
+      pricing_identity: {
+        pricing_option_id: 'equals_pricing.pricing_option_id_when_pricing_present',
+        on_violation: 'reject_before_commitment',
+      },
+    },
+  },
+};
+
 export const REVIEWED_COMMERCIAL_TERMS_SEMANTICS: Readonly<Record<string, unknown>> = {
   'media-buy/commercial-terms.json': {
     verifier_constraints: {
@@ -317,42 +355,8 @@ export const COMMERCIAL_SEMANTIC_OVERRIDES_BY_RELEASE: Readonly<Record<string, R
       },
     },
   },
-  // adcp#8537 withdrew definition pins, purchase rights and installment selection
-  // from 3.3 after beta.1, so beta.2 carries none of their verifier contracts.
-  // The pin and installment fail-closed checks therefore never fire for it.
-  '3.3.0-beta.2': {
-    'core/sla-window.json': {
-      verifier_constraints: {
-        calendar_reference:
-          'A business_calendar_id resolves to exactly one immutable get_adcp_capabilities.business_calendars declaration whose coverage includes receipt and the computed deadline. Invalid or unresolved calendars never fall back to elapsed time.',
-        request_snapshot:
-          'Pending requests retain the SLA and calendar resolved at receipt. Maxima are independent upper bounds; a completion maximum shorter than the response maximum does not invalidate either commitment.',
-      },
-    },
-    'core/targeting.json/properties/collection_lists': {
-      unique_by: ['agent_url', 'list_id'],
-      spec: 'docs/governance/collection/index.mdx#combining-several-collection-lists-experimental',
-    },
-    'core/targeting.json/properties/collection_lists_exclude': {
-      unique_by: ['agent_url', 'list_id'],
-      spec: 'docs/governance/collection/index.mdx#combining-several-collection-lists-experimental',
-    },
-    'media-buy/product-purchase.json': {
-      verifier_constraints: {
-        accepted_snapshot_terms:
-          'Inside canonical-proposal.commercial_terms, each purchase MUST carry resolved start_time and end_time and MUST preserve every applicable measurement term and performance standard. Omission of measurement_terms or performance_standards means the accepted offer declared none.',
-        // Requires the discovery-time price_adjustments table, which the accepted
-        // snapshot deliberately does not embed. The snapshot verifier checks
-        // schema validity and pricing identity; callers holding the table resolve it.
-        price_adjustments_resolution:
-          "When the option identified by pricing_option_id declares price_adjustments, pricing.fixed_price MUST equal the resolution of that option's table over this purchase's format_option_refs, placement selection and flight, and pricing.price_breakdown MUST record the declared adjustments followed by each fired row in declared order (a rate row as its rate when below 1, otherwise and for an amount row as its currency amount). The table itself is not embedded in the snapshot: pricing_option_id, covered by terms_digest, identifies exactly one immutable table.",
-        pricing_identity: {
-          pricing_option_id: 'equals_pricing.pricing_option_id_when_pricing_present',
-          on_violation: 'reject_before_commitment',
-        },
-      },
-    },
-  },
+  '3.3.0-beta.2': SEMANTICS_3_3_BETA_2,
+  '3.3.0-beta.3': SEMANTICS_3_3_BETA_2,
 };
 
 /** Binding snapshots keep JSON Schema enum membership even for extensible taxonomies. */

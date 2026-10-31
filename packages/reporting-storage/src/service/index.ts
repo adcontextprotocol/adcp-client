@@ -21,7 +21,13 @@ import {
   type ReliableReportingCycleOptionsV1,
   type ReliableReportingSchedulerOptionsV1,
   type ReliableReportingServiceV1,
+  type SubscriptionOptions,
 } from '@adcp/sdk/reporting/service';
+import {
+  assertReportingTaskGrantedV1,
+  withReportingSubscriptionCoverageV1,
+  type ReliableReportingSubscriptionsOptionsV1,
+} from '@adcp/sdk/reporting/advanced';
 import {
   composeNotificationDeliveryAttemptCheckpoints,
   composeWebhookAttemptResultObservers,
@@ -31,6 +37,7 @@ import {
 } from '@adcp/sdk';
 import { ReportingDeliveryCapabilitiesSchema } from '@adcp/sdk/schemas';
 import {
+  createPrincipalLifecycle,
   createPostgresPersistentNotificationRuntime,
   type Account,
   type CreatePostgresPersistentNotificationRuntimeOptions,
@@ -61,6 +68,7 @@ import {
   PostgresReportingManagedDeliveryStore,
   REPORTING_MANAGED_DELIVERY_MIGRATION,
   createReportingManagedDeliveryRuntime,
+  createReportingSubscriptionManagedBindingV1,
   type PostgresReportingManagedDeliveryStoreOptions,
   type ReportingManagedDeliveryAdapterV1,
   type ReportingManagedDeliveryRuntimeV1,
@@ -71,6 +79,7 @@ import {
   type PostgresReportingNotificationActivityOptions,
   type PostgresReportingNotificationActivityRuntime,
 } from '../notifications';
+import type { PostgresReportingStorage } from '../storage';
 
 type ProductionNotificationOptions = Omit<
   CreatePostgresPersistentNotificationRuntimeOptions,
@@ -84,9 +93,17 @@ type ProductionNotificationOptions = Omit<
  */
 export type CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta = Record<string, unknown>> = Omit<
   CreateReliableReportingServiceOptionsV1<TCtxMeta>,
-  'store' | 'subscribers' | 'maintenance'
+  'store' | 'storage' | 'subscribers' | 'maintenance'
 > & {
-  db: ReportingPgPool;
+  /** The PostgreSQL pool. Required without `storage`; `storage.pool` otherwise. */
+  db?: ReportingPgPool;
+  /**
+   * The one storage decision, `postgresStorage({ pool })`: its pool carries every table, the managed
+   * `subscriptions` block's engine state and principal records default to it (so `subscriptions.principal`
+   * can replace `subscriptions.principals`), and construction runs `storage.checkSchema()`, refusing a
+   * schema that is behind. Pass `storage` or `db`, not both.
+   */
+  storage?: PostgresReportingStorage;
   /** Stable, non-secret deployment namespace shared by reporting workers. */
   namespace: string;
   /** Stable webhook publisher identity; credentials must never be used here. */
@@ -206,6 +223,35 @@ export interface PostgresReliableReportingProductionServiceV1<TCtxMeta = Record<
   stop(): Promise<void>;
 }
 
+type SubscriptionBlock<TCtxMeta> =
+  | CreateReliableReportingServiceOptionsV1<TCtxMeta>['subscriptions']
+  | CreateReliableReportingServiceOptionsV1<TCtxMeta>['reportingSubscriptions'];
+
+/** Default the managed block's stores to `storage` and build its principal runtime from `principal`. */
+function withStorageSubscriptions<TCtxMeta>(
+  block: SubscriptionBlock<TCtxMeta>,
+  storage: PostgresReportingStorage | undefined
+): SubscriptionBlock<TCtxMeta> {
+  if (!block || !storage || ('engine' in block && block.engine !== undefined)) return block;
+  const managed = block as SubscriptionOptions<TCtxMeta>;
+  const { principal, ...rest } = managed;
+  if (principal !== undefined && managed.principals !== undefined) {
+    throw new TypeError('Pass subscriptions.principals or subscriptions.principal, not both');
+  }
+  return {
+    ...rest,
+    stateStore: managed.stateStore ?? storage.subscriptions,
+    ...(principal !== undefined
+      ? {
+          principals: createPrincipalLifecycle({
+            ...principal,
+            store: storage.principals,
+          }) as SubscriptionOptions<TCtxMeta>['principals'],
+        }
+      : {}),
+  } as SubscriptionBlock<TCtxMeta>;
+}
+
 /**
  * Assemble and probe the complete seller-side Reliable Reporting production
  * chain. Capability publication happens only after every durable component is
@@ -216,8 +262,14 @@ export interface PostgresReliableReportingProductionServiceV1<TCtxMeta = Record<
 export async function createPostgresReliableReportingProductionService<TCtxMeta = Record<string, unknown>>(
   options: CreatePostgresReliableReportingProductionServiceOptionsV1<TCtxMeta>
 ): Promise<PostgresReliableReportingProductionServiceV1<TCtxMeta>> {
-  if (!options.db || typeof options.db.query !== 'function' || typeof options.db.connect !== 'function') {
-    throw new TypeError('Reliable Reporting production service requires a PostgreSQL pool');
+  if (options.db !== undefined && options.storage !== undefined) {
+    throw new TypeError('Pass storage or db to the Reliable Reporting production service, not both');
+  }
+  const db = options.db ?? options.storage?.pool;
+  if (!db || typeof db.query !== 'function' || typeof db.connect !== 'function') {
+    throw new TypeError(
+      'Reliable Reporting production service requires a PostgreSQL pool: pass storage: postgresStorage({ pool }) or db'
+    );
   }
   if (!/^[A-Za-z0-9_.:-]{1,255}$/.test(options.namespace)) {
     throw new TypeError('Reliable Reporting production namespace must be a bounded non-secret identifier');
@@ -245,12 +297,12 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   }
 
   const recipientCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({
-    db: options.db,
+    db: db,
     namespace: options.namespace,
     ...(options.activity?.tableName !== undefined ? { tableName: options.activity.tableName } : {}),
   });
   const webhookActivity = createPostgresReportingWebhookActivityV1({
-    db: options.db,
+    db: db,
     namespace: options.namespace,
     ...(options.webhookActivity?.tableName !== undefined ? { tableName: options.webhookActivity.tableName } : {}),
     ...(options.webhookActivity?.retentionDays !== undefined
@@ -269,7 +321,7 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   const adopterAttemptObserverError = options.notifications.webhooks.onAttemptObserverError;
   const notifications = createPostgresPersistentNotificationRuntime({
     ...options.notifications,
-    db: options.db,
+    db: db,
     publisherScope: options.publisherScope,
     checkpointDeliveryAttempt: attemptCheckpoint,
     supportedAccountEventTypes: ['reporting.ledger_changed', 'reporting.status_changed', 'reporting.delivery_ready'],
@@ -297,13 +349,13 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   });
   const notificationActivity = createPostgresReportingNotificationActivityRuntime({
     ...options.activity,
-    db: options.db,
+    db: db,
     notifications,
     namespace: options.namespace,
     attemptCheckpoint,
     tenantScopeForAccount: options.activity.tenantScopeForAccount,
   });
-  const coreStore = new PostgresReportingLedgerStore(options.db, {
+  const coreStore = new PostgresReportingLedgerStore(db, {
     acknowledgeIsolatedDatabase: options.acknowledgeIsolatedDatabase,
     managedDelivery: true,
     ...(options.obligatedConsumers ? { obligatedConsumers: options.obligatedConsumers } : {}),
@@ -314,14 +366,63 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   });
   // Fail at construction, not on the first scheduled pass (see createReliableReportingService).
   if (options.compaction) coreStore.assertCompactionSafeRowBindings();
-  const managedStore = new PostgresReportingManagedDeliveryStore(options.db, {
+  const managedStore = new PostgresReportingManagedDeliveryStore(db, {
     ...options.managedDelivery.store,
     statusRetentionDays: options.statusRetentionDays,
     advertisedRecoveryWindowSeconds: options.automatedRecoveryWindowSeconds,
     notificationActivityPort: notificationActivity.port,
   });
+  // Principal-level reporting subscriptions (AdCP 3.3): a managed subscription generation is bound
+  // to the owner's destination before its first obligation, every delivery re-checks the owner's
+  // authority for the account, and reads are scoped to the caller's principal. Without
+  // `subscriptions` (or the deprecated `reportingSubscriptions`) nothing here is wired.
+  if (options.subscriptions !== undefined && options.reportingSubscriptions !== undefined) {
+    throw new TypeError('Pass subscriptions or the deprecated reportingSubscriptions, not both.');
+  }
+  const declaredBlock = options.subscriptions ?? options.reportingSubscriptions;
+  const subscriptionsEnabled = declaredBlock !== undefined;
+  // With storage, the managed block's engine state and principal records live in it, and
+  // `subscriptions.principal` builds the principal runtime over storage.principals here, so the managed
+  // binding below can name it.
+  const block = withStorageSubscriptions(declaredBlock, options.storage);
+  // The managed block (no engine) lets the core service build the engine; the advanced block brings one.
+  const advancedBlock =
+    block && 'engine' in block && block.engine !== undefined
+      ? (block as ReliableReportingSubscriptionsOptionsV1<TCtxMeta>)
+      : undefined;
+  if (advancedBlock && typeof advancedBlock.engine?.isAuthorized !== 'function') {
+    throw new TypeError(
+      'subscriptions on the production service requires an engine with isAuthorized, so every ' +
+        'managed delivery re-checks the owner principal’s account authority'
+    );
+  }
+  const principalRuntime = advancedBlock
+    ? advancedBlock.principal
+    : (block as { principals?: unknown } | undefined)?.principals;
+  const bindManagedGeneration =
+    block?.bindManagedGeneration ??
+    (principalRuntime
+      ? createReportingSubscriptionManagedBindingV1({
+          store: managedStore,
+          principal: principalRuntime as never,
+          resourceRetentionDays: options.managedDelivery.resourceRetentionDays,
+          verificationProfiles: options.managedDelivery.adapter.verificationProfiles,
+        })
+      : undefined);
+  const { reportingSubscriptions: _deprecatedSubscriptions, storage: _storage, db: _db, ...rest } = options;
+  void _deprecatedSubscriptions;
+  void _storage;
+  void _db;
   const coreOptions = {
-    ...options,
+    ...rest,
+    ...(block
+      ? {
+          subscriptions: {
+            ...block,
+            ...(bindManagedGeneration ? { bindManagedGeneration } : {}),
+          },
+        }
+      : {}),
     store: coreStore,
     // The composer's assertion that this service is served by a managed-delivery runtime: it names the store itself.
     [REPORTING_MANAGED_DELIVERY_COMPOSITION_V1]: coreStore,
@@ -329,6 +430,8 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     [REPORTING_MANAGED_DELIVERY_COMPOSITION_V1]: PostgresReportingLedgerStore;
   };
   const core = createReliableReportingService(coreOptions);
+  // The resolved wiring: the engine and principal resolver the core service runs.
+  const subscriptions = core.subscriptionWiring;
   const migrations = Object.freeze([
     REPORTING_LEDGER_MIGRATION,
     ...(options.rowStorage ? [REPORTING_ROW_STORAGE_MIGRATION] : []),
@@ -339,6 +442,8 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     ...webhookActivity.migrations.all,
   ]);
   await options.applyMigrations?.(migrations);
+  // Startup never changes the schema: a storage whose versioned migrations are behind is refused.
+  await options.storage?.checkSchema();
   await coreStore.readyRowStorage();
   await notifications.probe();
   await notificationActivity.probe();
@@ -349,13 +454,34 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     ...(options.legacyRevisionReader ? { legacyRevisionReader: options.legacyRevisionReader } : {}),
     store: managedStore,
     adapter: options.managedDelivery.adapter,
-    offerings: core.capabilities.offerings,
+    // `standard_dimensions` and `unmapped_dimensions` (published with reporting subscriptions) are
+    // defined after the offering schema the managed runtime validates against, which is closed.
+    offerings: core.capabilities.offerings.map(offering => {
+      const {
+        standard_dimensions: _standard,
+        unmapped_dimensions: _unmapped,
+        ...rest
+      } = offering as typeof offering & { standard_dimensions?: unknown; unmapped_dimensions?: unknown };
+      void _standard;
+      void _unmapped;
+      return rest;
+    }) as typeof core.capabilities.offerings,
     automatedRecoveryWindowSeconds: options.automatedRecoveryWindowSeconds,
     statusRetentionDays: options.statusRetentionDays,
     resourceRetentionDays: options.managedDelivery.resourceRetentionDays,
     authorizationRevocationSeconds: options.managedDelivery.authorizationRevocationSeconds,
     ...(options.resolveConsumerId ? { resolveConsumerId: options.resolveConsumerId } : {}),
     ...(options.consumerMismatchEscalation ? { consumerMismatchEscalation: options.consumerMismatchEscalation } : {}),
+    ...(subscriptions
+      ? {
+          resolveSubscriptionPrincipal: async (context: RequestContext<Account<TCtxMeta>>) => {
+            const principal = await subscriptions.resolvePrincipal(context);
+            return { tenantId: principal.tenantId, principalId: principal.principalId };
+          },
+          authorizeSubscriptionDelivery: ({ principal, account_id }) =>
+            subscriptions.engine.isAuthorized!(principal, account_id),
+        }
+      : {}),
   });
   const capabilities = deepFreeze(
     ReportingDeliveryCapabilitiesSchema.parse({
@@ -369,7 +495,14 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   );
   const platform: ReliableReportingPlatform<TCtxMeta> = {
     capabilities,
-    getReportingStatus: (request, context) => managed.getReportingStatus(request, context as never),
+    getReportingStatus: subscriptions
+      ? async (request, context) =>
+          withReportingSubscriptionCoverageV1(
+            await managed.getReportingStatus(request, context as never),
+            context as never,
+            subscriptions
+          )
+      : (request, context) => managed.getReportingStatus(request, context as never),
     getMediaBuyDelivery: (request, context) => managed.getMediaBuyDelivery(request, context as never),
     ...(core.platform.syncReportingStatus
       ? {
@@ -379,7 +512,11 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
       : {}),
     ...(managed.syncReportingReceipts
       ? {
-          syncReportingReceipts: (request, context) => managed.syncReportingReceipts!(request, context),
+          syncReportingReceipts: (request, context) => {
+            // adcp#8619: with subscriptions, a partial grant refuses the missing task with SCOPE_INSUFFICIENT.
+            if (subscriptionsEnabled) assertReportingTaskGrantedV1(context, 'sync_reporting_receipts');
+            return managed.syncReportingReceipts!(request, context);
+          },
         }
       : {}),
     async projectListAccounts(request, response, context) {
@@ -471,7 +608,7 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     }
     await runReportingLedgerMaintenance({
       store: coreStore,
-      sweepSnapshots: limit => sweepExpiredReportingLedgerState(options.db, limit),
+      sweepSnapshots: limit => sweepExpiredReportingLedgerState(db, limit),
       statusRetentionDays: options.statusRetentionDays,
       automatedRecoveryWindowSeconds: options.automatedRecoveryWindowSeconds,
       retention: options.retention,

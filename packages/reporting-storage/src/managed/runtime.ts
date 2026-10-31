@@ -11,6 +11,8 @@ import type {
 } from '@adcp/sdk/types';
 import { ReportingDeliveryCapabilitiesSchema, ReportingMaterializationSchema } from '@adcp/sdk/schemas';
 import { canonicalize } from '@adcp/sdk';
+import { expandReportingSubscriptionPathTemplate } from '@adcp/sdk/server';
+import type { ReliableReportingSubscriptionBindingInputV1 } from '@adcp/sdk/reporting/advanced';
 import {
   isReportingAdjustmentReceiptEvidence,
   isReportingReceiptEvidence,
@@ -19,6 +21,7 @@ import {
   createReportingStatusHandler,
   createSyncReportingReceiptsHandler,
   getReportingDeliveryOfferingValidatorV1,
+  reportingManagedDeliveryBindingV1,
   type ReportingReceiptSyncStoreV1,
   type SyncReportingReceiptsParamsV1,
 } from '@adcp/sdk/reporting/ledger';
@@ -29,12 +32,15 @@ import type {
   ReportingLedgerObligationV1,
   ReportingLedgerRevisionV1,
   ReportingLedgerStore,
+  PrincipalRef,
   ReportingManagedDeliveryBindingV1,
+  ReportingSubscriptionPrincipalResolverV1,
 } from '@adcp/sdk/reporting/ledger';
 
 const DEFAULT_LEASE_MILLISECONDS = 65_000;
 const DEFAULT_DELIVERY_DEADLINE_MILLISECONDS = 60_000;
 const MINIMUM_SETTLEMENT_GRACE_MILLISECONDS = 5_000;
+const DEFAULT_AUTHORITY_HOLD_MILLISECONDS = 60_000;
 const DEFAULT_RESOURCE_MAX_BYTES = 64 * 1024 * 1024;
 /**
  * Upper bound on an adapter's startup probe, so a hung provider cannot hang startup.
@@ -285,6 +291,25 @@ export interface ReportingManagedDeliveryStore extends ReportingReceiptSyncStore
     resource_ref: string;
   }): Promise<{ materialization: ReportingMaterialization; binding: ReportingManagedDeliveryBindingV1 } | null>;
   isAuthorizationCurrent(input: { account_id: string; destination_ref: string; generation: number }): Promise<boolean>;
+  /**
+   * Releases a claimed materialization without spending a delivery attempt and keeps it out of
+   * selection for `backoff_milliseconds`. Required by a worker that re-checks subscription
+   * authority: a lost grant stops the delivery while the obligation stays owed.
+   */
+  holdMaterialization?(input: {
+    lease: ReportingManagedDeliveryLeaseV1;
+    backoff_milliseconds: number;
+  }): Promise<boolean>;
+  /**
+   * The current authorization generation of a destination for one account, creating the next one
+   * when none is current. Required to bind managed subscription generations.
+   */
+  ensureDestinationAuthorization?(input: {
+    account_id: string;
+    destination_ref: string;
+    pattern: ReportingDestinationPatternV1;
+    transport?: string;
+  }): Promise<number>;
   // `syncReceiptBatch` comes from `ReportingReceiptSyncStoreV1`, the one method the SDK's
   // `sync_reporting_receipts` handler needs.
 }
@@ -304,6 +329,13 @@ export interface ReportingManagedDeliveryAdapterV1 {
       obligation: ReportingLedgerObligationV1;
       revision: ReportingLedgerRevisionV1;
       maxBytes: number;
+      /**
+       * The binding's `path_template` expanded for this obligation: a relative path under the
+       * destination location, each placeholder value one percent-encoded segment. Present only
+       * for a subscription binding with a template. An object-store adapter places the delivery
+       * under it; see `reportingObjectWriteName`.
+       */
+      delivery_path?: string;
     }>,
     context: { signal: AbortSignal }
   ): Promise<{ status: 'available' | 'delivered'; resource: ReportingResource; verification: ReportingVerification }>;
@@ -384,6 +416,11 @@ export const UNROUTED_REPORTING_ROUTE_KEY_V1 = '~unrouted';
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReportingManagedDeliveryWorkerResultV1 extends Partial<ReportingManagedDeliveryRouteCountsV1> {
+  /**
+   * Subscription materializations released because the owning principal is no longer
+   * authorized for the account. Present only when the worker re-checks subscription authority.
+   */
+  heldForAuthority?: number;
   planned: number;
   claimed: number;
   delivered: number;
@@ -431,7 +468,29 @@ export interface ReportingManagedDeliveryWorkerOptionsV1 {
     account_id: string,
     signal: AbortSignal | undefined
   ) => Promise<ReportingManagedDeliveryLeaseV1['revision']>;
+  /**
+   * Re-checks, before delivering and again before settling, that the principal owning a
+   * subscription obligation is still authorized for its account (experimental, AdCP 3.3). A
+   * `false` answer releases the materialization with `holdMaterialization` and does not fail it:
+   * the obligation stays owed, and the engine reports the loss in `accounts_unauthorized`.
+   * Account obligations are never checked.
+   */
+  authorizeSubscriptionDelivery?: ReportingSubscriptionDeliveryAuthorityV1;
+  /** How long a materialization held for lost authority stays out of selection. Defaults to 60 seconds. */
+  authorityHoldMilliseconds?: number;
 }
+
+/**
+ * Whether the owner of a subscription obligation may still receive this account's data.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export type ReportingSubscriptionDeliveryAuthorityV1 = (input: {
+  principal: PrincipalRef;
+  account_id: string;
+  obligation: ReportingLedgerObligationV1;
+  binding: ReportingManagedDeliveryBindingV1;
+}) => boolean | Promise<boolean>;
 
 /**
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
@@ -451,6 +510,10 @@ export interface CreateReportingManagedDeliveryRuntimeOptionsV1<
   authorizationRevocationSeconds: number;
   resolveConsumerId?: (context: TContext) => string | Promise<string>;
   consumerMismatchEscalation?: ReportingStatusConsumerScopeOptionsV1<TContext>['consumerMismatchEscalation'];
+  /** Scopes subscription generations in status and revision reads to the caller's principal. */
+  resolveSubscriptionPrincipal?: ReportingSubscriptionPrincipalResolverV1<TContext>;
+  /** Re-checks subscription authority at every delivery; see the worker option of the same name. */
+  authorizeSubscriptionDelivery?: ReportingSubscriptionDeliveryAuthorityV1;
 }
 
 /**
@@ -546,21 +609,37 @@ export async function createReportingManagedDeliveryRuntime<
       throw new Error('Reconciled Billing offerings require the pinned canonicalization contract');
     }
   }
+  if (options.authorizeSubscriptionDelivery && typeof options.store.holdMaterialization !== 'function') {
+    throw new Error('Re-checking subscription authority at delivery requires a store with holdMaterialization');
+  }
+  const subscriptionScope = options.resolveSubscriptionPrincipal
+    ? { resolveSubscriptionPrincipal: options.resolveSubscriptionPrincipal }
+    : undefined;
   const statusOptions = options.resolveConsumerId
     ? {
         resolveConsumerId: options.resolveConsumerId,
         ...(options.consumerMismatchEscalation
           ? { consumerMismatchEscalation: options.consumerMismatchEscalation }
           : {}),
+        ...(subscriptionScope ?? {}),
       }
-    : undefined;
+    : subscriptionScope;
   const getReportingStatus = createReportingStatusHandler(options.coreStore, statusOptions);
-  const getMediaBuyDelivery = createReportingDeliveryHandler(
-    options.coreStore,
-    options.legacyRevisionReader ? { legacyRevisionReader: options.legacyRevisionReader } : {}
-  );
+  const getMediaBuyDelivery = createReportingDeliveryHandler(options.coreStore, {
+    ...(options.legacyRevisionReader ? { legacyRevisionReader: options.legacyRevisionReader } : {}),
+    ...(options.resolveSubscriptionPrincipal
+      ? {
+          resolveSubscriptionPrincipal: context =>
+            options.resolveSubscriptionPrincipal!(context as unknown as TContext),
+        }
+      : {}),
+  });
   const syncReportingReceipts = reconciledBilling
-    ? createSyncReportingReceiptsHandler(options.store, options.resolveConsumerId!)
+    ? options.resolveSubscriptionPrincipal
+      ? createSyncReportingReceiptsHandler<TContext>(options.store, options.resolveConsumerId!, undefined, {
+          resolveSubscriptionPrincipal: options.resolveSubscriptionPrincipal,
+        })
+      : createSyncReportingReceiptsHandler(options.store, options.resolveConsumerId!)
     : undefined;
   const reportingDeliveryCapabilities: ReportingDeliveryCapabilities = {
     supported: true,
@@ -650,6 +729,9 @@ export async function createReportingManagedDeliveryRuntime<
               },
             }
           : {}),
+        ...(options.authorizeSubscriptionDelivery
+          ? { authorizeSubscriptionDelivery: options.authorizeSubscriptionDelivery }
+          : {}),
         ...workerOptions,
         minimumResourceRetentionDays: Math.max(
           options.resourceRetentionDays,
@@ -693,6 +775,25 @@ export async function runManagedDeliveryWorker(
   if (options.authorizationRevocationSeconds !== undefined) {
     nonnegativeInteger(options.authorizationRevocationSeconds, 'authorizationRevocationSeconds');
   }
+  const authorityHoldMilliseconds = options.authorityHoldMilliseconds ?? DEFAULT_AUTHORITY_HOLD_MILLISECONDS;
+  positiveInteger(authorityHoldMilliseconds, 'authorityHoldMilliseconds');
+  if (options.authorizeSubscriptionDelivery && typeof store.holdMaterialization !== 'function') {
+    throw new Error('Re-checking subscription authority at delivery requires a store with holdMaterialization');
+  }
+  // A subscription delivery proceeds only while its owner is authorized for the account
+  // (`core/reporting-subscription.json`: destination proof never establishes account authority).
+  const ownerAuthorized = async (lease: ReportingManagedDeliveryLeaseV1): Promise<boolean> => {
+    const owner = lease.obligation.subscription;
+    if (!owner || !options.authorizeSubscriptionDelivery) return true;
+    return (
+      (await options.authorizeSubscriptionDelivery({
+        principal: { tenantId: owner.tenantId, principalId: owner.principalId },
+        account_id: lease.obligation.account.account_id,
+        obligation: structuredClone(lease.obligation),
+        binding: structuredClone(lease.binding),
+      })) === true
+    );
+  };
   const revocationWindow =
     options.authorizationRevocationSeconds === undefined ? undefined : options.authorizationRevocationSeconds * 1_000;
   // A failed cleanup keeps its lease as the retry delay, so the lease is also
@@ -743,6 +844,11 @@ export async function runManagedDeliveryWorker(
         }
       : undefined;
   if (routed) Object.assign(counts, routed);
+  if (options.authorizeSubscriptionDelivery) counts.heldForAuthority = 0;
+  const holdForAuthority = async (lease: ReportingManagedDeliveryLeaseV1) => {
+    await store.holdMaterialization!({ lease, backoff_milliseconds: authorityHoldMilliseconds });
+    counts.heldForAuthority = (counts.heldForAuthority ?? 0) + 1;
+  };
   const countRoute = (
     bucket: keyof ReportingManagedDeliveryRouteCountsV1,
     target: Parameters<NonNullable<ReportingManagedDeliveryAdapterV1['routeIdFor']>>[0]
@@ -836,6 +942,10 @@ export async function runManagedDeliveryWorker(
     if (!lease) break;
     counts.claimed += 1;
     try {
+      if (!(await ownerAuthorized(lease))) {
+        await holdForAuthority(lease);
+        continue;
+      }
       if (!Array.isArray(lease.revision.rows) && options.hydrateRevision) {
         const hydrated = await options.hydrateRevision(
           lease.revision,
@@ -861,6 +971,9 @@ export async function runManagedDeliveryWorker(
               obligation: lease.obligation,
               revision: lease.revision,
               maxBytes: resourceMaxBytes,
+              ...(lease.binding.path_template !== undefined
+                ? { delivery_path: reportingSubscriptionDeliveryPathV1(lease.binding, lease.obligation) }
+                : {}),
             },
             { signal }
           ),
@@ -869,6 +982,11 @@ export async function runManagedDeliveryWorker(
         options.signal
       );
       assertMaterializationOutcome(lease, outcome, now().toISOString(), minimumResourceRetentionDays);
+      // Authority may have been lost while the bytes were in flight: never record such a delivery.
+      if (!(await ownerAuthorized(lease))) {
+        await holdForAuthority(lease);
+        continue;
+      }
       if (
         await store.settleMaterialization({
           lease,
@@ -897,6 +1015,151 @@ export async function runManagedDeliveryWorker(
     }
   }
   return counts;
+}
+
+/**
+ * A subscription binding's `path_template` expanded for one obligation: `{account_id}`,
+ * `{subscription_id}`, `{offering_id}` and `{period_start}` each fill one percent-encoded segment.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export function reportingSubscriptionDeliveryPathV1(
+  binding: Pick<ReportingManagedDeliveryBindingV1, 'path_template' | 'account_id'>,
+  obligation: Pick<ReportingLedgerObligationV1, 'delivery_config_id' | 'offeringId' | 'period' | 'account'>
+): string {
+  if (binding.path_template === undefined) throw new TypeError('Managed binding has no path_template');
+  if (obligation.account.account_id !== binding.account_id) {
+    throw new TypeError('Obligation and binding name different accounts');
+  }
+  return expandReportingSubscriptionPathTemplate(binding.path_template, {
+    account_id: binding.account_id,
+    subscription_id: obligation.delivery_config_id,
+    offering_id: obligation.offeringId,
+    period_start: obligation.period.start,
+  });
+}
+
+/**
+ * Binds one managed subscription generation to the subscription's destination, for
+ * `createReliableReportingService({ subscriptions: { bindManagedGeneration } })`.
+ *
+ * The destination is resolved from the owner: the subscription version names
+ * `destination.destination_id`, the principal's current generation of that destination supplies
+ * the `destination_ref` (`core/reporting-subscription.json`: "The seller binds the current
+ * generation"), and it must be delivery-eligible and serve the offering's pattern and transport
+ * (the version froze both). The account's destination is the subscription's `destination`, or the
+ * `destination_overrides` entry routing it (adcp#8619), and the account gets its own authorization
+ * of that destination's `destination_ref`, created on first use. The binding freezes that
+ * destination's `path_template`. A destination that is not ready rejects the
+ * bind, so the generation's obligations wait for the next cycle instead of becoming
+ * undeliverable.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export function createReportingSubscriptionManagedBindingV1(options: {
+  store: Pick<ReportingManagedDeliveryStore, 'installBinding' | 'ensureDestinationAuthorization'>;
+  principal: {
+    listReportingSubscriptions(scope: PrincipalRef): Promise<{
+      states: ReadonlyArray<{
+        subscription_id: string;
+        destination_ref?: string;
+        /** The generation bound for each `destination_overrides` destination (adcp#8619). */
+        destination_override_refs?: ReadonlyArray<{ destination_id: string; destination_ref: string }>;
+        configuration: { destination?: { destination_id: string } };
+      }>;
+    }>;
+    resolveReportingDestination(
+      scope: PrincipalRef,
+      destinationRef: string
+    ): Promise<{
+      destinationId: string;
+      destinationRef: string;
+      configuration: unknown;
+      deliveryEligible: boolean;
+    } | null>;
+  };
+  resourceRetentionDays: number;
+  /** The delivery adapter's verification profiles; `canonical_digest` is required for consumer receipts. */
+  verificationProfiles: readonly ReportingManagedDeliveryBindingV1['verification_profile'][];
+}): (input: ReliableReportingSubscriptionBindingInputV1) => Promise<void> {
+  positiveInteger(options.resourceRetentionDays, 'resourceRetentionDays');
+  const ensure = options.store.ensureDestinationAuthorization;
+  if (typeof ensure !== 'function') {
+    throw new Error('Binding subscription generations requires a store with ensureDestinationAuthorization');
+  }
+  return async input => {
+    const { principal, configuration, subscription, offering } = input;
+    const method = offering.method as { pattern?: string; transport?: string } | undefined;
+    // adcp#8619: the account's destination, with destination_overrides applied by the SDK.
+    const destination = input.destination ?? subscription.destination;
+    if (!method?.pattern || !method.transport || !destination) {
+      throw new TypeError('A managed subscription generation needs a destination and a managed offering method');
+    }
+    if (
+      input.destinationMethod &&
+      (input.destinationMethod.pattern !== method.pattern || input.destinationMethod.transport !== method.transport)
+    ) {
+      throw new Error('The resolved offering method differs from the destination method the version froze');
+    }
+    const owner = configuration.subscription;
+    if (
+      !owner ||
+      owner.tenantId !== principal.tenantId ||
+      owner.principalId !== principal.principalId ||
+      owner.subscriptionId !== subscription.subscription_id
+    ) {
+      throw new Error('The generation is not owned by this subscription');
+    }
+    const { states } = await options.principal.listReportingSubscriptions(principal);
+    const state = states.find(value => value.subscription_id === subscription.subscription_id);
+    // The primary destination's generation is destination_ref; an override's is in destination_override_refs.
+    const destinationRef =
+      state?.configuration.destination?.destination_id === destination.destination_id
+        ? state.destination_ref
+        : state?.destination_override_refs?.find(item => item.destination_id === destination.destination_id)
+            ?.destination_ref;
+    if (!state || !destinationRef) {
+      throw new Error('The subscription destination has no current generation to bind');
+    }
+    const resolved = await options.principal.resolveReportingDestination(principal, destinationRef);
+    const resolvedMethod = (resolved?.configuration ?? {}) as { pattern?: unknown; transport?: unknown };
+    if (!resolved || resolved.destinationId !== destination.destination_id || !resolved.deliveryEligible) {
+      throw new Error('The subscription destination is not ready for delivery');
+    }
+    if (resolvedMethod.pattern !== method.pattern || resolvedMethod.transport !== method.transport) {
+      throw new Error('The subscription destination serves another pattern or transport than its offering');
+    }
+    const reconciliationMode =
+      offering.reconciliation_mode === 'consumer_receipt' ? 'consumer_receipt' : 'delivery_only';
+    const verificationProfile =
+      reconciliationMode === 'consumer_receipt' ? 'canonical_digest' : options.verificationProfiles[0];
+    if (!verificationProfile || !options.verificationProfiles.includes(verificationProfile)) {
+      throw new Error('The delivery adapter cannot verify this subscription generation');
+    }
+    const authorizationGeneration = await ensure.call(options.store, {
+      account_id: configuration.account.account_id,
+      destination_ref: resolved.destinationRef,
+      pattern: method.pattern as ReportingDestinationPatternV1,
+      transport: method.transport,
+    });
+    await options.store.installBinding(
+      reportingManagedDeliveryBindingV1({
+        configurationId: configuration.configurationId,
+        account_id: configuration.account.account_id,
+        delivery_config_id: configuration.delivery_config_id,
+        delivery_config_version: configuration.delivery_config_version,
+        destination_ref: resolved.destinationRef,
+        authorization_generation: authorizationGeneration,
+        feed_purpose: configuration.feedPurpose,
+        method: method.pattern as ReportingManagedDeliveryBindingV1['method'],
+        transport: method.transport,
+        verification_profile: verificationProfile,
+        reconciliation_mode: reconciliationMode,
+        resource_retention_days: options.resourceRetentionDays,
+        ...(destination.path_template !== undefined ? { path_template: destination.path_template } : {}),
+      })
+    );
+  };
 }
 
 /**

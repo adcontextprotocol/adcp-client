@@ -41,7 +41,9 @@ listed.products.map(product => product.product_id);
 unchanged.products?.map(product => product.product_id);
 // @ts-expect-error An unchanged feed legitimately omits products.
 unchanged.products.map(product => product.product_id);
+// AdCP 3.3.0-beta.3 composes the protocol envelope into every response: status is required.
 const unchangedResponse: ListProductsResponseWithSupplyPath = {
+  status: 'completed',
   outcome: 'unchanged',
   feed_version: 'v1',
   cache_scope: 'public',

@@ -635,6 +635,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
       const verdict = overBudget ? 'denied' : plan.custom_policies.length > 0 ? 'conditions' : 'approved';
 
       const response: CheckGovernanceResponse = {
+        status: 'completed',
         check_id: checkId,
         verdict,
         plan_id: plan.plan_id,
@@ -690,6 +691,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
         detail: { outcome: req.outcome, purchase_type: req.purchase_type, committed_budget: committed },
       });
       return {
+        status: 'completed',
         outcome_id: randomUUID(),
         outcome_state: 'accepted',
         committed_budget: committed,

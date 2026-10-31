@@ -75,6 +75,11 @@ export const AccountNotificationsSupported_EventTypesValues = ["account.status_c
 /** single | AccountNotificationsSupported.read_task */
 export const AccountNotificationsSupported_ReadTaskValues = ["list_accounts"] as const;
 
+// ====== AccountRequest ======
+
+/** array of | AccountRequest.not_carried_over */
+export const AccountRequest_NotCarriedOverValues = ["notification_configs", "reporting_delivery_configs", "reporting_bucket", "governance_agents", "creatives", "audiences", "catalogs", "event_sources"] as const;
+
 // ====== AccountRequestChangedWebhook ======
 
 /** single | AccountRequestChangedWebhook.notification_type */
@@ -159,7 +164,7 @@ export const AgenticAdvertisingOrgVerificationTokenClaims_RoleValues = ["media-b
 // ====== AgentNotificationConfig ======
 
 /** array of | AgentNotificationConfig.event_types */
-export const AgentNotificationConfig_EventTypesValues = ["creative.status_changed", "creative.assignment_changed", "indicators.changed", "creative.purged", "account.status_changed", "account.change_recorded", "product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change", "collection_card.updated", "collection_card.removed", "collection_catalog.bulk_change", "capabilities.changed", "reporting.delivery_ready", "reporting.status_changed", "reporting.ledger_changed", "principal.changed", "proposal.created", "account_request.changed", "proposal.offered"] as const;
+export const AgentNotificationConfig_EventTypesValues = ["creative.status_changed", "creative.assignment_changed", "indicators.changed", "creative.purged", "creative.staged_update_changed", "account.status_changed", "account.change_recorded", "product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change", "collection_card.updated", "collection_card.removed", "collection_catalog.bulk_change", "capabilities.changed", "reporting.delivery_ready", "reporting.status_changed", "reporting.ledger_changed", "principal.changed", "proposal.created", "account_request.changed", "proposal.offered"] as const;
 
 // ====== AgentPermissionDeniedDetails ======
 
@@ -328,11 +333,18 @@ export const BudgetChangeConstraints_KindValues = ["budget"] as const;
 
 /** single | BuildCreativeAsyncInputRequired.reason */
 export const BuildCreativeAsyncInputRequired_ReasonValues = ["APPROVAL_REQUIRED", "CREATIVE_DIRECTION_NEEDED", "ASSET_SELECTION_NEEDED"] as const;
+/** single | BuildCreativeAsyncInputRequired.status */
+export const BuildCreativeAsyncInputRequired_StatusValues = ["input-required"] as const;
 
 // ====== BuildCreativeAsyncSubmitted ======
 
 /** single | BuildCreativeAsyncSubmitted.status */
 export const BuildCreativeAsyncSubmitted_StatusValues = ["submitted"] as const;
+
+// ====== BuildCreativeAsyncWorking ======
+
+/** single | BuildCreativeAsyncWorking.status */
+export const BuildCreativeAsyncWorking_StatusValues = ["working"] as const;
 
 // ====== BuildCreativeEstimate ======
 
@@ -699,6 +711,18 @@ export const CreativePurgedWebhook_PurgeKindValues = ["soft", "hard"] as const;
 
 /** single | CreativeReviewSLA.clock */
 export const CreativeReviewSLA_ClockValues = ["elapsed", "business"] as const;
+
+// ====== CreativeStagedUpdate ======
+
+/** single | CreativeStagedUpdate.status */
+export const CreativeStagedUpdate_StatusValues = ["processing", "pending_review", "rejected"] as const;
+
+// ====== CreativeStagedUpdateChangedWebhook ======
+
+/** single | CreativeStagedUpdateChangedWebhook.notification_type */
+export const CreativeStagedUpdateChangedWebhook_NotificationTypeValues = ["creative.staged_update_changed"] as const;
+/** single | CreativeStagedUpdateChangedWebhook.outcome */
+export const CreativeStagedUpdateChangedWebhook_OutcomeValues = ["promoted", "rejected"] as const;
 
 // ====== CreativeStatusChangedWebhook ======
 
@@ -1138,7 +1162,7 @@ export const ListCreativeFormatsResponse_SourceValues = ["publisher", "aao_mirro
 /** single | ListCreativesRequest.assignment_projection */
 export const ListCreativesRequest_AssignmentProjectionValues = ["all", "matching"] as const;
 /** array of | ListCreativesRequest.fields */
-export const ListCreativesRequest_FieldsValues = ["creative_id", "name", "format_id", "format_kind", "format_option_ref", "assets", "status", "created_date", "updated_date", "tags", "provenance", "rights", "rights_attestation_evaluations", "localization", "localization_unavailable", "assignments", "snapshot", "items", "variables", "concept", "pricing_options"] as const;
+export const ListCreativesRequest_FieldsValues = ["creative_id", "name", "format_id", "format_kind", "format_option_ref", "assets", "status", "created_date", "updated_date", "tags", "provenance", "rights", "rights_attestation_evaluations", "localization", "localization_unavailable", "assignments", "snapshot", "items", "variables", "concept", "pricing_options", "staged_update"] as const;
 
 // ====== ListProductsRequest ======
 
@@ -1218,7 +1242,7 @@ export const NativeInFeedFormatDeclaration_FormatKindValues = ["native_in_feed"]
 // ====== NotificationConfig ======
 
 /** array of | NotificationConfig.event_types */
-export const NotificationConfig_EventTypesValues = ["creative.status_changed", "creative.assignment_changed", "indicators.changed", "creative.purged", "account.status_changed", "account.change_recorded", "product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change", "collection_card.updated", "collection_card.removed", "collection_catalog.bulk_change", "reporting.delivery_ready", "reporting.status_changed", "reporting.ledger_changed", "proposal.created", "proposal.offered"] as const;
+export const NotificationConfig_EventTypesValues = ["creative.status_changed", "creative.assignment_changed", "indicators.changed", "creative.purged", "creative.staged_update_changed", "account.status_changed", "account.change_recorded", "product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change", "collection_card.updated", "collection_card.removed", "collection_catalog.bulk_change", "reporting.delivery_ready", "reporting.status_changed", "reporting.ledger_changed", "proposal.created", "proposal.offered"] as const;
 /** single | NotificationConfig.product_payload_view */
 export const NotificationConfig_ProductPayloadViewValues = ["canonical", "legacy"] as const;
 
@@ -1692,7 +1716,7 @@ export const ReportingStatusIssue_ResponsiblePartyValues = ["buyer", "seller", "
 // ====== ReportingSubscriptionCoverage ======
 
 /** single | ReportingSubscriptionCoverage.status */
-export const ReportingSubscriptionCoverage_StatusValues = ["active", "excluded", "action_required"] as const;
+export const ReportingSubscriptionCoverage_StatusValues = ["active", "excluded", "action_required", "inactive"] as const;
 
 // ====== ReportingSubscriptionState ======
 
@@ -2255,9 +2279,15 @@ export const CleanRoom1_PatternValues = CleanRoom_PatternValues;
 // --- CommitmentSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, CommitmentSubmitted.status duplicates the canonical export. */
 export const CommitmentSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
+// --- CompactTaskInputRequired ---
+/** @deprecated use `BuildCreativeAsyncInputRequired_StatusValues` — same literal set, CompactTaskInputRequired.status duplicates the canonical export. */
+export const CompactTaskInputRequired_StatusValues = BuildCreativeAsyncInputRequired_StatusValues;
 // --- CompactTaskSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, CompactTaskSubmitted.status duplicates the canonical export. */
 export const CompactTaskSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
+// --- CompactTaskWorking ---
+/** @deprecated use `BuildCreativeAsyncWorking_StatusValues` — same literal set, CompactTaskWorking.status duplicates the canonical export. */
+export const CompactTaskWorking_StatusValues = BuildCreativeAsyncWorking_StatusValues;
 // --- ContextMatchResponseProviderRouter ---
 /** @deprecated use `ContextMatchResponse_TypeValues` — same literal set, ContextMatchResponseProviderRouter.type duplicates the canonical export. */
 export const ContextMatchResponseProviderRouter_TypeValues = ContextMatchResponse_TypeValues;
@@ -2276,9 +2306,15 @@ export const ControlSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusV
 // --- CPMPricingOption ---
 /** @deprecated use `CpmPricing_ModelValues` — same literal set, CPMPricingOption.pricing_model duplicates the canonical export. */
 export const CPMPricingOption_PricingModelValues = CpmPricing_ModelValues;
+// --- CreateMediaBuyAsyncInputRequired ---
+/** @deprecated use `BuildCreativeAsyncInputRequired_StatusValues` — same literal set, CreateMediaBuyAsyncInputRequired.status duplicates the canonical export. */
+export const CreateMediaBuyAsyncInputRequired_StatusValues = BuildCreativeAsyncInputRequired_StatusValues;
 // --- CreateMediaBuyAsyncSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, CreateMediaBuyAsyncSubmitted.status duplicates the canonical export. */
 export const CreateMediaBuyAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
+// --- CreateMediaBuyAsyncWorking ---
+/** @deprecated use `BuildCreativeAsyncWorking_StatusValues` — same literal set, CreateMediaBuyAsyncWorking.status duplicates the canonical export. */
+export const CreateMediaBuyAsyncWorking_StatusValues = BuildCreativeAsyncWorking_StatusValues;
 // --- CreateMediaBuySubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, CreateMediaBuySubmitted.status duplicates the canonical export. */
 export const CreateMediaBuySubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
@@ -2294,6 +2330,9 @@ export const CreativeOperationFormatDeclaration_SellerPreferenceValues = Canonic
 // --- CreativeRejected ---
 /** @deprecated use `AccountIdentityChangeRejected_StatusValues` — same literal set, CreativeRejected.approval_status duplicates the canonical export. */
 export const CreativeRejected_ApprovalStatusValues = AccountIdentityChangeRejected_StatusValues;
+// --- CreativeStagedUpdateChangedWebhook ---
+/** @deprecated use `CreativePurgedWebhook_InitiatorValues` — same literal set, CreativeStagedUpdateChangedWebhook.initiator duplicates the canonical export. */
+export const CreativeStagedUpdateChangedWebhook_InitiatorValues = CreativePurgedWebhook_InitiatorValues;
 // --- CreativeStatusChangedWebhook ---
 /** @deprecated use `CreativePurgedWebhook_InitiatorValues` — same literal set, CreativeStatusChangedWebhook.initiator duplicates the canonical export. */
 export const CreativeStatusChangedWebhook_InitiatorValues = CreativePurgedWebhook_InitiatorValues;
@@ -2355,9 +2394,15 @@ export const GetCreativeFeaturesComplianceCompletion_StatusValues = CommittedMed
 // --- GetCreativeFeaturesSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, GetCreativeFeaturesSubmitted.status duplicates the canonical export. */
 export const GetCreativeFeaturesSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
+// --- GetProductsAsyncInputRequired ---
+/** @deprecated use `BuildCreativeAsyncInputRequired_StatusValues` — same literal set, GetProductsAsyncInputRequired.status duplicates the canonical export. */
+export const GetProductsAsyncInputRequired_StatusValues = BuildCreativeAsyncInputRequired_StatusValues;
 // --- GetProductsAsyncSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, GetProductsAsyncSubmitted.status duplicates the canonical export. */
 export const GetProductsAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
+// --- GetProductsAsyncWorking ---
+/** @deprecated use `BuildCreativeAsyncWorking_StatusValues` — same literal set, GetProductsAsyncWorking.status duplicates the canonical export. */
+export const GetProductsAsyncWorking_StatusValues = BuildCreativeAsyncWorking_StatusValues;
 // --- GetProductsRejected ---
 /** @deprecated use `AccountIdentityChangeRejected_StatusValues` — same literal set, GetProductsRejected.status duplicates the canonical export. */
 export const GetProductsRejected_StatusValues = AccountIdentityChangeRejected_StatusValues;
@@ -2370,6 +2415,9 @@ export const GetProductsSubmitted_StatusValues = BuildCreativeAsyncSubmitted_Sta
 // --- GetSignalsAsyncSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, GetSignalsAsyncSubmitted.status duplicates the canonical export. */
 export const GetSignalsAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
+// --- GetSignalsAsyncWorking ---
+/** @deprecated use `BuildCreativeAsyncWorking_StatusValues` — same literal set, GetSignalsAsyncWorking.status duplicates the canonical export. */
+export const GetSignalsAsyncWorking_StatusValues = BuildCreativeAsyncWorking_StatusValues;
 // --- GetSignalsCompletion ---
 /** @deprecated use `GetProductsCompletion_CacheScopeValues` — same literal set, GetSignalsCompletion.cache_scope duplicates the canonical export. */
 export const GetSignalsCompletion_CacheScopeValues = GetProductsCompletion_CacheScopeValues;
@@ -2674,18 +2722,30 @@ export const SLAWindow_ClockValues = CreativeReviewSLA_ClockValues;
 // --- SyncAudiencesSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, SyncAudiencesSubmitted.status duplicates the canonical export. */
 export const SyncAudiencesSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
+// --- SyncCatalogsAsyncInputRequired ---
+/** @deprecated use `BuildCreativeAsyncInputRequired_StatusValues` — same literal set, SyncCatalogsAsyncInputRequired.status duplicates the canonical export. */
+export const SyncCatalogsAsyncInputRequired_StatusValues = BuildCreativeAsyncInputRequired_StatusValues;
 // --- SyncCatalogsAsyncSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, SyncCatalogsAsyncSubmitted.status duplicates the canonical export. */
 export const SyncCatalogsAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
+// --- SyncCatalogsAsyncWorking ---
+/** @deprecated use `BuildCreativeAsyncWorking_StatusValues` — same literal set, SyncCatalogsAsyncWorking.status duplicates the canonical export. */
+export const SyncCatalogsAsyncWorking_StatusValues = BuildCreativeAsyncWorking_StatusValues;
 // --- SyncCatalogsSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, SyncCatalogsSubmitted.status duplicates the canonical export. */
 export const SyncCatalogsSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
 // --- SyncCatalogsSuccess ---
 /** @deprecated use `CommittedMediaBuy_StatusValues` — same literal set, SyncCatalogsSuccess.status duplicates the canonical export. */
 export const SyncCatalogsSuccess_StatusValues = CommittedMediaBuy_StatusValues;
+// --- SyncCreativesAsyncInputRequired ---
+/** @deprecated use `BuildCreativeAsyncInputRequired_StatusValues` — same literal set, SyncCreativesAsyncInputRequired.status duplicates the canonical export. */
+export const SyncCreativesAsyncInputRequired_StatusValues = BuildCreativeAsyncInputRequired_StatusValues;
 // --- SyncCreativesAsyncSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, SyncCreativesAsyncSubmitted.status duplicates the canonical export. */
 export const SyncCreativesAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
+// --- SyncCreativesAsyncWorking ---
+/** @deprecated use `BuildCreativeAsyncWorking_StatusValues` — same literal set, SyncCreativesAsyncWorking.status duplicates the canonical export. */
+export const SyncCreativesAsyncWorking_StatusValues = BuildCreativeAsyncWorking_StatusValues;
 // --- SyncCreativesSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, SyncCreativesSubmitted.status duplicates the canonical export. */
 export const SyncCreativesSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
@@ -2695,6 +2755,15 @@ export const TagURL_AssetTypeValues = DisplayTagFormatDeclaration_FormatKindValu
 // --- TargetingSignalGroups ---
 /** @deprecated use `PackageSignalTargetingGroups_OperatorValues` — same literal set, TargetingSignalGroups.operator duplicates the canonical export. */
 export const TargetingSignalGroups_OperatorValues = PackageSignalTargetingGroups_OperatorValues;
+// --- TaskInputRequired ---
+/** @deprecated use `BuildCreativeAsyncInputRequired_StatusValues` — same literal set, TaskInputRequired.status duplicates the canonical export. */
+export const TaskInputRequired_StatusValues = BuildCreativeAsyncInputRequired_StatusValues;
+// --- TaskSubmitted ---
+/** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, TaskSubmitted.status duplicates the canonical export. */
+export const TaskSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
+// --- TaskWorking ---
+/** @deprecated use `BuildCreativeAsyncWorking_StatusValues` — same literal set, TaskWorking.status duplicates the canonical export. */
+export const TaskWorking_StatusValues = BuildCreativeAsyncWorking_StatusValues;
 // --- TextAsset ---
 /** @deprecated use `GroupTextAsset_AssetTypeValues` — same literal set, TextAsset.asset_type duplicates the canonical export. */
 export const TextAsset_AssetTypeValues = GroupTextAsset_AssetTypeValues;
@@ -2713,9 +2782,15 @@ export const UnchangedReportingConsumerStatus_ResultValues = UnchangedReportingA
 // --- UnchangedReportingReceipt ---
 /** @deprecated use `UnchangedReportingAdjustmentReceipt_ResultValues` — same literal set, UnchangedReportingReceipt.result duplicates the canonical export. */
 export const UnchangedReportingReceipt_ResultValues = UnchangedReportingAdjustmentReceipt_ResultValues;
+// --- UpdateMediaBuyAsyncInputRequired ---
+/** @deprecated use `BuildCreativeAsyncInputRequired_StatusValues` — same literal set, UpdateMediaBuyAsyncInputRequired.status duplicates the canonical export. */
+export const UpdateMediaBuyAsyncInputRequired_StatusValues = BuildCreativeAsyncInputRequired_StatusValues;
 // --- UpdateMediaBuyAsyncSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, UpdateMediaBuyAsyncSubmitted.status duplicates the canonical export. */
 export const UpdateMediaBuyAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
+// --- UpdateMediaBuyAsyncWorking ---
+/** @deprecated use `BuildCreativeAsyncWorking_StatusValues` — same literal set, UpdateMediaBuyAsyncWorking.status duplicates the canonical export. */
+export const UpdateMediaBuyAsyncWorking_StatusValues = BuildCreativeAsyncWorking_StatusValues;
 // --- UpdateMediaBuySubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, UpdateMediaBuySubmitted.status duplicates the canonical export. */
 export const UpdateMediaBuySubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;

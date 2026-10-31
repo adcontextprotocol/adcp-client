@@ -16,7 +16,7 @@ Each `hello_*_adapter_*` entry is a worked, currently-running, three-gate-tested
 | `sales-guaranteed`      | [`hello_seller_adapter_guaranteed.ts`](../../examples/hello_seller_adapter_guaranteed.ts)         | `npx adcp mock-server sales-guaranteed`     | `sales_guaranteed`     |
 | `sales-non-guaranteed`  | [`hello_seller_adapter_non_guaranteed.ts`](../../examples/hello_seller_adapter_non_guaranteed.ts) | `npx adcp mock-server sales-non-guaranteed` | `sales_non_guaranteed` |
 | `sales-social`          | [`hello_seller_adapter_social.ts`](../../examples/hello_seller_adapter_social.ts)                 | `npx adcp mock-server sales-social`         | `sales_social`         |
-| Proxy-shaped seller     | [`proxy-seller-snap/`](../../examples/proxy-seller-snap/)                                        | upstream sandbox / OAuth                    | bridge + live run      |
+| Proxy-shaped seller     | [`proxy-seller-snap/`](../../examples/proxy-seller-snap/)                                         | upstream sandbox / OAuth                    | bridge + live run      |
 | Multi-tenant holdco hub | [`hello_seller_adapter_multi_tenant.ts`](../../examples/hello_seller_adapter_multi_tenant.ts)     | composed                                    | per specialism         |
 
 The other sales-\* specialisms reuse one of the primary fork targets and apply specialism deltas:
@@ -64,6 +64,8 @@ The fork target covers the baseline. Specialism subpages cover the deltas — wh
 - [`specialisms/sales-proposal-mode.md`](specialisms/sales-proposal-mode.md) — **read if you negotiate via proposals before line-itemizing**: `proposals[]` with `budget_allocations`, `buying_mode: 'refine'`.
 - [`specialisms/audience-sync.md`](specialisms/audience-sync.md) — **read if buyers push audiences to you** (walled-garden + identity-provider patterns): `sync_audiences` track. Hashed identifiers, match-rate telemetry.
 - [`specialisms/signed-requests.md`](specialisms/signed-requests.md) — **read if you accept buyer-signed requests on mutating tools**: RFC 9421 verification, `WWW-Authenticate: Signature error="<code>"` on rejection.
+
+**Reporting subscriptions (AdCP 3.3, experimental).** To let buyers register reporting once on their principal, add the managed `subscriptions` block to your Reliable Reporting service: read [`../reporting-subscriptions/SKILL.md`](../reporting-subscriptions/SKILL.md) (one storage object, `npx adcp-reporting-storage migrate`, `windDownGrant()` instead of revoking).
 
 `sales-catalog-driven` and `sales-retail-media` live in `skills/build-retail-media-agent/` because catalog-driven applies beyond retail (restaurants, travel, local commerce).
 

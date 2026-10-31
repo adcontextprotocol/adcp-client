@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.3.0-beta.2/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.3.0-beta.3/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.3.0-beta.2.
+ * Manifest-derived constants for AdCP 3.3.0-beta.3.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.3.0-beta.2/manifest.json` (adcp_version: 3.3.0-beta.2, generated_at:
- * 2026-10-30T03:19:48.498Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.3.0-beta.3/manifest.json` (adcp_version: 3.3.0-beta.3, generated_at:
+ * 2026-10-31T05:48:46.071Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -222,6 +222,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     description: "A creative governance agent (get_creative_features) could not retrieve the submitted creative_manifest assets for evaluation — an asset URL was unreachable, returned an error, or required credentials the agent does not hold. Distinct from CREATIVE_NOT_FOUND (a creative_id absent from the agent's library, not an asset-fetch failure) and CREATIVE_REJECTED (assets retrieved but failed creative review).",
     recovery: "correctable",
     suggestion: "verify the asset URLs in creative_manifest are reachable without agent-side credentials, then re-submit"
+  },
+  "CREATIVE_LIVE_UPDATE_UNSUPPORTED": {
+    description: "A sync_creatives item changed a live creative in a way the seller does not apply in place under the same creative_id. A creative is live when its status is approved and it has at least one assignment on a package that is not canceled, whose flight has not ended, and whose media buy is not in a terminal state; a paused package still counts. Returned only by sellers that declare creative.live_updates (others keep returning INVALID_STATE). The seller MUST fail only that item, MUST leave the creative, its review state, and its serving unchanged, SHOULD set error.field to the item, and SHOULD return details conforming to error-details/creative-live-update-unsupported.json naming the refused change kinds and the live packages. A dry_run returns the same refusal.",
+    recovery: "correctable",
+    suggestion: "sync the change as a new creative_id and swap it in on each live package with an assignment_operations replace; send the change with dry_run to see the exact outcome without applying it"
   },
   "CREATIVE_LOCALE_NOT_ACCEPTED": {
     description: "A creative bound to a locale-constrained product format has no materialized variant matching locale_policy.accepted_language_ranges, lacks protocol-declared locale topology, or uses serve_default with a seller-ineligible default variant. Seller ranges use RFC 4647 Basic Filtering and are applied independently for every placement where the assignment may serve, before buyer Lookup, locale_fallbacks, or default selection. Distinct from CREATIVE_REJECTED because this is a mechanically discoverable assignment-eligibility mismatch, not subjective content review. error.field SHOULD point to the offending creative or assignment; error.details SHOULD include format_option_id when present, accepted_language_ranges, available_variant_locales, and placement identity when applicable.",

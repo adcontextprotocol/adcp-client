@@ -460,10 +460,13 @@ describe('schema-loader per-version state', () => {
       task_type: 'create_media_buy',
       status: 'completed',
       timestamp: '2026-05-26T09:00:44.582Z',
+      // AdCP 3.3.0-beta.3: a completed create_media_buy carries confirmed_at and revision.
       result: {
         status: 'completed',
         media_buy_id: 'mb_1',
         packages: [],
+        confirmed_at: '2026-05-26T09:00:44.000Z',
+        revision: 1,
       },
     });
     assert.strictEqual(ok, true, JSON.stringify(validate.errors));
@@ -473,7 +476,13 @@ describe('schema-loader per-version state', () => {
       task_id: 'task_schema_ref',
       task_type: 'create_media_buy',
       status: 'completed',
-      result: { status: 'completed', media_buy_id: 'mb_1', packages: [] },
+      result: {
+        status: 'completed',
+        media_buy_id: 'mb_1',
+        packages: [],
+        confirmed_at: '2026-05-26T09:00:44.000Z',
+        revision: 1,
+      },
     });
     assert.strictEqual(missingEnvelopeFields, false, 'schema should reject missing operation_id and timestamp');
     assert.strictEqual(validate.errors.length, 1, 'the default remote-payload validator must remain fail-fast');
@@ -484,7 +493,13 @@ describe('schema-loader per-version state', () => {
         task_id: 'task_schema_ref',
         task_type: 'create_media_buy',
         status: 'completed',
-        result: { status: 'completed', media_buy_id: 'mb_1', packages: [] },
+        result: {
+          status: 'completed',
+          media_buy_id: 'mb_1',
+          packages: [],
+          confirmed_at: '2026-05-26T09:00:44.000Z',
+          revision: 1,
+        },
       }),
       false
     );

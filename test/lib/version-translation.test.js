@@ -27,6 +27,9 @@ const {
 } = require('../../dist/lib/adapters/version/index.js');
 
 const CLIENT_VERSION = '3.2.5';
+// The SDK's own 3.3 preview pin, as a bundle version and at release precision.
+const { ADCP_VERSION: BETA_PIN, toReleasePrecisionVersion } = require('../../dist/lib/version.js');
+const BETA_WIRE = toReleasePrecisionVersion(BETA_PIN);
 
 function caps(supportedVersions, overrides = {}) {
   return {
@@ -425,14 +428,14 @@ describe('SingleAgentClient against an older seller', () => {
     const calls = captureDispatch(t);
     for (const evidence of [
       caps(['3.3-beta.1']),
-      caps(undefined, { servedVersion: '3.3-beta.2' }),
-      caps(['3.3-beta.2'], { _synthetic: true }),
+      caps(undefined, { servedVersion: BETA_WIRE }),
+      caps([BETA_WIRE], { _synthetic: true }),
     ]) {
       for (const useWrapper of [false, true]) {
-        const client = makeClient(evidence, { adcpVersion: '3.3.0-beta.2' });
+        const client = makeClient(evidence, { adcpVersion: BETA_PIN });
         let buyer = client;
         if (useWrapper) {
-          buyer = new AgentClient(client.agent, { adcpVersion: '3.3.0-beta.2' });
+          buyer = new AgentClient(client.agent, { adcpVersion: BETA_PIN });
           buyer.client = client;
         }
         await assert.rejects(() => buyer.listCollections(), ProtocolFeatureUnsupportedError);
@@ -443,7 +446,7 @@ describe('SingleAgentClient against an older seller', () => {
 
   test('a beta buyer retains the 3.0 downgrade for real metadata-free v3 discovery', async t => {
     const calls = captureDispatch(t);
-    const client = makeClient(caps(undefined), { adcpVersion: '3.3.0-beta.2' });
+    const client = makeClient(caps(undefined), { adcpVersion: BETA_PIN });
     await assert.rejects(() => client.listCollections(), ProtocolFeatureUnsupportedError);
     assert.deepEqual(calls, []);
     const negotiated = client.negotiateCallRelease(caps(undefined), undefined);
@@ -637,7 +640,7 @@ describe('sized inline-markup creatives to a seller before AdCP 3.3 (adcp-client
   ]) {
     test(`${label}: the size selects the legacy ref and is not sent as 3.3 asset fields`, async t => {
       const calls = captureDispatch(t, { structuredContent: { adcp_version: wire, creatives: [] } });
-      const client = makeClient(sellerCaps, { adcpVersion: '3.3.0-beta.2' });
+      const client = makeClient(sellerCaps, { adcpVersion: BETA_PIN });
 
       const synced = await client.syncCreatives(
         { account: ACCOUNT, idempotency_key: 'markup-sync-000001', creatives: [creative()] },
@@ -677,7 +680,7 @@ describe('sized inline-markup creatives to a seller before AdCP 3.3 (adcp-client
 
   test('a 3.3 seller receives the canonical display_tag with its rendered size', async t => {
     const calls = captureDispatch(t, { structuredContent: { creatives: [] } });
-    const client = makeClient(caps(['3.2', '3.3.0-beta.2']), { adcpVersion: '3.3.0-beta.2' });
+    const client = makeClient(caps(['3.2', BETA_PIN]), { adcpVersion: BETA_PIN });
     await client.syncCreatives(
       { account: ACCOUNT, idempotency_key: 'markup-sync-000002', creatives: [creative()] },
       undefined,
@@ -764,10 +767,10 @@ describe("account keys under accountIdentityDowngrade: 'reduce'", () => {
     });
   }
 
-  test('accounts.ensure provisions a reduced account', async t => {
+  test('accounts.provision provisions a reduced account', async t => {
     seller(t);
     const { client } = reducingClient({ accountPolicy: 'auto' });
-    const entry = await client.accounts.ensure(CAD, { billing: 'operator' });
+    const entry = await client.accounts.provision(CAD, { billing: 'operator' });
     assert.equal(entry.account_id, 'acc_nike');
     assert.deepEqual((await client.accounts.reductionFor(CAD)).account, REDUCED);
   });

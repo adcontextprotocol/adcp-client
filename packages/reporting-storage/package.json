@@ -5,6 +5,9 @@
   "main": "dist/index.js",
   "module": "./dist/index.mjs",
   "types": "dist/index.d.ts",
+  "bin": {
+    "adcp-reporting-storage": "bin/adcp-reporting-storage.js"
+  },
   "type": "commonjs",
   "exports": {
     ".": {
@@ -116,6 +119,7 @@
   },
   "files": [
     "dist",
+    "bin",
     "examples/reliable-reporting-service/README.md",
     "README.md"
   ],

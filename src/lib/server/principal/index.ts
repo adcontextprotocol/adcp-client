@@ -23,6 +23,7 @@ export type {
   PrincipalReportingDestinationInput,
   PrincipalStateStore,
   PrincipalStoreReplaceResult,
+  PrincipalRef,
   PrincipalStoreScope,
   ReportingDestinationPreparation,
   ResolvedReportingDestination,
@@ -30,4 +31,23 @@ export type {
   StoredPrincipalRecord,
   StoredReportingDestinationGeneration,
   VersionedPrincipalRecord,
+} from './types';
+export {
+  ReportingSubscriptionValidationError,
+  applyReportingSubscriptions,
+  expandReportingSubscriptionPathTemplate,
+  projectReportingSubscriptionState,
+  reportingSubscriptionSemanticFingerprint,
+  validateReportingSubscription,
+} from './reporting-subscriptions';
+export type {
+  ApplyReportingSubscriptionsInput,
+  ApplyReportingSubscriptionsResult,
+  StoredReportingSubscriptionHistory,
+  StoredReportingSubscriptionVersion,
+} from './reporting-subscriptions';
+export type {
+  PrincipalLifecycleRuntimeSubscriptions,
+  PrincipalReportingSubscriptionState,
+  PrincipalReportingSubscriptionSupport,
 } from './types';
