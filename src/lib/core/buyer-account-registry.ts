@@ -748,6 +748,11 @@ export class BuyerAccountRegistry {
         via: 'request_account',
         request_id: requestId,
         ...(wire.account ? { account: structuredClone(wire.account) as unknown as Record<string, unknown> } : {}),
+        // adcp#8620: how it resolved, when changed money terms take effect, and what a separate
+        // account did not carry over.
+        ...(wire.resolution !== undefined ? { resolution: wire.resolution } : {}),
+        ...(wire.effective_at !== undefined ? { effective_at: wire.effective_at } : {}),
+        ...(wire.not_carried_over !== undefined ? { not_carried_over: [...wire.not_carried_over] } : {}),
       };
       // Publish the account_id alias too, so resolveAccount and account-scoped tasks find it.
       await this.record(ref, { account_id: wire.account_id, status }, scope);

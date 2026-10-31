@@ -58,7 +58,12 @@ describe('client.reporting', () => {
     const writes = c.writes.length;
     assert.equal((await reporting.subscribe(subscription())).action, 'unchanged');
     assert.equal(c.writes.length, writes, 'an unchanged subscription is not written');
-    const updated = await reporting.subscribe(subscription({ exclude_account_ids: ['z'] }));
+    // adcp#8619: a membership edit applies in place, under the same version.
+    const membership = await reporting.subscribe(subscription({ exclude_account_ids: ['z'] }));
+    assert.equal(membership.action, 'updated');
+    assert.equal(membership.subscriptionVersion, 1, 'membership changes in place');
+    const changedSelector = { ...subscription().selector, required_finality: 'snapshot' };
+    const updated = await reporting.subscribe(subscription({ exclude_account_ids: ['z'], selector: changedSelector }));
     assert.equal(updated.action, 'updated');
     assert.equal(updated.subscriptionVersion, 2, 'a semantic change bumps the version');
     const all = await reporting.listSubscriptions();
@@ -68,7 +73,7 @@ describe('client.reporting', () => {
     assert.equal(gone.action, 'deactivated');
     assert.equal(gone.state.state, 'inactive');
     assert.equal(gone.subscriptionVersion, 2, 'active changes in place');
-    const back = await reporting.subscribe(subscription({ exclude_account_ids: ['z'] }));
+    const back = await reporting.subscribe(subscription({ exclude_account_ids: ['z'], selector: changedSelector }));
     assert.equal(back.action, 'reactivated');
   });
 
@@ -80,7 +85,13 @@ describe('client.reporting', () => {
     for (const [call, pattern] of [
       [() => reporting.subscribe(subscription({ scope: {} })), /scope must be explicit/],
       [
-        () => reporting.subscribe(subscription({ subscription_version: 1, exclude_account_ids: ['z'] })),
+        () =>
+          reporting.subscribe(
+            subscription({
+              subscription_version: 1,
+              selector: { ...subscription().selector, required_finality: 'snapshot' },
+            })
+          ),
         /must exceed 1/,
       ],
       [() => reporting.subscribe(subscription({ destination: { destination_id: 'missing' } })), /not registered/],

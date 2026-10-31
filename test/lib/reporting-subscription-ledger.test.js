@@ -354,6 +354,30 @@ describe('subscription obligations in the reporting ledger', () => {
     assert.equal(other.failure_kind, 'lookup_unavailable');
   });
 
+  test('a billing cutover stub obligation keeps stub: true through to the wire (adcp#8617)', async () => {
+    const { store, producer } = setup();
+    // The stub covers [E, first incoming boundary): here the first five hours of a day.
+    const stub = {
+      ...owed(1, ['mb-a']),
+      period: { start: day(1), end: new Date(Date.parse(day(1)) + 5 * 3_600_000).toISOString() },
+      stub: true,
+    };
+    await producer.planSubscriptionObligations(plan(PRINCIPAL_A, [stub, owed(2, ['mb-a'])], 3));
+    const stored = [...store.obligations.values()].sort(
+      (l, r) => Date.parse(l.period.start) - Date.parse(r.period.start)
+    );
+    assert.equal(stored[0].stub, true);
+    assert.equal(stored[1].stub, undefined);
+    store.ledgerAsOf = day(4);
+    const periods = await read(store, PRINCIPAL_A, { view: 'periods', period: { start: day(0), end: day(3) } });
+    assert.equal(periods.status, 'completed', JSON.stringify(periods));
+    const wire = periods.periods.map(item => [item.period.start, item.stub]);
+    assert.deepEqual(wire, [
+      [day(1), true],
+      [day(2), undefined],
+    ]);
+  });
+
   test('status ingest accepts only owed periods of the caller', async () => {
     const { store, producer } = setup();
     await producer.planSubscriptionObligations(plan(PRINCIPAL_A, [owed(1, ['mb-a']), owed(3, ['mb-a'])], 4));

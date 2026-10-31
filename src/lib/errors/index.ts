@@ -1495,7 +1495,7 @@ export class CoverageInputError extends ADCPError {
  * - `SUBSCRIPTION_ROSTER_INCOMPLETE`: `listAuthorizedAccounts` repeated a cursor or did not finish
  *   within the page limit, so the engine refused a partial roster.
  * - `SUBSCRIPTION_HOST_FACT_INVALID`: a host hook returned a fact the engine cannot use, such as a
- *   re-grant without `granted_at`, a timezone change without `timezone_changed_at`, or an instant
+ *   re-grant without `regranted_at`, a timezone change without `timezone_changed_at`, or an instant
  *   that is not RFC 3339.
  *
  * @experimental Reporting subscriptions (AdCP 3.3).

@@ -220,3 +220,53 @@ export function reportingSubscriptionScopeIncludesV1(
   }
   return true;
 }
+
+/**
+ * Sticky per-package resolution (`core/reporting-subscription.json` `x-adcp-validation.selection`,
+ * adcontextprotocol/adcp#8619): the offerings one package resolves at `at`. The package resolves once,
+ * at `resolves_at` (the later of the version's `accepted_at` and the buy's `confirmed_at`), among the
+ * offerings available then, and keeps that resolution until a resolved offering is withdrawn: an
+ * offering added later, or a product catalog change, never re-resolves it. At a withdrawal the
+ * package re-resolves among the offerings then available, which is a cutover. Instants before
+ * `resolves_at` read the first resolution. A buy owes the union of its packages' resolutions.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export function resolveReportingSubscriptionPackageV1(
+  input: Omit<ResolveReportingSubscriptionOfferingsInputV1, 'at'> & {
+    /** Epoch milliseconds of the package's first resolution. */
+    resolves_at: number;
+    /** Epoch milliseconds at which to read the resolution. */
+    at: number;
+  }
+): string[] {
+  const { resolves_at: resolvesAt, at, ...selection } = input;
+  const resolveAt = (moment: number) => resolveReportingSubscriptionOfferingsV1({ ...selection, at: moment });
+  const withdrawal = (id: string) => {
+    const value = input.offerings.find(offering => offering.offering_id === id)?.withdrawn_at;
+    if (value === undefined) return undefined;
+    const parsed = Date.parse(value);
+    if (!Number.isFinite(parsed)) {
+      throw new CoverageInputError(
+        'COVERAGE_INPUT_INVALID',
+        'withdrawn_at must be an RFC 3339 date-time',
+        'invalid_instant'
+      );
+    }
+    return parsed;
+  };
+  let resolvedAt = resolvesAt;
+  let resolved = resolveAt(resolvesAt);
+  // Each step re-resolves after a strictly later withdrawal, so the chain is bounded by the offerings.
+  for (let step = 0; step <= input.offerings.length; step += 1) {
+    const withdrawals = resolved
+      .map(withdrawal)
+      .filter((value): value is number => value !== undefined && value > resolvedAt);
+    if (withdrawals.length === 0) break;
+    const next = Math.min(...withdrawals);
+    if (next > at) break;
+    resolvedAt = next;
+    resolved = resolveAt(next);
+  }
+  return resolved;
+}

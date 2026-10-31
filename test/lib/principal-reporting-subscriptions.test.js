@@ -171,7 +171,9 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
 
     // A semantic change without a new version is refused.
     const reused = await sync(lifecycle, {
-      reporting_subscriptions: [subscription({ exclude_account_ids: ['acct_x'] })],
+      reporting_subscriptions: [
+        subscription({ selector: { ...subscription().selector, required_finality: 'snapshot' } }),
+      ],
     });
     assert.equal(errorOf(reused).code, 'INVALID_REQUEST');
     assert.match(errorOf(reused).message, /reused with different content/);
@@ -355,16 +357,49 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
     const duplicate = await sync(lifecycle, { reporting_subscriptions: [subscription(), subscription()] });
     assert.match(errorOf(duplicate).message, /Duplicate subscription_id/);
 
+    // adcp#8619: billing allows one active subscription per account at a scope level ...
+    const billing = extra =>
+      subscription({
+        selector: {
+          feed_purpose: 'billing',
+          period_duration: 'P1D',
+          required_finality: 'official',
+          dimensions: ['package'],
+        },
+        reconciliation_mode: 'consumer_receipt',
+        ...extra,
+      });
     const overlap = await sync(lifecycle, {
       reporting_subscriptions: [
-        subscription(),
-        subscription({
-          subscription_id: 'analytics-2',
+        billing(),
+        billing({
+          subscription_id: 'billing-2',
           destination: { destination_id: 'archive', path_template: 'b/{account_id}' },
         }),
       ],
     });
     assert.match(errorOf(overlap).message, /both apply/);
+    // ... while pacing and analytics allow several, each resolving independently.
+    const severalAnalytics = await sync(lifecycle, {
+      reporting_subscriptions: [
+        subscription({ subscription_id: 'analytics-x' }),
+        subscription({
+          subscription_id: 'analytics-y',
+          selector: { ...subscription().selector, dimensions: ['package'] },
+          destination: { destination_id: 'archive', path_template: 'b/{account_id}' },
+        }),
+      ],
+    });
+    assert.equal(severalAnalytics.result.kind, 'applied', JSON.stringify(severalAnalytics));
+    // A billing subscription must use match exact with dimensions.
+    const finest = await sync(lifecycle, {
+      reporting_subscriptions: [
+        billing({
+          selector: { feed_purpose: 'billing', period_duration: 'P1D', required_finality: 'official', match: 'finest' },
+        }),
+      ],
+    });
+    assert.equal(errorOf(finest).code, 'INVALID_REQUEST');
 
     // Disjoint operator domains, or account_ids versus all-accounts, are allowed.
     const disjoint = await sync(lifecycle, {
@@ -391,6 +426,101 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
       ],
     });
     assert.match(errorOf(sameTemplate).message, /can expand to the same path/);
+  });
+
+  test('membership edits apply in place and are recorded per account (adcp#8619)', async () => {
+    const { lifecycle, time } = setup();
+    await sync(lifecycle, { reporting_destinations: [destination()], reporting_subscriptions: [subscription()] });
+    time.now = new Date('2026-11-03T06:00:00.000Z');
+    const excluded = await sync(lifecycle, {
+      reporting_subscriptions: [subscription({ exclude_account_ids: ['acct_x'] })],
+    });
+    assert.equal(excluded.result.kind, 'applied', JSON.stringify(excluded));
+    const state = excluded.result.configuration.reporting_subscriptions[0];
+    assert.equal(state.subscription_version, 1, 'subscription_version stays');
+    assert.equal(state.accepted_at, '2026-11-01T12:00:00.000Z', 'accepted_at stays');
+    assert.deepEqual(state.configuration.exclude_account_ids, ['acct_x']);
+    assert.equal(state.prior_versions, undefined, 'no new version');
+    time.now = new Date('2026-11-05T06:00:00.000Z');
+    await sync(lifecycle, { reporting_subscriptions: [subscription()] });
+    const { history } = await lifecycle.listReportingSubscriptions(SCOPE);
+    assert.deepEqual(history[0].versions.at(-1).membershipEdits, [
+      { accountId: 'acct_x', at: '2026-11-03T06:00:00.000Z', member: false },
+      { accountId: 'acct_x', at: '2026-11-05T06:00:00.000Z', member: true },
+    ]);
+    // Changing the scope kind still needs a new version.
+    const kind = await sync(lifecycle, {
+      reporting_subscriptions: [subscription({ scope: { account_ids: ['acct_1'] } })],
+    });
+    assert.match(errorOf(kind).message, /reused with different content/);
+  });
+
+  test('destination_overrides route accounts and read back each override destination generation (adcp#8619)', async () => {
+    const { lifecycle } = setup();
+    const second = destination('archive-b');
+    const written = await sync(lifecycle, {
+      reporting_destinations: [destination(), second],
+      reporting_subscriptions: [
+        subscription({
+          destination_overrides: [
+            { account_ids: ['acct_b'], destination_id: 'archive-b' },
+            { operator_domains: ['agency.example'], destination_id: 'archive-b', path_template: 'agency/{account_id}' },
+          ],
+        }),
+      ],
+    });
+    assert.equal(written.result.kind, 'applied', JSON.stringify(written));
+    const state = written.result.configuration.reporting_subscriptions[0];
+    const refs = written.result.configuration.reporting_destinations;
+    assert.deepEqual(state.destination_override_refs, [
+      {
+        destination_id: 'archive-b',
+        destination_ref: refs.find(item => item.destination_id === 'archive-b').destination_ref,
+      },
+      {
+        destination_id: 'archive-b',
+        destination_ref: refs.find(item => item.destination_id === 'archive-b').destination_ref,
+      },
+    ]);
+    assertSchemaValid('sync_principal', written);
+    const {
+      reportingSubscriptionDestinationForAccount,
+    } = require('../../dist/lib/server/principal/reporting-subscriptions.js');
+    const configuration = state.configuration;
+    assert.equal(
+      reportingSubscriptionDestinationForAccount(configuration, { account_id: 'acct_b' }).destination_id,
+      'archive-b'
+    );
+    assert.deepEqual(
+      reportingSubscriptionDestinationForAccount(configuration, { account_id: 'acct_c', operator: 'agency.example' }),
+      {
+        destination_id: 'archive-b',
+        path_template: 'agency/{account_id}',
+      }
+    );
+    assert.equal(
+      reportingSubscriptionDestinationForAccount(configuration, { account_id: 'acct_c' }).destination_id,
+      'archive'
+    );
+    // An override must name a destination that exists after the request.
+    const missing = await sync(lifecycle, {
+      reporting_subscriptions: [
+        subscription({ destination_overrides: [{ account_ids: ['acct_b'], destination_id: 'nope' }] }),
+      ],
+    });
+    assert.equal(errorOf(missing).code, 'INVALID_REQUEST');
+    // One account in two account_ids entries fails the whole request.
+    const twice = await sync(lifecycle, {
+      reporting_subscriptions: [
+        subscription({
+          destination_overrides: [
+            { account_ids: ['acct_b'], destination_id: 'archive-b' },
+            { account_ids: ['acct_b'], destination_id: 'archive' },
+          ],
+        }),
+      ],
+    });
+    assert.equal(errorOf(twice).code, 'INVALID_REQUEST');
   });
 
   test('a destination still named by an active subscription cannot be removed', async () => {
@@ -583,20 +713,19 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
       { expected_configuration_version: version }
     );
     assert.equal(guarded.result.kind, 'applied', JSON.stringify(guarded));
-    await assert.rejects(
-      lifecycle.recordSubscriptionReadback(SCOPE, [
-        {
-          subscriptionId: 'analytics-daily',
-          accountsWithExceptions: Array.from({ length: 1001 }, (_, index) => ({
-            account_id: `acct_${index}`,
-            reasons: ['capacity'],
-          })),
-          accountsUnauthorized: [],
-        },
-      ]),
-      /more than 1000/,
-      'the readback is never silently cut'
-    );
+    // adcp#8619: a list longer than 1000 is kept whole with its total; serving lists 1000 inline.
+    await lifecycle.recordSubscriptionReadback(SCOPE, [
+      {
+        subscriptionId: 'analytics-daily',
+        accountsWithExceptions: Array.from({ length: 1001 }, (_, index) => ({
+          account_id: `acct_${String(index).padStart(4, '0')}`,
+          reasons: ['capacity'],
+        })),
+        accountsUnauthorized: [],
+      },
+    ]);
+    const { states } = await lifecycle.listReportingSubscriptions(SCOPE);
+    assert.equal(states[0].accounts_with_exceptions_count, 1001, 'the readback is never silently cut');
   });
 
   test('a destination changing pattern or transport under an active subscription needs a new version', async () => {

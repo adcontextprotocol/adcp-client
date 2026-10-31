@@ -33,6 +33,8 @@ export interface ReportingSubscriptionReleaseFieldsV1 {
    * `accounts_unauthorized_count` (adcp#8619): each bounded list carries its total.
    */
   readbackCounts: boolean;
+  /** `reporting-subscription-state.json` `destination_override_refs` (adcp#8619). */
+  destinationOverrideRefs: boolean;
 }
 
 const cache = new Map<string, ReportingSubscriptionReleaseFieldsV1>();
@@ -82,6 +84,7 @@ export function reportingSubscriptionReleaseFieldsV1(
       'prior_versions_count' in properties(state) &&
       'accounts_with_exceptions_count' in properties(state) &&
       'accounts_unauthorized_count' in properties(state),
+    destinationOverrideRefs: 'destination_override_refs' in properties(state),
   });
   if (cache.size > 64) cache.clear();
   cache.set(servedAdcpVersion, result);
@@ -123,6 +126,9 @@ export function reportingSubscriptionCoverageForReleaseV1<T extends Record<strin
   return copy as T;
 }
 
+/** `accounts_with_exceptions` / `accounts_unauthorized` `maxItems`. */
+const MAX_INLINE_ACCOUNTS = 1000;
+
 /** The readback's bounded lists and their totals (adcp#8619). */
 const READBACK_LISTS = [
   ['prior_versions', 'prior_versions_count'],
@@ -146,7 +152,17 @@ export function reportingSubscriptionStatesForReleaseV1<T extends { reporting_su
           ({ configuration: _configuration, ...prior }) => prior
         );
       }
+      if (!fields.destinationOverrideRefs) delete next.destination_override_refs;
       for (const [list, count] of READBACK_LISTS) {
+        // adcp#8619: account lists are bounded at 1000 inline; get_principal reporting_subscription_page reads the rest.
+        if (
+          list !== 'prior_versions' &&
+          Array.isArray(next[list]) &&
+          (next[list] as unknown[]).length > MAX_INLINE_ACCOUNTS
+        ) {
+          if (typeof next[count] !== 'number') next[count] = (next[list] as unknown[]).length;
+          next[list] = (next[list] as unknown[]).slice(0, MAX_INLINE_ACCOUNTS);
+        }
         if (!fields.readbackCounts || !Array.isArray(next[list])) delete next[count];
         // A record written before the counts existed lists every entry it has, so its length is the total.
         else if (typeof next[count] !== 'number') next[count] = (next[list] as unknown[]).length;

@@ -74,7 +74,7 @@ function deliveryOffering() {
       schema_dialect: 'https://json-schema.org/draft/2020-12/schema',
       schema_ref_policy: 'bundled_only',
       grain: ['media_buy_id'],
-      primary_keys: ['media_buy_id'],
+      primary_keys: ['account_id', 'media_buy_id'],
     },
     schedule: { period_duration: 'P1D', alignment: 'utc', delivery_sla: 'PT0S' },
     supported_finality: ['snapshot'],
@@ -127,7 +127,7 @@ async function runTransition(testCase) {
                 {
                   account_id: ACCOUNT,
                   authorized_at: '2026-08-01T00:00:00Z',
-                  ...(step.granted_at ? { granted_at: step.granted_at } : {}),
+                  ...(step.regranted_at ? { regranted_at: step.regranted_at } : {}),
                   ...(step.allowed_tasks === null ? {} : { allowed_tasks: step.allowed_tasks }),
                 },
               ],

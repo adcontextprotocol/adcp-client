@@ -32,7 +32,7 @@ const B = { tenantId: TENANT, principalId: 'principal-b' };
 const day = n => new Date(Date.parse('2026-09-01T00:00:00.000Z') + n * 86_400_000).toISOString();
 const offeringId = redactedReportingSourceOfferingV1.offeringId;
 
-function deliveryOffering() {
+function deliveryOffering(primaryKeys = ['account_id', 'media_buy_id']) {
   const source = redactedReportingSourceOfferingV1;
   return {
     offering_id: source.offeringId,
@@ -48,7 +48,7 @@ function deliveryOffering() {
       schema_dialect: source.contract.schemaDialect,
       schema_ref_policy: source.contract.schemaRefPolicy,
       grain: source.grain,
-      primary_keys: ['media_buy_id'],
+      primary_keys: primaryKeys,
     },
     schedule: { period_duration: 'P1D', alignment: 'utc', delivery_sla: 'PT0S' },
     supported_finality: ['snapshot'],
@@ -101,7 +101,7 @@ function buy(mediaBuyId, start, end) {
 }
 const BUYS = { 'principal-a': [buy('mb-a', 3, 5)], 'principal-b': [buy('mb-b', 4, 5)] };
 
-async function world({ bind, subscribers = [] } = {}) {
+async function world({ bind, subscribers = [], primaryKeys, overrideA = false } = {}) {
   const clock = { now: new Date(day(0.5)) };
   const { lifecycle } = createTestPrincipalLifecycle({
     clock,
@@ -119,10 +119,24 @@ async function world({ bind, subscribers = [] } = {}) {
     const response = await lifecycle.protocol.syncPrincipal(
       {
         idempotency_key: `subscription-delivery-${String(++key).padStart(4, '0')}`,
-        configuration: {
-          reporting_destinations: [destination(destinationId)],
-          reporting_subscriptions: [subscription(destinationId)],
-        },
+        configuration:
+          overrideA && principal === A
+            ? {
+                // adcp#8619: route this account to a second destination inside the one subscription.
+                reporting_destinations: [destination(destinationId), destination('dest-a2')],
+                reporting_subscriptions: [
+                  {
+                    ...subscription(destinationId),
+                    destination_overrides: [
+                      { account_ids: [ACCOUNT], destination_id: 'dest-a2', path_template: 'routed/{account_id}' },
+                    ],
+                  },
+                ],
+              }
+            : {
+                reporting_destinations: [destination(destinationId)],
+                reporting_subscriptions: [subscription(destinationId)],
+              },
       },
       {
         callerMutationScope: {
@@ -173,7 +187,7 @@ async function world({ bind, subscribers = [] } = {}) {
     adapters: {
       fixture: {
         sourceOffering,
-        deliveryOffering: deliveryOffering(),
+        deliveryOffering: deliveryOffering(primaryKeys),
         fetchSlice: slice => ({
           reporting_period: { start: slice.start_date, end: slice.end_date },
           currency: 'USD',
@@ -246,6 +260,25 @@ describe('managed subscription delivery in the Core service', () => {
       assert.ok(revision.rows.length > 0);
       for (const row of revision.rows) assert.equal(row.account_id, ACCOUNT);
     }
+  });
+
+  test('destination_overrides route an account to its own destination and template (adcp#8619)', async () => {
+    const binds = [];
+    const { service } = await world({ overrideA: true, bind: async input => binds.push(input) });
+    await service.runCycle({ accountId: ACCOUNT, now: new Date(day(6)) });
+    const routed = binds.find(value => value.principal.principalId === 'principal-a');
+    assert.deepEqual(routed.destination, { destination_id: 'dest-a2', path_template: 'routed/{account_id}' });
+    const other = binds.find(value => value.principal.principalId === 'principal-b');
+    assert.deepEqual(other.destination, {
+      destination_id: 'dest-b',
+      path_template: '{account_id}/{offering_id}/{period_start}',
+    });
+  });
+
+  test('a managed offering whose primary keys omit account_id is refused at creation (adcp#8619)', async () => {
+    await assert.rejects(world({ primaryKeys: ['media_buy_id'] }), error =>
+      /primary_keys omit account_id/.test(error.message)
+    );
   });
 
   test('a failing bind writes nothing for that generation and retries next cycle', async () => {

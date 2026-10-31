@@ -135,11 +135,18 @@ describe('ensure routes to request_account when the seller advertises account.re
       [['pending', 'req-1']]
     );
     assert.deepEqual(await registry.refresh(), [], 'nothing moved');
-    seller.state = wireRequest('resolved', { account_id: 'acc-renault', account: { status: 'active' } });
+    // adcp#8620: a created account carries its money terms, which can differ from those requested.
+    seller.state = wireRequest('resolved', {
+      account_id: 'acc-renault',
+      resolution: 'created',
+      account: { account_id: 'acc-renault', name: 'Renault', status: 'active', payment_terms: 'net_45' },
+    });
     const moved = await registry.refresh();
     assert.equal(moved.length, 1);
     assert.equal(moved[0].kind, 'ready');
     assert.equal(moved[0].account_id, 'acc-renault');
+    assert.equal(moved[0].resolution, 'created');
+    assert.equal(moved[0].account.payment_terms, 'net_45');
     assert.deepEqual(await registry.pending(), []);
     // The account_id alias is published for account-scoped tasks.
     assert.equal((await registry.getByAccountId('acc-renault')).status, 'active');

@@ -360,17 +360,18 @@ phases:
         sample_request:
           idempotency_key: '$generate:uuid_v4#subscriptions_reused_version'
           configuration:
+            # A selector change is semantic. Membership edits (account_ids, exclude_account_ids) apply
+            # in place under the same version (adcp#8619).
             reporting_subscriptions:
               - subscription_id: 'analytics-daily'
                 subscription_version: 1
                 active: true
                 scope:
                   all_authorized_accounts: true
-                exclude_account_ids: ['acct-excluded']
                 selector:
                   feed_purpose: analytics
                   period_duration: P1D
-                  required_finality: snapshot
+                  required_finality: official
                 reconciliation_mode: delivery_only
           context:
             correlation_id: 'reporting_subscriptions--reused_version'

@@ -219,7 +219,90 @@ export function createPrincipalLifecycle<TAccount = unknown>(
     params: GetPrincipalRequest,
     ctx: HandlerContext<TAccount>
   ): Promise<ServerPayload<GetPrincipalResponse>> {
-    return forRelease(await readPrincipal(ctx), ctx.servedAdcpVersion, subscriptionSupport !== undefined);
+    const page = (params as { reporting_subscription_page?: ReportingSubscriptionPageRequest })
+      .reporting_subscription_page;
+    if (page === undefined) {
+      return forRelease(await readPrincipal(ctx), ctx.servedAdcpVersion, subscriptionSupport !== undefined);
+    }
+    return forRelease(await readSubscriptionPage(ctx, page), ctx.servedAdcpVersion, subscriptionSupport !== undefined);
+  }
+
+  /**
+   * One page of a subscription's `accounts_with_exceptions`, `accounts_unauthorized` or
+   * `prior_versions` (adcp#8619): the same entries and order as the inline list, which is shorter
+   * than its count once the list passes its inline bound.
+   */
+  async function readSubscriptionPage(
+    ctx: HandlerContext<TAccount>,
+    page: ReportingSubscriptionPageRequest
+  ): Promise<ServerPayload<GetPrincipalResponse>> {
+    const invalid = (message: string) =>
+      ({
+        status: 'failed',
+        result: {
+          kind: 'failed',
+          errors: [{ code: 'INVALID_REQUEST', message, field: 'reporting_subscription_page' }],
+        },
+      }) as unknown as ServerPayload<GetPrincipalResponse>;
+    if (!subscriptionSupport) {
+      throw new UnsupportedPrincipalFeatureError('reporting_subscriptions are not supported by this seller');
+    }
+    const read = await readPrincipal(ctx);
+    const result = read.result as {
+      kind?: string;
+      configuration?: { reporting_subscriptions?: PrincipalReportingSubscriptionState[] };
+    };
+    const resolved = await resolve(ctx);
+    const current = await options.store.get(storeScope(resolved));
+    const state = result.configuration?.reporting_subscriptions?.find(
+      item => item.subscription_id === page.subscription_id
+    );
+    if (!state || !current) return invalid(`Unknown reporting subscription ${JSON.stringify(page.subscription_id)}`);
+    if (!['accounts_with_exceptions', 'accounts_unauthorized', 'prior_versions'].includes(page.list)) {
+      return invalid('reporting_subscription_page.list is invalid');
+    }
+    const history = current.record.reportingSubscriptionHistory?.find(
+      item => item.subscriptionId === page.subscription_id
+    );
+    const entries: unknown[] =
+      page.list === 'prior_versions'
+        ? (history?.versions ?? [])
+            .slice(0, -1)
+            .reverse()
+            .map(version => ({
+              subscription_version: version.subscriptionVersion,
+              accepted_at: version.acceptedAt,
+              superseded_at: version.supersededAt!,
+              configuration: structuredClone(version.configuration),
+            }))
+        : (structuredClone((state as Record<string, unknown>)[page.list] as unknown[] | undefined) ?? []);
+    const size = page.pagination?.max_results ?? 50;
+    if (!Number.isSafeInteger(size) || size < 1 || size > 100) {
+      return invalid('reporting_subscription_page.pagination.max_results must be 1-100');
+    }
+    let offset = 0;
+    if (page.pagination?.cursor !== undefined) {
+      const decoded = /^o(\d{1,9})$/.exec(page.pagination.cursor);
+      if (!decoded) return invalid('reporting_subscription_page.pagination.cursor is not a cursor this seller issued');
+      offset = Number(decoded[1]);
+    }
+    const slice = entries.slice(offset, offset + size);
+    const hasMore = offset + size < entries.length;
+    return {
+      result: {
+        ...(read.result as object),
+        reporting_subscription_page: {
+          subscription_id: page.subscription_id,
+          list: page.list,
+          [page.list]: slice,
+          pagination: {
+            has_more: hasMore,
+            ...(hasMore ? { cursor: `o${offset + size}` } : {}),
+            total_count: entries.length,
+          },
+        },
+      },
+    } as unknown as ServerPayload<GetPrincipalResponse>;
   }
 
   async function readPrincipal(ctx: HandlerContext<TAccount>): Promise<ServerPayload<GetPrincipalResponse>> {
@@ -1036,12 +1119,8 @@ export function createPrincipalLifecycle<TAccount = unknown>(
         const state = nextStates.find(item => item.subscription_id === update.subscriptionId);
         if (!state) continue;
         const before = canonicalJsonSha256([state.accounts_with_exceptions ?? [], state.accounts_unauthorized ?? []]);
-        if (update.accountsWithExceptions.length > 1000 || update.accountsUnauthorized.length > 1000) {
-          // The readback lists at most 1000 of each; a silently cut list would misreport.
-          throw new RangeError(
-            `Reporting subscription ${JSON.stringify(update.subscriptionId)} has more than 1000 accounts to list in its readback`
-          );
-        }
+        // adcp#8619: the full lists are kept; the response lists 1000 inline with each total, and
+        // get_principal reporting_subscription_page reads the rest.
         const withExceptions = [...update.accountsWithExceptions].sort((left, right) =>
           compareBytes(left.account_id, right.account_id)
         );
@@ -1222,6 +1301,13 @@ function storeScope(resolved: Readonly<ResolvedPrincipalScope>): PrincipalRef {
 
 function notificationScope(scope: Readonly<PrincipalRef>) {
   return { kind: 'caller' as const, tenantId: scope.tenantId, principalId: scope.principalId };
+}
+
+/** `get_principal` `reporting_subscription_page` (adcp#8619). */
+interface ReportingSubscriptionPageRequest {
+  subscription_id: string;
+  list: 'accounts_with_exceptions' | 'accounts_unauthorized' | 'prior_versions';
+  pagination?: { max_results?: number; cursor?: string };
 }
 
 function currentResult(record: Readonly<StoredPrincipalRecord>) {

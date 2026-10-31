@@ -65,8 +65,9 @@ export interface SubscriptionPlanningFailure {
  * - `accounts(principal, { cursor })`: the roster, instead of the platform's `accounts.list` read
  *   under the principal's identity. Required when account access depends on a live upstream token.
  * - `buys(principal, accountId)`: an account's buys, instead of the platform's `getMediaBuys`.
- * - `buyOfferings(mediaBuy)`: each package's offering ids, keyed by `package_id`. Without it every
- *   package is reported by every offering the service registered.
+ * - `buyOfferings(mediaBuy)`: each package's offering ids, keyed by `package_id`. Without it the
+ *   package's own `reporting_delivery_offering_ids` snapshot from `get_media_buys` is used
+ *   (adcp#8618), and a package without one is reported by every offering the service registered.
  * - `accountDeliveryConfigs(principal, accountId)`: the caller's own active `sync_accounts`
  *   configurations, so they take precedence and their ids never clash with a `subscription_id`.
  * - `endAccountConfigs(principal, accountId, ids, { at })`: ends them for `replace_account_configs`
@@ -198,8 +199,9 @@ export interface ManagedReportingSubscriptions<TCtxMeta> {
   /** Push grant changes into the grant journal: `service.grants`. */
   readonly grants: SubscriptionGrants;
   /**
-   * Serve the journal's `authorized_at` on accounts a caller is shown (`list_accounts`,
-   * `sync_accounts`). Only callers holding subscriptions are touched; never fails the read.
+   * Serve the journal's `authorized_at` and `regranted_at` (adcp#8618) on accounts a caller is shown
+   * (`list_accounts`, `sync_accounts`). Only callers holding subscriptions are touched; never fails
+   * the read.
    */
   projectAccounts<T>(items: T[], ctx: unknown): Promise<T[]>;
 }
@@ -357,12 +359,15 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
       (page?.items ?? []).flatMap(raw => {
         const account = raw as Record<string, unknown>;
         const accountId = typeof account.id === 'string' ? account.id : (account.account_id as string | undefined);
-        const authorization = account.authorization as { allowed_tasks?: string[]; authorized_at?: string } | undefined;
+        const authorization = account.authorization as
+          | { allowed_tasks?: string[]; authorized_at?: string; regranted_at?: string }
+          | undefined;
         return accountId
           ? [
               {
                 account_id: accountId,
                 ...(authorization?.authorized_at ? { authorized_at: authorization.authorized_at } : {}),
+                ...(authorization?.regranted_at ? { regranted_at: authorization.regranted_at } : {}),
                 ...(authorization?.allowed_tasks ? { allowed_tasks: authorization.allowed_tasks } : {}),
               },
             ]
@@ -375,9 +380,12 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
       const accountId = typeof account.id === 'string' ? account.id : (account.account_id as string | undefined);
       if (!accountId) continue;
       const authorization = account.authorization as { allowed_tasks?: string[]; authorized_at?: string } | undefined;
+      const grant = served.get(accountId);
       accounts.push({
         account_id: accountId,
-        authorized_at: served.get(accountId) ?? authorization?.authorized_at ?? now().toISOString(),
+        authorized_at: grant?.authorized_at ?? authorization?.authorized_at ?? now().toISOString(),
+        // adcp#8618: the journal's re-grant instant is the wire's authorization.regranted_at.
+        ...(grant?.regranted_at !== undefined ? { regranted_at: grant.regranted_at } : {}),
         ...(typeof account.timezone === 'string' ? { timezone: account.timezone } : {}),
         ...(typeof account.operator === 'string' ? { operator: account.operator } : {}),
         ...(authorization?.allowed_tasks ? { allowed_tasks: [...authorization.allowed_tasks] } : {}),
@@ -390,20 +398,51 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
     if (typeof raw.start_time !== 'string' || typeof raw.end_time !== 'string') return undefined;
     const cancellation = (raw.cancellation ?? {}) as { canceled_at?: string };
     const every = service.offerings.map(item => item.offering_id);
+    // adcp#8618: get_media_buys carries each package's offering snapshot, fixed at confirmation.
     const byPackage = options.buyOfferings
       ? options.buyOfferings(raw)
       : Object.fromEntries(
-          ((raw.packages as Array<{ package_id?: string }> | undefined) ?? [])
+          (
+            (raw.packages as Array<{ package_id?: string; reporting_delivery_offering_ids?: unknown }> | undefined) ??
+            []
+          )
             .filter(item => typeof item.package_id === 'string')
-            .map(item => [item.package_id!, every])
+            .map(item => [
+              item.package_id!,
+              Array.isArray(item.reporting_delivery_offering_ids)
+                ? (item.reporting_delivery_offering_ids as string[])
+                : every,
+            ])
         );
+    const history = Array.isArray(raw.flight_history)
+      ? (raw.flight_history as Array<Record<string, unknown>>).filter(
+          entry =>
+            typeof entry.recorded_at === 'string' &&
+            typeof entry.start_time === 'string' &&
+            typeof entry.stop_time === 'string'
+        )
+      : [];
     return {
       media_buy_id: String(raw.media_buy_id),
       confirmed_at: (raw.confirmed_at as string | null | undefined) ?? null,
       start_time: raw.start_time,
       end_time: raw.end_time,
       ...(cancellation.canceled_at ? { canceled_at: cancellation.canceled_at } : {}),
+      // adcp#8617: the delivery stop under a cancellation, which ends the flight.
+      ...(typeof raw.cancellation_effective_at === 'string'
+        ? { cancellation_effective_at: raw.cancellation_effective_at }
+        : {}),
       ...(typeof raw.completed_at === 'string' ? { completed_at: raw.completed_at } : {}),
+      // adcp#8618: the buy's retroactive flight edits.
+      ...(history.length > 0
+        ? {
+            flight_history: history.map(entry => ({
+              recorded_at: entry.recorded_at as string,
+              start_time: entry.start_time as string,
+              stop_time: entry.stop_time as string,
+            })),
+          }
+        : {}),
       packages: Object.entries(byPackage)
         .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
         .map(([package_id, ids]) => ({ package_id, reporting_delivery_offering_ids: [...ids] })),
@@ -694,13 +733,14 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
           const account = raw as Record<string, unknown>;
           const accountId = typeof account.id === 'string' ? account.id : (account.account_id as string | undefined);
           const authorization = account.authorization as
-            | { allowed_tasks?: string[]; authorized_at?: string }
+            | { allowed_tasks?: string[]; authorized_at?: string; regranted_at?: string }
             | undefined;
           return accountId && authorization
             ? [
                 {
                   account_id: accountId,
                   ...(authorization.authorized_at ? { authorized_at: authorization.authorized_at } : {}),
+                  ...(authorization.regranted_at ? { regranted_at: authorization.regranted_at } : {}),
                   ...(authorization.allowed_tasks ? { allowed_tasks: authorization.allowed_tasks } : {}),
                 },
               ]
@@ -710,11 +750,17 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
         return items.map(raw => {
           const account = raw as Record<string, unknown>;
           const accountId = typeof account.id === 'string' ? account.id : (account.account_id as string | undefined);
-          const start = accountId ? served.get(accountId) : undefined;
-          if (start === undefined) return raw;
+          const grant = accountId ? served.get(accountId) : undefined;
+          if (grant === undefined) return raw;
+          // The journal is the one source of authorized_at and regranted_at (adcp#8618): serve both.
+          const { regranted_at: _hostRegrant, ...authorization } = account.authorization as Record<string, unknown>;
           return {
             ...account,
-            authorization: { ...(account.authorization as Record<string, unknown>), authorized_at: start },
+            authorization: {
+              ...authorization,
+              authorized_at: grant.authorized_at,
+              ...(grant.regranted_at !== undefined ? { regranted_at: grant.regranted_at } : {}),
+            },
           } as typeof raw;
         });
       } catch (error) {

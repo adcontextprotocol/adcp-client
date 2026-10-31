@@ -285,6 +285,11 @@ export interface ReportingLedgerObligationV1 {
   createdAt: string;
   /** Copied from a subscription generation, so ownership is checkable from the obligation alone. */
   subscription?: ReportingLedgerSubscriptionV1;
+  /**
+   * A billing cutover stub (adcp#8617): the stretch from a cutover's E to the incoming schedule's
+   * first boundary, owed as one period. Served as the wire obligation's `stub: true`.
+   */
+  stub?: true;
 }
 
 export interface ReportingRevisionBindingV1 {
@@ -1410,6 +1415,8 @@ export interface ReportingSubscriptionLedgerObligationInputV1 {
   /** Frozen at the period end (`scope_resolved_at`). Must equal the constituents' media buys. */
   mediaBuyIds: string[];
   constituents: ReportingSourceSliceRequestV1['coverage']['constituents'];
+  /** A billing cutover stub (adcp#8617): `period` is [E, first incoming boundary). */
+  stub?: true;
 }
 
 /**

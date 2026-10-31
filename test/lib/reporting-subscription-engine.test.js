@@ -16,6 +16,10 @@ const { validateResponse } = require('../../dist/lib/validation/schema-validator
 
 const SCOPE = { tenantId: 't', principalId: 'p' };
 const CTX = { callerMutationScope: { tenant_id: 't', principal_id: 'p', principal_kind: 'buyer_agent' } };
+function assertSchemaValid(toolName, response) {
+  const outcome = validateResponse(toolName, response, PINNED);
+  assert.equal(outcome.valid, true, JSON.stringify(outcome.issues));
+}
 
 const profile = {
   id: 'adcp.delivery.v1',
@@ -291,8 +295,13 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     w.host.buys.set('acct_1', [
       buy('mb_1', {
         end_time: '2026-11-08T00:00:00Z',
-        prior_flights: [
-          { replaced_at: '2026-11-07T12:00:00Z', start_time: '2026-11-03T00:00:00Z', end_time: '2026-11-06T00:00:00Z' },
+        // adcp#8618: the buy's wire flight_history carries the flight in force before the edit.
+        flight_history: [
+          {
+            recorded_at: '2026-11-07T12:00:00Z',
+            start_time: '2026-11-03T00:00:00Z',
+            stop_time: '2026-11-06T00:00:00Z',
+          },
         ],
       }),
     ]);
@@ -355,7 +364,7 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
       assert.ok(w.emitted.some(event => event.payload.reason === 'reporting_subscription_changed'));
 
       // The host keeps reporting the chain's authorized_at and reports when it re-granted.
-      w.grant('acct_1', '2026-10-01T00:00:00.000Z', { granted_at: '2026-11-06T18:00:00.000Z' });
+      w.grant('acct_1', '2026-10-01T00:00:00.000Z', { regranted_at: '2026-11-06T18:00:00.000Z' });
       const regranted = await w.step('2026-11-06T18:00:00.000Z');
       assert.equal(regranted.result.configuration.reporting_subscriptions[0].accounts_unauthorized, undefined);
       const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
@@ -750,41 +759,138 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     );
   });
 
-  test('a subscription with more than 1000 readback accounts is isolated, not fatal', async () => {
+  test('a readback with more than 1000 accounts lists 1000 inline with the total and pages the rest (adcp#8619)', async () => {
     const w = world({ maxAccounts: 1 });
     for (let index = 0; index < 1002; index += 1) {
       w.grant(`acct_${String(index).padStart(4, '0')}`, '2026-10-01T00:00:00.000Z');
     }
-    w.grant('acct_x', '2026-10-01T00:00:00.000Z');
-    await w.sync([
-      subscription(),
-      subscription({ subscription_id: 'analytics-x', scope: { account_ids: ['acct_x'] } }),
-    ]);
-    {
-      const result = await w.engine.reconcile(SCOPE);
-      assert.deepEqual(
-        result.readback_overflow.map(item => item.subscription_id),
-        ['analytics-daily'],
-        'every account past max_accounts carries capacity, more than the readback can list'
-      );
-      assert.ok(result.readback_overflow[0].accounts_with_exceptions > 1000);
-    }
-    // Other subscriptions keep updating.
-    w.revoke('acct_x', '2026-11-03T00:00:00.000Z');
-    w.clock.now = new Date('2026-11-03T12:00:00.000Z');
+    await w.sync([subscription()]);
     const result = await w.engine.reconcile(SCOPE);
-    assert.deepEqual(
-      result.readback_overflow.map(item => item.subscription_id),
-      ['analytics-daily']
-    );
+    assert.deepEqual(result.readback_overflow, [], 'nothing overflows any more');
+    // Every account past max_accounts carries capacity: 1001 of them. The internal state keeps all.
     const { states } = await w.lifecycle.listReportingSubscriptions(SCOPE);
-    const x = states.find(item => item.subscription_id === 'analytics-x');
-    assert.deepEqual(
-      x.accounts_unauthorized.map(item => item.account_id),
-      ['acct_x']
+    assert.equal(states[0].accounts_with_exceptions.length, 1001);
+    assert.equal(states[0].accounts_with_exceptions_count, 1001);
+    // Served: 1000 inline in account_id byte order, with the total.
+    const served = await w.lifecycle.protocol.getPrincipal({}, CTX);
+    const inline = served.result.configuration.reporting_subscriptions[0];
+    assert.equal(inline.accounts_with_exceptions.length, 1000);
+    assert.equal(inline.accounts_with_exceptions_count, 1001);
+    assertSchemaValid('get_principal', served);
+    // The rest through get_principal reporting_subscription_page.
+    const pages = [];
+    let cursor;
+    do {
+      const page = await w.lifecycle.protocol.getPrincipal(
+        {
+          reporting_subscription_page: {
+            subscription_id: 'analytics-daily',
+            list: 'accounts_with_exceptions',
+            pagination: { max_results: 100, ...(cursor ? { cursor } : {}) },
+          },
+        },
+        CTX
+      );
+      assertSchemaValid('get_principal', page);
+      const body = page.result.reporting_subscription_page;
+      assert.equal(body.pagination.total_count, 1001);
+      pages.push(...body.accounts_with_exceptions);
+      cursor = body.pagination.has_more ? body.pagination.cursor : undefined;
+    } while (cursor);
+    assert.equal(pages.length, 1001);
+    assert.deepEqual(pages.slice(0, 1000), inline.accounts_with_exceptions, 'same entries and order as inline');
+    const unknown = await w.lifecycle.protocol.getPrincipal(
+      { reporting_subscription_page: { subscription_id: 'nope', list: 'prior_versions' } },
+      CTX
     );
-    const daily = states.find(item => item.subscription_id === 'analytics-daily');
-    assert.equal(daily.accounts_with_exceptions, undefined, 'the oversized list is never published cut');
+    assert.equal(unknown.result.errors[0].code, 'INVALID_REQUEST');
+  });
+
+  test('an in-place membership edit is a cutover for that account alone (adcp#8619)', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.grant('acct_2', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [buy('mb_1')]);
+    w.host.buys.set('acct_2', [buy('mb_2')]);
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    // Exclude acct_1 at 11-05T06 without a new version, and include it again at 11-07T06.
+    w.clock.now = new Date('2026-11-05T06:00:00.000Z');
+    await w.sync([subscription({ exclude_account_ids: ['acct_1'] })]);
+    await w.step('2026-11-05T06:00:00.000Z');
+    const [excluded] = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+    assert.equal(excluded.subscription_version, 1, 'no new version');
+    assert.equal(excluded.status, 'excluded');
+    assert.deepEqual(
+      excluded.excluded.map(item => [item.reason, item.from, item.until]),
+      [['excluded_by_buyer', '2026-11-06T00:00:00.000Z', undefined]],
+      'the 11-05 period started before the edit and stays owed'
+    );
+    w.clock.now = new Date('2026-11-07T06:00:00.000Z');
+    await w.sync([subscription()]);
+    await w.step('2026-11-07T06:00:00.000Z');
+    const [restored] = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+    assert.deepEqual(
+      restored.excluded.map(item => [item.reason, item.from, item.until]),
+      [['excluded_by_buyer', '2026-11-06T00:00:00.000Z', '2026-11-08T00:00:00.000Z']]
+    );
+    await w.step('2026-11-12T00:00:00.000Z');
+    const owed = await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z');
+    assert.deepEqual(
+      owed.map(row => row.period_start.slice(0, 10)),
+      ['2026-11-03', '2026-11-04', '2026-11-05', '2026-11-08', '2026-11-09']
+    );
+    // The other account was never affected.
+    assert.equal((await w.assertAgree('acct_2', '2026-11-12T00:00:00.000Z')).length, 7);
+  });
+
+  test('two analytics subscriptions resolving one offering for a package: the lower subscription_id owes it (adcp#8619)', async () => {
+    const w = world();
+    w.grant('acct_1', '2026-10-01T00:00:00.000Z');
+    w.host.buys.set('acct_1', [buy('mb_1')]);
+    await w.sync([subscription({ subscription_id: 'analytics-a' }), subscription({ subscription_id: 'analytics-b' })]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    await w.step('2026-11-12T00:00:00.000Z');
+    const coverage = await w.engine.subscriptionCoverage(SCOPE, 'acct_1');
+    const b = coverage.find(item => item.subscription_id === 'analytics-b');
+    assert.deepEqual(
+      b.excluded.map(item => [item.reason, item.media_buy_id, item.package_ids, item.overridden_by]),
+      [['overridden', 'mb_1', ['mb_1_pkg'], { subscription_id: 'analytics-a' }]]
+    );
+    assert.equal(b.status, 'active', 'a package-level exception leaves the account active');
+    assert.equal((await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z', 'analytics-a')).length, 7);
+    assert.deepEqual(await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z', 'analytics-b'), [], 'never twice');
+  });
+
+  test('admission under max_accounts is ordered by authorized_at, then account_id, and is sticky (adcp#8619)', async () => {
+    const w = world({ maxAccounts: 1 });
+    // acct_b sorts after acct_a in byte order but was authorized first.
+    w.grant('acct_a', '2026-10-01T00:00:00.000Z');
+    w.grant('acct_b', '2026-09-01T00:00:00.000Z');
+    await w.sync([subscription()]);
+    await w.step('2026-11-02T00:00:00.000Z');
+    const admitted = async () => {
+      const capacity = [];
+      for (const id of ['acct_a', 'acct_b']) {
+        const [entry] = await w.engine.subscriptionCoverage(SCOPE, id);
+        if (entry?.excluded.some(item => item.reason === 'capacity' && item.until === undefined)) capacity.push(id);
+      }
+      return capacity;
+    };
+    assert.deepEqual(await admitted(), ['acct_a'], 'acct_b holds the slot, acct_a waits');
+    // A candidate that sorts before an admitted account never displaces it.
+    w.grant('acct_0', '2026-08-01T00:00:00.000Z');
+    await w.step('2026-11-03T00:00:00.000Z');
+    const [early] = await w.engine.subscriptionCoverage(SCOPE, 'acct_0');
+    assert.ok(
+      early.excluded.some(item => item.reason === 'capacity'),
+      'acct_0 waits behind the sticky slot'
+    );
+    // When the admitted account leaves coverage, the next candidate in order takes its place.
+    w.revoke('acct_b', '2026-11-04T00:00:00.000Z');
+    await w.step('2026-11-04T12:00:00.000Z');
+    const [next] = await w.engine.subscriptionCoverage(SCOPE, 'acct_0');
+    assert.equal(next.excluded.filter(item => item.until === undefined).length, 0, 'acct_0 is admitted next');
   });
 
   test('pruning retained exceptions after status_retention_days never re-owes elapsed periods', async () => {
@@ -1002,7 +1108,7 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
       w.clock.now = new Date(at);
       return (await w.engine.observeGrants(SCOPE, [{ account_id: 'acct_1' }])).get('acct_1');
     };
-    assert.equal(await served('2026-11-02T00:00:00.000Z'), '2026-10-01T00:00:00.000Z');
+    assert.deepEqual(await served('2026-11-02T00:00:00.000Z'), { authorized_at: '2026-10-01T00:00:00.000Z' });
     // Pushed: revoked on 11-05, re-granted on 11-20, inside the 30-day retention: the chain continues.
     // Listings agree with what was pushed.
     const push = async (at, authorized, hostFacts) => {
@@ -1014,16 +1120,20 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
     await push('2026-11-05T00:00:00.000Z', false);
     await push('2026-11-20T00:00:00.000Z', true, {
       authorized_at: '2026-10-01T00:00:00.000Z',
-      extra: { granted_at: '2026-11-20T00:00:00.000Z' },
+      extra: { regranted_at: '2026-11-20T00:00:00.000Z' },
     });
-    assert.equal(await served('2026-11-20T00:00:00.000Z'), '2026-10-01T00:00:00.000Z');
+    // adcp#8618: the continued chain serves its re-grant as authorization.regranted_at.
+    assert.deepEqual(await served('2026-11-20T00:00:00.000Z'), {
+      authorized_at: '2026-10-01T00:00:00.000Z',
+      regranted_at: '2026-11-20T00:00:00.000Z',
+    });
     // Revoked again on 11-21, re-granted on 12-30, after retention: a new chain starts then.
     await push('2026-11-21T00:00:00.000Z', false);
     await push('2026-12-30T00:00:00.000Z', true, { authorized_at: '2026-12-30T00:00:00.000Z' });
-    assert.equal(await served('2026-12-30T00:00:00.000Z'), '2026-12-30T00:00:00.000Z');
+    assert.deepEqual(await served('2026-12-30T00:00:00.000Z'), { authorized_at: '2026-12-30T00:00:00.000Z' });
     // Observed by a listing: revoked on 12-31, first seen again on 2027-02-15, after retention.
     await push('2026-12-31T00:00:00.000Z', false);
-    assert.equal(await served('2027-02-15T00:00:00.000Z'), '2027-02-15T00:00:00.000Z');
+    assert.deepEqual(await served('2027-02-15T00:00:00.000Z'), { authorized_at: '2027-02-15T00:00:00.000Z' });
   });
 
   test('a pending account action is an account-level action_required exception', async () => {

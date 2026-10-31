@@ -16,15 +16,21 @@
  *    `accepted_at` and the account's `authorized_at`, and that end after the buy's
  *    `confirmed_at` (so the period in which the buy is confirmed is owed in full);
  * 2. and that overlap the flight from `start_time` to the stop time, the earliest of
- *    `end_time`, `canceled_at` and `completed_at`, with flight values taken as of the
- *    period's `scope_resolved_at` (its end). A flight whose stop is at or before its start
- *    owes nothing. Periods are never clipped.
+ *    `end_time`, the cancellation's delivery stop (`cancellation_effective_at`, else
+ *    `canceled_at`; adcp#8617) and `completed_at`, with flight values taken as of the period's
+ *    `scope_resolved_at` (its end) from the buy's `flight_history` (adcp#8618). A flight whose
+ *    stop is at or before its start owes nothing. Periods are never clipped.
  * 3. Every change at an instant T that hands periods from an outgoing schedule to an
  *    incoming one (a new version, deactivation, a resolution change, an account timezone
  *    change) is a cutover: the outgoing schedule owes its periods that start before T in
  *    full, and the incoming schedule owes its periods that start at or after E, the end of
- *    the last of them.
- * 4. Exceptions (`excluded[]`, `gaps[]`) and lost authority only ever remove periods.
+ *    the last of them. A billing incoming side owes the stretch from E to its first boundary
+ *    as one stub period (adcp#8617). Reactivation resumes at the later of the reactivation
+ *    instant and the E of the deactivation (adcp#8622).
+ * 4. Each package resolves once per version, at the later of `accepted_at` and the buy's
+ *    `confirmed_at`, among the offerings available then, and keeps that resolution until the
+ *    offering is withdrawn (adcp#8619).
+ * 5. Exceptions (`excluded[]`, `gaps[]`) and lost authority only ever remove periods.
  *
  * @packageDocumentation
  */
@@ -43,7 +49,7 @@ import {
 import {
   compareReportingIdsByteOrderV1,
   reportingSubscriptionScopeIncludesV1,
-  resolveReportingSubscriptionOfferingsV1,
+  resolveReportingSubscriptionPackageV1,
   type ReportingSubscriptionDestinationMethodV1,
   type ReportingSubscriptionOfferingV1,
 } from './selection';
@@ -78,17 +84,18 @@ export interface ReportingSubscriptionVersionRecordV1 {
 }
 
 /**
- * Flight values a buy carried before an update replaced them.
+ * One `flight_history[]` entry of a media buy (`core/media-buy.json`, adcp#8618): a retroactive
+ * flight edit, with the flight in force before it.
  *
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
-export interface ReportingSubscriptionPriorFlightV1 {
-  /** When these values stopped applying. Periods resolved at or after it use later values. */
-  replaced_at: string;
+export interface ReportingSubscriptionFlightHistoryEntryV1 {
+  /** When the seller recorded the edit. Periods resolved after it use the later flight. */
+  recorded_at: string;
+  /** `start_time` in force before the edit. */
   start_time: string;
-  end_time: string;
-  canceled_at?: string;
-  completed_at?: string;
+  /** Stop time in force before the edit. */
+  stop_time: string;
 }
 
 /**
@@ -102,17 +109,26 @@ export interface ReportingSubscriptionBuyV1 {
   confirmed_at?: string | null;
   start_time: string;
   end_time: string;
-  /** `cancellation.canceled_at`. */
+  /** `cancellation.canceled_at`: the delivery stop when `cancellation_effective_at` is absent. */
   canceled_at?: string;
+  /**
+   * `cancellation_effective_at` (adcp#8617): when delivery stops under the cancellation, later
+   * than `canceled_at` through a notice period. When present it, not `canceled_at`, ends the flight.
+   */
+  cancellation_effective_at?: string;
   completed_at?: string;
-  /** Each package with its product's `reporting_capabilities.reporting_delivery_offering_ids`. */
+  /**
+   * Each package with its `reporting_delivery_offering_ids` snapshot from `get_media_buys`, fixed
+   * at confirmation from its product's list (adcp#8618).
+   */
   packages: ReadonlyArray<{ package_id: string; reporting_delivery_offering_ids: readonly string[] }>;
   /**
-   * Earlier flight values, so an extension or reinstatement never makes an elapsed period
-   * owed. Not on the wire: `get_media_buys` shows only the current flight, so a buyer MUST
-   * retain them to agree with the seller after a flight change.
+   * The buy's `flight_history` from `get_media_buys` (adcp#8618): its retroactive flight edits,
+   * oldest first, each with the flight in force before it. The flight in force at an instant is
+   * the one in the earliest entry recorded after it, or the current flight, so an extension or
+   * reinstatement never makes an elapsed period owed.
    */
-  prior_flights?: readonly ReportingSubscriptionPriorFlightV1[];
+  flight_history?: readonly ReportingSubscriptionFlightHistoryEntryV1[];
 }
 
 /**
@@ -204,6 +220,11 @@ export interface OwedSubscriptionPeriodV1 {
   /** RFC 3339 instant, `toISOString()` form. */
   period_start: string;
   period_end: string;
+  /**
+   * A billing cutover stub (adcp#8617): the stretch from a cutover's E to the incoming schedule's
+   * first boundary, owed as one period. Present only then.
+   */
+  stub?: true;
 }
 
 /**
@@ -219,6 +240,8 @@ export interface OwedSubscriptionObligationV1 {
   report_definition_id: string;
   period_start: string;
   period_end: string;
+  /** A billing cutover stub (adcp#8617); its obligation carries `stub: true`. */
+  stub?: true;
   /** Sorted in byte order; the obligation's frozen `media_buy_ids`. */
   media_buy_ids: string[];
 }
@@ -245,6 +268,12 @@ interface Regime {
   offerings: ResolvedOffering[];
   /** The instant each offering owed from (before its first boundary), set while walking. */
   handoffs: Map<string, number>;
+  /**
+   * Set when this regime follows an inactive interval (adcp#8622): the regime that was active
+   * before the deactivation and the deactivation instant, so reactivation resumes no earlier
+   * than the end of the last period owed before it.
+   */
+  resumes?: { regime: Regime; at: number };
 }
 
 interface AuthorityChain {
@@ -315,8 +344,49 @@ export function owedSubscriptionPeriodsV1(input: OwedSubscriptionPeriodsInputV1)
       const predecessor = index > 0 ? regimes[index - 1] : null;
       for (const resolved of regime.offerings) {
         const { calendar, offering } = resolved;
-        const handoff = cutoverEnd(regime.from, predecessor ?? null, resolved);
+        const { handoff, cutover } = incomingHandoff(regime, predecessor ?? null, resolved);
         regime.handoffs.set(offering.offering_id, handoff);
+        const owes = (start: number, end: number): boolean => {
+          if (coveringRemoval(removals, buy.media_buy_id, offering.offering_id, start) !== undefined) return false;
+          const flight = flightAt(flights, end);
+          return (
+            flight.start < flight.stop && // an empty flight overlaps nothing
+            start < flight.stop &&
+            end > flight.start &&
+            authorized(chains, calendar, start, input.backfill_on_regrant === true)
+          );
+        };
+        // adcp#8617: when a cutover hands a billing feed periods from an E that is not one of its
+        // boundaries, the stretch [E, first boundary) is owed as one stub period, so no billable
+        // delivery goes unreported. Pacing and analytics leave it unowed.
+        const firstBoundary = calendar.ceil(handoff);
+        if (
+          cutover &&
+          offering.feed_purpose === 'billing' &&
+          firstBoundary > handoff &&
+          handoff < regime.until &&
+          firstBoundary > confirmedAt &&
+          firstBoundary <= now &&
+          owes(handoff, firstBoundary)
+        ) {
+          result.push({
+            subscription_id: input.subscription_id,
+            subscription_version: regime.version.subscription_version,
+            account_id: input.account.account_id,
+            media_buy_id: buy.media_buy_id,
+            offering_id: offering.offering_id,
+            report_definition_id: offering.report_definition_id,
+            period_start: new Date(handoff).toISOString(),
+            period_end: new Date(firstBoundary).toISOString(),
+            stub: true,
+          });
+          if (result.length > maxPeriods) {
+            throw new CoverageInputError(
+              'COVERAGE_BUDGET_EXCEEDED',
+              `Expected subscription periods exceed max_periods (${maxPeriods})`
+            );
+          }
+        }
         // A period starting before the last boundary at or before the earliest flight
         // start ends by then and cannot overlap any flight value, so skip ahead.
         let start = Math.max(firstOwedBoundary(calendar, handoff, confirmedAt), calendar.floor(earliestStart));
@@ -337,13 +407,7 @@ export function owedSubscriptionPeriodsV1(input: OwedSubscriptionPeriodsInputV1)
             start = Math.max(end, calendar.ceil(covering.until));
             continue;
           }
-          const flight = flightAt(flights, end);
-          const owed =
-            flight.start < flight.stop && // an empty flight overlaps nothing
-            start < flight.stop &&
-            end > flight.start &&
-            authorized(chains, calendar, start, input.backfill_on_regrant === true);
-          if (!owed) {
+          if (!owes(start, end)) {
             start = end;
             continue;
           }
@@ -401,6 +465,7 @@ export function groupOwedSubscriptionPeriodsV1(
       period.offering_id,
       period.period_start,
       period.period_end,
+      period.stub === true,
     ]);
     let group = groups.get(key);
     if (!group) {
@@ -412,6 +477,7 @@ export function groupOwedSubscriptionPeriodsV1(
         report_definition_id: period.report_definition_id,
         period_start: period.period_start,
         period_end: period.period_end,
+        ...(period.stub === true ? { stub: true as const } : {}),
         media_buy_ids: [],
       };
       groups.set(key, group);
@@ -720,6 +786,20 @@ function exceptionWindows(coverage: OwedSubscriptionPeriodsInputV1['coverage']):
   return windows;
 }
 
+/** `excluded[]` entries naming packages of one buy, as half-open windows. */
+function packageExclusions(
+  coverage: OwedSubscriptionPeriodsInputV1['coverage'],
+  mediaBuyId: string
+): Array<{ from: number; until: number; packageIds: readonly string[] }> {
+  return (coverage?.excluded ?? [])
+    .filter(entry => entry.media_buy_id === mediaBuyId && entry.package_ids !== undefined)
+    .map(entry => ({
+      from: instant(entry.from, 'excluded.from'),
+      until: entry.until === undefined ? Number.POSITIVE_INFINITY : instant(entry.until, 'excluded.until'),
+      packageIds: entry.package_ids!,
+    }));
+}
+
 function coveringRemoval(
   windows: readonly ExceptionWindow[],
   mediaBuyId: string,
@@ -735,27 +815,41 @@ function coveringRemoval(
   );
 }
 
+/**
+ * The buy's flights over time: each `flight_history` entry governs instants before its
+ * `recorded_at` (adcp#8618), and the current flight governs the rest. The current stop time is
+ * the earliest of `end_time`, the cancellation's delivery stop (`cancellation_effective_at`, or
+ * `canceled_at` when it is absent; adcp#8617) and `completed_at`.
+ */
 function flightTimeline(buy: ReportingSubscriptionBuyV1): Array<{ until: number; flight: Flight }> {
-  const toFlight = (
-    values: Pick<ReportingSubscriptionBuyV1, 'start_time' | 'end_time' | 'canceled_at' | 'completed_at'>,
-    label: string
-  ): Flight => {
-    const start = instant(values.start_time, `${label}.start_time`);
-    const stops = [instant(values.end_time, `${label}.end_time`)];
-    if (values.canceled_at !== undefined) stops.push(instant(values.canceled_at, `${label}.canceled_at`));
-    if (values.completed_at !== undefined) stops.push(instant(values.completed_at, `${label}.completed_at`));
-    return { start, stop: Math.min(...stops) };
-  };
-  const priors = [...(buy.prior_flights ?? [])]
-    .map(prior => ({
-      until: instant(prior.replaced_at, `${buy.media_buy_id}.prior_flights.replaced_at`),
-      flight: toFlight(prior, `${buy.media_buy_id}.prior_flights`),
+  const label = buy.media_buy_id;
+  const stops = [instant(buy.end_time, `${label}.end_time`)];
+  if (buy.cancellation_effective_at !== undefined) {
+    stops.push(instant(buy.cancellation_effective_at, `${label}.cancellation_effective_at`));
+  } else if (buy.canceled_at !== undefined) {
+    stops.push(instant(buy.canceled_at, `${label}.canceled_at`));
+  }
+  if (buy.completed_at !== undefined) stops.push(instant(buy.completed_at, `${label}.completed_at`));
+  const current: Flight = { start: instant(buy.start_time, `${label}.start_time`), stop: Math.min(...stops) };
+  if (buy.flight_history !== undefined && !Array.isArray(buy.flight_history)) {
+    throw new CoverageInputError('COVERAGE_INPUT_INVALID', `${label}.flight_history must be an array`, 'invalid_input');
+  }
+  const history = [...(buy.flight_history ?? [])]
+    .map(entry => ({
+      until: instant(entry.recorded_at, `${label}.flight_history.recorded_at`),
+      flight: {
+        start: instant(entry.start_time, `${label}.flight_history.start_time`),
+        stop: instant(entry.stop_time, `${label}.flight_history.stop_time`),
+      },
     }))
     .sort((left, right) => left.until - right.until);
-  return [...priors, { until: Number.POSITIVE_INFINITY, flight: toFlight(buy, buy.media_buy_id) }];
+  return [...history, { until: Number.POSITIVE_INFINITY, flight: current }];
 }
 
-/** Flight values in effect at a period's `scope_resolved_at`: replaced values apply strictly before `replaced_at`. */
+/**
+ * Flight values in effect at a period's `scope_resolved_at`: the earliest `flight_history` entry
+ * recorded after it, else the current flight.
+ */
 function flightAt(timeline: ReadonlyArray<{ until: number; flight: Flight }>, resolvedAt: number): Flight {
   return timeline.find(entry => resolvedAt < entry.until)!.flight;
 }
@@ -787,25 +881,52 @@ function buildRegimes(
     if (offering.withdrawn_at !== undefined) points.add(instant(offering.withdrawn_at, 'withdrawn_at'));
   }
   for (const cutover of timezones.cutovers) points.add(cutover.at);
+  // Package-level exceptions change which packages the buy resolves for (adcp#8619).
+  for (const window of packageExclusions(input.coverage, buy.media_buy_id)) {
+    points.add(window.from);
+    if (Number.isFinite(window.until)) points.add(window.until);
+  }
   const ordered = [...points].sort((left, right) => left - right);
   const regimes: Array<Regime | null> = [];
+  // adcp#8619: membership edits (account_ids, exclude_account_ids) apply in place and the seller
+  // records them per account as excluded_by_buyer intervals. When such an entry is published, the
+  // intervals govern membership instead of the version's current lists, so periods that started
+  // before a removal stay owed.
+  const membershipByExceptions = (input.coverage?.excluded ?? []).some(
+    entry => entry.reason === 'excluded_by_buyer' && entry.media_buy_id === undefined
+  );
+  // The regime active before a deactivation, while the subscription stays inactive (adcp#8622).
+  let pendingResume: { regime: Regime; at: number } | undefined;
   for (let index = 0; index < ordered.length; index += 1) {
     const from = ordered[index]!;
     const until = ordered[index + 1] ?? Number.POSITIVE_INFINITY;
-    const version = versions.find(
-      candidate =>
-        from >= candidate.acceptedAt &&
-        from < candidate.endsAt &&
-        !candidate.inactive.some(window => from >= window.from && from < window.until)
-    );
+    const current = (candidate: NormalizedVersion) => from >= candidate.acceptedAt && from < candidate.endsAt;
+    const inactiveAt = (candidate: NormalizedVersion) =>
+      candidate.inactive.some(window => from >= window.from && from < window.until);
+    const version = versions.find(candidate => current(candidate) && !inactiveAt(candidate));
+    const configuration = version?.record.configuration;
     const inScope =
-      version !== undefined &&
-      reportingSubscriptionScopeIncludesV1(version.record.configuration, {
-        account_id: input.account.account_id,
-        ...(input.account.operator !== undefined ? { operator: input.account.operator } : {}),
-      });
+      configuration !== undefined &&
+      reportingSubscriptionScopeIncludesV1(
+        membershipByExceptions
+          ? {
+              scope: { all_authorized_accounts: true },
+              ...(configuration.operator_domains ? { operator_domains: configuration.operator_domains } : {}),
+            }
+          : configuration,
+        {
+          account_id: input.account.account_id,
+          ...(input.account.operator !== undefined ? { operator: input.account.operator } : {}),
+        }
+      );
     if (!version || !inScope) {
-      if (regimes.at(-1) !== null) regimes.push(null);
+      const previous = regimes.at(-1);
+      if (version === undefined && versions.some(candidate => current(candidate) && inactiveAt(candidate))) {
+        if (previous) pendingResume = { regime: previous, at: from };
+      } else {
+        pendingResume = undefined;
+      }
+      if (previous !== null) regimes.push(null);
       continue;
     }
     const offerings = resolveForBuy(buy, version.record, input, offeringsById, timezones, from, calendars);
@@ -814,7 +935,15 @@ function buildRegimes(
       previous.until = until;
       continue;
     }
-    regimes.push({ from, until, version: version.record, offerings, handoffs: new Map() });
+    regimes.push({
+      from,
+      until,
+      version: version.record,
+      offerings,
+      handoffs: new Map(),
+      ...(previous === null && pendingResume !== undefined ? { resumes: pendingResume } : {}),
+    });
+    pendingResume = undefined;
   }
   return regimes;
 }
@@ -840,17 +969,14 @@ function resolveForBuy(
   calendars: Map<string, ReportingPeriodCalendarV1>
 ): ResolvedOffering[] {
   const ids = new Set<string>();
+  const removed = packageExclusions(input.coverage, buy.media_buy_id).filter(
+    window => at >= window.from && at < window.until
+  );
   for (const pkg of buy.packages) {
-    for (const id of resolveReportingSubscriptionOfferingsV1({
-      selector: version.configuration.selector,
-      reconciliation_mode: version.configuration.reconciliation_mode,
-      ...(version.destination_method ? { destination_method: version.destination_method } : {}),
-      offerings: [...offeringsById.values()],
-      eligible_offering_ids: pkg.reporting_delivery_offering_ids,
-      at,
-    })) {
-      ids.add(id);
-    }
+    // A package-level exception (overridden: another subscription of the caller owes it; or
+    // offering_unsupported) removes the package from the buy's coverage, not the buy's periods.
+    if (removed.some(window => window.packageIds.includes(pkg.package_id))) continue;
+    for (const id of packageResolutionAt(buy, pkg, version, offeringsById, at)) ids.add(id);
   }
   return [...ids].sort(compareReportingIdsByteOrderV1).map(id => {
     const offering = offeringsById.get(id)!;
@@ -870,6 +996,50 @@ function resolveForBuy(
     }
     return { offering, calendar };
   });
+}
+
+/** The offerings one package resolves at `at`: sticky per (buy, version) (adcp#8619). */
+function packageResolutionAt(
+  buy: ReportingSubscriptionBuyV1,
+  pkg: ReportingSubscriptionBuyV1['packages'][number],
+  version: ReportingSubscriptionVersionRecordV1,
+  offeringsById: ReadonlyMap<string, ReportingSubscriptionOfferingV1>,
+  at: number
+): string[] {
+  return resolveReportingSubscriptionPackageV1({
+    selector: version.configuration.selector,
+    reconciliation_mode: version.configuration.reconciliation_mode,
+    ...(version.destination_method ? { destination_method: version.destination_method } : {}),
+    offerings: [...offeringsById.values()],
+    eligible_offering_ids: pkg.reporting_delivery_offering_ids,
+    resolves_at: Math.max(
+      instant(version.accepted_at, `version ${version.subscription_version} accepted_at`),
+      buy.confirmed_at ? instant(buy.confirmed_at, `${buy.media_buy_id}.confirmed_at`) : Number.NEGATIVE_INFINITY
+    ),
+    at,
+  });
+}
+
+/**
+ * Where the incoming side of a regime starts owing, and whether that start is a cutover (which
+ * owes a billing stub). After an adjacent regime it is the cutover's E. After an inactive interval
+ * (adcp#8622) it is the later of the reactivation instant and the E computed at the deactivation
+ * instant against the regime that was active then: a reactivation before that E is a cutover with
+ * E equal to it, so nothing is owed twice; a later one is a fresh start.
+ */
+function incomingHandoff(
+  regime: Regime,
+  predecessor: Regime | null,
+  incoming: ResolvedOffering
+): { handoff: number; cutover: boolean } {
+  if (predecessor !== null) {
+    return { handoff: cutoverEnd(regime.from, predecessor, incoming), cutover: predecessor.offerings.length > 0 };
+  }
+  if (regime.resumes !== undefined && regime.resumes.regime.offerings.length > 0) {
+    const end = cutoverEnd(regime.resumes.at, regime.resumes.regime, incoming);
+    if (end > regime.from) return { handoff: end, cutover: true };
+  }
+  return { handoff: regime.from, cutover: false };
 }
 
 /** The published schedule's calendar for this account, with any `period_timezone` override. */

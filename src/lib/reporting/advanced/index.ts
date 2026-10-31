@@ -54,6 +54,7 @@ export {
 
 // The Reliable Reporting service's subscription planner hooks and its coverage hook.
 export {
+  assertReportingTaskGrantedV1,
   withReportingSubscriptionCoverageV1,
   type ReliableReportingSubscriptionBindingInputV1,
   type ReliableReportingSubscriptionGenerationContextV1,

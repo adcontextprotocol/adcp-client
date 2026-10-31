@@ -70,9 +70,14 @@ import {
 import type { ReportingSubscriptionFrozenOwedSetV1 } from '../subscriptions/engine';
 import type { PrincipalRef } from '../../server/principal/types';
 import type { PrincipalLifecycleRuntime } from '../../server/principal/runtime';
+import { reportingSubscriptionDestinationForAccount } from '../../server/principal/reporting-subscriptions';
 import { isReportingStorage, requireDurable, type ReportingStorage } from '../../storage';
 import { reportingConfigurationCapabilitiesV1 } from '../subscriptions/capabilities';
-import { type ReliableReportingSubscriptionsOptionsV1, withReportingSubscriptionCoverageV1 } from './subscriptions';
+import {
+  assertReportingTaskGrantedV1,
+  type ReliableReportingSubscriptionsOptionsV1,
+  withReportingSubscriptionCoverageV1,
+} from './subscriptions';
 import {
   createManagedReportingSubscriptions,
   isManagedSubscriptionOptions,
@@ -702,6 +707,21 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
           { code: 'SUBSCRIPTIONS_REQUIRE_STANDARD_DIMENSIONS', configField: 'adapters' }
         );
       }
+      // adcontextprotocol/adcp#8619: rows of several accounts may land in one consolidated destination,
+      // so every managed-delivery offering keys its rows by account_id.
+      if (
+        offering.method !== undefined &&
+        !(offering.reporting_profile?.primary_keys as readonly unknown[] | undefined)?.includes('account_id')
+      ) {
+        throw new PlatformConfigError(
+          `Reporting offering ${JSON.stringify(offering.offering_id)} delivers to a managed destination but its ` +
+            'reporting_profile.primary_keys omit account_id. Declare account_id as a required string in the row ' +
+            'schema and list it in primary_keys when reporting subscriptions are advertised (adcp#8619).',
+          // The frozen error vocabulary (error-codes.json) has no code for this rule yet; the generic
+          // configuration code applies until the spec adds one.
+          { configField: 'adapters' }
+        );
+      }
     }
   }
   // Without subscriptions this is exactly the pre-3.3 shape.
@@ -784,7 +804,11 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       : (request, context) => getReportingStatus(request, context as never),
     getMediaBuyDelivery: (request, context) => getMediaBuyDelivery(request, context as never),
     ...(syncReportingStatus && {
-      syncReportingStatus: (request, context) => syncReportingStatus(request, context),
+      syncReportingStatus: (request, context) => {
+        // adcp#8619: with subscriptions, a partial grant refuses the missing task with SCOPE_INSUFFICIENT.
+        if (subscriptionOptions) assertReportingTaskGrantedV1(context, 'sync_reporting_status');
+        return syncReportingStatus(request, context);
+      },
       // Published so `createAdcpServerFromPlatform` can scope replay by the
       // identity the receipt is actually recorded under, rather than by the
       // caller's credential.
@@ -1005,6 +1029,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         period: { start: owed.period_start, end: owed.period_end },
         mediaBuyIds: [...owed.media_buy_ids],
         constituents: structuredClone(constituents),
+        ...(owed.stub === true ? { stub: true as const } : {}),
       });
     }
     const result = await producer.planSubscriptionObligations({
@@ -1019,10 +1044,15 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
             value.input.offeringId === configuration.offeringId
         );
         if (!generation?.managedOffering) return;
+        const routed = reportingSubscriptionDestinationForAccount(generation.version.configuration, {
+          account_id: set.account_id,
+          ...(set.operator !== undefined ? { operator: set.operator } : {}),
+        });
         await subscriptions.bindManagedGeneration!({
           principal,
           configuration,
           subscription: structuredClone(generation.version.configuration),
+          ...(routed ? { destination: routed } : {}),
           ...(generation.version.destination_method
             ? { destinationMethod: structuredClone(generation.version.destination_method) }
             : {}),

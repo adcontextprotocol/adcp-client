@@ -8,6 +8,7 @@
 import type { Account } from '../../server/decisioning/account';
 import type { RequestContext } from '../../server/decisioning/context';
 import type { ReliableReportingPlatform } from '../../server/decisioning/specialisms/reporting';
+import { AdcpError } from '../../server/decisioning/async-outcome';
 import type { PrincipalLifecycleRuntimeSubscriptions, PrincipalRef } from '../../server/principal/types';
 import type { PrincipalLifecycleRuntime } from '../../server/principal/runtime';
 import {
@@ -98,6 +99,11 @@ export interface ReliableReportingSubscriptionBindingInputV1 {
   destinationMethod?: NonNullable<ReportingSubscriptionFrozenOwedSetV1['versions'][number]['destination_method']>;
   /** The resolved managed offering. */
   offering: ReportingDeliveryOffering;
+  /**
+   * Where this account's data goes (adcp#8619): the `account_ids` override naming it, else the
+   * `operator_domains` override naming its operator, else `subscription.destination`.
+   */
+  destination?: { destination_id: string; path_template?: string };
 }
 
 /**
@@ -155,4 +161,29 @@ export async function withReportingSubscriptionCoverageV1<TCtxMeta>(
   );
   if (coverage.length === 0) return response;
   return { ...body, subscription_coverage: coverage } as unknown as typeof response;
+}
+
+/**
+ * Partial grants (`core/reporting-subscription.json` `x-adcp-validation.coverage`, adcontextprotocol/adcp#8619):
+ * coverage depends only on `get_reporting_status`, so a grant without `sync_reporting_receipts` or
+ * `sync_reporting_status` keeps the account covered, and the seller refuses the missing task for that
+ * account with `SCOPE_INSUFFICIENT`, not as an unknown identifier. Call it once the account is resolved:
+ * an `authorization` whose `allowed_tasks` leaves out `task` is refused; an absent `authorization`, or one
+ * that restricts no task, passes. A billing obligation the buyer can't receipt stays receipt-pending,
+ * attributed to the buyer.
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export function assertReportingTaskGrantedV1(
+  context: unknown,
+  task: 'sync_reporting_receipts' | 'sync_reporting_status'
+): void {
+  const account = (context as { account?: { id?: unknown; authorization?: { allowed_tasks?: unknown } } } | undefined)
+    ?.account;
+  const allowed = account?.authorization?.allowed_tasks;
+  if (!Array.isArray(allowed) || allowed.includes(task)) return;
+  throw new AdcpError('SCOPE_INSUFFICIENT', {
+    message: `The caller's grant on account ${JSON.stringify(account?.id)} does not include ${task}`,
+    field: 'account',
+  });
 }

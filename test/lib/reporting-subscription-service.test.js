@@ -46,7 +46,7 @@ function deliveryOffering() {
       schema_dialect: source.contract.schemaDialect,
       schema_ref_policy: source.contract.schemaRefPolicy,
       grain: source.grain,
-      primary_keys: ['media_buy_id'],
+      primary_keys: ['account_id', 'media_buy_id'],
     },
     schedule: {
       period_duration: 'P1D',
