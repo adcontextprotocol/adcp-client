@@ -1316,6 +1316,13 @@ const REPORTING_SUBSCRIPTION_RECOVERY: Readonly<Record<ReportingSubscriptionErro
 /** Options for {@link ReportingSubscriptionError}. */
 export interface ReportingSubscriptionErrorOptions {
   cause?: unknown;
+  /**
+   * For a code outside the vocabulary (`INVALID_REQUEST` for a malformed facade call, or a seller's
+   * wire code): its recovery. Vocabulary codes always take their fixed recovery.
+   */
+  recovery?: AdcpErrorRecovery;
+  /** For a code outside the vocabulary: `false` when the SDK refused before sending. */
+  dispatched?: false;
   /** `SUBSCRIPTION_WOULD_DEACTIVATE`: the `subscription_id` values the write would deactivate. */
   wouldDeactivate?: readonly string[];
   /** `DESTINATION_WOULD_REVOKE`: the `destination_id` values the write would revoke. */
@@ -1350,7 +1357,8 @@ export interface ReportingSubscriptionErrorOptions {
  * @experimental Reporting subscriptions (AdCP 3.3).
  */
 export class ReportingSubscriptionError extends ADCPError {
-  readonly code: ReportingSubscriptionErrorCode;
+  /** One of the vocabulary codes, `INVALID_REQUEST` for a malformed facade call, or a seller's wire code. */
+  readonly code: ReportingSubscriptionErrorCode | (string & {});
   readonly recovery: AdcpErrorRecovery;
   /** `false` when the write was refused before it was sent; absent otherwise. */
   declare readonly dispatched?: false;
@@ -1363,11 +1371,19 @@ export class ReportingSubscriptionError extends ADCPError {
   declare readonly appliedResponse?: unknown;
   declare readonly current?: unknown;
 
-  constructor(code: ReportingSubscriptionErrorCode, message: string, options: ReportingSubscriptionErrorOptions = {}) {
+  constructor(
+    code: ReportingSubscriptionErrorCode | (string & {}),
+    message: string,
+    options: ReportingSubscriptionErrorOptions = {}
+  ) {
     super(message);
     this.code = code;
-    this.recovery = REPORTING_SUBSCRIPTION_RECOVERY[code];
-    if (REPORTING_SUBSCRIPTION_PRE_DISPATCH.has(code)) {
+    const known = REPORTING_SUBSCRIPTION_RECOVERY[code as ReportingSubscriptionErrorCode];
+    this.recovery = known ?? options.recovery ?? (code === 'INVALID_REQUEST' ? 'correctable' : 'transient');
+    if (
+      REPORTING_SUBSCRIPTION_PRE_DISPATCH.has(code as ReportingSubscriptionErrorCode) ||
+      (known === undefined && options.dispatched === false)
+    ) {
       Object.defineProperty(this, 'dispatched', { value: false, enumerable: true });
     }
     if (options.cause !== undefined) Object.defineProperty(this, 'cause', { value: options.cause, configurable: true });

@@ -14,3 +14,14 @@ export {
   type SyncReportingSubscriptionsResultV1,
 } from './reporting-subscriptions';
 export type { PrincipalRef } from '../server/principal/types';
+export {
+  ReportingClient,
+  guardSyncPrincipal,
+  type SubscriptionPreviewResult,
+  type ReportingFacadeClient,
+  type ReportingSubscriptionReadback,
+  type SubscribeAction,
+  type SubscribeResult,
+  type SubscriptionInput,
+  type SyncPrincipalGuardOptions,
+} from './reporting-facade';

@@ -158,7 +158,9 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // The reporting-subscription DX slices (#3504: the advanced subpath, wind-down grant, typed errors with
 // their TSDoc, and the canonical-vector fixes) plus main through #3510 measured 26,520,756 packed bytes;
 // allow about 40 KB above that for compressor variance. Other budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 26_560_000;
+// The managed seller path, grant journal and buyer write facade (#3504, T5-T7) measured 26,566,153
+// packed bytes; allow about 44 KB above that for compressor variance. Other budgets stay fixed.
+const MAX_PACKED_TARBALL_BYTES = 26_610_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 144 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -331,7 +333,8 @@ const MAX_PACKED_FILE_COUNT =
   12 + // Reporting subscription engine store, buyer expectations and client helper (three dual-format sets).
   2 + // Reporting subscriptions example storyboard and reference seller.
   8 + // `reporting/advanced` subpath and the service's subscription-hook module (two dual-format sets).
-  4; // Managed reporting-subscription block for the Reliable Reporting service (one dual-format set).
+  4 + // Managed reporting-subscription block for the Reliable Reporting service (one dual-format set).
+  4; // Buyer reporting-subscription write facade, client.reporting (one dual-format set).
 const MAX_BUNDLED_SCHEMA_BYTES = 2000 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
