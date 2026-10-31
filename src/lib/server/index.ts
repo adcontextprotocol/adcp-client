@@ -603,6 +603,9 @@ export {
   createPrincipalStateStore,
   principalNotificationSubscriptionStore,
   DEFAULT_PRINCIPAL_STORE_COLLECTION,
+  ReportingSubscriptionValidationError,
+  expandReportingSubscriptionPathTemplate,
+  validateReportingSubscription,
 } from './principal';
 export type {
   CreatePrincipalLifecycleOptions,
@@ -618,6 +621,10 @@ export type {
   PrincipalDestinationTransition,
   PrincipalKind,
   PrincipalLifecycleRuntime,
+  PrincipalLifecycleRuntimeSubscriptions,
+  PrincipalReportingSubscriptionState,
+  PrincipalReportingSubscriptionSupport,
+  StoredReportingSubscriptionHistory,
   PrincipalNotificationRecoveryResult,
   PrincipalPendingNotificationPage,
   PrincipalReportingDestination,
