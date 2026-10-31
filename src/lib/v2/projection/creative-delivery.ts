@@ -64,14 +64,14 @@ import {
   type CreativePrimaryAssetFacts,
   type CreativeVastInlineFacts,
   type NormalizedCreativeFitFacts,
-} from './creative-fit';
+} from './canonical-properties';
 
 export type {
   CreativeFitVerdict,
   CreativeFitReason,
   CreativePrimaryAssetFacts,
   CreativeVastInlineFacts,
-} from './creative-fit';
+} from './canonical-properties';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, Extract<keyof T, K>> : never;
 

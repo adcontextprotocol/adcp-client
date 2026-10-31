@@ -21,12 +21,12 @@ if (result.wire?.mode === 'canonical') {
   const assetKind: string = result.wire.creative.format_kind;
   void [kind, assetKind];
   // @ts-expect-error canonical selectors cannot expose legacy identity
-  result.wire.selector.format_id;
+  type NoCanonicalLegacyId = (typeof result.wire.selector)['format_id'];
 }
 if (result.wire?.mode === 'legacy') {
   const owner: string = result.wire.selector.format_id.agent_url;
   const id: string = result.wire.creative.format_id.id;
   void [owner, id];
   // @ts-expect-error legacy selectors cannot expose canonical identity
-  result.wire.selector.format_kind;
+  type NoLegacyCanonicalKind = (typeof result.wire.selector)['format_kind'];
 }
