@@ -99,7 +99,7 @@ function noOutboundNotifications(store) {
  * @param {object} options
  * @param {import('@adcp/sdk/reporting/ledger').ReportingLedgerStore} options.store
  * @param {import('@adcp/sdk/server').AdcpStateStore} [options.stateStore] Principal and engine state;
- *   any store other than `InMemoryStateStore` is declared durable.
+ *   the store declares its own durability (`PostgresStateStore` is durable).
  * @param {() => Date} [options.now]
  * @param {(protocol: object) => object} [options.wrapProtocol] Test seam: wrap the principal protocol handlers.
  */
@@ -116,8 +116,8 @@ export function createReportingSubscriptionsSeller({
     if (typeof clientId !== 'string' || clientId.length === 0) throw new Error('authenticated caller required');
     return { tenantId: REFERENCE_TENANT, principalId: clientId };
   };
-  const durability = stateStore instanceof InMemoryStateStore ? 'process-local' : 'durable';
-  const principalStore = createPrincipalStateStore({ store: stateStore, durability });
+  // Durability is read from the state store itself (InMemoryStateStore is process-local).
+  const principalStore = createPrincipalStateStore({ store: stateStore });
   const lifecycle = createPrincipalLifecycle({
     store: principalStore,
     notifications: noOutboundNotifications(principalStore),
@@ -139,7 +139,7 @@ export function createReportingSubscriptionsSeller({
   const engine = createReportingSubscriptionEngineV1({
     principal: lifecycle,
     offerings: [offering],
-    store: createReportingSubscriptionEngineStateStoreV1({ store: stateStore, durability }),
+    store: createReportingSubscriptionEngineStateStoreV1({ store: stateStore }),
     statusRetentionDays: redactedReportingSourceOfferingV1.retentionDays,
     maxAccounts: 100,
     now,

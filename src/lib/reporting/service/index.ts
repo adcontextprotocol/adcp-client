@@ -69,6 +69,8 @@ import {
 
 import type { ReportingSubscriptionFrozenOwedSetV1 } from '../subscriptions/engine';
 import type { PrincipalRef } from '../../server/principal/types';
+import type { PrincipalLifecycleRuntime } from '../../server/principal/runtime';
+import { isReportingStorage, requireDurable, type ReportingStorage } from '../../storage';
 import { reportingConfigurationCapabilitiesV1 } from '../subscriptions/capabilities';
 import type { ReportingDeliveryOfferingWithDimensionsV1 } from '../subscriptions/wire';
 import { type ReliableReportingSubscriptionsOptionsV1, withReportingSubscriptionCoverageV1 } from './subscriptions';
@@ -230,7 +232,18 @@ export type ReliableReportingCycleOptionsV1 = ReliableReportingCycleBaseOptionsV
   ({ deploymentWide: true; accountId?: never } | { deploymentWide?: false; accountId: string });
 
 export interface CreateReliableReportingServiceOptionsV1<TCtxMeta = Record<string, unknown>> {
-  store: ReportingLedgerStore;
+  /**
+   * The one storage decision: `memoryStorage()` from `@adcp/sdk/storage`, or `postgresStorage({ pool })`
+   * from `@adcp/reporting-storage`. It supplies the ledger, the reporting-subscription engine state and
+   * the principal records. Process-local storage is refused outside `NODE_ENV=test|development`
+   * (`REPORTING_STORAGE_NOT_DURABLE`), and the first cycle runs `storage.checkSchema()`. Pass `storage`
+   * or `store`, not both.
+   *
+   * @experimental Reporting storage (AdCP 3.3).
+   */
+  storage?: ReportingStorage;
+  /** The ledger store. Required without `storage`; `storage.ledger` otherwise. */
+  store?: ReportingLedgerStore;
   adapters: Readonly<Record<string, ReliableReportingAdapterV1>>;
   contact: ReportingProducerContactV1;
   resolveSource(
@@ -398,6 +411,20 @@ export interface ReliableReportingServiceV1<TCtxMeta = Record<string, unknown>> 
    * @experimental Reporting subscriptions (AdCP 3.3).
    */
   readonly grants?: SubscriptionGrants;
+  /**
+   * With the managed `subscriptions` block: the principal runtime the section is installed on, the one
+   * passed as `subscriptions.principals` or the one built over `storage.principals`. Serve
+   * `get_principal` and `sync_principal` with `protocol: service.principals.protocol`.
+   *
+   * @experimental Reporting subscriptions (AdCP 3.3).
+   */
+  readonly principals?: PrincipalLifecycleRuntime;
+  /**
+   * The `storage` the service was created with.
+   *
+   * @experimental Reporting storage (AdCP 3.3).
+   */
+  readonly storage?: ReportingStorage;
   installConfiguration(
     configuration: ReliableReportingConfigurationInputV1,
     context: ReliableReportingInstallContextV1<TCtxMeta>
@@ -444,9 +471,50 @@ export interface ReliableReportingServiceV1<TCtxMeta = Record<string, unknown>> 
  * Compose the existing source executor, ledger producer, protocol handlers,
  * and scheduler into one Reliable Reporting Core lifecycle owner.
  */
+/** Resolve `storage` into the ledger store, refusing both, neither and process-local production storage. */
+function withStorage<TCtxMeta>(
+  input: CreateReliableReportingServiceOptionsV1<TCtxMeta>
+): CreateReliableReportingServiceOptionsV1<TCtxMeta> & { store: ReportingLedgerStore } {
+  const storage = input.storage;
+  if (storage === undefined) {
+    if (!input.store) {
+      throw new PlatformConfigError(
+        'Reliable Reporting needs storage. Pass storage: memoryStorage() (@adcp/sdk/storage) or postgresStorage({ pool }) (@adcp/reporting-storage).',
+        { configField: 'storage' }
+      );
+    }
+    return input as CreateReliableReportingServiceOptionsV1<TCtxMeta> & { store: ReportingLedgerStore };
+  }
+  if (input.store !== undefined) {
+    throw new PlatformConfigError('Pass storage or store, not both. storage already supplies the ledger.', {
+      configField: 'store',
+    });
+  }
+  if (!isReportingStorage(storage)) {
+    throw new PlatformConfigError(
+      'storage must be memoryStorage() (@adcp/sdk/storage) or postgresStorage({ pool }) (@adcp/reporting-storage).',
+      { configField: 'storage' }
+    );
+  }
+  requireDurable(storage.durability === 'durable', { stores: 'memoryStorage()' });
+  return { ...input, store: storage.ledger };
+}
+
 export function createReliableReportingService<TCtxMeta = Record<string, unknown>>(
-  options: CreateReliableReportingServiceOptionsV1<TCtxMeta>
+  input: CreateReliableReportingServiceOptionsV1<TCtxMeta>
 ): ReliableReportingServiceV1<TCtxMeta> {
+  const options = withStorage(input);
+  const storage = options.storage;
+  // Startup refuses a schema that is behind; run once, retried after a failure.
+  let schemaChecked: Promise<void> | undefined;
+  const checkSchema = (): Promise<void> => {
+    if (!storage) return Promise.resolve();
+    schemaChecked ??= storage.checkSchema().catch(error => {
+      schemaChecked = undefined;
+      throw error;
+    });
+    return schemaChecked;
+  };
   const allowManagedDelivery =
     (
       options as CreateReliableReportingServiceOptionsV1<TCtxMeta> & {
@@ -590,6 +658,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       ? createManagedReportingSubscriptions(subscriptionBlock, {
           offerings: deliveryOfferings,
           statusRetentionDays: options.statusRetentionDays,
+          ...(storage ? { storage } : {}),
         })
       : undefined;
   const subscriptionOptions: ReliableReportingSubscriptionsOptionsV1<TCtxMeta> | undefined =
@@ -1067,7 +1136,8 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     producer,
     platform: reportingPlatform,
     ...(subscriptionOptions ? { subscriptionWiring: subscriptionOptions } : {}),
-    ...(managed ? { grants: managed.grants } : {}),
+    ...(managed ? { grants: managed.grants, principals: managed.principals } : {}),
+    ...(storage ? { storage } : {}),
     get running() {
       return schedulerPromise !== undefined;
     },
@@ -1110,7 +1180,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         // The service owns the principal section it installed: advertise it unless the host did.
         const capabilities = platform.capabilities as unknown as Record<string, unknown> | undefined;
         if (capabilities && capabilities.principal === undefined) {
-          capabilities.principal = (subscriptionBlock as SubscriptionOptions<TCtxMeta>).principals.capabilities;
+          capabilities.principal = managed.principals.capabilities;
         }
       }
       if (servesAccountConfigurations && typeof platform.accounts.upsert !== 'function') {
@@ -1136,6 +1206,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       const accountId = cycleAccountId(cycle);
       const planningNow = cycle.now ?? new Date();
       cycle.signal?.throwIfAborted();
+      await checkSchema();
       // The boundary sweep: reconcile every subscribed principal before planning, so each elapsed
       // period is frozen by the cycle that follows its end.
       const sweepFailures = managed ? await managed.sweep(cycle.signal) : [];

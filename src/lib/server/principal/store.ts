@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { InMemoryStateStore, type AdcpStateStore } from '../state-store';
+import { resolveStoreDurability, type AdcpStateStore } from '../state-store';
 import {
   NotificationSubscriptionValidationError,
   type NotificationSubscriptionMatch,
@@ -23,7 +23,11 @@ export const DEFAULT_PRINCIPAL_STORE_COLLECTION = 'adcp_principals';
 export interface CreatePrincipalStateStoreOptions {
   store: AdcpStateStore;
   collection?: string;
-  /** Set to durable only when the supplied backend survives process loss. */
+  /**
+   * @deprecated Durability is read from `store` (`InMemoryStateStore` is process-local,
+   * `PostgresStateStore` durable). A value that agrees is ignored; one that contradicts the store is
+   * refused. Remove it, or use `memoryStorage()` / `postgresStorage({ pool })`.
+   */
   durability?: 'process-local' | 'durable';
   /** Observe malformed scanned rows that are skipped during fanout/recovery. */
   onMalformedRecord?: (error: Error) => void;
@@ -73,9 +77,7 @@ export function createPrincipalStateStore(options: CreatePrincipalStateStoreOpti
   if (!options.store.getWithVersion || !options.store.putIfMatch) {
     throw new TypeError('Principal state requires an AdcpStateStore with getWithVersion and putIfMatch');
   }
-  if (options.durability === 'durable' && options.store instanceof InMemoryStateStore) {
-    throw new TypeError('InMemoryStateStore cannot be declared durable');
-  }
+  const durability = resolveStoreDurability(options.store, options.durability, message => new TypeError(message));
   const collection = options.collection ?? DEFAULT_PRINCIPAL_STORE_COLLECTION;
   const getRecord = async (scope: Readonly<PrincipalRef>): Promise<VersionedPrincipalRecord | null> => {
     const row = await options.store.getWithVersion!<StoredPrincipalRecord>(collection, scopeDocumentId(scope));
@@ -85,7 +87,7 @@ export function createPrincipalStateStore(options: CreatePrincipalStateStoreOpti
   };
 
   return {
-    durability: options.durability ?? 'process-local',
+    durability,
     async get(scope) {
       return getRecord(scope);
     },

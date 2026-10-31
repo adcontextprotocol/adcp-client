@@ -7,13 +7,9 @@ const {
   principalNotificationSubscriptionStore,
 } = require('../../dist/lib/server/index.js');
 
-function createTestPrincipalLifecycle({
-  clock = { now: new Date('2026-11-01T12:00:00.000Z') },
-  ...lifecycleOptions
-} = {}) {
-  const store = createPrincipalStateStore({ store: new InMemoryStateStore() });
-  const emitted = [];
-  const notifications = createPersistentNotificationRuntime({
+/** A notification runtime over a principal store that records each emitted change in `emitted`. */
+function createTestNotifications(store, emitted = []) {
+  return createPersistentNotificationRuntime({
     store: principalNotificationSubscriptionStore(store),
     proofAdapter: { prove: async () => ({ proved: true }) },
     validateDestination: async () => ({ allowed: true }),
@@ -39,6 +35,15 @@ function createTestPrincipalLifecycle({
       },
     }),
   });
+}
+
+function createTestPrincipalLifecycle({
+  clock = { now: new Date('2026-11-01T12:00:00.000Z') },
+  ...lifecycleOptions
+} = {}) {
+  const store = createPrincipalStateStore({ store: new InMemoryStateStore() });
+  const emitted = [];
+  const notifications = createTestNotifications(store, emitted);
   let version = 0;
   let ref = 0;
   const lifecycle = createPrincipalLifecycle({
@@ -58,4 +63,4 @@ function createTestPrincipalLifecycle({
   return { lifecycle, store, emitted, clock };
 }
 
-module.exports = { createTestPrincipalLifecycle };
+module.exports = { createTestPrincipalLifecycle, createTestNotifications };

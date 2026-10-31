@@ -409,6 +409,16 @@
         "default": "./dist/lib/reporting/advanced/index.js"
       }
     },
+    "./storage": {
+      "import": {
+        "types": "./dist/lib/storage/index.d.mts",
+        "default": "./dist/lib/storage/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/storage/index.d.ts",
+        "default": "./dist/lib/storage/index.js"
+      }
+    },
     "./negotiation/verification": {
       "import": {
         "types": "./dist/lib/negotiation/verification.d.mts",
@@ -544,6 +554,9 @@
       ],
       "reporting/advanced": [
         "dist/lib/reporting/advanced/index.d.ts"
+      ],
+      "storage": [
+        "dist/lib/storage/index.d.ts"
       ],
       "enums": [
         "dist/lib/enums.d.ts"

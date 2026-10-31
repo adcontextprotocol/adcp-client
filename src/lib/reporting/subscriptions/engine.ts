@@ -641,7 +641,7 @@ export function createReportingSubscriptionEngineV1(
   const store = options.store ?? createInMemoryReportingSubscriptionEngineStoreV1();
   if (production && store.durability !== 'durable') {
     throw new PlatformConfigError(
-      'Production reporting subscription engines require a durable store. Pass store: createReportingSubscriptionEngineStateStoreV1({ store, durability: "durable" }) over durable storage, or run with NODE_ENV=test or development.',
+      'Production reporting subscription engines require a durable store. Pass store: postgresStorage({ pool }).subscriptions (from @adcp/reporting-storage) or createReportingSubscriptionEngineStateStoreV1({ store }) over a durable state store such as PostgresStateStore, or run with NODE_ENV=test or development.',
       { code: 'REPORTING_STORAGE_NOT_DURABLE', configField: 'store' }
     );
   }
