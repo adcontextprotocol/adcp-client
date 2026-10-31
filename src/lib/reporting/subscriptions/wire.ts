@@ -76,14 +76,26 @@ export interface ReportingSubscriptionGapV1 {
 }
 
 /**
- * `core/reporting-subscription-coverage.json` with per-offering cutovers and gaps.
+ * One `excluded[]` entry with an optional `offering_id`: the offering whose periods it removes, when the
+ * account's covered offerings have different period boundaries. Absent: every offering on the account
+ * (or the buy, with `media_buy_id`).
+ *
+ * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export type ReportingSubscriptionExclusionEntryV1 = ReportingSubscriptionCoverage['excluded'][number] & {
+  offering_id?: string;
+};
+
+/**
+ * `core/reporting-subscription-coverage.json` with per-offering exclusions, cutovers and gaps.
  *
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export type ReportingSubscriptionCoverageWithOfferingsV1 = Omit<
   ReportingSubscriptionCoverage,
-  'timezone_cutovers' | 'gaps'
+  'timezone_cutovers' | 'gaps' | 'excluded'
 > & {
+  excluded: ReportingSubscriptionExclusionEntryV1[];
   timezone_cutovers?: ReportingSubscriptionTimezoneCutoverV1[];
   gaps?: ReportingSubscriptionGapV1[];
 };
