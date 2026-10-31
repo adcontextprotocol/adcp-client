@@ -1,0 +1,255 @@
+[
+  [
+    "get-unconfigured",
+    {
+      "result": {
+        "kind": "unconfigured"
+      }
+    }
+  ],
+  [
+    "sync-dry-run",
+    {
+      "result": {
+        "kind": "validated",
+        "action": "would_update",
+        "dry_run": true
+      }
+    }
+  ],
+  [
+    "sync-destinations",
+    {
+      "result": {
+        "kind": "applied",
+        "principal_id": "record-t-p",
+        "principal_kind": "buyer_agent",
+        "configuration_version": "cfg-1",
+        "configuration": {
+          "notification_configs": [],
+          "reporting_destinations": [
+            {
+              "destination_id": "archive",
+              "destination_ref": "dest-ref-2",
+              "state": "validating",
+              "configuration": {
+                "pattern": "file_transfer",
+                "destination_id": "archive",
+                "active": true,
+                "provider": {
+                  "domain": "storage.example"
+                },
+                "transport": "s3",
+                "location": "s3://bucket/prefix",
+                "accepted_formats": ["jsonl"],
+                "accepted_verification_profiles": ["manifest_checksums"]
+              }
+            }
+          ],
+          "retired_destinations": [],
+          "declarations": {
+            "declared": {
+              "async_adcp_versions": ["3.2"]
+            },
+            "accepted": {
+              "async_adcp_versions": ["3.2"]
+            },
+            "selected_async_adcp_version": "3.2"
+          }
+        },
+        "action": "updated",
+        "dry_run": false
+      }
+    }
+  ],
+  [
+    "transition-ready",
+    {
+      "notification_configs": [],
+      "reporting_destinations": [
+        {
+          "destination_id": "archive",
+          "destination_ref": "dest-ref-2",
+          "state": "ready",
+          "configuration": {
+            "pattern": "file_transfer",
+            "destination_id": "archive",
+            "active": true,
+            "provider": {
+              "domain": "storage.example"
+            },
+            "transport": "s3",
+            "location": "s3://bucket/prefix",
+            "accepted_formats": ["jsonl"],
+            "accepted_verification_profiles": ["manifest_checksums"]
+          }
+        }
+      ],
+      "retired_destinations": [],
+      "declarations": {
+        "declared": {
+          "async_adcp_versions": ["3.2"]
+        },
+        "accepted": {
+          "async_adcp_versions": ["3.2"]
+        },
+        "selected_async_adcp_version": "3.2"
+      }
+    }
+  ],
+  [
+    "sync-unchanged",
+    {
+      "result": {
+        "kind": "applied",
+        "principal_id": "record-t-p",
+        "principal_kind": "buyer_agent",
+        "configuration_version": "cfg-1",
+        "configuration": {
+          "notification_configs": [],
+          "reporting_destinations": [
+            {
+              "destination_id": "archive",
+              "destination_ref": "dest-ref-2",
+              "state": "ready",
+              "configuration": {
+                "pattern": "file_transfer",
+                "destination_id": "archive",
+                "active": true,
+                "provider": {
+                  "domain": "storage.example"
+                },
+                "transport": "s3",
+                "location": "s3://bucket/prefix",
+                "accepted_formats": ["jsonl"],
+                "accepted_verification_profiles": ["manifest_checksums"]
+              }
+            }
+          ],
+          "retired_destinations": [],
+          "declarations": {
+            "declared": {
+              "async_adcp_versions": ["3.2"]
+            },
+            "accepted": {
+              "async_adcp_versions": ["3.2"]
+            },
+            "selected_async_adcp_version": "3.2"
+          }
+        },
+        "action": "unchanged",
+        "dry_run": false
+      }
+    }
+  ],
+  [
+    "sync-subscriptions-refused",
+    {
+      "status": "failed",
+      "result": {
+        "kind": "failed",
+        "errors": [
+          {
+            "code": "UNSUPPORTED_FEATURE",
+            "message": "reporting_subscriptions are not supported by this seller"
+          }
+        ]
+      }
+    }
+  ],
+  [
+    "sync-stale-version",
+    {
+      "status": "failed",
+      "result": {
+        "kind": "failed",
+        "errors": [
+          {
+            "code": "CONFLICT",
+            "message": "The principal configuration changed; read current state and retry"
+          }
+        ]
+      }
+    }
+  ],
+  [
+    "sync-remove-destination",
+    {
+      "result": {
+        "kind": "applied",
+        "principal_id": "record-t-p",
+        "principal_kind": "buyer_agent",
+        "configuration_version": "cfg-2",
+        "configuration": {
+          "notification_configs": [],
+          "reporting_destinations": [],
+          "retired_destinations": [
+            {
+              "destination_id": "archive",
+              "destination_refs": ["dest-ref-2"],
+              "revoked_at": "2026-11-01T00:00:00.000Z"
+            }
+          ],
+          "declarations": {
+            "declared": {
+              "async_adcp_versions": ["3.2"]
+            },
+            "accepted": {
+              "async_adcp_versions": ["3.2"]
+            },
+            "selected_async_adcp_version": "3.2"
+          }
+        },
+        "action": "cleared",
+        "dry_run": false
+      }
+    }
+  ],
+  [
+    "get-final",
+    {
+      "result": {
+        "kind": "current",
+        "principal_id": "record-t-p",
+        "principal_kind": "buyer_agent",
+        "configuration_version": "cfg-2",
+        "configuration": {
+          "notification_configs": [],
+          "reporting_destinations": [],
+          "retired_destinations": [
+            {
+              "destination_id": "archive",
+              "destination_refs": ["dest-ref-2"],
+              "revoked_at": "2026-11-01T00:00:00.000Z"
+            }
+          ],
+          "declarations": {
+            "declared": {
+              "async_adcp_versions": ["3.2"]
+            },
+            "accepted": {
+              "async_adcp_versions": ["3.2"]
+            },
+            "selected_async_adcp_version": "3.2"
+          }
+        }
+      }
+    }
+  ],
+  [
+    "stored-record-keys",
+    [
+      "configuration",
+      "configurationVersion",
+      "notificationGeneration",
+      "notificationSubscriptions",
+      "pendingNotifications",
+      "principalId",
+      "principalKind",
+      "reportingGenerations",
+      "schemaVersion",
+      "scopePrincipalId",
+      "tenantId"
+    ]
+  ]
+]

@@ -31,3 +31,22 @@ export type {
   StoredReportingDestinationGeneration,
   VersionedPrincipalRecord,
 } from './types';
+export {
+  ReportingSubscriptionValidationError,
+  applyReportingSubscriptions,
+  expandReportingSubscriptionPathTemplate,
+  projectReportingSubscriptionState,
+  reportingSubscriptionSemanticFingerprint,
+  validateReportingSubscription,
+} from './reporting-subscriptions';
+export type {
+  ApplyReportingSubscriptionsInput,
+  ApplyReportingSubscriptionsResult,
+  StoredReportingSubscriptionHistory,
+  StoredReportingSubscriptionVersion,
+} from './reporting-subscriptions';
+export type {
+  PrincipalLifecycleRuntimeSubscriptions,
+  PrincipalReportingSubscriptionState,
+  PrincipalReportingSubscriptionSupport,
+} from './types';

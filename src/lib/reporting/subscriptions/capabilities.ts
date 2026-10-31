@@ -7,7 +7,7 @@
  * or is absent. Advertising `subscriptions` requires `sync_principal` in
  * `configuration_tasks`, and vice versa (`core/reporting-delivery-capabilities.json`).
  */
-import type { ReportingDeliveryCapabilities } from '../../types/core.generated';
+import type { ReportingDeliveryCapabilities } from '../../types/tools.generated';
 
 export interface ReportingConfigurationCapabilitiesInputV1 {
   /**
@@ -61,7 +61,9 @@ export function reportingConfigurationCapabilitiesV1(
   }
   return {
     ...(accountConfigurations ? { configuration_task: 'sync_accounts' as const } : {}),
-    configuration_tasks: accountConfigurations ? ['sync_principal', 'sync_accounts'] : ['sync_principal'],
+    configuration_tasks: accountConfigurations
+      ? (['sync_principal', 'sync_accounts'] as ['sync_principal', 'sync_accounts'])
+      : (['sync_principal'] as ['sync_principal']),
     subscriptions: {
       supported: true,
       ...(maxAccounts !== undefined ? { max_accounts: maxAccounts } : {}),
