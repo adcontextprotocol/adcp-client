@@ -1,4 +1,9 @@
 import type * as ToolTypes from '../types/tools.generated';
+import {
+  ReportingClient,
+  type ReportingFacadeClient,
+  type SyncPrincipalGuardOptions,
+} from '../principal/reporting-facade';
 import type * as CoreTypes from '../types/core.generated';
 // Per-agent client wrapper with conversation context preservation
 
@@ -1192,15 +1197,31 @@ export class AgentClient {
     return result;
   }
 
-  /** Atomically replace selected sections of the authenticated caller's principal configuration. */
+  /**
+   * Replaces each submitted section. To add a reporting subscription, use `client.reporting.subscribe`.
+   *
+   * A write that would deactivate an active reporting subscription or revoke a destination by
+   * omission is refused before sending unless you pass `allowDeactivation` / `allowRevocation`.
+   */
   async syncPrincipal(
     params: MutatingRequestInput<SyncPrincipalRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: TaskOptions & SyncPrincipalGuardOptions
   ): Promise<TaskResult<SyncPrincipalResponse>> {
     const result = await this.client.syncPrincipal(params, inputHandler, this.withSession('sync_principal', options));
     this.retainSession(result);
     return result;
+  }
+
+  private reportingClient?: ReportingClient;
+
+  /**
+   * Patch-shaped reporting-subscription writes: `subscribe`, `unsubscribe`, `replaceSubscriptions`,
+   * `listSubscriptions`, `preview` (experimental `media_buy.reporting_subscriptions`, AdCP 3.3).
+   */
+  get reporting(): ReportingClient {
+    this.reportingClient ??= new ReportingClient(this as unknown as ReportingFacadeClient);
+    return this.reportingClient;
   }
 
   /**

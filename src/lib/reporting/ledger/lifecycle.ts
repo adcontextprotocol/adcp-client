@@ -13,6 +13,7 @@ import type {
   ReportingLedgerStatusTransitionV1,
   ReportingLedgerStore,
   ReportingLedgerSubscriberV1,
+  ReportingLedgerObligationV1,
   ReportingObservedFinalityV1,
 } from './types';
 
@@ -258,7 +259,7 @@ export async function reconcileReportingStatusLifecycleV1(
       await input.store.markTransitionNotified(pending.transitionId, ledgerAsOf);
       continue;
     }
-    if (await notifyTransition(pending, obligation.account.account_id, input.subscribers)) {
+    if (await notifyTransition(pending, obligation, input.subscribers)) {
       await input.store.markTransitionNotified(pending.transitionId, ledgerAsOf);
     }
   }
@@ -345,7 +346,7 @@ export async function reconcileReportingStatusLifecycleV1(
     await input.store.markTransitionNotified(transition.transitionId, ledgerAsOf);
     return { ...transition, notifiedAt: ledgerAsOf };
   }
-  const notified = await notifyTransition(transition, obligation.account.account_id, input.subscribers);
+  const notified = await notifyTransition(transition, obligation, input.subscribers);
   if (notified) await input.store.markTransitionNotified(transition.transitionId, ledgerAsOf);
   return notified ? { ...transition, notifiedAt: ledgerAsOf } : transition;
 }
@@ -653,10 +654,17 @@ export async function reconcileReportingStatusDeadlinesV1(input: {
 
 async function notifyTransition(
   transition: ReportingLedgerStatusTransitionV1,
-  accountId: string,
+  obligation: Pick<ReportingLedgerObligationV1, 'account' | 'subscription'>,
   configured: readonly ReportingLedgerSubscriberV1[] | undefined
 ): Promise<boolean> {
-  const subscribers = (configured ?? []).filter(value => value.account_id === accountId);
+  const owner = obligation.subscription;
+  // A subscription obligation belongs to its owning principal: another principal's subscriber on
+  // the same account never learns of it.
+  const subscribers = (configured ?? []).filter(
+    value =>
+      value.account_id === obligation.account.account_id &&
+      (!owner || (value.principal?.tenantId === owner.tenantId && value.principal?.principalId === owner.principalId))
+  );
   if (subscribers.length === 0) return true;
   if (subscribers.length > 64) throw new Error('Reporting status subscriber fanout exceeds 64');
   const results = await Promise.allSettled(
