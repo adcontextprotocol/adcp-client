@@ -1,0 +1,171 @@
+{
+  "description": "Reduced grants and reporting-subscription coverage (experimental media_buy.reporting_subscriptions, AdCP 3.3). Revocation means no access (adcp#8607): a seller that wants a buyer to finish reconciling keeps a reduced grant instead of revoking. Coverage follows the grant: an account is covered while its authorization, when advertised, lists get_reporting_status in allowed_tasks. A grant without get_reporting_status reads exactly as a loss of authority at the instant it took effect.",
+  "rule": "covered = authorization is absent, or authorization.allowed_tasks lists get_reporting_status. read_only does not affect coverage.",
+  "spec_refs": [
+    "static/schemas/source/core/reporting-subscription.json#/x-adcp-validation/coverage",
+    "docs/media-buy/task-reference/get_reporting_status.mdx (Winding down instead of revoking)",
+    "static/schemas/source/media-buy/sync-reporting-receipts-request.json#/x-adcp-validation/after_revocation"
+  ],
+  "wind_down_grant": {
+    "allowed_tasks": ["get_reporting_status", "sync_reporting_receipts", "sync_reporting_status"],
+    "read_only": false
+  },
+  "grant_cases": [
+    { "name": "no authorization object: restricts no task", "authorization": null, "covered": true },
+    {
+      "name": "wind-down grant",
+      "authorization": {
+        "allowed_tasks": ["get_reporting_status", "sync_reporting_receipts", "sync_reporting_status"],
+        "read_only": false
+      },
+      "covered": true
+    },
+    {
+      "name": "get_reporting_status alone",
+      "authorization": { "allowed_tasks": ["get_reporting_status"], "read_only": true },
+      "covered": true
+    },
+    {
+      "name": "full buying grant listing get_reporting_status",
+      "authorization": {
+        "allowed_tasks": ["get_media_buys", "create_media_buy", "get_reporting_status", "sync_reporting_receipts"]
+      },
+      "covered": true
+    },
+    {
+      "name": "reduced grant without get_reporting_status: receipts and statuses only",
+      "authorization": { "allowed_tasks": ["sync_reporting_receipts", "sync_reporting_status"], "read_only": false },
+      "covered": false
+    },
+    {
+      "name": "reduced grant without get_reporting_status: statuses only",
+      "authorization": { "allowed_tasks": ["sync_reporting_status"], "read_only": false },
+      "covered": false
+    },
+    {
+      "name": "reduced grant without get_reporting_status: buying tasks only",
+      "authorization": { "allowed_tasks": ["get_media_buys", "create_media_buy"] },
+      "covered": false
+    },
+    {
+      "name": "empty allowed_tasks",
+      "authorization": { "allowed_tasks": [], "read_only": true },
+      "covered": false
+    },
+    {
+      "name": "task names match exactly",
+      "authorization": { "allowed_tasks": ["get_reporting_status_v2", "GET_REPORTING_STATUS"] },
+      "covered": false
+    }
+  ],
+  "transition_conventions": {
+    "offering": "One delivery offering: period_duration P1D, alignment utc, delivery_sla PT0S, feed_purpose analytics, finality snapshot, delivery_only.",
+    "subscription": "analytics-daily version 1, scope all_authorized_accounts, accepted at 2026-09-01T12:00:00Z.",
+    "buy": "mb-1 on account-a, confirmed 2026-09-01T06:00:00Z, flight 2026-09-02T00:00:00Z to 2026-09-11T00:00:00Z, one package mapped to the offering.",
+    "grant": "authorized_at 2026-08-01T00:00:00Z. Each step replaces the account's authorization at its instant; the seller reconciles at that instant and the revocation instant is the observation time. allowed_tasks null means an authorization that restricts no task; revoked means the account leaves the list.",
+    "expected": "Read at evaluate_at: authorized is the engine's current authority, covered is whether get_reporting_status shows the subscription on the account, unauthorized_at lists accounts_unauthorized for account-a, owed lists every owed period start in order."
+  },
+  "transition_cases": [
+    {
+      "name": "wind-down keeps coverage and opens no accounts_unauthorized entry",
+      "steps": [
+        { "at": "2026-09-01T18:00:00Z", "allowed_tasks": null },
+        {
+          "at": "2026-09-05T12:00:00Z",
+          "allowed_tasks": ["get_reporting_status", "sync_reporting_receipts", "sync_reporting_status"]
+        }
+      ],
+      "evaluate_at": "2026-09-13T00:00:00Z",
+      "expected": {
+        "authorized": true,
+        "covered": true,
+        "unauthorized_at": [],
+        "owed": [
+          "2026-09-02T00:00:00Z",
+          "2026-09-03T00:00:00Z",
+          "2026-09-04T00:00:00Z",
+          "2026-09-05T00:00:00Z",
+          "2026-09-06T00:00:00Z",
+          "2026-09-07T00:00:00Z",
+          "2026-09-08T00:00:00Z",
+          "2026-09-09T00:00:00Z",
+          "2026-09-10T00:00:00Z"
+        ]
+      }
+    },
+    {
+      "name": "a reduced grant without get_reporting_status ends coverage like a revocation",
+      "steps": [
+        { "at": "2026-09-01T18:00:00Z", "allowed_tasks": null },
+        { "at": "2026-09-05T12:00:00Z", "allowed_tasks": ["sync_reporting_receipts", "sync_reporting_status"] }
+      ],
+      "evaluate_at": "2026-09-13T00:00:00Z",
+      "expected": {
+        "authorized": false,
+        "covered": false,
+        "unauthorized_at": ["2026-09-05T12:00:00Z"],
+        "owed": ["2026-09-02T00:00:00Z", "2026-09-03T00:00:00Z", "2026-09-04T00:00:00Z"]
+      }
+    },
+    {
+      "name": "a reduced grant without get_reporting_status owes the same periods as a full revocation",
+      "steps": [
+        { "at": "2026-09-01T18:00:00Z", "allowed_tasks": null },
+        { "at": "2026-09-05T12:00:00Z", "allowed_tasks": "revoked" }
+      ],
+      "evaluate_at": "2026-09-13T00:00:00Z",
+      "expected": {
+        "authorized": false,
+        "covered": false,
+        "unauthorized_at": ["2026-09-05T12:00:00Z"],
+        "owed": ["2026-09-02T00:00:00Z", "2026-09-03T00:00:00Z", "2026-09-04T00:00:00Z"]
+      }
+    },
+    {
+      "name": "dropping get_reporting_status from a wind-down grant ends coverage then",
+      "steps": [
+        { "at": "2026-09-01T18:00:00Z", "allowed_tasks": null },
+        {
+          "at": "2026-09-04T12:00:00Z",
+          "allowed_tasks": ["get_reporting_status", "sync_reporting_receipts", "sync_reporting_status"]
+        },
+        { "at": "2026-09-07T12:00:00Z", "allowed_tasks": ["sync_reporting_receipts"] }
+      ],
+      "evaluate_at": "2026-09-13T00:00:00Z",
+      "expected": {
+        "authorized": false,
+        "covered": false,
+        "unauthorized_at": ["2026-09-07T12:00:00Z"],
+        "owed": [
+          "2026-09-02T00:00:00Z",
+          "2026-09-03T00:00:00Z",
+          "2026-09-04T00:00:00Z",
+          "2026-09-05T00:00:00Z",
+          "2026-09-06T00:00:00Z"
+        ]
+      }
+    },
+    {
+      "name": "restoring get_reporting_status inside retention is a re-grant with a gap",
+      "steps": [
+        { "at": "2026-09-01T18:00:00Z", "allowed_tasks": null },
+        { "at": "2026-09-04T12:00:00Z", "allowed_tasks": ["sync_reporting_receipts", "sync_reporting_status"] },
+        { "at": "2026-09-06T12:00:00Z", "allowed_tasks": null, "granted_at": "2026-09-06T12:00:00Z" }
+      ],
+      "evaluate_at": "2026-09-13T00:00:00Z",
+      "expected": {
+        "authorized": true,
+        "covered": true,
+        "unauthorized_at": [],
+        "owed": [
+          "2026-09-02T00:00:00Z",
+          "2026-09-03T00:00:00Z",
+          "2026-09-07T00:00:00Z",
+          "2026-09-08T00:00:00Z",
+          "2026-09-09T00:00:00Z",
+          "2026-09-10T00:00:00Z"
+        ]
+      }
+    }
+  ]
+}

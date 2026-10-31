@@ -94,10 +94,24 @@ const SPECIALISM_REQUIREMENTS: Partial<Record<AdCPSpecialism, ReadonlyArray<keyo
   'brand-rights': ['brandRights'],
 };
 
+/**
+ * A seller configuration mistake caught at startup, before any request is served. `code` names it
+ * (`PLATFORM_CONFIG_INVALID` unless a more specific code applies, such as
+ * `REPORTING_STORAGE_NOT_DURABLE`), `configField` names the option when there is one, and the
+ * message ends with the fix. Recovery is always `correctable`.
+ */
 export class PlatformConfigError extends Error {
   readonly name = 'PlatformConfigError' as const;
-  constructor(message: string) {
+  readonly code: string;
+  readonly recovery = 'correctable' as const;
+  declare readonly configField?: string;
+  constructor(message: string, options: { code?: string; configField?: string; cause?: unknown } = {}) {
     super(message);
+    this.code = options.code ?? 'PLATFORM_CONFIG_INVALID';
+    if (options.configField !== undefined) {
+      Object.defineProperty(this, 'configField', { value: options.configField, enumerable: true });
+    }
+    if (options.cause !== undefined) Object.defineProperty(this, 'cause', { value: options.cause, configurable: true });
   }
 }
 
