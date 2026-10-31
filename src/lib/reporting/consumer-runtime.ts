@@ -98,7 +98,8 @@ export interface CreateReliableReportingConsumerOptionsV1<TCredential = unknown>
    */
   storage?: {
     readonly consumer: ReliableReportingConsumerPersistenceV1;
-    readonly durability?: 'process-local' | 'durable';
+    /** The storage's own declaration; anything but `'durable'` is refused in production. */
+    readonly durability: 'process-local' | 'durable';
   };
   /** Unique per running process. It is coordination metadata, not a credential. */
   ownerToken: string;
@@ -343,13 +344,14 @@ export function createReliableReportingConsumerV1<TCredential = unknown>(
   // Like the seller, a buyer refuses process-local storage in production: losing checkpoints, leases and
   // the processed-notification set on restart reprocesses notifications and re-walks every account.
   if (
-    input.storage?.durability === 'process-local' &&
+    input.storage !== undefined &&
+    input.storage.durability !== 'durable' &&
     process.env.NODE_ENV !== 'test' &&
     process.env.NODE_ENV !== 'development'
   ) {
     throw Object.assign(
       new TypeError(
-        'The reliable reporting consumer keeps checkpoints, leases and processed notifications in memoryStorage(), which does not survive a restart. ' +
+        'The reliable reporting consumer keeps checkpoints, leases and processed notifications in storage that is not declared durable (such as memoryStorage()), which does not survive a restart. ' +
           'Pass storage: postgresStorage({ pool }) (@adcp/reporting-storage), or set NODE_ENV=development to run in memory.'
       ),
       { code: 'REPORTING_STORAGE_NOT_DURABLE' }
