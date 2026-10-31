@@ -146,6 +146,48 @@ describe('client.reporting', () => {
     assert.equal((await reporting.listSubscriptions()).subscriptions.length, 0, 'a preview is a dry run');
   });
 
+  test('a seller that alters a submitted field fails the readback check', async () => {
+    const c = client();
+    const rewriting = {
+      ...c,
+      syncPrincipal: async params => {
+        const response = await c.syncPrincipal(params);
+        for (const state of response.data.result.configuration.reporting_subscriptions ?? []) {
+          state.configuration = { ...state.configuration, exclude_account_ids: ['seller-chosen'] };
+        }
+        return response;
+      },
+    };
+    await assert.rejects(
+      new ReportingClient(rewriting).subscribe(subscription({ exclude_account_ids: ['z'] })),
+      error => {
+        assert.equal(error.code, 'SUBSCRIPTION_READBACK_MISMATCH');
+        assert.equal(error.recovery, 'terminal');
+        assert.equal('dispatched' in error, false);
+        assert.equal(error.readback.subscription_id, 'analytics-daily');
+        assert.match(error.message, /stores a different configuration at \/exclude_account_ids\/0/);
+        return true;
+      }
+    );
+    const dropping = {
+      ...c,
+      syncPrincipal: async params => {
+        const response = await c.syncPrincipal(params);
+        response.data.result.configuration.reporting_subscriptions = [];
+        return response;
+      },
+    };
+    await assert.rejects(
+      new ReportingClient(dropping).subscribe(
+        subscription({ subscription_id: 'other', scope: { account_ids: ['a'] } })
+      ),
+      {
+        code: 'SUBSCRIPTION_READBACK_MISMATCH',
+        message: /does not carry version 1/,
+      }
+    );
+  });
+
   test('CONFLICT on every attempt exhausts the retries', async () => {
     const c = client();
     await new ReportingClient(c).subscribe(subscription());
