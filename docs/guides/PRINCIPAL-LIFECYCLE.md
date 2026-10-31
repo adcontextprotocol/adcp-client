@@ -148,11 +148,10 @@ import {
   principalNotificationSubscriptionStore,
 } from '@adcp/sdk/server';
 
+// Durability is read from the state store: PostgresStateStore is durable. With reporting, use the
+// one storage object instead: postgresStorage({ pool }).principals (@adcp/reporting-storage).
 const state = new PostgresStateStore(pool);
-const principalStore = createPrincipalStateStore({
-  store: state,
-  durability: 'durable',
-});
+const principalStore = createPrincipalStateStore({ store: state });
 
 let principalWebhooks: ReturnType<typeof createPostgresWebhookRuntime>;
 const notifications = createPersistentNotificationRuntime({
@@ -246,7 +245,11 @@ do {
   the complete record. Custom stores must preserve the trusted
   `(tenantId, principalId)` scope, return opaque revisions, enumerate pending
   notification scopes, and report `durability: 'durable'` only when records
-  survive process loss. Production rejects process-local stores.
+  survive process loss. Production rejects process-local stores. A store built
+  with `createPrincipalStateStore` inherits the backing `AdcpStateStore`'s own
+  `durability` (`InMemoryStateStore` is process-local, `PostgresStateStore`
+  durable); its `durability` option is deprecated, accepted only when it agrees
+  with the backend and refused when it contradicts it.
 - Use exactly one notification writer. The notification runtime must use
   `principalNotificationSubscriptionStore(principalStore)`; do not pair the
   principal lifecycle with a second subscription table or the standalone
