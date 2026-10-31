@@ -399,6 +399,16 @@
         "default": "./dist/lib/reporting/service/index.js"
       }
     },
+    "./reporting/advanced": {
+      "import": {
+        "types": "./dist/lib/reporting/advanced/index.d.mts",
+        "default": "./dist/lib/reporting/advanced/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/reporting/advanced/index.d.ts",
+        "default": "./dist/lib/reporting/advanced/index.js"
+      }
+    },
     "./negotiation/verification": {
       "import": {
         "types": "./dist/lib/negotiation/verification.d.mts",
@@ -532,6 +542,9 @@
       "reporting/service": [
         "dist/lib/reporting/service/index.d.ts"
       ],
+      "reporting/advanced": [
+        "dist/lib/reporting/advanced/index.d.ts"
+      ],
       "enums": [
         "dist/lib/enums.d.ts"
       ],
@@ -590,8 +603,10 @@
     "examples/README.md",
     "examples/CONTRIBUTING.md",
     "examples/storyboards/account-sync-contract.yaml",
+    "examples/storyboards/reporting-subscriptions.yaml",
     "examples/adcp.config.json",
     "examples/reliable-reporting-buyer/**/*",
+    "examples/reporting-subscriptions-seller/**/*",
     "examples/seller-3.2-starter.ts",
     "examples/supply-path-verification.ts",
     "examples/wholesale-feed-sync.ts",
