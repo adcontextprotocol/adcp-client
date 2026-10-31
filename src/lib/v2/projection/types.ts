@@ -23,6 +23,7 @@ export interface V1FormatId {
   width?: number;
   height?: number;
   duration_ms?: number;
+  pixel_ratio?: number;
 }
 
 /**
@@ -59,6 +60,8 @@ export type CanonicalFormatKind =
 export interface V2ProductFormatDeclaration {
   format_kind: CanonicalFormatKind;
   params: Record<string, unknown>;
+  /** Whether omitted technical constraints are explicitly unconstrained. */
+  technical_requirements_complete?: boolean;
   capability_id?: string;
   format_option_id?: string;
   publisher_domain?: string;

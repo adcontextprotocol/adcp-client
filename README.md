@@ -804,6 +804,11 @@ named `createMediaBuyLegacy()`, `updateMediaBuyLegacy()`,
 typed primary tasks or legacy creative tools; other less-common standard and
 extension tools intentionally use that explicit raw-task route.
 
+For planning package assignments, use the pure
+[`fitCreativeToPackages()` helper](docs/guides/CREATIVE-PACKAGE-FIT.md).
+It shares sync's decision engine and separates measured package fit from a
+shared canonical or legacy wire representation.
+
 - `getProducts()` - Discover advertising products
 - `listCreativeFormatsLegacy()` - Inspect the legacy named-format catalog (migration tooling only)
 - `createMediaBuy()` - Create new media buy

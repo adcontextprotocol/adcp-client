@@ -284,7 +284,7 @@ describe('seller option constraints for opaque legacy IDs (#3445 follow-up)', ()
     assert.throws(() => sync(input, options), CreativeFormatProjectionError);
   });
 
-  test('known reference constraints keep precedence over conflicting option metadata', () => {
+  test('explicit native constraints remain binding when linked legacy refs disagree', () => {
     const options = {
       format_options: imageRefs.map(value => ({
         format_kind: 'image',
@@ -292,6 +292,6 @@ describe('seller option constraints for opaque legacy IDs (#3445 follow-up)', ()
         params: { width: 1080, height: 1920 },
       })),
     };
-    assert.deepEqual(sync(creative(), options).format_id, imageRefs[0]);
+    assert.throws(() => sync(creative(), options), CreativeFormatProjectionError);
   });
 });
