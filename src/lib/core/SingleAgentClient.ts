@@ -1202,6 +1202,10 @@ function snapshotCreativeFormatProjection<T extends CreativeDeliveryTaskOptions[
     ...(projection.legacyFormatDefinitions !== undefined && {
       legacyFormatDefinitions: structuredClone(projection.legacyFormatDefinitions),
     }),
+    ...('creativeFacts' in projection &&
+      projection.creativeFacts !== undefined && {
+        creativeFacts: structuredClone(projection.creativeFacts),
+      }),
   };
 }
 

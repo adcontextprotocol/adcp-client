@@ -177,6 +177,14 @@ export type { LegacyProductNormalizationInput, NormalizedLegacyProduct } from '.
 
 export {
   CreativeFormatProjectionError,
+  fitCreativeToPackages,
+  type CreativePackageFit,
+  type CreativePackageFitOptions,
+  type CreativePackageFitResult,
+  type CreativeFitVerdict,
+  type CreativeFitReason,
+  type CreativePrimaryAssetFacts,
+  type CreativeVastInlineFacts,
   CreativeFormatCapabilityError,
   projectCreativeForDelivery,
   projectMediaBuyCreativesForDelivery,

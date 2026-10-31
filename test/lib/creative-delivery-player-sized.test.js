@@ -213,9 +213,18 @@ describe('player-sized creative assignment projection (#3496)', () => {
       duration_ms: 30000,
     });
   });
-  test('canonical wire stays canonical for different player sizes', () => {
+  test('canonical wire requires one shared option pin across different player sizes', () => {
     const input = request();
-    assert.deepEqual(project(input, [container('A'), container('B', 480)], OPT_IN, 'canonical'), input);
+    const selectors = [container('A'), container('B', 480)];
+    assert.throws(() => project(input, selectors, OPT_IN, 'canonical'), /format_option_ref/);
+    for (const selector of selectors) {
+      for (const option of selector.format_options) option.format_option_id = `vast-${option.params.duration_ms_exact}`;
+    }
+    const result = project(input, selectors, OPT_IN, 'canonical');
+    assert.deepEqual(result.creatives[0].format_option_ref, { scope: 'product', format_option_id: 'vast-30000' });
+    assert.equal(result.creatives[0].format_kind, 'video_vast');
+    assert.equal(result.creatives[0].format_id, undefined);
+    assert.deepEqual(result.creatives[0].assets, input.creatives[0].assets);
   });
   test('unknown wire follows the same explicit opt-in policy as legacy delivery', () => {
     assert.equal(
