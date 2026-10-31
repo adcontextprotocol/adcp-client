@@ -166,7 +166,10 @@ import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifac
 // ones (the composed protocol envelope on every response, live creative updates, the
 // reporting_subscription_probe controller scenario) and regenerates the types. Measured
 // 26,825,751 packed bytes; allow about 44 KB above that. Other budgets stay fixed.
-const MAX_PACKED_TARBALL_BYTES = 26_870_000;
+// The beta.3 engine slice (#3560) and the creative package-fit decisions (#3564) landed together on
+// main: 26,862,555 packed bytes. Allow about 45 KB above that, which also covers the release PR's
+// CHANGELOG growth.
+const MAX_PACKED_TARBALL_BYTES = 26_910_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 144 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
 // ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
@@ -345,7 +348,8 @@ const MAX_PACKED_FILE_COUNT =
   3 + // Reporting-subscription seller and buyer guides, and the reporting-subscriptions skill.
   // AdCP 3.3.0-beta.3: eleven new source schemas (task-id, task-message and the task-status envelopes; live
   // creative updates) and the new compliance storyboards and controller-scenario files that ship with them.
-  21;
+  21 + // AdCP 3.3.0-beta.3 adoption (#3559).
+  1; // Creative package-fit guide (#3564), merged in parallel with #3559's exact count.
 const MAX_BUNDLED_SCHEMA_BYTES = 2000 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

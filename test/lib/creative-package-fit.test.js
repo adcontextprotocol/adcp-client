@@ -504,10 +504,11 @@ test('non-default legacy density is retained or refused, never silently discarde
   assert.ok(!shared.wire || shared.wire.selector.format_id.pixel_ratio === 2);
 });
 test('sync snapshots measured creative facts before capability discovery', async () => {
-  const { SingleAgentClient } = require('../../dist/lib');
+  const { SingleAgentClient, ADCP_VERSION } = require('../../dist/lib');
+  // The SDK's own 3.3 preview pin: only the current beta bundle ships.
   const client = new SingleAgentClient(
     { id: 'fit-seller', name: 'Acme seller', protocol: 'mcp', agent_uri: 'https://seller.acme.example/mcp' },
-    { adcpVersion: '3.3.0-beta.2', validation: { requests: 'off', responses: 'off' } }
+    { adcpVersion: ADCP_VERSION, validation: { requests: 'off', responses: 'off' } }
   );
   const creative = image();
   const packages = [pkg('A', declaration({ width: 300, height: 250 }))];
