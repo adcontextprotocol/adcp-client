@@ -103,6 +103,8 @@ export function getAdcpStateMigration(tableName = DEFAULT_TABLE): string {
 export const ADCP_STATE_MIGRATION = getAdcpStateMigration();
 
 export class PostgresStateStore implements AdcpStateStore {
+  /** PostgreSQL survives process loss. */
+  readonly durability = 'durable' as const;
   private readonly db: PgQueryable;
   private readonly table: string;
   private readonly maxDocumentBytes: number;

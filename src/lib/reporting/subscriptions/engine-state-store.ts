@@ -12,7 +12,7 @@
 import { ReportingSubscriptionEngineError } from '../../errors';
 import { PlatformConfigError } from '../../server/decisioning/runtime/validate-platform';
 import { createHash } from 'node:crypto';
-import { InMemoryStateStore, type AdcpStateStore } from '../../server/state-store';
+import { resolveStoreDurability, type AdcpStateStore } from '../../server/state-store';
 import type { PrincipalRef } from '../../server/principal/types';
 import type { ReportingSubscriptionEngineStoreV1 } from './engine';
 
@@ -25,7 +25,12 @@ const PAGE_SIZE = 500;
 export interface CreateReportingSubscriptionEngineStateStoreOptionsV1 {
   store: AdcpStateStore;
   collection?: string;
-  /** Declare durable only when the backend survives process loss (for example `PostgresStateStore`). */
+  /**
+   * @deprecated Durability is read from `store` (`InMemoryStateStore` is process-local,
+   * `PostgresStateStore` durable). A value that agrees is ignored; one that contradicts the store is
+   * refused with `REPORTING_STORAGE_NOT_DURABLE`. Remove it, or use `memoryStorage()` /
+   * `postgresStorage({ pool })`.
+   */
   durability?: 'process-local' | 'durable';
 }
 
@@ -57,12 +62,11 @@ export function createReportingSubscriptionEngineStateStoreV1(
       { configField: 'store' }
     );
   }
-  if (options.durability === 'durable' && options.store instanceof InMemoryStateStore) {
-    throw new PlatformConfigError(
-      'InMemoryStateStore cannot be declared durable. Use durable storage, such as PostgresStateStore, or drop durability: "durable".',
-      { code: 'REPORTING_STORAGE_NOT_DURABLE', configField: 'durability' }
-    );
-  }
+  const durability = resolveStoreDurability(
+    options.store,
+    options.durability,
+    message => new PlatformConfigError(message, { code: 'REPORTING_STORAGE_NOT_DURABLE', configField: 'durability' })
+  );
   const collection = options.collection ?? DEFAULT_REPORTING_SUBSCRIPTION_ENGINE_COLLECTION;
   const store = options.store;
 
@@ -96,7 +100,7 @@ export function createReportingSubscriptionEngineStateStoreV1(
   }
 
   return {
-    durability: options.durability ?? 'process-local',
+    durability,
     async get(scope, key) {
       const row = await store.getWithVersion!<EngineDocument>(collection, documentId(scope, key));
       if (!row) return null;

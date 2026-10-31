@@ -110,6 +110,7 @@ export interface ReportingPgPool {
 
 /**
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ * @deprecated Applied by the versioned migrations: run `npx adcp-reporting-storage migrate` (or `migrate(pool)`), which records each version and lets `postgresStorage().checkSchema()` refuse a schema that is behind. Kept for one beta.
  */
 export const REPORTING_LEDGER_MIGRATION = `
 CREATE TABLE IF NOT EXISTS adcp_reporting_configurations (
@@ -485,6 +486,7 @@ export const REPORTING_LEDGER_FINALITY_FENCE_CONSTRAINT = 'adcp_reporting_transi
  * once installed.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ * @deprecated Applied by the versioned migrations: run `npx adcp-reporting-storage migrate` (or `migrate(pool)`), which records each version and lets `postgresStorage().checkSchema()` refuse a schema that is behind. Kept for one beta.
  */
 export const REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION = `
 DO $$

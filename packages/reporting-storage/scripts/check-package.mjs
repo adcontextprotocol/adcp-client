@@ -24,7 +24,9 @@ const PUBLISHED_EXAMPLE = 'examples/reliable-reporting-service/README.md';
 // change that grows the package.
 const MAX_PACKED_BYTES = 450_000;
 const MAX_UNPACKED_BYTES = 2_200_000;
-const MAX_FILE_COUNT = 125;
+// +13 at 0.3: postgresStorage, the versioned migrations and the CLI module (three modules x 4) and
+// bin/adcp-reporting-storage.js.
+const MAX_FILE_COUNT = 140;
 
 function pack() {
   const output = execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts', '--loglevel=error'], {

@@ -210,6 +210,7 @@ export interface ReportingObjectWriteStoreV1 {
  * Apply after REPORTING_MANAGED_DELIVERY_MIGRATION. Additive and independently opt-in.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ * @deprecated Applied by the versioned migrations: run `npx adcp-reporting-storage migrate` (or `migrate(pool)`), which records each version and lets `postgresStorage().checkSchema()` refuse a schema that is behind. Kept for one beta.
  */
 export const REPORTING_OBJECT_WRITE_MIGRATION = `
 CREATE TABLE IF NOT EXISTS adcp_reporting_object_write_bindings (
@@ -341,6 +342,7 @@ export interface ReportingObjectWriteAuthorityStoreV1 extends ReportingObjectWri
  * PostgreSQL 13+; apply after REPORTING_OBJECT_WRITE_MIGRATION. Identity survives replica/worker restart.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ * @deprecated Applied by the versioned migrations: run `npx adcp-reporting-storage migrate` (or `migrate(pool)`), which records each version and lets `postgresStorage().checkSchema()` refuse a schema that is behind. Kept for one beta.
  */
 export const REPORTING_OBJECT_WRITE_AUTHORITY_MIGRATION = `
 CREATE TABLE IF NOT EXISTS adcp_reporting_object_write_authority (

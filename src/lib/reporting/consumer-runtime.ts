@@ -87,7 +87,20 @@ export interface ReliableReportingConsumerPersistenceV1 {
 
 export interface CreateReliableReportingConsumerOptionsV1<TCredential = unknown> {
   accounts: readonly ReliableReportingConsumerAccountV1<TCredential>[];
-  persistence: ReliableReportingConsumerPersistenceV1;
+  /** The consumer's durable state. Required without `storage`. */
+  persistence?: ReliableReportingConsumerPersistenceV1;
+  /**
+   * The one storage decision (`memoryStorage()` from `@adcp/sdk/storage`, `postgresStorage({ pool })`
+   * from `@adcp/reporting-storage`): its `consumer` stores are the persistence. Pass `storage` or
+   * `persistence`, not both.
+   *
+   * @experimental Reporting storage (AdCP 3.3).
+   */
+  storage?: {
+    readonly consumer: ReliableReportingConsumerPersistenceV1;
+    /** The storage's own declaration; anything but `'durable'` is refused in production. */
+    readonly durability: 'process-local' | 'durable';
+  };
   /** Unique per running process. It is coordination metadata, not a credential. */
   ownerToken: string;
   pollIntervalMs?: number;
@@ -323,9 +336,34 @@ function changePageRecordCount(response: Record<string, unknown>): number {
 }
 
 export function createReliableReportingConsumerV1<TCredential = unknown>(
-  options: CreateReliableReportingConsumerOptionsV1<TCredential>
+  input: CreateReliableReportingConsumerOptionsV1<TCredential>
 ): ReliableReportingConsumerV1<TCredential> {
-  if (!options.persistence) throw new TypeError('reliable reporting consumer persistence is required');
+  if (input.persistence && input.storage) {
+    throw new TypeError('Pass storage or persistence to the reliable reporting consumer, not both');
+  }
+  // Like the seller, a buyer refuses process-local storage in production: losing checkpoints, leases and
+  // the processed-notification set on restart reprocesses notifications and re-walks every account.
+  if (
+    input.storage !== undefined &&
+    input.storage.durability !== 'durable' &&
+    process.env.NODE_ENV !== 'test' &&
+    process.env.NODE_ENV !== 'development'
+  ) {
+    throw Object.assign(
+      new TypeError(
+        'The reliable reporting consumer keeps checkpoints, leases and processed notifications in storage that is not declared durable (such as memoryStorage()), which does not survive a restart. ' +
+          'Pass storage: postgresStorage({ pool }) (@adcp/reporting-storage), or set NODE_ENV=development to run in memory.'
+      ),
+      { code: 'REPORTING_STORAGE_NOT_DURABLE' }
+    );
+  }
+  const persistence = input.persistence ?? input.storage?.consumer;
+  if (!persistence) {
+    throw new TypeError(
+      'reliable reporting consumer persistence is required: pass storage (memoryStorage() or postgresStorage({ pool })) or persistence'
+    );
+  }
+  const options = { ...input, persistence };
   boundedString(options.ownerToken, 'ownerToken', 255);
   if (options.ownerToken.length < 8) throw new TypeError('ownerToken must contain at least 8 characters');
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;

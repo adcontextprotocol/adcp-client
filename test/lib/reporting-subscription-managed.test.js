@@ -17,7 +17,8 @@ const {
 } = require('../../dist/lib/reporting/source/index.js');
 const { createAdcpServerFromPlatform } = require('../../dist/lib/server/decisioning/runtime/from-platform.js');
 const { MemoryLedgerStore } = require('../helpers/memory-reporting-ledger-store.js');
-const { createTestPrincipalLifecycle } = require('../helpers/principal-runtime.js');
+const { createTestNotifications, createTestPrincipalLifecycle } = require('../helpers/principal-runtime.js');
+const { memoryStorage } = require('../../dist/lib/storage/index.js');
 
 const DAY = 86_400_000;
 const ACCOUNT = 'account-a';
@@ -51,7 +52,7 @@ function deliveryOffering() {
   };
 }
 
-function world({ list = true, managed = {} } = {}) {
+function world({ list = true, managed = {}, withStorage = false } = {}) {
   const origin = Math.floor(Date.now() / DAY) * DAY - 10 * DAY;
   const day = n => new Date(origin + n * DAY).toISOString();
   const clock = { now: new Date(day(0.5)) };
@@ -61,8 +62,12 @@ function world({ list = true, managed = {} } = {}) {
       : CLIENTS[ctx.authInfo?.clientId]
         ? { tenant_id: TENANT, principal_id: CLIENTS[ctx.authInfo.clientId], principal_kind: 'buyer_agent' }
         : undefined;
-  // Created without reportingSubscriptions: the service installs that section.
-  const { lifecycle } = createTestPrincipalLifecycle({ clock, resolvePrincipal: scopeOf });
+  // Created without reportingSubscriptions: the service installs that section. With storage the
+  // service builds the runtime itself over storage.principals.
+  const storage = withStorage ? memoryStorage({ now: () => clock.now }) : undefined;
+  const { lifecycle: hostLifecycle } = withStorage
+    ? { lifecycle: undefined }
+    : createTestPrincipalLifecycle({ clock, resolvePrincipal: scopeOf });
   const request = redactedReportingSourceRequestV1();
   const [template] = request.coverage.constituents;
   const constituent = mediaBuyId => ({
@@ -78,12 +83,12 @@ function world({ list = true, managed = {} } = {}) {
     worstCaseAvailabilityLag: 'PT0S',
   };
   const { currency: _currency, ...sourceSettings } = request.sourceSettings;
-  const store = new MemoryLedgerStore();
+  const store = storage ? storage.ledger : new MemoryLedgerStore();
   const reads = { list: 0, buys: 0 };
   // The host's grant as list_accounts shows it; authorizedAt undefined omits authorized_at.
   const host = { authorizedAt: day(-30), allowedTasks: ['get_reporting_status', 'get_media_buys'] };
   const service = createReliableReportingService({
-    store,
+    ...(storage ? { storage } : { store }),
     adapters: {
       fixture: {
         sourceOffering,
@@ -111,7 +116,16 @@ function world({ list = true, managed = {} } = {}) {
     resolveCoverage: () => ({ constituents: [constituent('mb-1')] }),
     resolveConsumerId: context => context.authInfo.clientId,
     subscriptions: {
-      principals: lifecycle,
+      ...(storage
+        ? {
+            principal: {
+              notifications: createTestNotifications(storage.principals),
+              agentUrl: 'https://seller.example/mcp',
+              resolvePrincipal: scopeOf,
+              now: () => clock.now,
+            },
+          }
+        : { principals: hostLifecycle }),
       configure: () => ({
         requestedMetrics: request.requestedMetrics,
         requestedDimensions: request.requestedDimensions,
@@ -120,6 +134,7 @@ function world({ list = true, managed = {} } = {}) {
       ...managed,
     },
   });
+  const lifecycle = service.principals;
   const account = { id: ACCOUNT, name: 'Account A', status: 'active', ctx_metadata: {} };
   const platform = service.install({
     capabilities: { specialisms: [], config: {} },
@@ -190,7 +205,7 @@ function world({ list = true, managed = {} } = {}) {
         ],
       },
     });
-  return { clock, lifecycle, service, platform, server, store, reads, host, call, subscribe, day };
+  return { clock, lifecycle, service, platform, server, store, storage, reads, host, call, subscribe, day };
 }
 
 describe('managed reporting subscriptions', () => {
@@ -218,6 +233,23 @@ describe('managed reporting subscriptions', () => {
     });
     assert.notEqual(status.isError, true, JSON.stringify(status.structuredContent));
     assert.equal(status.structuredContent.subscription_coverage[0].subscription_id, 'analytics-daily');
+  });
+
+  test('with storage, the service builds the principal runtime and keeps every store in it', async () => {
+    const w = world({ withStorage: true });
+    assert.equal(w.service.storage, w.storage);
+    assert.ok(w.lifecycle.capabilities.supported_sections.includes('reporting_subscriptions'));
+    const applied = await w.subscribe();
+    assert.equal(applied.structuredContent.result.kind, 'applied', JSON.stringify(applied.structuredContent));
+    // The principal record and the engine state are in the storage, not in a host-built store.
+    const scope = { tenantId: TENANT, principalId: 'principal-a' };
+    assert.ok(await w.storage.principals.get(scope), 'the principal record is in storage.principals');
+    assert.ok((await w.storage.subscriptions.listKeys(scope)).length > 0, 'engine state is in storage.subscriptions');
+    w.clock.now = new Date();
+    const cycle = await w.service.runCycle({ accountId: ACCOUNT });
+    assert.deepEqual(cycle.subscriptionPlanningFailures, []);
+    assert.ok(cycle.revisionsCommitted >= 1, JSON.stringify(cycle));
+    assert.ok((await w.storage.ledger.listObligations(ACCOUNT)).length > 0, 'obligations are in storage.ledger');
   });
 
   test('without a readable roster the failure is recorded with its code, never thrown', async () => {

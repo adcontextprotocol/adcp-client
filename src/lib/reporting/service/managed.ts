@@ -11,7 +11,12 @@
 import { PlatformConfigError } from '../../server/decisioning/runtime/validate-platform';
 import type { Account } from '../../server/decisioning/account';
 import type { RequestContext } from '../../server/decisioning/context';
-import type { PrincipalLifecycleRuntime } from '../../server/principal/runtime';
+import {
+  createPrincipalLifecycle,
+  type CreatePrincipalLifecycleOptions,
+  type PrincipalLifecycleRuntime,
+} from '../../server/principal/runtime';
+import type { ReportingStorage } from '../../storage';
 import type {
   PrincipalLifecycleRuntimeSubscriptions,
   PrincipalRef,
@@ -73,15 +78,29 @@ export interface SubscriptionPlanningFailure {
  * `reconcileOnWrite` (default on) reconciles a principal after a `sync_principal` write that
  * submitted `reporting_subscriptions`; the boundary sweep in `runCycle` catches anything it misses.
  *
+ * With the service's `storage`, the engine state lives in `storage.subscriptions` and the service
+ * builds the principal runtime over `storage.principals` from `principal`, so `principals` and
+ * `stateStore` are both optional; serve it with `protocol: service.principals.protocol`.
+ *
  * @experimental Reporting subscriptions (AdCP 3.3). See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface SubscriptionOptions<TCtxMeta = Record<string, unknown>> {
   /**
    * The server's principal runtime, created with `createPrincipalLifecycle` and without
-   * `reportingSubscriptions`: the service installs that section on it.
+   * `reportingSubscriptions`: the service installs that section on it. Optional when the service has
+   * `storage`: pass `principal` instead and the service builds the runtime over `storage.principals`.
    */
-  principals: PrincipalLifecycleRuntime & PrincipalLifecycleRuntimeSubscriptions;
-  /** Engine state. Defaults to process memory, which is refused outside `NODE_ENV=test|development`. */
+  principals?: PrincipalLifecycleRuntime & PrincipalLifecycleRuntimeSubscriptions;
+  /**
+   * With the service's `storage` and without `principals`: the principal runtime's options, minus the
+   * store (`storage.principals`) and the `reportingSubscriptions` section (the service installs it).
+   * The built runtime is `service.principals`; serve it with `protocol: service.principals.protocol`.
+   */
+  principal?: Omit<CreatePrincipalLifecycleOptions<Account<TCtxMeta>>, 'store' | 'reportingSubscriptions'>;
+  /**
+   * Engine state. Defaults to the service's `storage.subscriptions`, else process memory, which is
+   * refused outside `NODE_ENV=test|development`.
+   */
   stateStore?: ReportingSubscriptionEngineStoreV1;
   /**
    * Tenants whose principals each cycle plans. Defaults to every tenant a principal was resolved
@@ -168,6 +187,8 @@ const ALL_BUY_STATUSES = ['pending_activation', 'active', 'paused', 'completed',
 /** The managed block, resolved into the engine and the advanced options the service runs. */
 export interface ManagedReportingSubscriptions<TCtxMeta> {
   readonly engine: ReportingSubscriptionEngineV1;
+  /** The principal runtime the section is installed on: the one passed, or the one built over storage. */
+  readonly principals: PrincipalLifecycleRuntime & PrincipalLifecycleRuntimeSubscriptions;
   readonly advanced: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>;
   /** Called by `service.install(platform)`: the platform the roster and buys are read from. */
   bindPlatform(platform: unknown): void;
@@ -209,17 +230,47 @@ export interface SubscriptionGrants {
   }): Promise<void>;
 }
 
-export function createManagedReportingSubscriptions<TCtxMeta>(
+function managedPrincipals<TCtxMeta>(
   options: SubscriptionOptions<TCtxMeta>,
-  service: { offerings: readonly ReportingDeliveryOffering[]; statusRetentionDays: number }
-): ManagedReportingSubscriptions<TCtxMeta> {
+  storage: ReportingStorage | undefined
+): PrincipalLifecycleRuntime & PrincipalLifecycleRuntimeSubscriptions {
+  if (options.principals !== undefined && options.principal !== undefined) {
+    throw new PlatformConfigError(
+      'Pass subscriptions.principals or subscriptions.principal, not both. principal builds the runtime over storage.principals.',
+      { configField: 'subscriptions.principal' }
+    );
+  }
+  if (options.principal !== undefined) {
+    if (!storage) {
+      throw new PlatformConfigError(
+        "subscriptions.principal builds the principal runtime over the service's storage. Pass storage: memoryStorage() or postgresStorage({ pool }), or pass subscriptions.principals.",
+        { configField: 'storage' }
+      );
+    }
+    return createPrincipalLifecycle({ ...options.principal, store: storage.principals }) as PrincipalLifecycleRuntime &
+      PrincipalLifecycleRuntimeSubscriptions;
+  }
   const principals = options.principals;
   if (typeof principals?.installReportingSubscriptions !== 'function' || !principals.listReportingSubscriptions) {
     throw new PlatformConfigError(
-      'subscriptions.principals must be a principal runtime from createPrincipalLifecycle. Pass the runtime your server serves get_principal and sync_principal with.',
+      storage
+        ? 'subscriptions needs the principal runtime. Pass principal: { agentUrl, notifications, resolvePrincipal } to build it over storage.principals, or principals: the runtime your server serves get_principal and sync_principal with.'
+        : 'subscriptions.principals must be a principal runtime from createPrincipalLifecycle. Pass the runtime your server serves get_principal and sync_principal with, or give the service storage and pass subscriptions.principal.',
       { configField: 'subscriptions.principals' }
     );
   }
+  return principals;
+}
+
+export function createManagedReportingSubscriptions<TCtxMeta>(
+  options: SubscriptionOptions<TCtxMeta>,
+  service: {
+    offerings: readonly ReportingDeliveryOffering[];
+    statusRetentionDays: number;
+    storage?: ReportingStorage;
+  }
+): ManagedReportingSubscriptions<TCtxMeta> {
+  const principals = managedPrincipals(options, service.storage);
   if (typeof options.configure !== 'function') {
     throw new PlatformConfigError(
       'subscriptions.configure is required: it returns the metrics, dimensions and source settings for each subscription generation.',
@@ -238,7 +289,8 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
       configField: 'subscriptions.readTimeoutMilliseconds',
     });
   }
-  const store = options.stateStore ?? createInMemoryReportingSubscriptionEngineStoreV1();
+  const store =
+    options.stateStore ?? service.storage?.subscriptions ?? createInMemoryReportingSubscriptionEngineStoreV1();
   const now = options.now ?? (() => new Date());
   let platform: PlatformReads | undefined;
 
@@ -596,6 +648,7 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
 
   return {
     engine,
+    principals,
     advanced,
     bindPlatform(value) {
       platform = value as PlatformReads;
