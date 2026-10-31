@@ -292,7 +292,38 @@ snapshot. For PostgreSQL, reapply `REPORTING_LEDGER_MIGRATION`: it adds
 `adcp_reporting_configurations.subscription_key` (empty for every existing row)
 and replaces the three-column generation constraint with a unique index on
 `(account_id, delivery_config_id, delivery_config_version, subscription_key)`.
-Managed delivery of subscription obligations is not supported yet.
+
+**Managed delivery of subscriptions.** A subscription with a `destination`
+resolves only managed offerings. Serve it with
+`createPostgresReliableReportingProductionService` and pass the principal
+runtime as `reportingSubscriptions.principal`. The engine must have
+`isAuthorized`. Then:
+
+- Before a managed generation's first obligation is written, the service binds
+  it to the owner's destination. The version's `destination.destination_id`
+  names the destination, and the binding uses that destination's current
+  generation (its `destination_ref`). The destination must be delivery-eligible
+  and serve the offering's pattern and transport.
+- One destination serves every covered account, so each account gets its own
+  authorization of that `destination_ref`.
+- A destination that is not ready rejects the bind, and the obligations wait
+  for a later cycle instead of becoming undeliverable.
+- Bindings are keyed by their Core configuration, so every (owner, offering)
+  generation of one version gets its own. Reapply
+  `REPORTING_MANAGED_DELIVERY_MIGRATION` to drop the three-column binding key.
+- The binding freezes the version's `path_template`. Each delivery expands it
+  per obligation and passes the result to the adapter as `delivery_path`.
+  Object-store writes place it inside the collision-free generation prefix:
+  `adcp-reporting/{namespace_key}/{scope_key}/{delivery_path}/{plan_id}/{index}`.
+- Every row of a subscription revision carries `account_id`. The producer stamps
+  it before the revision is bound, so the committed digest covers it, and it
+  refuses a row that names another account.
+- The managed worker re-checks `engine.isAuthorized(owner, account)` before
+  delivering and again before settling. A lost grant releases the claim with
+  `holdMaterialization` without spending an attempt: the obligation stays
+  owed, and the engine reports the loss in `accounts_unauthorized`.
+- Status subscribers with a `principal`, and notification activity, carry a
+  subscription obligation's transitions only to its owner.
 
 ## Advanced: assemble the primitives directly
 

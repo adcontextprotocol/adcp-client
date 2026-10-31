@@ -8,7 +8,7 @@ import { createReportingStatusHandler } from '@adcp/sdk/reporting/ledger';
 import type { ReportingManagedDeliveryAdapterV1, ReportingManagedDeliveryStore } from '../managed/runtime';
 import type { ReportingLedgerStore, ReportingManagedDeliveryBindingV1 } from '@adcp/sdk/reporting/ledger';
 import {
-  reportingObjectWriteName,
+  isReportingObjectWriteName,
   reportingObjectWriteScopeKey,
   type ReportingObjectWriteAuthorityStoreV1,
 } from '../object-writes';
@@ -129,7 +129,13 @@ export async function createGcsReportingManagedDeliveryAdapterV1(
     },
     { signal: context.signal, milliseconds }
   );
-  const getStatus = createReportingStatusHandler(coreStore);
+  const getAccountStatus = createReportingStatusHandler(coreStore);
+  // A subscription obligation is visible only to its owning principal.
+  const getOwnedStatus = createReportingStatusHandler<{
+    account: { id: string; account_id: string };
+    signal: AbortSignal;
+    owner: { tenantId: string; principalId: string };
+  }>(coreStore, { resolveSubscriptionPrincipal: context => context.owner });
   async function readerOptions(
     binding: ReportingManagedDeliveryBindingV1,
     signal: AbortSignal
@@ -167,16 +173,25 @@ export async function createGcsReportingManagedDeliveryAdapterV1(
     let cursor: string | undefined;
     for (let page = 0; page < 25; page++) {
       activeGcsSignal(signal);
-      const status = await getStatus(
-        {
-          account: { account_id: input.binding.account_id },
-          view: 'periods',
-          delivery_config_ids: [input.binding.delivery_config_id],
-          period: input.revision.wireRevision.period,
-          pagination: { max_results: 100, ...(cursor ? { cursor } : {}) },
-        },
-        { account: { id: input.binding.account_id, account_id: input.binding.account_id }, signal }
-      );
+      const request = {
+        account: { account_id: input.binding.account_id },
+        view: 'periods' as const,
+        delivery_config_ids: [input.binding.delivery_config_id],
+        period: input.revision.wireRevision.period,
+        pagination: { max_results: 100, ...(cursor ? { cursor } : {}) },
+      };
+      const account = { id: input.binding.account_id, account_id: input.binding.account_id };
+      const owner = input.obligation.subscription;
+      const status = owner
+        ? await getOwnedStatus(
+            request as never,
+            {
+              account,
+              signal,
+              owner: { tenantId: owner.tenantId, principalId: owner.principalId },
+            } as never
+          )
+        : await getAccountStatus(request as never, { account, signal });
       activeGcsSignal(signal);
       const selected = status.periods?.find(
         value => value.reporting_obligation_id === input.obligation.reporting_obligation_id
@@ -312,7 +327,10 @@ export async function createGcsReportingManagedDeliveryAdapterV1(
           );
           if (rows.length + manifestBytes.length > input.maxBytes) throw new ReportingGcsFenceError('INVALID_INPUT');
           const scope = scopeFor(binding);
-          const plan = await fence.register(scope, deliveryIdentity(input), [rows, manifestBytes], { signal });
+          const plan = await fence.register(scope, deliveryIdentity(input), [rows, manifestBytes], {
+            signal,
+            ...(input.delivery_path !== undefined ? { path: input.delivery_path } : {}),
+          });
           activeGcsSignal(signal);
           await fence.write(plan, 0, rows, { signal });
           await fence.write(plan, 1, manifestBytes, { signal });
@@ -408,7 +426,11 @@ export async function createGcsReportingManagedDeliveryAdapterV1(
           const plan = await store.getObjectWritePlan(scope, planId, { signal });
           activeGcsSignal(signal);
           if (!plan) throw new ReportingGcsFenceError('REVOKED');
-          const location = `https://storage.googleapis.com/${plan.provider.bucket}/${reportingObjectWriteName(scope, plan.provider, planId, 1)}`;
+          // The manifest's recorded name, which carries the delivery path when there is one.
+          const manifestName = plan.objects[1]?.object_name ?? '';
+          if (!isReportingObjectWriteName(scope, plan.provider, planId, 1, manifestName))
+            throw new ReportingGcsFenceError('INVALID_INPUT');
+          const location = `https://storage.googleapis.com/${plan.provider.bucket}/${manifestName}`;
           if (
             plan.objects.length !== 2 ||
             input.resource.resource_ref !== `gcs:${planId}` ||

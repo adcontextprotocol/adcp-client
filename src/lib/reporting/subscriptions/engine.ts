@@ -420,6 +420,11 @@ export interface ReportingSubscriptionEngineV1 {
   ): Promise<ReportingSubscriptionFrozenOwedSetV1[]>;
   /** Principals with engine state in one tenant, from the engine store. */
   listPrincipals(tenantId: string): Promise<PrincipalStoreScope[]>;
+  /**
+   * Whether the principal is authorized for the account now: its latest grant has no
+   * `unauthorized_at`. Every managed delivery of a subscription obligation re-checks it.
+   */
+  isAuthorized(principal: Readonly<PrincipalStoreScope>, accountId: string): Promise<boolean>;
   /** Principals in the tenant whose active subscriptions cover the account: the consumers that owe receipts. */
   receiptRoster(tenantId: string, accountId: string): Promise<PrincipalStoreScope[]>;
   /**
@@ -441,7 +446,12 @@ export interface ReportingSubscriptionFrozenOwedSetV1 {
   /** Frozen obligations, grouped as the ledger carries them, with byte-sorted `media_buy_ids`. */
   obligations: ExpectedSubscriptionObligationV1[];
   /** Every retained version's configuration, oldest first, for the generation each obligation names. */
-  versions: Array<{ subscription_version: number; configuration: StoredReportingSubscriptionVersion['configuration'] }>;
+  versions: Array<{
+    subscription_version: number;
+    configuration: StoredReportingSubscriptionVersion['configuration'];
+    /** The destination's pattern and transport, frozen when the version was accepted. */
+    destination_method?: StoredReportingSubscriptionVersion['destinationMethod'];
+  }>;
 }
 
 /**
@@ -1619,11 +1629,15 @@ export function createReportingSubscriptionEngineV1(
             versions: entry.versions.map(version => ({
               subscription_version: version.subscriptionVersion,
               configuration: structuredClone(version.configuration),
+              ...(version.destinationMethod ? { destination_method: structuredClone(version.destinationMethod) } : {}),
             })),
           });
         }
       }
       return sets;
+    },
+    async isAuthorized(principal, accountId) {
+      return isAuthorized((await readAccount(principal, accountId))?.account);
     },
     async listPrincipals(tenantId) {
       return (await store.listPrincipals(tenantId)).filter(principal => principal.tenantId === tenantId);
