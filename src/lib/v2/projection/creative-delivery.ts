@@ -39,6 +39,7 @@ import {
   selectedFormatOptions,
   transferLegacyCreativeMetadata,
   structuredCloneWithLegacyCreativeMetadata,
+  isSynthesizedFormatOption,
 } from './legacy-metadata';
 import type { CanonicalFormatDeclaration } from './legacy-metadata';
 import type { UndeclaredFormatOptionSelector } from './legacy-routes';
@@ -58,12 +59,14 @@ import { parseAdcpRelease } from '../../adapters/version/negotiate';
 import {
   normalizeCreativeFitFacts,
   evaluateDeclaredCreativeFit,
+  uniqueCreativeFitReasons,
   CREATIVE_FIT_ASPECT_RATIO_TOLERANCE,
   type CreativeFitVerdict,
   type CreativeFitReason,
   type CreativePrimaryAssetFacts,
   type CreativeVastInlineFacts,
   type NormalizedCreativeFitFacts,
+  type DeclaredCreativeFit,
 } from './canonical-properties';
 
 export type {
@@ -2978,6 +2981,15 @@ type FitLayer = {
 
 type FitResolverRoutes = WeakMap<object, Map<string, readonly V1FormatId[]>>;
 
+function compatibleLegacyFitRoute(route: V1FormatId, ref: V1FormatId): boolean {
+  return (
+    sameLegacyIdentity(route, ref) &&
+    (route.width === undefined || ref.width === undefined || route.width === ref.width) &&
+    (route.height === undefined || ref.height === undefined || route.height === ref.height) &&
+    (route.duration_ms === undefined || ref.duration_ms === undefined || route.duration_ms === ref.duration_ms)
+  );
+}
+
 function legacyLinkContradictsDeclaration(ref: V1FormatId, declaration: Record<string, unknown>): boolean {
   const params = record(declaration.params) ?? {};
   const known = legacyRefParameterConstraints(ref);
@@ -3008,7 +3020,10 @@ function fitLegacyDeclarations(
         const option = optionReference(value);
         return option && sameOptionReference(pin, option) ? [...legacyFormatRefsForDeclaration(value)] : [];
       });
-    return refs.length > 0 ? { ...declaration, v1_format_ref: refs } : declaration;
+    if (refs.length === 0) return declaration;
+    const resolved = { ...declaration, v1_format_ref: refs };
+    transferLegacyCreativeMetadata(declaration, resolved);
+    return resolved;
   });
   return (
     container.format_options !== undefined ? withDualEmissionLegacyRefs(resolved, container.format_ids) : resolved
@@ -3023,10 +3038,27 @@ function legacyWireFitsDeclarations(
   wireDensity: unknown,
   resolverRoutes: FitResolverRoutes,
   creativeRoutes: ReadonlyMap<string | undefined, readonly V1FormatId[]>,
-  inheritedPackageId?: string
+  inheritedPackageId?: string,
+  legacyFormatConverter?: LegacyFormatConverter
 ): boolean {
   const packageId = typeof container.package_id === 'string' ? container.package_id : inheritedPackageId;
   const declarations = fitLegacyDeclarations(container, resolverRoutes);
+  if (declarations.length === 0 && packageId !== undefined) {
+    const originals = [...(container.format_ids ?? []), ...(container.formats ?? [])];
+    if (
+      originals.length > 0 &&
+      !originals.some(value => {
+        const original = legacyRef(value);
+        if (!original || !compatibleLegacyFitRoute(original, ref)) return false;
+        const fit = evaluateLegacyFormatFit(facts, value, container, legacyFormatConverter).fit;
+        return (
+          fit.verdict !== 'does_not_fit' &&
+          (facts.kind !== 'image' || !fit.pixel_ratios?.some(ratio => ratio !== wireDensity))
+        );
+      })
+    )
+      return false;
+  }
   const pin = optionReference(creative.format_option_ref);
   if (declarations.length === 0 && container.params !== undefined && legacyLinkContradictsDeclaration(ref, container))
     return false;
@@ -3048,17 +3080,12 @@ function legacyWireFitsDeclarations(
       const unlinkedContext = declarations.every(value => legacyFormatRefsForDeclaration(value).length === 0);
       const fallback = linked.length === 0 && (unlinkedContext || (pin && option && sameOptionReference(pin, option)));
       const authorized = [...linked, ...(fallback ? (creativeRoutes.get(packageId) ?? []) : [])];
-      if (
-        !authorized.some(
-          route =>
-            sameLegacyIdentity(route, ref) &&
-            (route.width === undefined || ref.width === undefined || route.width === ref.width) &&
-            (route.height === undefined || ref.height === undefined || route.height === ref.height) &&
-            (route.duration_ms === undefined || ref.duration_ms === undefined || route.duration_ms === ref.duration_ms)
-        )
-      )
-        return false;
-      const fit = evaluateDeclaredCreativeFit(facts, declaration);
+      if (!authorized.some(route => compatibleLegacyFitRoute(route, ref))) return false;
+      const original = linked.find(route => compatibleLegacyFitRoute(route, ref));
+      const fit =
+        packageId !== undefined && isSynthesizedFormatOption(declaration) && original
+          ? evaluateLegacyFormatFit(facts, original, container, legacyFormatConverter, declaration).fit
+          : evaluateDeclaredCreativeFit(facts, declaration);
       return (
         fit.verdict !== 'does_not_fit' &&
         (facts.kind !== 'image' || !fit.pixel_ratios?.some(ratio => ratio !== wireDensity))
@@ -3067,7 +3094,17 @@ function legacyWireFitsDeclarations(
   )
     return false;
   return (container.selector_containers ?? []).every(child =>
-    legacyWireFitsDeclarations(creative, child, ref, facts, wireDensity, resolverRoutes, creativeRoutes, packageId)
+    legacyWireFitsDeclarations(
+      creative,
+      child,
+      ref,
+      facts,
+      wireDensity,
+      resolverRoutes,
+      creativeRoutes,
+      packageId,
+      legacyFormatConverter
+    )
   );
 }
 
@@ -3092,14 +3129,123 @@ function rawLegacyRefs(
   ];
 }
 
+function evaluateLegacyFormatFit(
+  facts: NormalizedCreativeFitFacts,
+  value: unknown,
+  container: CreativeFormatSelectorContainer,
+  legacyFormatConverter?: LegacyFormatConverter,
+  sourceDeclaration?: Record<string, unknown>
+): { declaration: Record<string, unknown>; fit: DeclaredCreativeFit } {
+  const raw = record(value);
+  const ref = legacyRef(value);
+  const projected = ref
+    ? projectV1ProductToV2(
+        {
+          product_id: typeof container.product_id === 'string' ? container.product_id : '<selector>',
+          name: 'Legacy creative fit',
+          format_ids: [raw as unknown as V1FormatId],
+        },
+        { _authoritativeOnly: true, legacyFormatConverter }
+      ).v2.format_options[0]
+    : undefined;
+  if (sourceDeclaration) {
+    const contract = (value: Record<string, unknown>): string => {
+      const { v1_format_ref: _refs, format_option_id: _id, ...rest } = value;
+      return canonicalizeJson(rest);
+    };
+    if (!projected || contract(sourceDeclaration) !== contract(projected as unknown as Record<string, unknown>))
+      return { declaration: sourceDeclaration, fit: evaluateDeclaredCreativeFit(facts, sourceDeclaration) };
+  }
+  const params = { ...record(projected?.params) };
+  const size = sizeParamsAcceptor(params);
+  const duration = durationParamsAcceptor(params);
+  const conflict =
+    (positiveConstraint(raw?.width) !== undefined &&
+      positiveConstraint(raw?.height) !== undefined &&
+      size !== undefined &&
+      !size.accepts({ width: raw!.width as number, height: raw!.height as number })) ||
+    (positiveConstraint(raw?.duration_ms) !== undefined &&
+      duration !== undefined &&
+      !duration.accepts(raw!.duration_ms as number)) ||
+    (raw?.pixel_ratio !== undefined &&
+      Array.isArray(params.pixel_ratios) &&
+      !params.pixel_ratios.includes(raw.pixel_ratio));
+  // Explicit legacy constraints still disprove fit when kind/owner resolution
+  // is unavailable. Only an authoritative mapping can establish positive fit.
+  for (const key of ['width', 'height'])
+    if (raw?.[key] !== undefined && params[key] === undefined) params[key] = raw[key];
+  if (raw?.duration_ms !== undefined && params.duration_ms_exact === undefined)
+    params.duration_ms_exact = raw.duration_ms;
+  if (raw?.pixel_ratio !== undefined && !conflict) params.pixel_ratios = [raw.pixel_ratio];
+  if (projected?.format_kind === 'display_tag' && params.supported_delivery_types === undefined)
+    params.supported_delivery_types = ['tag_url'];
+  const catalog = ref ? lookupV1Format(ref) : undefined;
+  const catalogShape = catalog?.canonical && catalog.canonical.kind === projected?.format_kind;
+  if (catalogShape && facts.primary_assets.length > 0) {
+    // This is an evaluation view only: the legacy wire projector still owns
+    // the original slot names. Never apply catalog aliases to converter data.
+    if (catalog.canonical?.asset_source === 'buyer_uploaded' && params.asset_source === 'buyer_uploaded')
+      delete params.asset_source;
+    const primarySlots =
+      catalog.canonical?.slots_override?.filter(
+        slot => slot.required === true && facts.primary_assets.every(asset => asset.asset_type === slot.asset_type)
+      ) ?? [];
+    if (primarySlots.length === 1 && facts.primary_asset_group_id && Array.isArray(params.slots)) {
+      params.slots = params.slots.map(value => {
+        const slot = record(value);
+        return slot?.asset_group_id === primarySlots[0]!.asset_group_id
+          ? { ...slot, asset_group_id: facts.primary_asset_group_id }
+          : value;
+      });
+    }
+  }
+  const declaration = { ...projected, format_kind: projected?.format_kind ?? facts.kind, params };
+  const fit = evaluateDeclaredCreativeFit(
+    facts,
+    declaration,
+    'format_ids',
+    catalogShape ? 'legacy_catalog_shape' : 'legacy_shape'
+  );
+  const additional: CreativeFitReason[] = [];
+  if (conflict) additional.push({ code: 'legacy_declaration_conflict', path: 'format_ids' });
+  if (!projected) additional.push({ code: 'legacy_format_unresolved', path: 'format_ids' });
+  if (
+    !raw ||
+    Object.keys(raw).some(key => !['agent_url', 'id', 'width', 'height', 'duration_ms', 'pixel_ratio'].includes(key))
+  )
+    additional.push({ code: 'unsupported_legacy_parameter', path: 'format_ids' });
+  return {
+    declaration,
+    fit: {
+      ...fit,
+      verdict: conflict
+        ? 'does_not_fit'
+        : fit.verdict === 'fits' && additional.length > 0
+          ? 'insufficient_facts'
+          : fit.verdict,
+      reasons: uniqueCreativeFitReasons([...fit.reasons, ...additional]),
+    },
+  };
+}
+
 function fitSelectorLayer(
   facts: NormalizedCreativeFitFacts,
   creative: Record<string, unknown>,
-  container: CreativeFormatSelectorContainer
+  container: CreativeFormatSelectorContainer,
+  legacyFormatConverter?: LegacyFormatConverter,
+  inheritedPackageScope = false
 ): FitLayer {
   const layers: FitLayer[] = [];
+  const packageScoped = inheritedPackageScope || typeof container.package_id === 'string';
   const declared =
     container.format_options !== undefined ? container.format_options : [...selectedFormatOptions(container)];
+  const legacy =
+    packageScoped &&
+    container.format_options === undefined &&
+    declared.length === 0 &&
+    typeof container.format_kind !== 'string'
+      ? [...(container.format_ids ?? []), ...(container.formats ?? [])]
+      : [];
   if (declared.length === 0 && container.params !== undefined && typeof container.format_kind !== 'string') {
     layers.push({
       verdict: 'insufficient_facts',
@@ -3107,8 +3253,15 @@ function fitSelectorLayer(
       selector: container,
     });
   }
-  if (declared.length > 0 || typeof container.format_kind === 'string') {
-    const options = declared.length > 0 ? declared : [container];
+  if (declared.length > 0 || typeof container.format_kind === 'string' || legacy.length > 0) {
+    const options = legacy.length > 0 ? legacy : declared.length > 0 ? declared : [container];
+    const synthesized =
+      packageScoped &&
+      declared.length > 0 &&
+      declared.every(value => {
+        const declaration = record(value);
+        return declaration && isSynthesizedFormatOption(declaration);
+      });
     const pin = optionReference(creative.format_option_ref);
     const selected = selectedOptionReferences({ ...container, selector_containers: undefined });
     const eligible = options.flatMap(value => {
@@ -3122,8 +3275,32 @@ function fitSelectorLayer(
         (!ref || !selected.some(item => sameOptionReference(item, ref)))
       )
         return [];
-      const fit = evaluateDeclaredCreativeFit(facts, declaration);
-      return [{ declaration, ref, fit }];
+      if (legacy.length > 0 || (synthesized && legacyFormatRefsForDeclaration(declaration).length > 0)) {
+        const originals = legacy.length > 0 ? [value] : legacyFormatRefsForDeclaration(declaration);
+        return originals.map(original => {
+          const evaluated = evaluateLegacyFormatFit(
+            facts,
+            original,
+            container,
+            legacyFormatConverter,
+            synthesized ? declaration : undefined
+          );
+          const bindingUnknown = legacy.length > 0 && (pin !== undefined || selected.length > 0);
+          return {
+            declaration: evaluated.declaration,
+            ref,
+            fit:
+              bindingUnknown && evaluated.fit.verdict === 'fits'
+                ? {
+                    ...evaluated.fit,
+                    verdict: 'insufficient_facts' as const,
+                    reasons: [{ code: 'legacy_option_binding_unproven', path: 'format_option_ref' }],
+                  }
+                : evaluated.fit,
+          };
+        });
+      }
+      return [{ declaration, ref, fit: evaluateDeclaredCreativeFit(facts, declaration) }];
     });
     const fits = eligible.filter(item => item.fit.verdict === 'fits');
     const unknown = eligible.filter(item => item.fit.verdict === 'insufficient_facts');
@@ -3141,7 +3318,7 @@ function fitSelectorLayer(
         verdict === 'fits'
           ? []
           : eligible.length > 0
-            ? eligible.flatMap(item => item.fit.reasons).slice(0, 32)
+            ? uniqueCreativeFitReasons(eligible.flatMap(item => item.fit.reasons))
             : [{ code: 'selected_option_not_declared', path: 'format_option_ref' }],
       selector: {
         ...container,
@@ -3162,7 +3339,9 @@ function fitSelectorLayer(
       ),
     });
   }
-  const nested = (container.selector_containers ?? []).map(child => fitSelectorLayer(facts, creative, child));
+  const nested = (container.selector_containers ?? []).map(child =>
+    fitSelectorLayer(facts, creative, child, legacyFormatConverter, packageScoped)
+  );
   layers.push(...nested);
   if (layers.length === 0)
     return {
@@ -3205,7 +3384,7 @@ function fitSelectorLayer(
   }
   return {
     verdict,
-    reasons: [...jointReasons, ...layers.flatMap(item => item.reasons)].slice(0, 32),
+    reasons: uniqueCreativeFitReasons([...jointReasons, ...layers.flatMap(item => item.reasons)]),
     selector: {
       ...(direct?.selector ?? container),
       ...(nested.length > 0 && { selector_containers: nested.map(item => item.selector) }),
@@ -3375,9 +3554,11 @@ function decideCreativePackageFit(
         normalized,
         containers.length === 1
           ? containers[0]!
-          : { ...(id !== undefined && { package_id: id }), selector_containers: containers }
+          : { ...(id !== undefined && { package_id: id }), selector_containers: containers },
+        legacyFormatConverter
       ),
     }));
+    if (callbackFailed) throw callbackError;
     result.perPackage = evaluated.flatMap(({ id, fit }) =>
       id === undefined
         ? []
@@ -3387,10 +3568,9 @@ function decideCreativePackageFit(
     if (evaluated.some(item => item.fit.verdict === 'does_not_fit'))
       result.refusal = {
         code: 'package_does_not_fit',
-        reasons: evaluated
-          .filter(item => item.fit.verdict === 'does_not_fit')
-          .flatMap(item => item.fit.reasons)
-          .slice(0, 32),
+        reasons: uniqueCreativeFitReasons(
+          evaluated.filter(item => item.fit.verdict === 'does_not_fit').flatMap(item => item.fit.reasons)
+        ),
       };
     // Keep legacy-only contexts and unknown declarations available to the
     // existing identity/owner-aware resolver, retaining complete routing metadata.
@@ -3412,8 +3592,8 @@ function decideCreativePackageFit(
         !refs.every(ref => sameOptionReference(ref, pin)) ||
         evaluated.some(
           item =>
-            fitSelectorLayer(facts, { ...normalized, format_option_ref: pin }, item.fit.selector).verdict ===
-            'does_not_fit'
+            fitSelectorLayer(facts, { ...normalized, format_option_ref: pin }, item.fit.selector, legacyFormatConverter)
+              .verdict === 'does_not_fit'
         )
       ) {
         const error = new CreativeFormatProjectionError(
@@ -3511,7 +3691,17 @@ function decideCreativePackageFit(
         densityConflict ||
         prepared.some(
           container =>
-            !legacyWireFitsDeclarations(normalized, container, ref, facts, wireDensity, resolverRoutes, creativeRoutes)
+            !legacyWireFitsDeclarations(
+              normalized,
+              container,
+              ref,
+              facts,
+              wireDensity,
+              resolverRoutes,
+              creativeRoutes,
+              undefined,
+              legacyFormatConverter
+            )
         )
       ) {
         const error = new CreativeFormatProjectionError(
@@ -3531,6 +3721,7 @@ function decideCreativePackageFit(
         return { result, error };
       }
     }
+    if (callbackFailed) throw callbackError;
     result.wire =
       mode === 'legacy'
         ? {
