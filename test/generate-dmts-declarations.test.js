@@ -67,3 +67,60 @@ test('rejects schema exports that export-star would omit', () => {
     }
   }
 });
+
+function addTypeOnlyDeclaration(root, relativePath, declaration) {
+  const file = path.join(root, 'dist', 'lib', relativePath);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, declaration);
+  writeFileSync(file.replace(/\.d\.ts$/, '.js'), '"use strict";\n');
+}
+
+test('uses ESM facades for the type-only generated protocol and registry declarations', () => {
+  const root = createFixture('export declare const ExampleSchema: { readonly exact: true };\n');
+  try {
+    addTypeOnlyDeclaration(
+      root,
+      'types/core.generated.d.ts',
+      'export interface Product {\n    enum?: string[];\n    /** declare const in prose */\n    module?: string;\n}\n'
+    );
+    addTypeOnlyDeclaration(
+      root,
+      'types/tools.generated.d.ts',
+      "import type { Product } from './core.generated';\nexport type GetProducts = { products: Product[] };\n"
+    );
+    addTypeOnlyDeclaration(root, 'registry/types.generated.d.ts', 'export interface paths {\n}\n');
+    const result = runGenerator(root);
+    assert.equal(result.status, 0, result.stderr);
+    for (const [relativePath, name] of [
+      ['types/core.generated.d.mts', 'core.generated'],
+      ['types/tools.generated.d.mts', 'tools.generated'],
+      ['registry/types.generated.d.mts', 'types.generated'],
+    ]) {
+      assert.equal(
+        readFileSync(path.join(root, 'dist', 'lib', relativePath), 'utf8'),
+        `export * from './${name}.js';\n`,
+        relativePath
+      );
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects a type-only facade declaration that gains values or package imports', () => {
+  for (const declaration of [
+    'export declare const ProductSchema: unknown;\n',
+    'export declare enum Status {\n    Active = "active"\n}\n',
+    "import type { z } from 'zod';\nexport type Product = z.infer<never>;\n",
+  ]) {
+    const root = createFixture('export declare const ExampleSchema: { readonly exact: true };\n');
+    try {
+      addTypeOnlyDeclaration(root, 'types/core.generated.d.ts', declaration);
+      const result = runGenerator(root);
+      assert.notEqual(result.status, 0, declaration);
+      assert.match(result.stderr, /core\.generated\.d\.ts is no longer type-only/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});

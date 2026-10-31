@@ -264,6 +264,19 @@ function stripMcpOutputSchemaReferences(schemaRoot: string): void {
   visit(mcpRoot);
 }
 
+/**
+ * Re-serialize the retained MCP projections without indentation. Each request
+ * projection is self-contained (every `$ref` inlined), so indentation alone is
+ * about a quarter of their 26 MB and roughly 400 KB of the packed tarball.
+ * The loader only ever `JSON.parse`s these files, and `tools/list` serves the
+ * parsed object, so the bytes on the wire are unchanged.
+ */
+function compactMcpProjectionJson(schemaRoot: string): void {
+  for (const file of walkJsonFiles(path.join(schemaRoot, 'mcp'))) {
+    writeFileSync(file, JSON.stringify(JSON.parse(readFileSync(file, 'utf8'))));
+  }
+}
+
 function walkJsonFiles(root: string): string[] {
   if (!existsSync(root)) return [];
   const files: string[] = [];
@@ -404,6 +417,7 @@ function main(): void {
     stripMcpOutputSchemaReferences(destRoot);
     relaxAdagentsAuthorizedAgentsMinItems(destRoot);
     patchPrereleaseGetProductsTaskType(destRoot);
+    compactMcpProjectionJson(destRoot);
     writeCompactBundles(srcRoot, destRoot);
     const note = key === source.version ? '' : ` (key collapsed from ${source.version})`;
     console.log(`[copy-schemas-to-dist] copied ${srcRoot} → ${destRoot}${note}`);
