@@ -307,6 +307,21 @@ export async function syncPrincipalLifecycle(
   configuration: PrincipalConfiguration,
   options: PrincipalLifecycleOptions = {}
 ): Promise<PrincipalLifecycleResult> {
+  return guardedSyncPrincipalLifecycle(client, configuration, options);
+}
+
+/**
+ * {@link syncPrincipalLifecycle} with a check of each configuration read before the guarded
+ * write that replaces it, including the fresh read after a conflict. Section helpers use it to
+ * refuse a replacement the caller did not intend against the configuration actually replaced.
+ * @internal
+ */
+export async function guardedSyncPrincipalLifecycle(
+  client: PrincipalLifecycleClient,
+  configuration: PrincipalConfiguration,
+  options: PrincipalLifecycleOptions = {},
+  assertReplaceable?: (prior: GetPrincipalResponse['result']) => void
+): Promise<PrincipalLifecycleResult> {
   const maxAttempts = options.maxAttempts ?? 3;
   const setupTimeoutMs = options.setupTimeoutMs ?? 60_000;
   const pollIntervalMs = options.pollIntervalMs ?? 1_000;
@@ -330,6 +345,7 @@ export async function syncPrincipalLifecycle(
         );
   let prior = await readCurrent(client, options);
   assertExpectedPrincipalKind(prior, options.expectedPrincipalKind);
+  assertReplaceable?.(prior);
   let applied: AppliedPrincipal | undefined;
   const attemptedIdempotencyKeys = new Set<string>();
 
@@ -382,6 +398,7 @@ export async function syncPrincipalLifecycle(
     const refreshed = await readCurrent(client, options);
     assertSamePrincipal(prior, refreshed);
     assertExpectedPrincipalKind(refreshed, options.expectedPrincipalKind);
+    assertReplaceable?.(refreshed);
     prior = refreshed;
   }
 

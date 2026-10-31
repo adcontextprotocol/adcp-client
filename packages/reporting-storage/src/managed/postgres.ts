@@ -107,8 +107,7 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_managed_bindings (
   data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
   FOREIGN KEY (account_id, destination_ref, authorization_generation)
-    REFERENCES adcp_reporting_destination_authorizations(account_id, destination_ref, generation),
-  UNIQUE (account_id, delivery_config_id, delivery_config_version)
+    REFERENCES adcp_reporting_destination_authorizations(account_id, destination_ref, generation)
 );
 
 CREATE TABLE IF NOT EXISTS adcp_reporting_materializations (
@@ -333,6 +332,36 @@ BEGIN
   END IF;
 END
 $pattern_transport$;
+
+-- A binding is keyed by its Core configuration (the primary key). Principal-level reporting
+-- subscriptions (AdCP 3.3) install one Core configuration per owning principal and resolved
+-- offering under one (account, delivery_config_id, delivery_config_version), so the published
+-- three-column constraint would refuse their bindings. Core configurations stay unique per
+-- (account, id, version, subscription_key), so every account binding keeps its uniqueness. The
+-- constraint is found by its columns, not by a guessed name, and the block is idempotent.
+DO $binding_configuration_key$
+DECLARE
+  bindings regclass := to_regclass('adcp_reporting_managed_bindings');
+  legacy RECORD;
+BEGIN
+  FOR legacy IN
+    SELECT constraint_row.conname
+      FROM pg_constraint constraint_row
+     WHERE constraint_row.conrelid = bindings
+       AND constraint_row.contype = 'u'
+       AND (
+         SELECT array_agg(attribute.attname::text ORDER BY attribute.attname::text)
+           FROM unnest(constraint_row.conkey) AS key(attnum)
+           JOIN pg_attribute attribute
+             ON attribute.attrelid = constraint_row.conrelid AND attribute.attnum = key.attnum
+       ) = ARRAY['account_id', 'delivery_config_id', 'delivery_config_version']::text[]
+  LOOP
+    EXECUTE format('ALTER TABLE adcp_reporting_managed_bindings DROP CONSTRAINT %I', legacy.conname);
+  END LOOP;
+END
+$binding_configuration_key$;
+CREATE INDEX IF NOT EXISTS adcp_reporting_managed_bindings_generation
+  ON adcp_reporting_managed_bindings (account_id, delivery_config_id, delivery_config_version);
 `.trim();
 
 const GENERIC_RECEIPT_MESSAGE = 'Receipt does not match authorized current reporting evidence';
@@ -1143,6 +1172,85 @@ export class PostgresReportingManagedDeliveryStore
     });
   }
 
+  /**
+   * The current authorization generation of a destination for one account, creating the next one
+   * when none is current. Used when a principal-level reporting subscription binds a shared
+   * destination to each account it covers: one destination, one authorization per account.
+   */
+  async ensureDestinationAuthorization(input: {
+    account_id: string;
+    destination_ref: string;
+    pattern: ReportingDestinationAuthorizationV1['pattern'];
+    transport?: string;
+  }): Promise<number> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const current = await this.query<
+        QueryRow & { generation: string; pattern: string | null; transport: string | null }
+      >(
+        `SELECT generation::text, pattern, transport FROM adcp_reporting_destination_authorizations
+          WHERE account_id = $1 AND destination_ref = $2 AND revoked_at IS NULL`,
+        [input.account_id, input.destination_ref]
+      );
+      const row = current.rows[0];
+      if (row) {
+        if (
+          (row.pattern !== null && row.pattern !== input.pattern) ||
+          (row.transport !== null && input.transport !== undefined && row.transport !== input.transport)
+        ) {
+          throw new Error('The current destination authorization serves another pattern or transport');
+        }
+        return Number(row.generation);
+      }
+      const latest = await this.query<QueryRow & { generation: string | null }>(
+        `SELECT MAX(generation)::text AS generation FROM adcp_reporting_destination_authorizations
+          WHERE account_id = $1 AND destination_ref = $2`,
+        [input.account_id, input.destination_ref]
+      );
+      const generation = Number(latest.rows[0]?.generation ?? 0) + 1;
+      try {
+        await this.authorizeDestination({
+          account_id: input.account_id,
+          destination_ref: input.destination_ref,
+          generation,
+          authorized_at: new Date().toISOString(),
+          ...(input.pattern ? { pattern: input.pattern } : {}),
+          ...(input.transport !== undefined ? { transport: input.transport } : {}),
+        });
+        return generation;
+      } catch (error) {
+        // A concurrent bind authorized it first; read it back.
+        if (attempt === 2) throw error;
+      }
+    }
+    throw new Error('Destination authorization could not be resolved');
+  }
+
+  /**
+   * Releases a claimed materialization without spending a delivery attempt and holds it out of
+   * selection for `backoff_milliseconds`. For a subscription whose owner has lost authority for
+   * the account: the delivery stops, and the obligation stays owed rather than failed.
+   */
+  async holdMaterialization(input: {
+    lease: ReportingManagedDeliveryLeaseV1;
+    backoff_milliseconds: number;
+  }): Promise<boolean> {
+    positiveInteger(input.backoff_milliseconds, 'backoff_milliseconds');
+    const result = await this.query(
+      `UPDATE adcp_reporting_materializations
+          SET lease_owner = NULL,
+              lease_generation = GREATEST(lease_generation - 1, 0),
+              lease_expires_at = clock_timestamp() + ($4::bigint * INTERVAL '1 millisecond')
+        WHERE materialization_id = $1 AND lease_owner = $2 AND lease_generation = $3 AND status = 'pending'`,
+      [
+        input.lease.materialization.reporting_materialization_id,
+        input.lease.owner,
+        input.lease.generation,
+        input.backoff_milliseconds,
+      ]
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
   async revokeDestination(input: {
     account_id: string;
     destination_ref: string;
@@ -1198,6 +1306,14 @@ export class PostgresReportingManagedDeliveryStore
     // caller's `semantic_fingerprint`, so changed binding content carrying a
     // copied-over old fingerprint was accepted as an idempotent replay and the
     // immutable binding silently meant something else than the stored row.
+    if (
+      binding.path_template !== undefined &&
+      (typeof binding.path_template !== 'string' ||
+        binding.path_template.length > 512 ||
+        !/^(?!\/)(?!(?:.*\/)?\.{1,2}(?:\/|$))[A-Za-z0-9_.=/{}-]+$/.test(binding.path_template))
+    ) {
+      throw new Error('Managed binding path_template is not a relative path template');
+    }
     const expectedFingerprint = managedBindingFingerprint(binding);
     if (binding.semantic_fingerprint !== expectedFingerprint) {
       throw new Error('Managed binding semantic fingerprint does not match its immutable content');
