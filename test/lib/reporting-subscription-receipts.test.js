@@ -406,3 +406,18 @@ describe('client.reporting.submitReceipts and reconcile({ receipts })', () => {
     });
   });
 });
+
+describe('the receipt state of a delivered billing period', () => {
+  const { receiptStateOf } = require('../../dist/lib/principal/reporting-reconcile.js');
+  const billing = { reporting_obligation_id: 'o1', reconciliation_mode: 'consumer_receipt' };
+  const stated = status => [{ reporting_obligation_id: 'o1', reporting_revision_id: 'r1', status }];
+
+  test('owed until stated, settled when accepted, the seller’s move once rejected', () => {
+    assert.deepEqual(receiptStateOf(billing, 'r1', []), { status: 'owed_by_buyer' });
+    assert.equal(receiptStateOf(billing, 'r1', stated('accepted')), undefined);
+    assert.deepEqual(receiptStateOf(billing, 'r1', stated('rejected')), { status: 'rejected_by_buyer' });
+    // A receipt for an older revision says nothing about the current one.
+    assert.deepEqual(receiptStateOf(billing, 'r2', stated('accepted')), { status: 'owed_by_buyer' });
+    assert.equal(receiptStateOf({ ...billing, reconciliation_mode: 'delivery_only' }, 'r1', []), undefined);
+  });
+});
