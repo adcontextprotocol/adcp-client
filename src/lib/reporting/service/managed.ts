@@ -558,7 +558,10 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
       const revisions = ledger.listRevisionMetadata
         ? await ledger.listRevisionMetadata(obligation.reporting_obligation_id, period.account_id)
         : await ledger.listRevisions(obligation.reporting_obligation_id);
-      if (revisions.length > 0) return true;
+      // A snapshot does not deliver an official obligation, as the buyer's reconcile also reads it.
+      if (revisions.some(revision => obligation.requiredFinality !== 'official' || revision.finality === 'official')) {
+        return true;
+      }
     }
     return false;
   }
