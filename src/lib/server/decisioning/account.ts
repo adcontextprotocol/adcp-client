@@ -129,6 +129,14 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
   operator?: string;
 
   /**
+   * The account's operational timezone, `UTC` or an IANA identifier (for example
+   * `America/New_York`). Maps to wire `Account.timezone`, which AdCP 3.2+ sellers return on every
+   * account. Reporting subscriptions read it for `account_timezone` offerings: an account without
+   * one fails those offerings with `COVERAGE_INPUT_INCOMPLETE`, and is never read as UTC.
+   */
+  timezone?: string;
+
+  /**
    * The advertiser whose rates apply to this account. Maps to wire
    * `Account.advertiser`. Use when the account is operated by an agency on
    * behalf of an advertiser whose rates differ from the operator's.
@@ -1162,6 +1170,7 @@ export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount
   };
   if (account.brand !== undefined) wire.brand = account.brand;
   if (account.operator !== undefined) wire.operator = account.operator;
+  if (account.timezone !== undefined) wire.timezone = account.timezone;
   if (account.advertiser !== undefined) wire.advertiser = account.advertiser;
   if (account.billing_proxy !== undefined) wire.billing_proxy = account.billing_proxy;
   if (account.billing !== undefined) {

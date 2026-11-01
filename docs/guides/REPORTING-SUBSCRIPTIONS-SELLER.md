@@ -23,7 +23,6 @@ const reporting = createReliableReportingService({
   subscriptions: {
     principal: { agentUrl: 'https://seller.example/mcp', notifications, resolvePrincipal },
     maxAccounts: 500,
-    configure: ({ offering }) => reportContentFor(offering),
   },
 });
 const server = createAdcpServerFromPlatform(reporting.install(platform), {
@@ -43,9 +42,11 @@ The SDK reads these surfaces under each principal's identity, so a principal see
 | Visible buys | `sales.getMediaBuys` | `confirmed_at`, `start_time`, `end_time`, `cancellation.canceled_at`, `completed_at`, `packages[].package_id` | `subscriptions.buys` |
 | Package offerings | every registered offering | | `subscriptions.buyOfferings` |
 | Offerings | each adapter's `deliveryOffering` | `standard_dimensions` on every offering | none |
-| Report content | `subscriptions.configure(generation)` | metrics, dimensions, source settings | required in TypeScript |
+| Report content | the resolved source offering | exact metrics and dimensions, attribution settings | `subscriptions.configure(generation)`; required for billing feeds |
 
-The framework `Account` type has no `timezone` field yet: return `timezone` on the `accounts.list` items. An account without a timezone fails `account_timezone` offerings with `COVERAGE_INPUT_INCOMPLETE`, and is never read as UTC.
+Set `timezone` on the framework `Account` your `accounts.list` returns; `list_accounts` serves it. An account without a timezone fails `account_timezone` offerings with `COVERAGE_INPUT_INCOMPLETE`, and is never read as UTC.
+
+Without `configure`, each generation requests every metric and dimension its source offering supports exactly, with the offering's first attribution model and window, and an `official` feed gets a contractual cutoff at the offering's `delivery_sla`. Billing feeds need a canonicalization, so they fail to plan until you supply `configure`.
 
 ## What the SDK derives
 
@@ -53,7 +54,7 @@ The framework `Account` type has no `timezone` field yet: return `timezone` on t
 - **Capabilities.** `configuration_tasks` and the `subscriptions` block (`max_accounts`, `backfill_on_regrant`).
 - **Scheduling.**
   - A `sync_principal` write that submits `reporting_subscriptions` reconciles that principal (`reconcileOnWrite`, default on). A failed reconcile never fails the write.
-  - Each `runCycle` reconciles every subscribed principal, then plans obligations.
+  - Each `runCycle` sweeps the subscribed principals that are due, then plans obligations. A principal is due when a period of one of its schedules ended since its last reconcile, its last reconcile failed, a grant change was pushed, or `maxSweepIntervalMilliseconds` (one hour by default) elapsed.
 - **Grants.** The grant journal (see [Grants and wind-down](#grants-and-wind-down)).
 - **Failures.** Reconcile and planning failures are returned in `runCycle().subscriptionPlanningFailures` and passed to `planningErrorHandler`. They never reject a cycle.
 
@@ -63,7 +64,8 @@ Each `subscriptions` field replaces one derivation:
 - `accounts(principal, { cursor })` and `buys(principal, accountId)` replace the roster and the buys;
 - `buyOfferings(mediaBuy)` replaces package offerings;
 - `accountDeliveryConfigs(principal, accountId)` and `endAccountConfigs(...)` enable precedence and `replace_account_configs`;
-- `isPeriodDelivered(principal, period)` gives exact withheld counts (it defaults to `false`);
+- `isPeriodDelivered(principal, period)` decides whether a withheld period was delivered (by default the service's ledger answers: the period's obligation has a revision);
+- `configure(generation)` replaces the report content derived from the source offering;
 - `resolvePrincipal(ctx)` replaces principal resolution for the reporting tasks.
 
 If your account access depends on a live upstream token, supply `accounts`. A listing that fails under the service context is recorded as `SUBSCRIPTION_ROSTER_UNAVAILABLE`, and is never read as an empty roster.

@@ -27,7 +27,7 @@ import { postgresStorage } from '@adcp/reporting-storage'; // memoryStorage() fr
 const reporting = createReliableReportingService({
   storage: postgresStorage({ pool, acknowledgeIsolatedDatabase: true }),
   ...producerConfig,
-  subscriptions: { principal: { agentUrl, notifications, resolvePrincipal }, maxAccounts: 500, configure },
+  subscriptions: { principal: { agentUrl, notifications, resolvePrincipal }, maxAccounts: 500 },
 });
 const server = createAdcpServerFromPlatform(reporting.install(platform), { protocol: reporting.principals!.protocol });
 ```

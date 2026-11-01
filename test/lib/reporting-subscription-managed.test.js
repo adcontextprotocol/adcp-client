@@ -19,6 +19,7 @@ const { createAdcpServerFromPlatform } = require('../../dist/lib/server/decision
 const { MemoryLedgerStore } = require('../helpers/memory-reporting-ledger-store.js');
 const { createTestNotifications, createTestPrincipalLifecycle } = require('../helpers/principal-runtime.js');
 const { memoryStorage } = require('../../dist/lib/storage/index.js');
+const { toWireAccount } = require('../../dist/lib/server/decisioning/account.js');
 
 const DAY = 86_400_000;
 const ACCOUNT = 'account-a';
@@ -366,5 +367,104 @@ describe('managed reporting subscriptions', () => {
     const binding = await stateStore.get({ tenantId: TENANT, principalId: 'principal-a' }, 'binding');
     assert.deepEqual(binding.value.authInfo, { clientId: 'buyer-a', scopes: ['reporting'] });
     assert.ok(!JSON.stringify(binding.value).includes('secret'));
+  });
+});
+
+describe('managed reporting subscriptions: derived defaults', () => {
+  test('the framework Account carries timezone onto the wire', () => {
+    const wire = toWireAccount({ id: 'a', name: 'A', status: 'active', timezone: 'America/New_York' });
+    assert.equal(wire.timezone, 'America/New_York');
+    assert.equal('timezone' in toWireAccount({ id: 'a', name: 'A', status: 'active' }), false);
+  });
+
+  test('without configure, the report content is derived from the source offering', async () => {
+    const w = world({ managed: { configure: undefined } });
+    const applied = await w.subscribe();
+    assert.equal(applied.structuredContent.result.kind, 'applied', JSON.stringify(applied.structuredContent));
+    w.clock.now = new Date();
+    const cycle = await w.service.runCycle({ accountId: ACCOUNT });
+    assert.deepEqual(cycle.subscriptionPlanningFailures, []);
+    assert.ok(cycle.revisionsCommitted >= 1, JSON.stringify(cycle));
+    const [obligation] = (await w.store.listObligations(ACCOUNT)).filter(item => item.subscription);
+    assert.deepEqual(obligation.requestedMetrics, ['impressions', 'spend']);
+    assert.deepEqual(obligation.requestedDimensions, ['media_buy_id']);
+    assert.equal(obligation.sourceSettings.attributionModel, 'source_default');
+  });
+
+  test('defaultSubscriptionConfiguration pins a contractual cutoff for official feeds and refuses billing', () => {
+    const { defaultSubscriptionConfiguration } = require('../../dist/lib/reporting/service/index.js');
+    const offering = {
+      ...deliveryOffering(),
+      schedule: { period_duration: 'P1D', alignment: 'utc', delivery_sla: 'PT6H' },
+    };
+    const subscription = feed_purpose => ({
+      subscription_id: 'feed',
+      selector: { feed_purpose, period_duration: 'P1D', required_finality: 'official' },
+    });
+    const policy = defaultSubscriptionConfiguration({
+      subscription: subscription('analytics'),
+      offering,
+      sourceOffering: redactedReportingSourceOfferingV1,
+    });
+    assert.equal(policy.finalityPolicy.basis, 'contractual_cutoff');
+    assert.equal(policy.finalityPolicy.durationAfterPeriodEndMilliseconds, 6 * 3_600_000);
+    assert.throws(
+      () =>
+        defaultSubscriptionConfiguration({
+          subscription: subscription('billing'),
+          offering,
+          sourceOffering: redactedReportingSourceOfferingV1,
+        }),
+      error => error.name === 'PlatformConfigError' && /subscriptions\.configure/.test(error.message)
+    );
+  });
+
+  test('withheld_period_count reads delivery from the ledger by default', async () => {
+    const principal = { tenantId: TENANT, principalId: 'principal-a' };
+    const withheld = async managed => {
+      const w = world({ managed });
+      await w.subscribe();
+      w.clock.now = new Date();
+      const cycle = await w.service.runCycle({ accountId: ACCOUNT });
+      assert.ok(cycle.revisionsCommitted >= 1, JSON.stringify(cycle));
+      w.host.allowedTasks = ['get_media_buys'];
+      await w.service.grants.changed({
+        principal,
+        accountId: ACCOUNT,
+        at: new Date().toISOString(),
+        authorized: false,
+      });
+      await w.service.subscriptionWiring.engine.reconcile(principal);
+      const read = await w.call('buyer-a', 'get_principal', {});
+      const [state] = read.structuredContent.result.configuration.reporting_subscriptions;
+      return state.accounts_unauthorized[0].withheld_period_count;
+    };
+    assert.equal(await withheld({}), 0, 'every owed period was delivered, so none is withheld');
+    assert.ok((await withheld({ isPeriodDelivered: () => false })) > 0, 'an override still decides');
+  });
+
+  test('the sweep reconciles a principal only when a boundary passed, it failed, or a change was pushed', async () => {
+    const clock = { now: new Date() };
+    const w = world({ managed: { now: () => clock.now } });
+    await w.subscribe();
+    const afterWrite = w.reads.list;
+    await w.service.runCycle({ accountId: ACCOUNT, now: clock.now });
+    assert.equal(w.reads.list, afterWrite, 'nothing ended since the write reconciled');
+    await w.service.grants.changed({
+      principal: { tenantId: TENANT, principalId: 'principal-a' },
+      accountId: ACCOUNT,
+      at: clock.now.toISOString(),
+      authorized: true,
+      allowedTasks: w.host.allowedTasks,
+    });
+    const afterPush = w.reads.list;
+    await w.service.runCycle({ accountId: ACCOUNT, now: clock.now });
+    assert.ok(w.reads.list > afterPush, 'a pushed change makes the principal due');
+    const afterDue = w.reads.list;
+    await w.service.runCycle({ accountId: ACCOUNT, now: clock.now });
+    assert.equal(w.reads.list, afterDue);
+    clock.now = new Date(clock.now.getTime() + DAY);
+    await w.service.runCycle({ accountId: ACCOUNT, now: clock.now });
+    assert.ok(w.reads.list > afterDue, 'a daily boundary passed, so the sweep reconciled');
   });
 });

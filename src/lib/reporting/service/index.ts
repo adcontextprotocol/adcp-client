@@ -663,6 +663,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
           offerings: deliveryOfferings,
           statusRetentionDays: options.statusRetentionDays,
           ...(storage ? { storage } : {}),
+          ledger: options.store,
         })
       : undefined;
   const subscriptionOptions: ReliableReportingSubscriptionsOptionsV1<TCtxMeta> | undefined =
@@ -2117,6 +2118,7 @@ function deepFreeze<T>(value: T): T {
 }
 
 export { ReportingConfigurationImmutableError, isReportingConfigurationImmutableError } from '../ledger';
+export { defaultSubscriptionConfiguration } from './managed';
 export type {
   SubscriptionAccountsPage,
   SubscriptionGrants,

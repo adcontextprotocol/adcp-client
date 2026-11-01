@@ -253,7 +253,8 @@ runtime your server already serves `get_principal`/`sync_principal` with as `pri
 without `reportingSubscriptions`. The service builds the coverage engine, installs the
 `reporting_subscriptions` section on that runtime, advertises the principal capability in
 `install()`, reconciles a principal after each `sync_principal` write that submits
-subscriptions, and sweeps every subscribed principal at the start of each `runCycle`:
+subscriptions, and sweeps each subscribed principal that is due (a period boundary passed, its last
+reconcile failed, a grant change was pushed, or an hour elapsed) at the start of each `runCycle`:
 
 ```ts
 const service = createReliableReportingService({
@@ -262,6 +263,7 @@ const service = createReliableReportingService({
   subscriptions: {
     principal: { notifications, agentUrl, resolvePrincipal }, // or principals: your runtime
     maxAccounts: 500,
+    // Optional: without it each generation is derived from its source offering. Required for billing.
     configure: ({ subscription, offering }) => ({
       requestedMetrics: metricsFor(offering.report_definition_id),
       requestedDimensions: dimensionsFor(offering.report_definition_id),
