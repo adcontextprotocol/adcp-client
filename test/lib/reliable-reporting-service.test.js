@@ -1557,13 +1557,16 @@ describe('ReliableReportingService', () => {
 
     // Alignment the service does not generate periods for. Refused at
     // construction so discovery never advertises an uninstallable schedule.
-    for (const alignment of ['billing_cycle', 'account_timezone']) {
-      assert.throws(
-        () => zonedFixture('UTC', { alignment }),
-        /cannot honor '.*' period alignment/,
-        `${alignment} must be refused`
-      );
-    }
+    assert.throws(
+      () => zonedFixture('UTC', { alignment: 'billing_cycle' }),
+      /cannot honor 'billing_cycle' period alignment/
+    );
+    // account_timezone periods follow each account's zone, which only the subscription engine
+    // resolves; without a subscriptions block nothing could ever owe them.
+    assert.throws(
+      () => zonedFixture('UTC', { alignment: 'account_timezone' }),
+      /'account_timezone' period alignment only on the subscription path/
+    );
 
     // UTC-aligned offerings need a zero-offset source timezone, and the zone is
     // pinned, so this is decidable before the offering is ever published.
@@ -2117,9 +2120,8 @@ describe('ReliableReportingService', () => {
     // Discovery-to-install consistency: every alignment reachable in
     // capabilities must be installable, and the unsupported ones must be
     // unreachable because construction refused them.
-    for (const alignment of ['billing_cycle', 'account_timezone']) {
-      assert.throws(() => zonedFixture('UTC', { alignment }), /cannot honor/);
-    }
+    assert.throws(() => zonedFixture('UTC', { alignment: 'billing_cycle' }), /cannot honor/);
+    assert.throws(() => zonedFixture('UTC', { alignment: 'account_timezone' }), /only on the subscription path/);
 
     const { service } = serviceFixture();
     const context = { account: { id: 'account-a', ctx_metadata: {} } };

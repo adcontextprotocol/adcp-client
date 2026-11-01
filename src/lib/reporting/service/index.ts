@@ -67,6 +67,7 @@ import {
   type ReportingSourceOfferingV1,
 } from '../source';
 
+import { reportingLocalDayStartDateV1 } from '../subscriptions/calendar';
 import type { ReportingSubscriptionFrozenOwedSetV1 } from '../subscriptions/engine';
 import type { PrincipalRef } from '../../server/principal/types';
 import type { PrincipalLifecycleRuntime } from '../../server/principal/runtime';
@@ -584,7 +585,12 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     }
     // Validated against the routed offering, so the narrowing the inline
     // executor applies (media_buy applicability, one format) is authoritative.
-    validateDeliveryOffering(routedOffering, deliveryOffering, allowManagedDelivery);
+    validateDeliveryOffering(
+      routedOffering,
+      deliveryOffering,
+      allowManagedDelivery,
+      (options.subscriptions ?? options.reportingSubscriptions) !== undefined
+    );
     sources.set(adapterId, source);
     // Keyed by adapter, not by offering ID: the route must resolve to the exact
     // executor instance whose contract was validated here. A global offering
@@ -915,7 +921,11 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
             periodDuration: deliveryOffering.schedule.period_duration,
             deliverySlaDuration: deliveryOffering.schedule.delivery_sla,
             alignment: deliveryOffering.schedule.alignment,
-            ...(deliveryOffering.schedule.alignment === 'utc' ? {} : { periodTimezone: normalizedTimezone }),
+            // reporting-schedule.json: utc and account_timezone carry no period timezone.
+            ...(deliveryOffering.schedule.alignment === 'utc' ||
+            deliveryOffering.schedule.alignment === 'account_timezone'
+              ? {}
+              : { periodTimezone: normalizedTimezone }),
           };
     const {
       expectedCurrency: _currency,
@@ -1020,6 +1030,9 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       }
       if (owed.report_definition_id !== generation.input.report_definition_id) {
         throw new TypeError('Subscription obligation names a report definition its offering does not publish');
+      }
+      if (generation.input.schedule.alignment === 'account_timezone' && owed.stub !== true) {
+        assertWholeSourceLocalDays(owed, generation.input.sourceTimezone);
       }
       const owedBuys = new Set(owed.media_buy_ids);
       // Each obligation freezes its own denominator: the host-authorized constituents of exactly
@@ -1567,7 +1580,8 @@ function keylessPredecessorScope(
 function validateDeliveryOffering(
   source: ReportingSourceOfferingV1,
   delivery: ReportingDeliveryOffering,
-  allowManagedDelivery = false
+  allowManagedDelivery = false,
+  servesSubscriptions = false
 ): void {
   if (delivery.offering_id !== source.offeringId) throw new TypeError('Source and delivery offering IDs differ');
   if (delivery.report_definition_id !== source.contract.report_definition_id) {
@@ -1598,7 +1612,25 @@ function validateDeliveryOffering(
   // Refused here rather than at install: capabilities are built from these
   // offerings, so accepting one whose alignment can never be installed would
   // advertise a schedule to every buyer that the service always rejects.
-  if (delivery.schedule.alignment !== 'utc' && delivery.schedule.alignment !== 'source_timezone') {
+  if (delivery.schedule.alignment === 'account_timezone') {
+    // Each account's periods follow that account's timezone and its cutovers, which only the
+    // subscription engine resolves (from `accounts.list` items' `timezone`). Account-level
+    // generations run one grid from the routed source timezone and cannot follow them.
+    if (!servesSubscriptions) {
+      throw new TypeError(
+        "ReliableReportingService serves 'account_timezone' period alignment only on the subscription path; " +
+          'pass a subscriptions block so each account owes the periods of its own timezone'
+      );
+    }
+    // The source is asked for whole local dates, so it must report in each account's zone, which
+    // resolveSource returns. A source pinned to one zone cannot produce another zone's days.
+    if (source.sourceTimezone.ianaTimezone !== undefined) {
+      throw new TypeError(
+        "An 'account_timezone' delivery offering needs a source offering whose timezone is resolved per " +
+          "account (omit sourceTimezone.ianaTimezone); a source pinned to one zone cannot report other accounts' days"
+      );
+    }
+  } else if (delivery.schedule.alignment !== 'utc' && delivery.schedule.alignment !== 'source_timezone') {
     throw new TypeError(
       `ReliableReportingService cannot honor '${delivery.schedule.alignment}' period alignment; ` +
         'it generates fixed-length periods from the utc and source_timezone origins'
@@ -1756,6 +1788,26 @@ function validateDeliveryOffering(
   }
 }
 
+/**
+ * An `account_timezone` period is asked of the source as whole local dates in the zone
+ * resolveSource returned, so its boundaries must start local days there (midnight, or the instant
+ * a midnight DST gap advances to). Refusing here names the cause, where the source would only
+ * refuse the window.
+ */
+function assertWholeSourceLocalDays(owed: { period_start: string; period_end: string }, sourceTimezone: string): void {
+  if (
+    reportingLocalDayStartDateV1(Date.parse(owed.period_start), sourceTimezone) === undefined ||
+    reportingLocalDayStartDateV1(Date.parse(owed.period_end), sourceTimezone) === undefined
+  ) {
+    throw new TypeError(
+      `Subscription owes the account_timezone period [${owed.period_start}, ${owed.period_end}), which is not ` +
+        `whole local days in the source timezone ${sourceTimezone}. resolveSource must return the account's ` +
+        "timezone for an 'account_timezone' offering; a generation does not follow a later account timezone " +
+        'change, nor a selector.period_timezone override the source does not report in'
+    );
+  }
+}
+
 function validateConfigurationAgainstDeliveryOffering(
   configuration: ReliableReportingConfigurationInputV1,
   offering: ReportingDeliveryOffering,
@@ -1907,6 +1959,13 @@ function assertSupportedScheduleSemantics(
   sourceOffering: ReportingSourceOfferingV1
 ): void {
   const { alignment } = offering.schedule;
+  if (alignment === 'account_timezone') {
+    throw new TypeError(
+      "Reporting offerings with 'account_timezone' alignment are served only through reporting subscriptions, " +
+        'which owe each account the periods of its own timezone; subscribe to the offering instead of ' +
+        'installing an account-level configuration'
+    );
+  }
   if (alignment !== 'utc' && alignment !== 'source_timezone') {
     throw new TypeError(
       `ReliableReportingService cannot honor '${alignment}' period alignment; it generates fixed-length ` +
@@ -2033,7 +2092,7 @@ function assertOfferingScheduleShape(offering: ReportingDeliveryOffering): void 
       }
     }
   };
-  if (offering.schedule.alignment === 'utc') {
+  if (offering.schedule.alignment === 'utc' || offering.schedule.alignment === 'account_timezone') {
     forbid(['period_anchor', 'period_anchor_policy', 'period_timezone', 'period_timezone_policy']);
     return;
   }

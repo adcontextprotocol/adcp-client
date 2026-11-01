@@ -484,14 +484,18 @@ day schedule. For the latter, set the existing schedule identity fields to
 midnight `anchor`. Keep `periodMilliseconds: 86_400_000` as the nominal day;
 it does not determine the elapsed width on this path. Boundaries are resolved
 independently from local 1970-01-01 and their civil-day ordinal, so New York's
-spring and fall days span 23 and 25 hours. The service fills these identity
+spring and fall days span 23 and 25 hours. Where a DST gap swallows local
+midnight (America/Santiago, America/Havana, Africa/Cairo), the day starts at
+the instant midnight advances to, as `core/reporting-schedule.json`
+`period_generation` defines it, and the source is still asked for that one
+local date. The service fills these identity
 fields from its delivery offering; callers of the producer directly must supply
 them explicitly. `PT24H` continues to mean an elapsed 24 hours.
 
 The new calendar path supports a fixed-time SLA, for example
 `deliverySlaDuration: 'PT4H'` with `deliverySlaMilliseconds: 14_400_000`.
 The deadline is the resolved period end plus that elapsed duration. Source
-window bounds, local-midnight representability and authoritative finalization
+window bounds, local-day representability and authoritative finalization
 must remain feasible; installation checks the operational 400-day horizon,
 and planning checks each actual period's intrinsic calendar boundaries.
 An elapsed `PT24H` source window cannot stand in for a calendar `P1D` window
@@ -504,9 +508,8 @@ renumbering later ordinals. Valid neighboring boundary lookups keep their
 identities. A floor lookup identifies a representable start; it does not certify
 the next endpoint. Ceil inside the preceding day refuses its missing endpoint,
 and every interval used for planning, coverage, status eligibility or deadline
-projection must have both representable boundaries and a positive, lossless
-source-local day. Ordinary midnight gap/fold point resolution is unchanged;
-the separate lossless-midnight source requirement still applies to periods.
+projection must have both representable boundaries and span exactly one
+source-local date. Ordinary midnight gap/fold point resolution is unchanged.
 Source feasibility is an acceptance-time fact. Withdrawing or changing the
 process-local offering later does not suppress an elapsed obligation: the
 planner commits it independently, and an unavailable source proceeds through

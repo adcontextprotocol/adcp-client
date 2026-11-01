@@ -119,9 +119,13 @@ const FULL_GRANT = ['get_reporting_status', 'sync_reporting_receipts', 'sync_rep
 export const offerings = {
   /**
    * A daily analytics feed (`P1D`, snapshot finality, `delivery_sla` `PT0S`) mapped onto the
-   * `package` standard dimension.
+   * `package` standard dimension. `alignment: 'account_timezone'` makes each account's days follow
+   * its own `timezone` (local midnight, or the first instant after a DST gap at midnight); the
+   * default is `utc`.
    */
-  dailyAnalytics(options: { offering_id?: string; dimensions?: string[] } = {}): ReportingTestOffering {
+  dailyAnalytics(
+    options: { offering_id?: string; dimensions?: string[]; alignment?: 'utc' | 'account_timezone' } = {}
+  ): ReportingTestOffering {
     const source = redactedReportingSourceOfferingV1;
     return {
       offering_id: options.offering_id ?? source.offeringId,
@@ -139,7 +143,7 @@ export const offerings = {
         grain: source.grain,
         primary_keys: ['account_id', 'media_buy_id'],
       },
-      schedule: { period_duration: 'P1D', alignment: 'utc', delivery_sla: 'PT0S' },
+      schedule: { period_duration: 'P1D', alignment: options.alignment ?? 'utc', delivery_sla: 'PT0S' },
       supported_finality: ['snapshot'],
       reconciliation_mode: 'delivery_only',
       standard_dimensions: options.dimensions ?? ['package'],
@@ -151,7 +155,8 @@ export const offerings = {
  * The reference seller on the managed path: one `subscriptions` block on the Reliable Reporting
  * service, a platform serving `accounts.list` (with timezone and grant) and `getMediaBuys`, and a
  * source adapter that reports one impression per buy per period. Everything is in memory and on
- * `clock`.
+ * `clock`. A `utc` offering's source reports in UTC; an `account_timezone` offering's source reports
+ * in each account's timezone, as `resolveSource` returns it.
  *
  * @experimental
  */
@@ -201,13 +206,24 @@ export function createReferenceReportingSeller(options: ReportingTestKitOptions)
     worstCaseAvailabilityLag: 'PT0S',
   };
 
+  // An account_timezone source reports in each account's zone, so it pins none.
+  const sourceOfferingFor = (offering: ReportingTestOffering): Json => {
+    const value = { ...structuredClone(sourceOffering), offeringId: offering.offering_id } as unknown as Json & {
+      sourceTimezone: { ianaTimezone?: string };
+    };
+    if (offering.schedule.alignment === 'account_timezone') delete value.sourceTimezone.ianaTimezone;
+    return value;
+  };
+  const offeringFor = (offeringId: string | undefined) =>
+    deliveryOfferings.find(offering => offering.offering_id === offeringId) ?? deliveryOfferings[0]!;
+
   const service = createReliableReportingService({
     storage,
     adapters: Object.fromEntries(
       deliveryOfferings.map(offering => [
         offering.offering_id,
         {
-          sourceOffering: { ...structuredClone(sourceOffering), offeringId: offering.offering_id },
+          sourceOffering: sourceOfferingFor(offering),
           deliveryOffering: offering,
           fetchSlice: (slice: { start_date: string; end_date: string; media_buy_ids: string[] }) => ({
             reporting_period: { start: slice.start_date, end: slice.end_date },
@@ -220,11 +236,16 @@ export function createReferenceReportingSeller(options: ReportingTestKitOptions)
     contact: { name: 'Reporting operations', email: 'reporting@reference-seller.example' },
     automatedRecoveryWindowSeconds: 86_400,
     statusRetentionDays: redactedReportingSourceOfferingV1.retentionDays,
-    resolveSource: (account: { id: string }) => ({
-      adapterId: deliveryOfferings[0]!.offering_id,
-      sourceScope: { network_id: `network-${account.id}` },
-      sourceTimezone: 'UTC',
-    }),
+    resolveSource: (account: { id: string }, configuration: { offeringId?: string }) => {
+      const offering = offeringFor(configuration?.offeringId);
+      const timezone =
+        offering.schedule.alignment === 'account_timezone' ? state.accounts.get(account.id)?.timezone : undefined;
+      return {
+        adapterId: offering.offering_id,
+        sourceScope: { network_id: `network-${account.id}` },
+        sourceTimezone: timezone ?? 'UTC',
+      };
+    },
     resolveCurrency: () => 'USD',
     resolveCoverage: (account: { id: string }) => ({
       constituents: [...state.buys.values()]
