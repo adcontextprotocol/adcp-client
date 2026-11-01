@@ -271,6 +271,39 @@ describe('account.requests on the platform path', () => {
     assert.equal(validate(paged), true, JSON.stringify(validate.errors));
   });
 
+  test('releases before 3.3 get no account_requests, and before 3.2 no revision', async t => {
+    const world = sellerWorld();
+    const server = platformServer(world, {
+      capabilities: { supported_versions: ['3.1', '3.2', WIRE] },
+      // Production defaults to validation off, so the gate must not rely on request validation.
+      options: { validation: { requests: 'off', responses: 'off' } },
+    });
+    t.after(() => server.close());
+    await call(server, 'request_account', {
+      idempotency_key: 'open-review-0000000001',
+      brand: { domain: 'review.example' },
+      operator: 'agency.example',
+    });
+    for (const version of ['3.1', '3.2']) {
+      const listed = await call(server, 'list_accounts', {
+        adcp_version: version,
+        include_requests: true,
+        request_ids: ['areq_1'],
+        requests_pagination: { max_results: 10 },
+      });
+      assert.equal(listed.account_requests, undefined, version);
+      assert.equal(listed.account_requests_pagination, undefined, version);
+      const revision = listed.accounts.find(account => account.account_id === 'acct_1').revision;
+      assert.equal(revision, version === '3.2' ? 3 : undefined, version);
+    }
+    assert.equal(world.listRequestCalls.length, 0, 'listRequests never runs for an earlier release');
+    const current = await call(server, 'list_accounts', { include_requests: true });
+    assert.deepEqual(
+      current.account_requests.map(item => item.request_id),
+      ['areq_1']
+    );
+  });
+
   test('listRequests needs accounts.list', () => {
     const world = sellerWorld();
     assert.throws(
