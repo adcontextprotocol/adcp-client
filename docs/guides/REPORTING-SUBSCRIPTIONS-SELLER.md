@@ -50,7 +50,7 @@ Without `configure`, each generation requests every metric and dimension its sou
 
 ## What the SDK derives
 
-- **The principal runtime.** With `storage` and `subscriptions.principal`, the service builds it over `storage.principals` (`reporting.principals`). Otherwise pass yours as `subscriptions.principals`. Either way the service installs the `reporting_subscriptions` section and fills in `capabilities.principal`.
+- **The principal runtime.** With `storage` and `subscriptions.principal`, the service builds it over `storage.principals` (`reporting.principals`), pairs `notification_configs` with `sync_principal`, and advertises `capability_changes` unless you do. `principal.notifications` is optional with `memoryStorage()` (nothing is sent) and required with durable storage. Otherwise pass yours as `subscriptions.principals`. Either way the service installs the `reporting_subscriptions` section and fills in `capabilities.principal`.
 - **Capabilities.** `configuration_tasks` and the `subscriptions` block (`max_accounts`, `backfill_on_regrant`).
 - **Scheduling.**
   - A `sync_principal` write that submits `reporting_subscriptions` reconciles that principal (`reconcileOnWrite`, default on). A failed reconcile never fails the write.

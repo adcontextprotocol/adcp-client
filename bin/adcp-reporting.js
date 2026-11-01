@@ -208,4 +208,45 @@ async function handleReportingCommand(args, deps) {
   return 2;
 }
 
-module.exports = { handleReportingCommand, readTraces, traceKey };
+/**
+ * `adcp reference-seller reporting [--port 3000] [--cycle-seconds 60]`: serve the reference seller
+ * (examples/reporting-subscriptions-seller) locally, with a seeded buy, running its cycle on a timer.
+ * Any bearer token is the caller's principal id. Development only: state is in memory.
+ */
+async function handleReferenceSellerCommand(args) {
+  if (args[0] !== 'reporting' || args.includes('--help')) {
+    process.stdout.write(
+      'Usage: adcp reference-seller reporting [--port 3000] [--cycle-seconds 60]\n' +
+        'Serves the reporting-subscriptions reference seller over MCP. Any bearer token is the principal id.\n'
+    );
+    return args[0] === 'reporting' || args.includes('--help') ? 0 : 2;
+  }
+  process.env.NODE_ENV ??= 'development';
+  const port = Number(option(args, '--port') ?? 3000);
+  const cycleSeconds = Number(option(args, '--cycle-seconds') ?? 60);
+  const { serve } = require('../dist/lib/index.js');
+  const seller = await import(
+    pathToFileURL(path.join(__dirname, '..', 'examples', 'reporting-subscriptions-seller', 'seller.mjs')).href
+  );
+  const { createServer, service } = seller.createReportingSubscriptionsSeller();
+  serve(createServer, {
+    port,
+    authenticate: request => {
+      const header = request.headers?.authorization ?? '';
+      const token = /^Bearer\s+(.+)$/i.exec(header)?.[1];
+      return { principal: token || 'buyer' };
+    },
+    onListening: url =>
+      process.stdout.write(
+        `Reporting reference seller on ${url ?? `http://127.0.0.1:${port}/mcp`} (account ${seller.REFERENCE_ACCOUNT_ID}).\n` +
+          `Try: npx adcp reporting reconcile --agent http://127.0.0.1:${port}/mcp --auth agency-x\n`
+      ),
+  });
+  const cycle = () =>
+    service.runCycle({ deploymentWide: true }).catch(error => process.stderr.write(`cycle failed: ${error.message}\n`));
+  setInterval(cycle, cycleSeconds * 1000).unref?.();
+  await cycle();
+  return new Promise(() => {});
+}
+
+module.exports = { handleReportingCommand, handleReferenceSellerCommand, readTraces, traceKey };
