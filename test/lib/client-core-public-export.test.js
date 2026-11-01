@@ -153,15 +153,12 @@ test('@adcp/sdk/client/core keeps heavy generated-schema surfaces out of its eag
     }
   }
 
-  // #3461 adds only the public delivery-parser module through the existing
-  // webhooks barrel; all of its transitive dependencies were already present.
-  // #3530 adds one internal shared MCP validator module. No generated schema
-  // or registry module is added to the eager graph.
-  // #3504 adds the reporting-subscription write facade (client.reporting and the raw sync_principal
-  // guard); offering selection inside it loads on demand.
-  // #3504 (T9) adds the account-outcomes module behind client.accounts.ensure (nextStep, formatPendingAction).
-  // Schema compaction stays lazy. Keep heavy schema/registry exclusions intact.
-  assert.ok(visited.size <= 216, `focused client eager graph grew to ${visited.size} internal modules`);
+  // The exclusions below guard the heavy surfaces by name. The count is a
+  // ceiling with headroom, not a pin: it was 216 when set, so features that
+  // each add a module or two to the focused client do not collide when they
+  // merge in parallel, while an accidental barrel import still fails it. When
+  // a change crosses it, check what joined the graph before raising it.
+  assert.ok(visited.size <= 230, `focused client eager graph grew to ${visited.size} internal modules`);
   for (const excluded of [
     'types/schemas.generated.mjs',
     'utils/response-schemas.mjs',

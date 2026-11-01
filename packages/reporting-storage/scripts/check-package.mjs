@@ -3,7 +3,7 @@
  * Offline checks for the `@adcp/reporting-storage` tarball. Requires a prior `npm run build`.
  *
  *   node scripts/check-package.mjs          export map, packed contents and budgets
- *   node scripts/check-package.mjs --size   the budgets only (the root `check:package-size` runs this)
+ *   node scripts/check-package.mjs --size   the size ceilings only (the root `check:package-size` checks them too)
  *
  * The package is built like the SDK (one transpiled module per source module, CommonJS and ESM with both
  * declaration flavours), so the checks mirror the SDK's: every export target is packed, nothing from `src/`,
@@ -19,16 +19,17 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 // The one example that ships: the integrated production-service walkthrough the guides link to.
 const PUBLISHED_EXAMPLE = 'examples/reliable-reporting-service/README.md';
 
-// Measured at 0.0.0: about 408,000 packed bytes, 1,883,000 unpacked, 115 files (28 modules x 4 flavours, the
-// manifest, the README and the example). A new module adds four files. Raise a budget deliberately, in the
-// change that grows the package.
-const MAX_PACKED_BYTES = 450_000;
-const MAX_UNPACKED_BYTES = 2_200_000;
-// +13 at 0.3: postgresStorage, the versioned migrations and the CLI module (three modules x 4) and
-// bin/adcp-reporting-storage.js.
-const MAX_FILE_COUNT = 140;
+// Size ceilings and the per-PR growth allowance live with the SDK's in the repository's
+// scripts/package-size-budget.json, so the root `check:package-size` compares both packages with their merge
+// base in one place. A new module adds four files (two runtime formats, two declaration flavours).
+const BUDGET_FILE = path.resolve(packageRoot, '..', '..', 'scripts', 'package-size-budget.json');
+export const PACKAGE_NAME = '@adcp/reporting-storage';
 
-function pack() {
+function ceiling() {
+  return JSON.parse(readFileSync(BUDGET_FILE, 'utf8')).packages[PACKAGE_NAME].ceiling;
+}
+
+export function packReportingStorage() {
   const output = execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts', '--loglevel=error'], {
     cwd: packageRoot,
     encoding: 'utf8',
@@ -46,15 +47,15 @@ function pack() {
   throw new Error('npm pack did not return package metadata');
 }
 
-function checkBudgets(info) {
+export function checkReportingStorageBudgets(info) {
+  const limit = ceiling();
   const problems = [];
-  if (info.size > MAX_PACKED_BYTES)
-    problems.push(`packed tarball is ${info.size} bytes; budget is ${MAX_PACKED_BYTES}`);
-  if (info.unpackedSize > MAX_UNPACKED_BYTES) {
-    problems.push(`unpacked package is ${info.unpackedSize} bytes; budget is ${MAX_UNPACKED_BYTES}`);
+  if (info.size > limit.packedBytes)
+    problems.push(`packed tarball is ${info.size} bytes; ceiling is ${limit.packedBytes}`);
+  if (info.unpackedSize > limit.unpackedBytes) {
+    problems.push(`unpacked package is ${info.unpackedSize} bytes; ceiling is ${limit.unpackedBytes}`);
   }
-  if (info.entryCount > MAX_FILE_COUNT)
-    problems.push(`package has ${info.entryCount} files; budget is ${MAX_FILE_COUNT}`);
+  if (info.entryCount > limit.files) problems.push(`package has ${info.entryCount} files; ceiling is ${limit.files}`);
   return problems;
 }
 
@@ -95,17 +96,23 @@ function checkContents(info) {
   return problems;
 }
 
-try {
-  const info = pack();
-  const problems = [...checkBudgets(info), ...(process.argv.includes('--size') ? [] : checkContents(info))];
-  if (problems.length > 0) {
-    for (const problem of problems) console.error(`  - ${problem}`);
-    throw new Error(`${problems.length} package problem(s)`);
+const scriptPath = process.argv[1] ? path.resolve(process.argv[1]) : undefined;
+if (scriptPath === fileURLToPath(import.meta.url)) {
+  try {
+    const info = packReportingStorage();
+    const problems = [
+      ...checkReportingStorageBudgets(info),
+      ...(process.argv.includes('--size') ? [] : checkContents(info)),
+    ];
+    if (problems.length > 0) {
+      for (const problem of problems) console.error(`  - ${problem}`);
+      throw new Error(`${problems.length} package problem(s)`);
+    }
+    console.log(
+      `✅ ${PACKAGE_NAME}: ${info.size} bytes packed, ${info.unpackedSize} unpacked, ${info.entryCount} files`
+    );
+  } catch (error) {
+    console.error(`❌ ${PACKAGE_NAME} package check failed: ${error.message ?? error}`);
+    process.exitCode = 1;
   }
-  console.log(
-    `✅ @adcp/reporting-storage: ${info.size} bytes packed, ${info.unpackedSize} unpacked, ${info.entryCount} files`
-  );
-} catch (error) {
-  console.error(`❌ @adcp/reporting-storage package check failed: ${error.message ?? error}`);
-  process.exitCode = 1;
 }

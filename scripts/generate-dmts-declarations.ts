@@ -22,10 +22,11 @@
  * `tsup.config.ts`: it normally copies each `.d.ts` to `.d.mts` and appends the
  * module extension to every relative `from`/`import(...)` specifier — `.mjs`
  * for a file, `/index.mjs` for a directory — resolving each against the built
- * dist tree (the bytes that actually ship). The generated Zod declaration is
- * the exception: its exact inferred type graph is tens of MiB, so its ESM file
- * is a facade over the canonical CJS declaration instead of a byte-for-byte
- * duplicate.
+ * dist tree (the bytes that actually ship). The multi-MiB generated
+ * declarations in {@link ESM_FACADE_DECLARATIONS} are the exception: their ESM
+ * file is a one-line facade over the canonical CJS declaration instead of a
+ * byte-for-byte duplicate, which would otherwise double their share of the
+ * published tarball.
  */
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -58,6 +59,52 @@ function wildcardOnlySlices(): Set<string> {
     tools: Record<string, { subpath: string }>;
   };
   return new Set(Object.values(index.tools).map(t => path.join(DIST_LIB, 'types', `${path.basename(t.subpath)}.d.ts`)));
+}
+
+// Generated declarations whose `.d.mts` is `export * from './<name>.js';`
+// rather than a copy. The Zod declaration is tens of MiB because TypeScript
+// expands the inferred schema shapes; the protocol and registry type modules
+// are 0.5-2.7 MiB of interfaces and type aliases each. Copying all four cost
+// about 1.2 MB of the packed tarball. The type-only entries must stay free of
+// value declarations and package imports, so ESM and CJS consumers resolve the
+// exact same structural types through the facade.
+const ESM_FACADE_DECLARATIONS: ReadonlyArray<{ file: string; typeOnly: boolean }> = [
+  { file: 'types/schemas.generated.d.ts', typeOnly: false },
+  { file: 'types/core.generated.d.ts', typeOnly: true },
+  { file: 'types/tools.generated.d.ts', typeOnly: true },
+  { file: 'registry/types.generated.d.ts', typeOnly: true },
+];
+
+function hasDefaultExport(source: string): boolean {
+  return (
+    /^\s*export\s+default\b/m.test(source) ||
+    /^\s*export\s*=\s*/m.test(source) ||
+    /\bexport\s*\{[^}]*\bdefault\b[^}]*\}/m.test(source)
+  );
+}
+
+// tsc emits top-level statements at column 0, so anchoring there skips
+// interface members such as a schema's `enum?: string[]` and JSDoc text.
+function hasValueOrPackageDependency(source: string): boolean {
+  return (
+    /^(?:export\s+)?(?:declare\s+)?(?:abstract\s+)?(?:const|let|var|function|class|enum|namespace|module)\b/m.test(
+      source
+    ) || /^(?:import|export)\b[^;]*\bfrom\s*['"][^.'"][^'"]*['"]/m.test(source)
+  );
+}
+
+function writeEsmFacade(file: string, source: string, typeOnly: boolean): void {
+  const name = path.basename(file, '.d.ts');
+  if (hasDefaultExport(source)) {
+    throw new Error(`${name}.d.ts has an export that the ESM facade would omit`);
+  }
+  if (typeOnly && hasValueOrPackageDependency(source)) {
+    throw new Error(`${name}.d.ts is no longer type-only; give it a full ESM declaration or review the facade`);
+  }
+  if (!existsSync(file.replace(/\.d\.ts$/, '.js'))) {
+    throw new Error(`${name}.js is missing; build runtime files before declarations`);
+  }
+  writeFileSync(file.replace(/\.d\.ts$/, '.d.mts'), `export * from './${name}.js';\n`);
 }
 
 // Resolve a relative specifier against the dist tree and return the ESM form.
@@ -95,26 +142,13 @@ function main(): void {
 
   const skip = wildcardOnlySlices();
   const declarations = collectDeclarationFiles(DIST_LIB).filter(f => !skip.has(f));
-  const generatedSchemasDeclaration = path.join(DIST_LIB, 'types', 'schemas.generated.d.ts');
+  const facades = new Map(ESM_FACADE_DECLARATIONS.map(entry => [path.join(DIST_LIB, entry.file), entry.typeOnly]));
   let written = 0;
   for (const file of declarations) {
     const source = readFileSync(file, 'utf8');
-    if (file === generatedSchemasDeclaration) {
-      // This declaration is tens of MiB because TypeScript expands the full
-      // inferred Zod shapes. Keep the exact CJS declaration as the source of
-      // truth and expose it through a tiny ESM declaration facade instead of
-      // copying the same type graph byte-for-byte.
-      const hasDefaultExport =
-        /^\s*export\s+default\b/m.test(source) ||
-        /^\s*export\s*=\s*/m.test(source) ||
-        /\bexport\s*\{[^}]*\bdefault\b[^}]*\}/m.test(source);
-      if (hasDefaultExport) {
-        throw new Error('schemas.generated.d.ts has an export that the ESM facade would omit');
-      }
-      if (!existsSync(file.replace(/\.d\.ts$/, '.js'))) {
-        throw new Error('schemas.generated.js is missing; build runtime files before declarations');
-      }
-      writeFileSync(file.replace(/\.d\.ts$/, '.d.mts'), `export * from './schemas.generated.js';\n`);
+    const typeOnly = facades.get(file);
+    if (typeOnly !== undefined) {
+      writeEsmFacade(file, source, typeOnly);
       written++;
       continue;
     }
