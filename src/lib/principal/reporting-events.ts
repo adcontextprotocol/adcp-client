@@ -474,11 +474,8 @@ export function deriveEvents(
 
 /** Keep the previous view of what a partial run could not read, so nothing unread reads as changed. */
 function mergePartial(previous: Json, current: Json, report: ReconcileReport): Json {
-  const unread = new Set(
-    report.accounts.filter(item => item.status === 'failed' && item.account_id !== '*').map(item => item.account_id)
-  );
-  const everything =
-    report.accounts.length === 0 || report.accounts.some(item => item.status === 'failed' && item.account_id === '*');
+  const unread = new Set(report.issues.flatMap(issue => (issue.account_id ? [issue.account_id] : [])));
+  const everything = report.accounts.length === 0 || report.issues.some(issue => issue.account_id === undefined);
   const merged: Json = { ...current };
   for (const section of ['periods', 'exceptions', 'cutovers']) {
     const values: Record<string, Json> = { ...((current[section] as Record<string, Json> | undefined) ?? {}) };
