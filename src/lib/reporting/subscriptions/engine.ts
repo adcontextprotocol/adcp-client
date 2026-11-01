@@ -1560,7 +1560,9 @@ export function createReportingSubscriptionEngineV1(
       const revokedAt = Date.parse(previous.unauthorized_at);
       const regrantedAt = Date.parse(grant.authorized_at);
       if (regrantedAt >= revokedAt + retentionMs) continue; // a fresh start, no gap claimed
-      // Each offering's own boundaries; one account-wide entry when they agree.
+      // Each offering's own boundaries, always naming the offering: an entry without offering_id
+      // applies to every offering on the account, including ones a later version resolves with
+      // other boundaries (adcp-client#3577).
       const bounds =
         calendars.size === 0
           ? [{ offeringId: undefined as string | undefined, from: revokedAt, until: regrantedAt }]
@@ -1569,8 +1571,7 @@ export function createReportingSubscriptionEngineV1(
               from: calendar.floor(revokedAt),
               until: calendar.ceil(regrantedAt),
             }));
-      const uniform = bounds.every(bound => bound.from === bounds[0]!.from && bound.until === bounds[0]!.until);
-      for (const bound of uniform ? [{ ...bounds[0]!, offeringId: undefined }] : bounds) {
+      for (const bound of bounds) {
         if (bound.until <= bound.from) continue;
         if (
           target.gaps.some(

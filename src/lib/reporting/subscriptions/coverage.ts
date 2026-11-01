@@ -684,7 +684,10 @@ function authorized(
   backfill: boolean
 ): boolean {
   return chains.some(chain => {
-    if (start < calendar.ceil(chain.start)) return false;
+    // The first boundary at or after authorized_at: for a period on the calendar that is start >=
+    // authorized_at, which also holds for a billing cutover stub that starts at E, off the calendar
+    // (adcp-client#3572).
+    if (start < chain.start) return false;
     if (chain.end !== undefined && start >= calendar.floor(chain.end)) return false;
     if (!backfill) {
       for (const gap of chain.interruptions) {
@@ -712,7 +715,8 @@ function timezoneTimeline(
   current: string | undefined,
   entries: ReportingSubscriptionCoverage['timezone_cutovers']
 ): TimezoneTimeline {
-  if (current !== undefined) assertReportingIanaTimezoneV1(current, 'account.timezone');
+  // Validated where an account_timezone schedule reads it (calendarSpec): a zone no schedule reads
+  // is never refused (error-codes.json invalid_timezone, adcp-client#3573).
   const cutovers = [...(entries ?? [])]
     .map(entry => {
       assertReportingIanaTimezoneV1(entry.timezone, 'timezone_cutovers.timezone');
@@ -740,16 +744,17 @@ function timezoneFor(timeline: TimezoneTimeline, offeringId: string, at: number)
     cutover => cutover.offeringId === undefined || cutover.offeringId === offeringId
   );
   if (applicable.length === 0) return timeline.current;
-  if (at < applicable[0]!.at) {
-    if (applicable[0]!.previous === undefined) {
-      throw new CoverageInputError(
-        'COVERAGE_INPUT_INCOMPLETE',
-        'timezone_cutovers entries require previous_timezone',
-        'missing_previous_timezone'
-      );
-    }
-    return applicable[0]!.previous;
+  // adcp#8681 (error-codes.json): a timezone_cutovers entry is read whenever an account_timezone
+  // offering resolves, whether or not a period under the old zone is owed, so every applicable
+  // entry needs its previous_timezone here, not only the first one before its effective_at.
+  if (applicable.some(cutover => cutover.previous === undefined)) {
+    throw new CoverageInputError(
+      'COVERAGE_INPUT_INCOMPLETE',
+      'timezone_cutovers entries require previous_timezone',
+      'missing_previous_timezone'
+    );
   }
+  if (at < applicable[0]!.at) return applicable[0]!.previous;
   let zone = applicable[0]!.timezone;
   for (const cutover of applicable) if (cutover.at <= at) zone = cutover.timezone;
   return zone;
@@ -1063,6 +1068,7 @@ function calendarSpec(
           'missing_account_timezone'
         );
       }
+      assertReportingIanaTimezoneV1(timezone, override === undefined ? 'account.timezone' : 'period_timezone');
       return { ...base, timezone };
     }
     case 'source_timezone': {
