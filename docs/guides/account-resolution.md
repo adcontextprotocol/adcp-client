@@ -141,6 +141,56 @@ resolve: async (ref, ctx) => {
 When `resolveAccount` is configured, a supplied unknown reference returns
 `ACCOUNT_NOT_FOUND`, even on optional account tools.
 
+### Account requests (`request_account`, AdCP 3.3 experimental)
+
+A seller that serves `request_account` registers it through the handler merge
+seam, and serves the caller's requests back on `list_accounts` through
+`accounts.listRequests`:
+
+```ts
+createAdcpServerFromPlatform(
+  {
+    capabilities: {
+      // ...
+      accountRequests: {
+        changeableAttributes: ['billing', 'payment_terms', 'timezone'],
+        pendingActionKinds: ['review', 'accept_terms'],
+      },
+    },
+    accounts: {
+      resolution: 'explicit',
+      resolve,
+      list,
+      // Only when the buyer sends include_requests, request_ids or requests_pagination.
+      listRequests: async (request, ctx) => {
+        const page = await db.requestsFor(callerOf(ctx), {
+          ids: request.request_ids,
+          cursor: request.requests_pagination?.cursor,
+        });
+        return { items: page.records, nextCursor: page.next };
+      },
+    },
+  },
+  { accounts: { requestAccount: async (params, ctx) => ({ request: await db.request(params, ctx) }) } }
+);
+```
+
+Registering `requestAccount` advertises `account.requests` on
+`get_adcp_capabilities` (`supported: true`, `request_task: 'request_account'`,
+`read_task: 'list_accounts'`, plus `changeable_attributes`,
+`pending_action_kinds` and `event_type` from `capabilities.accountRequests`) and
+adds `account.requests` to `experimental_features`. Callers on releases before
+3.3 see neither. Buyers route `client.accounts.ensure` and
+`client.accounts.change` by this block. The same applies to `createAdcpServer`,
+with `capabilities.accountRequests`.
+
+`listRequests` returns a `CursorPage` of wire account-request records, which the
+framework serves as `account_requests[]` and `account_requests_pagination`; the
+accounts page is unaffected. Return only the caller's own requests, newest
+`updated_at` first and at most 100 per page, and omit unknown or foreign
+`request_ids` silently. It needs `accounts.list`. Without it, the framework warns
+at startup that buyers cannot poll a pending request.
+
 ### Strict account references (`strictAccountReferences`)
 
 SDK 14 keeps four compatibility behaviors that strict mode removes:

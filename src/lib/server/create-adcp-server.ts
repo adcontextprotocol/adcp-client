@@ -432,6 +432,7 @@ import type {
   GetMediaBuyIssueResponse,
   RequestAccountResponse,
   GetAdCPCapabilitiesResponse,
+  AccountRequestsSupported,
   CreatePropertyListResponse,
   UpdatePropertyListResponse,
   GetPropertyListResponse,
@@ -1418,6 +1419,33 @@ export interface AdcpCapabilitiesConfig {
    * them via their dedicated fields on {@link AdcpCapabilitiesConfig}.
    */
   overrides?: AdcpCapabilitiesOverrides;
+  /**
+   * Seller-supplied fields of the `account.requests` block (AdCP 3.3, experimental). The block itself
+   * is advertised automatically when `accounts.requestAccount` is registered: `supported: true`,
+   * `request_task: 'request_account'`, `read_task: 'list_accounts'`, and `account.requests` in
+   * `experimental_features`. Requires `accounts.requestAccount`.
+   */
+  accountRequests?: AccountRequestsCapabilityOptions;
+}
+
+/**
+ * What a seller registering `request_account` adds to its `account.requests` capability block. Both
+ * lists are advisory to buyers; the seller still validates each request.
+ */
+export interface AccountRequestsCapabilityOptions {
+  /**
+   * Account attributes the seller accepts in a change request (`account_id` plus fields). Absent or
+   * empty means the seller only opens accounts. `currency` and `timezone` are changeable only when
+   * listed.
+   */
+  changeableAttributes?: readonly NonNullable<AccountRequestsSupported['changeable_attributes']>[number][];
+  /** Pending-action kinds the seller may issue, so buyers can prepare the people who will act. */
+  pendingActionKinds?: readonly NonNullable<AccountRequestsSupported['pending_action_kinds']>[number][];
+  /**
+   * Set when the seller fires `account_request.changed`. A seller declaring it also declares
+   * `capability_changes.notifications.supported: true`; without it, buyers poll `list_accounts`.
+   */
+  eventType?: 'account_request.changed';
 }
 
 /** Inclusive AdCP release range in which a registered tool is available. */
@@ -3947,7 +3975,12 @@ function filterCapabilitiesForToolAvailability(
   const experimentalTools = [
     ['list_collections', ['media_buy.collection_catalog', 'media_buy.collection_cards']],
     ['list_proposals', ['media_buy.open_opportunities']],
+    ['request_account', ['account.requests']],
   ] as const;
+  if (data.account?.requests && !(registeredTools.has('request_account') && isAvailable('request_account', release))) {
+    // `account.requests` names request_account; a release without the tool has no such block.
+    delete data.account.requests;
+  }
   const features = new Set(data.experimental_features ?? []);
   for (const [tool, requiredFeatures] of experimentalTools) {
     for (const feature of requiredFeatures) {
@@ -9599,6 +9632,35 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     applyCapabilityOverrides(capabilitiesData, capConfig.overrides);
   }
 
+  // AdCP 3.3 `account.requests`: a seller serving request_account advertises the block, and
+  // `filterCapabilitiesForToolAvailability` adds the feature id for releases that define the tool
+  // (and removes both for earlier ones). Seller-supplied lists come from `accountRequests`; an
+  // adopter override of the block keeps its optional fields, but the task names are fixed.
+  let syntheticAccountBlock = false;
+  if (registeredToolNames.has('request_account')) {
+    if (capabilitiesData.account == null) {
+      // `supported_billing` is required whenever the account block is emitted. Same default as the
+      // platform path: 'agent' when the seller declared no account capabilities.
+      capabilitiesData.account = { supported_billing: ['agent'] };
+      syntheticAccountBlock = true;
+    }
+    const adopterRequests = capabilitiesData.account.requests as Partial<AccountRequestsSupported> | undefined;
+    const options = capConfig?.accountRequests;
+    capabilitiesData.account.requests = {
+      ...(adopterRequests?.supported === true ? adopterRequests : {}),
+      supported: true,
+      request_task: 'request_account',
+      read_task: 'list_accounts',
+      ...(options?.changeableAttributes?.length && { changeable_attributes: [...options.changeableAttributes] }),
+      ...(options?.pendingActionKinds?.length && { pending_action_kinds: [...options.pendingActionKinds] }),
+      ...(options?.eventType && { event_type: options.eventType }),
+    };
+  } else if (capConfig?.accountRequests) {
+    throw new Error(
+      'createAdcpServer: capabilities.accountRequests describes request_account; register accounts.requestAccount too.'
+    );
+  }
+
   if (webhooks) {
     const profile = webhooks.tag ?? 'adcp/webhook-signing/v1';
     if (profile !== 'adcp/webhook-signing/v1') {
@@ -9848,6 +9910,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         (tool, version) =>
           releaseDefinesTool(tool, { validationVersion: version }) && toolAvailableForRelease(tool, version)
       );
+      // An account block emitted only to carry account.requests goes when the release has no requests.
+      if (syntheticAccountBlock && !data.account?.requests) delete data.account;
       const selected = parseAdcpRelease(release.validationVersion);
       const principalBlock = (data.adcp as { principal?: { supported_sections?: string[] } }).principal;
       if (principalBlock && selected !== undefined) {
