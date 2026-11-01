@@ -607,6 +607,26 @@ export async function reconcileReportingSubscriptions(
   wireClient: ReportingReadClient,
   options: ReconcileOptions = {}
 ): Promise<ReconcileReport> {
+  return reconcileObserved(wireClient, options);
+}
+
+/**
+ * What a reconcile run read besides its report: the subscriptions, and per account the
+ * `list_accounts` authorization and the `subscription_coverage[]` entries. Events derive from it.
+ *
+ * @internal
+ */
+export interface ReconcileObservation {
+  subscriptions: ReportingSubscriptionState[];
+  accounts: Map<string, { authorization?: Json; coverage: Map<string, Json> }>;
+}
+
+/** @internal `reconcileReportingSubscriptions`, also filling `observation`. */
+export async function reconcileObserved(
+  wireClient: ReportingReadClient,
+  options: ReconcileOptions = {},
+  observation?: ReconcileObservation
+): Promise<ReconcileReport> {
   const client = withReadTimeout(wireClient, options.readTimeoutMilliseconds);
   const now = instantOf(options.now, 'now');
   const graceMs = durationMs(options.grace ?? 'PT1H');
@@ -614,6 +634,7 @@ export async function reconcileReportingSubscriptions(
   const subscriptions = principal.subscriptions.filter(
     state => options.subscriptionIds === undefined || options.subscriptionIds.includes(state.subscription_id)
   );
+  if (observation) observation.subscriptions = subscriptions;
   const earliest = Math.min(
     ...subscriptions.flatMap(state => [
       Date.parse(state.accepted_at),
@@ -670,6 +691,12 @@ export async function reconcileReportingSubscriptions(
     try {
       const buys = await readBuys(client, accountId, seller.offerings);
       const coverage = await readCoverage(client, accountId);
+      observation?.accounts.set(accountId, {
+        ...(account.authorization && typeof account.authorization === 'object'
+          ? { authorization: account.authorization as Json }
+          : {}),
+        coverage,
+      });
       // The whole window, not the seller's default horizon; no delivery_config_ids filter, which a
       // seller refuses for a subscription with no obligation yet.
       const ledger = await loadReportingLedger(ledgerClient(client), {

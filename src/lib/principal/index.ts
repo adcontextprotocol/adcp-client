@@ -24,6 +24,7 @@ export {
   type SubscribeResult,
   type SubscriptionInput,
   type SyncPrincipalGuardOptions,
+  type ReportingClientOptions,
 } from './reporting-facade';
 export type {
   ExplainOptions,
@@ -36,5 +37,17 @@ export type {
   ReconcileReport,
   ReportingReadClient,
 } from './reporting-reconcile';
+export {
+  InMemoryReportingEventStore,
+  ReportingEventConflictError,
+  VerifiedWebhook,
+  createReportingEventStore,
+  type EventBatch,
+  type EventsOptions,
+  type PollOptions,
+  type ReportingEvent,
+  type ReportingEventStore,
+  type ReportingEventType,
+} from './reporting-events';
 export type { CoverageTrace, CoverageTraceStep, CoveragePeriodSelector } from '../reporting/subscriptions/explain';
 export type { CoverageReason, CoverageRule } from '../reporting/subscriptions/reason-codes';

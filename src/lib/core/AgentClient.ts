@@ -1217,10 +1217,14 @@ export class AgentClient {
 
   /**
    * Patch-shaped reporting-subscription writes: `subscribe`, `unsubscribe`, `replaceSubscriptions`,
-   * `listSubscriptions`, `preview` (experimental `media_buy.reporting_subscriptions`, AdCP 3.3).
+   * `listSubscriptions`, `preview`; reads: `reconcile`, `explain`; events: `poll`, `events`,
+   * `handleWebhook` (experimental `media_buy.reporting_subscriptions`, AdCP 3.3).
    */
   get reporting(): ReportingClient {
-    this.reportingClient ??= new ReportingClient(this as unknown as ReportingFacadeClient);
+    this.reportingClient ??= new ReportingClient(
+      this as unknown as ReportingFacadeClient,
+      this.config.reportingEventStore ? { eventStore: this.config.reportingEventStore } : {}
+    );
     return this.reportingClient;
   }
 

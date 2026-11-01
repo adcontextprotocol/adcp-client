@@ -18,6 +18,15 @@ import type {
 import type { MutatingRequestInput } from '../utils/idempotency';
 import type { CoverageTrace } from '../reporting/subscriptions/explain';
 import type { ExplainOptions, ReconcileOptions, ReconcileReport, ReportingReadClient } from './reporting-reconcile';
+import type {
+  EventsOptions,
+  PollOptions,
+  ReportingEvent,
+  EventBatch,
+  ReportingEvents,
+  ReportingEventStore,
+  VerifiedWebhook,
+} from './reporting-events';
 
 type Json = Record<string, unknown>;
 
@@ -75,6 +84,19 @@ export interface ReportingFacadeClient {
   /** Needed by `reconcile()` and `explain()`. */
   getReportingStatus?(params: Json, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<unknown>>;
   getAgentId?(): string;
+}
+
+/** Options for {@link ReportingClient}. */
+export interface ReportingClientOptions {
+  /** Write attempts under compare-and-set, 1..10. Default 3. */
+  maxAttempts?: number;
+  createIdempotencyKey?: () => string;
+  /**
+   * Where `poll()` keeps the acknowledged snapshot. Defaults to a process-local store, which a
+   * serverless consumer loses between invocations: pass `postgresStorage({ pool }).events` or
+   * `createReportingEventStore({ store })` there.
+   */
+  eventStore?: ReportingEventStore;
 }
 
 /** Options that let a raw `syncPrincipal` call deactivate subscriptions or revoke destinations. */
@@ -260,11 +282,14 @@ interface Plan {
 export class ReportingClient {
   private readonly maxAttempts: number;
   private readonly createIdempotencyKey: () => string;
+  private readonly eventStore?: ReportingEventStore;
+  private eventsRuntime?: ReportingEvents;
 
   constructor(
     private readonly client: ReportingFacadeClient,
-    options: { maxAttempts?: number; createIdempotencyKey?: () => string } = {}
+    options: ReportingClientOptions = {}
   ) {
+    if (options.eventStore !== undefined) this.eventStore = options.eventStore;
     const attempts = options.maxAttempts ?? 3;
     if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 10) {
       throw new TypeError('maxAttempts must be an integer in 1..10');
@@ -323,6 +348,42 @@ export class ReportingClient {
   async explain(options: ExplainOptions): Promise<CoverageTrace[]> {
     const { explainReportingSubscriptionCoverage } = await import('./reporting-reconcile');
     return explainReportingSubscriptionCoverage(this.client as unknown as ReportingReadClient, options);
+  }
+
+  /**
+   * One batch of events since the last acknowledgement, derived by comparing what the seller reports
+   * now (`reconcile`, the subscription readback, `subscription_coverage[]`) with the snapshot saved by
+   * the last `ack()`. Handle `batch.events`, then `await batch.ack()`; until then the same events
+   * come again with the same ids. Serverless-safe with a durable `eventStore`. `baseline: true` on a
+   * consumer with no snapshot records the present without emitting it.
+   */
+  async poll(options: PollOptions = {}): Promise<EventBatch> {
+    return (await this.eventRuntime()).poll(options);
+  }
+
+  /**
+   * Every event, until `signal` aborts. Each batch is acknowledged once the loop body has run for all
+   * of its events, so a throw in the body redelivers the batch. `handleWebhook` wakes it early.
+   */
+  async *events(options: EventsOptions = {}): AsyncGenerator<ReportingEvent, void, undefined> {
+    yield* (await this.eventRuntime()).events(options);
+  }
+
+  /**
+   * A verified seller webhook (`principal.changed` and friends) is a doorbell, never event content.
+   * With an `events()` loop running this wakes it and returns `null`; otherwise it polls inline and
+   * returns the batch for the caller to handle and `ack()`. Only a {@link VerifiedWebhook} is accepted.
+   */
+  async handleWebhook(verified: VerifiedWebhook): Promise<EventBatch | null> {
+    return (await this.eventRuntime()).handleWebhook(verified);
+  }
+
+  private async eventRuntime(): Promise<ReportingEvents> {
+    if (!this.eventsRuntime) {
+      const { ReportingEvents } = await import('./reporting-events');
+      this.eventsRuntime ??= new ReportingEvents(this.client as unknown as ReportingReadClient, this.eventStore);
+    }
+    return this.eventsRuntime;
   }
 
   /** Validate what `subscribe` would write, as a seller dry run. */
