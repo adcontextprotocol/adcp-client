@@ -65,8 +65,8 @@ for (const line of report.periods.filter(p => p.responsible_party === 'seller'))
 - **Status.** `delivered`: a current revision of the required finality exists. `pending`: the seller has not planned it yet but is inside `grace` (default `PT1H`), or planned it and is before `expected_at`. `late`: past `expected_at`. `missing_obligation`: the seller has no obligation for it after the grace. `withheld`: the account's authority ended (see below).
 - **`includeNotOwed: true`** adds `not_owed` lines with their reason (`before_confirmation`, `after_stop`, ...) for the audit trail.
 - **Revoked accounts** are unknown to every task, so their periods can't be read. They are listed in `report.accounts` as `unauthorized` with the seller's `withheld_period_count`. Pass the previous report as `previous` and its undelivered periods that ended before `unauthorized_at` are carried over as `withheld`.
-- **Never smaller, only non-definitive.** A failed read marks the account `failed` and `definitive: false`; it never shrinks the owed set.
-- **Fleet.** `multiClient.reporting.reconcile({ concurrency: 4 })` runs every configured seller and returns `{ bySeller, failures, definitive, summary }`.
+- **Never smaller, only non-definitive.** A failed read marks the account `failed` and `definitive: false`; it never shrinks the owed set. `report.issues` names each cause in the Python SDK's shape (`{ code, message, account_id? }`, for example `SUBSCRIPTION_LEDGER_UNAVAILABLE`), each message ending with the fix.
+- **Fleet.** `multiClient.reporting.reconcile({ concurrency: 4 })` runs every configured seller and returns `{ bySeller, issues, definitive, summary }`.
 
 ## Explain
 

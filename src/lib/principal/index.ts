@@ -33,6 +33,7 @@ export type {
   PeriodLine,
   PeriodStatus,
   ReconcileAccount,
+  ReconcileIssue,
   ReconcileOptions,
   ReconcileReport,
   ReportingReadClient,

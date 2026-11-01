@@ -817,7 +817,7 @@ export class ADCPMultiAgentClient {
   /**
    * Reporting subscriptions across every configured seller (experimental, AdCP 3.3):
    * `reporting.reconcile(options)` runs `client.reporting.reconcile()` on each agent with bounded
-   * concurrency and returns `{ bySeller, failures, definitive, summary }`.
+   * concurrency and returns `{ bySeller, issues, definitive, summary }`.
    */
   get reporting(): {
     reconcile(options?: FleetReconcileOptions): Promise<FleetReconcileReport>;
