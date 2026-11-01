@@ -607,8 +607,13 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
   }
 
   async function isDue(principal: PrincipalRef, at: number): Promise<boolean> {
-    const dueAt = (await store.get(principal, SWEEP_KEY))?.value?.due_at;
-    return typeof dueAt !== 'number' || at >= dueAt;
+    try {
+      const dueAt = (await store.get(principal, SWEEP_KEY))?.value?.due_at;
+      return typeof dueAt !== 'number' || at >= dueAt;
+    } catch {
+      // A store hiccup never rejects the cycle: reconcile the principal, which records its own failure.
+      return true;
+    }
   }
 
   const engine = createReportingSubscriptionEngineV1({
