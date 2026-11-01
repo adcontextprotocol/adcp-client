@@ -293,7 +293,7 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
     statusRetentionDays: number;
     storage?: ReportingStorage;
     /** The service's ledger: the default `isPeriodDelivered` reads it. */
-    ledger?: Pick<ReportingLedgerStore, 'listObligations' | 'listRevisions'>;
+    ledger?: Pick<ReportingLedgerStore, 'listObligations' | 'listRevisions' | 'listRevisionMetadata'>;
   }
 ): ManagedReportingSubscriptions<TCtxMeta> {
   const principals = managedPrincipals(options, service.storage);
@@ -554,7 +554,11 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
       ) {
         continue;
       }
-      if ((await ledger.listRevisions(obligation.reporting_obligation_id)).length > 0) return true;
+      // Existence only: read metadata when the store can, never the revision rows.
+      const revisions = ledger.listRevisionMetadata
+        ? await ledger.listRevisionMetadata(obligation.reporting_obligation_id, period.account_id)
+        : await ledger.listRevisions(obligation.reporting_obligation_id);
+      if (revisions.length > 0) return true;
     }
     return false;
   }
