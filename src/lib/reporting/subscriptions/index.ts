@@ -53,3 +53,23 @@ export type {
 } from './coverage';
 export { reportingConfigurationCapabilitiesV1 } from './capabilities';
 export type { ReportingConfigurationCapabilitiesInputV1, ReportingConfigurationCapabilitiesV1 } from './capabilities';
+export {
+  COVERAGE_TRACE_VERSION,
+  EXPLAIN_TEMPLATES,
+  EXPLAIN_TEMPLATES_VERSION,
+  classifySubscriptionPeriodsV1,
+  coverageTraceForBuyer,
+  diffCoverageTraces,
+  explainSubscriptionCoverageV1,
+  renderCoverageExplanation,
+} from './explain';
+export type {
+  ClassifiedSubscriptionPeriodV1,
+  CoveragePeriodSelector,
+  CoverageTrace,
+  CoverageTraceDifference,
+  CoverageTraceStep,
+  ExplainSubscriptionCoverageInputV1,
+} from './explain';
+export { COVERAGE_REASONS, COVERAGE_REASON_VOCABULARY_VERSION, COVERAGE_RULE_ORDER } from './reason-codes';
+export type { CoverageReason, CoverageRule } from './reason-codes';

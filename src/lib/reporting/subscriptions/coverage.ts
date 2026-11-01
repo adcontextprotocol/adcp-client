@@ -1135,3 +1135,52 @@ export type ExpectedSubscriptionPeriodV1 = OwedSubscriptionPeriodV1;
 export type ExpectedSubscriptionObligationV1 = OwedSubscriptionObligationV1;
 /** @deprecated Renamed {@link OwedSubscriptionPeriodsInputV1}: "owed" is the one word for what a seller must deliver. This alias is removed in a later beta. */
 export type ExpectedSubscriptionPeriodsInputV1 = OwedSubscriptionPeriodsInputV1;
+
+/**
+ * The regimes of one buy (maximal intervals with one active version and one resolution), each with
+ * the instant every resolved offering owes from (its handoff), computed exactly as
+ * `owedSubscriptionPeriodsV1` computes them. `null` marks an interval with no active version.
+ */
+function regimesForBuy(
+  input: OwedSubscriptionPeriodsInputV1,
+  buy: ReportingSubscriptionBuyV1
+): Array<{ from: number; until: number; version: number; resolved: string[]; handoffs: Map<string, number> } | null> {
+  const versions = normalizeVersions(input.versions, input.subscription_id, inactiveWindows(input.inactive_intervals));
+  const timezones = timezoneTimeline(input.account.timezone, input.coverage?.timezone_cutovers);
+  const offeringsById = new Map(input.offerings.map(offering => [offering.offering_id, offering]));
+  const regimes = buildRegimes(buy, versions, input, offeringsById, timezones, new Map());
+  return regimes.map((regime, index) => {
+    if (regime === null) return null;
+    const predecessor = index > 0 ? (regimes[index - 1] ?? null) : null;
+    for (const resolved of regime.offerings) {
+      regime.handoffs.set(resolved.offering.offering_id, incomingHandoff(regime, predecessor, resolved).handoff);
+    }
+    return {
+      from: regime.from,
+      until: regime.until,
+      version: regime.version.subscription_version,
+      resolved: regime.offerings.map(entry => entry.offering.offering_id),
+      handoffs: regime.handoffs,
+    };
+  });
+}
+
+/**
+ * The coverage rule's building blocks, shared with the coverage explainer (`explain.ts`) so a trace
+ * evaluates exactly what `owedSubscriptionPeriodsV1` evaluates.
+ *
+ * @internal Not re-exported from any public entry point.
+ */
+export const coverageInternalsV1 = {
+  instant,
+  authorityChains,
+  timezoneTimeline,
+  timezoneFor,
+  calendarSpec,
+  flightTimeline,
+  flightAt,
+  inactiveWindows,
+  packageResolutionAt,
+  packageExclusions,
+  regimesForBuy,
+};

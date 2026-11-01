@@ -16,6 +16,8 @@ import type {
   SyncPrincipalResponse,
 } from '../types/tools.generated';
 import type { MutatingRequestInput } from '../utils/idempotency';
+import type { CoverageTrace } from '../reporting/subscriptions/explain';
+import type { ExplainOptions, ReconcileOptions, ReconcileReport, ReportingReadClient } from './reporting-reconcile';
 
 type Json = Record<string, unknown>;
 
@@ -68,6 +70,11 @@ export interface ReportingFacadeClient {
   ): Promise<TaskResult<SyncPrincipalResponse>>;
   listAccounts?(params: Json, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<unknown>>;
   getAdcpCapabilities?(params?: Json, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<unknown>>;
+  /** Needed by `reconcile()` and `explain()`. */
+  getMediaBuys?(params: Json, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<unknown>>;
+  /** Needed by `reconcile()` and `explain()`. */
+  getReportingStatus?(params: Json, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<unknown>>;
+  getAgentId?(): string;
 }
 
 /** Options that let a raw `syncPrincipal` call deactivate subscriptions or revoke destinations. */
@@ -293,6 +300,29 @@ export class ReportingClient {
       if (!activeSubscription(state)) return unchanged(current);
       return replaceOne(principal, { ...current, active: false }, 'deactivated');
     });
+  }
+
+  /**
+   * What the seller owes this buyer, period by period: every owed obligation of every subscription on
+   * every covered account, with `status` (`delivered`, `pending`, `late`, `missing_obligation`,
+   * `withheld`), the coverage `reason`, the `responsible_party` and a `message`. The roster is
+   * `list_accounts` intersected with the subscriptions' scopes, read on every run. `grace` (default
+   * `PT1H`) is how long after a period ends the seller may take to plan its obligation.
+   * `includeNotOwed` adds `not_owed` lines with their reasons. Reads only; never writes.
+   */
+  async reconcile(options: ReconcileOptions = {}): Promise<ReconcileReport> {
+    const { reconcileReportingSubscriptions } = await import('./reporting-reconcile');
+    return reconcileReportingSubscriptions(this.client as unknown as ReportingReadClient, options);
+  }
+
+  /**
+   * Why a period is or is not owed: one `CoverageTrace` (`side: 'buyer'`) per subscription, buy and
+   * offering, in the same JSON the seller's `reporting.explainCoverage` returns. A plain date
+   * (`'2026-11-03'`) is read in the offering's zone. Reads only.
+   */
+  async explain(options: ExplainOptions): Promise<CoverageTrace[]> {
+    const { explainReportingSubscriptionCoverage } = await import('./reporting-reconcile');
+    return explainReportingSubscriptionCoverage(this.client as unknown as ReportingReadClient, options);
   }
 
   /** Validate what `subscribe` would write, as a seller dry run. */
