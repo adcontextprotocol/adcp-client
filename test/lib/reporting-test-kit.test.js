@@ -104,6 +104,98 @@ describe('createReportingTestKit', () => {
   test('the clock only moves forward', async () => {
     const k = kit();
     await assert.rejects(k.clock.advanceTo(day(-1)), RangeError);
-    await assert.rejects(k.clock.advance('P60D'), /cannot pass the real clock/);
+  });
+
+  test('the clock runs past the real clock, and those periods are produced', async () => {
+    const start = reportingTestStart(1);
+    const at = n => new Date(Date.parse(start) + n * 86_400_000).toISOString();
+    const k = createReportingTestKit({
+      start,
+      offerings: [offerings.dailyAnalytics()],
+      accounts: [{ account_id: 'acc_a', timezone: 'UTC', grants: ['agency-x'] }],
+      buys: [{ media_buy_id: 'mb_1', account_id: 'acc_a', confirmed_at: at(0.5), start_time: at(1), end_time: at(25) }],
+    });
+    await k.buyer('agency-x').reporting.subscribe(analyticsDaily);
+    await k.clock.advance('P5D');
+    assert.ok(k.clock.now().getTime() > Date.now());
+    const report = await k.buyer('agency-x').reporting.reconcile({ now: k.clock.now() });
+    assert.ok(report.periods.length >= 3);
+    assert.ok(
+      report.periods.every(line => line.status === 'delivered'),
+      JSON.stringify(report.summary)
+    );
+    await k.assertAgreement('agency-x');
+  });
+});
+
+describe('comply_test_controller reporting_subscription_probe', () => {
+  const probe = (buyer, params) =>
+    buyer.call('comply_test_controller', { scenario: 'reporting_subscription_probe', params });
+
+  test('is advertised, validates params, and drives grants, timezone and the clock', async () => {
+    const k = kit();
+    const buyer = k.buyer('agency-x');
+    await buyer.reporting.subscribe(analyticsDaily);
+    const listed = await buyer.call('comply_test_controller', { scenario: 'list_scenarios' });
+    assert.ok(listed.data.scenarios.includes('reporting_subscription_probe'), JSON.stringify(listed.data));
+
+    const invalid = await probe(buyer, { operation: 'reduce_grant', account_id: 'acc_a' });
+    assert.equal(invalid.data?.error ?? JSON.parse(invalid.error ?? '{}').error, 'INVALID_PARAMS');
+
+    const advanced = await probe(buyer, { operation: 'advance_time', target_time: day(2) });
+    assert.equal(advanced.data.simulated.simulated_now, day(2));
+    assert.equal(k.clock.now().toISOString(), day(2));
+
+    const revoked = await probe(buyer, { operation: 'revoke_grant', account_id: 'acc_a' });
+    assert.equal(revoked.data.simulated.unauthorized_at, day(2));
+    const principal = await buyer.call('get_principal', {});
+    const state = principal.data.result.configuration.reporting_subscriptions[0];
+    assert.equal(state.accounts_unauthorized[0].account_id, 'acc_a');
+
+    await probe(buyer, { operation: 'advance_time', target_time: day(3) });
+    const regranted = await probe(buyer, { operation: 'regrant', account_id: 'acc_a' });
+    assert.equal(regranted.data.simulated.chain, 'continued');
+    assert.equal(regranted.data.simulated.regranted_at, day(3));
+
+    const moved = await probe(buyer, {
+      operation: 'set_account_timezone',
+      account_id: 'acc_a',
+      timezone: 'Europe/Paris',
+    });
+    assert.equal(moved.data.simulated.previous_timezone, 'America/New_York');
+    assert.equal(moved.data.simulated.timezone, 'Europe/Paris');
+    // The kit's daily offering is UTC-aligned, so an account timezone change cuts nothing over.
+    assert.deepEqual(moved.data.simulated.timezone_cutovers, []);
+    const accounts = await buyer.call('list_accounts', {});
+    assert.equal(accounts.data.accounts.find(item => item.account_id === 'acc_a').timezone, 'Europe/Paris');
+  });
+});
+
+describe('runReportingDoctor', () => {
+  test('passes the kit seller, and names a fix for an account without a timezone', async () => {
+    const { runReportingDoctor } = require('../../dist/lib/testing/reporting/index.js');
+    const k = kit();
+    const buyer = k.buyer('agency-x');
+    // The SDK stamps authorization.authorized_at once a subscription reconciles the account.
+    await buyer.reporting.subscribe(analyticsDaily);
+    const client = { ...buyer, complyTestController: params => buyer.call('comply_test_controller', params) };
+    for (const name of ['getAdcpCapabilities', 'getPrincipal', 'listAccounts', 'getMediaBuys'])
+      client[name] = buyer[name];
+    const report = await runReportingDoctor(client);
+    assert.equal(report.ok, true, JSON.stringify(report.checks, null, 2));
+    assert.ok(report.checks.some(check => check.id === 'controller.probe' && check.status === 'pass'));
+
+    const broken = {
+      ...client,
+      listAccounts: async () => ({
+        success: true,
+        data: { accounts: [{ account_id: 'acc_z', authorization: { authorized_at: day(0) } }] },
+      }),
+    };
+    const failing = await runReportingDoctor(broken);
+    assert.equal(failing.ok, false);
+    const zone = failing.checks.find(check => check.id === 'accounts.timezone');
+    assert.equal(zone.status, 'fail');
+    assert.match(zone.fix, /Account\.timezone/);
   });
 });

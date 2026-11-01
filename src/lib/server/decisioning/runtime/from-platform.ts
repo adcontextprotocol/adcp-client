@@ -4799,6 +4799,7 @@ function deriveScenariosFromAdapters(
   if (cfg.queryUpstreamTraffic) out.push('query_upstream_traffic');
   if (cfg.queryProvenanceAuditObservations) out.push('query_provenance_audit_observations');
   if (cfg.force?.upstream_unavailable) out.push('force_upstream_unavailable');
+  if (cfg.reportingSubscriptionProbe) out.push('reporting_subscription_probe');
   return out;
 }
 

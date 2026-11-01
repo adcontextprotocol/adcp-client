@@ -515,9 +515,13 @@ function withStorage<TCtxMeta>(
   return { ...input, store: storage.ledger };
 }
 
+const SIMULATED_CLOCK_ENVIRONMENTS: ReadonlySet<string> = new Set(['test', 'development']);
+
 export function createReliableReportingService<TCtxMeta = Record<string, unknown>>(
   input: CreateReliableReportingServiceOptionsV1<TCtxMeta>
 ): ReliableReportingServiceV1<TCtxMeta> {
+  // The current cycle's simulated now, read by inline executors under a simulated clock.
+  let simulatedNow: Date | undefined;
   const options = withStorage(input);
   const storage = options.storage;
   // Startup refuses a schema that is behind; run once, retried after a failure.
@@ -558,6 +562,11 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       adapter.executor ??
       createInlineReportingSourceExecutor(adapter.fetchSlice!, sourceOffering, {
         ...(adapter.inlineReplayRetention ? { replayRetention: adapter.inlineReplayRetention } : {}),
+        // Under a simulated clock (the test kit, a sandbox advance_time), acquisitions are stamped at
+        // the cycle's now, so periods that have not ended in real time can still be produced.
+        ...(SIMULATED_CLOCK_ENVIRONMENTS.has(process.env.NODE_ENV ?? '')
+          ? { now: () => simulatedNow ?? new Date() }
+          : {}),
       });
     // The executor's own offering is the one that governs every request and is
     // stored on each generation, so it — not the declaration beside it — is
@@ -1261,6 +1270,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     async runCycle(cycle) {
       const accountId = cycleAccountId(cycle);
       const planningNow = cycle.now ?? new Date();
+      simulatedNow = cycle.now;
       cycle.signal?.throwIfAborted();
       await checkSchema();
       // The boundary sweep: reconcile every subscribed principal before planning, so each elapsed

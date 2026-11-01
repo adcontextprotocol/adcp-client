@@ -1081,3 +1081,60 @@ export async function reconcileReportingFleet(
   if (Object.keys(fleet.failures).length > 0) fleet.definitive = false;
   return fleet;
 }
+
+/**
+ * The obligations one subscription owes one account, computed from wire reads alone: `get_principal`
+ * (paging `prior_versions` past the inline 16), `list_accounts`, `get_media_buys`,
+ * `get_adcp_capabilities`, and the caller-supplied `subscription_coverage[]` entry. The storyboard
+ * runner's `owed_periods_match` check grades a seller's `get_reporting_status` periods view with it.
+ *
+ * @internal
+ */
+export async function owedObligationsFromWire(
+  wireClient: ReportingReadClient,
+  input: { accountId: string; subscriptionId: string; now: string; coverage?: Json; readTimeoutMilliseconds?: number }
+): Promise<OwedSubscriptionObligationV1[]> {
+  const client = withReadTimeout(wireClient, input.readTimeoutMilliseconds);
+  const now = instantOf(input.now, 'now');
+  const principal = await readPrincipal(client);
+  const state = principal.subscriptions.find(item => item.subscription_id === input.subscriptionId);
+  if (!state) {
+    throw new ReadFailure(
+      'get_principal',
+      'SUBSCRIPTION_NOT_FOUND',
+      `get_principal lists no subscription ${JSON.stringify(input.subscriptionId)}`
+    );
+  }
+  const inline = state.prior_versions ?? [];
+  if ((state.prior_versions_count ?? inline.length) > inline.length) {
+    const priors: NonNullable<ReportingSubscriptionState['prior_versions']> = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const data = await read('get_principal', client.getPrincipal as Read, client, {
+        reporting_subscription_page: {
+          subscription_id: input.subscriptionId,
+          list: 'prior_versions',
+          ...(cursor ? { pagination: { cursor } } : {}),
+        },
+      });
+      const listing = (data.reporting_subscription_page ??
+        (data.result as Json | undefined)?.reporting_subscription_page ??
+        {}) as Json;
+      priors.push(...((listing.prior_versions as typeof priors | undefined) ?? []));
+      const pagination = listing.pagination as { has_more?: boolean; cursor?: string } | undefined;
+      cursor = pagination?.has_more ? pagination.cursor : undefined;
+      if (!cursor) break;
+    }
+    state.prior_versions = priors;
+  }
+  const seller = await readSeller(client);
+  const roster = await readRoster(client);
+  const account = roster.find(item => item.account_id === input.accountId);
+  if (!account) {
+    throw new ReadFailure('list_accounts', 'ACCOUNT_NOT_FOUND', `list_accounts does not list ${input.accountId}`);
+  }
+  if (!selects(state, account)) return [];
+  const buys = await readBuys(client, input.accountId, seller.offerings);
+  const owed = owedSubscriptionPeriodsV1(coverageInput(state, principal, seller, account, buys, input.coverage, now));
+  return groupOwedSubscriptionPeriodsV1(owed);
+}

@@ -318,6 +318,13 @@ export interface InlineReportingReplayRetentionV1 {
 
 export interface CreateInlineReportingSourceExecutorOptionsV1 {
   readonly replayRetention?: InlineReportingReplayRetentionV1;
+  /**
+   * A simulated clock for the acquisition instant, so a virtual clock (the reporting test kit, a
+   * sandbox `advance_time`) can produce periods that have not ended in real time. Honoured only when
+   * `NODE_ENV` is `test` or `development`; anywhere else it is refused, because a source acquisition
+   * stamped by a fake clock would be evidence the seller cannot stand behind.
+   */
+  readonly now?: () => Date;
 }
 
 export function createInlineReportingSourceExecutor(
@@ -381,6 +388,12 @@ function createInlineExecutorWithCapacities(
   observer?: InlineCapacityObserverV1
 ): InlineReportingSourceExecutorV1 {
   const evictSettled = executorOptions.replayRetention?.evictSettled === true;
+  if (executorOptions.now !== undefined && !['test', 'development'].includes(process.env.NODE_ENV ?? '')) {
+    throw new TypeError(
+      'The inline reporting executor takes a simulated clock (now) only when NODE_ENV is test or development.'
+    );
+  }
+  const clock = executorOptions.now;
   const parsedOffering = ReportingSourceOfferingV1Schema.parse(offeringInput);
   if (!parsedOffering.sourceExecution.manifestLevels.includes('basic')) {
     throw new TypeError('Inline reporting requires a basic manifest offering');
@@ -553,7 +566,8 @@ function createInlineExecutorWithCapacities(
             scopeKey,
             capacities,
             reclaimer,
-            observer
+            observer,
+            clock
           )
         )
         .then(result => ({ requestFingerprint, result }))
@@ -624,7 +638,8 @@ async function executeAndSeal(
   scopeKey: string,
   capacities: InlineStagingCapacitiesV1,
   reclaimer?: InlineAdmissionReclaimerV1,
-  observer?: InlineCapacityObserverV1
+  observer?: InlineCapacityObserverV1,
+  clock?: () => Date
 ): Promise<ReportingSourceExecutorResultV1> {
   let fetched: InlineReportingDeliveryResultV1;
   try {
@@ -1051,7 +1066,7 @@ async function executeAndSeal(
   const dataThrough = isRows(fetched)
     ? defaultDataThrough
     : normalizeDeliveryInstant(readResponseField('data_through') ?? defaultDataThrough, deliveryDates, request.period);
-  const acquiredAt = new Date().toISOString();
+  const acquiredAt = (clock?.() ?? new Date()).toISOString();
   const startMs = Date.parse(request.period.start);
   const endMs = Date.parse(request.period.end);
   const cutoffMs = Date.parse(request.period.sourceReadCutoffAt);
