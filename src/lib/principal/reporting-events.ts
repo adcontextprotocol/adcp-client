@@ -532,6 +532,11 @@ export interface EventsOptions extends Omit<PollOptions, 'baseline' | 'now'> {
   pollEvery?: string | number;
   /** Stops the loop. */
   signal?: AbortSignal;
+  /**
+   * Hears a transient poll failure (`recovery: 'transient'`, such as an unreachable seller). The loop
+   * keeps going and polls again at the next tick or doorbell. Other errors end the loop.
+   */
+  onError?: (error: Error) => void;
 }
 
 const DURATION = /^PT?(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$/;
@@ -632,12 +637,22 @@ export class ReportingEvents {
         // Consume the ring before polling: one that lands during the poll, the loop body or the
         // ack survives and polls again at once.
         this.rung = false;
-        const batch = await this.poll({
-          ...(options.grace !== undefined ? { grace: options.grace } : {}),
-          ...(options.readTimeoutMilliseconds !== undefined
-            ? { readTimeoutMilliseconds: options.readTimeoutMilliseconds }
-            : {}),
-        });
+        let batch: EventBatch;
+        try {
+          batch = await this.poll({
+            ...(options.grace !== undefined ? { grace: options.grace } : {}),
+            ...(options.readTimeoutMilliseconds !== undefined
+              ? { readTimeoutMilliseconds: options.readTimeoutMilliseconds }
+              : {}),
+          });
+        } catch (error) {
+          // A transient read failure (the seller unreachable, a timeout) waits for the next tick or
+          // doorbell instead of ending the loop; anything else is a bug or a misconfiguration.
+          if ((error as { recovery?: unknown })?.recovery !== 'transient') throw error;
+          options.onError?.(error as Error);
+          await this.wait(every, signal);
+          continue;
+        }
         for (const event of batch.events) {
           if (signal?.aborted) return;
           yield event;
@@ -649,22 +664,27 @@ export class ReportingEvents {
           if (error instanceof ReportingEventConflictError) continue;
           throw error;
         }
-        if (this.rung || signal?.aborted) continue;
-        await new Promise<void>(resolve => {
-          const done = () => {
-            clearTimeout(timer);
-            signal?.removeEventListener('abort', done);
-            this.doorbell = undefined;
-            resolve();
-          };
-          const timer = setTimeout(done, every);
-          this.doorbell = done;
-          signal?.addEventListener('abort', done, { once: true });
-        });
+        await this.wait(every, signal);
       }
     } finally {
       this.listening -= 1;
     }
+  }
+
+  /** Until `every` elapses, the doorbell rings or `signal` aborts. */
+  private wait(every: number, signal: AbortSignal | undefined): Promise<void> {
+    if (this.rung || signal?.aborted) return Promise.resolve();
+    return new Promise<void>(resolve => {
+      const done = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', done);
+        this.doorbell = undefined;
+        resolve();
+      };
+      const timer = setTimeout(done, every);
+      this.doorbell = done;
+      signal?.addEventListener('abort', done, { once: true });
+    });
   }
 
   async handleWebhook(verified: VerifiedWebhook): Promise<EventBatch | null> {

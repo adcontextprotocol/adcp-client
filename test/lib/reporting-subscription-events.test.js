@@ -178,6 +178,41 @@ describe('client.reporting.handleWebhook and events', () => {
   });
 });
 
+describe('client.reporting.events resilience', () => {
+  test('a transient read failure keeps the loop alive and is reported to onError', async () => {
+    const k = kit();
+    const buyer = k.buyer('agency-x');
+    await buyer.reporting.subscribe(analyticsDaily);
+    let failures = 1;
+    const flaky = Object.create(buyer);
+    flaky.getPrincipal = params => {
+      if (failures > 0) {
+        failures -= 1;
+        return Promise.resolve({ success: false, status: 'failed', error: 'seller unreachable' });
+      }
+      return buyer.getPrincipal(params);
+    };
+    const reporting = new ReportingClient(flaky);
+    const controller = new AbortController();
+    const errors = [];
+    const seen = [];
+    const loop = (async () => {
+      for await (const event of reporting.events({
+        pollEvery: 10,
+        signal: controller.signal,
+        onError: error => errors.push(error),
+      })) {
+        seen.push(event.type);
+        if (event.type === 'subscription.state_changed') controller.abort();
+      }
+    })();
+    await loop;
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].recovery, 'transient');
+    assert.ok(seen.includes('subscription.state_changed'));
+  });
+});
+
 describe('deriveEvents', () => {
   test('ids match the Python SDK for the same natural key and version', () => {
     const current = {
