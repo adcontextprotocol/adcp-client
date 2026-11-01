@@ -134,7 +134,8 @@ describe('explainSubscriptionCoverageV1', () => {
     const [again] = explainSubscriptionCoverageV1({ ...input, now: '2026-11-03T13:00:00Z', period: '2026-11-03' });
     assert.equal(again.inputs_digest, late.inputs_digest, 'now is not an input while the period stays open');
     const [ended] = explainSubscriptionCoverageV1({ ...input, period: '2026-11-03' });
-    assert.equal(ended.inputs_digest, late.inputs_digest, 'now is never an input');
+    const [later] = explainSubscriptionCoverageV1({ ...input, now: '2026-11-20T00:00:00Z', period: '2026-11-03' });
+    assert.equal(later.inputs_digest, ended.inputs_digest, 'now is not an input once the period has ended');
     const moved = structuredClone(input);
     moved.buys[0].end_time = '2026-11-07T00:00:00Z';
     const [changed] = explainSubscriptionCoverageV1({ ...moved, period: '2026-11-03' });
@@ -142,6 +143,15 @@ describe('explainSubscriptionCoverageV1', () => {
     const [seller] = explainSubscriptionCoverageV1({ ...input, period: '2026-11-03', side: 'seller' });
     assert.equal(seller.inputs_digest, ended.inputs_digest, 'both sides digest the same wire inputs');
     assert.equal(seller.side, 'seller');
+  });
+
+  test('traces either side of the period end differ in inputs_digest, not only in verdict', () => {
+    const input = baseline();
+    const [before] = explainSubscriptionCoverageV1({ ...input, now: '2026-11-03T23:59:59Z', period: '2026-11-03' });
+    const [at] = explainSubscriptionCoverageV1({ ...input, now: '2026-11-04T00:00:00Z', period: '2026-11-03' });
+    assert.equal(before.reason, 'period_not_ended');
+    assert.equal(at.verdict, 'owed', 'a period has ended at its end instant');
+    assert.notEqual(before.inputs_digest, at.inputs_digest, 'period_ended is an input');
   });
 
   test('a revoked account owes what ended before the revocation as owed:withheld', () => {

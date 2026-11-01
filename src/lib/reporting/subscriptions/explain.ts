@@ -999,6 +999,11 @@ function authorizationProjection(chains: Chains): Record<string, unknown> {
   };
 }
 
+/**
+ * The wire-visible document both sides hash. `now` itself is not part of it, but whether the period
+ * has ended is: two traces taken either side of the period end differ in their inputs, never only in
+ * their verdict (as in the Python SDK's `period_ended`).
+ */
 function inputsDigest(ctx: Context, candidate: Candidate, subject: CoverageTrace['subject']): string {
   const { start, end, buy, offering } = candidate;
   const window = windowAt(ctx, start);
@@ -1054,6 +1059,7 @@ function inputsDigest(ctx: Context, candidate: Candidate, subject: CoverageTrace
     authorization_gap: gap,
     backfill_on_regrant: backfill,
     status_retention_days: ctx.input.status_retention_days ?? null,
+    period_ended: end <= ctx.now,
   };
   return `sha256:${createHash('sha256')
     .update(canonicalJsonV1(stripUndefined(document)), 'utf8')
