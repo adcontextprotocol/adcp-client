@@ -191,6 +191,11 @@ accounts page is unaffected. Return only the caller's own requests, newest
 `request_ids` silently. It needs `accounts.list`. Without it, the framework warns
 at startup that buyers cannot poll a pending request.
 
+Return `revision` on the accounts `accounts.list` lists. Buyers read it from
+`list_accounts` and send it with a change, and a money change (`billing`,
+`billing_entity`, `payment_terms`) without it should be refused with
+`INVALID_REQUEST`; a stale one with `CONFLICT`.
+
 ### Strict account references (`strictAccountReferences`)
 
 SDK 14 keeps four compatibility behaviors that strict mode removes:

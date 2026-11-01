@@ -240,6 +240,8 @@ describe('account.requests on the platform path', () => {
     );
 
     const plain = await call(server, 'list_accounts', {});
+    // Buyers read the revision a change is based on from list_accounts.
+    assert.equal(plain.accounts.find(account => account.account_id === 'acct_1').revision, 3);
     assert.equal(plain.account_requests, undefined);
     assert.equal(plain.account_requests_pagination, undefined);
     assert.equal(world.listRequestCalls.length, 0, 'listRequests runs only when requests are asked for');

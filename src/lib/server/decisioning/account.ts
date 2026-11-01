@@ -140,6 +140,13 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
   timezone?: string;
 
   /**
+   * The account's optimistic-concurrency revision (AdCP 3.2+). Maps to wire `Account.revision`.
+   * Buyers read it from `list_accounts` and send it with a `request_account` change or a
+   * `sync_accounts` settings update, so a concurrent change is never overwritten.
+   */
+  revision?: number;
+
+  /**
    * The advertiser whose rates apply to this account. Maps to wire
    * `Account.advertiser`. Use when the account is operated by an agency on
    * behalf of an advertiser whose rates differ from the operator's.
@@ -1191,6 +1198,7 @@ export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount
   if (account.brand !== undefined) wire.brand = account.brand;
   if (account.operator !== undefined) wire.operator = account.operator;
   if (account.timezone !== undefined) wire.timezone = account.timezone;
+  if (account.revision !== undefined) wire.revision = account.revision;
   if (account.advertiser !== undefined) wire.advertiser = account.advertiser;
   if (account.billing_proxy !== undefined) wire.billing_proxy = account.billing_proxy;
   if (account.billing !== undefined) {
