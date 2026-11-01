@@ -17,7 +17,7 @@ await client.reporting.preview(subscription); // seller dry run + offeringIds
 const outcome = await client.accounts.ensure(key, { billing: 'operator' }); // ready | pending | ambiguous | rejected
 ```
 
-`client.reporting.replaceSubscriptions(list, { deactivateOmitted: true })` is the expert complete-set write; `[]` needs `deactivateAll: true`. `client.reporting.reconcile()` lists every owed period with its status, reason and responsible party; `client.reporting.explain({ accountId, period })` returns `CoverageTrace`s. Events arrive in a later beta.
+`client.reporting.replaceSubscriptions(list, { deactivateOmitted: true })` is the expert complete-set write; `[]` needs `deactivateAll: true`. `client.reporting.reconcile()` lists every owed period with its status, reason and responsible party; `client.reporting.explain({ accountId, period })` returns `CoverageTrace`s. `client.reporting.poll()` returns the events since the last `batch.ack()` (call `ack()` after handling; ids are deterministic, so deduplicate on `event.id`); `events({ signal })` is the loop; `handleWebhook(VerifiedWebhook.fromOutcome(verification, body))` is a doorbell, and a webhook body is never event content. Receipts: never send one on read. `reconcile({ receipts: { mode: 'verified', commit } })` receipts after the SDK verified the revision and your `commit` returned `{ commitRef }`; billing lines without a receipt read `receipt: { status: 'owed_by_buyer' }`. Never auto-accept adjustments.
 
 ## Seller: one block
 

@@ -954,6 +954,21 @@ function normalizedTotals(totals: ReportingControlTotal[]): ReportingControlTota
   return [...totals].sort((left, right) => left.name.localeCompare(right.name));
 }
 
+/**
+ * The current revision and verified materialization of one obligation, from the seller's own ledger,
+ * with the selection's reasons when it cannot be used. No buyer expectation is pinned, so the
+ * `EXPECTED_*` reasons, which compare against one, are dropped. The buyer receipts policy uses it.
+ *
+ * @internal
+ */
+export function selectReportingReceiptCandidate(
+  obligation: ManagedReportingObligation,
+  ledger: ReportingLedger
+): { revision?: ManagedReportingRevision; materialization?: ReportingMaterialization; reasons: string[] } {
+  const selected = selectCurrent(obligation, ledger);
+  return { ...selected, reasons: selected.reasons.filter(reason => !reason.startsWith('EXPECTED_')) };
+}
+
 function receiptMatches(
   receipt: ReportingReceipt,
   revision: ManagedReportingRevision,

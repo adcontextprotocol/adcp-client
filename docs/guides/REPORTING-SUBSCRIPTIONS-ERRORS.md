@@ -13,6 +13,8 @@ Every SDK error carries `code` and `recovery` (`transient`, `correctable` or `te
 | `SUBSCRIPTION_SELECTOR_UNMATCHED` | `ReportingSubscriptionError` | `false` | correctable | adjust the selector; `nearest` names the closest offerings |
 | `SUBSCRIPTION_CONFLICT_EXHAUSTED` | `ReportingSubscriptionError` | absent | transient | retry later |
 | `SUBSCRIPTION_READBACK_MISMATCH` | `ReportingSubscriptionError` | absent | terminal | contact the seller; `readback` is attached |
+| `RECEIPT_WRITE_FAILED` | `ReportingSubscriptionError` | absent | transient | the seller did not record the receipts (or its wire code); retry: receipt ids are stable |
+| `REPORTING_EVENTS_CONFLICT` | `ReportingEventConflictError` (a `ReportingSubscriptionError`) | absent | transient | another worker acknowledged first; poll again |
 | `COVERAGE_INPUT_INCOMPLETE`, `COVERAGE_INPUT_INVALID` | `CoverageInputError` | n/a | correctable | supply the named input (`detail` names it) |
 | `COVERAGE_BUDGET_EXCEEDED` | `CoverageInputError` | n/a | correctable | narrow the input, or raise `max_periods` |
 | `REPORTING_STORAGE_NOT_DURABLE` | `PlatformConfigError` | n/a | correctable | `storage: postgresStorage({ pool })`, or `NODE_ENV=development` |
