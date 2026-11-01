@@ -53,5 +53,5 @@ Run `npx adcp-reporting-storage migrate` before starting a release. The service 
 
 - `docs/guides/REPORTING-SUBSCRIPTIONS-SELLER.md` and `docs/guides/REPORTING-SUBSCRIPTIONS-BUYER.md`
 - `docs/guides/REPORTING-SUBSCRIPTIONS-COVERAGE.md`, `-ERRORS.md` and `-MIGRATION.md`
-- `docs/guides/FIRST-CALL-TO-A-SELLER.md` for `accounts.ensure` outcomes
+- `docs/guides/FIRST-CALL-TO-A-SELLER.md` for `accounts.ensure` outcomes and `accounts.change` (a separate account's `subscriptionsNotCovering`)
 - `docs/guides/REPORTING-LEDGER.md` for the building blocks

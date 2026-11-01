@@ -2399,6 +2399,8 @@ export {
   type BuyerAccountDispatch,
   type BuyerAccountProvisioningDispatch,
   type EnsureAccountOptions,
+  type AccountChanges,
+  type ChangeAccountOptions,
   type ProvisionedAccount,
 } from './core/buyer-account-registry';
 export {
@@ -2409,6 +2411,11 @@ export {
   type AccountPending,
   type AccountAmbiguous,
   type AccountRejected,
+  type AccountChangeOutcome,
+  type AccountUpdated,
+  type AccountSeparate,
+  type AccountMatched,
+  type AccountChangeRejected,
   type AccountVia,
   type NextStep,
 } from './core/account-outcomes';

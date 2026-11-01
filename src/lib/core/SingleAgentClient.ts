@@ -2258,6 +2258,7 @@ export class SingleAgentClient {
             }
             return found;
           },
+          subscriptions: async () => (await this.reporting.listSubscriptions()).subscriptions,
         },
         normalizeOptions: async (options, taskOptions) => {
           if (options.billing) return options;

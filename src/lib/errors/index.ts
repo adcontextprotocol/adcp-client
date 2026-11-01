@@ -212,9 +212,16 @@ export class AccountPaymentRequiredError extends BuyerSetupError {
 export class AccountRequestError extends ADCPError {
   readonly code: string;
   readonly recovery: 'transient' | 'correctable' | 'terminal';
+  /**
+   * `false` when the SDK refused the call itself and sent nothing (`client.accounts.change` without a
+   * required `revision`, with an unknown attribute, or against a seller without `account.requests`).
+   * Absent otherwise. See {@link isPreDispatchError}.
+   */
+  declare readonly dispatched?: false;
   constructor(
     public readonly operation: string,
-    public readonly errors: readonly { code: string; message?: string; recovery?: string }[]
+    public readonly errors: readonly { code: string; message?: string; recovery?: string }[],
+    options: { dispatched?: false } = {}
   ) {
     const first = errors[0];
     super(
@@ -229,6 +236,9 @@ export class AccountRequestError extends ADCPError {
           ? 'correctable'
           : 'transient';
     this.details = { operation, errors: structuredClone(errors) };
+    if (options.dispatched === false) {
+      Object.defineProperty(this, 'dispatched', { value: false, enumerable: true });
+    }
   }
 }
 export class AccountNotProvisionedError extends AccountNotFoundError {
