@@ -9,6 +9,7 @@ const { describe, test } = require('node:test');
 process.env.NODE_ENV = 'test';
 
 const { ReportingClient, ADCPMultiAgentClient } = require('../../dist/lib/index.js');
+const { coverageTraceForBuyer, diffCoverageTraces } = require('../../dist/lib/reporting/advanced/index.js');
 const { createReliableReportingService } = require('../../dist/lib/reporting/service/index.js');
 const {
   redactedReportingSourceOfferingV1,
@@ -325,5 +326,70 @@ describe('multiClient.reporting.reconcile', () => {
     assert.ok(fleet.failures['seller-b']);
     assert.equal(fleet.definitive, false);
     assert.equal(fleet.summary.owed, 2);
+  });
+});
+
+describe('reporting.explainCoverage (seller)', () => {
+  test('the seller trace and the buyer trace of one period agree, digests included', async () => {
+    const w = world();
+    await w.reporting.subscribe(subscription);
+    const now = new Date();
+    w.clock.now = now;
+    await w.service.runCycle({ accountId: ACCOUNT });
+    const principal = { tenantId: TENANT, principalId: 'principal-a' };
+    const period = w.day(3).slice(0, 10);
+    const [seller] = await w.service.explainCoverage({ principal, accountId: ACCOUNT, period, now });
+    const [buyer] = await w.reporting.explain({ accountId: ACCOUNT, period, now });
+    assert.equal(seller.side, 'seller');
+    assert.equal(seller.subject.principal_id, 'principal-a');
+    assert.equal(seller.verdict, 'owed');
+    assert.equal(seller.seller_only.buy_visible, true);
+    assert.ok(seller.seller_only.reporting_obligation_id, 'an owed, planned period names its obligation');
+    assert.equal(diffCoverageTraces(buyer, seller), null, JSON.stringify(diffCoverageTraces(buyer, seller)));
+    assert.equal(coverageTraceForBuyer(seller).seller_only, undefined);
+  });
+
+  test('an unknown subscription is refused with a fix', async () => {
+    const w = world();
+    await w.reporting.subscribe(subscription);
+    await assert.rejects(
+      w.service.explainCoverage({
+        principal: { tenantId: TENANT, principalId: 'principal-a' },
+        accountId: ACCOUNT,
+        subscriptionId: 'nope',
+        period: '2026-11-03',
+      }),
+      error => error.name === 'PlatformConfigError' && /no subscription/.test(error.message)
+    );
+  });
+});
+
+describe('adcp reporting diff', () => {
+  test('names the first differing rule and exits 1, or agrees and exits 0', async () => {
+    const { mkdtempSync, writeFileSync } = require('node:fs');
+    const { tmpdir } = require('node:os');
+    const path = require('node:path');
+    const { handleReportingCommand } = require('../../bin/adcp-reporting.js');
+    const w = world();
+    await w.reporting.subscribe(subscription);
+    const traces = await w.reporting.explain({ accountId: ACCOUNT, period: w.day(3).slice(0, 10), now: new Date() });
+    const dir = mkdtempSync(path.join(tmpdir(), 'adcp-reporting-diff-'));
+    const left = path.join(dir, 'buyer.json');
+    const right = path.join(dir, 'seller.json');
+    writeFileSync(left, JSON.stringify(traces));
+    const changed = structuredClone(traces);
+    changed[0].steps[5].facts.stop_time = '2099-01-01T00:00:00Z';
+    writeFileSync(right, JSON.stringify(changed));
+    const output = [];
+    const write = process.stdout.write;
+    process.stdout.write = chunk => output.push(String(chunk));
+    try {
+      assert.equal(await handleReportingCommand(['diff', left, left], {}), 0);
+      assert.equal(await handleReportingCommand(['diff', left, right], {}), 1);
+    } finally {
+      process.stdout.write = write;
+    }
+    assert.match(output.join(''), /The traces agree/);
+    assert.match(output.join(''), /rule "flight"/);
   });
 });

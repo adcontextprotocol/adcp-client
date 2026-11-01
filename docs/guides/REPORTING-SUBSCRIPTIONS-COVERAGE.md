@@ -23,9 +23,17 @@ The rules are applied in a fixed order: `scope`, `authorization`, `version`, `ac
 // Buyer: from wire reads.
 const traces = await client.reporting.explain({ accountId: 'acc_a', subscriptionId: 'analytics-daily', mediaBuyId: 'mb_123', period: '2026-11-03' });
 
+// Seller: from the engine's own state.
+const sellerTraces = await reporting.explainCoverage!({ principal, accountId: 'acc_a', period: '2026-11-03' });
+
 // Any side, from inputs you already hold.
 import { explainSubscriptionCoverageV1 } from '@adcp/sdk/reporting/advanced';
 const local = explainSubscriptionCoverageV1({ ...owedInput, period: '2026-11-03' });
+```
+
+```
+npx adcp reporting explain --agent <alias|url> --account acc_a --period 2026-11-03 [--json]              # buyer
+npx adcp reporting explain --app ./dist/reporting.js --tenant t1 --principal agency-x --account acc_a --period 2026-11-03  # seller
 ```
 
 - `period` is a `YYYY-MM-DD` date read in each offering's zone (every period that starts on that local date), an instant (the period containing it), or `{ start, end }`, which must be a period of the offering's schedule. The trace echoes the period with its `timezone`.
@@ -64,6 +72,10 @@ const local = explainSubscriptionCoverageV1({ ...owedInput, period: '2026-11-03'
 - `inputs_digest` hashes only wire-visible facts local to the period: the version in effect, the authorization as `list_accounts` and `accounts_unauthorized` show it, the zone in effect, the buy as `get_media_buys` returns it, the offering, the `excluded[]` entries covering the period start, and whether an authorization gap covers it. `now` is not part of it.
 
 ### Comparing a buyer trace with a seller trace
+
+```
+npx adcp reporting diff buyer.json seller.json
+```
 
 `diffCoverageTraces(left, right)` names the first rule whose result or facts differ:
 - **Equal digests and different verdicts:** both sides read the same facts, so one SDK applied a rule differently. Report it.

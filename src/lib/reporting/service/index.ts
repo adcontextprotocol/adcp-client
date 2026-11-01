@@ -81,10 +81,12 @@ import {
 import {
   createManagedReportingSubscriptions,
   isManagedSubscriptionOptions,
+  type ExplainCoverageInput,
   type SubscriptionGrants,
   type SubscriptionOptions,
   type SubscriptionPlanningFailure,
 } from './managed';
+import type { CoverageTrace } from '../subscriptions/explain';
 
 const ADAPTER_SCOPE_KEY = '_adcp_reporting_adapter';
 
@@ -415,6 +417,15 @@ export interface ReliableReportingServiceV1<TCtxMeta = Record<string, unknown>> 
    * @experimental Reporting subscriptions (AdCP 3.3).
    */
   readonly grants?: SubscriptionGrants;
+  /**
+   * Why a period is or is not owed, from the engine's own state: one `CoverageTrace` (`side:
+   * 'seller'`) per subscription, buy, offering and period. The same JSON a buyer's
+   * `client.reporting.explain` returns, plus `seller_only` (send `coverageTraceForBuyer(trace)` if
+   * it leaves the seller). Present with the managed `subscriptions` block.
+   *
+   * @experimental Reporting subscriptions (AdCP 3.3).
+   */
+  explainCoverage?(input: ExplainCoverageInput): Promise<CoverageTrace[]>;
   /**
    * With the managed `subscriptions` block: the principal runtime the section is installed on, the one
    * passed as `subscriptions.principals` or the one built over `storage.principals`. Serve
@@ -1166,7 +1177,9 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     producer,
     platform: reportingPlatform,
     ...(subscriptionOptions ? { subscriptionWiring: subscriptionOptions } : {}),
-    ...(managed ? { grants: managed.grants, principals: managed.principals } : {}),
+    ...(managed
+      ? { grants: managed.grants, principals: managed.principals, explainCoverage: managed.explainCoverage }
+      : {}),
     ...(storage ? { storage } : {}),
     get running() {
       return schedulerPromise !== undefined;
@@ -2119,7 +2132,10 @@ function deepFreeze<T>(value: T): T {
 
 export { ReportingConfigurationImmutableError, isReportingConfigurationImmutableError } from '../ledger';
 export { defaultSubscriptionConfiguration } from './managed';
+export { coverageTraceForBuyer, diffCoverageTraces } from '../subscriptions/explain';
+export type { CoverageTrace, CoverageTraceDifference, CoverageTraceStep } from '../subscriptions/explain';
 export type {
+  ExplainCoverageInput,
   SubscriptionAccountsPage,
   SubscriptionGrants,
   SubscriptionOptions,

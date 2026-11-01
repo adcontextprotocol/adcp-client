@@ -544,7 +544,8 @@ const [trace] = await client.reporting.explain({ accountId: 'acc_a', period: '20
 - **Storage.** One object; process-local storage is refused in production. Apply schema changes with `npx adcp-reporting-storage migrate`.
 - **Grants.** The SDK is the only source of `authorized_at`. End a relationship with `windDownGrant()` instead of revoking.
 - **Explain.** `reconcile` lines and `explain` traces carry the spec's reason codes and the same `CoverageTrace` JSON as the Python SDK.
-- **Coming in later betas:** buyer events, the test kit, and the seller's `explainCoverage`.
+- **Troubleshooting.** Sellers call `reporting.explainCoverage(...)`; `npx adcp reporting explain|diff|reconcile` runs the same from a terminal.
+- **Coming in later betas:** buyer events and the test kit.
 
 Guides: [seller](docs/guides/REPORTING-SUBSCRIPTIONS-SELLER.md) · [buyer](docs/guides/REPORTING-SUBSCRIPTIONS-BUYER.md) · [coverage](docs/guides/REPORTING-SUBSCRIPTIONS-COVERAGE.md) · [errors](docs/guides/REPORTING-SUBSCRIPTIONS-ERRORS.md) · [migrating](docs/guides/REPORTING-SUBSCRIPTIONS-MIGRATION.md) · [accounts](docs/guides/FIRST-CALL-TO-A-SELLER.md) · [ledger and building blocks](docs/guides/REPORTING-LEDGER.md) · [storage package](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/README.md)
 

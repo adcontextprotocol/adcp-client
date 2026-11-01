@@ -115,4 +115,22 @@ Today: `planningErrorHandler`, `runCycle().subscriptionPlanningFailures`, the `a
 
 ## Troubleshooting with explain
 
-`reporting.explainCoverage(...)` and the shared `CoverageTrace` arrive in a later beta. Until then, `owedSubscriptionPeriodsV1` from `@adcp/sdk/reporting/advanced` lists the owed periods. Coverage reason codes and SDK error codes come from the canonical vectors in the spec repository (`static/compliance/source/test-vectors/reporting-subscriptions/`).
+`reporting.explainCoverage(...)` answers "why is (or isn't) this period owed?" from the engine's own state: the stored version history, the grant journal, the coverage the caller is served, and the buys read under the principal's identity.
+
+```ts
+const traces = await reporting.explainCoverage!({
+  principal: { tenantId: 't1', principalId: 'agency-x' },
+  accountId: 'acc_renault_fr',
+  subscriptionId: 'analytics-daily', // optional: every subscription when omitted
+  mediaBuyId: 'mb_123', // optional
+  period: '2026-11-03', // a date read in each offering's zone, an instant, or { start, end }
+});
+for (const trace of traces) console.log(trace.verdict, trace.reason, trace.explanation);
+```
+
+```
+npx adcp reporting explain --app ./dist/reporting.js#reporting --tenant t1 --principal agency-x \
+    --account acc_renault_fr --period 2026-11-03 [--json]
+```
+
+Each `CoverageTrace` is the JSON a buyer's `client.reporting.explain` returns, plus `seller_only` (`buy_visible`, and the `reporting_obligation_id` of an owed, planned period). Send `coverageTraceForBuyer(trace)` if it leaves the seller. When a buyer disputes a period, compare the two traces with `npx adcp reporting diff buyer.json seller.json`: equal `inputs_digest` with different verdicts is an SDK bug, different digests mean one side read different state. See [Coverage, explained](REPORTING-SUBSCRIPTIONS-COVERAGE.md#explaining-a-period) for the reason codes.

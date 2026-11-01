@@ -30,6 +30,12 @@ import { canonicalJsonV1 } from '../source/manifest';
 import { reportingIsoDurationMillisecondsV1 } from '../source/source';
 import { createReportingPeriodCalendarV1 } from '../subscriptions/calendar';
 import {
+  explainSubscriptionCoverageV1,
+  type CoveragePeriodSelector,
+  type CoverageTrace,
+} from '../subscriptions/explain';
+import type { ReportingSubscriptionVersionRecordV1 } from '../subscriptions/coverage';
+import {
   createInMemoryReportingSubscriptionEngineStoreV1,
   createReportingSubscriptionEngineV1,
   type ReportingSubscriptionAccountConfigV1,
@@ -51,6 +57,24 @@ type MaybePromise<T> = T | Promise<T>;
 export interface SubscriptionAccountsPage {
   accounts: ReportingSubscriptionAccountFactV1[];
   nextCursor?: string;
+}
+
+/**
+ * What `service.explainCoverage` explains.
+ *
+ * @experimental Reporting subscriptions (AdCP 3.3).
+ */
+export interface ExplainCoverageInput {
+  principal: PrincipalRef;
+  accountId: string;
+  /** Only this subscription. Default: every subscription of the principal. */
+  subscriptionId?: string;
+  mediaBuyId?: string;
+  offeringId?: string;
+  /** A `YYYY-MM-DD` date read in each offering's zone, an instant, or `{ start, end }`. */
+  period: CoveragePeriodSelector;
+  /** Evaluate as of this instant. Defaults to the service clock. */
+  now?: string | Date;
 }
 
 /** One planning or reconcile failure, recorded instead of rejecting the whole cycle. */
@@ -230,6 +254,8 @@ export interface ManagedReportingSubscriptions<TCtxMeta> {
   report(failure: SubscriptionPlanningFailure): Promise<void>;
   /** Push grant changes into the grant journal: `service.grants`. */
   readonly grants: SubscriptionGrants;
+  /** `service.explainCoverage`: seller-side `CoverageTrace`s from the engine's own state. */
+  explainCoverage(input: ExplainCoverageInput): Promise<CoverageTrace[]>;
   /**
    * Serve the journal's `authorized_at` and `regranted_at` (adcp#8618) on accounts a caller is shown
    * (`list_accounts`, `sync_accounts`). Only callers holding subscriptions are touched; never fails
@@ -827,7 +853,115 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
     onPlanningError: (error, context) => report({ ...context, error }),
   };
 
+  /**
+   * Seller-side traces over exactly what the engine evaluates: the stored version history, the
+   * grant journal, the coverage the caller is served, and the buys read under the principal's
+   * identity. `seller_only` adds the ledger obligation of an owed period.
+   */
+  async function explainCoverage(input: ExplainCoverageInput): Promise<CoverageTrace[]> {
+    const principal = { tenantId: input.principal.tenantId, principalId: input.principal.principalId };
+    const at = input.now === undefined ? now() : input.now instanceof Date ? input.now : new Date(input.now);
+    const { history } = await principals.listReportingSubscriptions(principal);
+    const entries = history.filter(
+      entry => input.subscriptionId === undefined || entry.subscriptionId === input.subscriptionId
+    );
+    if (input.subscriptionId !== undefined && entries.length === 0) {
+      throw new PlatformConfigError(
+        `Principal ${JSON.stringify(principal.principalId)} has no subscription ${JSON.stringify(input.subscriptionId)}. Check the principal and subscription ids.`,
+        { configField: 'subscriptionId' }
+      );
+    }
+    const state = await engine.inspect(principal);
+    const document = state.accounts[input.accountId];
+    const account = document?.account;
+    let buys: ReportingSubscriptionBuyV1[];
+    try {
+      buys = options.buys
+        ? await options.buys(principal, input.accountId, {})
+        : await platformBuys(principal, input.accountId);
+    } catch {
+      buys = document?.lastBuys ?? [];
+    }
+    const coverage = new Map(
+      (await engine.subscriptionCoverage(principal, input.accountId)).map(entry => [entry.subscription_id, entry])
+    );
+    const obligations = service.ledger ? await service.ledger.listObligations(input.accountId) : [];
+    const traces: CoverageTrace[] = [];
+    for (const entry of entries) {
+      const versions: ReportingSubscriptionVersionRecordV1[] = entry.versions.map((version, index) => ({
+        subscription_version: version.subscriptionVersion,
+        accepted_at: version.acceptedAt,
+        ...(version.supersededAt !== undefined ? { superseded_at: version.supersededAt } : {}),
+        ...(index === entry.versions.length - 1 && entry.deactivatedAt !== undefined
+          ? { deactivated_at: entry.deactivatedAt }
+          : {}),
+        configuration: structuredClone(version.configuration),
+        ...(version.destinationMethod ? { destination_method: structuredClone(version.destinationMethod) } : {}),
+      }));
+      const served = coverage.get(entry.subscriptionId) as
+        | { excluded?: unknown[]; gaps?: unknown[]; timezone_cutovers?: unknown[] }
+        | undefined;
+      const owedTraces = explainSubscriptionCoverageV1({
+        subscription_id: entry.subscriptionId,
+        versions,
+        account: {
+          account_id: input.accountId,
+          ...(account?.operator !== undefined ? { operator: account.operator } : {}),
+          ...(account?.timezone !== undefined ? { timezone: account.timezone } : {}),
+          ...(account?.sourceTimezone !== undefined ? { source_timezone: account.sourceTimezone } : {}),
+          grants: structuredClone(account?.grants ?? []),
+        },
+        buys,
+        offerings: service.offerings as never,
+        ...(entry.inactiveIntervals.length > 0
+          ? {
+              inactive_intervals: entry.inactiveIntervals.map(item => ({
+                deactivated_at: item.from,
+                reactivated_at: item.until,
+              })),
+            }
+          : {}),
+        ...(served
+          ? {
+              coverage: {
+                ...(served.excluded ? { excluded: served.excluded } : {}),
+                ...(served.gaps ? { gaps: served.gaps } : {}),
+                ...(served.timezone_cutovers ? { timezone_cutovers: served.timezone_cutovers } : {}),
+              } as never,
+            }
+          : {}),
+        backfill_on_regrant: engine.settings.backfillOnRegrant,
+        status_retention_days: service.statusRetentionDays,
+        now: at.toISOString(),
+        period: input.period,
+        ...(input.mediaBuyId !== undefined ? { media_buy_id: input.mediaBuyId } : {}),
+        ...(input.offeringId !== undefined ? { offering_id: input.offeringId } : {}),
+        side: 'seller',
+        principal_id: principal.principalId,
+      });
+      for (const trace of owedTraces) {
+        const start = Date.parse(trace.subject.period.start);
+        const end = Date.parse(trace.subject.period.end);
+        const obligation = obligations.find(
+          item =>
+            item.subscription?.tenantId === principal.tenantId &&
+            item.subscription.principalId === principal.principalId &&
+            item.subscription.subscriptionId === entry.subscriptionId &&
+            item.offeringId === trace.subject.offering_id &&
+            Date.parse(item.period.start) === start &&
+            Date.parse(item.period.end) === end &&
+            item.mediaBuyIds.includes(trace.subject.media_buy_id)
+        );
+        if (obligation)
+          trace.seller_only = { ...trace.seller_only, reporting_obligation_id: obligation.reporting_obligation_id };
+        traces.push(trace);
+      }
+    }
+    return traces;
+  }
+
   return {
+    explainCoverage,
     engine,
     principals,
     advanced,
