@@ -684,7 +684,10 @@ function authorized(
   backfill: boolean
 ): boolean {
   return chains.some(chain => {
-    if (start < calendar.ceil(chain.start)) return false;
+    // The first boundary at or after authorized_at: for a period on the calendar that is start >=
+    // authorized_at, which also holds for a billing cutover stub that starts at E, off the calendar
+    // (adcp-client#3572).
+    if (start < chain.start) return false;
     if (chain.end !== undefined && start >= calendar.floor(chain.end)) return false;
     if (!backfill) {
       for (const gap of chain.interruptions) {
@@ -712,7 +715,8 @@ function timezoneTimeline(
   current: string | undefined,
   entries: ReportingSubscriptionCoverage['timezone_cutovers']
 ): TimezoneTimeline {
-  if (current !== undefined) assertReportingIanaTimezoneV1(current, 'account.timezone');
+  // Validated where an account_timezone schedule reads it (calendarSpec): a zone no schedule reads
+  // is never refused (error-codes.json invalid_timezone, adcp-client#3573).
   const cutovers = [...(entries ?? [])]
     .map(entry => {
       assertReportingIanaTimezoneV1(entry.timezone, 'timezone_cutovers.timezone');
@@ -1063,6 +1067,7 @@ function calendarSpec(
           'missing_account_timezone'
         );
       }
+      assertReportingIanaTimezoneV1(timezone, override === undefined ? 'account.timezone' : 'period_timezone');
       return { ...base, timezone };
     }
     case 'source_timezone': {
