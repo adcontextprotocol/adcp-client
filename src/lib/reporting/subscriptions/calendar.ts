@@ -497,3 +497,11 @@ function createSubDailyLocalCalendar(spec: ReportingPeriodCalendarSpecV1, stepMs
     key: JSON.stringify([spec.period_duration, spec.alignment, timeZone, 'local-sub-daily']),
   };
 }
+
+/**
+ * Wall-clock conversion shared with the coverage explainer (`explain.ts`), which reads a plain date
+ * in the offering's zone.
+ *
+ * @internal Not re-exported from any public entry point.
+ */
+export const calendarInternalsV1 = { instantForWall };

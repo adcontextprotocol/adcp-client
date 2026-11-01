@@ -49,7 +49,35 @@ An `all_authorized_accounts` subscription follows every grant, including account
 
 ## Reconcile
 
-`client.reporting.reconcile()` and `explain()` arrive in a later beta. Until then, `owedSubscriptionPeriodsV1` from `@adcp/sdk/reporting/advanced` computes owed periods from `get_principal`, `list_accounts` and `get_media_buys`, and `createReliableReportingConsumerV1({ storage })` from `@adcp/sdk/reporting/consumer` runs the durable buyer loop over the same storage object sellers use (`memoryStorage()`, or `postgresStorage({ pool })` from `@adcp/reporting-storage`). Never compute periods yourself.
+`client.reporting.reconcile()` answers "what does this seller owe me, and where is it?" from wire reads only. Never compute periods yourself.
+
+```ts
+const report = await client.reporting.reconcile({ since: '2026-11-01', grace: 'PT1H' });
+report.definitive; // every account's reads completed: roster, buys, ledger
+report.summary; // { owed, delivered, pending, late, missing_obligation, withheld, not_owed }
+for (const line of report.periods.filter(p => p.responsible_party === 'seller')) {
+  console.log(line.account_id, line.period.start, line.status, line.reason, line.message);
+}
+```
+
+- **The roster follows the subscriptions.** `list_accounts` intersected with each subscription's scope, read on every run; there is no account list to keep. `accounts: ['acc_a']` narrows it.
+- **`PeriodLine`.** One line per owed obligation, with wire-style keys: `account_id`, `subscription_id`, `subscription_version`, `offering_id`, `report_definition_id`, `media_buy_ids`, `period` (`start`, `end`, `timezone`), `status`, `reason` (the spec's reason code), `responsible_party` and `message`, plus `expected_at`, `reporting_obligation_id`, `reporting_revision_id` and `finality` when the seller's ledger has them.
+- **Status.** `delivered`: a current revision of the required finality exists. `pending`: the seller has not planned it yet but is inside `grace` (default `PT1H`), or planned it and is before `expected_at`. `late`: past `expected_at`. `missing_obligation`: the seller has no obligation for it after the grace. `withheld`: the account's authority ended (see below).
+- **`includeNotOwed: true`** adds `not_owed` lines with their reason (`before_confirmation`, `after_stop`, ...) for the audit trail.
+- **Revoked accounts** are unknown to every task, so their periods can't be read. They are listed in `report.accounts` as `unauthorized` with the seller's `withheld_period_count`. Pass the previous report as `previous` and its undelivered periods that ended before `unauthorized_at` are carried over as `withheld`.
+- **Never smaller, only non-definitive.** A failed read marks the account `failed` and `definitive: false`; it never shrinks the owed set.
+- **Fleet.** `multiClient.reporting.reconcile({ concurrency: 4 })` runs every configured seller and returns `{ bySeller, failures, definitive, summary }`.
+
+## Explain
+
+```ts
+const traces = await client.reporting.explain({ accountId: 'acc_a', subscriptionId: 'analytics-daily', period: '2026-11-03' });
+traces[0].verdict; // 'owed' | 'not_owed'
+traces[0].reason; // 'before_confirmation'
+traces[0].explanation; // 'Not owed: the period ends 2026-11-04T05:00Z, before mb_1 was confirmed at 2026-11-04T10:00Z.'
+```
+
+Each `CoverageTrace` (`side: 'buyer'`) is the JSON the seller's `reporting.explainCoverage` returns, with the same steps, sentences and `inputs_digest`. A `YYYY-MM-DD` period is read in each offering's zone. See [Coverage, explained](REPORTING-SUBSCRIPTIONS-COVERAGE.md#explaining-a-period). `owedSubscriptionPeriodsV1` and `explainSubscriptionCoverageV1` from `@adcp/sdk/reporting/advanced` take the same inputs directly; `createReliableReportingConsumerV1({ storage })` from `@adcp/sdk/reporting/consumer` runs the durable buyer loop.
 
 ## Events
 

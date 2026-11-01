@@ -25,3 +25,16 @@ export {
   type SubscriptionInput,
   type SyncPrincipalGuardOptions,
 } from './reporting-facade';
+export type {
+  ExplainOptions,
+  FleetReconcileOptions,
+  FleetReconcileReport,
+  PeriodLine,
+  PeriodStatus,
+  ReconcileAccount,
+  ReconcileOptions,
+  ReconcileReport,
+  ReportingReadClient,
+} from './reporting-reconcile';
+export type { CoverageTrace, CoverageTraceStep, CoveragePeriodSelector } from '../reporting/subscriptions/explain';
+export type { CoverageReason, CoverageRule } from '../reporting/subscriptions/reason-codes';

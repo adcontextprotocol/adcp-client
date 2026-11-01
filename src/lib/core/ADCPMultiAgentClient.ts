@@ -54,6 +54,11 @@ import type {
 } from '../types/tools.generated';
 import type { MutatingRequestInput } from '../utils/idempotency';
 import type {
+  FleetReconcileOptions,
+  FleetReconcileReport,
+  ReportingReadClient,
+} from '../principal/reporting-reconcile';
+import type {
   CanonicalCreateMediaBuyInput,
   CanonicalCreativeResponse,
   CanonicalGetProductsRequest,
@@ -807,6 +812,25 @@ export class ADCPMultiAgentClient {
    */
   get agentCount(): number {
     return this.agentClients.size;
+  }
+
+  /**
+   * Reporting subscriptions across every configured seller (experimental, AdCP 3.3):
+   * `reporting.reconcile(options)` runs `client.reporting.reconcile()` on each agent with bounded
+   * concurrency and returns `{ bySeller, failures, definitive, summary }`.
+   */
+  get reporting(): {
+    reconcile(options?: FleetReconcileOptions): Promise<FleetReconcileReport>;
+  } {
+    return {
+      reconcile: async (options = {}) => {
+        const { reconcileReportingFleet } = await import('../principal/reporting-reconcile');
+        return reconcileReportingFleet(
+          [...this.agentClients.entries()].map(([id, agent]) => [id, agent as unknown as ReportingReadClient] as const),
+          options
+        );
+      },
+    };
   }
 
   // ====== UTILITY METHODS ======

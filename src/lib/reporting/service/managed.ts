@@ -205,7 +205,17 @@ const SWEEP_KEY = 'sweep';
 const MAX_PAGES = 1_000;
 /** The authInfo fields a service-context read restores: identity only, never secrets. */
 const SNAPSHOT_AUTH_FIELDS: ReadonlySet<string> = new Set(['clientId', 'scopes', 'resource', 'expiresAt']);
-const ALL_BUY_STATUSES = ['pending_activation', 'active', 'paused', 'completed', 'canceled', 'rejected'];
+// Every get_media_buys status (enums/media-buy-status.json), plus the pre-3.0 pending_activation.
+const ALL_BUY_STATUSES = [
+  'pending_creatives',
+  'pending_start',
+  'pending_activation',
+  'active',
+  'paused',
+  'completed',
+  'canceled',
+  'rejected',
+];
 
 /** The managed block, resolved into the engine and the advanced options the service runs. */
 export interface ManagedReportingSubscriptions<TCtxMeta> {

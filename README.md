@@ -537,13 +537,16 @@ const server = createAdcpServerFromPlatform(reporting.install(platform), { proto
 await client.reporting.subscribe(analyticsDaily, { registerDestination: archive });
 await client.reporting.unsubscribe('pacing-hourly');
 const outcome = await client.accounts.ensure(key, { billing: 'operator' }); // ready | pending | ambiguous | rejected
+const report = await client.reporting.reconcile(); // every owed period: delivered | pending | late | missing_obligation | withheld
+const [trace] = await client.reporting.explain({ accountId: 'acc_a', period: '2026-11-03' }); // why it is owed, or not
 ```
 
 - **Storage.** One object; process-local storage is refused in production. Apply schema changes with `npx adcp-reporting-storage migrate`.
 - **Grants.** The SDK is the only source of `authorized_at`. End a relationship with `windDownGrant()` instead of revoking.
-- **Coming in later betas:** buyer `reconcile`, `explain` and events, the test kit, and explain traces.
+- **Explain.** `reconcile` lines and `explain` traces carry the spec's reason codes and the same `CoverageTrace` JSON as the Python SDK.
+- **Coming in later betas:** buyer events, the test kit, and the seller's `explainCoverage`.
 
-Guides: [seller](docs/guides/REPORTING-SUBSCRIPTIONS-SELLER.md) · [buyer](docs/guides/REPORTING-SUBSCRIPTIONS-BUYER.md) · [accounts](docs/guides/FIRST-CALL-TO-A-SELLER.md) · [ledger and building blocks](docs/guides/REPORTING-LEDGER.md) · [storage package](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/README.md)
+Guides: [seller](docs/guides/REPORTING-SUBSCRIPTIONS-SELLER.md) · [buyer](docs/guides/REPORTING-SUBSCRIPTIONS-BUYER.md) · [coverage](docs/guides/REPORTING-SUBSCRIPTIONS-COVERAGE.md) · [errors](docs/guides/REPORTING-SUBSCRIPTIONS-ERRORS.md) · [migrating](docs/guides/REPORTING-SUBSCRIPTIONS-MIGRATION.md) · [accounts](docs/guides/FIRST-CALL-TO-A-SELLER.md) · [ledger and building blocks](docs/guides/REPORTING-LEDGER.md) · [storage package](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/README.md)
 
 ## Multi-Agent Operations
 
