@@ -1975,6 +1975,7 @@ COMMANDS:
                               --transport a2a it also grades the A2A
                               operation-resolution vectors)
   fuzz <url>                  Property-based conformance fuzzing against schemas
+  reporting <subcommand>      Reporting subscriptions: explain, diff, reconcile
   resolve <agent-url>         Walk the brand_json_url discovery chain
                               (capabilities -> brand.json -> JWKS) and print
                               the per-step trace. Triages request_signature_brand_*
@@ -5941,6 +5942,12 @@ async function main() {
   if (args[0] === 'grade') {
     const { handleGradeCommand } = require('./adcp-grade.js');
     await handleGradeCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'reporting') {
+    const { handleReportingCommand } = require('./adcp-reporting.js');
+    process.exitCode = await handleReportingCommand(args.slice(1), { resolveAgent, AdCPClient });
     return;
   }
 
