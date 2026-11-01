@@ -167,4 +167,22 @@ describe('differential-harness repros', () => {
       error => error.detail === 'invalid_timezone'
     );
   });
+
+  test('seed 200088 (adcp#8681): a cutover without previous_timezone is read whenever an account_timezone offering resolves', () => {
+    const cutover = table.cases.find(item => item.id === 'account-timezone-change-is-a-cutover');
+    const input = structuredClone(cutover.input);
+    assert.ok(owedSubscriptionPeriodsV1(input).length > 0);
+    // Only periods after the cutover are owed here, so the old zone governs nothing, and the entry is
+    // still read: it is incomplete without previous_timezone.
+    const entry = input.coverage.timezone_cutovers[0];
+    delete entry.previous_timezone;
+    for (const buy of input.buys) {
+      buy.confirmed_at = entry.effective_at;
+      buy.start_time = entry.effective_at;
+    }
+    assert.throws(
+      () => owedSubscriptionPeriodsV1(input),
+      error => error.code === 'COVERAGE_INPUT_INCOMPLETE' && error.detail === 'missing_previous_timezone'
+    );
+  });
 });

@@ -744,16 +744,17 @@ function timezoneFor(timeline: TimezoneTimeline, offeringId: string, at: number)
     cutover => cutover.offeringId === undefined || cutover.offeringId === offeringId
   );
   if (applicable.length === 0) return timeline.current;
-  if (at < applicable[0]!.at) {
-    if (applicable[0]!.previous === undefined) {
-      throw new CoverageInputError(
-        'COVERAGE_INPUT_INCOMPLETE',
-        'timezone_cutovers entries require previous_timezone',
-        'missing_previous_timezone'
-      );
-    }
-    return applicable[0]!.previous;
+  // adcp#8681 (error-codes.json): a timezone_cutovers entry is read whenever an account_timezone
+  // offering resolves, whether or not a period under the old zone is owed, so every applicable
+  // entry needs its previous_timezone here, not only the first one before its effective_at.
+  if (applicable.some(cutover => cutover.previous === undefined)) {
+    throw new CoverageInputError(
+      'COVERAGE_INPUT_INCOMPLETE',
+      'timezone_cutovers entries require previous_timezone',
+      'missing_previous_timezone'
+    );
   }
+  if (at < applicable[0]!.at) return applicable[0]!.previous;
   let zone = applicable[0]!.timezone;
   for (const cutover of applicable) if (cutover.at <= at) zone = cutover.timezone;
   return zone;
