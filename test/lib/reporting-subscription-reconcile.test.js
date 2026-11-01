@@ -266,6 +266,18 @@ describe('client.reporting.reconcile', () => {
     assert.equal(report.accounts[0].error.task, 'get_media_buys');
   });
 
+  test('a read that never answers fails its account after the read timeout', async () => {
+    const w = world();
+    await w.reporting.subscribe(subscription);
+    const hung = new ReportingClient({ ...w.buyer, getMediaBuys: () => new Promise(() => {}) });
+    const report = await hung.reconcile({ now: new Date(), readTimeoutMilliseconds: 50 });
+    assert.equal(report.definitive, false);
+    assert.deepEqual(
+      { task: report.accounts[0].error.task, code: report.accounts[0].error.code },
+      { task: 'get_media_buys', code: 'TIMEOUT' }
+    );
+  });
+
   test('grace must be a fixed-length duration', async () => {
     const w = world();
     await assert.rejects(w.reporting.reconcile({ grace: 'P1M' }), error => error.code === 'INVALID_REQUEST');

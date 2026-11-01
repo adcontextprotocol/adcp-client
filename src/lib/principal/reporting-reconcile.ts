@@ -143,6 +143,8 @@ export interface ReconcileOptions {
   previous?: ReconcileReport;
   /** Evaluate as of this instant. Defaults to now. */
   now?: string | Date;
+  /** Bounds each read, so one unresponsive seller cannot stall the report. Defaults to 30 seconds. */
+  readTimeoutMilliseconds?: number;
 }
 
 /** Input to {@link explainReportingSubscriptionCoverage}. */
@@ -155,6 +157,8 @@ export interface ExplainOptions {
   /** A plain date read in the offering's zone, an instant, or `{ start, end }`. */
   period: CoveragePeriodSelector;
   now?: string | Date;
+  /** Bounds each read. Defaults to 30 seconds. */
+  readTimeoutMilliseconds?: number;
 }
 
 const MAX_PAGES = 1_000;
@@ -198,6 +202,47 @@ class ReadFailure extends Error {
   ) {
     super(message);
   }
+}
+
+const TASK_METHODS = [
+  'getPrincipal',
+  'listAccounts',
+  'getAdcpCapabilities',
+  'getMediaBuys',
+  'getReportingStatus',
+] as const;
+
+/** The client with every read bounded: a read that does not answer in time fails as `TIMEOUT`. */
+function withReadTimeout(client: ReportingReadClient, milliseconds: number | undefined): ReportingReadClient {
+  const limit = milliseconds ?? 30_000;
+  if (!Number.isSafeInteger(limit) || limit < 1) {
+    throw new ReportingSubscriptionError('INVALID_REQUEST', 'readTimeoutMilliseconds must be a positive integer.', {
+      dispatched: false,
+    });
+  }
+  const bounded: Record<string, unknown> = { getAgentId: client.getAgentId?.bind(client) };
+  for (const name of TASK_METHODS) {
+    const method = client[name] as Read | undefined;
+    if (!method) continue;
+    bounded[name] = async (params: Json) => {
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        return await Promise.race([
+          method.call(client, params),
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => {
+              const task = name.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+              reject(new ReadFailure(task, 'TIMEOUT', `${task} did not answer within ${limit} ms`));
+            }, limit);
+            timer.unref?.();
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+  }
+  return bounded as unknown as ReportingReadClient;
 }
 
 async function read(task: string, method: Read | undefined, client: unknown, params: Json): Promise<Json> {
@@ -560,9 +605,10 @@ function failure(error: unknown, fallbackTask: string): NonNullable<ReconcileAcc
  * @experimental Reporting subscriptions (AdCP 3.3).
  */
 export async function reconcileReportingSubscriptions(
-  client: ReportingReadClient,
+  wireClient: ReportingReadClient,
   options: ReconcileOptions = {}
 ): Promise<ReconcileReport> {
+  const client = withReadTimeout(wireClient, options.readTimeoutMilliseconds);
   const now = instantOf(options.now, 'now');
   const graceMs = durationMs(options.grace ?? 'PT1H');
   const principal = await readPrincipal(client);
@@ -828,9 +874,10 @@ function statusMessage(
  * @experimental Reporting subscriptions (AdCP 3.3).
  */
 export async function explainReportingSubscriptionCoverage(
-  client: ReportingReadClient,
+  wireClient: ReportingReadClient,
   options: ExplainOptions
 ): Promise<CoverageTrace[]> {
+  const client = withReadTimeout(wireClient, options.readTimeoutMilliseconds);
   if (typeof options.accountId !== 'string' || options.accountId.length === 0) {
     throw new ReportingSubscriptionError('INVALID_REQUEST', 'explain needs accountId. Pass the account to explain.', {
       dispatched: false,
