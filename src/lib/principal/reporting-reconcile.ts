@@ -234,7 +234,6 @@ function withReadTimeout(client: ReportingReadClient, milliseconds: number | und
               const task = name.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
               reject(new ReadFailure(task, 'TIMEOUT', `${task} did not answer within ${limit} ms`));
             }, limit);
-            timer.unref?.();
           }),
         ]);
       } finally {
