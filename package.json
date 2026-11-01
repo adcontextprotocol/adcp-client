@@ -144,6 +144,16 @@
         "default": "./dist/lib/testing/index.js"
       }
     },
+    "./testing/reporting": {
+      "import": {
+        "types": "./dist/lib/testing/reporting/index.d.mts",
+        "default": "./dist/lib/testing/reporting/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/testing/reporting/index.d.ts",
+        "default": "./dist/lib/testing/reporting/index.js"
+      }
+    },
     "./testing/personas": {
       "import": {
         "types": "./dist/lib/testing/personas/index.d.mts",
@@ -560,6 +570,9 @@
       ],
       "enums": [
         "dist/lib/enums.d.ts"
+      ],
+      "testing/reporting": [
+        "dist/lib/testing/reporting/index.d.ts"
       ],
       "testing/personas": [
         "dist/lib/testing/personas/index.d.ts"

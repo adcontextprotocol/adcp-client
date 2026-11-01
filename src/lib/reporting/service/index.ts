@@ -1225,6 +1225,19 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         if (capabilities && capabilities.principal === undefined) {
           capabilities.principal = managed.principals.capabilities;
         }
+        // A runtime the service built pairs notification_configs with sync_principal, so it also
+        // advertises how buyers learn its capabilities changed, unless the host did.
+        if (capabilities && managed.ownsPrincipalRuntime && capabilities.capability_changes === undefined) {
+          capabilities.capability_changes = {
+            capabilities_version: 'reporting-subscriptions-1',
+            cache_ttl_seconds: 3600,
+            notifications: {
+              supported: true,
+              registration_task: 'sync_principal',
+              event_types: ['capabilities.changed'],
+            },
+          };
+        }
       }
       if (servesAccountConfigurations && typeof platform.accounts.upsert !== 'function') {
         throw new TypeError(

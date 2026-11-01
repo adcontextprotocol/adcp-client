@@ -13,6 +13,8 @@ import { createHash } from 'node:crypto';
 import { PlatformConfigError } from '../../server/decisioning/runtime/validate-platform';
 import type { Account } from '../../server/decisioning/account';
 import type { RequestContext } from '../../server/decisioning/context';
+import { createPersistentNotificationRuntime } from '../../server/notification-subscriptions/runtime';
+import { principalNotificationSubscriptionStore } from '../../server/principal/store';
 import {
   createPrincipalLifecycle,
   type CreatePrincipalLifecycleOptions,
@@ -134,7 +136,16 @@ export interface SubscriptionOptions<TCtxMeta = Record<string, unknown>> {
    * store (`storage.principals`) and the `reportingSubscriptions` section (the service installs it).
    * The built runtime is `service.principals`; serve it with `protocol: service.principals.protocol`.
    */
-  principal?: Omit<CreatePrincipalLifecycleOptions<Account<TCtxMeta>>, 'store' | 'reportingSubscriptions'>;
+  principal?: Omit<
+    CreatePrincipalLifecycleOptions<Account<TCtxMeta>>,
+    'store' | 'reportingSubscriptions' | 'notifications'
+  > & {
+    /**
+     * Delivers `principal.changed` and `capabilities.changed`. Optional with process-local storage
+     * (`memoryStorage()`), where the default makes no outbound calls; required with durable storage.
+     */
+    notifications?: CreatePrincipalLifecycleOptions<Account<TCtxMeta>>['notifications'];
+  };
   /**
    * Engine state. Defaults to the service's `storage.subscriptions`, else process memory, which is
    * refused outside `NODE_ENV=test|development`.
@@ -246,6 +257,8 @@ export interface ManagedReportingSubscriptions<TCtxMeta> {
   readonly engine: ReportingSubscriptionEngineV1;
   /** The principal runtime the section is installed on: the one passed, or the one built over storage. */
   readonly principals: PrincipalLifecycleRuntime & PrincipalLifecycleRuntimeSubscriptions;
+  /** Whether the service built the principal runtime (`subscriptions.principal`), so it owns its capabilities. */
+  readonly ownsPrincipalRuntime: boolean;
   readonly advanced: ReliableReportingSubscriptionsOptionsV1<TCtxMeta>;
   /** Called by `service.install(platform)`: the platform the roster and buys are read from. */
   bindPlatform(platform: unknown): void;
@@ -307,8 +320,20 @@ function managedPrincipals<TCtxMeta>(
         { configField: 'storage' }
       );
     }
-    return createPrincipalLifecycle({ ...options.principal, store: storage.principals }) as PrincipalLifecycleRuntime &
-      PrincipalLifecycleRuntimeSubscriptions;
+    const { notifications, ...principal } = options.principal;
+    if (notifications === undefined && storage.durability !== 'process-local') {
+      throw new PlatformConfigError(
+        'subscriptions.principal.notifications is required with durable storage: it delivers principal.changed to buyers. Pass a runtime from createPersistentNotificationRuntime.',
+        { configField: 'subscriptions.principal.notifications' }
+      );
+    }
+    return createPrincipalLifecycle({
+      // notification_configs is always a principal section; the server pairs it with this task.
+      includeCompatibilityNotificationTask: true,
+      ...principal,
+      notifications: notifications ?? noOutboundNotifications(storage.principals),
+      store: storage.principals,
+    }) as PrincipalLifecycleRuntime & PrincipalLifecycleRuntimeSubscriptions;
   }
   const principals = options.principals;
   if (typeof principals?.installReportingSubscriptions !== 'function' || !principals.listReportingSubscriptions) {
@@ -320,6 +345,35 @@ function managedPrincipals<TCtxMeta>(
     );
   }
   return principals;
+}
+
+/** Development notifications: registrations are stored, nothing is ever sent. */
+function noOutboundNotifications(store: ReportingStorage['principals']) {
+  return createPersistentNotificationRuntime({
+    store: principalNotificationSubscriptionStore(store),
+    proofAdapter: { prove: async () => ({ proved: false }) },
+    validateDestination: async () => ({ allowed: false, reason: 'development storage makes no outbound calls' }),
+    authorizeDelivery: async () => ({ authorized: false }),
+    checkpointDeliveryAttempt: async () => {},
+    createEmitter: () => ({
+      forTenantScope() {
+        return this;
+      },
+      async emit(params: { delivery_id: string }) {
+        return {
+          delivery_id: params.delivery_id,
+          idempotency_key: params.delivery_id,
+          attempts: 0,
+          delivered: false,
+          terminal: true,
+          errors: ['outbound delivery is disabled with development storage'],
+        };
+      },
+      async emitRecovered(params: { delivery_id: string }) {
+        return this.emit(params);
+      },
+    }),
+  } as never);
 }
 
 export function createManagedReportingSubscriptions<TCtxMeta>(
@@ -964,6 +1018,7 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
     explainCoverage,
     engine,
     principals,
+    ownsPrincipalRuntime: options.principal !== undefined,
     advanced,
     bindPlatform(value) {
       platform = value as PlatformReads;

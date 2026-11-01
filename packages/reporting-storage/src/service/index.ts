@@ -227,6 +227,16 @@ type SubscriptionBlock<TCtxMeta> =
   | CreateReliableReportingServiceOptionsV1<TCtxMeta>['subscriptions']
   | CreateReliableReportingServiceOptionsV1<TCtxMeta>['reportingSubscriptions'];
 
+/** PostgreSQL storage is durable, so principal notifications must really be delivered. */
+function requiredNotifications<T>(notifications: T | undefined): T {
+  if (notifications === undefined) {
+    throw new TypeError(
+      'subscriptions.principal.notifications is required with PostgreSQL storage: it delivers principal.changed to buyers. Pass a runtime from createPersistentNotificationRuntime.'
+    );
+  }
+  return notifications;
+}
+
 /** Default the managed block's stores to `storage` and build its principal runtime from `principal`. */
 function withStorageSubscriptions<TCtxMeta>(
   block: SubscriptionBlock<TCtxMeta>,
@@ -245,6 +255,7 @@ function withStorageSubscriptions<TCtxMeta>(
       ? {
           principals: createPrincipalLifecycle({
             ...principal,
+            notifications: requiredNotifications(principal.notifications),
             store: storage.principals,
           }) as SubscriptionOptions<TCtxMeta>['principals'],
         }
