@@ -129,7 +129,7 @@ app.post('/adcp/webhooks', async (req, res) => {
 
 ## Receipts for billing feeds
 
-A receipt says you verified and committed the data, so the SDK never sends one on read. The policy is off by default. With it off, delivered `consumer_receipt` (billing) periods carry `receipt: { status: 'owed_by_buyer' }` and `responsible_party: 'buyer'`, and the client warns once.
+A receipt says you verified and committed the data, so the SDK never sends one on read. The policy is off by default. With it off, delivered `consumer_receipt` (billing) periods carry `receipt: { status: 'owed_by_buyer' }` and `responsible_party: 'buyer'`, and the client warns once. Once you reject a revision, its line reads `receipt: { status: 'rejected_by_buyer' }` with `responsible_party: 'seller'`: the seller has to correct and re-deliver it. The policy's receipt write is bounded by `readTimeoutMilliseconds`, like every read.
 
 ```ts
 const report = await client.reporting.reconcile({
