@@ -179,6 +179,19 @@ export interface DeclaredCreativeFit {
   pixel_ratios?: readonly number[];
 }
 
+/** @internal Preserve distinct diagnostics before applying the public budget. */
+export function uniqueCreativeFitReasons(reasons: readonly CreativeFitReason[]): CreativeFitReason[] {
+  const seen = new Set<string>();
+  return reasons
+    .filter(reason => {
+      const key = JSON.stringify([reason.code, reason.path]);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 32);
+}
+
 /** @internal Match the existing legacy size acceptor's allowance for rounded dimensions. */
 export const CREATIVE_FIT_ASPECT_RATIO_TOLERANCE = 0.01;
 
@@ -369,7 +382,8 @@ function interval(value: unknown): Interval | undefined {
 export function evaluateDeclaredCreativeFit(
   facts: NormalizedCreativeFitFacts,
   declaration: Json,
-  path = 'format_options'
+  path = 'format_options',
+  scope: 'canonical' | 'legacy_shape' | 'legacy_catalog_shape' = 'canonical'
 ): DeclaredCreativeFit {
   const failures: CreativeFitReason[] = [
     ...facts.problems.filter(item => item.code === 'conflicting_facts' || item.code === 'invalid_fact'),
@@ -385,8 +399,22 @@ export function evaluateDeclaredCreativeFit(
   if (!facts.kind) unknown('format_kind_missing', 'format_kind');
   else if (facts.kind !== declaration.format_kind)
     fail('format_kind_mismatch', 'format_kind', declaration.format_kind, facts.kind);
-  if (declaration.technical_requirements_complete !== true)
+  if (scope === 'canonical' && declaration.technical_requirements_complete !== true)
     unknown('technical_requirements_incomplete', 'technical_requirements_complete');
+  if (scope !== 'canonical') {
+    // A legacy reference describes a bounded shape envelope, not the complete
+    // canonical technical contract. Missing essentials cannot become wildcards.
+    if (['image', 'html5', 'display_tag', 'video_hosted'].includes(String(facts.kind))) {
+      for (const axis of ['width', 'height'])
+        if (!positive(params[axis])) unknown('legacy_dimensions_unstated', `params.${axis}`);
+    }
+    if (['video_hosted', 'audio_hosted', 'video_vast', 'audio_vast'].includes(String(facts.kind))) {
+      if (!positive(params.duration_ms_exact) && !interval(params.duration_ms_range))
+        unknown('legacy_duration_unstated', 'params.duration_ms_exact');
+    }
+    if (facts.kind === 'display_tag' && params.supported_delivery_types === undefined)
+      unknown('legacy_delivery_type_unproven', 'params.supported_delivery_types');
+  }
   if (!facts.kind || !PRIMARY[facts.kind]) unknown('unsupported_format_kind', 'format_kind');
   if (declaration.format_schema !== undefined || facts.kind === 'custom')
     unknown('unresolved_format_schema', 'format_schema');
@@ -517,6 +545,27 @@ export function evaluateDeclaredCreativeFit(
       const intrinsic = pair(asset);
       const assetRatio = asset.pixel_ratio ?? facts.params.pixel_ratio;
       if (!intrinsic) {
+        const possibleRatios = ratios.filter(ratio => assetRatio === undefined || assetRatio === ratio);
+        for (const axis of ['width', 'height']) {
+          const measured = asset[axis];
+          if (!positive(measured) || possibleRatios.length === 0) continue;
+          if (
+            possibleRatios.every(ratio => {
+              const logical = measured / ratio;
+              return (
+                !Number.isInteger(logical) ||
+                (positive(params[axis]) && params[axis] !== logical) ||
+                (positive(params[`min_${axis}`]) && logical < (params[`min_${axis}`] as number)) ||
+                (positive(params[`max_${axis}`]) && logical > (params[`max_${axis}`] as number)) ||
+                (Array.isArray(params.sizes) && params.sizes.every(size => record(size)?.[axis] !== logical)) ||
+                (positive(facts.params[axis]) && facts.params[axis] !== logical)
+              );
+            })
+          )
+            fail('size_mismatch', axis);
+        }
+        if (assetRatio !== undefined && possibleRatios.length === 0 && ratios.length > 0)
+          fail('size_mismatch', 'pixel_ratios');
         unknown('primary_asset_dimensions_missing', 'primaryAssetFacts.width/height');
         continue;
       }
@@ -535,7 +584,8 @@ export function evaluateDeclaredCreativeFit(
           return [];
         return [{ size, ratio }];
       });
-      if (candidates.length === 0) fail('image_size_or_density_mismatch', 'sizes');
+      if (candidates.length === 0)
+        fail(scope !== 'canonical' ? 'size_mismatch' : 'image_size_or_density_mismatch', 'sizes');
       else if (candidates.length > 1) unknown('pixel_ratio_ambiguous', 'primaryAssetFacts.pixel_ratio');
       else {
         logicalSize = candidates[0]!.size;
@@ -706,13 +756,17 @@ export function evaluateDeclaredCreativeFit(
           unknown('invalid_declaration', 'params.slots');
         const raw = facts.assets[slot.asset_group_id];
         const items = raw === undefined ? [] : Array.isArray(raw) ? raw : [raw];
-        if ((slot.required === true || (typeof slot.min === 'number' && slot.min > 0)) && items.length === 0)
-          fail('required_slot_missing', 'slots');
+        const unboundCatalogSlot = scope === 'legacy_catalog_shape' && raw === undefined;
+        if ((slot.required === true || (typeof slot.min === 'number' && slot.min > 0)) && items.length === 0) {
+          if (unboundCatalogSlot) unknown('legacy_slot_binding_unproven', 'params.slots');
+          else fail('required_slot_missing', 'slots');
+        }
         if (
           (typeof slot.min === 'number' && items.length < slot.min) ||
           (typeof slot.max === 'number' && items.length > slot.max)
         )
-          fail('slot_count_mismatch', 'slots');
+          if (unboundCatalogSlot) unknown('legacy_slot_binding_unproven', 'params.slots');
+          else fail('slot_count_mismatch', 'slots');
         if (typeof slot.asset_type === 'string' && items.some(item => record(item)?.asset_type !== slot.asset_type))
           fail('slot_asset_type_mismatch', 'slots');
         if (
@@ -748,7 +802,7 @@ export function evaluateDeclaredCreativeFit(
   if (declaration.serve_adaptations !== undefined) unknown('unsupported_adaptation_contract', 'serve_adaptations');
   return {
     verdict: failures.length > 0 ? 'does_not_fit' : missing.length > 0 ? 'insufficient_facts' : 'fits',
-    reasons: [...failures, ...missing].slice(0, 32),
+    reasons: uniqueCreativeFitReasons([...failures, ...missing]),
     ...(logicalSize && { logical_size: logicalSize }),
     ...(renditionDensities.size === 1 && pixelRatio !== undefined && { pixel_ratio: pixelRatio }),
     ...(renditionDensities.size > 0 && { pixel_ratios: [...renditionDensities].sort((a, b) => a - b) }),

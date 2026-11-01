@@ -1,6 +1,10 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { fitCreativeToPackages, projectSyncCreativesForDelivery } = require('../../dist/lib/v2/projection');
+const {
+  fitCreativeToPackages,
+  projectSyncCreativesForDelivery,
+  CreativeFormatProjectionError,
+} = require('../../dist/lib/v2/projection');
 const { vectors } = require('../fixtures/canonical-image-pixel-ratio.json');
 const VERSION = { adcpVersion: '3.3.0-beta.3' };
 const OWNER = 'https://creative.adcontextprotocol.org';
@@ -25,6 +29,422 @@ function freeze(value) {
   }
   return value;
 }
+
+const legacyTag = () => ({
+  creative_id: 'legacy-tag',
+  name: 'Acme tall banner',
+  format_kind: 'display_tag',
+  format_parameters: { width: 300, height: 600 },
+  assets: {
+    tag_url: {
+      asset_type: 'display_tag',
+      delivery_type: 'inline_markup',
+      markup_type: 'standard',
+      markup: '<div>Acme</div>',
+    },
+  },
+});
+const legacyPackage = (package_id, ...format_ids) => ({ package_id, format_ids });
+const legacyHtml = (width, height) => ({
+  agent_url: OWNER,
+  id: `display_${width}x${height}_html`,
+  width,
+  height,
+});
+const legacyFit = (creative, packages, options = {}) =>
+  fit(creative, packages, { adcpVersion: '3.1', wireMode: 'legacy', ...options });
+
+test('legacy fit: nine packages distinguish exact HTML sizes from known mismatches', () => {
+  const sizes = [
+    [[320, 50]],
+    [[300, 250]],
+    [[300, 600]],
+    [[728, 90]],
+    [[970, 250]],
+    [[160, 600]],
+    [[300, 600]],
+    [
+      [300, 250],
+      [300, 600],
+    ],
+    [
+      [320, 50],
+      [300, 600],
+    ],
+  ];
+  const packages = sizes.map((alternatives, index) =>
+    legacyPackage(
+      `P${index}`,
+      ...alternatives.flatMap(([width, height]) => [
+        legacyHtml(width, height),
+        { agent_url: OWNER, id: 'display_html', width, height },
+        { agent_url: OWNER, id: `display_${width}x${height}_image`, width, height },
+        { agent_url: OWNER, id: 'display_js', width, height },
+      ])
+    )
+  );
+  const options = { primaryAssetFacts: { width: 300, height: 600, delivery_type: 'inline_markup' } };
+  const decision = legacyFit(freeze(legacyTag()), freeze(packages), options);
+  assert.deepEqual(
+    decision.perPackage.map(entry => entry.verdict),
+    ['does_not_fit', 'does_not_fit', 'fits', 'does_not_fit', 'does_not_fit', 'does_not_fit', 'fits', 'fits', 'fits']
+  );
+  assert.ok(decision.perPackage[0].reasons.some(reason => reason.code === 'size_mismatch'));
+  assert.equal(decision.wire, undefined);
+  const compatible = packages.filter((_, index) => [2, 6, 7, 8].includes(index));
+  const accepted = legacyFit(legacyTag(), compatible, options);
+  assert.equal(
+    accepted.perPackage.every(entry => entry.verdict === 'fits'),
+    true
+  );
+  assert.equal(accepted.wire.selector.format_id.id, 'display_300x600_html');
+});
+
+test('legacy fit: catalog-pinned sizes work without inline dimensions; unsized declarations stay unknown', () => {
+  assert.equal(
+    legacyFit(legacyTag(), [legacyPackage('A', { agent_url: OWNER, id: 'display_300x600_html' })]).perPackage[0]
+      .verdict,
+    'fits'
+  );
+  assert.equal(
+    legacyFit(legacyTag(), [legacyPackage('A', { agent_url: OWNER, id: 'display_320x50_html' })]).perPackage[0].verdict,
+    'does_not_fit'
+  );
+  assert.equal(
+    legacyFit(legacyTag(), [legacyPackage('A', { agent_url: OWNER, id: 'display_html' })]).perPackage[0].verdict,
+    'insufficient_facts'
+  );
+});
+
+test('legacy fit: missing measurements stay unknown, but a known axis mismatch still rejects', () => {
+  const creative = legacyTag();
+  delete creative.format_parameters;
+  const packages = [legacyPackage('A', legacyHtml(320, 50))];
+  assert.equal(legacyFit(creative, packages).perPackage[0].verdict, 'insufficient_facts');
+  const measured = legacyFit(creative, packages, { primaryAssetFacts: { width: 300 } });
+  assert.equal(measured.perPackage[0].verdict, 'does_not_fit');
+  assert.ok(measured.perPackage[0].reasons.some(reason => reason.code === 'size_mismatch'));
+});
+
+test('legacy fit: a public owner copying an AAO ID is not authoritative positive-fit evidence', () => {
+  const alias = { ...legacyHtml(300, 600), agent_url: 'https://formats.acme.example' };
+  assert.equal(legacyFit(legacyTag(), [legacyPackage('A', alias)]).perPackage[0].verdict, 'insufficient_facts');
+  assert.equal(
+    legacyFit(legacyTag(), [legacyPackage('A', { ...alias, width: 320, height: 50 })]).perPackage[0].verdict,
+    'does_not_fit'
+  );
+  const converted = legacyFit(legacyTag(), [legacyPackage('A', alias)], {
+    legacyFormatConverter: () => ({
+      format_kind: 'display_tag',
+      params: { width: 300, height: 600, supported_delivery_types: ['inline_markup'] },
+    }),
+  });
+  assert.equal(converted.perPackage[0].verdict, 'fits');
+  assert.equal(converted.wire.selector.format_id.agent_url, alias.agent_url);
+});
+
+test('legacy fit: native canonical contracts retain their completeness and size requirements', () => {
+  const legacy = legacyHtml(300, 600);
+  for (const [native, expected] of [
+    [{ format_kind: 'display_tag', params: { width: 300, height: 600 } }, 'insufficient_facts'],
+    [{ format_kind: 'display_tag', params: { width: 320, height: 50 } }, 'does_not_fit'],
+  ]) {
+    const result = legacyFit(legacyTag(), [{ package_id: 'A', format_ids: [legacy], format_options: [native] }]);
+    assert.equal(result.perPackage[0].verdict, expected);
+  }
+});
+
+test('legacy fit: hosted audio compares duration and leaves unstated duration unknown', () => {
+  const creative = {
+    creative_id: 'audio',
+    name: 'Acme audio',
+    format_kind: 'audio_hosted',
+    assets: { audio_main: { asset_type: 'audio', duration_ms: 30000 } },
+  };
+  const ref = duration_ms => ({
+    agent_url: OWNER,
+    id: duration_ms ? `audio_standard_${duration_ms / 1000}s` : 'audio_standard',
+    ...(duration_ms && { duration_ms }),
+  });
+  const result = legacyFit(creative, [
+    legacyPackage('exact', ref(30000)),
+    legacyPackage('wrong', ref(15000)),
+    legacyPackage('unstated', ref()),
+  ]);
+  assert.deepEqual(
+    result.perPackage.map(entry => entry.verdict),
+    ['fits', 'does_not_fit', 'insufficient_facts']
+  );
+  assert.ok(result.perPackage[1].reasons.some(reason => reason.code === 'duration_mismatch'));
+  delete creative.assets.audio_main.duration_ms;
+  assert.equal(legacyFit(creative, [legacyPackage('A', ref(30000))]).perPackage[0].verdict, 'insufficient_facts');
+});
+
+test('legacy fit: VAST player sizes fit independently while conflicting shared legacy references still refuse', () => {
+  const creative = {
+    creative_id: 'vast',
+    name: 'Acme VAST',
+    format_kind: 'video_vast',
+    assets: { vast_tag: { asset_type: 'vast', url: 'https://cdn.acme.example/tag.xml' } },
+  };
+  const packages = [360, 480].map((height, index) =>
+    legacyPackage(`P${index}`, { agent_url: OWNER, id: 'video_vast', width: 640, height, duration_ms: 30000 })
+  );
+  const result = legacyFit(creative, packages, { primaryAssetFacts: { duration_ms: 30000 } });
+  assert.deepEqual(
+    result.perPackage.map(entry => entry.verdict),
+    ['fits', 'fits']
+  );
+  assert.equal(result.wire, undefined);
+  assert.equal(result.refusal.code, 'wire_projection_failed');
+  const explicit = legacyFit({ ...creative, format_parameters: { width: 640, height: 360 } }, packages, {
+    primaryAssetFacts: { duration_ms: 30000 },
+  });
+  assert.deepEqual(
+    explicit.perPackage.map(entry => entry.verdict),
+    ['fits', 'does_not_fit']
+  );
+});
+
+test('legacy fit: image density is part of its logical-size contract', () => {
+  const ref = { agent_url: OWNER, id: 'display_image', width: 300, height: 250, pixel_ratio: 2 };
+  assert.equal(
+    legacyFit(image({ width: 600, height: 500, pixel_ratio: 2 }), [legacyPackage('A', ref)]).perPackage[0].verdict,
+    'fits'
+  );
+  assert.equal(
+    legacyFit(image({ width: 600, height: 500, pixel_ratio: 2 }), [legacyPackage('A', { ...ref, pixel_ratio: 1 })])
+      .perPackage[0].verdict,
+    'does_not_fit'
+  );
+});
+
+test('fit reasons are deduplicated by code/path before the diagnostic budget', () => {
+  const repeated = Array.from({ length: 40 }, () => declaration({ width: 320, height: 50 }));
+  const unknown = declaration({ max_file_size_kb: 1 });
+  const result = fit(image(), [pkg('A', ...repeated, unknown)]);
+  const reasons = result.perPackage[0].reasons;
+  const keys = reasons.map(reason => JSON.stringify([reason.code, reason.path]));
+  assert.equal(new Set(keys).size, keys.length);
+  assert.ok(reasons.some(reason => reason.code === 'fact_missing'));
+});
+
+test('legacy fit: partial image facts reject only contradictions every accepted density proves', () => {
+  for (const [asset, width, ratio, expected] of [
+    [{ width: 300 }, 320, 1, 'does_not_fit'],
+    [{ height: 600 }, 300, 1, 'does_not_fit'],
+    [{ width: 600, pixel_ratio: 2 }, 320, 2, 'does_not_fit'],
+    [{ width: 600, pixel_ratio: 2 }, 300, 2, 'insufficient_facts'],
+  ]) {
+    const ref = { agent_url: OWNER, id: 'display_image', width, height: 250, pixel_ratio: ratio };
+    assert.equal(legacyFit(image(asset), [legacyPackage('A', ref)]).perPackage[0].verdict, expected);
+  }
+  const possible = fit(image({ width: 300 }), [
+    pkg('A', declaration({ width: 150, height: 125, pixel_ratios: [1, 2] })),
+  ]);
+  assert.equal(possible.perPackage[0].verdict, 'insufficient_facts');
+});
+
+test('legacy fit: explicit dimensions never overwrite converter exact or ranged constraints', () => {
+  const ref = { agent_url: 'https://formats.acme.example', id: 'custom-banner', width: 300, height: 600 };
+  for (const params of [
+    { width: 320, height: 50 },
+    { min_width: 320, max_width: 640, min_height: 50, max_height: 100 },
+    { sizes: [{ width: 320, height: 50 }] },
+  ]) {
+    const decision = legacyFit(legacyTag(), [legacyPackage('A', ref)], {
+      legacyFormatConverter: () => ({
+        format_kind: 'display_tag',
+        params: { ...params, supported_delivery_types: ['inline_markup'] },
+      }),
+    });
+    assert.equal(decision.perPackage[0].verdict, 'does_not_fit');
+    assert.equal(decision.wire, undefined);
+  }
+});
+
+test('legacy fit: explicit duration cannot override a converter exact duration or escape its range', () => {
+  const creative = {
+    creative_id: 'audio',
+    name: 'Acme audio',
+    format_kind: 'audio_hosted',
+    assets: { audio_main: { asset_type: 'audio', duration_ms: 30000 } },
+  };
+  const ref = { agent_url: 'https://formats.acme.example', id: 'custom-audio', duration_ms: 30000 };
+  for (const params of [{ duration_ms_exact: 15000 }, { duration_ms_range: [null, 15000] }]) {
+    const result = legacyFit(creative, [legacyPackage('A', ref)], {
+      legacyFormatConverter: () => ({ format_kind: 'audio_hosted', params }),
+    });
+    assert.equal(result.perPackage[0].verdict, 'does_not_fit');
+    assert.equal(result.wire, undefined);
+  }
+});
+
+test('legacy fit: explicit density cannot broaden a converter density contract', () => {
+  const ref = {
+    agent_url: 'https://formats.acme.example',
+    id: 'custom-image',
+    width: 300,
+    height: 250,
+    pixel_ratio: 2,
+  };
+  const result = legacyFit(image({ width: 600, height: 500, pixel_ratio: 2 }), [legacyPackage('A', ref)], {
+    legacyFormatConverter: () => ({ format_kind: 'image', params: { width: 300, height: 250, pixel_ratios: [1] } }),
+  });
+  assert.equal(result.perPackage[0].verdict, 'does_not_fit');
+});
+
+test('legacy fit: SDK-derived options use retained refs, while mutations and JSON clones keep canonical checks', () => {
+  const { projectV1ProductToV2 } = require('../../dist/lib/v2/projection/v1-to-v2');
+  const product = () =>
+    projectV1ProductToV2({ product_id: 'product', name: 'Acme display', format_ids: [legacyHtml(300, 600)] }).v2;
+  const derived = product();
+  assert.equal(legacyFit(legacyTag(), [{ package_id: 'A', ...derived }]).perPackage[0].verdict, 'fits');
+  assert.equal(
+    legacyFit(legacyTag(), [{ package_id: 'A', ...JSON.parse(JSON.stringify(derived)) }]).perPackage[0].verdict,
+    'does_not_fit'
+  );
+  derived.format_options[0].params.width = 320;
+  assert.equal(legacyFit(legacyTag(), [{ package_id: 'A', ...derived }]).perPackage[0].verdict, 'does_not_fit');
+  const alias = projectV1ProductToV2({
+    product_id: 'product',
+    name: 'Acme alias',
+    format_ids: [{ ...legacyHtml(300, 600), agent_url: 'https://formats.acme.example' }],
+  }).v2;
+  alias.format_options[0].params.width = 320;
+  assert.equal(legacyFit(legacyTag(), [{ package_id: 'A', ...alias }]).perPackage[0].verdict, 'does_not_fit');
+});
+
+test('legacy fit: converter exceptions propagate and invalid answers remain unknown', () => {
+  const packages = [
+    legacyPackage('A', { agent_url: 'https://formats.acme.example', id: 'custom-banner', width: 300, height: 600 }),
+  ];
+  const failure = new Error('Acme converter failed');
+  assert.throws(
+    () =>
+      legacyFit(legacyTag(), packages, {
+        legacyFormatConverter: () => {
+          throw failure;
+        },
+      }),
+    error => error === failure
+  );
+  const result = legacyFit(legacyTag(), packages, { legacyFormatConverter: () => ({ format_kind: 'not-a-kind' }) });
+  assert.equal(result.perPackage[0].verdict, 'insufficient_facts');
+  assert.equal(result.wire, undefined);
+});
+
+test('legacy fit: inline markup never fits URL-only or HTML5 ZIP declarations', () => {
+  for (const id of ['display_js', 'display_image']) {
+    const result = legacyFit(legacyTag(), [legacyPackage('A', { agent_url: OWNER, id, width: 300, height: 600 })]);
+    assert.equal(result.perPackage[0].verdict, 'does_not_fit');
+  }
+  const zip = legacyFit(
+    legacyTag(),
+    [legacyPackage('A', { agent_url: 'https://formats.acme.example', id: 'zip-banner', width: 300, height: 600 })],
+    {
+      legacyFormatConverter: () => ({ format_kind: 'html5', params: { width: 300, height: 600 } }),
+    }
+  );
+  assert.equal(zip.perPackage[0].verdict, 'does_not_fit');
+});
+
+test('legacy fit: a converter slot contract is never rewritten as a catalog primary alias', () => {
+  const ref = { agent_url: 'https://formats.acme.example', id: 'branded-banner', width: 300, height: 600 };
+  const result = legacyFit(legacyTag(), [legacyPackage('A', ref)], {
+    legacyFormatConverter: () => ({
+      format_kind: 'display_tag',
+      params: {
+        width: 300,
+        height: 600,
+        supported_delivery_types: ['inline_markup'],
+        slots: [{ asset_group_id: 'required_logo', asset_type: 'display_tag', required: true }],
+      },
+    }),
+  });
+  assert.equal(result.perPackage[0].verdict, 'does_not_fit');
+  assert.ok(result.perPackage[0].reasons.some(reason => reason.code === 'required_slot_missing'));
+});
+
+test('legacy fit: resolved required image renditions survive the envelope check', () => {
+  const ref = { agent_url: 'https://formats.acme.example', id: 'dense-image', width: 300, height: 250 };
+  const options = {
+    legacyFormatConverter: () => ({
+      format_kind: 'image',
+      params: {
+        width: 300,
+        height: 250,
+        pixel_ratios: [1, 2],
+        slots: [{ asset_group_id: 'image_main', asset_type: 'image', required_pixel_ratios: [1, 2] }],
+      },
+    }),
+  };
+  const packages = [legacyPackage('A', ref)];
+  const missing = legacyFit(image({ width: 300, height: 250, pixel_ratio: 1 }), packages, options);
+  assert.equal(missing.perPackage[0].verdict, 'does_not_fit');
+  const creative = image();
+  creative.assets.image_main = [
+    { asset_type: 'image', width: 300, height: 250, pixel_ratio: 1 },
+    { asset_type: 'image', width: 600, height: 500, pixel_ratio: 2 },
+  ];
+  const complete = legacyFit(creative, packages, options);
+  assert.equal(complete.perPackage[0].verdict, 'fits');
+  assert.equal(complete.wire, undefined);
+});
+
+test('legacy fit: catalog HTML alias retains its inline-only delivery requirement', () => {
+  const creative = legacyTag();
+  creative.assets.tag_url = {
+    asset_type: 'display_tag',
+    delivery_type: 'tag_url',
+    url: 'https://cdn.acme.example/tag',
+  };
+  const result = legacyFit(creative, [legacyPackage('A', legacyHtml(300, 600))]);
+  assert.equal(result.perPackage[0].verdict, 'does_not_fit');
+  assert.equal(result.wire, undefined);
+});
+
+test('legacy fit: a shared reference gaining dimensions does not change its original synthetic contract', () => {
+  const { projectV1ProductToV2 } = require('../../dist/lib/v2/projection/v1-to-v2');
+  const packages = [{}, { width: 300, height: 600 }].map((size, index) => ({
+    package_id: `P${index}`,
+    ...projectV1ProductToV2({
+      product_id: `product-${index}`,
+      name: 'Acme HTML',
+      format_ids: [{ agent_url: OWNER, id: 'display_html', ...size }],
+    }).v2,
+  }));
+  const result = legacyFit(legacyTag(), packages);
+  assert.deepEqual(
+    result.perPackage.map(entry => entry.verdict),
+    ['insufficient_facts', 'fits']
+  );
+  assert.deepEqual(result.wire.selector.format_id, { agent_url: OWNER, id: 'display_html', width: 300, height: 600 });
+});
+
+test('legacy fit: unknown library routing hints preserve existing projection while identified package constraints bind', () => {
+  const creative = image({ width: 300, height: 250 });
+  const selectors = [{ format_ids: [{ agent_url: OWNER, id: 'display_728x90_image' }] }];
+  assert.equal(
+    projectSyncCreativesForDelivery({ creatives: [creative] }, selectors, 'legacy').creatives[0].format_id.id,
+    'display_728x90_image'
+  );
+  const packages = selectors.map(selector => ({ ...selector, package_id: 'A' }));
+  assert.equal(legacyFit(creative, packages).perPackage[0].verdict, 'does_not_fit');
+  assert.throws(
+    () => projectSyncCreativesForDelivery({ creatives: [creative] }, packages, 'legacy'),
+    CreativeFormatProjectionError
+  );
+});
+
+test('legacy fit: unscoped legacy restrictions still bind every identified package', () => {
+  const result = legacyFit(legacyTag(), [
+    legacyPackage('A', legacyHtml(300, 600)),
+    { format_ids: [legacyHtml(320, 50)] },
+  ]);
+  assert.equal(result.perPackage[0].verdict, 'does_not_fit');
+  assert.equal(result.wire, undefined);
+});
 
 for (const vector of vectors) {
   test(`published image density: ${vector.id}`, () => {
