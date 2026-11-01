@@ -37,6 +37,13 @@ import {
   type ReportingSubscriptionOfferingV1,
 } from '../reporting/subscriptions/selection';
 import type { ReportingSubscriptionState } from '../types/core.generated';
+import {
+  applyReceiptPolicy,
+  emptyReceiptReport,
+  validateReceiptPolicy,
+  type ReceiptPolicy,
+  type ReceiptReport,
+} from './reporting-receipts';
 
 type Json = Record<string, unknown>;
 type Read = (params: Json, inputHandler?: InputHandler, options?: TaskOptions) => Promise<TaskResult<unknown>>;
@@ -85,6 +92,11 @@ export interface PeriodLine {
   /** The current revision of the required finality, when delivered. */
   reporting_revision_id?: string;
   finality?: 'snapshot' | 'official';
+  /**
+   * For a delivered `consumer_receipt` (billing) period that has no accepted receipt: the buyer owes
+   * one (`responsible_party: 'buyer'`). Submit it with the `receipts` policy or `submitReceipts`.
+   */
+  receipt?: { status: 'owed_by_buyer' };
 }
 
 /** One account the run reconciled, or could not. */
@@ -115,6 +127,8 @@ export interface ReconcileReport {
   summary: Record<PeriodStatus, number> & { owed: number };
   periods: PeriodLine[];
   accounts: ReconcileAccount[];
+  /** What the receipts policy did; absent with `mode: 'off'` or no policy. */
+  receipts?: ReceiptReport;
 }
 
 /** Options for {@link reconcileReportingSubscriptions}. */
@@ -145,6 +159,11 @@ export interface ReconcileOptions {
   now?: string | Date;
   /** Bounds each read, so one unresponsive seller cannot stall the report. Defaults to 30 seconds. */
   readTimeoutMilliseconds?: number;
+  /**
+   * Receipts for `consumer_receipt` (billing) revisions: `'off'` by default. With `mode: 'verified'`
+   * the SDK verifies each unreceipted revision, then your `commit` decides. Never sent on read.
+   */
+  receipts?: ReceiptPolicy;
 }
 
 /** Input to {@link explainReportingSubscriptionCoverage}. */
@@ -527,7 +546,13 @@ function statusOf(
   graceMs: number
 ): Pick<
   PeriodLine,
-  'status' | 'responsible_party' | 'expected_at' | 'reporting_obligation_id' | 'reporting_revision_id' | 'finality'
+  | 'status'
+  | 'responsible_party'
+  | 'expected_at'
+  | 'reporting_obligation_id'
+  | 'reporting_revision_id'
+  | 'finality'
+  | 'receipt'
 > {
   const start = Date.parse(owed.period_start);
   const end = Date.parse(owed.period_end);
@@ -560,12 +585,21 @@ function statusOf(
     .sort((left, right) => String(right.created_at ?? '').localeCompare(String(left.created_at ?? '')))[0];
   const base = { reporting_obligation_id: obligation.reporting_obligation_id, expected_at: obligation.expected_at };
   if (current) {
+    const receiptOwed =
+      obligation.reconciliation_mode === 'consumer_receipt' &&
+      !(ledger?.receipts ?? []).some(
+        receipt =>
+          receipt.reporting_obligation_id === obligation.reporting_obligation_id &&
+          receipt.reporting_revision_id === current.reporting_revision_id &&
+          receipt.status === 'accepted'
+      );
     return {
       ...base,
       status: 'delivered',
-      responsible_party: 'none',
+      responsible_party: receiptOwed ? 'buyer' : 'none',
       reporting_revision_id: current.reporting_revision_id,
       finality: current.finality,
+      ...(receiptOwed ? { receipt: { status: 'owed_by_buyer' as const } } : {}),
     };
   }
   if (obligation.health === 'action_required') {
@@ -630,6 +664,9 @@ export async function reconcileObserved(
   const client = withReadTimeout(wireClient, options.readTimeoutMilliseconds);
   const now = instantOf(options.now, 'now');
   const graceMs = durationMs(options.grace ?? 'PT1H');
+  validateReceiptPolicy(options.receipts);
+  const policy = options.receipts?.mode === 'verified' ? options.receipts : undefined;
+  const receipts = emptyReceiptReport();
   const principal = await readPrincipal(client);
   const subscriptions = principal.subscriptions.filter(
     state => options.subscriptionIds === undefined || options.subscriptionIds.includes(state.subscription_id)
@@ -652,6 +689,7 @@ export async function reconcileObserved(
     summary: emptySummary(),
     periods: [],
     accounts: [],
+    ...(policy ? { receipts } : {}),
   };
   if (subscriptions.length === 0) return report;
 
@@ -699,10 +737,15 @@ export async function reconcileObserved(
       });
       // The whole window, not the seller's default horizon; no delivery_config_ids filter, which a
       // seller refuses for a subscription with no obligation yet.
-      const ledger = await loadReportingLedger(ledgerClient(client), {
+      const ledgerRequest = {
         account: { account_id: accountId },
         period: { start: iso(since), end: iso(Math.max(now, since + 1)) },
-      } as never);
+      } as never;
+      let ledger = await loadReportingLedger(ledgerClient(client), ledgerRequest);
+      if (policy && (await applyReceiptPolicy(wireClient as never, accountId, ledger, policy, receipts, now))) {
+        // Read again, so the lines reflect what was just receipted.
+        ledger = await loadReportingLedger(ledgerClient(client), ledgerRequest);
+      }
       for (const state of states) {
         const input = coverageInput(state, principal, seller, account, buys, coverage.get(state.subscription_id), now);
         const owed = owedSubscriptionPeriodsV1(input).filter(row => Date.parse(row.period_end) > since);
@@ -866,18 +909,30 @@ export async function reconcileObserved(
     report.summary[line.status] += 1;
     if (line.status !== 'not_owed') report.summary.owed += 1;
   }
+  receipts.owedByBuyer = report.periods.filter(line => line.receipt?.status === 'owed_by_buyer').length;
+  if (receipts.owedByBuyer > 0 && !policy && !warnedReceipts.has(wireClient)) {
+    warnedReceipts.add(wireClient);
+    console.warn(
+      `${receipts.owedByBuyer} billing period(s) owe a consumer receipt and the receipts policy is off. ` +
+        "Pass receipts: { mode: 'verified', commit } to reconcile, or submit them with client.reporting.submitReceipts."
+    );
+  }
   return report;
 }
+
+const warnedReceipts = new WeakSet<object>();
 
 function statusMessage(
   status: PeriodStatus,
   owed: string,
-  facts: { expected_at?: string; responsible_party: string },
+  facts: { expected_at?: string; responsible_party: string; receipt?: { status: string } },
   obligation: OwedSubscriptionObligationV1
 ): string {
   switch (status) {
     case 'delivered':
-      return `${owed} Delivered.`;
+      return facts.receipt?.status === 'owed_by_buyer'
+        ? `${owed} Delivered; the buyer owes a consumer receipt for it.`
+        : `${owed} Delivered.`;
     case 'pending':
       return facts.expected_at
         ? `${owed} The seller expects to deliver it by ${facts.expected_at}.`

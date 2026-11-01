@@ -129,7 +129,37 @@ app.post('/adcp/webhooks', async (req, res) => {
 
 ## Receipts for billing feeds
 
-The receipts policy arrives in a later beta. Submit receipts with `sync_reporting_receipts` after your warehouse commits the data, never on read.
+A receipt says you verified and committed the data, so the SDK never sends one on read. The policy is off by default. With it off, delivered `consumer_receipt` (billing) periods carry `receipt: { status: 'owed_by_buyer' }` and `responsible_party: 'buyer'`, and the client warns once.
+
+```ts
+const report = await client.reporting.reconcile({
+  receipts: {
+    mode: 'verified', // 'off' is the default
+    resourceReader: createHttpsReportingResourceReader(), referenceAllowedOrigins: ['https://schemas.seller.example'],
+    commit: async revision => {
+      const load = await warehouse.load(revision.resource); // idempotent on revision.resource
+      return { commitRef: load.jobId }; // or 'defer', or { reject: ['ROW_COUNT_MISMATCH'] }
+    },
+    adjustments: async adjustment => 'defer', // billing never auto-accepts
+  },
+});
+report.receipts?.submitted; report.receipts?.rejected; report.receipts?.deferred; report.receipts?.failed;
+```
+
+For each `consumer_receipt` obligation whose current revision is materialized and not yet receipted:
+
+1. **The SDK verifies the materialization itself**, through `resourceReader` (the built-in manifest inspector) or your `inspect(context)` adapter. That gives the observed row count, control totals and digest.
+2. **If the verifier can't read it**, or the built-in inspector refuses it, the obligation is listed in `receipts.failed` with the code and nothing is receipted. If your `inspect` adapter returns a mismatched observation, the SDK sends a `rejected` receipt with its own codes (`ROW_COUNT_MISMATCH`, ...) and doesn't call `commit`.
+3. **Otherwise your `commit` runs, at least once per revision.** If it throws (listed in `failed` as `COMMIT_FAILED`), or the receipt write after it fails, the next reconcile calls it again.
+   - `{ commitRef }` sends an `accepted` receipt with `consumer_commit_ref`.
+   - `'defer'` sends nothing.
+   - `{ reject }` sends a `rejected` receipt with your codes.
+
+Receipt ids are stable per (obligation, revision, materialization), and a materialization that already has a receipt, accepted or rejected, is never receipted again. Canonical-digest materializations need an `inspect` adapter: the subscription buyer pins no canonicalization of its own.
+
+**Adjustments** are offered to `adjustments(adjustment)` and always deferred, even if your hook answers otherwise. Accepting one needs the raw evidence, so it stays manual.
+
+**`client.reporting.submitReceipts(accountId, { receipts, adjustmentReceipts })`** is the manual path: a typed wrapper over `sync_reporting_receipts`. It returns the seller's item results and throws `ReportingSubscriptionError` when the write fails.
 
 ## Accounts
 

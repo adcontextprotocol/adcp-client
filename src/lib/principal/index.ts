@@ -49,5 +49,14 @@ export {
   type ReportingEventStore,
   type ReportingEventType,
 } from './reporting-events';
+export {
+  validateReceiptPolicy,
+  type CommitOutcome,
+  type CommitResult,
+  type ReceiptPolicy,
+  type ReceiptReport,
+  type Reject,
+  type VerifiedRevision,
+} from './reporting-receipts';
 export type { CoverageTrace, CoverageTraceStep, CoveragePeriodSelector } from '../reporting/subscriptions/explain';
 export type { CoverageReason, CoverageRule } from '../reporting/subscriptions/reason-codes';
