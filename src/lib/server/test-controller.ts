@@ -207,6 +207,87 @@ export const DISCOVERY_ARM_SCENARIOS = {
 export const REPORTING_CORE_LIFECYCLE_PROBE_SCENARIO = 'reporting_core_lifecycle_probe' as const;
 
 /**
+ * Experimental (`media_buy.reporting_subscriptions`, AdCP 3.3): drives what reporting-subscription
+ * coverage depends on but a buyer can't change itself, on the caller's sandbox accounts: its own grant,
+ * the account's timezone, and the sandbox clock.
+ */
+export const REPORTING_SUBSCRIPTION_PROBE_SCENARIO = 'reporting_subscription_probe' as const;
+
+/** The `reporting_subscription_probe` operations. */
+export const REPORTING_SUBSCRIPTION_PROBE_OPERATIONS = [
+  'revoke_grant',
+  'regrant',
+  'reduce_grant',
+  'set_account_timezone',
+  'advance_time',
+] as const;
+
+export type ReportingSubscriptionProbeOperation = (typeof REPORTING_SUBSCRIPTION_PROBE_OPERATIONS)[number];
+
+/** `params` of a `reporting_subscription_probe` call, as the request schema constrains them. */
+export type ReportingSubscriptionProbeParams =
+  | { operation: 'revoke_grant' | 'regrant'; account_id: string }
+  | { operation: 'reduce_grant'; account_id: string; allowed_tasks: string[] }
+  | { operation: 'set_account_timezone'; account_id: string; timezone: string }
+  | { operation: 'advance_time'; target_time: string; account_id?: string };
+
+/**
+ * The `simulated` object of a `reporting_subscription_probe` success. `simulated_now` is the caller's
+ * virtual clock after the operation (one clock per caller; a `reset_state` resets it). Every operation
+ * but `advance_time` echoes `account_id`.
+ */
+export interface ReportingSubscriptionProbeSimulated {
+  simulated_now: string;
+  account_id?: string;
+  /** `revoke_grant`. */
+  unauthorized_at?: string;
+  /** `regrant`: the chain start; unchanged when the chain continued. */
+  authorized_at?: string;
+  /** `regrant`. */
+  chain?: 'continued' | 'new';
+  /** `regrant`, when the chain continued. */
+  regranted_at?: string;
+  /** `reduce_grant`: the applied list. */
+  allowed_tasks?: string[];
+  /** `set_account_timezone`. */
+  previous_timezone?: string;
+  timezone?: string;
+  /** `set_account_timezone`: the cutover instant of each affected offering. */
+  timezone_cutovers?: Array<{ offering_id: string; effective_at: string }>;
+  [key: string]: unknown;
+}
+
+/** Refuses `reporting_subscription_probe` params the request schema refuses; `undefined` when valid. */
+export function reportingSubscriptionProbeParamsError(params: Record<string, unknown> | undefined): string | undefined {
+  const operation = params?.operation;
+  if (!REPORTING_SUBSCRIPTION_PROBE_OPERATIONS.includes(operation as ReportingSubscriptionProbeOperation)) {
+    return `reporting_subscription_probe needs params.operation, one of ${REPORTING_SUBSCRIPTION_PROBE_OPERATIONS.join(', ')}`;
+  }
+  const text = (value: unknown) => typeof value === 'string' && value.length > 0;
+  if (operation !== 'advance_time' && !text(params!.account_id)) return `${operation} needs params.account_id`;
+  if (operation === 'reduce_grant') {
+    const tasks = params!.allowed_tasks;
+    if (!Array.isArray(tasks) || tasks.length === 0 || !tasks.every(item => /^[a-z][a-z0-9_]*$/.test(String(item)))) {
+      return 'reduce_grant needs params.allowed_tasks: a non-empty list of task names';
+    }
+  } else if (params!.allowed_tasks !== undefined) {
+    return 'params.allowed_tasks belongs to reduce_grant only';
+  }
+  if (operation === 'set_account_timezone') {
+    if (!text(params!.timezone)) return 'set_account_timezone needs params.timezone (IANA)';
+  } else if (params!.timezone !== undefined) {
+    return 'params.timezone belongs to set_account_timezone only';
+  }
+  if (
+    operation === 'advance_time' &&
+    !(text(params!.target_time) && Number.isFinite(Date.parse(String(params!.target_time))))
+  ) {
+    return 'advance_time needs params.target_time (RFC 3339)';
+  }
+  return undefined;
+}
+
+/**
  * Stable `SeedSuccess.message` strings the SDK's `dispatchSeed` emits.
  * Adopters who want to detect first-seed vs idempotent-replay can match
  * on these constants instead of grepping for the literal prose.
@@ -251,6 +332,14 @@ void _scenarioExhaustivenessGuard;
 export interface TestControllerStore {
   /** Drive a deterministic Reliable Reporting source/worker lifecycle step. */
   reportingCoreLifecycleProbe?(params: Record<string, unknown>): Promise<SimulationSuccess>;
+  /**
+   * Experimental `reporting_subscription_probe` (`media_buy.reporting_subscriptions`). Params are
+   * validated against the request schema first; return `simulated` as
+   * {@link ReportingSubscriptionProbeSimulated}.
+   */
+  reportingSubscriptionProbe?(
+    params: ReportingSubscriptionProbeParams
+  ): Promise<SimulationSuccess & { simulated: ReportingSubscriptionProbeSimulated }>;
   /** Transition a creative to the specified status. */
   forceCreativeStatus?(
     creativeId: string,
@@ -692,6 +781,7 @@ function allScenariosFromStore(store: TestControllerStore): string[] {
   if (typeof store.forceGetProductsArm === 'function') out.push(DISCOVERY_ARM_SCENARIOS.FORCE_GET_PRODUCTS_ARM);
   if (typeof store.forceGetSignalsArm === 'function') out.push(DISCOVERY_ARM_SCENARIOS.FORCE_GET_SIGNALS_ARM);
   if (typeof store.reportingCoreLifecycleProbe === 'function') out.push(REPORTING_CORE_LIFECYCLE_PROBE_SCENARIO);
+  if (typeof store.reportingSubscriptionProbe === 'function') out.push(REPORTING_SUBSCRIPTION_PROBE_SCENARIO);
   return out;
 }
 
@@ -1519,6 +1609,18 @@ async function handleTestControllerRequestImpl(
           return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
         }
         return wrapStoreSuccess(await store.reportingCoreLifecycleProbe((params ?? {}) as Record<string, unknown>));
+      }
+
+      case REPORTING_SUBSCRIPTION_PROBE_SCENARIO: {
+        if (!store.reportingSubscriptionProbe) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        const probe = (params ?? {}) as Record<string, unknown>;
+        const invalid = reportingSubscriptionProbeParamsError(probe);
+        if (invalid) return controllerError('INVALID_PARAMS', invalid);
+        return wrapStoreSuccess(
+          await store.reportingSubscriptionProbe(probe as unknown as ReportingSubscriptionProbeParams)
+        );
       }
 
       default:

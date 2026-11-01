@@ -57,6 +57,9 @@ import {
   type SeedFixtureCache,
   type TestControllerStore,
   type UpstreamTrafficSuccessResponse,
+  REPORTING_SUBSCRIPTION_PROBE_SCENARIO,
+  type ReportingSubscriptionProbeParams,
+  type ReportingSubscriptionProbeSimulated,
 } from '../server/test-controller';
 import { getSdkServer, type AdcpServer } from '../server/adcp-server';
 import type {
@@ -456,6 +459,17 @@ export interface ComplyControllerConfig {
   queryUpstreamTraffic?: QueryUpstreamTrafficAdapter;
 
   /**
+   * Experimental `reporting_subscription_probe`: revoke, re-grant or reduce the caller's own grant on
+   * a sandbox account, change its timezone, or advance the sandbox clock. Params arrive validated.
+   */
+  reportingSubscriptionProbe?: (
+    params: ReportingSubscriptionProbeParams,
+    ctx: ComplyControllerContext
+  ) =>
+    | Promise<SimulationSuccess & { simulated: ReportingSubscriptionProbeSimulated }>
+    | (SimulationSuccess & { simulated: ReportingSubscriptionProbeSimulated });
+
+  /**
    * `query_provenance_audit_observations` adapter. When omitted, provenance
    * audit-observation storyboards grade as not applicable after scenario
    * discovery.
@@ -673,6 +687,9 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
   if (queryUpstreamTraffic) {
     store.queryUpstreamTraffic = params => Promise.resolve(queryUpstreamTraffic(params, ctx));
   }
+  if (config.reportingSubscriptionProbe) {
+    store.reportingSubscriptionProbe = params => Promise.resolve(config.reportingSubscriptionProbe!(params, ctx));
+  }
   if (queryProvenanceAuditObservations) {
     store.queryProvenanceAuditObservations = params => Promise.resolve(queryProvenanceAuditObservations(params, ctx));
   }
@@ -707,6 +724,7 @@ function advertisedScenarios(config: ComplyControllerConfig): string[] {
   if (config.force?.audience_status) out.push('force_audience_status');
   if (config.force?.catalog_item_status) out.push('force_catalog_item_status');
   if (config.queryUpstreamTraffic) out.push(CONTROLLER_SCENARIOS.QUERY_UPSTREAM_TRAFFIC);
+  if (config.reportingSubscriptionProbe) out.push(REPORTING_SUBSCRIPTION_PROBE_SCENARIO);
   if (config.queryProvenanceAuditObservations) {
     out.push(CONTROLLER_SCENARIOS.QUERY_PROVENANCE_AUDIT_OBSERVATIONS);
   }

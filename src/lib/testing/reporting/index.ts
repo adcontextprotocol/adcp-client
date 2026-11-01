@@ -37,6 +37,12 @@ import { createReportingPeriodCalendarV1 } from '../../reporting/subscriptions/c
 import { diffCoverageTraces } from '../../reporting/subscriptions/explain';
 import { REPORTING_WIND_DOWN_TASKS } from '../../server/decisioning/account';
 import { createAdcpServerFromPlatform } from '../../server/decisioning/runtime/from-platform';
+import {
+  TestControllerError,
+  type ReportingSubscriptionProbeParams,
+  type ReportingSubscriptionProbeSimulated,
+} from '../../server/test-controller';
+import type { ComplyControllerConfig } from '../comply-controller';
 import { memoryStorage, type ReportingStorage } from '../../storage';
 import type { ReportingDeliveryOffering } from '../../types/tools.generated';
 
@@ -155,7 +161,9 @@ export const offerings = {
  *
  * @experimental
  */
-export function createReferenceReportingSeller(options: ReportingTestKitOptions): ReferenceReportingSeller {
+export function createReferenceReportingSeller(
+  options: ReportingTestKitOptions & { complyTest?: ComplyControllerConfig }
+): ReferenceReportingSeller {
   const clock = { now: new Date(options.start) };
   if (!Number.isFinite(clock.now.getTime())) throw new TypeError('start must be an RFC 3339 instant');
   const now = () => clock.now;
@@ -188,6 +196,7 @@ export function createReferenceReportingSeller(options: ReportingTestKitOptions)
     id: account.account_id,
     name: account.account_id,
     status: 'active' as const,
+    ...(options.complyTest ? { mode: 'sandbox' as const } : {}),
     timezone: account.timezone,
     ...(account.operator ? { operator: account.operator } : {}),
     ctx_metadata: {},
@@ -257,10 +266,25 @@ export function createReferenceReportingSeller(options: ReportingTestKitOptions)
   } as never) as ReliableReportingServiceV1;
 
   const platform = service.install({
-    capabilities: { specialisms: [], config: {} },
+    capabilities: {
+      specialisms: [],
+      config: {},
+      ...(options.complyTest ? { compliance_testing: {} } : {}),
+    },
     accounts: {
       resolution: 'explicit',
       resolve: async (ref: { account_id?: string } | undefined, ctx: unknown) => {
+        // With a test controller, the caller's principal is a sandbox principal: the controller is
+        // visible to it and acts only on its own grants on the kit's sandbox accounts.
+        if (ref === undefined && options.complyTest && buyerOf(ctx) !== undefined) {
+          return {
+            id: `sandbox-principal:${buyerOf(ctx)}`,
+            name: 'Sandbox principal',
+            status: 'active' as const,
+            mode: 'sandbox' as const,
+            ctx_metadata: {},
+          };
+        }
         const account = ref?.account_id ? state.accounts.get(ref.account_id) : undefined;
         // A revoked account is unknown to every task.
         return account && grantOf(account.account_id, ctx) ? toAccount(account) : null;
@@ -312,14 +336,15 @@ export function createReferenceReportingSeller(options: ReportingTestKitOptions)
           version: '1.0.0',
           protocol: service.principals!.protocol,
           validation: { requests: 'strict', responses: 'strict' },
+          ...(options.complyTest ? { complyTest: options.complyTest } : {}),
         } as never
       ),
   };
 }
 
 /**
- * A kit start `daysAgo` days before now, at UTC midnight. The virtual clock never passes the real
- * one, so start far enough back for the scenario.
+ * A kit start `daysAgo` days before now, at UTC midnight. The virtual clock may also run past the real
+ * one: under `NODE_ENV=test` the reporting source stamps acquisitions at the kit's clock.
  *
  * @experimental
  */
@@ -380,7 +405,22 @@ function durationMs(value: string): number {
  * @experimental
  */
 export function createReportingTestKit(options: ReportingTestKitOptions): ReportingTestKit {
-  const seller = createReferenceReportingSeller(options);
+  // comply_test_controller reporting_subscription_probe, bound below once the levers exist.
+  const bound: {
+    probe?: (params: ReportingSubscriptionProbeParams, buyerId: string) => Promise<ReportingSubscriptionProbeSimulated>;
+  } = {};
+  const seller = createReferenceReportingSeller({
+    ...options,
+    complyTest: {
+      sandboxGate: () => true,
+      reportingSubscriptionProbe: async (params, ctx) => {
+        const caller = (ctx.authInfo as { clientId?: string } | undefined)?.clientId;
+        if (!caller)
+          throw new TestControllerError('INVALID_STATE', 'The probe acts on the caller’s own grant; authenticate.');
+        return { success: true, simulated: await bound.probe!(params, caller) };
+      },
+    },
+  });
   const { service, state, clock } = seller;
   const server = seller.createServer();
   const buyers = new Map<string, ReportingTestBuyer>();
@@ -429,17 +469,84 @@ export function createReportingTestKit(options: ReportingTestKitOptions): Report
   };
   const advanceTo = async (target: number) => {
     if (!(target > clock.now.getTime())) throw new RangeError('The clock only moves forward');
-    if (target > Date.now()) {
-      throw new RangeError(
-        'The virtual clock cannot pass the real clock: the reporting source refuses periods that have not ended in real time. Start the kit in the past, for example start: reportingTestStart(30).'
-      );
-    }
     for (const at of boundaries(clock.now.getTime(), target)) {
       clock.now = new Date(at);
       await runCycle();
     }
     clock.now = new Date(target);
     await runCycle();
+  };
+
+  bound.probe = async (params, caller) => {
+    const at = () => clock.now.toISOString();
+    if (params.operation === 'advance_time') {
+      const target = Date.parse(params.target_time);
+      if (!(target > clock.now.getTime())) {
+        throw new TestControllerError('INVALID_PARAMS', `target_time must be after simulated_now ${at()}`);
+      }
+      await advanceTo(target);
+      return { simulated_now: at() };
+    }
+    const accountId = params.account_id;
+    const found = state.accounts.get(accountId);
+    if (!found) throw new TestControllerError('NOT_FOUND', `No sandbox account ${JSON.stringify(accountId)}`);
+    switch (params.operation) {
+      case 'revoke_grant':
+        await changeGrant(caller, accountId, null);
+        return { simulated_now: at(), account_id: accountId, unauthorized_at: at() };
+      case 'regrant': {
+        await changeGrant(caller, accountId, FULL_GRANT);
+        const listed = await buyer(caller).call('list_accounts', {});
+        const item = ((listed.data as { accounts?: Json[] } | undefined)?.accounts ?? []).find(
+          entry => entry.account_id === accountId
+        );
+        const authorization = (item?.authorization ?? {}) as { authorized_at?: string; regranted_at?: string };
+        const continued =
+          authorization.regranted_at !== undefined && Date.parse(authorization.regranted_at) === clock.now.getTime();
+        return {
+          simulated_now: at(),
+          account_id: accountId,
+          ...(authorization.authorized_at ? { authorized_at: authorization.authorized_at } : {}),
+          chain: continued ? 'continued' : 'new',
+          ...(continued ? { regranted_at: authorization.regranted_at } : {}),
+        };
+      }
+      case 'reduce_grant':
+        await changeGrant(caller, accountId, params.allowed_tasks);
+        return { simulated_now: at(), account_id: accountId, allowed_tasks: [...params.allowed_tasks] };
+      case 'set_account_timezone': {
+        const previous = found.timezone;
+        found.timezone = params.timezone;
+        // Account-timezone periods cut over at the first old-timezone boundary at or after the change.
+        const cutovers = (service.capabilities.offerings ?? []).flatMap(offering => {
+          const schedule = offering.schedule as { period_duration: string; alignment: string };
+          if (schedule.alignment !== 'account_timezone' || previous === params.timezone) return [];
+          try {
+            const calendar = createReportingPeriodCalendarV1({
+              period_duration: schedule.period_duration,
+              alignment: 'account_timezone',
+              timezone: previous,
+            });
+            return [
+              {
+                offering_id: offering.offering_id,
+                effective_at: new Date(calendar.next(clock.now.getTime() - 1)).toISOString(),
+              },
+            ];
+          } catch {
+            return [];
+          }
+        });
+        await runCycle();
+        return {
+          simulated_now: at(),
+          account_id: accountId,
+          previous_timezone: previous,
+          timezone: params.timezone,
+          timezone_cutovers: cutovers,
+        };
+      }
+    }
   };
 
   const buyer = (id: string): ReportingTestBuyer => {
@@ -649,3 +756,10 @@ export async function withReportingTestKit<T>(
 ): Promise<T> {
   return fn(createReportingTestKit(options));
 }
+
+export {
+  runReportingDoctor,
+  type ReportingDoctorCheck,
+  type ReportingDoctorClient,
+  type ReportingDoctorReport,
+} from './doctor';

@@ -539,6 +539,8 @@ await client.reporting.unsubscribe('pacing-hourly');
 const outcome = await client.accounts.ensure(key, { billing: 'operator' }); // ready | pending | ambiguous | rejected
 const report = await client.reporting.reconcile(); // every owed period: delivered | pending | late | missing_obligation | withheld
 const [trace] = await client.reporting.explain({ accountId: 'acc_a', period: '2026-11-03' }); // why it is owed, or not
+const batch = await client.reporting.poll(); // events since the last ack: revision.available, period.late, ...
+await batch.ack();
 ```
 
 - **Storage.** One object; process-local storage is refused in production. Apply schema changes with `npx adcp-reporting-storage migrate`.
@@ -546,7 +548,8 @@ const [trace] = await client.reporting.explain({ accountId: 'acc_a', period: '20
 - **Explain.** `reconcile` lines and `explain` traces carry the spec's reason codes and the same `CoverageTrace` JSON as the Python SDK.
 - **Troubleshooting.** Sellers call `reporting.explainCoverage(...)`; `npx adcp reporting explain|diff|reconcile` runs the same from a terminal.
 - **Testing.** `createReportingTestKit` (`@adcp/sdk/testing/reporting`) runs a managed reference seller on a virtual clock with `assertAgreement`; `npx adcp reference-seller reporting` serves it.
-- **Coming in later betas:** buyer events.
+- **Receipts.** Off by default; `reconcile({ receipts: { mode: 'verified', commit } })` sends a receipt only after the SDK verified the revision and your `commit` returned a ref. Adjustments are never accepted automatically; `submitReceipts()` is the manual path.
+- **Events.** `poll()` / `events()` diff durable snapshots, at least once with deterministic ids; `handleWebhook()` takes only a `VerifiedWebhook` and treats it as a doorbell.
 
 Guides: [seller](docs/guides/REPORTING-SUBSCRIPTIONS-SELLER.md) · [buyer](docs/guides/REPORTING-SUBSCRIPTIONS-BUYER.md) · [coverage](docs/guides/REPORTING-SUBSCRIPTIONS-COVERAGE.md) · [errors](docs/guides/REPORTING-SUBSCRIPTIONS-ERRORS.md) · [migrating](docs/guides/REPORTING-SUBSCRIPTIONS-MIGRATION.md) · [testing](docs/guides/REPORTING-SUBSCRIPTIONS-TESTING.md) · [accounts](docs/guides/FIRST-CALL-TO-A-SELLER.md) · [ledger and building blocks](docs/guides/REPORTING-LEDGER.md) · [storage package](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/README.md)
 

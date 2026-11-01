@@ -37,6 +37,13 @@ import {
   type ReportingSubscriptionOfferingV1,
 } from '../reporting/subscriptions/selection';
 import type { ReportingSubscriptionState } from '../types/core.generated';
+import {
+  applyReceiptPolicy,
+  emptyReceiptReport,
+  validateReceiptPolicy,
+  type ReceiptPolicy,
+  type ReceiptReport,
+} from './reporting-receipts';
 
 type Json = Record<string, unknown>;
 type Read = (params: Json, inputHandler?: InputHandler, options?: TaskOptions) => Promise<TaskResult<unknown>>;
@@ -48,6 +55,8 @@ export interface ReportingReadClient {
   getAdcpCapabilities?: Read;
   getMediaBuys?: Read;
   getReportingStatus?: Read;
+  /** Used only by the `receipts` policy. */
+  syncReportingReceipts?: Read;
   getAgentId?(): string;
 }
 
@@ -85,6 +94,28 @@ export interface PeriodLine {
   /** The current revision of the required finality, when delivered. */
   reporting_revision_id?: string;
   finality?: 'snapshot' | 'official';
+  /**
+   * For a delivered `consumer_receipt` (billing) period without an accepted receipt:
+   * `owed_by_buyer` while the buyer has stated nothing (`responsible_party: 'buyer'`; submit it with
+   * the `receipts` policy or `submitReceipts`), or `rejected_by_buyer` once the buyer rejected the
+   * revision (`responsible_party: 'seller'`, which has to correct and re-deliver).
+   */
+  receipt?: { status: 'owed_by_buyer' | 'rejected_by_buyer' };
+}
+
+/**
+ * Why part of a reconcile is not definitive; the message ends with the fix. The same shape and codes
+ * as the Python SDK's `ReconcileIssue`: `SUBSCRIPTION_ROSTER_UNAVAILABLE`,
+ * `SUBSCRIPTION_OFFERINGS_UNAVAILABLE`, `SUBSCRIPTION_ACCOUNT_UNREADABLE`,
+ * `SUBSCRIPTION_LEDGER_UNAVAILABLE`, `SUBSCRIPTION_ACCOUNT_NOT_COVERED`, or a coverage input code.
+ *
+ * @experimental Reporting subscriptions (AdCP 3.3).
+ */
+export interface ReconcileIssue {
+  code: string;
+  message: string;
+  account_id?: string;
+  subscription_id?: string;
 }
 
 /** One account the run reconciled, or could not. */
@@ -115,6 +146,10 @@ export interface ReconcileReport {
   summary: Record<PeriodStatus, number> & { owed: number };
   periods: PeriodLine[];
   accounts: ReconcileAccount[];
+  /** What kept the report from being definitive, one entry per cause (empty when definitive). */
+  issues: ReconcileIssue[];
+  /** What the receipts policy did; absent with `mode: 'off'` or no policy. */
+  receipts?: ReceiptReport;
 }
 
 /** Options for {@link reconcileReportingSubscriptions}. */
@@ -145,6 +180,11 @@ export interface ReconcileOptions {
   now?: string | Date;
   /** Bounds each read, so one unresponsive seller cannot stall the report. Defaults to 30 seconds. */
   readTimeoutMilliseconds?: number;
+  /**
+   * Receipts for `consumer_receipt` (billing) revisions: `'off'` by default. With `mode: 'verified'`
+   * the SDK verifies each unreceipted revision, then your `commit` decides. Never sent on read.
+   */
+  receipts?: ReceiptPolicy;
 }
 
 /** Input to {@link explainReportingSubscriptionCoverage}. */
@@ -210,6 +250,8 @@ const TASK_METHODS = [
   'getAdcpCapabilities',
   'getMediaBuys',
   'getReportingStatus',
+  // The receipts policy's write is bounded too, so a hung seller never holds the report.
+  'syncReportingReceipts',
 ] as const;
 
 /** The client with every read bounded: a read that does not answer in time fails as `TIMEOUT`. */
@@ -527,7 +569,13 @@ function statusOf(
   graceMs: number
 ): Pick<
   PeriodLine,
-  'status' | 'responsible_party' | 'expected_at' | 'reporting_obligation_id' | 'reporting_revision_id' | 'finality'
+  | 'status'
+  | 'responsible_party'
+  | 'expected_at'
+  | 'reporting_obligation_id'
+  | 'reporting_revision_id'
+  | 'finality'
+  | 'receipt'
 > {
   const start = Date.parse(owed.period_start);
   const end = Date.parse(owed.period_end);
@@ -560,12 +608,15 @@ function statusOf(
     .sort((left, right) => String(right.created_at ?? '').localeCompare(String(left.created_at ?? '')))[0];
   const base = { reporting_obligation_id: obligation.reporting_obligation_id, expected_at: obligation.expected_at };
   if (current) {
+    const receipt = receiptStateOf(obligation, current.reporting_revision_id, ledger?.receipts ?? []);
     return {
       ...base,
       status: 'delivered',
-      responsible_party: 'none',
+      responsible_party:
+        receipt?.status === 'owed_by_buyer' ? 'buyer' : receipt?.status === 'rejected_by_buyer' ? 'seller' : 'none',
       reporting_revision_id: current.reporting_revision_id,
       finality: current.finality,
+      ...(receipt ? { receipt } : {}),
     };
   }
   if (obligation.health === 'action_required') {
@@ -576,6 +627,29 @@ function statusOf(
     return { ...base, status: 'late', responsible_party: 'seller' };
   }
   return { ...base, status: 'pending', responsible_party: 'none' };
+}
+
+/**
+ * Where a delivered billing revision's receipt stands. It is owed by the buyer until one is recorded.
+ * Once the buyer rejected it, the seller has to act (correct and re-deliver): the receipts policy
+ * never resends a rejection. `undefined` for a non-billing obligation or an accepted receipt.
+ *
+ * @internal
+ */
+export function receiptStateOf(
+  obligation: { reporting_obligation_id: string; reconciliation_mode?: string },
+  revisionId: string,
+  receipts: ReadonlyArray<{ reporting_obligation_id: string; reporting_revision_id: string; status: string }>
+): PeriodLine['receipt'] {
+  if (obligation.reconciliation_mode !== 'consumer_receipt') return undefined;
+  const statements = receipts.filter(
+    item =>
+      item.reporting_obligation_id === obligation.reporting_obligation_id && item.reporting_revision_id === revisionId
+  );
+  if (statements.some(item => item.status === 'accepted')) return undefined;
+  return statements.some(item => item.status === 'rejected')
+    ? { status: 'rejected_by_buyer' }
+    : { status: 'owed_by_buyer' };
 }
 
 /** The period end plus the offering's `delivery_sla`, when no obligation states `expected_at`. */
@@ -589,6 +663,27 @@ function expectedAt(offering: ReportingSubscriptionOfferingV1 | undefined, perio
 
 function emptySummary(): ReconcileReport['summary'] {
   return { owed: 0, delivered: 0, pending: 0, late: 0, missing_obligation: 0, withheld: 0, not_owed: 0 };
+}
+
+function accountIssue(cause: NonNullable<ReconcileAccount['error']>, accountId: string): ReconcileIssue {
+  if (cause.task === 'coverage') {
+    return {
+      code: cause.code,
+      message: `${cause.message}. The seller's wire state for ${accountId} is incomplete; its owed set was not computed.`,
+      account_id: accountId,
+    };
+  }
+  return cause.task === 'get_reporting_status'
+    ? {
+        code: 'SUBSCRIPTION_LEDGER_UNAVAILABLE',
+        message: `${cause.message}. Retry once get_reporting_status answers for ${accountId}.`,
+        account_id: accountId,
+      }
+    : {
+        code: 'SUBSCRIPTION_ACCOUNT_UNREADABLE',
+        message: `${cause.message}. Retry once ${cause.task} answers for ${accountId}.`,
+        account_id: accountId,
+      };
 }
 
 function failure(error: unknown, fallbackTask: string): NonNullable<ReconcileAccount['error']> {
@@ -607,13 +702,37 @@ export async function reconcileReportingSubscriptions(
   wireClient: ReportingReadClient,
   options: ReconcileOptions = {}
 ): Promise<ReconcileReport> {
+  return reconcileObserved(wireClient, options);
+}
+
+/**
+ * What a reconcile run read besides its report: the subscriptions, and per account the
+ * `list_accounts` authorization and the `subscription_coverage[]` entries. Events derive from it.
+ *
+ * @internal
+ */
+export interface ReconcileObservation {
+  subscriptions: ReportingSubscriptionState[];
+  accounts: Map<string, { authorization?: Json; coverage: Map<string, Json> }>;
+}
+
+/** @internal `reconcileReportingSubscriptions`, also filling `observation`. */
+export async function reconcileObserved(
+  wireClient: ReportingReadClient,
+  options: ReconcileOptions = {},
+  observation?: ReconcileObservation
+): Promise<ReconcileReport> {
   const client = withReadTimeout(wireClient, options.readTimeoutMilliseconds);
   const now = instantOf(options.now, 'now');
   const graceMs = durationMs(options.grace ?? 'PT1H');
+  validateReceiptPolicy(options.receipts);
+  const policy = options.receipts?.mode === 'verified' ? options.receipts : undefined;
+  const receipts = emptyReceiptReport();
   const principal = await readPrincipal(client);
   const subscriptions = principal.subscriptions.filter(
     state => options.subscriptionIds === undefined || options.subscriptionIds.includes(state.subscription_id)
   );
+  if (observation) observation.subscriptions = subscriptions;
   const earliest = Math.min(
     ...subscriptions.flatMap(state => [
       Date.parse(state.accepted_at),
@@ -631,6 +750,8 @@ export async function reconcileReportingSubscriptions(
     summary: emptySummary(),
     periods: [],
     accounts: [],
+    issues: [],
+    ...(policy ? { receipts } : {}),
   };
   if (subscriptions.length === 0) return report;
 
@@ -641,12 +762,19 @@ export async function reconcileReportingSubscriptions(
     roster = await readRoster(client);
   } catch (error) {
     report.definitive = false;
-    report.accounts.push({
-      account_id: '*',
-      subscription_ids: [],
-      status: 'failed',
-      error: failure(error, 'list_accounts'),
-    });
+    const cause = failure(error, 'list_accounts');
+    report.accounts.push({ account_id: '*', subscription_ids: [], status: 'failed', error: cause });
+    report.issues.push(
+      cause.task === 'get_adcp_capabilities'
+        ? {
+            code: 'SUBSCRIPTION_OFFERINGS_UNAVAILABLE',
+            message: `${cause.message}. Retry once the seller's get_adcp_capabilities answers.`,
+          }
+        : {
+            code: 'SUBSCRIPTION_ROSTER_UNAVAILABLE',
+            message: `${cause.message}. Retry once the seller's list_accounts answers; no account was reconciled.`,
+          }
+    );
     return report;
   }
 
@@ -670,12 +798,23 @@ export async function reconcileReportingSubscriptions(
     try {
       const buys = await readBuys(client, accountId, seller.offerings);
       const coverage = await readCoverage(client, accountId);
+      observation?.accounts.set(accountId, {
+        ...(account.authorization && typeof account.authorization === 'object'
+          ? { authorization: account.authorization as Json }
+          : {}),
+        coverage,
+      });
       // The whole window, not the seller's default horizon; no delivery_config_ids filter, which a
       // seller refuses for a subscription with no obligation yet.
-      const ledger = await loadReportingLedger(ledgerClient(client), {
+      const ledgerRequest = {
         account: { account_id: accountId },
         period: { start: iso(since), end: iso(Math.max(now, since + 1)) },
-      } as never);
+      } as never;
+      let ledger = await loadReportingLedger(ledgerClient(client), ledgerRequest);
+      if (policy && (await applyReceiptPolicy(client as never, accountId, ledger, policy, receipts, now))) {
+        // Read again, so the lines reflect what was just receipted.
+        ledger = await loadReportingLedger(ledgerClient(client), ledgerRequest);
+      }
       for (const state of states) {
         const input = coverageInput(state, principal, seller, account, buys, coverage.get(state.subscription_id), now);
         const owed = owedSubscriptionPeriodsV1(input).filter(row => Date.parse(row.period_end) > since);
@@ -767,6 +906,7 @@ export async function reconcileReportingSubscriptions(
       report.definitive = false;
       entry.status = 'failed';
       entry.error = failure(error, 'get_reporting_status');
+      report.issues.push(accountIssue(entry.error, accountId));
     }
     report.accounts.push(entry);
   }
@@ -826,6 +966,19 @@ export async function reconcileReportingSubscriptions(
     }
   }
 
+  // An explicitly requested account no subscription covers is named, not silently dropped.
+  if (Array.isArray(options.accounts)) {
+    for (const accountId of options.accounts) {
+      if (report.accounts.some(item => item.account_id === accountId)) continue;
+      report.issues.push({
+        code: 'SUBSCRIPTION_ACCOUNT_NOT_COVERED',
+        message: `No subscription covers ${accountId}, or list_accounts does not list it. Check the subscriptions' scopes and the caller's grant.`,
+        account_id: accountId,
+      });
+    }
+  }
+  // As in the Python SDK, any issue makes the report non-definitive.
+  if (report.issues.length > 0) report.definitive = false;
   report.accounts.sort((left, right) => compareReportingIdsByteOrderV1(left.account_id, right.account_id));
   report.periods.sort(
     (left, right) =>
@@ -839,18 +992,32 @@ export async function reconcileReportingSubscriptions(
     report.summary[line.status] += 1;
     if (line.status !== 'not_owed') report.summary.owed += 1;
   }
+  receipts.owedByBuyer = report.periods.filter(line => line.receipt?.status === 'owed_by_buyer').length;
+  if (receipts.owedByBuyer > 0 && !policy && !warnedReceipts.has(wireClient)) {
+    warnedReceipts.add(wireClient);
+    console.warn(
+      `${receipts.owedByBuyer} billing period(s) owe a consumer receipt and the receipts policy is off. ` +
+        "Pass receipts: { mode: 'verified', commit } to reconcile, or submit them with client.reporting.submitReceipts."
+    );
+  }
   return report;
 }
+
+const warnedReceipts = new WeakSet<object>();
 
 function statusMessage(
   status: PeriodStatus,
   owed: string,
-  facts: { expected_at?: string; responsible_party: string },
+  facts: { expected_at?: string; responsible_party: string; receipt?: { status: string } },
   obligation: OwedSubscriptionObligationV1
 ): string {
   switch (status) {
     case 'delivered':
-      return `${owed} Delivered.`;
+      return facts.receipt?.status === 'owed_by_buyer'
+        ? `${owed} Delivered; the buyer owes a consumer receipt for it.`
+        : facts.receipt?.status === 'rejected_by_buyer'
+          ? `${owed} Delivered, and the buyer rejected it; the seller has to correct and re-deliver it.`
+          : `${owed} Delivered.`;
     case 'pending':
       return facts.expected_at
         ? `${owed} The seller expects to deliver it by ${facts.expected_at}.`
@@ -938,8 +1105,11 @@ export async function explainReportingSubscriptionCoverage(
  */
 export interface FleetReconcileReport {
   bySeller: Record<string, ReconcileReport>;
-  /** Agents whose principal could not be read; their periods are not in the summary. */
-  failures: Record<string, { code: string; message: string }>;
+  /**
+   * Sellers that could not be reconciled at all (their principal could not be read), one entry each
+   * with `agent_id`; their periods are not in the summary. Each seller's own issues are on its report.
+   */
+  issues: Array<ReconcileIssue & { agent_id: string }>;
   /** Every seller's report is definitive and none failed. */
   definitive: boolean;
   summary: ReconcileReport['summary'];
@@ -970,7 +1140,7 @@ export async function reconcileReportingFleet(
     });
   }
   const selected = clients.filter(([id]) => agentIds === undefined || agentIds.includes(id));
-  const fleet: FleetReconcileReport = { bySeller: {}, failures: {}, definitive: true, summary: emptySummary() };
+  const fleet: FleetReconcileReport = { bySeller: {}, issues: [], definitive: true, summary: emptySummary() };
   let next = 0;
   const worker = async () => {
     while (next < selected.length) {
@@ -982,10 +1152,11 @@ export async function reconcileReportingFleet(
           ...(prior ? { previous: prior } : {}),
         });
       } catch (error) {
-        fleet.failures[id] = {
-          code: (error as { code?: string }).code ?? 'TASK_FAILED',
-          message: error instanceof Error ? error.message : String(error),
-        };
+        fleet.issues.push({
+          agent_id: id,
+          code: 'SUBSCRIPTION_PRINCIPAL_UNAVAILABLE',
+          message: `${error instanceof Error ? error.message : String(error)} (${(error as { code?: string }).code ?? 'TASK_FAILED'})`,
+        });
       }
     }
   };
@@ -996,6 +1167,63 @@ export async function reconcileReportingFleet(
       fleet.summary[key] += report.summary[key];
     }
   }
-  if (Object.keys(fleet.failures).length > 0) fleet.definitive = false;
+  if (fleet.issues.length > 0) fleet.definitive = false;
   return fleet;
+}
+
+/**
+ * The obligations one subscription owes one account, computed from wire reads alone: `get_principal`
+ * (paging `prior_versions` past the inline 16), `list_accounts`, `get_media_buys`,
+ * `get_adcp_capabilities`, and the caller-supplied `subscription_coverage[]` entry. The storyboard
+ * runner's `owed_periods_match` check grades a seller's `get_reporting_status` periods view with it.
+ *
+ * @internal
+ */
+export async function owedObligationsFromWire(
+  wireClient: ReportingReadClient,
+  input: { accountId: string; subscriptionId: string; now: string; coverage?: Json; readTimeoutMilliseconds?: number }
+): Promise<OwedSubscriptionObligationV1[]> {
+  const client = withReadTimeout(wireClient, input.readTimeoutMilliseconds);
+  const now = instantOf(input.now, 'now');
+  const principal = await readPrincipal(client);
+  const state = principal.subscriptions.find(item => item.subscription_id === input.subscriptionId);
+  if (!state) {
+    throw new ReadFailure(
+      'get_principal',
+      'SUBSCRIPTION_NOT_FOUND',
+      `get_principal lists no subscription ${JSON.stringify(input.subscriptionId)}`
+    );
+  }
+  const inline = state.prior_versions ?? [];
+  if ((state.prior_versions_count ?? inline.length) > inline.length) {
+    const priors: NonNullable<ReportingSubscriptionState['prior_versions']> = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const data = await read('get_principal', client.getPrincipal as Read, client, {
+        reporting_subscription_page: {
+          subscription_id: input.subscriptionId,
+          list: 'prior_versions',
+          ...(cursor ? { pagination: { cursor } } : {}),
+        },
+      });
+      const listing = (data.reporting_subscription_page ??
+        (data.result as Json | undefined)?.reporting_subscription_page ??
+        {}) as Json;
+      priors.push(...((listing.prior_versions as typeof priors | undefined) ?? []));
+      const pagination = listing.pagination as { has_more?: boolean; cursor?: string } | undefined;
+      cursor = pagination?.has_more ? pagination.cursor : undefined;
+      if (!cursor) break;
+    }
+    state.prior_versions = priors;
+  }
+  const seller = await readSeller(client);
+  const roster = await readRoster(client);
+  const account = roster.find(item => item.account_id === input.accountId);
+  if (!account) {
+    throw new ReadFailure('list_accounts', 'ACCOUNT_NOT_FOUND', `list_accounts does not list ${input.accountId}`);
+  }
+  if (!selects(state, account)) return [];
+  const buys = await readBuys(client, input.accountId, seller.offerings);
+  const owed = owedSubscriptionPeriodsV1(coverageInput(state, principal, seller, account, buys, input.coverage, now));
+  return groupOwedSubscriptionPeriodsV1(owed);
 }
