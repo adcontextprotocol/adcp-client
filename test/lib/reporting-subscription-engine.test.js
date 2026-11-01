@@ -371,7 +371,13 @@ describe('reporting subscription engine conformance (buyer periods equal seller 
       if (backfillOnRegrant) assert.equal(coverage[0].gaps, undefined);
       else
         assert.deepEqual(coverage[0].gaps, [
-          { from: '2026-11-05T00:00:00.000Z', until: '2026-11-07T00:00:00.000Z', reason: 'unauthorized' },
+          // adcp-client#3577: always per offering, so a later version's offerings are not swept in.
+          {
+            offering_id: 'off_a_pkg',
+            from: '2026-11-05T00:00:00.000Z',
+            until: '2026-11-07T00:00:00.000Z',
+            reason: 'unauthorized',
+          },
         ]);
       const owed = await w.assertAgree('acct_1', '2026-11-12T00:00:00.000Z');
       assert.deepEqual(
