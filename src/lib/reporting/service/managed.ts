@@ -4,10 +4,12 @@
  * feature. The service builds the coverage engine, installs the `reporting_subscriptions` section on
  * the principal runtime, advertises the principal capability, reconciles on writes and sweeps
  * period boundaries in `runCycle`. Every host input is an optional override of something the
- * service derives, except `configure`.
+ * service derives.
  *
  * Internal to the service: `SubscriptionOptions` is published from `@adcp/sdk/reporting/service`.
  */
+import { createHash } from 'node:crypto';
+
 import { PlatformConfigError } from '../../server/decisioning/runtime/validate-platform';
 import type { Account } from '../../server/decisioning/account';
 import type { RequestContext } from '../../server/decisioning/context';
@@ -23,6 +25,10 @@ import type {
   PrincipalReportingSubscriptionSupport,
 } from '../../server/principal/types';
 import type { ReportingDeliveryOffering } from '../../types/tools.generated';
+import type { ReportingLedgerStore } from '../ledger/types';
+import { canonicalJsonV1 } from '../source/manifest';
+import { reportingIsoDurationMillisecondsV1 } from '../source/source';
+import { createReportingPeriodCalendarV1 } from '../subscriptions/calendar';
 import {
   createInMemoryReportingSubscriptionEngineStoreV1,
   createReportingSubscriptionEngineV1,
@@ -72,12 +78,19 @@ export interface SubscriptionPlanningFailure {
  *   configurations, so they take precedence and their ids never clash with a `subscription_id`.
  * - `endAccountConfigs(principal, accountId, ids, { at })`: ends them for `replace_account_configs`
  *   (needs `accountDeliveryConfigs`). Without it the flag is refused with `UNSUPPORTED_FEATURE`.
- * - `isPeriodDelivered(principal, period)`: exact `withheld_period_count`.
+ * - `isPeriodDelivered(principal, period)`: whether an owed period was delivered, for
+ *   `withheld_period_count`. By default the service's own ledger answers: a period is delivered when
+ *   its obligation has a committed revision.
+ * - `configure(generation)`: the report content for a subscription generation. By default it is
+ *   derived from the resolved source offering (see {@link defaultSubscriptionConfiguration}).
  * - `resolvePrincipal(ctx)`: the authenticated principal. By default the request's
  *   `callerMutationScope`.
  *
  * `reconcileOnWrite` (default on) reconciles a principal after a `sync_principal` write that
  * submitted `reporting_subscriptions`; the boundary sweep in `runCycle` catches anything it misses.
+ * The sweep reconciles a principal only when it is due: a period boundary of one of its schedules
+ * passed since its last reconcile, its last reconcile failed, or `maxSweepIntervalMilliseconds`
+ * elapsed. A write or a pushed grant change makes it due again.
  *
  * With the service's `storage`, the engine state lives in `storage.subscriptions` and the service
  * builds the principal runtime over `storage.principals` from `principal`, so `principals` and
@@ -129,9 +142,11 @@ export interface SubscriptionOptions<TCtxMeta = Record<string, unknown>> {
   /**
    * The report content for a subscription generation: requested metrics and dimensions, source
    * settings, and the finality policy or canonicalization an official or billing subscription needs.
-   * Required: unlike the Python SDK, the TypeScript producer resolver has no source settings to reuse.
+   * Optional: without it the content is derived from the resolved source offering
+   * ({@link defaultSubscriptionConfiguration}). Supply it for billing feeds, which need a
+   * canonicalization, or to choose metrics, dimensions or attribution settings yourself.
    */
-  configure(
+  configure?(
     generation: ReliableReportingSubscriptionGenerationContextV1<TCtxMeta>
   ): MaybePromise<ReliableReportingSubscriptionPolicyV1>;
   accountDeliveryConfigs?(
@@ -148,6 +163,11 @@ export interface SubscriptionOptions<TCtxMeta = Record<string, unknown>> {
   resolvePrincipal?(ctx: RequestContext<Account<TCtxMeta>>): MaybePromise<PrincipalRef>;
   /** Reconcile a principal after a write that submitted `reporting_subscriptions`. Defaults to true. */
   reconcileOnWrite?: boolean;
+  /**
+   * The longest the boundary sweep leaves a subscribed principal unreconciled, so grant and buy
+   * changes the platform never pushes are still seen. Defaults to one hour.
+   */
+  maxSweepIntervalMilliseconds?: number;
   /** Bounds each read of the platform's `accounts.list` and `getMediaBuys`. Defaults to 30 seconds. */
   readTimeoutMilliseconds?: number;
   /** Keep serving `sync_accounts` `reporting_delivery_configs` (`configuration_tasks`). Defaults to true. */
@@ -180,6 +200,8 @@ interface PlatformReads {
 const TENANT_INDEX: PrincipalRef = { tenantId: '@adcp-reporting-subscriptions', principalId: '@tenants' };
 const TENANT_KEY = 'tenants';
 const BINDING_KEY = 'binding';
+/** When the boundary sweep next reconciles the principal (`{ due_at }`, epoch milliseconds). */
+const SWEEP_KEY = 'sweep';
 const MAX_PAGES = 1_000;
 /** The authInfo fields a service-context read restores: identity only, never secrets. */
 const SNAPSHOT_AUTH_FIELDS: ReadonlySet<string> = new Set(['clientId', 'scopes', 'resource', 'expiresAt']);
@@ -270,14 +292,22 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
     offerings: readonly ReportingDeliveryOffering[];
     statusRetentionDays: number;
     storage?: ReportingStorage;
+    /** The service's ledger: the default `isPeriodDelivered` reads it. */
+    ledger?: Pick<ReportingLedgerStore, 'listObligations' | 'listRevisions' | 'listRevisionMetadata'>;
   }
 ): ManagedReportingSubscriptions<TCtxMeta> {
   const principals = managedPrincipals(options, service.storage);
-  if (typeof options.configure !== 'function') {
+  if (options.configure !== undefined && typeof options.configure !== 'function') {
     throw new PlatformConfigError(
-      'subscriptions.configure is required: it returns the metrics, dimensions and source settings for each subscription generation.',
+      'subscriptions.configure must be a function returning the metrics, dimensions and source settings for a subscription generation. Omit it to derive them from the source offering.',
       { configField: 'subscriptions.configure' }
     );
+  }
+  const maxSweepInterval = options.maxSweepIntervalMilliseconds ?? 3_600_000;
+  if (!Number.isSafeInteger(maxSweepInterval) || maxSweepInterval < 1) {
+    throw new PlatformConfigError('subscriptions.maxSweepIntervalMilliseconds must be a positive integer.', {
+      configField: 'subscriptions.maxSweepIntervalMilliseconds',
+    });
   }
   if (options.endAccountConfigs && !options.accountDeliveryConfigs) {
     throw new PlatformConfigError(
@@ -493,6 +523,102 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
     throw new Error(`getMediaBuys for account ${JSON.stringify(accountId)} did not finish paging`);
   }
 
+  // One ledger read per account serves every period the engine asks about in the same tick.
+  const obligationReads = new Map<string, Promise<Awaited<ReturnType<ReportingLedgerStore['listObligations']>>>>();
+  /** The default `isPeriodDelivered`: the period's obligation in the service's ledger has a revision. */
+  async function ledgerDelivered(principal: PrincipalRef, period: OwedSubscriptionPeriodV1): Promise<boolean> {
+    const ledger = service.ledger;
+    if (!ledger) return false;
+    let read = obligationReads.get(period.account_id);
+    if (!read) {
+      read = ledger.listObligations(period.account_id);
+      obligationReads.set(period.account_id, read);
+      read.then(
+        () => setImmediate(() => obligationReads.delete(period.account_id)),
+        () => obligationReads.delete(period.account_id)
+      );
+    }
+    const start = Date.parse(period.period_start);
+    const end = Date.parse(period.period_end);
+    for (const obligation of await read) {
+      const owner = obligation.subscription;
+      if (
+        owner?.tenantId !== principal.tenantId ||
+        owner.principalId !== principal.principalId ||
+        owner.subscriptionId !== period.subscription_id ||
+        owner.offeringId !== period.offering_id ||
+        obligation.delivery_config_version !== period.subscription_version ||
+        Date.parse(obligation.period.start) !== start ||
+        Date.parse(obligation.period.end) !== end ||
+        !obligation.mediaBuyIds.includes(period.media_buy_id)
+      ) {
+        continue;
+      }
+      // Existence only: read metadata when the store can, never the revision rows.
+      const revisions = ledger.listRevisionMetadata
+        ? await ledger.listRevisionMetadata(obligation.reporting_obligation_id, period.account_id)
+        : await ledger.listRevisions(obligation.reporting_obligation_id);
+      // A snapshot does not deliver an official obligation, as the buyer's reconcile also reads it.
+      if (revisions.some(revision => obligation.requiredFinality !== 'official' || revision.finality === 'official')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * When the sweep next needs this principal: the first boundary after `at` of any schedule its
+   * accounts use, capped by `maxSweepIntervalMilliseconds`. A schedule whose zone is not known here
+   * (`source_timezone`, `billing_cycle`) is left to the cap.
+   */
+  async function nextDue(principal: PrincipalRef, at: number): Promise<number> {
+    let due = at + maxSweepInterval;
+    const zones = new Set<string>();
+    try {
+      const state = await engine.inspect(principal);
+      for (const document of Object.values(state.accounts)) {
+        if (document.account.timezone) zones.add(document.account.timezone);
+      }
+    } catch {
+      return due;
+    }
+    for (const offering of service.offerings) {
+      const { alignment, period_duration } = offering.schedule as { alignment: string; period_duration: string };
+      const timezones = alignment === 'utc' ? ['UTC'] : alignment === 'account_timezone' ? [...zones] : [];
+      for (const timezone of timezones) {
+        try {
+          const calendar = createReportingPeriodCalendarV1({
+            period_duration,
+            alignment: alignment as 'utc' | 'account_timezone',
+            ...(alignment === 'utc' ? {} : { timezone }),
+          });
+          due = Math.min(due, calendar.next(at));
+        } catch {
+          // An offering this calendar cannot evaluate is left to the cap.
+        }
+      }
+    }
+    return due;
+  }
+
+  async function markDue(principal: PrincipalRef, dueAt: number): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const current = await store.get(principal, SWEEP_KEY);
+      const result = await store.put(principal, SWEEP_KEY, { due_at: dueAt }, current?.revision ?? null);
+      if (result.outcome === 'applied') return;
+    }
+  }
+
+  async function isDue(principal: PrincipalRef, at: number): Promise<boolean> {
+    try {
+      const dueAt = (await store.get(principal, SWEEP_KEY))?.value?.due_at;
+      return typeof dueAt !== 'number' || at >= dueAt;
+    } catch {
+      // A store hiccup never rejects the cycle: reconcile the principal, which records its own failure.
+      return true;
+    }
+  }
+
   const engine = createReportingSubscriptionEngineV1({
     principal: principals,
     offerings: service.offerings as never,
@@ -511,7 +637,8 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
           ? options.buys(principal, accountId, { ...(signal ? { signal } : {}) })
           : platformBuys(principal, accountId, signal),
       resolveRevocationInstant: (_principal, _accountId, input) => input.observedAt,
-      isPeriodDelivered: (principal, period) => options.isPeriodDelivered?.(principal, period) ?? false,
+      isPeriodDelivered: (principal, period) =>
+        options.isPeriodDelivered ? options.isPeriodDelivered(principal, period) : ledgerDelivered(principal, period),
       ...(options.accountDeliveryConfigs
         ? {
             listAccountDeliveryConfigs: (principal: PrincipalRef, accountId: string) =>
@@ -587,12 +714,16 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
     principal: PrincipalRef,
     signal?: AbortSignal
   ): Promise<SubscriptionPlanningFailure | undefined> {
+    const at = now().getTime();
     try {
       const { states } = await principals.listReportingSubscriptions(principal);
       if (states.length === 0) return undefined;
       await engine.reconcile(principal, signal ? { signal } : {});
+      await markDue(principal, await nextDue(principal, at));
       return undefined;
     } catch (error) {
+      // A failed reconcile is due again at the next sweep.
+      await markDue(principal, 0).catch(() => undefined);
       return { principal, error };
     }
   }
@@ -677,7 +808,8 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
     principal: principals,
     resolvePrincipal,
     listSubscriptionPrincipals,
-    resolveSubscriptionConfiguration: generation => options.configure(generation),
+    resolveSubscriptionConfiguration: generation =>
+      options.configure ? options.configure(generation) : defaultSubscriptionConfiguration(generation),
     ...(options.dimensions ? { dimensions: options.dimensions } : {}),
     accountConfigurations: accountConfiguration,
     ...(options.bindManagedGeneration ? { bindManagedGeneration: options.bindManagedGeneration } : {}),
@@ -696,6 +828,9 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
       const failures: SubscriptionPlanningFailure[] = [];
       for (const principal of await listSubscriptionPrincipals()) {
         signal?.throwIfAborted();
+        // Boundary-due: a principal is reconciled when a period of one of its schedules ended since
+        // its last reconcile, its last reconcile failed, or the interval cap elapsed.
+        if (!(await isDue(principal, now().getTime()))) continue;
         const failure = await reconcile(principal, signal);
         if (failure) {
           failures.push(failure);
@@ -709,6 +844,8 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
       async changed(input) {
         const principal = { tenantId: input.principal.tenantId, principalId: input.principal.principalId };
         await rememberPrincipal(principal);
+        // A pushed change makes the principal due at the next sweep.
+        await markDue(principal, 0);
         await engine.authorizationChanged(principal, input.accountId, {
           authorized: input.authorized,
           at: input.at,
@@ -774,4 +911,54 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
       }
     },
   };
+}
+
+/**
+ * The report content a subscription generation gets without `subscriptions.configure`, derived from
+ * the resolved source offering:
+ *
+ * - every metric and dimension the source offering supports exactly;
+ * - its first attribution model and window, with a settings digest over them;
+ * - for `required_finality: 'official'`, a contractual cutoff at the offering's `delivery_sla`.
+ *
+ * Billing feeds need a canonicalization, which no default can supply: their generations fail to plan
+ * with `PlatformConfigError` naming `subscriptions.configure`.
+ *
+ * @experimental Reporting subscriptions (AdCP 3.3). See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export function defaultSubscriptionConfiguration(
+  generation: Pick<ReliableReportingSubscriptionGenerationContextV1, 'subscription' | 'offering' | 'sourceOffering'>
+): ReliableReportingSubscriptionPolicyV1 {
+  const { subscription, offering, sourceOffering } = generation;
+  if (subscription.selector.feed_purpose === 'billing') {
+    throw new PlatformConfigError(
+      `Subscription ${JSON.stringify(subscription.subscription_id)} resolved billing offering ${JSON.stringify(offering.offering_id)}, which needs a canonicalization. Supply subscriptions.configure for billing feeds.`,
+      { configField: 'subscriptions.configure' }
+    );
+  }
+  const exact = (items: ReadonlyArray<{ name: string; support: string }>) =>
+    items.filter(item => item.support === 'exact').map(item => item.name);
+  const settings = {
+    attributionModel: sourceOffering.sourceSettings.attributionModels[0]!,
+    attributionWindow: sourceOffering.sourceSettings.attributionWindows[0]!,
+  };
+  const digest = createHash('sha256').update(canonicalJsonV1(settings)).digest('hex');
+  const policy: ReliableReportingSubscriptionPolicyV1 = {
+    requestedMetrics: exact(sourceOffering.metrics),
+    requestedDimensions: exact(sourceOffering.dimensions),
+    sourceSettings: {
+      ...settings,
+      sourceSettingsVersion: '1',
+      sourceSettingsSha256: digest,
+      settingsSnapshotRef: `adcp-default.${sourceOffering.offeringId}`.slice(0, 255).replace(/[^A-Za-z0-9_.-]/g, '_'),
+    },
+  };
+  if (subscription.selector.required_finality === 'official') {
+    policy.finalityPolicy = {
+      policyId: `adcp-default-cutoff:${offering.offering_id}`.slice(0, 255).replace(/[^A-Za-z0-9_.:-]/g, '_'),
+      basis: 'contractual_cutoff',
+      durationAfterPeriodEndMilliseconds: reportingIsoDurationMillisecondsV1(offering.schedule.delivery_sla),
+    };
+  }
+  return policy;
 }
