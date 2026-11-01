@@ -87,6 +87,21 @@ export interface PeriodLine {
   finality?: 'snapshot' | 'official';
 }
 
+/**
+ * Why part of a reconcile is not definitive; the message ends with the fix. The same shape and codes
+ * as the Python SDK's `ReconcileIssue`: `SUBSCRIPTION_ROSTER_UNAVAILABLE`,
+ * `SUBSCRIPTION_OFFERINGS_UNAVAILABLE`, `SUBSCRIPTION_ACCOUNT_UNREADABLE`,
+ * `SUBSCRIPTION_LEDGER_UNAVAILABLE`, `SUBSCRIPTION_ACCOUNT_NOT_COVERED`, or a coverage input code.
+ *
+ * @experimental Reporting subscriptions (AdCP 3.3).
+ */
+export interface ReconcileIssue {
+  code: string;
+  message: string;
+  account_id?: string;
+  subscription_id?: string;
+}
+
 /** One account the run reconciled, or could not. */
 export interface ReconcileAccount {
   account_id: string;
@@ -115,6 +130,8 @@ export interface ReconcileReport {
   summary: Record<PeriodStatus, number> & { owed: number };
   periods: PeriodLine[];
   accounts: ReconcileAccount[];
+  /** What kept the report from being definitive, one entry per cause (empty when definitive). */
+  issues: ReconcileIssue[];
 }
 
 /** Options for {@link reconcileReportingSubscriptions}. */
@@ -591,6 +608,27 @@ function emptySummary(): ReconcileReport['summary'] {
   return { owed: 0, delivered: 0, pending: 0, late: 0, missing_obligation: 0, withheld: 0, not_owed: 0 };
 }
 
+function accountIssue(cause: NonNullable<ReconcileAccount['error']>, accountId: string): ReconcileIssue {
+  if (cause.task === 'coverage') {
+    return {
+      code: cause.code,
+      message: `${cause.message}. The seller's wire state for ${accountId} is incomplete; its owed set was not computed.`,
+      account_id: accountId,
+    };
+  }
+  return cause.task === 'get_reporting_status'
+    ? {
+        code: 'SUBSCRIPTION_LEDGER_UNAVAILABLE',
+        message: `${cause.message}. Retry once get_reporting_status answers for ${accountId}.`,
+        account_id: accountId,
+      }
+    : {
+        code: 'SUBSCRIPTION_ACCOUNT_UNREADABLE',
+        message: `${cause.message}. Retry once ${cause.task} answers for ${accountId}.`,
+        account_id: accountId,
+      };
+}
+
 function failure(error: unknown, fallbackTask: string): NonNullable<ReconcileAccount['error']> {
   if (error instanceof ReadFailure) return { task: error.task, code: error.code, message: error.message };
   if (error instanceof CoverageInputError) return { task: 'coverage', code: error.code, message: error.message };
@@ -652,6 +690,7 @@ export async function reconcileObserved(
     summary: emptySummary(),
     periods: [],
     accounts: [],
+    issues: [],
   };
   if (subscriptions.length === 0) return report;
 
@@ -662,12 +701,19 @@ export async function reconcileObserved(
     roster = await readRoster(client);
   } catch (error) {
     report.definitive = false;
-    report.accounts.push({
-      account_id: '*',
-      subscription_ids: [],
-      status: 'failed',
-      error: failure(error, 'list_accounts'),
-    });
+    const cause = failure(error, 'list_accounts');
+    report.accounts.push({ account_id: '*', subscription_ids: [], status: 'failed', error: cause });
+    report.issues.push(
+      cause.task === 'get_adcp_capabilities'
+        ? {
+            code: 'SUBSCRIPTION_OFFERINGS_UNAVAILABLE',
+            message: `${cause.message}. Retry once the seller's get_adcp_capabilities answers.`,
+          }
+        : {
+            code: 'SUBSCRIPTION_ROSTER_UNAVAILABLE',
+            message: `${cause.message}. Retry once the seller's list_accounts answers; no account was reconciled.`,
+          }
+    );
     return report;
   }
 
@@ -794,6 +840,7 @@ export async function reconcileObserved(
       report.definitive = false;
       entry.status = 'failed';
       entry.error = failure(error, 'get_reporting_status');
+      report.issues.push(accountIssue(entry.error, accountId));
     }
     report.accounts.push(entry);
   }
@@ -853,6 +900,19 @@ export async function reconcileObserved(
     }
   }
 
+  // An explicitly requested account no subscription covers is named, not silently dropped.
+  if (Array.isArray(options.accounts)) {
+    for (const accountId of options.accounts) {
+      if (report.accounts.some(item => item.account_id === accountId)) continue;
+      report.issues.push({
+        code: 'SUBSCRIPTION_ACCOUNT_NOT_COVERED',
+        message: `No subscription covers ${accountId}, or list_accounts does not list it. Check the subscriptions' scopes and the caller's grant.`,
+        account_id: accountId,
+      });
+    }
+  }
+  // As in the Python SDK, any issue makes the report non-definitive.
+  if (report.issues.length > 0) report.definitive = false;
   report.accounts.sort((left, right) => compareReportingIdsByteOrderV1(left.account_id, right.account_id));
   report.periods.sort(
     (left, right) =>
@@ -965,8 +1025,11 @@ export async function explainReportingSubscriptionCoverage(
  */
 export interface FleetReconcileReport {
   bySeller: Record<string, ReconcileReport>;
-  /** Agents whose principal could not be read; their periods are not in the summary. */
-  failures: Record<string, { code: string; message: string }>;
+  /**
+   * Sellers that could not be reconciled at all (their principal could not be read), one entry each
+   * with `agent_id`; their periods are not in the summary. Each seller's own issues are on its report.
+   */
+  issues: Array<ReconcileIssue & { agent_id: string }>;
   /** Every seller's report is definitive and none failed. */
   definitive: boolean;
   summary: ReconcileReport['summary'];
@@ -997,7 +1060,7 @@ export async function reconcileReportingFleet(
     });
   }
   const selected = clients.filter(([id]) => agentIds === undefined || agentIds.includes(id));
-  const fleet: FleetReconcileReport = { bySeller: {}, failures: {}, definitive: true, summary: emptySummary() };
+  const fleet: FleetReconcileReport = { bySeller: {}, issues: [], definitive: true, summary: emptySummary() };
   let next = 0;
   const worker = async () => {
     while (next < selected.length) {
@@ -1009,10 +1072,11 @@ export async function reconcileReportingFleet(
           ...(prior ? { previous: prior } : {}),
         });
       } catch (error) {
-        fleet.failures[id] = {
-          code: (error as { code?: string }).code ?? 'TASK_FAILED',
-          message: error instanceof Error ? error.message : String(error),
-        };
+        fleet.issues.push({
+          agent_id: id,
+          code: 'SUBSCRIPTION_PRINCIPAL_UNAVAILABLE',
+          message: `${error instanceof Error ? error.message : String(error)} (${(error as { code?: string }).code ?? 'TASK_FAILED'})`,
+        });
       }
     }
   };
@@ -1023,6 +1087,6 @@ export async function reconcileReportingFleet(
       fleet.summary[key] += report.summary[key];
     }
   }
-  if (Object.keys(fleet.failures).length > 0) fleet.definitive = false;
+  if (fleet.issues.length > 0) fleet.definitive = false;
   return fleet;
 }
