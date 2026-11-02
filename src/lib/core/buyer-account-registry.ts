@@ -9,7 +9,14 @@ import type {
   SyncAccountsResponse,
 } from '../types/tools.generated';
 import type { AccountRequest, AccountRequestState, PendingAction } from '../types/core.generated';
-import { SELLER_REVIEW, pendingActionFromWire, type AccountOutcome, type AccountVia } from './account-outcomes';
+import {
+  SELLER_REVIEW,
+  pendingActionFromWire,
+  type AccountChangeOutcome,
+  type AccountChangeRejected,
+  type AccountOutcome,
+  type AccountVia,
+} from './account-outcomes';
 import type { TaskOptions, TaskResult } from './ConversationTypes';
 import { accountReferenceKey } from './account-key';
 import { sameCountrySet } from './account-resolution';
@@ -30,6 +37,46 @@ export interface EnsureAccountOptions {
   /** `ensure` only: joins the natural key when the key does not carry `timezone`. */
   timezone?: string;
 }
+/**
+ * The attributes `client.accounts.change` can change, in wire spelling: `brand` (to change
+ * `countries`; `domain` and `brand_id` must equal the account's), `operator_unit`, `currency`,
+ * `timezone`, and the money terms `billing`, `billing_entity` and `payment_terms`.
+ */
+export type AccountChanges = Partial<
+  Pick<
+    RequestAccountRequest,
+    'brand' | 'operator_unit' | 'currency' | 'timezone' | 'billing' | 'billing_entity' | 'payment_terms'
+  >
+>;
+export interface ChangeAccountOptions {
+  /**
+   * The account revision the change is based on. Required for money changes (`billing`,
+   * `billing_entity`, `payment_terms`): pass the revision the change was approved against. For other
+   * changes it is read from `list_accounts` when omitted.
+   */
+  revision?: number;
+  /** May the seller answer by opening a separate account with the change? Defaults to false, as in the spec. */
+  allowSeparateAccount?: boolean;
+}
+/** Attributes `change()` sends; the money ones need an explicit `revision`. */
+const CHANGEABLE = new Set<string>([
+  'brand',
+  'operator_unit',
+  'currency',
+  'timezone',
+  'billing',
+  'billing_entity',
+  'payment_terms',
+]);
+const MONEY_FIELDS = new Set<string>(['billing', 'billing_entity', 'payment_terms']);
+
+/** A local refusal: nothing was sent. */
+function changeRefused(code: string, message: string): AccountRequestError {
+  return new AccountRequestError('request_account', [{ code, message, recovery: 'correctable' }], {
+    dispatched: false,
+  });
+}
+
 export interface ProvisionedAccount {
   account: AccountReference;
   account_id?: string;
@@ -103,6 +150,11 @@ export interface BuyerAccountRegistryOptions {
     supported(taskOptions?: TaskOptions): Promise<boolean>;
     request(params: RequestAccountRequest, taskOptions?: TaskOptions): Promise<TaskResult<RequestAccountResponse>>;
     read(requestIds: readonly string[], taskOptions?: TaskOptions): Promise<AccountRequest[]>;
+    /**
+     * The caller's reporting subscriptions (`client.reporting.listSubscriptions()`), read best effort
+     * when a change resolves as a separate account.
+     */
+    subscriptions?(): Promise<readonly { subscription_id: string; configuration?: unknown }[]>;
   };
 }
 type NaturalRef = Extract<AccountReference, { brand: unknown }>;
@@ -133,6 +185,16 @@ function setupTerms(options: EnsureAccountOptions): ProvisionedAccount['setupTer
           .digest('hex'),
       ])
   );
+}
+
+/** The errors of a `request_account` call that did not return a request. */
+function requestErrors(
+  result: TaskResult<unknown>,
+  body: Partial<RequestAccountResponse>
+): { code: string; message?: string; recovery?: string }[] {
+  const errors = body.errors as { code: string; message?: string; recovery?: string }[] | undefined;
+  if (errors?.length) return errors;
+  return [result.adcpError ?? { code: 'SERVICE_UNAVAILABLE', message: result.error ?? 'request_account failed' }];
 }
 
 /** Synthetic transport/protocol errors do not establish the seller mutation's outcome. */
@@ -722,10 +784,7 @@ export class BuyerAccountRegistry {
     const result = await this.registryOptions.requests!.request(params, taskOptions);
     const body = (result.data ?? {}) as Partial<RequestAccountResponse>;
     if (!result.success || body.adcp_error || !body.request || typeof body.request !== 'object') {
-      const errors = (body.errors as { code: string; message?: string }[] | undefined)?.length
-        ? body.errors!
-        : [result.adcpError ?? { code: 'SERVICE_UNAVAILABLE', message: result.error ?? 'request_account failed' }];
-      throw new AccountRequestError('request_account', structuredClone(errors) as never);
+      throw new AccountRequestError('request_account', structuredClone(requestErrors(result, body)) as never);
     }
     return this.recordRequest(ref, body.request, taskOptions);
   }
@@ -908,6 +967,250 @@ export class BuyerAccountRegistry {
       if (latest && latest.status !== record.status) moved.push(this.syncOutcome(latest));
     }
     return moved;
+  }
+
+  /**
+   * Change an account's attributes through `request_account` (AdCP 3.3 `account.requests`). Resolves to
+   * an {@link AccountChangeOutcome}: `updated` (same `account_id`, new `revision`, and `effective_at` for
+   * money terms), `separate_account` or `matched_existing` (a different account; the registry is not
+   * re-pointed until {@link BuyerAccountRegistry.use}), `pending`, or `rejected`.
+   *
+   * - **Money changes** (`billing`, `billing_entity`, `payment_terms`) need `options.revision`, the
+   *   revision the change was approved against. The SDK never reads it for you, since that would defeat
+   *   the lost-update protection. Without it nothing is sent: `AccountRequestError` with code
+   *   `ACCOUNT_REVISION_REQUIRED` and `dispatched: false`.
+   * - **Other changes** read the current `revision` from `list_accounts` when omitted, and retry once on
+   *   `CONFLICT` when the fields being changed did not change concurrently.
+   * - `allowSeparateAccount` defaults to false. A seller that would accept the change only on a new
+   *   account then rejects it, and the outcome's `requiresNewAccount` is true.
+   *
+   * Unknown attributes (`ACCOUNT_CHANGE_INVALID`) and sellers that do not advertise `account.requests`
+   * (`ACCOUNT_REQUESTS_UNSUPPORTED`) are refused before dispatch. A failure to process the call throws
+   * `AccountRequestError`. A pending change is not kept in the registry, which maps natural keys: keep
+   * its `request_id` and read it back with {@link BuyerAccountRegistry.changeStatus}. A new change
+   * request for the same account supersedes an open one.
+   */
+  async change(
+    accountId: string,
+    changes: AccountChanges,
+    options: ChangeAccountOptions = {},
+    taskOptions?: TaskOptions
+  ): Promise<AccountChangeOutcome> {
+    if (typeof accountId !== 'string' || accountId.length === 0)
+      throw new TypeError('change() needs the account_id of the account to change.');
+    const payload = Object.fromEntries(
+      Object.entries(changes ?? {}).filter(([, value]) => value !== undefined)
+    ) as Record<string, unknown>;
+    const unknown = Object.keys(payload)
+      .filter(name => !CHANGEABLE.has(name))
+      .sort();
+    const changeable = [...CHANGEABLE].sort().join(', ');
+    if (Object.keys(payload).length === 0 || unknown.length > 0)
+      throw changeRefused(
+        'ACCOUNT_CHANGE_INVALID',
+        (unknown.length > 0
+          ? `change() cannot change ${unknown.join(', ')}. `
+          : 'change() needs at least one attribute to change. ') + `Change one of ${changeable}.`
+      );
+    const money = Object.keys(payload)
+      .filter(name => MONEY_FIELDS.has(name))
+      .sort();
+    let revision = options.revision;
+    if (revision !== undefined && (!Number.isSafeInteger(revision) || revision < 1))
+      throw new TypeError('revision must be a positive integer.');
+    if (money.length > 0 && revision === undefined)
+      throw changeRefused(
+        'ACCOUNT_REVISION_REQUIRED',
+        `Changing ${money.join(', ')} needs the account revision the change was approved against, so a ` +
+          'concurrent change is never overwritten. Read it from list_accounts and pass options.revision.'
+      );
+    const requests = this.registryOptions.requests;
+    if (!requests || !(await requests.supported(taskOptions)))
+      throw changeRefused(
+        'ACCOUNT_REQUESTS_UNSUPPORTED',
+        'This seller does not advertise account.requests, so accounts change through sync_accounts. ' +
+          'Use client.syncAccounts for this seller.'
+      );
+    const automatic = revision === undefined;
+    let before = automatic ? await this.readAccount(accountId, taskOptions) : undefined;
+    if (automatic && typeof before?.revision === 'number') revision = before.revision;
+    for (let attempt = 1; ; attempt++) {
+      const entry: Record<string, unknown> = {
+        account_id: accountId,
+        ...structuredClone(payload),
+        ...(revision !== undefined && { revision }),
+        ...(options.allowSeparateAccount === true && { allow_separate_account: true }),
+      };
+      const result = await requests.request(
+        { idempotency_key: this.ensureKey(entry), ...entry } as RequestAccountRequest,
+        taskOptions
+      );
+      const body = (result.data ?? {}) as Partial<RequestAccountResponse>;
+      if (result.success && !body.adcp_error && body.request && typeof body.request === 'object')
+        return this.changeOutcome(accountId, body.request);
+      const errors = requestErrors(result, body);
+      if (attempt === 1 && automatic && before && errors.some(error => error.code === 'CONFLICT')) {
+        const current = await this.readAccount(accountId, taskOptions);
+        if (current && Object.keys(payload).every(name => isDeepStrictEqual(current[name], before![name]))) {
+          // Only the revision moved under us: retry once on the new one.
+          revision = typeof current.revision === 'number' ? current.revision : undefined;
+          before = current;
+          continue;
+        }
+      }
+      throw new AccountRequestError('request_account', structuredClone(errors) as never);
+    }
+  }
+
+  /**
+   * The current outcome of a change request, read through `list_accounts` `request_ids`. A request the
+   * seller no longer knows is `rejected` with `ACCOUNT_REQUEST_NOT_FOUND`: send the change again.
+   */
+  async changeStatus(accountId: string, requestId: string, taskOptions?: TaskOptions): Promise<AccountChangeOutcome> {
+    const requests = this.registryOptions.requests;
+    if (!requests) throw changeRefused('ACCOUNT_REQUESTS_UNSUPPORTED', 'This client cannot read account requests.');
+    const [wire] = (await requests.read([requestId], taskOptions)).filter(item => item.request_id === requestId);
+    if (!wire)
+      return {
+        kind: 'rejected',
+        errors: [
+          { code: 'ACCOUNT_REQUEST_NOT_FOUND', message: 'The seller no longer knows this request; send it again.' },
+        ],
+        via: 'request_account',
+        request_id: requestId,
+        requiresNewAccount: false,
+      };
+    return this.changeOutcome(accountId, wire);
+  }
+
+  /**
+   * Point a natural key at `accountId`: account-scoped calls and new buys for `key` go to that account.
+   * The explicit step after {@link BuyerAccountRegistry.change} returned `separate_account` or
+   * `matched_existing`; the registry never re-points on its own. The account's `status` is read from
+   * `list_accounts` unless you pass it, so the spend gate still holds a `payment_required` or pending
+   * account. An account the caller cannot list is recorded as `unknown` and refused for spend until it
+   * is listed.
+   */
+  async use(
+    key: AccountReference,
+    accountId: string,
+    options: { status?: string } = {},
+    taskOptions?: TaskOptions
+  ): Promise<void> {
+    if (!key || typeof key !== 'object' || 'account_id' in key)
+      throw new TypeError('use() maps a buyer-declared natural key, not an account_id.');
+    if (typeof accountId !== 'string' || accountId.length === 0)
+      throw new TypeError('use() needs the account_id new buys go to.');
+    this.provisioningAccessed = true;
+    const ref = structuredClone(key);
+    const scope = this.scope();
+    let status = options.status;
+    if (status === undefined) {
+      const listed = await this.readAccount(accountId, taskOptions);
+      status = typeof listed?.status === 'string' ? listed.status : 'unknown';
+    }
+    if (scope !== this.scope()) throw new AccountNotFoundError('Caller credentials changed before use().');
+    await this.enqueue(() => this.record(ref, { account_id: accountId, status }, scope));
+    this.touched.add(this.key(ref, scope));
+  }
+
+  /** The account as `list_accounts` shows it to the caller, or `undefined`. */
+  private async readAccount(
+    accountId: string,
+    taskOptions?: TaskOptions
+  ): Promise<Record<string, unknown> | undefined> {
+    if (!this.repair) return undefined;
+    const rows = await this.repair(accountId, taskOptions);
+    const row = rows.find(
+      item => item !== null && typeof item === 'object' && (item as AccountRow).account_id === accountId
+    );
+    return row ? (row as Record<string, unknown>) : undefined;
+  }
+
+  /** The natural key the registry maps to `accountId`, if any. */
+  private async keyFor(accountId: string): Promise<AccountReference | undefined> {
+    const record = (await this.known()).find(entry => entry.account_id === accountId);
+    return record ? structuredClone(record.account) : undefined;
+  }
+
+  /** `account_ids`-scoped subscriptions naming `previous` but not `next`. Best effort. */
+  private async subscriptionsNotCovering(previous: string, next: string): Promise<string[]> {
+    const read = this.registryOptions.requests?.subscriptions;
+    if (!read) return [];
+    let subscriptions: Awaited<ReturnType<typeof read>>;
+    try {
+      subscriptions = await read();
+    } catch {
+      return []; // Informational only.
+    }
+    return subscriptions
+      .filter(state => {
+        const ids = (state.configuration as { scope?: { account_ids?: unknown } } | undefined)?.scope?.account_ids;
+        return Array.isArray(ids) && ids.includes(previous) && !ids.includes(next);
+      })
+      .map(state => String(state.subscription_id))
+      .sort();
+  }
+
+  private async changeOutcome(previous: string, wire: AccountRequest): Promise<AccountChangeOutcome> {
+    const requestId = wire.request_id;
+    if (wire.state === 'in_review')
+      return {
+        kind: 'pending',
+        action: pendingActionFromWire(wire.pending_action),
+        via: 'request_account',
+        request_id: requestId,
+        account_id: previous,
+      };
+    if (wire.state !== 'resolved') {
+      const errors = structuredClone(
+        wire.errors?.length
+          ? wire.errors
+          : [{ code: 'ACCOUNT_REQUEST_REJECTED', message: 'The seller declined the request' }]
+      );
+      const rejected: AccountChangeRejected = {
+        kind: 'rejected',
+        errors,
+        via: 'request_account',
+        request_id: requestId,
+        requiresNewAccount: errors.some(error => error.code === 'ACCOUNT_CHANGE_REQUIRES_NEW_ACCOUNT'),
+      };
+      return rejected;
+    }
+    const account = wire.account ? (structuredClone(wire.account) as unknown as Record<string, unknown>) : undefined;
+    const accountId = wire.account_id ?? previous;
+    if (wire.resolution === 'updated' || accountId === previous)
+      return {
+        kind: 'updated',
+        account_id: accountId,
+        ...(typeof account?.revision === 'number' && { revision: account.revision }),
+        ...(wire.effective_at !== undefined && { effective_at: wire.effective_at }),
+        ...(account && { account }),
+        request_id: requestId,
+        via: 'request_account',
+      };
+    const key = await this.keyFor(previous);
+    if (wire.resolution === 'created')
+      return {
+        kind: 'separate_account',
+        account_id: accountId,
+        previousAccountId: previous,
+        ...(key && { key }),
+        ...(account && { account }),
+        not_carried_over: [...(wire.not_carried_over ?? [])],
+        subscriptionsNotCovering: await this.subscriptionsNotCovering(previous, accountId),
+        request_id: requestId,
+        via: 'request_account',
+      };
+    return {
+      kind: 'matched_existing',
+      account_id: accountId,
+      previousAccountId: previous,
+      ...(key && { key }),
+      ...(account && { account }),
+      request_id: requestId,
+      via: 'request_account',
+    };
   }
 
   private async write(entry: ProvisionedAccount, scope: string, isCurrent: () => boolean = () => true): Promise<void> {
