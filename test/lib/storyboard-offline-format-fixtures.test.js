@@ -4,7 +4,8 @@ const {
   expandCreativeAssetDirectivesWithDiagnostics: expand,
 } = require('../../dist/lib/testing/storyboard/creative-assets');
 const { runStoryboard } = require('../../dist/lib/testing');
-const { validateStoryboardShape } = require('../../dist/lib/testing/storyboard/loader');
+const { validateStoryboardShape, parseStoryboard } = require('../../dist/lib/testing/storyboard/loader');
+const { stringify } = require('yaml');
 
 const reference = { agent_url: 'https://creative.example/formats', id: 'display_custom', width: 300, height: 250 };
 const format = {
@@ -221,12 +222,80 @@ test('unsupported accessibility, delivery, nested dimensions and unparameterized
   }
 });
 
+test('parameterized legacy slots cannot override reference dimensions through helper requirement fields', () => {
+  for (const dimensions of [{ width: 600, height: 500 }, { dimensions: { width: 600, height: 500 } }]) {
+    const conflicting = {
+      ...format,
+      assets: [
+        {
+          ...format.assets[0],
+          requirements: {
+            parameters_from_format_id: true,
+            ...dimensions,
+          },
+        },
+      ],
+    };
+    const result = expandRef(reference, {
+      ...kit,
+      creative_formats: [conflicting],
+      assets: { ...kit.assets, images: [{ url: 'https://assets.example/large.jpg', width: 600, height: 500 }] },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.failure.reason, 'fixture_unavailable');
+  }
+  assert.equal(
+    expandRef(reference, {
+      ...kit,
+      creative_formats: [
+        {
+          ...format,
+          assets: [{ ...format.assets[0], requirements: { parameters_from_format_id: true, width: 300, height: 250 } }],
+        },
+      ],
+    }).ok,
+    true
+  );
+});
+
 test('authored offline directives cannot run without the forward compatibility gate', () => {
   const source = storyboard();
   delete source.requires;
   assert.throws(() => validateStoryboardShape(source), /test_kit_format_catalog_runner/);
   source.requires = ['test_kit_format_catalog_runner'];
   assert.doesNotThrow(() => validateStoryboardShape(source));
+});
+
+test('synthetic rate-limit target requests require the offline gate in programmatic and YAML storyboards', () => {
+  const source = storyboard();
+  const request = source.phases[1].steps[0].sample_request;
+  source.phases = [
+    {
+      id: 'trip',
+      title: 'Trip',
+      steps: [
+        {
+          id: 'trip',
+          title: 'Trip',
+          task: 'expect_rate_limit_not_replayed',
+          requires_contract: 'rate_limit_trip_runner',
+          rate_limit_trip: {
+            trip_target_task: 'create_media_buy',
+            trip_target_sample_request: request,
+            max_attempts: 50,
+            replay_max_wait_seconds: 1,
+          },
+          validations: [],
+        },
+      ],
+    },
+  ];
+  delete source.requires;
+  assert.throws(() => validateStoryboardShape(source), /test_kit_format_catalog_runner/);
+  assert.throws(() => parseStoryboard(stringify(source)), /test_kit_format_catalog_runner/);
+  source.requires = ['test_kit_format_catalog_runner'];
+  assert.doesNotThrow(() => validateStoryboardShape(source));
+  assert.doesNotThrow(() => parseStoryboard(stringify(source)));
 });
 
 function storyboard({ updateRef = reference } = {}) {

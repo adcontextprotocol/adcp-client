@@ -110,6 +110,21 @@ function resolveTestKitFormat(value: JsonObject, testKit: unknown): FormatResolu
       return unavailable('required slot needs logical dimensions from a parameterized FormatId');
     }
     if (
+      requirements.parameters_from_format_id === true &&
+      [requirements, requirements.dimensions].filter(isObject).some(dimensions =>
+        ['width', 'height'].some(axis => {
+          const logical = asNumber(requested[axis]);
+          return (
+            dimensions[axis] !== undefined &&
+            logical !== undefined &&
+            dimensions[axis] !== logical * (asNumber(requested.pixel_ratio) ?? 1)
+          );
+        })
+      )
+    ) {
+      return unavailable('required slot dimensions contradict the parameterized FormatId');
+    }
+    if (
       isObject(requirements.dimensions) &&
       Object.keys(requirements.dimensions).some(key => !['width', 'height'].includes(key))
     ) {

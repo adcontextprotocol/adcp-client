@@ -120,7 +120,8 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
     if (!phase.steps) continue;
     for (const step of phase.steps) {
       if (
-        hasOfflineFormatDirective(step.sample_request) &&
+        (hasOfflineFormatDirective(step.sample_request) ||
+          hasOfflineFormatDirective(step.rate_limit_trip?.trip_target_sample_request)) &&
         !(Array.isArray(storyboard.requires) && storyboard.requires.includes('test_kit_format_catalog_runner'))
       ) {
         throw new Error(
