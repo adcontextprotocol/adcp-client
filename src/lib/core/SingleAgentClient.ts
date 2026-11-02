@@ -2638,7 +2638,7 @@ export class SingleAgentClient {
         ? event => config.onTransportActivity!(canonicalCreativeTransportActivity(event))
         : undefined,
       governance: config.governance,
-      adcpVersion: this.config.wireAdcpVersion ?? this.resolvedAdcpVersion,
+      adcpVersion: this.resolvedAdcpVersion,
       ...(config.wireAdcpVersion !== undefined && { wireAdcpVersion: config.wireAdcpVersion }),
       ...(config.versionEnvelope !== undefined && { versionEnvelope: config.versionEnvelope }),
       transport: config.transport,
@@ -8954,7 +8954,7 @@ export class SingleAgentClient {
           if (groups.size > 0) {
             const fitting = new Set(
               fitCreativeToPackages(creative as unknown as import('../types/tools.generated').CreativeAsset, relevant, {
-                adcpVersion: this.resolvedAdcpVersion,
+                adcpVersion: this.config.wireAdcpVersion ?? this.resolvedAdcpVersion,
                 wireMode: 'canonical',
                 legacyFormatConverter: options?.legacyFormatConverter,
                 canonicalFormatLegacyResolver: options?.canonicalFormatLegacyResolver,
