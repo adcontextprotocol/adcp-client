@@ -1,3 +1,45 @@
+import { REPORTING_ROW_IDENTIFIER_MAX_LENGTH } from './row-storage-provider-io';
+
+/**
+ * Widens `row_binding_id` to AdCP's 255-character identifier bound on a database that was installed with the
+ * original 128-character `CHECK`, and adds the named constraint a fresh install carries inline. Guarded on the
+ * catalog, so a database that is already current takes no lock and changes nothing. Widening a `CHECK` needs no
+ * data migration, and the two tables that reference `row_binding_id` (`adcp_reporting_row_sets`,
+ * `adcp_reporting_row_write_intents`) hold it by foreign key only. Applied as migration `0010`, and part of
+ * {@link REPORTING_ROW_STORAGE_MIGRATION} for a database that applies that constant by hand.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export const REPORTING_ROW_BINDING_ID_BOUND_MIGRATION = `
+DO $binding_id_bound$
+DECLARE
+  bindings regclass := to_regclass(quote_ident(current_schema()) || '.adcp_reporting_row_bindings');
+  legacy TEXT;
+BEGIN
+  IF bindings IS NULL THEN
+    RETURN;
+  END IF;
+  -- The original CHECK was unnamed (PostgreSQL named it after the column) and capped the ID at 128.
+  FOR legacy IN
+    SELECT conname FROM pg_constraint
+     WHERE conrelid = bindings AND contype = 'c'
+       AND conname <> 'adcp_reporting_row_bindings_row_binding_id_bounds'
+       AND pg_get_constraintdef(oid) LIKE '%row_binding_id%{1,128}%'
+  LOOP
+    EXECUTE format('ALTER TABLE adcp_reporting_row_bindings DROP CONSTRAINT %I', legacy);
+  END LOOP;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = bindings AND conname = 'adcp_reporting_row_bindings_row_binding_id_bounds'
+  ) THEN
+    ALTER TABLE adcp_reporting_row_bindings
+      ADD CONSTRAINT adcp_reporting_row_bindings_row_binding_id_bounds
+      CHECK (row_binding_id ~ '^[A-Za-z0-9_.:-]{1,${REPORTING_ROW_IDENTIFIER_MAX_LENGTH}}$');
+  END IF;
+END
+$binding_id_bound$;
+`.trim();
+
 /**
  * Row-storage tables for reporting revisions (shared SDK persistence spec,
  * `reporting-row-storage` v1, adcontextprotocol/adcp#7996 §3.2).
@@ -92,7 +134,9 @@ CREATE TABLE IF NOT EXISTS adcp_persistence_installation (
 INSERT INTO adcp_persistence_installation (singleton) VALUES (TRUE) ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS adcp_reporting_row_bindings (
-  row_binding_id TEXT COLLATE "C" PRIMARY KEY CHECK (row_binding_id ~ '^[A-Za-z0-9_.:-]{1,128}$'),
+  row_binding_id TEXT COLLATE "C" PRIMARY KEY
+    CONSTRAINT adcp_reporting_row_bindings_row_binding_id_bounds
+    CHECK (row_binding_id ~ '^[A-Za-z0-9_.:-]{1,${REPORTING_ROW_IDENTIFIER_MAX_LENGTH}}$'),
   kind TEXT NOT NULL CHECK (kind IN ('postgres', 'object')),
   provider TEXT NOT NULL CHECK (provider ~ '^[a-z][a-z0-9_]{0,63}$'),
   identity_config JSONB NOT NULL CHECK (jsonb_typeof(identity_config) = 'object'),
@@ -307,6 +351,8 @@ BEGIN
   END IF;
 END
 $bounds$;
+
+${REPORTING_ROW_BINDING_ID_BOUND_MIGRATION}
 
 -- Open write intents written before the rename name objects objectKey / nativeVersion.
 UPDATE adcp_reporting_row_write_intents

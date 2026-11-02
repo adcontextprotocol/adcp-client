@@ -168,6 +168,14 @@ Reporting storage is now one decision. `postgresStorage({ pool })` (this package
 
 The migration constants (`REPORTING_LEDGER_MIGRATION`, `REPORTING_ROW_STORAGE_MIGRATION`, `REPORTING_LEDGER_CHANGES_MIGRATION`, `REPORTING_MANAGED_DELIVERY_MIGRATION`, the object-write and finality-fence constants) are deprecated re-exports for one beta. A schema they set up migrates cleanly: the first `migrate` re-runs them as no-ops and records versions `0001`–`0008`. See the [package README](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/README.md#apply-migrations-npx-adcp-reporting-storage-migrate) for the version table.
 
+### Binding IDs and `credentialRef` accept 255 characters (storage `0.3`, migration `0010`)
+
+`row_binding_id` and `credentialRef` were capped at 128 characters, tighter than every comparable AdCP identifier (`reporting_revision_id`, `resource_ref` and `destination_ref` use `^[A-Za-z0-9_.:-]{1,255}$`), so an ID derived from an AdCP destination reference could be refused for no protocol reason. Both now use the AdCP bound. Nothing you have stored changes and nothing you configured is refused that was accepted before.
+
+1. Run `npx adcp-reporting-storage migrate` (version `0010`, `reporting_row_binding_id_bounds`). It replaces the 128-character `CHECK` on `adcp_reporting_row_bindings.row_binding_id` with a named 255-character one, only when the database still has the old one. `postgresStorage().checkSchema()` names `0010` as pending until then. Until it runs, a binding ID longer than 128 characters is accepted by the configuration and refused by the database when the binding registers.
+2. The `adcp_reporting_row_sets` and `adcp_reporting_row_write_intents` columns reference the ID by foreign key and carry no bound of their own, so nothing else changes.
+3. The bound is exported as `REPORTING_ROW_BINDING_ID_MAX_LENGTH` and `REPORTING_ROW_CREDENTIAL_REF_MAX_LENGTH`. A provider's `clients` map accepts the same 255-character references.
+
 ### `service.setup.migrations` comes from the store
 
 `createReliableReportingService` no longer names the PostgreSQL migration. `service.setup.migrations` is the store's own `migrations` list (`ReportingLedgerStore.migrations`, optional). `PostgresReportingLedgerStore` lists `[REPORTING_LEDGER_MIGRATION]`. A store with nothing to install (an in-memory test double), or a decorator over the PostgreSQL store that does not forward `migrations`, gives an empty list.

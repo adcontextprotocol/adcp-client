@@ -4,7 +4,7 @@ import * as path from 'path';
 
 import { canonicalize } from '@adcp/sdk';
 import { ReportingRowStoreError, reportingPeriodDate } from '@adcp/sdk/reporting/ledger';
-import { isReportingRowInstant } from './row-storage-provider-io';
+import { REPORTING_ROW_IDENTIFIER_MAX_LENGTH, isReportingRowInstant } from './row-storage-provider-io';
 
 /**
  * Object-storage providers for revision row chunks (shared SDK persistence
@@ -45,6 +45,21 @@ export const REPORTING_ROW_OBJECT_REF_MAX_LENGTH = 1024;
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export const REPORTING_ROW_NATIVE_VERSION_REF_MAX_LENGTH = 1024;
+/**
+ * Bound on a row binding ID, 1 to 255 characters of `A-Za-z0-9_.:-`: the AdCP identifier bound that
+ * `reporting_revision_id`, `resource_ref` and `destination_ref` use (`^[A-Za-z0-9_.:-]{1,255}$`). The
+ * `adcp_reporting_row_bindings` `CHECK` constraint enforces the same.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export const REPORTING_ROW_BINDING_ID_MAX_LENGTH: 255 = REPORTING_ROW_IDENTIFIER_MAX_LENGTH;
+/**
+ * Bound on a binding's `credentialRef` (and on the keys of a provider's `clients` map): the same 1 to 255
+ * characters of `A-Za-z0-9_.:-` as a row binding ID.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export const REPORTING_ROW_CREDENTIAL_REF_MAX_LENGTH: 255 = REPORTING_ROW_IDENTIFIER_MAX_LENGTH;
 
 /**
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md

@@ -20,8 +20,14 @@ import {
   isReportingRowStoreError,
 } from '@adcp/sdk/reporting/ledger';
 import { probeReportingRowStorageSchemaV1 } from './row-storage-migration';
-import { isReportingRowInstant, isReportingRowObjectKeyShape } from './row-storage-provider-io';
 import {
+  isReportingRowIdentifier,
+  isReportingRowInstant,
+  isReportingRowObjectKeyShape,
+} from './row-storage-provider-io';
+import {
+  REPORTING_ROW_BINDING_ID_MAX_LENGTH,
+  REPORTING_ROW_CREDENTIAL_REF_MAX_LENGTH,
   REPORTING_ROW_DEFAULT_KEY_TEMPLATE,
   REPORTING_ROW_NATIVE_VERSION_REF_MAX_LENGTH,
   REPORTING_ROW_OBJECT_REF_MAX_LENGTH,
@@ -79,7 +85,10 @@ export interface ReportingObjectRowBindingV1 {
   readOnly?: boolean;
   /** Stored encoding; digests always cover uncompressed bytes. Default `gzip`. */
   compression?: 'none' | 'gzip';
-  /** Host-mapped client reference passed to the provider; never a secret. */
+  /**
+   * Host-mapped client reference passed to the provider; never a secret. 1 to
+   * `REPORTING_ROW_CREDENTIAL_REF_MAX_LENGTH` (255) characters of `A-Za-z0-9_.:-`.
+   */
   credentialRef?: string;
 }
 
@@ -107,7 +116,8 @@ export interface ReportingRowStorageOptionsV1 {
   /**
    * Logical binding ID → immutable definition. Defaults to a single
    * `postgres` binding. Changing a definition requires a new ID; keep retired
-   * definitions configured while revisions still reference them.
+   * definitions configured while revisions still reference them. An ID is 1 to
+   * `REPORTING_ROW_BINDING_ID_MAX_LENGTH` (255) characters of `A-Za-z0-9_.:-`, the AdCP identifier bound.
    */
   bindings?: Readonly<Record<string, ReportingRowBindingDefinitionV1>>;
   /** Object-storage providers by name. */
@@ -253,8 +263,6 @@ export interface ReportingRowSetHandleV1 {
 }
 
 const DEFAULT_BINDING_ID = 'postgres';
-const BINDING_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
-const CREDENTIAL_REF = /^[A-Za-z0-9_.:-]{1,128}$/;
 /** Upper bound for adopting an existing object whose encoding may differ byte-for-byte. */
 const MAX_ADOPTED_OBJECT_BYTES = 2 * REPORTING_ROW_CHUNK_MAX_BYTES + 1024 * 1024;
 
@@ -284,7 +292,12 @@ export class ReportingRowStorageV1 {
     const ids = Object.keys(bindings);
     if (ids.length === 0) throw new ReportingRowStoreError('INVALID_INPUT', 'at least one row binding is required');
     for (const id of ids) {
-      if (!BINDING_ID.test(id)) throw new ReportingRowStoreError('INVALID_INPUT', `invalid row binding ID ${id}`);
+      if (!isReportingRowIdentifier(id)) {
+        throw new ReportingRowStoreError(
+          'INVALID_INPUT',
+          `invalid row binding ID ${id.length > 64 ? `${id.slice(0, 64)}...` : id}: use 1 to ${REPORTING_ROW_BINDING_ID_MAX_LENGTH} characters of A-Za-z0-9_.:-`
+        );
+      }
       const binding = bindings[id]!;
       if (binding.kind === 'postgres') continue;
       if (binding.kind !== 'object') {
@@ -294,8 +307,11 @@ export class ReportingRowStorageV1 {
       if (!provider) throw new ReportingRowStoreError('INVALID_INPUT', `row binding ${id} names an unknown provider`);
       provider.validateLocation(binding.location);
       assertReportingRowPrefixV1(binding.prefix);
-      if (binding.credentialRef !== undefined && !CREDENTIAL_REF.test(binding.credentialRef)) {
-        throw new ReportingRowStoreError('INVALID_INPUT', `row binding ${id} has an invalid credentialRef`);
+      if (binding.credentialRef !== undefined && !isReportingRowIdentifier(binding.credentialRef)) {
+        throw new ReportingRowStoreError(
+          'INVALID_INPUT',
+          `row binding ${id} has an invalid credentialRef: use 1 to ${REPORTING_ROW_CREDENTIAL_REF_MAX_LENGTH} characters of A-Za-z0-9_.:-`
+        );
       }
     }
     // Copy each binding so a host mutating its own objects later cannot change a validated template.
