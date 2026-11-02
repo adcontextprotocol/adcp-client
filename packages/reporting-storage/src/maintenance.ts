@@ -43,8 +43,11 @@ export interface ReportingCompactionOptionsV1 {
  *
  * Enable it only on the ledger database that owns the namespace. A clone or restore of that
  * database that still points at the same bucket shares its namespace and would delete the objects
- * of every row set the original wrote after the clone was taken. Start with `dryRun: true` and read
- * `candidates` in the task result. See `docs/guides/REPORTING-OPERATIONS.md`.
+ * of every row set the original wrote after the clone was taken, so a real pass is fenced: it
+ * claims the namespace (migration `0009`) and refuses, reporting the binding as `fenced`, when the
+ * object store holds a newer claim than this database recorded. After a restore, or when the
+ * original is gone, call `takeOverOrphanCollectorFence` on the store. Start with `dryRun: true` and
+ * read `candidates` in the task result. See `docs/guides/REPORTING-OPERATIONS.md`.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
@@ -54,7 +57,8 @@ export interface ReportingOrphanCollectionOptionsV1 {
   dryRun?: boolean;
   /**
    * Required unless `dryRun`: your statement that this ledger database is the only one that owns the
-   * namespace, and not a clone or restore pointed at the same bucket.
+   * namespace, and not a clone or restore pointed at the same bucket. A copy of the configuration carries
+   * this flag too; the ownership fence is what stops such a copy.
    */
   acknowledgeExclusiveNamespace?: boolean;
   /**
@@ -307,6 +311,7 @@ export async function runReportingLedgerMaintenance(
                 failed: 0,
                 unsupported: [],
                 skippedReadOnly: [],
+                fenced: [],
                 candidates: [],
                 cursors: {},
                 completed: [],
@@ -372,7 +377,12 @@ export async function runReportingLedgerMaintenance(
           overdue?: number;
           // Orphan object collection: bindings it could not cover.
           unsupported?: readonly string[];
-          bindings?: readonly { bindingId: string; status: string; error?: string }[];
+          bindings?: readonly {
+            bindingId: string;
+            status: string;
+            error?: string;
+            fence?: { cause: string; detail: string };
+          }[];
         }
       | undefined;
     const failed = Array.isArray(value?.failed)
@@ -410,6 +420,12 @@ export async function runReportingLedgerMaintenance(
     for (const binding of value?.bindings ?? []) {
       if (binding.status === 'failed') {
         warnings.push(`orphan collection failed for row binding ${binding.bindingId} (${binding.error ?? 'unknown'})`);
+      }
+      if (binding.status === 'fenced') {
+        warnings.push(
+          `orphan collection refused to delete for row binding ${binding.bindingId}: its namespace is fenced ` +
+            `(${binding.fence?.cause ?? 'unknown'}). ${binding.fence?.detail ?? ''}`.trim()
+        );
       }
     }
     let partialFailure: ReportingMaintenancePartialFailureError | undefined;

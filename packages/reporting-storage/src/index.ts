@@ -15,6 +15,7 @@ export * from './postgres';
 export * from './row-storage-migration';
 export * from './row-storage';
 export * from './row-storage-object';
+export type { ReportingOrphanFenceCauseV1, ReportingOrphanFenceRefusalV1 } from './orphan-fence';
 export * from './object-writes';
 export * from './change-feed';
 export * from './maintenance';

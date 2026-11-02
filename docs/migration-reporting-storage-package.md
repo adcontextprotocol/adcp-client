@@ -168,6 +168,18 @@ Reporting storage is now one decision. `postgresStorage({ pool })` (this package
 
 The migration constants (`REPORTING_LEDGER_MIGRATION`, `REPORTING_ROW_STORAGE_MIGRATION`, `REPORTING_LEDGER_CHANGES_MIGRATION`, `REPORTING_MANAGED_DELIVERY_MIGRATION`, the object-write and finality-fence constants) are deprecated re-exports for one beta. A schema they set up migrates cleanly: the first `migrate` re-runs them as no-ops and records versions `0001`–`0008`. See the [package README](https://github.com/adcontextprotocol/adcp-client/blob/main/packages/reporting-storage/README.md#apply-migrations-npx-adcp-reporting-storage-migrate) for the version table.
 
+### Orphan collector ownership fence (storage `0.3`, migration `0009`)
+
+Only deployments that enable `orphanCollection` (or call `collectOrphanedRowObjects`) are affected. A clone or restore of the ledger database shares the live database's namespace key and configuration, including `acknowledgeExclusiveNamespace: true`, and would delete the live database's newer row objects. A real pass now claims the namespace first and refuses to delete when another database holds a newer claim.
+
+1. Run `npx adcp-reporting-storage migrate` (version `0009`, `reporting_orphan_collector_fence`, additive). Until it is applied, every pass, `dryRun` included, reports each binding as `fenced` with cause `migration_required` and deletes nothing. `postgresStorage().checkSchema()` names `0009` as pending.
+2. Roll `0009` out and run one pass on the **live** database before any staging copy of it runs a collector. The first claim wins, and a copy has no way to tell it is a copy.
+3. Handle the new result shape: `ReportingOrphanBindingResultV1.status` can be `'fenced'` (with `fence: { cause, detail, fenceEpoch?, recordedEpoch? }`), and `ReportingOrphanCollectionResultV1` has a required `fenced: string[]`. A custom store that implements `collectOrphanedRowObjects` for the maintenance task must return `fenced` (an empty array is fine). The maintenance task raises a warning for each fenced binding.
+4. After restoring a database in place, or when the database that held the namespace is gone, call `store.takeOverOrphanCollectorFence({ acknowledgePreviousOwnerGone: true })` once, then collection resumes. It refuses without the acknowledgement.
+5. The fence chain lives under `{prefix}/{namespace_key}/_collector-fence/` in each object binding's bucket. Your provider needs nothing new (create-only `putIfAbsent`, `get`, `list` and `delete`, which the conformance suite already covers), and a bucket lifecycle rule must not expire objects under the owned prefix (the probe already refuses one that does).
+
+See [Orphaned object collection](guides/REPORTING-OPERATIONS.md#adopting-row-storage-retention-and-the-change-feed) for the claim, check and first-claim-wins rules.
+
 ### `service.setup.migrations` comes from the store
 
 `createReliableReportingService` no longer names the PostgreSQL migration. `service.setup.migrations` is the store's own `migrations` list (`ReportingLedgerStore.migrations`, optional). `PostgresReportingLedgerStore` lists `[REPORTING_LEDGER_MIGRATION]`. A store with nothing to install (an in-memory test double), or a decorator over the PostgreSQL store that does not forward `migrations`, gives an empty list.

@@ -90,6 +90,12 @@ import {
   type ReportingRowChunkLocatorV1,
   type ReportingRowStorageOptionsV1,
 } from './row-storage';
+import {
+  decideOrphanFence,
+  type OrphanFenceEntry,
+  type OrphanFenceRow,
+  type ReportingOrphanFenceRefusalV1,
+} from './orphan-fence';
 
 type QueryResultRow = Record<string, unknown>;
 interface ReportingPgResult<Row extends QueryResultRow> {
@@ -2696,9 +2702,17 @@ ${managedDueArm}       )
    * Deleting needs `acknowledgeExclusiveNamespace: true`: enable it only on the ledger database that
    * owns the namespace. A clone or restore of that database that still points at the same bucket
    * shares its `namespace_key`, and would delete the objects of every row set the original wrote after
-   * the clone was taken. Everything the listing finds under the owned prefix with a row-object key is
-   * treated as written by this SDK, so do not store other `.jsonl` files there. `deleted` counts delete
-   * requests that found nothing referenced; an object another host removed first still counts.
+   * the clone was taken. That flag is copied with the configuration, so it is backed by a fence: a real
+   * pass first claims the namespace (a create-only object under `{prefix}/{namespace_key}/_collector-fence/`
+   * and a row in `adcp_reporting_orphan_collector_fences`) and deletes only while the object store's
+   * highest claim is exactly the one this database recorded. A database copied before the original's last
+   * pass sees a newer claim and refuses: its binding is reported `fenced` with a `cause`, in `fenced`, and
+   * in the maintenance warnings, and nothing is deleted. A `dryRun` checks the fence without claiming it
+   * and reports fenced bindings the same way. After a restore, or when the original is gone, take the
+   * namespace over deliberately with `takeOverOrphanCollectorFence`. Everything the listing finds under
+   * the owned prefix with a row-object key is treated as written by this SDK, so do not store other
+   * `.jsonl` files there. `deleted` counts delete requests that found nothing referenced; an object
+   * another host removed first still counts.
    */
   async collectOrphanedRowObjects(
     input: {
@@ -2766,6 +2780,7 @@ ${managedDueArm}       )
       failed: 0,
       unsupported: [],
       skippedReadOnly: [],
+      fenced: [],
       candidates: [],
       cursors: {},
       completed: [],
@@ -2773,6 +2788,24 @@ ${managedDueArm}       )
     };
     const tables = await this.optionalTables();
     if (!tables.has('adcp_reporting_row_sets') || !tables.has('adcp_reporting_row_write_intents')) return result;
+    const hasFenceTable = tables.has('adcp_reporting_orphan_collector_fences');
+    // One fence check or claim per physical fence per pass: bindings that share a bucket and prefix share it.
+    const gates = new Map<string, { ok: true } | { ok: false; refusal: ReportingOrphanFenceRefusalV1 }>();
+    const gate = async (bindingId: string, mode: 'claim' | 'check') => {
+      const { scope } = await this.rowStorage.collectorFenceLocation(bindingId);
+      if (mode === 'claim') {
+        const known = gates.get(scope);
+        if (known) return known;
+      }
+      const outcome = await this.orphanFenceGate(
+        bindingId,
+        mode === 'claim' && dryRun ? 'check' : mode,
+        hasFenceTable,
+        input.signal
+      );
+      if (mode === 'claim') gates.set(scope, outcome);
+      return outcome;
+    };
     const cutoff = clock.getTime() - minAgeSeconds * 1000;
     for (const summary of summaries) {
       if (input.bindings && !input.bindings.includes(summary.id)) continue;
@@ -2801,6 +2834,24 @@ ${managedDueArm}       )
         continue;
       }
       let token = input.cursors?.[summary.id];
+      // The ownership fence comes before any listing: a clone or restore must not even enumerate for deletion.
+      try {
+        const claim = await gate(summary.id, 'claim');
+        if (!claim.ok) {
+          outcome.status = 'fenced';
+          outcome.fence = claim.refusal;
+          result.fenced.push(summary.id);
+          continue;
+        }
+      } catch (error) {
+        input.signal?.throwIfAborted();
+        outcome.status = 'failed';
+        outcome.error = isReportingRowStoreError(error) ? error.code : 'INTERNAL_ERROR';
+        outcome.failed += 1;
+        // The listing never started, so the position it had stays where it was.
+        if (token !== undefined) result.cursors[summary.id] = token;
+        continue;
+      }
       // A failure on the first page of a resumed listing drops the cursor: a stale or invalid token must
       // not wedge the binding, and restarting from the beginning is always safe.
       let resumed = token !== undefined;
@@ -2838,6 +2889,17 @@ ${managedDueArm}       )
             old.push(entry);
           }
           const named = await this.rowObjectKeysNamedByRecords(old.map(entry => entry.objectRef));
+          if (!dryRun && old.some(entry => !named.has(entry.objectRef))) {
+            // Another database may have claimed the namespace since this pass began: read the fence again
+            // before every page that deletes.
+            const again = await gate(summary.id, 'check');
+            if (!again.ok) {
+              outcome.status = 'fenced';
+              outcome.fence = again.refusal;
+              result.fenced.push(summary.id);
+              break;
+            }
+          }
           for (const entry of old) {
             input.signal?.throwIfAborted();
             if (named.has(entry.objectRef)) {
@@ -2907,6 +2969,244 @@ ${managedDueArm}       )
       result.failed += outcome.failed;
     }
     return result;
+  }
+
+  /**
+   * Whether this database may collect orphans under a binding's namespace, and for a real pass the claim that
+   * makes it so (see `orphan-fence.ts`). `check` only reads: it is what `dryRun` and the per-page recheck use.
+   * `claim` runs under a per-fence advisory lock: it verifies the object store's highest epoch is exactly the
+   * claim this database recorded, records the next epoch and a fresh token in the database, and only then
+   * writes that epoch's object create-only. The intent is committed before the object is written, so a crash
+   * between the two is finished by the next pass instead of looking like another database's claim.
+   */
+  private async orphanFenceGate(
+    bindingId: string,
+    mode: 'claim' | 'check',
+    fencesTable: boolean,
+    signal?: AbortSignal
+  ): Promise<{ ok: true } | { ok: false; refusal: ReportingOrphanFenceRefusalV1 }> {
+    if (!fencesTable) {
+      return {
+        ok: false,
+        refusal: {
+          cause: 'migration_required',
+          detail:
+            'the orphan collector fence table does not exist: apply the pending reporting-storage migration ' +
+            '(npx adcp-reporting-storage migrate), then orphan collection can claim its namespace',
+        },
+      };
+    }
+    const { scope } = await this.rowStorage.collectorFenceLocation(bindingId);
+    try {
+      if (mode === 'check') {
+        const row = await this.orphanFenceRow(scope);
+        const { latest } = await this.latestOrphanFence(bindingId, signal);
+        const decision = decideOrphanFence(row?.row ?? null, latest);
+        return decision.action === 'fenced' ? { ok: false, refusal: decision.refusal } : { ok: true };
+      }
+      const plan = await this.transaction(async client => {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`adcp.orphan_fence:${scope}`]);
+        const row = await this.orphanFenceRow(scope, client);
+        const { entries, latest } = await this.latestOrphanFence(bindingId, signal);
+        const decision = decideOrphanFence(row?.row ?? null, latest);
+        if (decision.action === 'fenced') return { kind: 'fenced', refusal: decision.refusal } as const;
+        if (decision.action === 'complete') {
+          return {
+            kind: 'write',
+            record: {
+              epoch: row!.row.epoch,
+              token: row!.row.token,
+              previousToken: row!.row.previousToken,
+              claimedAt: row!.claimedAt,
+            },
+            entries,
+          } as const;
+        }
+        const record = {
+          epoch: decision.epoch,
+          token: randomUUID(),
+          previousToken: decision.previousToken,
+          claimedAt: new Date().toISOString(),
+        };
+        await client.query(
+          `INSERT INTO adcp_reporting_orphan_collector_fences (fence_scope, epoch, token, previous_token, claimed_at)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (fence_scope) DO UPDATE
+             SET epoch = EXCLUDED.epoch, token = EXCLUDED.token,
+                 previous_token = EXCLUDED.previous_token, claimed_at = EXCLUDED.claimed_at`,
+          [scope, record.epoch, record.token, record.previousToken, record.claimedAt]
+        );
+        return { kind: 'write', record, entries } as const;
+      });
+      if (plan.kind === 'fenced') return { ok: false, refusal: plan.refusal };
+      const written = await this.rowStorage.putCollectorFence(bindingId, plan.record, signal);
+      if (written.record.token !== plan.record.token) {
+        return {
+          ok: false,
+          refusal: {
+            cause: 'claim_lost',
+            detail:
+              `another database claimed epoch ${plan.record.epoch} first. If this database is the only one that ` +
+              'owns this namespace, call takeOverOrphanCollectorFence({ acknowledgePreviousOwnerGone: true }); ' +
+              'otherwise leave orphan collection off on this copy.',
+            fenceEpoch: written.record.epoch,
+            recordedEpoch: plan.record.epoch,
+          },
+        };
+      }
+      // Keep the claim and its predecessor; everything older is superseded.
+      await this.rowStorage.deleteCollectorFence(
+        bindingId,
+        plan.entries.filter(entry => entry.epoch < plan.record.epoch - 1),
+        signal
+      );
+      return { ok: true };
+    } catch (error) {
+      // Fence objects that are not exactly what this collector writes fail closed.
+      if (isReportingRowStoreError(error) && error.code === 'ROWS_INTEGRITY_FAILED') {
+        return {
+          ok: false,
+          refusal: {
+            cause: 'fence_unreadable',
+            detail:
+              'the collector fence objects under this namespace are malformed, oversized, duplicated or name ' +
+              'another namespace. Inspect them; once the namespace is known to be owned by this database alone, ' +
+              'call takeOverOrphanCollectorFence({ acknowledgePreviousOwnerGone: true }).',
+          },
+        };
+      }
+      throw error;
+    }
+  }
+
+  private async orphanFenceRow(
+    scope: string,
+    client?: ReportingPgClient
+  ): Promise<{ row: OrphanFenceRow; claimedAt: string } | null> {
+    const sql = `SELECT epoch::text AS epoch, token, previous_token, claimed_at
+                   FROM adcp_reporting_orphan_collector_fences WHERE fence_scope = $1`;
+    const result = client
+      ? await client.query<{ epoch: string; token: string; previous_token: string | null; claimed_at: Date }>(sql, [
+          scope,
+        ])
+      : await this.query<{ epoch: string; token: string; previous_token: string | null; claimed_at: Date }>(sql, [
+          scope,
+        ]);
+    const found = result.rows[0];
+    if (!found) return null;
+    return {
+      row: { epoch: Number(found.epoch), token: found.token, previousToken: found.previous_token },
+      claimedAt: new Date(found.claimed_at).toISOString(),
+    };
+  }
+
+  /** The object store's current claim: the highest epoch listed, read and verified. */
+  private async latestOrphanFence(
+    bindingId: string,
+    signal?: AbortSignal
+  ): Promise<{ entries: OrphanFenceEntry[]; latest: { epoch: number; token: string } | null }> {
+    const entries = await this.rowStorage.listCollectorFence(bindingId, signal);
+    const newest = entries[entries.length - 1];
+    if (!newest) return { entries, latest: null };
+    const record = await this.rowStorage.readCollectorFence(bindingId, newest, signal);
+    return { entries, latest: { epoch: record.epoch, token: record.token } };
+  }
+
+  /**
+   * Take over the orphan collector's namespace fence: the deliberate step after a restore, or when the database
+   * that held the fence is gone for good. It claims the next epoch for this database, so the previous holder
+   * (and every other copy of its state) is fenced out, and this database's collector can delete again.
+   *
+   * Do this only when this database is the one that should own the namespace. If the original is still running,
+   * taking over from a clone fences the original and lets the clone delete its objects: the acknowledgement
+   * exists because nothing else can tell them apart. `acknowledgePreviousOwnerGone: true` is required.
+   *
+   * Takes over every writable (or, with `includeReadOnly`, every) object binding whose provider can list, or
+   * only the `bindings` named; bindings that share a bucket, prefix and installation share one fence and are
+   * reported together. Requires the `0009` migration.
+   */
+  async takeOverOrphanCollectorFence(input: {
+    acknowledgePreviousOwnerGone: boolean;
+    bindings?: readonly string[];
+    includeReadOnly?: boolean;
+    signal?: AbortSignal;
+  }): Promise<{ bindingIds: string[]; epoch: number; previousEpoch: number | null }[]> {
+    if (input?.acknowledgePreviousOwnerGone !== true) {
+      throw new TypeError(
+        'takeOverOrphanCollectorFence fences out the namespace’s current owner: pass acknowledgePreviousOwnerGone: ' +
+          'true to confirm that database is gone or must never collect again'
+      );
+    }
+    const summaries = this.rowStorage.objectBindingSummaries();
+    for (const id of input.bindings ?? []) {
+      const summary = summaries.find(item => item.id === id);
+      if (!summary) throw new RangeError(`bindings names ${id}, which is not a configured object binding`);
+      if (!summary.listable) throw new RangeError(`bindings names ${id}, whose provider cannot list objects`);
+    }
+    const tables = await this.query<{ present: boolean }>(
+      `SELECT to_regclass('adcp_reporting_orphan_collector_fences') IS NOT NULL AS present`
+    );
+    if (!tables.rows[0]?.present) {
+      throw new Error('the orphan collector fence table does not exist: run npx adcp-reporting-storage migrate');
+    }
+    const selected = summaries.filter(
+      summary =>
+        summary.listable &&
+        (input.bindings ? input.bindings.includes(summary.id) : input.includeReadOnly === true || !summary.readOnly)
+    );
+    const byScope = new Map<string, string[]>();
+    for (const summary of selected) {
+      const { scope } = await this.rowStorage.collectorFenceLocation(summary.id);
+      byScope.set(scope, [...(byScope.get(scope) ?? []), summary.id]);
+    }
+    const taken: { bindingIds: string[]; epoch: number; previousEpoch: number | null }[] = [];
+    for (const [scope, bindingIds] of byScope) {
+      input.signal?.throwIfAborted();
+      const bindingId = bindingIds[0]!;
+      const plan = await this.transaction(async client => {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`adcp.orphan_fence:${scope}`]);
+        const stored = await this.orphanFenceRow(scope, client);
+        const entries = await this.rowStorage.listCollectorFence(bindingId, input.signal);
+        const newest = entries[entries.length - 1];
+        // A malformed newest object is exactly what a takeover is for: its key still gives the epoch to supersede.
+        const previous = newest
+          ? await this.rowStorage.readCollectorFence(bindingId, newest, input.signal).catch(error => {
+              if (isReportingRowStoreError(error) && error.code === 'ROWS_INTEGRITY_FAILED') return null;
+              throw error;
+            })
+          : null;
+        const epoch = Math.max(newest?.epoch ?? 0, stored?.row.epoch ?? 0) + 1;
+        const record = {
+          epoch,
+          token: randomUUID(),
+          previousToken: previous?.token ?? null,
+          claimedAt: new Date().toISOString(),
+        };
+        await client.query(
+          `INSERT INTO adcp_reporting_orphan_collector_fences (fence_scope, epoch, token, previous_token, claimed_at)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (fence_scope) DO UPDATE
+             SET epoch = EXCLUDED.epoch, token = EXCLUDED.token,
+                 previous_token = EXCLUDED.previous_token, claimed_at = EXCLUDED.claimed_at`,
+          [scope, record.epoch, record.token, record.previousToken, record.claimedAt]
+        );
+        return { record, entries, previousEpoch: newest?.epoch ?? null };
+      });
+      const written = await this.rowStorage.putCollectorFence(bindingId, plan.record, input.signal);
+      if (written.record.token !== plan.record.token) {
+        throw new ReportingRowStoreError(
+          'STATE_UNAVAILABLE',
+          `another database claimed epoch ${plan.record.epoch} while this takeover ran; run it again`
+        );
+      }
+      await this.rowStorage.deleteCollectorFence(
+        bindingId,
+        plan.entries.filter(entry => entry.epoch < plan.record.epoch - 1),
+        input.signal
+      );
+      taken.push({ bindingIds, epoch: plan.record.epoch, previousEpoch: plan.previousEpoch });
+    }
+    return taken;
   }
 
   /**
@@ -3023,7 +3323,8 @@ ${managedDueArm}       )
         WHERE table_schema = current_schema()
           AND table_name IN ('adcp_reporting_row_sets', 'adcp_reporting_row_write_intents',
                              'adcp_reporting_materializations', 'adcp_reporting_changes',
-                             'adcp_reporting_feed_consumers', 'adcp_reporting_receipts')`
+                             'adcp_reporting_feed_consumers', 'adcp_reporting_receipts',
+                             'adcp_reporting_orphan_collector_fences')`
     );
     return new Set(result.rows.map(row => row.name));
   }
@@ -6244,9 +6545,11 @@ export interface ReportingOrphanBindingResultV1 {
   /**
    * `complete`: the listing reached its end. `partial`: stopped at `limit`; resume from `cursors`.
    * `failed`: the listing or its provider failed (`error` is the stable code). `unsupported`: the
-   * binding's provider has no `list`. `read_only`: skipped because the binding is `readOnly`.
+   * binding's provider has no `list`. `read_only`: skipped because the binding is `readOnly`. `fenced`:
+   * another database holds the namespace's collector fence (or this database cannot prove it holds it), so
+   * nothing was deleted; `fence` says why.
    */
-  status: 'complete' | 'partial' | 'failed' | 'unsupported' | 'read_only';
+  status: 'complete' | 'partial' | 'failed' | 'unsupported' | 'read_only' | 'fenced';
   /** Objects the provider listed, including ones dropped as foreign. */
   listed: number;
   /** Old enough, but named by a ledger record or open upload; left alone. */
@@ -6260,6 +6563,8 @@ export interface ReportingOrphanBindingResultV1 {
   wouldDelete: number;
   failed: number;
   error?: string;
+  /** Set when `status` is `fenced`. */
+  fence?: ReportingOrphanFenceRefusalV1;
 }
 
 /**
@@ -6278,6 +6583,8 @@ export interface ReportingOrphanCollectionResultV1 {
   unsupported: string[];
   /** `readOnly` bindings skipped. */
   skippedReadOnly: string[];
+  /** Bindings whose collector fence another database holds: nothing was deleted there. See each binding's `fence`. */
+  fenced: string[];
   /** Dry run only: the orphans a real pass would delete, at most 1000. */
   candidates: {
     bindingId: string;
