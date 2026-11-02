@@ -325,30 +325,48 @@ describe('account.requests on the platform path', () => {
 });
 
 describe('account.requests on createAdcpServer', () => {
-  test('a seller with no account capabilities gets a minimal account block carrying requests', async t => {
+  test('a seller that declares no supported_billing is refused at construction, with the fix', () => {
+    // The account block's schema requires supported_billing; who bills is the seller's claim to make.
+    assert.throws(
+      () =>
+        createAdcpServer({
+          name: 'direct',
+          version: '1.0.0',
+          adcpVersion: ADCP_VERSION,
+          logger: silent,
+          capabilities: { supported_versions: ['3.2', WIRE], accountRequests: { changeableAttributes: ['timezone'] } },
+          accounts: { requestAccount: sellerWorld().requestAccount },
+        }),
+      /requires supported_billing\. Declare who bills: capabilities\.account\.supportedBilling/
+    );
+  });
+
+  test('a seller that declares supported_billing advertises requests alongside it', async t => {
     const server = createAdcpServer({
       name: 'direct',
       version: '1.0.0',
       adcpVersion: ADCP_VERSION,
       logger: silent,
-      capabilities: { supported_versions: ['3.2', WIRE], accountRequests: { changeableAttributes: ['timezone'] } },
+      capabilities: {
+        supported_versions: ['3.2', WIRE],
+        account: { supportedBilling: ['agent'] },
+        accountRequests: { changeableAttributes: ['timezone'] },
+      },
       validation: { requests: 'strict', responses: 'strict' },
       accounts: { requestAccount: sellerWorld().requestAccount },
     });
     t.after(() => server.close());
     const caps = await capabilities(server);
-    assert.deepEqual(caps.account, {
-      supported_billing: ['agent'],
-      requests: {
-        supported: true,
-        request_task: 'request_account',
-        read_task: 'list_accounts',
-        changeable_attributes: ['timezone'],
-      },
+    assert.deepEqual(caps.account.requests, {
+      supported: true,
+      request_task: 'request_account',
+      read_task: 'list_accounts',
+      changeable_attributes: ['timezone'],
     });
+    assert.deepEqual(caps.account.supported_billing, ['agent']);
     assert.ok(caps.experimental_features.includes('account.requests'));
     const legacy = await capabilities(server, '3.2');
-    assert.equal(legacy.account, undefined, 'the synthesized block is not shown to a release without requests');
+    assert.equal(legacy.account?.requests, undefined, 'a release without requests sees no requests block');
   });
 
   test('an adopter override keeps its optional fields; the task names stay fixed', async t => {
