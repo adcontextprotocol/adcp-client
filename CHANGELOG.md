@@ -1,5 +1,93 @@
 # Changelog
 
+## 17.0.0-beta.12
+
+### Minor Changes
+
+- a831111: Sellers registering `request_account` (`accounts.requestAccount`) now advertise AdCP 3.3 `account.requests` on `get_adcp_capabilities`, with `request_task`, `read_task: 'list_accounts'` and the `account.requests` experimental feature id, so `client.accounts.ensure` routes to them. `capabilities.accountRequests` supplies `changeableAttributes`, `pendingActionKinds` and `eventType`. On the platform path, the new `accounts.listRequests(request, ctx)` hook serves the caller's requests as `account_requests[]` and `account_requests_pagination` on `list_accounts` when the buyer sends `include_requests`, `request_ids` or `requests_pagination`. `Account.revision` is now served on `list_accounts`, so buyers can read the revision a change is based on. Fixes #3575.
+
+  **Behavior change for 3.3 beta adopters:** a seller that registers `request_account` must declare who bills, because `account.requests` lives in the account capability block, whose schema requires `supported_billing`. A server that registers it without one is now refused at construction. Fix: add `capabilities: { account: { supportedBilling: ['agent'] } }` to `createAdcpServer`, or `capabilities.supportedBillings` on the platform path, with your actual billing model. The SDK never fills in this claim for you.
+
+- b296a8a: Add `client.accounts.change(accountId, changes, { revision, allowSeparateAccount })`, which changes an account through AdCP 3.3 `request_account` with `account_id`. It resolves to an `AccountChangeOutcome`: `updated` (with `revision` and `effective_at`), `separate_account` (with `not_carried_over` and `subscriptionsNotCovering`), `matched_existing`, `pending`, or `rejected` (with `requiresNewAccount`). A money change (`billing`, `billing_entity`, `payment_terms`) without `revision` is refused before dispatch with `AccountRequestError` code `ACCOUNT_REVISION_REQUIRED`. Other changes read the revision from `list_accounts` and retry once on `CONFLICT`, but only when the changed fields did not move. Unknown attributes (`ACCOUNT_CHANGE_INVALID`) and sellers without `account.requests` (`ACCOUNT_REQUESTS_UNSUPPORTED`) are also refused locally, and the error carries `dispatched: false`. A separate or matched account never re-points the registry: `client.accounts.use(key, accountId)` is the explicit step. `client.accounts.changeStatus(accountId, requestId)` reads a pending change back. `nextStep` accepts change outcomes. The behavior matches the Python SDK's `accounts.change`.
+- d134d82: Reporting subscriptions (experimental, AdCP 3.3): reconcile reports name what kept them from being definitive in the Python SDK's shape.
+  - `ReconcileReport.issues` is a list of `ReconcileIssue` entries (`{ code, message, account_id?, subscription_id? }`). The codes match Python's: `SUBSCRIPTION_ROSTER_UNAVAILABLE`, `SUBSCRIPTION_OFFERINGS_UNAVAILABLE`, `SUBSCRIPTION_ACCOUNT_UNREADABLE`, `SUBSCRIPTION_LEDGER_UNAVAILABLE`, `SUBSCRIPTION_ACCOUNT_NOT_COVERED`, or a coverage input code. As in Python, any issue makes the report `definitive: false`.
+  - Explicitly requested `accounts` that no subscription covers are now reported (`SUBSCRIPTION_ACCOUNT_NOT_COVERED`) instead of being dropped silently.
+  - The fleet report (`multiClient.reporting.reconcile()`) renames `failures` to `issues`: an array of `ReconcileIssue & { agent_id }`, with `SUBSCRIPTION_PRINCIPAL_UNAVAILABLE` for a seller that could not be reconciled at all.
+
+- 8374d8d: Reporting subscriptions (experimental, AdCP 3.3): buyer events.
+  - `client.reporting.poll()` returns the events since the last acknowledgement, derived by comparing what the seller reports now (`reconcile`, the subscription readback, each account's `subscription_coverage[]`) with the snapshot saved by the last `batch.ack()`. Delivery is at least once with deterministic ids (`rse_` + `sha256(agent, type, natural key, version)`, the same ids as the Python SDK). A partial read never fabricates a change, and `poll({ baseline: true })` records the present without emitting it.
+  - `client.reporting.events({ pollEvery, signal })` is the loop: each batch is acknowledged after the loop body has run for all its events.
+  - `client.reporting.handleWebhook(verified)` treats a seller webhook as a doorbell: it wakes a running `events()` loop or polls inline. It takes only a `VerifiedWebhook`, built by `VerifiedWebhook.fromOutcome` from a successful signature verification.
+  - Event types: `revision.available`, `revision.adjusted`, `period.late`, `period.missing_obligation`, `period.withheld`, `coverage.exception_opened`, `coverage.exception_closed`, `account.covered`, `account.unauthorized`, `account.regranted`, `subscription.state_changed`, `timezone.cutover`.
+  - Snapshots live in a `ReportingEventStore` with compare-and-set (`ReportingEventConflictError` when another worker acknowledged first). `memoryStorage().events` and `postgresStorage({ pool }).events` provide one, `createReportingEventStore({ store })` builds one over any `AdcpStateStore` with `putIfMatch`, and the client takes it as `reportingEventStore`.
+  - `@adcp/sdk/reporting/advanced` adds `deriveEvents`, `EVENT_TYPES` and `SNAPSHOT_VERSION`.
+
+- e4b43a3: Reporting subscriptions (experimental, AdCP 3.3): sellers can explain coverage, and the CLI compares traces.
+  - `service.explainCoverage({ principal, accountId, period, subscriptionId?, mediaBuyId?, offeringId? })` on the managed `subscriptions` path returns `CoverageTrace`s (`side: 'seller'`) from the engine's own state: the stored version history, the grant journal, the served `subscription_coverage` and the buys read under the principal. `seller_only` carries `buy_visible` and the planned obligation's `reporting_obligation_id`. Its trace of a period equals the buyer's `client.reporting.explain` trace, `inputs_digest` included.
+  - `@adcp/sdk/reporting/service` re-exports `coverageTraceForBuyer` and `diffCoverageTraces`.
+  - New CLI: `adcp reporting explain` (buyer with `--agent`, seller with `--app module#export --tenant --principal`), `adcp reporting diff left.json right.json` (names the first differing rule; exits 1 on a difference) and `adcp reporting reconcile --agent`.
+
+- 7cfccfd: Reporting subscriptions (experimental, AdCP 3.3): the managed seller path derives more and reconciles less.
+  - The framework `Account` has a `timezone` field (`UTC` or IANA), served on `list_accounts`. The derived roster reads it, so `account_timezone` offerings no longer need an untyped `timezone` on the `accounts.list` items.
+  - `subscriptions.configure` is optional. Without it each subscription generation is derived from its source offering by `defaultSubscriptionConfiguration` (exported from `@adcp/sdk/reporting/service`): every exactly supported metric and dimension, the first attribution model and window, and a contractual cutoff at the offering's `delivery_sla` for `official` feeds. Billing feeds still need `configure`.
+  - `isPeriodDelivered` defaults to the service's own ledger, so `withheld_period_count` counts only periods whose obligation has no revision. It used to count every withheld period.
+  - The `runCycle` boundary sweep reconciles a principal only when it is due: a period of one of its schedules ended since its last reconcile, its last reconcile failed, a grant change was pushed, or `subscriptions.maxSweepIntervalMilliseconds` (one hour by default) elapsed. It used to reconcile every subscribed principal on every cycle.
+
+- 1da37d9: Reporting subscriptions (experimental, AdCP 3.3): the buyer receipts policy.
+  - `client.reporting.reconcile({ receipts: { mode: 'verified', commit, resourceReader | inspect } })` receipts `consumer_receipt` (billing) revisions only after the SDK verified the materialization itself and your `commit` returned `{ commitRef }`. `'defer'` sends nothing, and `{ reject: codes }` sends a rejected receipt. A mismatch the SDK finds is rejected without calling `commit`, and a revision it can't verify is listed in `report.receipts.failed`. Receipt ids are stable per (obligation, revision, materialization), so a materialization is never receipted twice.
+  - The policy is off by default. Delivered billing periods then read `receipt: { status: 'owed_by_buyer' }` with `responsible_party: 'buyer'`, and the client warns once.
+  - Adjustments are offered to `adjustments(adjustment)` and always deferred: billing never auto-accepts.
+  - `client.reporting.submitReceipts(accountId, { receipts, adjustmentReceipts })` is the typed manual wrapper over `sync_reporting_receipts`.
+  - `scripts/package-size-budget.json`: the SDK file ceiling rises from 8,450 to 8,500 for the stacked reporting-subscription slices.
+
+- dc8cad8: Reporting subscriptions (experimental, AdCP 3.3): buyers can see what a seller owes them and why.
+  - `client.reporting.reconcile(options)` reads the principal, capabilities, `list_accounts`, `get_media_buys` and `get_reporting_status` and returns a `ReconcileReport`: one `PeriodLine` per owed obligation with `status` (`delivered`, `pending`, `late`, `missing_obligation`, `withheld`), the spec's coverage `reason`, `responsible_party` and a `message`. The roster is `list_accounts` intersected with the subscription scopes on every run. `grace` (default `PT1H`) keeps fresh periods from reading as missing; `includeNotOwed` adds `not_owed` lines with their reasons; `previous` carries a revoked account's undelivered periods as `withheld`. A failed read makes the report `definitive: false`, never smaller, and each read is bounded by `readTimeoutMilliseconds` (30 seconds by default).
+  - `multiClient.reporting.reconcile()` runs every configured seller with bounded concurrency and returns `{ bySeller, issues, definitive, summary }`.
+  - `client.reporting.explain({ accountId, period, ... })` returns `CoverageTrace`s (`side: 'buyer'`).
+  - `@adcp/sdk/reporting/advanced` adds `explainSubscriptionCoverageV1`, `classifySubscriptionPeriodsV1`, `diffCoverageTraces`, `coverageTraceForBuyer`, `EXPLAIN_TEMPLATES` and the spec's frozen reason-code vocabulary (`COVERAGE_REASONS`, `COVERAGE_RULE_ORDER`). Traces carry the same steps, sentences and `inputs_digest` as the Python SDK's `explain_subscription_coverage`.
+  - New guides: coverage, error reference, and migrating from account-level `reporting_delivery_configs`.
+  - The managed seller path asks `getMediaBuys` for every wire buy status (`pending_creatives`, `pending_start`) as well.
+
+- b7b9ec8: Reporting subscriptions (experimental, AdCP 3.3): conformance tooling.
+  - **Storyboard runner: `check: owed_periods_match`** (runner contract `storyboard-schema.yaml`, "Owed periods").
+    - On a `get_reporting_status` periods-view step, it computes the periods a subscription owes the account from wire state alone (`get_principal` with `prior_versions` paging, `list_accounts`, `get_media_buys`, `get_adcp_capabilities`, and the response's `subscription_coverage` entry) with the SDK coverage function at `ledger_as_of`.
+    - It passes when the seller's obligations are exactly that set from `ledger_retained_from`, within the request's `period`: no missing and no extra periods, the same `media_buy_ids` and `stub` flag. `pagination.has_more` fails as unverifiable.
+  - **Storyboard runner: brand-subject tasks.** Test-kit brand injection no longer overwrites `request_account`'s `brand`, which dropped `brand.countries` (`BRAND_SUBJECT_TASKS`).
+  - **`comply_test_controller` scenario `reporting_subscription_probe`.**
+    - Operations: `revoke_grant`, `regrant`, `reduce_grant`, `set_account_timezone` (returns `timezone_cutovers: [{ offering_id, effective_at }]`) and `advance_time`.
+    - Types: `ReportingSubscriptionProbeParams` and `ReportingSubscriptionProbeSimulated`.
+    - Wiring: schema-checked params (`reportingSubscriptionProbeParamsError`), `TestControllerStore.reportingSubscriptionProbe`, `complyTest.reportingSubscriptionProbe`, and `list_scenarios` / `compliance_testing.scenarios` advertisement.
+  - **Test kit.**
+    - Its seller implements the probe.
+    - Its virtual clock may now run past the real clock: under `NODE_ENV=test` or `development`, the Reliable Reporting service hands each cycle's `now` to the inline source executor (`createInlineReportingSourceExecutor({ now })`, refused in other environments).
+  - **`npx adcp reporting doctor --agent <url>`** and `runReportingDoctor(client)` check a seller's subscription wiring from the wire, and name a fix for each failure.
+
+- 8856bbd: Reporting subscriptions (experimental, AdCP 3.3): a test kit, a managed reference seller, and fewer host inputs.
+  - New subpath `@adcp/sdk/testing/reporting`: `createReportingTestKit({ start, offerings, accounts, buys })` runs a managed reference seller over `memoryStorage()` on a virtual clock. It gives buyers bound to it (`kit.buyer(id).reporting`), `clock.advance`/`advanceTo` (running the seller's cycle at every boundary crossed), `grants.revoke`/`regrant`/`windDown`/`reduce`, `accounts.setTimezone`, `buys.add`/`cancel`/`complete`, and `assertAgreement(buyer)`, which checks the seller's frozen owed set against the buyer's `reconcile()` and names the first differing rule. Also `createReferenceReportingSeller`, `offerings.dailyAnalytics()`, `withReportingTestKit` and `reportingTestStart`.
+  - The reference seller (`examples/reporting-subscriptions-seller/seller.mjs`) is rewritten on the managed path: one `subscriptions` block, `accounts.list` and `getMediaBuys`, with a seeded buy that produces real obligations. `npx adcp reference-seller reporting [--port]` serves it.
+  - With `subscriptions.principal`, the service now pairs `notification_configs` with `sync_principal` and advertises `capability_changes` unless the platform does, and `principal.notifications` is optional with process-local storage (nothing is sent). Durable storage still requires it.
+
+### Patch Changes
+
+- 9cf1b55: Evaluate each package's legacy format references against measured creative dimensions and duration. Recognize resolved legacy shape matches without asserting canonical technical completeness, retain unknown verdicts for unstated constraints, and preserve native canonical contracts and shared wire refusals. Deduplicate fit diagnostics by code and path.
+- 6141030: Trim the published package from 26.86 MB to 24.99 MB packed (8,529 to 8,176 files). Runtime behavior is unchanged.
+  - The compliance bundles no longer ship their `domains/` directories. Each was a byte-identical copy of `protocols/`, which is what the storyboard loader reads. If you read storyboards from `node_modules/@adcp/sdk/compliance/cache/<version>/domains/<id>/`, read `protocols/<id>/` instead. `index.json` keeps listing both arrays because it is the upstream bundle file.
+  - The ESM declarations for the generated protocol and registry types (`types/core.generated.d.mts`, `types/tools.generated.d.mts`, `registry/types.generated.d.mts`) now re-export the CommonJS declarations, as `types/schemas.generated.d.mts` already did, instead of shipping a second copy. ESM and CommonJS consumers get the same types.
+  - The MCP `tools/list` request projections under `dist/lib/schemas-data/<version>/mcp/` are stored as compact JSON. `tools/list` serves the parsed schemas, so the wire output is the same.
+
+- ed8f98d: Reporting subscriptions (experimental, AdCP 3.3): fixes found by the cross-SDK differential harness.
+  - `owedSubscriptionPeriodsV1` owes the billing cutover stub when the incoming schedule's first boundary at or after `authorized_at` falls after the cutover's E (#3572). The authorization start bound now compares the period start with `authorized_at`, which is the same test for calendar periods and also admits a stub that starts at E.
+  - An `account.timezone` that no schedule reads is no longer refused as `invalid_timezone` (#3573). It is validated where an `account_timezone` schedule reads it.
+  - The managed engine's `unauthorized` `gaps[]` entries always name their `offering_id` (#3577). An entry without one applies to every offering on the account, so a later version resolving offerings with other boundaries made buyers drop periods the seller owed.
+  - A `timezone_cutovers` entry without `previous_timezone` is refused (`COVERAGE_INPUT_INCOMPLETE`, `missing_previous_timezone`) whenever an `account_timezone` offering resolves, as `error-codes.json` words it (adcp#8681), not only when a period under the old zone is computed.
+
+- b5f7461: Reliable Reporting (experimental, AdCP 3.3): the managed service now serves local-day offerings that it used to refuse (#3574).
+  - `account_timezone` offerings are served on the subscription path. Each account owes the periods of its own `accounts.list` `timezone`, the same periods the buyer's `reconcile` computes. The source offering must not pin `sourceTimezone.ianaTimezone`, and `resolveSource` must return the account's timezone. Without a `subscriptions` block, creating the service still refuses the offering, and an account-level `installConfiguration` refuses it. Both errors now name the subscription path. The managed path does not yet follow an account timezone change on an `account_timezone` subscription.
+  - `source_timezone` `P1D` offerings are served in zones whose DST change skips local midnight (America/Santiago, America/Havana, Africa/Cairo). Such a day starts at the instant its skipped midnight advances to, per `core/reporting-schedule.json` `period_generation`, and the source is asked for that one local date. The inline executor and source request conformance accept these 23- and 25-hour local days.
+  - `offerings.dailyAnalytics({ alignment: 'account_timezone' })` in `@adcp/sdk/testing/reporting`. The kit's reference seller reports that offering in each account's timezone and routes each offering to its own adapter.
+
+- f31e94f: Reporting subscriptions (experimental, AdCP 3.3): a PostgreSQL production seller configured with `subscriptions.principal` now serves the same principal surface as the `memoryStorage()` seller. `createPostgresReliableReportingProductionService` builds the principal runtime with the `notification_configs` task (`syncAgentNotificationConfigs`) and marks it as service-built, so the service advertises `capability_changes` for it. Before, it served neither.
+
 ## 17.0.0-beta.11
 
 ### Major Changes
