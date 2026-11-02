@@ -10,6 +10,8 @@ import { ReportingSubscriptionError } from '../errors';
 import type { ReportingSubscriptionOfferingV1 } from '../reporting/subscriptions/selection';
 import type { ReportingSubscription, ReportingSubscriptionState } from '../types/core.generated';
 import type {
+  ReportingAdjustmentReceipt,
+  ReportingReceipt,
   GetPrincipalRequest,
   GetPrincipalResponse,
   SyncPrincipalRequest,
@@ -83,6 +85,12 @@ export interface ReportingFacadeClient {
   getMediaBuys?(params: Json, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<unknown>>;
   /** Needed by `reconcile()` and `explain()`. */
   getReportingStatus?(params: Json, inputHandler?: InputHandler, options?: TaskOptions): Promise<TaskResult<unknown>>;
+  /** Needed by `submitReceipts()` and the `receipts` policy. */
+  syncReportingReceipts?(
+    params: Json,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<unknown>>;
   getAgentId?(): string;
 }
 
@@ -384,6 +392,30 @@ export class ReportingClient {
       this.eventsRuntime ??= new ReportingEvents(this.client as unknown as ReportingReadClient, this.eventStore);
     }
     return this.eventsRuntime;
+  }
+
+  /**
+   * The manual receipts path: a typed wrapper over `sync_reporting_receipts` for one account.
+   * Returns the seller's item results. A receipt states that you verified and committed the data, so
+   * send one only after your load committed; the `receipts` policy on `reconcile` does this for you.
+   * Accepting an adjustment always goes through here: billing never auto-accepts.
+   */
+  async submitReceipts(
+    accountId: string,
+    items: { receipts?: readonly ReportingReceipt[]; adjustmentReceipts?: readonly ReportingAdjustmentReceipt[] }
+  ): Promise<{ receipts: Json[]; adjustmentReceipts: Json[] }> {
+    if (typeof accountId !== 'string' || accountId.length === 0) {
+      throw invalid('submitReceipts needs the account_id the receipts belong to.');
+    }
+    if (!items?.receipts?.length && !items?.adjustmentReceipts?.length) {
+      throw invalid('submitReceipts needs at least one receipt or adjustment receipt.');
+    }
+    const { writeReceipts } = await import('./reporting-receipts');
+    const data = await writeReceipts(this.client as never, accountId, items);
+    return {
+      receipts: [...((data.receipts as Json[] | undefined) ?? [])],
+      adjustmentReceipts: [...((data.adjustment_receipts as Json[] | undefined) ?? [])],
+    };
   }
 
   /** Validate what `subscribe` would write, as a seller dry run. */
