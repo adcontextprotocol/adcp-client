@@ -12,7 +12,7 @@ const { TOOL_INPUT_SHAPE, toMcpResponse } = require('../../dist/lib/server/test-
 const { getComplianceStoryboardById } = require('../../dist/lib/testing/storyboard/index.js');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 
-const ADCP_VERSION = '3.2.7';
+const ADCP_VERSION = '3.2.8';
 const ACCOUNT = {
   brand: { domain: 'acmeoutdoor.example' },
   operator: 'pinnacle-agency.example',

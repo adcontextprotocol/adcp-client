@@ -100,7 +100,7 @@ for exhaustive dimension handling instead of maintaining local copies.
 `streamAccountChanges` validates each page using trusted negotiated/wire
 metadata before any seller echo. Without authoritative release metadata, the
 drain falls back to the seller echo and then the client's configured version. Custom
-readers can pass `adcpVersion: '3.2.7'` in the drain options. This selects
+readers can pass `adcpVersion: '3.2.8'` in the drain options. This selects
 validation only; the reader remains responsible for sending the matching
 request release. Existing cursor, account identity, and acknowledgement checks
 still apply.
@@ -139,7 +139,7 @@ and [peer-dependency settings](https://pnpm.io/settings#dedupepeerdependents).
 ## Protocol and discovery
 
 The SDK packages the exact 3.3 beta schema and compliance bundle alongside
-maintained AdCP 3.2.7, 3.1.29 and 3.0.25 bundles. A seller must advertise
+maintained AdCP 3.2.8, 3.1.31 and 3.0.25 bundles. A seller must advertise
 `3.3-beta.3` (or its full bundle version, `3.3.0-beta.3`) before the buyer
 selects that preview. A different beta, a moving `3.3-beta` alias, or a
 served-version echo alone does not establish support. The buyer can negotiate
@@ -384,7 +384,7 @@ On 3.3 routes, the server automatically advertises the required experimental fea
 
 Account verification applies to the selected request release. Unversioned callers select the server default, now the 3.3 beta. On 3.3 routes, `required_for_products` enforces `ACCOUNT_REQUIRED`; set `strictAccountReferences: true` to apply the same policy to older routes. Proposal discovery always requires an authenticated caller and a resolved account, including when schema validation is off.
 
-The direct governance helpers and governance middleware retain their configured client protocol pin. For a stable governance agent, use a client configured with `adcpVersion: '3.2.7'`; `syncPlans` and `getPlanAuditLogs` also accept an explicit `wireAdcpVersion` in their task options. Per-agent negotiation for these direct governance paths remains follow-up work.
+The direct governance helpers and governance middleware retain their configured client protocol pin. For a stable governance agent, use a client configured with `adcpVersion: '3.2.8'`; `syncPlans` and `getPlanAuditLogs` also accept an explicit `wireAdcpVersion` in their task options. Per-agent negotiation for these direct governance paths remains follow-up work.
 
 AdCP 3.3.0-beta.2 withdraws definition pins, purchase rights and installment selection from 3.3 (adcp#8537); they return through a `commercial_terms` extension point in 4.0. The verifier reads this from the selected schema: against beta.2, `definition_pins` and purchase `installments[]` / `rights[]` are unknown fields that the closed `commercial_terms` rejects, and publisher format references and placement, collection or signal targeting compare as ordinary snapshot terms. A snapshot verified against a retained beta.0 or beta.1 schema root still fails closed on definition pins and the references they covered, because that release required current-source pin verification. The verifier enforces collection-list uniqueness by reference identity.
 

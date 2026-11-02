@@ -1060,7 +1060,7 @@ describe('real AdCP 3.2 bundle aggregates', { skip: !scenariosAvailable }, () =>
     // in more than one bundle directory — both numbers are asserted so the
     // claim cannot drift silently in either direction.
     // This census records the historical 3.2 scope claim.
-    const root = path.join(__dirname, '..', '..', 'compliance', 'cache', '3.2.7');
+    const root = path.join(__dirname, '..', '..', 'compliance', 'cache', '3.2.8');
     const walk = dir =>
       fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
         const full = path.join(dir, entry.name);
