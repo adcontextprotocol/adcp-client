@@ -1086,16 +1086,13 @@ describe('legacy format_id reconciliation by constraint satisfaction (#3506)', (
         ['A', 'B']
       );
     });
-    test(`${label} assignments refuse a creative that only fits one supplied package`, () => {
+    test(`${label} assignments sync a library creative that only fits one supplied package`, () => {
       const selectors = [vastPackage('A', { width: 640, height: 360 }), vastPackage('B', { width: 940, height: 529 })];
       const value = { ...unsizedCreative(), format_parameters: { width: 640, height: 360 } };
       const input = { creatives: [value], ...(assignments && { assignments }) };
-      const error = refusal(input, selectors);
-      assert.deepEqual(
-        error.details.package_refs.map(entry => entry.package_id),
-        ['A', 'B']
-      );
-      assert.match(error.details.package_refs[1].reason, /cannot select/);
+      const result = project(input, selectors);
+      assert.deepEqual(result.creatives[0].format_id, selectors[0].format_ids[0]);
+      assert.deepEqual(result.assignments, assignments);
     });
     test(`${label} assignments leave canonical wire unchanged`, () => {
       const input = { creatives: [unsizedCreative()], ...(assignments && { assignments }) };
@@ -1119,14 +1116,15 @@ describe('legacy format_id reconciliation by constraint satisfaction (#3506)', (
       const error = refusal(input, selectors);
       assert.match(error.details.package_refs.find(entry => entry.package_id === 'B').reason, /forbids legacy/);
     });
-    test(`${label} assignments enforce a creative's pinned option on every package`, () => {
+    test(`${label} assignments sync a library creative using only packages with its pinned option`, () => {
       const selectors = [vastPackage('A'), vastPackage('B')];
       selectors[0].format_options[0].format_option_id = 'selected';
       selectors[1].format_options[0].format_option_id = 'other';
       const value = { ...unsizedCreative(), format_option_ref: { scope: 'product', format_option_id: 'selected' } };
       const input = { creatives: [value], ...(assignments && { assignments }) };
-      const error = refusal(input, selectors);
-      assert.match(error.details.package_refs.find(entry => entry.package_id === 'B').reason, /selected/);
+      const result = project(input, selectors);
+      assert.deepEqual(result.creatives[0].format_id, selectors[0].format_ids[0]);
+      assert.deepEqual(result.assignments, assignments);
     });
   }
 
