@@ -9293,17 +9293,25 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       return projectSync(
         async () => {
           const page = await accounts.list!(filter, resolveCtx);
-          // AdCP 3.3 account.requests: the caller's requests ride on list_accounts when asked for.
+          // AdCP 3.3 account.requests: the caller's requests ride on list_accounts when asked for, and
+          // only on releases that define them (capabilities hide account.requests below 3.3 too).
+          const served = ctx.servedAdcpVersion;
           const requests =
             accounts.listRequests &&
+            isAdcpVersionAtLeast(served, '3.3.0-beta.0') &&
             (filter.include_requests === true ||
               filter.request_ids !== undefined ||
               filter.requests_pagination !== undefined)
               ? await accounts.listRequests(filter, resolveCtx)
               : undefined;
+          const listed = await projectAccountList(accounts, page.items, resolveCtx, logger);
+          // Account.revision is an AdCP 3.2 field: not served to an earlier release.
+          if (served !== undefined && !isAdcpVersionAtLeast(served, '3.2.0-beta.0')) {
+            for (const row of listed) delete row.revision;
+          }
           const response = {
             status: 'completed' as const,
-            accounts: await projectAccountList(accounts, page.items, resolveCtx, logger),
+            accounts: listed,
             pagination: {
               has_more: page.nextCursor != null,
               ...(page.nextCursor != null && { cursor: page.nextCursor }),
