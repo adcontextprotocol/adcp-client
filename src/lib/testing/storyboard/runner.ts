@@ -2145,6 +2145,7 @@ function buildPhaseCapabilitySkippedSteps(
 const REQUIREMENT_TO_SKIP_REASON: Record<RequirementName, RunnerSkipReason> = {
   controller: 'missing_test_controller',
   collect_product_pages_runner: 'requirement_unmet',
+  test_kit_format_catalog_runner: 'requirement_unmet',
   seeded_state: 'requirement_unmet',
   real_wire: 'requirement_unmet',
   webhook_receiver: 'requirement_unmet',
@@ -2413,6 +2414,7 @@ async function checkRequires(
     }
     switch (requirement) {
       case 'collect_product_pages_runner':
+      case 'test_kit_format_catalog_runner':
         // Intrinsic support in this SDK; older runners safely reject the
         // unknown requirement before they can seed or run a partial read.
         break;

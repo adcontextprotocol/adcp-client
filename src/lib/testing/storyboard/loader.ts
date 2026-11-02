@@ -29,6 +29,15 @@ const IDENTIFIER_PATH_SEGMENT = String.raw`[A-Za-z_][A-Za-z0-9_-]*(?:\[\*\])*`;
 const IDENTIFIER_PATH_PATTERN = new RegExp(`^${IDENTIFIER_PATH_SEGMENT}(?:\\.${IDENTIFIER_PATH_SEGMENT})*$`);
 const CAPABILITY_PATH_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$/;
 
+function hasOfflineFormatDirective(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasOfflineFormatDirective);
+  if (!value || typeof value !== 'object') return false;
+  const object = value as Record<string, unknown>;
+  const directive = object.$build_assets_from_format;
+  if (directive && typeof directive === 'object' && Object.hasOwn(directive, 'catalog')) return true;
+  return Object.values(object).some(hasOfflineFormatDirective);
+}
+
 /** Parse a YAML string into a Storyboard. Throws if required fields are missing. */
 export function parseStoryboard(yamlContent: string): Storyboard {
   const parsed = parse(yamlContent) as Storyboard;
@@ -110,6 +119,14 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
     validateBranchSet(storyboard.id, phase);
     if (!phase.steps) continue;
     for (const step of phase.steps) {
+      if (
+        hasOfflineFormatDirective(step.sample_request) &&
+        !(Array.isArray(storyboard.requires) && storyboard.requires.includes('test_kit_format_catalog_runner'))
+      ) {
+        throw new Error(
+          `[${storyboard.id}] ${step.id}: offline format fixtures require test_kit_format_catalog_runner`
+        );
+      }
       if (step.collect_product_pages !== undefined) {
         if (
           step.collect_product_pages !== true ||

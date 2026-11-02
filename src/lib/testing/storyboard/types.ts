@@ -99,6 +99,8 @@ export interface Storyboard {
    *     not actually present.
    *   - `collect_product_pages_runner` — intrinsic support for explicit wholesale
    *     all-page steps; unavailable on older runners that ignore this metadata.
+   *   - `test_kit_format_catalog_runner` — intrinsic support for explicitly
+   *     selecting offline legacy declarations from `test_kit.creative_formats`.
    *   - `real_wire` — always available. Tag scenarios that observe
    *     production behavior with this when you want them excluded from
    *     a future `--mock-only` mode; today the tag is a no-op gate.
@@ -2662,6 +2664,7 @@ export interface RunnerSelectionResult {
 export type RequirementName =
   | 'controller'
   | 'collect_product_pages_runner'
+  | 'test_kit_format_catalog_runner'
   | 'seeded_state'
   | 'real_wire'
   | 'webhook_receiver'
@@ -2682,6 +2685,7 @@ export type RequirementName =
 export const KNOWN_REQUIREMENTS: ReadonlySet<RequirementName> = new Set([
   'controller',
   'collect_product_pages_runner',
+  'test_kit_format_catalog_runner',
   'seeded_state',
   'real_wire',
   'webhook_receiver',
