@@ -261,7 +261,8 @@ function project(
   target: SchemaNode[],
   path: string,
   dropped: ProjectionDrop[],
-  depth: number
+  depth: number,
+  protectedKeys: ReadonlySet<string> = NO_PROTECTED_KEYS
 ): unknown {
   if (depth > MAX_DEPTH || source.length === 0 || target.length === 0) return value;
   const sourceExpansions = source.map(node => expand(node, value, depth));
@@ -323,6 +324,10 @@ function project(
     const sourceSchemas = schemasForKey(sourceIndex, key) ?? nonEmpty(sourceIndex.additional);
     const targetSchemas = schemasForKey(targetIndex, key) ?? nonEmpty(targetIndex.additional);
     const entryPath = joinPath(path, key);
+    if (protectedKeys.has(key)) {
+      out[key] = entry;
+      continue;
+    }
     if (sourceIndex.declares && targetIndex.declares && schemasForKey(sourceIndex, key) && !targetSchemas) {
       dropped.push({ path: entryPath, kind: 'field' });
       changed = true;
@@ -371,8 +376,51 @@ export function projectToolPayload<T>(
   const target = toolRoot(toolName, direction, toVersion);
   if (!source || !target || !isObject(payload)) return { value: payload, dropped: [] };
   const dropped: ProjectionDrop[] = [];
-  const projected = project(payload, [source], [target], '', dropped, 0);
+  const projected = project(payload, [source], [target], '', dropped, 0, envelopeKeys(toVersion));
   return { value: (projected === OMIT ? payload : projected) as T, dropped };
+}
+
+const NO_PROTECTED_KEYS: ReadonlySet<string> = new Set();
+
+/** Envelope fields the protocol has defined since 3.0, used when a bundle omits the envelope schemas. */
+const BASELINE_ENVELOPE_KEYS = [
+  'adcp_error',
+  'adcp_major_version',
+  'adcp_version',
+  'context',
+  'context_id',
+  'governance_context',
+  'message',
+  'payload',
+  'push_notification_config',
+  'replayed',
+  'status',
+  'task_id',
+  'timestamp',
+];
+
+const envelopeKeyCache = new Map<string, ReadonlySet<string>>();
+
+/**
+ * Root-level fields of the protocol and version envelopes. The envelope
+ * applies to every task payload whether or not a task schema composes it
+ * (some 3.2 proposal-flow responses did not, which DR-0036 correction (b)
+ * fixes), so the projection never removes them.
+ */
+function envelopeKeys(version: string): ReadonlySet<string> {
+  const cached = envelopeKeyCache.get(version);
+  if (cached) return cached;
+  const keys = new Set(BASELINE_ENVELOPE_KEYS);
+  for (const ref of ['core/protocol-envelope.json', 'core/version-envelope.json']) {
+    try {
+      const properties = getSchemaDocumentByRef(ref, version)?.schema.properties;
+      if (isObject(properties)) for (const key of Object.keys(properties)) keys.add(key);
+    } catch {
+      // A bundle without the envelope schemas keeps the baseline set.
+    }
+  }
+  envelopeKeyCache.set(version, keys);
+  return keys;
 }
 
 /** Whether the release's schema bundle defines a request schema for the tool. */
