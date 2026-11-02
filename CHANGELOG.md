@@ -1,5 +1,47 @@
 # Changelog
 
+## 17.0.0-beta.12
+
+### Minor Changes
+
+- e4b43a3: Reporting subscriptions (experimental, AdCP 3.3): sellers can explain coverage, and the CLI compares traces.
+  - `service.explainCoverage({ principal, accountId, period, subscriptionId?, mediaBuyId?, offeringId? })` on the managed `subscriptions` path returns `CoverageTrace`s (`side: 'seller'`) from the engine's own state: the stored version history, the grant journal, the served `subscription_coverage` and the buys read under the principal. `seller_only` carries `buy_visible` and the planned obligation's `reporting_obligation_id`. Its trace of a period equals the buyer's `client.reporting.explain` trace, `inputs_digest` included.
+  - `@adcp/sdk/reporting/service` re-exports `coverageTraceForBuyer` and `diffCoverageTraces`.
+  - New CLI: `adcp reporting explain` (buyer with `--agent`, seller with `--app module#export --tenant --principal`), `adcp reporting diff left.json right.json` (names the first differing rule; exits 1 on a difference) and `adcp reporting reconcile --agent`.
+
+- 7cfccfd: Reporting subscriptions (experimental, AdCP 3.3): the managed seller path derives more and reconciles less.
+  - The framework `Account` has a `timezone` field (`UTC` or IANA), served on `list_accounts`. The derived roster reads it, so `account_timezone` offerings no longer need an untyped `timezone` on the `accounts.list` items.
+  - `subscriptions.configure` is optional. Without it each subscription generation is derived from its source offering by `defaultSubscriptionConfiguration` (exported from `@adcp/sdk/reporting/service`): every exactly supported metric and dimension, the first attribution model and window, and a contractual cutoff at the offering's `delivery_sla` for `official` feeds. Billing feeds still need `configure`.
+  - `isPeriodDelivered` defaults to the service's own ledger, so `withheld_period_count` counts only periods whose obligation has no revision. It used to count every withheld period.
+  - The `runCycle` boundary sweep reconciles a principal only when it is due: a period of one of its schedules ended since its last reconcile, its last reconcile failed, a grant change was pushed, or `subscriptions.maxSweepIntervalMilliseconds` (one hour by default) elapsed. It used to reconcile every subscribed principal on every cycle.
+
+- dc8cad8: Reporting subscriptions (experimental, AdCP 3.3): buyers can see what a seller owes them and why.
+  - `client.reporting.reconcile(options)` reads the principal, capabilities, `list_accounts`, `get_media_buys` and `get_reporting_status` and returns a `ReconcileReport`: one `PeriodLine` per owed obligation with `status` (`delivered`, `pending`, `late`, `missing_obligation`, `withheld`), the spec's coverage `reason`, `responsible_party` and a `message`. The roster is `list_accounts` intersected with the subscription scopes on every run. `grace` (default `PT1H`) keeps fresh periods from reading as missing; `includeNotOwed` adds `not_owed` lines with their reasons; `previous` carries a revoked account's undelivered periods as `withheld`. A failed read makes the report `definitive: false`, never smaller, and each read is bounded by `readTimeoutMilliseconds` (30 seconds by default).
+  - `multiClient.reporting.reconcile()` runs every configured seller with bounded concurrency and returns `{ bySeller, failures, definitive, summary }`.
+  - `client.reporting.explain({ accountId, period, ... })` returns `CoverageTrace`s (`side: 'buyer'`).
+  - `@adcp/sdk/reporting/advanced` adds `explainSubscriptionCoverageV1`, `classifySubscriptionPeriodsV1`, `diffCoverageTraces`, `coverageTraceForBuyer`, `EXPLAIN_TEMPLATES` and the spec's frozen reason-code vocabulary (`COVERAGE_REASONS`, `COVERAGE_RULE_ORDER`). Traces carry the same steps, sentences and `inputs_digest` as the Python SDK's `explain_subscription_coverage`.
+  - New guides: coverage, error reference, and migrating from account-level `reporting_delivery_configs`.
+  - The managed seller path asks `getMediaBuys` for every wire buy status (`pending_creatives`, `pending_start`) as well.
+
+- 8856bbd: Reporting subscriptions (experimental, AdCP 3.3): a test kit, a managed reference seller, and fewer host inputs.
+  - New subpath `@adcp/sdk/testing/reporting`: `createReportingTestKit({ start, offerings, accounts, buys })` runs a managed reference seller over `memoryStorage()` on a virtual clock. It gives buyers bound to it (`kit.buyer(id).reporting`), `clock.advance`/`advanceTo` (running the seller's cycle at every boundary crossed), `grants.revoke`/`regrant`/`windDown`/`reduce`, `accounts.setTimezone`, `buys.add`/`cancel`/`complete`, and `assertAgreement(buyer)`, which checks the seller's frozen owed set against the buyer's `reconcile()` and names the first differing rule. Also `createReferenceReportingSeller`, `offerings.dailyAnalytics()`, `withReportingTestKit` and `reportingTestStart`.
+  - The reference seller (`examples/reporting-subscriptions-seller/seller.mjs`) is rewritten on the managed path: one `subscriptions` block, `accounts.list` and `getMediaBuys`, with a seeded buy that produces real obligations. `npx adcp reference-seller reporting [--port]` serves it.
+  - With `subscriptions.principal`, the service now pairs `notification_configs` with `sync_principal` and advertises `capability_changes` unless the platform does, and `principal.notifications` is optional with process-local storage (nothing is sent). Durable storage still requires it.
+
+### Patch Changes
+
+- 9cf1b55: Evaluate each package's legacy format references against measured creative dimensions and duration. Recognize resolved legacy shape matches without asserting canonical technical completeness, retain unknown verdicts for unstated constraints, and preserve native canonical contracts and shared wire refusals. Deduplicate fit diagnostics by code and path.
+- 6141030: Trim the published package from 26.86 MB to 24.99 MB packed (8,529 to 8,176 files). Runtime behavior is unchanged.
+  - The compliance bundles no longer ship their `domains/` directories. Each was a byte-identical copy of `protocols/`, which is what the storyboard loader reads. If you read storyboards from `node_modules/@adcp/sdk/compliance/cache/<version>/domains/<id>/`, read `protocols/<id>/` instead. `index.json` keeps listing both arrays because it is the upstream bundle file.
+  - The ESM declarations for the generated protocol and registry types (`types/core.generated.d.mts`, `types/tools.generated.d.mts`, `registry/types.generated.d.mts`) now re-export the CommonJS declarations, as `types/schemas.generated.d.mts` already did, instead of shipping a second copy. ESM and CommonJS consumers get the same types.
+  - The MCP `tools/list` request projections under `dist/lib/schemas-data/<version>/mcp/` are stored as compact JSON. `tools/list` serves the parsed schemas, so the wire output is the same.
+
+- ed8f98d: Reporting subscriptions (experimental, AdCP 3.3): fixes found by the cross-SDK differential harness.
+  - `owedSubscriptionPeriodsV1` owes the billing cutover stub when the incoming schedule's first boundary at or after `authorized_at` falls after the cutover's E (#3572). The authorization start bound now compares the period start with `authorized_at`, which is the same test for calendar periods and also admits a stub that starts at E.
+  - An `account.timezone` that no schedule reads is no longer refused as `invalid_timezone` (#3573). It is validated where an `account_timezone` schedule reads it.
+  - The managed engine's `unauthorized` `gaps[]` entries always name their `offering_id` (#3577). An entry without one applies to every offering on the account, so a later version resolving offerings with other boundaries made buyers drop periods the seller owed.
+  - A `timezone_cutovers` entry without `previous_timezone` is refused (`COVERAGE_INPUT_INCOMPLETE`, `missing_previous_timezone`) whenever an `account_timezone` offering resolves, as `error-codes.json` words it (adcp#8681), not only when a period under the old zone is computed.
+
 ## 17.0.0-beta.11
 
 ### Major Changes

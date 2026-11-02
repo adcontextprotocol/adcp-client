@@ -1,5 +1,19 @@
 # @adcp/reporting-storage
 
+## 0.3.0-beta.3
+
+### Patch Changes
+
+- 8856bbd: The production service refuses `subscriptions.principal` without `notifications` with a message naming the fix. `@adcp/sdk` now lets development storage omit it; PostgreSQL storage still needs a delivering runtime.
+- Updated dependencies [9cf1b55]
+- Updated dependencies [6141030]
+- Updated dependencies [ed8f98d]
+- Updated dependencies [e4b43a3]
+- Updated dependencies [7cfccfd]
+- Updated dependencies [dc8cad8]
+- Updated dependencies [8856bbd]
+  - @adcp/sdk@17.0.0-beta.12
+
 ## 0.3.0-beta.2
 
 ### Minor Changes
