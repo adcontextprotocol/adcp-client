@@ -703,6 +703,12 @@ const store = new PostgresReportingLedgerStore(pool, {
 await store.readyRowStorage();
 ```
 
+- A binding ID (the key in `bindings`) is 1 to 255 characters of `A-Za-z0-9_.:-`, the
+  AdCP identifier bound that `reporting_revision_id`, `resource_ref` and `destination_ref` use, so an ID
+  derived from an AdCP destination reference fits. The same bound applies to a binding's `credentialRef`
+  and to the keys of a provider's `clients` map. Both limits were 128 before migration `0010`; the
+  `adcp_reporting_row_bindings` `CHECK` is widened by migration `0010`. The bound is exported as
+  `REPORTING_ROW_BINDING_ID_MAX_LENGTH` and `REPORTING_ROW_CREDENTIAL_REF_MAX_LENGTH`.
 - Each chunk is one object, written create-only. If an object already exists at
   a planned key, it is adopted only when its bytes decode to the exact chunk;
   otherwise the commit fails with `CONTENT_CONFLICT`.
