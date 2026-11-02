@@ -23,7 +23,7 @@ import type {
 } from '../../types/tools.generated';
 import type { ProductMetricOptimizationLike } from '../../utils/capability-rollups';
 import type { MediaBuyFeatures, AccountCapabilities, CreativeCapabilities } from '../../utils/capabilities';
-import type { AdcpCapabilitiesOverrides } from '../create-adcp-server';
+import type { AccountRequestsCapabilityOptions, AdcpCapabilitiesOverrides } from '../create-adcp-server';
 
 /**
  * Pre-resolved alias for the wire `media_buy` block. Used as the projection
@@ -326,6 +326,14 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * noted in adcp-client#2199.
    */
   overrides?: AdcpCapabilitiesOverrides;
+
+  /**
+   * Seller-supplied fields of the `account.requests` capability block (AdCP 3.3, experimental):
+   * `changeableAttributes`, `pendingActionKinds` and `eventType`. The block itself, with
+   * `request_task` / `read_task` and the `account.requests` feature id, is advertised automatically
+   * when `opts.accounts.requestAccount` is registered. Requires `requestAccount`.
+   */
+  accountRequests?: AccountRequestsCapabilityOptions;
 
   /**
    * Release-precision AdCP versions this platform supports (e.g. `["3.0", "3.1"]`).
