@@ -115,8 +115,11 @@ describe('orphan collector ownership fence', { skip: !DATABASE_URL && 'PostgreSQ
   }
 
   async function freshClone() {
-    if (clonePool) await clonePool.end();
-    pools.splice(pools.indexOf(clonePool), 1);
+    if (clonePool) {
+      await clonePool.end();
+      pools.splice(pools.indexOf(clonePool), 1);
+      clonePool = undefined;
+    }
     await copySchema(live, clone);
     clonePool = await newPool(clone);
     cloneStore = newStore(clonePool);
@@ -289,10 +292,7 @@ describe('orphan collector ownership fence', { skip: !DATABASE_URL && 'PostgreSQ
     const original = await collect(liveStore);
     assert.deepEqual(original.fenced, ['objects']);
     assert.equal(objectsBinding(original).fence.cause, 'fence_advanced');
-    assert.match(
-      require('node:util').inspect(objectsBinding(original).fence.detail),
-      /another database that shares this namespace has collected/
-    );
+    assert.match(objectsBinding(original).fence.detail, /another database that shares this namespace has collected/);
   });
 
   test('a restore to an older database state is fenced until an operator takes over', async () => {
@@ -523,7 +523,9 @@ describe('orphan collector ownership fence', { skip: !DATABASE_URL && 'PostgreSQ
     const result = await collect(liveStore);
     assert.deepEqual(result.fenced, []);
     assert.equal(onDisk(orphan), false);
-    assert.equal(fenceRecord(2).token, intent, 'the recorded intent was written as the claim');
+    assert.notEqual(fenceRecord(2).token, intent, 'a finished claim carries a fresh token');
+    assert.equal(fenceRecord(2).token, (await fenceRow(livePool)).token);
+    assert.equal(fenceRecord(2).previous_token, fenceRecord(1).token);
     assert.equal((await fenceRow(livePool)).epoch, 2);
 
     // The same for a crash during the very first claim.
@@ -535,7 +537,8 @@ describe('orphan collector ownership fence', { skip: !DATABASE_URL && 'PostgreSQ
       [await scopeOf(liveStore), intent]
     );
     assert.deepEqual((await collect(liveStore)).fenced, []);
-    assert.equal(fenceRecord(1).token, intent);
+    assert.notEqual(fenceRecord(1).token, intent);
+    assert.equal(fenceRecord(1).token, (await fenceRow(livePool)).token);
   });
 
   async function scopeOf(store) {
@@ -550,24 +553,19 @@ describe('orphan collector ownership fence', { skip: !DATABASE_URL && 'PostgreSQ
       assert.deepEqual([first.fenced, second.fenced], [[], []]);
       assert.equal(first.failed + second.failed, 0);
     }
-    // A host that finds its sibling's claim still unwritten finishes that claim instead of claiming again,
-    // so the epoch advances once or twice per round, never backwards.
-    const epoch = (await fenceRow(livePool)).epoch;
-    assert.ok(epoch >= 3 && epoch <= 6, `epoch ${epoch}`);
-    assert.ok(fenceFiles().includes(fenceName(epoch)));
+    // The fence lock serializes the claims of one database, so every pass claims exactly one epoch.
+    assert.equal((await fenceRow(livePool)).epoch, 6);
+    assert.deepEqual(fenceFiles(), [fenceName(5), fenceName(6)]);
   });
 
   test('another database claiming mid-pass stops the deletes on the next page', async () => {
     for (const name of ['a', 'b', 'c']) await putObject(key(`acct/${name}.jsonl`));
-    await collect(liveStore, { dryRun: true });
-    let lists = 0;
     const intruding = new Proxy(provider, {
       get(target, property) {
         if (property === 'list') {
           return async (input, ctx) => {
             const listed = await target.list(input, ctx);
             if (!input.prefix.endsWith('/_collector-fence/')) {
-              lists += 1;
               if (input.pageToken?.endsWith('/acct/a.jsonl')) {
                 // After the first object's page, another database claims the next epoch.
                 const record = fenceRecord(1);
@@ -630,5 +628,277 @@ describe('orphan collector ownership fence', { skip: !DATABASE_URL && 'PostgreSQ
         ),
       /check/i
     );
+  });
+
+  /** A store over `pool` whose provider can be intercepted per operation. */
+  function storeWith(pool, hooks) {
+    const wrapped = new Proxy(provider, {
+      get(target, property) {
+        const hook = hooks[property];
+        if (hook) return (input, ctx) => hook(input, ctx, () => target[property](input, ctx));
+        const value = target[property];
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    return new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      rowStorage: {
+        bindings: { objects: { kind: 'object', provider: 'filesystem', location: { root: 'rows' }, prefix: 'orph' } },
+        providers: { filesystem: wrapped },
+        selectRowBinding: () => 'objects',
+      },
+    });
+  }
+  const isFenceKey = input => typeof input.objectRef === 'string' && input.objectRef.includes('/_collector-fence/');
+  const isFencePrefix = input => typeof input.prefix === 'string' && input.prefix.endsWith('/_collector-fence/');
+
+  test('a provider failure while reading or writing the fence is a failed binding, not a fenced one', async () => {
+    const orphan = key('acct/provider-down.jsonl');
+    await putObject(orphan);
+    const down = () => Object.assign(new Error('provider down'), { name: 'Error' });
+    const listing = storeWith(livePool, {
+      list: (input, ctx, next) => {
+        if (isFencePrefix(input)) throw down();
+        return next();
+      },
+    });
+    await listing.readyRowStorage();
+    const failedList = await collect(listing, { cursors: { objects: 'orph/some-token' } });
+    assert.equal(objectsBinding(failedList).status, 'failed');
+    assert.equal(objectsBinding(failedList).error, 'PROVIDER_UNAVAILABLE');
+    assert.deepEqual(failedList.fenced, []);
+    assert.equal(failedList.failed, 1);
+    assert.deepEqual(failedList.cursors, { objects: 'orph/some-token' }, 'the listing position is kept');
+    assert.ok(onDisk(orphan));
+    assert.equal(await fenceRow(livePool), undefined, 'a claim that could not read the bucket records nothing');
+
+    // The write of the claim fails after its intent committed.
+    const writing = storeWith(livePool, {
+      putIfAbsent: (input, ctx, next) => {
+        if (isFenceKey(input)) throw down();
+        return next();
+      },
+    });
+    await writing.readyRowStorage();
+    const failedPut = await collect(writing);
+    assert.equal(objectsBinding(failedPut).status, 'failed');
+    assert.deepEqual(failedPut.fenced, []);
+    assert.equal(failedPut.deleted, 0);
+    assert.ok(onDisk(orphan), 'a claim that could not be written deletes nothing');
+    assert.equal((await fenceRow(livePool)).epoch, 1, 'the intent stays recorded');
+    assert.deepEqual(fenceFiles(), []);
+
+    // The next healthy pass finishes that claim, with a fresh token, and then collects.
+    const intent = (await fenceRow(livePool)).token;
+    const recovered = await collect(liveStore);
+    assert.deepEqual(recovered.fenced, []);
+    assert.equal(onDisk(orphan), false);
+    assert.equal(fenceRecord(1).namespace_key, namespaceKey);
+    assert.notEqual(fenceRecord(1).token, intent, 'a finished claim never reuses the token a copy could hold');
+    assert.equal((await fenceRow(livePool)).token, fenceRecord(1).token);
+
+    // A failure while re-reading the fence before a delete is a failed binding too.
+    await putObject(key('acct/second.jsonl'));
+    let fenceLists = 0;
+    const rechecking = storeWith(livePool, {
+      list: (input, ctx, next) => {
+        if (isFencePrefix(input) && (fenceLists += 1) > 1) throw down();
+        return next();
+      },
+    });
+    await rechecking.readyRowStorage();
+    const failedRecheck = await collect(rechecking);
+    assert.equal(objectsBinding(failedRecheck).status, 'failed');
+    assert.deepEqual(failedRecheck.fenced, []);
+    assert.equal(objectsBinding(failedRecheck).deleted, 0);
+
+    // An aborted signal is an abort, not a refusal.
+    await assert.rejects(() => collect(liveStore, { signal: AbortSignal.abort() }));
+  });
+
+  test('a copy taken while a claim was unfinished cannot adopt the same token as the original', async () => {
+    await putObject(key('acct/seed.jsonl'));
+    await collect(liveStore); // epoch 1
+    // The original wrote its intent for epoch 2 and never got the object out; a copy is taken in that window.
+    const intent = '66666666-6666-4666-8666-666666666666';
+    await livePool.query(
+      `UPDATE adcp_reporting_orphan_collector_fences SET epoch = 2, token = $1, previous_token = $2`,
+      [intent, fenceRecord(1).token]
+    );
+    await freshClone();
+    const newer = key('acct/live-only.jsonl');
+    await addIntent(livePool, 'rrev_live_only', newer, await putObject(newer));
+    const [original, copy] = [await collect(liveStore), await collect(cloneStore)];
+    assert.deepEqual(original.fenced, [], 'the first to finish the claim owns it');
+    assert.deepEqual(copy.fenced, ['objects']);
+    assert.equal(objectsBinding(copy).fence.cause, 'token_mismatch', 'the copy does not adopt the original token');
+    assert.ok(onDisk(newer));
+    assert.deepEqual(fenceRecord(2).token, (await fenceRow(livePool)).token);
+    assert.notEqual(fenceRecord(2).token, intent);
+  });
+
+  test('a sibling host waits for a claim in flight instead of finishing it under another token', async () => {
+    await putObject(key('acct/seed.jsonl'));
+    await collect(liveStore); // epoch 1
+    await putObject(key('acct/a.jsonl'));
+    let reached;
+    const atPut = new Promise(resolve => (reached = resolve));
+    let release;
+    const held = new Promise(resolve => (release = resolve));
+    const slow = storeWith(livePool, {
+      putIfAbsent: async (input, ctx, next) => {
+        if (isFenceKey(input)) {
+          reached();
+          await held;
+        }
+        return next();
+      },
+    });
+    await slow.readyRowStorage();
+    const first = collect(slow); // commits its intent for epoch 2, then waits to write it
+    await atPut;
+    let siblingDone = false;
+    const sibling = collect(liveStore).then(result => {
+      siblingDone = true;
+      return result;
+    });
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.equal(siblingDone, false, 'the sibling waits on the fence lock while the claim is in flight');
+    assert.equal((await fenceRow(livePool)).epoch, 2, 'the intent is already recorded');
+    release();
+    const [early, late] = await Promise.all([first, sibling]);
+    assert.deepEqual([early.fenced, late.fenced], [[], []]);
+    // The first claim is epoch 2 under its own token; the sibling then claims epoch 3 on top of it.
+    assert.equal(fenceRecord(3).previous_token, fenceRecord(2).token);
+    assert.equal((await fenceRow(livePool)).epoch, 3);
+    assert.equal((await fenceRow(livePool)).token, fenceRecord(3).token);
+  });
+
+  test('the fence is claimed before the first delete of a pass', async () => {
+    const events = [];
+    const ordered = storeWith(livePool, {
+      putIfAbsent: (input, ctx, next) => {
+        if (isFenceKey(input)) events.push('claim');
+        return next();
+      },
+      delete: (input, ctx, next) => {
+        events.push(isFenceKey(input) ? 'prune' : 'delete');
+        return next();
+      },
+    });
+    await ordered.readyRowStorage();
+    for (const name of ['a', 'b']) await putObject(key(`acct/${name}.jsonl`));
+    await collect(ordered);
+    assert.deepEqual(events, ['claim', 'delete', 'delete']);
+  });
+
+  test('a takeover recovers every refusal, and moves past a database that is ahead of its bucket', async () => {
+    const seed = async () => {
+      await putObject(key('acct/seed.jsonl'));
+      await collect(liveStore);
+      await collect(liveStore);
+    };
+    const recipes = {
+      claimed_elsewhere: async () => livePool.query('DELETE FROM adcp_reporting_orphan_collector_fences'),
+      fence_missing: async () => rmSync(fenceDirectory(), { recursive: true, force: true }),
+      token_mismatch: async () =>
+        writeFileSync(
+          path.join(fenceDirectory(), fenceName(2)),
+          `${JSON.stringify({ ...fenceRecord(2), token: '77777777-7777-4777-8777-777777777777' })}\n`
+        ),
+      fence_regressed: async () =>
+        livePool.query(`UPDATE adcp_reporting_orphan_collector_fences SET epoch = 5, previous_token = $1`, [
+          '88888888-8888-4888-8888-888888888888',
+        ]),
+      fence_unreadable: async () => writeFileSync(path.join(fenceDirectory(), fenceName(2)), 'garbage'),
+    };
+    for (const [cause, recipe] of Object.entries(recipes)) {
+      await beforeEachReset();
+      await seed();
+      await recipe();
+      const refused = await collect(liveStore);
+      assert.equal(objectsBinding(refused).fence.cause, cause);
+      const taken = await liveStore.takeOverOrphanCollectorFence({ acknowledgePreviousOwnerGone: true });
+      const expected = cause === 'fence_regressed' ? 6 : 3;
+      assert.equal(taken[0].epoch, expected, cause);
+      assert.deepEqual((await collect(liveStore)).fenced, [], `${cause} is recovered by a takeover`);
+    }
+  });
+
+  async function beforeEachReset() {
+    await livePool.query('DELETE FROM adcp_reporting_orphan_collector_fences');
+    await livePool.query('DELETE FROM adcp_reporting_row_write_intents');
+    rmSync(path.join(root, 'orph'), { recursive: true, force: true });
+  }
+
+  test('a takeover can be limited to named bindings, skips readOnly ones, and refuses a provider that cannot list', async () => {
+    const taken = await liveStore.takeOverOrphanCollectorFence({
+      acknowledgePreviousOwnerGone: true,
+      bindings: ['objects'],
+    });
+    assert.deepEqual(taken, [{ bindingIds: ['objects'], epoch: 1, previousEpoch: null }]);
+    const defaults = await liveStore.takeOverOrphanCollectorFence({ acknowledgePreviousOwnerGone: true });
+    assert.deepEqual(defaults, [{ bindingIds: ['objects'], epoch: 2, previousEpoch: 1 }], 'readOnly twin is left out');
+
+    const noList = new Proxy(provider, {
+      get(target, property) {
+        if (property === 'list') return undefined;
+        const value = target[property];
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const store = new ledger.PostgresReportingLedgerStore(livePool, {
+      acknowledgeIsolatedDatabase: true,
+      rowStorage: {
+        bindings: { objects: { kind: 'object', provider: 'filesystem', location: { root: 'rows' }, prefix: 'orph' } },
+        providers: { filesystem: noList },
+        selectRowBinding: () => 'objects',
+      },
+    });
+    await assert.rejects(
+      () => store.takeOverOrphanCollectorFence({ acknowledgePreviousOwnerGone: true, bindings: ['objects'] }),
+      RangeError
+    );
+    await assert.rejects(
+      () => liveStore.takeOverOrphanCollectorFence({ acknowledgePreviousOwnerGone: true, signal: AbortSignal.abort() }),
+      /abort/i
+    );
+  });
+
+  test('a fenced clone refuses every binding that shares the fence, with one check and no cursor kept', async () => {
+    await putObject(key('acct/seed.jsonl'));
+    await collect(liveStore);
+    await freshClone();
+    await collect(liveStore);
+    const refused = await collect(cloneStore, {
+      includeReadOnly: true,
+      cursors: { objects: 'orph/stale-token' },
+    });
+    assert.deepEqual(refused.fenced, ['objects', 'twin']);
+    assert.deepEqual(refused.cursors, {}, 'a refused binding does not keep a listing position');
+    assert.deepEqual(refused.completed, []);
+    assert.equal(refused.listed, 0);
+  });
+
+  test('a fenced namespace never rests a whole interval in the maintenance cycle, and applying the fix resumes it', async () => {
+    await putObject(key('acct/seed.jsonl'));
+    await collect(liveStore);
+    await freshClone();
+    await collect(liveStore);
+    const orphanState = { cursors: {} };
+    const run = () =>
+      ledger.runReportingLedgerMaintenance({
+        store: cloneStore,
+        statusRetentionDays: 30,
+        orphanCollection: { enabled: true, acknowledgeExclusiveNamespace: true, intervalSeconds: 7 * 24 * 3600 },
+        orphanState,
+      });
+    const results = await run();
+    const task = results.find(item => item.task === 'orphan object collection');
+    assert.equal(task.status, 'completed');
+    assert.deepEqual(task.result.fenced, ['objects']);
+    assert.match(task.partialFailure.message, /fence_advanced/);
+    const rest = orphanState.nextCycleAt - Date.now();
+    assert.ok(rest > 0 && rest <= 3_600_000, `a fenced cycle looks again within the hour (${rest} ms)`);
   });
 });

@@ -343,7 +343,11 @@ export async function runReportingLedgerMaintenance(
                 !outcome.bindings.some(item => item.status === 'failed')
               ) {
                 state.completed = [];
-                state.nextCycleAt = Date.now() + (orphanCollection.intervalSeconds ?? 86_400) * 1000;
+                // A fenced binding looks again within the hour, so applying the migration or taking the
+                // namespace over does not leave collection idle for the rest of a day.
+                const fenced = outcome.bindings.some(item => item.status === 'fenced');
+                const rest = orphanCollection.intervalSeconds ?? 86_400;
+                state.nextCycleAt = Date.now() + (fenced ? Math.min(rest, 3_600) : rest) * 1000;
               } else {
                 state.completed = [...new Set([...(state.completed ?? []), ...outcome.completed])];
                 delete state.nextCycleAt;

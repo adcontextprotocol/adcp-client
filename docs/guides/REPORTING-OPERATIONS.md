@@ -222,7 +222,9 @@ service runs for you. See
      earlier state. A `dryRun` reads the fence without claiming it, so it
      reports a fenced binding too and writes nothing.
    - **First claim wins.** Nothing in the database distinguishes a copy from the
-     original until one of them claims. If a clone collects before the original
+     original until one of them claims. When you roll the fence out, claim from the
+     live database first: one real pass, or `takeOverOrphanCollectorFence` (on a
+     namespace nobody has claimed it is a claim and nothing more). If a clone collects before the original
      has run a pass since the copy was taken, the clone claims first and the
      original is fenced, and the warning is the signal. The age threshold still
      holds: the clone cannot delete an object the original wrote after the copy
@@ -235,6 +237,15 @@ service runs for you. See
      copy out. It refuses without the acknowledgement. Do not call it from a
      clone while the original is running: that fences the original and lets the
      clone delete its objects.
+
+   A fenced binding is checked again within the hour (never a whole `intervalSeconds`
+   later), so applying `0009` or taking the namespace over resumes collection
+   without a restart. A pass writes one small fence object per pass (and prunes
+   the older ones), so the binding's credentials need write access, including a
+   `readOnly` binding collected with `includeReadOnly`. Keep `_collector-fence/` out
+   of bucket lifecycle rules and manual cleanup: deleting the newest fence object
+   makes an older copy look current again. The claim holds a database connection
+   and an advisory lock across the object-store listing and read.
 
    After a restore in place, expect the collector to delete the objects of the
    row sets the restore lost once you have taken the namespace over, which is its

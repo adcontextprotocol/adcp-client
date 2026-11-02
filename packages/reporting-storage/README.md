@@ -83,16 +83,16 @@ SDK's `python -m adcp migrate` uses), so concurrent runners serialize. `migrate(
 `pendingMigrations(pool)` and `migrations()` are the same operations in code. Startup never changes the schema:
 `storage.checkSchema()` names the pending versions and this command.
 
-| Version | Name                              | Contents (the deprecated constant that holds the same SQL)                                                 |
-| ------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| 0001    | `adcp_state`                      | principal records and reporting-subscription engine state (`ADCP_STATE_MIGRATION` from `@adcp/sdk/server`) |
-| 0002    | `reporting_ledger`                | the ledger (`REPORTING_LEDGER_MIGRATION`)                                                                  |
-| 0003    | `reporting_ledger_finality_fence` | **stopped-worker:** fences pre-SDK-14 writers (`REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION`)         |
-| 0004    | `reporting_row_storage`           | row storage, PostgreSQL 13+ (`REPORTING_ROW_STORAGE_MIGRATION`)                                            |
-| 0005    | `reporting_ledger_changes`        | the host change feed, PostgreSQL 13+ (`REPORTING_LEDGER_CHANGES_MIGRATION`)                                |
-| 0006    | `reporting_managed_delivery`      | managed delivery (`REPORTING_MANAGED_DELIVERY_MIGRATION`)                                                  |
-| 0007    | `reporting_object_writes`         | the GCS write fence (`REPORTING_OBJECT_WRITE_MIGRATION`, `REPORTING_OBJECT_WRITE_AUTHORITY_MIGRATION`)     |
-| 0008    | `reporting_consumer`              | the buyer consumer (`REPORTING_CONSUMER_POSTGRES_MIGRATION` from `@adcp/sdk/reporting/consumer`)           |
+| Version | Name                               | Contents (the deprecated constant that holds the same SQL)                                                              |
+| ------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 0001    | `adcp_state`                       | principal records and reporting-subscription engine state (`ADCP_STATE_MIGRATION` from `@adcp/sdk/server`)              |
+| 0002    | `reporting_ledger`                 | the ledger (`REPORTING_LEDGER_MIGRATION`)                                                                               |
+| 0003    | `reporting_ledger_finality_fence`  | **stopped-worker:** fences pre-SDK-14 writers (`REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION`)                      |
+| 0004    | `reporting_row_storage`            | row storage, PostgreSQL 13+ (`REPORTING_ROW_STORAGE_MIGRATION`)                                                         |
+| 0005    | `reporting_ledger_changes`         | the host change feed, PostgreSQL 13+ (`REPORTING_LEDGER_CHANGES_MIGRATION`)                                             |
+| 0006    | `reporting_managed_delivery`       | managed delivery (`REPORTING_MANAGED_DELIVERY_MIGRATION`)                                                               |
+| 0007    | `reporting_object_writes`          | the GCS write fence (`REPORTING_OBJECT_WRITE_MIGRATION`, `REPORTING_OBJECT_WRITE_AUTHORITY_MIGRATION`)                  |
+| 0008    | `reporting_consumer`               | the buyer consumer (`REPORTING_CONSUMER_POSTGRES_MIGRATION` from `@adcp/sdk/reporting/consumer`)                        |
 | 0009    | `reporting_orphan_collector_fence` | the orphan collector's ownership fence (`REPORTING_ORPHAN_FENCE_MIGRATION`); needed before orphan collection can delete |
 
 A schema set up by applying those constants by hand migrates cleanly: the statements are idempotent, re-run as no-ops,

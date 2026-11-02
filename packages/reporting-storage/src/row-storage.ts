@@ -479,6 +479,8 @@ export class ReportingRowStorageV1 {
    * the object-store directory that holds its chain. Bindings that share provider, location, prefix and
    * installation share a fence. Throws `STATE_UNAVAILABLE` for a binding that is not an object binding, and
    * `INVALID_INPUT` when its provider cannot list (the fence is read by listing).
+   *
+   * @internal
    */
   async collectorFenceLocation(bindingId: string): Promise<{ scope: string; directory: string; namespaceKey: string }> {
     await this.ready();
@@ -493,7 +495,9 @@ export class ReportingRowStorageV1 {
     const namespaceKey = this.installation!.namespaceKey;
     return {
       scope: orphanFenceScope({
-        provider: binding.provider,
+        // The provider's own name, not this host's registry key: two registry entries of one kind that reach
+        // the same bucket and prefix are one physical fence.
+        provider: provider.name,
         location: binding.location,
         prefix: binding.prefix,
         namespaceKey,
@@ -507,9 +511,16 @@ export class ReportingRowStorageV1 {
    * Every fence object of a binding's namespace, ordered by epoch. Keys under the fence directory that are
    * not an epoch name are ignored. Two live versions of one epoch's key (a versioned store after a manual
    * delete and re-create) are ambiguous and fail closed with `ROWS_INTEGRITY_FAILED`, as does a chain too
-   * long to be one this collector wrote (it prunes to two objects).
+   * long to be one this collector wrote (it prunes to two objects). `tolerant` is for a takeover, which must
+   * be able to supersede a damaged chain: duplicates keep their first version and the page bound is wider.
+   *
+   * @internal
    */
-  async listCollectorFence(bindingId: string, signal?: AbortSignal): Promise<OrphanFenceEntry[]> {
+  async listCollectorFence(
+    bindingId: string,
+    signal?: AbortSignal,
+    options: { tolerant?: boolean } = {}
+  ): Promise<OrphanFenceEntry[]> {
     const { directory } = await this.collectorFenceLocation(bindingId);
     const binding = this.bindings[bindingId] as ReportingObjectRowBindingV1;
     const provider = this.providers[binding.provider]!;
@@ -518,7 +529,7 @@ export class ReportingRowStorageV1 {
     const pageSize = 50;
     let token: string | undefined;
     for (let page = 0; ; page += 1) {
-      if (page >= 20) {
+      if (page >= (options.tolerant ? 200 : 20)) {
         throw new ReportingRowStoreError(
           'ROWS_INTEGRITY_FAILED',
           'the collector fence directory holds too many objects'
@@ -550,6 +561,7 @@ export class ReportingRowStorageV1 {
         const epoch = orphanFenceEpochOfKey(ownedPrefix, object.objectRef);
         if (epoch === undefined || object.objectRef !== orphanFenceKey(ownedPrefix, epoch)) continue;
         if (entries.has(epoch)) {
+          if (options.tolerant) continue;
           throw new ReportingRowStoreError(
             'ROWS_INTEGRITY_FAILED',
             'the collector fence holds two versions of one epoch'
@@ -570,6 +582,8 @@ export class ReportingRowStorageV1 {
    * Read and verify one fence object. A missing version is `PROVIDER_UNAVAILABLE` (it was listed a moment ago,
    * so this is a race to retry); content that is not exactly a fence of this namespace and epoch is
    * `ROWS_INTEGRITY_FAILED`.
+   *
+   * @internal
    */
   async readCollectorFence(
     bindingId: string,
@@ -621,6 +635,8 @@ export class ReportingRowStorageV1 {
   /**
    * Create-only write of one epoch's fence object. When the key is taken, returns the record already there
    * (verified), so the caller can tell its own earlier write from another database's claim.
+   *
+   * @internal
    */
   async putCollectorFence(
     bindingId: string,
@@ -659,7 +675,11 @@ export class ReportingRowStorageV1 {
     };
   }
 
-  /** Delete superseded fence objects. Best effort: a failure leaves a stale object that the next claim prunes. */
+  /**
+   * Delete superseded fence objects. Best effort: a failure leaves a stale object that the next claim prunes.
+   *
+   * @internal
+   */
   async deleteCollectorFence(
     bindingId: string,
     entries: readonly OrphanFenceEntry[],
