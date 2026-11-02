@@ -9636,13 +9636,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // `filterCapabilitiesForToolAvailability` adds the feature id for releases that define the tool
   // (and removes both for earlier ones). Seller-supplied lists come from `accountRequests`; an
   // adopter override of the block keeps its optional fields, but the task names are fixed.
-  let syntheticAccountBlock = false;
   if (registeredToolNames.has('request_account')) {
-    if (capabilitiesData.account == null) {
-      // `supported_billing` is required whenever the account block is emitted. Same default as the
-      // platform path: 'agent' when the seller declared no account capabilities.
-      capabilitiesData.account = { supported_billing: ['agent'] };
-      syntheticAccountBlock = true;
+    // account.requests lives in the account block, whose schema requires supported_billing. Who
+    // bills is the seller's claim to make, so the SDK never fills it in.
+    if (
+      !Array.isArray(capabilitiesData.account?.supported_billing) ||
+      capabilitiesData.account.supported_billing.length === 0
+    ) {
+      throw new Error(
+        'createAdcpServer: request_account is advertised in the account capability block, which requires supported_billing. ' +
+          "Declare who bills: capabilities.account.supportedBilling (on createAdcpServerFromPlatform, capabilities.supportedBillings), for example ['agent']."
+      );
     }
     const adopterRequests = capabilitiesData.account.requests as Partial<AccountRequestsSupported> | undefined;
     const options = capConfig?.accountRequests;
@@ -9910,8 +9914,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         (tool, version) =>
           releaseDefinesTool(tool, { validationVersion: version }) && toolAvailableForRelease(tool, version)
       );
-      // An account block emitted only to carry account.requests goes when the release has no requests.
-      if (syntheticAccountBlock && !data.account?.requests) delete data.account;
       const selected = parseAdcpRelease(release.validationVersion);
       const principalBlock = (data.adcp as { principal?: { supported_sections?: string[] } }).principal;
       if (principalBlock && selected !== undefined) {

@@ -152,6 +152,7 @@ createAdcpServerFromPlatform(
   {
     capabilities: {
       // ...
+      supportedBillings: ['agent'], // required with account requests: who bills
       accountRequests: {
         changeableAttributes: ['billing', 'payment_terms', 'timezone'],
         pendingActionKinds: ['review', 'accept_terms'],
@@ -183,6 +184,12 @@ adds `account.requests` to `experimental_features`. Callers on releases before
 3.3 see neither. Buyers route `client.accounts.ensure` and
 `client.accounts.change` by this block. The same applies to `createAdcpServer`,
 with `capabilities.accountRequests`.
+
+The block lives in the account capability block, whose schema requires
+`supported_billing`, so declare who bills: `capabilities.supportedBillings` here,
+or `capabilities.account.supportedBilling` on `createAdcpServer`. A server that
+registers `requestAccount` without one is refused at construction; the SDK never
+fills in a billing claim for you.
 
 `listRequests` returns a `CursorPage` of wire account-request records, which the
 framework serves as `account_requests[]` and `account_requests_pagination`; the
