@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
+import { reportingLocalDayStartDateV1 } from '../subscriptions/calendar';
 import { buildReportingSourceManifestV1 } from './builder';
 import { validateReportingSourceRequestAgainstCapabilitiesV1 } from './conformance';
 import {
@@ -459,7 +460,7 @@ function createInlineExecutorWithCapacities(
         return failure(
           'UNSUPPORTED_OFFERING',
           'terminal',
-          'Inline reporting requires source-local midnight delivery windows'
+          'Inline reporting requires delivery windows of whole source-local days'
         );
       }
       if (
@@ -2480,8 +2481,8 @@ function projectSnapshotRow(
 }
 
 function inlineDeliveryDates(request: ReportingSourceSliceRequestV1): { start: string; end: string } {
-  const start = sourceLocalMidnightDate(request.period.start, request.period.sourceTimezone);
-  const end = sourceLocalMidnightDate(request.period.end, request.period.sourceTimezone);
+  const start = sourceLocalDayStartDate(request.period.start, request.period.sourceTimezone);
+  const end = sourceLocalDayStartDate(request.period.end, request.period.sourceTimezone);
   if (start !== request.period.sourceLocalDate) throw new RangeError('sourceLocalDate does not match period start');
   return { start, end };
 }
@@ -2726,27 +2727,16 @@ function createAdmissionReclaimer(
   };
 }
 
-function sourceLocalMidnightDate(instant: string, timeZone: string): string {
-  const date = new Date(instant);
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-CA', {
-      timeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hourCycle: 'h23',
-    })
-      .formatToParts(date)
-      .filter(part => part.type !== 'literal')
-      .map(part => [part.type, part.value])
-  );
-  if (parts.hour !== '00' || parts.minute !== '00' || parts.second !== '00' || date.getUTCMilliseconds() !== 0) {
-    throw new RangeError('Reporting boundary is not source-local midnight');
-  }
-  return `${parts.year}-${parts.month}-${parts.day}`;
+/**
+ * The source-local date a period boundary starts. A boundary is local midnight or, where a DST gap
+ * swallows midnight (America/Santiago, America/Havana, Africa/Cairo), the instant midnight advances
+ * to under `reporting-schedule.json` `period_generation`, so a 23- or 25-hour local day is still one
+ * whole date the upstream can be asked for.
+ */
+function sourceLocalDayStartDate(instant: string, timeZone: string): string {
+  const date = reportingLocalDayStartDateV1(Date.parse(instant), timeZone);
+  if (date === undefined) throw new RangeError('Reporting boundary does not start a source-local day');
+  return date;
 }
 
 function deliveryPeriodBoundaryMatches(actual: unknown, wireDate: string, instant: string): boolean {

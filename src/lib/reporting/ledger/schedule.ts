@@ -253,12 +253,17 @@ function canonicalCalendarPeriod(start: number, end: number) {
   return { start, end };
 }
 
+/**
+ * One whole source-local date: `[day start, next day start)`. A day start is local midnight or,
+ * where a DST gap swallows midnight (America/Santiago, America/Havana, Africa/Cairo), the instant
+ * midnight advances to (`reporting-schedule.json` `period_generation`). The source is asked for
+ * that local date, so a 23- or 25-hour day is as lossless as any other.
+ */
 function sourceCompatibleCalendarPeriod(sourceTimezone: string, start: number, end: number) {
   canonicalCalendarPeriod(start, end);
-  const localStart = wallTime(start, sourceTimezone);
-  const localEnd = wallTime(end, sourceTimezone);
-  if (localStart % DAY !== 0 || localEnd % DAY !== 0 || localEnd - localStart !== DAY) {
-    throw new TypeError('Reporting calendar day cannot be expressed as lossless source-local midnight boundaries');
+  const day = Math.floor(wallTime(start, sourceTimezone) / DAY);
+  if (civilBoundary(day, sourceTimezone) !== start || civilBoundary(day + 1, sourceTimezone) !== end) {
+    throw new TypeError('Reporting calendar day is not one whole source-local date');
   }
   return { start, end };
 }

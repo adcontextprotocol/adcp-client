@@ -568,8 +568,10 @@ test('rejects unsupported elapsed grids, calendar SLAs and incompatible source w
       /outside its source window bounds/
     );
   }
+  // A DST gap that swallows midnight still has one day start per date (the instant midnight
+  // advances to), so the source is asked for whole local dates and the offering is servable.
   const midnightGap = { zone: 'America/Santiago', boundaries: ['2026-09-01T04:00:00.000Z'] };
-  assert.throws(() => fixture(midnightGap, { service: true }), /lossless source-local midnight boundaries/);
+  assert.doesNotThrow(() => fixture(midnightGap, { service: true }));
   assert.throws(
     () => fixture({ zone: '+02:00', boundaries: ['2026-03-07T22:00:00.000Z'] }, { service: true }),
     /IANA|time zone|timezone/i
@@ -1528,22 +1530,21 @@ test('calendar regression: offering withdrawal does not suppress accepted obliga
   assert.deepEqual(await f.store.listConfigurations(), [installed]);
 });
 
-test('calendar regression: a later midnight gap creates an obligation before source incompatibility', async () => {
+test('calendar regression: a midnight DST gap day is produced as one whole source-local date', async () => {
   const f = fixture({ zone: 'America/Santiago', boundaries: ['2026-09-01T04:00:00.000Z'] });
   // A retained host-authored generation can outlive its offering and install
-  // horizon. The September 6 midnight gap starts at local 01:00, so the source
-  // date-only request cannot express this interval losslessly.
+  // horizon. The September 6 midnight gap starts the day at local 01:00 (04:00Z)
+  // and ends it at the next local midnight (03:00Z): a 23-hour day the source is
+  // asked for as the single date 2026-09-06 (reporting-schedule.json period_generation).
   await f.store.putConfiguration(retainedConfiguration(f.input, '2026-09-06T04:00:00.000Z'));
-  let writes = 0;
-  let fetches = 0;
-  const put = f.store.putObligation.bind(f.store);
-  f.store.putObligation = async value => {
-    writes += 1;
-    return put(value);
-  };
-  const source = createInlineReportingSourceExecutor(() => {
-    fetches += 1;
-    throw new Error('unexpected source fetch');
+  const fetched = [];
+  const source = createInlineReportingSourceExecutor(request => {
+    fetched.push({ start_date: request.start_date, end_date: request.end_date });
+    return {
+      reporting_period: { start: request.start_date, end: request.end_date },
+      currency: 'USD',
+      reporting_rows: [],
+    };
   }, f.sourceOffering);
   const producer = createReportingProducer({
     store: f.store,
@@ -1556,22 +1557,18 @@ test('calendar regression: a later midnight gap creates an obligation before sou
     planned.map(value => [value.period.start, value.period.end]),
     [['2026-09-06T04:00:00.000Z', '2026-09-07T03:00:00.000Z']]
   );
-  assert.equal(writes, 1);
   await producer.runWorker({
     now: () => new Date(Date.parse(planned[0].expectedAt) + 1_000),
     maxIterations: 1,
   });
-  assert.equal(fetches, 0);
+  assert.deepEqual(fetched, [{ start_date: '2026-09-06', end_date: '2026-09-07' }]);
   assert.deepEqual(
-    (await f.store.listIssues(planned[0].reporting_obligation_id))
-      .filter(issue => issue.code === 'CONFIGURATION_REQUIRED')
-      .map(issue => ({
-        code: issue.code,
-        severity: issue.severity,
-        responsibleParty: issue.responsibleParty,
-      })),
-    [{ code: 'CONFIGURATION_REQUIRED', severity: 'action_required', responsibleParty: 'seller' }]
+    (await f.store.listIssues(planned[0].reporting_obligation_id)).filter(
+      issue => issue.code === 'CONFIGURATION_REQUIRED'
+    ),
+    []
   );
+  assert.equal((await f.store.listRevisions(planned[0].reporting_obligation_id)).length, 1);
 });
 
 test('calendar regression: numeric planning retains its behavior after offering withdrawal', async t => {

@@ -505,3 +505,25 @@ function createSubDailyLocalCalendar(spec: ReportingPeriodCalendarSpecV1, stepMs
  * @internal Not re-exported from any public entry point.
  */
 export const calendarInternalsV1 = { instantForWall };
+
+/**
+ * The local date (`YYYY-MM-DD`) that `instant` starts in `timeZone`, or `undefined` when it
+ * starts none. A local day starts at midnight or, where a DST gap swallows midnight (Santiago,
+ * Havana, Cairo), at the instant midnight advances to under `period_generation`; on a fold at
+ * midnight only the earlier instant starts the day. These are exactly the `P1D` boundaries
+ * {@link createReportingPeriodCalendarV1} generates for a local alignment, so a period between two
+ * day starts is a whole number of local dates a source can be asked for.
+ *
+ * @internal Not re-exported from any public entry point.
+ */
+export function reportingLocalDayStartDateV1(instant: number, timeZone: string): string | undefined {
+  if (!Number.isFinite(instant) || instant < MIN_INSTANT || instant > MAX_INSTANT) return undefined;
+  try {
+    const day = Math.floor(wallTime(instant, timeZone) / DAY_MS);
+    if (instantForWall(day * DAY_MS, timeZone) !== instant) return undefined;
+    return new Date(day * DAY_MS).toISOString().slice(0, 10);
+  } catch {
+    // An unknown zone or an instant outside the civil range starts no day.
+    return undefined;
+  }
+}

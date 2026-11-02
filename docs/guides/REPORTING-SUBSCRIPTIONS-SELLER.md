@@ -46,6 +46,16 @@ The SDK reads these surfaces under each principal's identity, so a principal see
 
 Set `timezone` on the framework `Account` your `accounts.list` returns; `list_accounts` serves it. An account without a timezone fails `account_timezone` offerings with `COVERAGE_INPUT_INCOMPLETE`, and is never read as UTC.
 
+### Local-day offerings
+
+Local days follow `core/reporting-schedule.json` `period_generation`. A day starts at local midnight. Where a DST gap swallows midnight (America/Santiago, America/Havana, Africa/Cairo), it starts at the instant midnight advances to, so that day is 23 hours long. The source is asked for whole local dates (`start_date`, `end_date`), so such a day is served like any other.
+
+- **`source_timezone` `P1D`.** Served in any IANA zone, on the subscription path and for account-level configurations.
+- **`account_timezone`.** Served only on the subscription path, where each account owes the periods of its own `timezone`, as the buyer's `reconcile` computes them. Creating the service without a `subscriptions` block refuses the offering, and `installConfiguration` refuses an account-level configuration for it.
+  - The source offering must not pin `sourceTimezone.ianaTimezone`.
+  - `resolveSource` must return the account's timezone as `sourceTimezone`, because the source reports each account's days in that account's zone. When an owed period is not whole local days in the returned zone, planning fails for that subscription and names the period.
+  - A generation keeps the zone it was installed with. The managed path does not yet follow an account timezone change (a `timezone_cutovers` entry) or a `selector.period_timezone` override the source does not report in. Planning reports both as failures.
+
 Without `configure`, each generation requests every metric and dimension its source offering supports exactly, with the offering's first attribution model and window, and an `official` feed gets a contractual cutoff at the offering's `delivery_sla`. Billing feeds need a canonicalization, so they fail to plan until you supply `configure`.
 
 ## What the SDK derives

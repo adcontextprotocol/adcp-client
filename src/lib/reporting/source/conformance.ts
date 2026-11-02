@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
+import { reportingLocalDayStartDateV1 } from '../subscriptions/calendar';
 import { toPublishedJsonSchema } from './json-schema';
 import {
   canonicalJsonV1,
@@ -695,6 +696,10 @@ function sourceCalendarWallClockElapsedMs(start: string, end: string, timezone: 
     hourCycle: 'h23',
   });
   const localEpoch = (instant: string) => {
+    // A day start inside a midnight DST gap reads 01:00 on the wall, but it begins its whole
+    // local date: count it from that date's midnight, so a 23- or 25-hour day measures one day.
+    const dayStart = reportingLocalDayStartDateV1(Date.parse(instant), timezone);
+    if (dayStart !== undefined) return Date.parse(`${dayStart}T00:00:00Z`);
     const parts = Object.fromEntries(formatter.formatToParts(new Date(instant)).map(part => [part.type, part.value]));
     return Date.UTC(
       Number(parts.year),
