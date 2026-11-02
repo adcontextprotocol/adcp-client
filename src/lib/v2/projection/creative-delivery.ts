@@ -3439,7 +3439,8 @@ function decideCreativePackageFit(
   wireMode: CreativeFormatWireMode,
   options: Omit<CreativePackageFitOptions, 'adcpVersion'>,
   packageIds?: Set<string>,
-  projectionOptions?: Pick<SyncCreativeFormatProjection, 'playerSizedRefs'>
+  projectionOptions?: Pick<SyncCreativeFormatProjection, 'playerSizedRefs'>,
+  packageScope: 'assigned' | 'library' = 'assigned'
 ): { result: CreativePackageFitResult; error?: CreativeFormatProjectionError } {
   const result: CreativePackageFitResult = { perPackage: [] };
   let callbackFailed = false;
@@ -3564,33 +3565,41 @@ function decideCreativePackageFit(
         ? []
         : [{ package_id: id, verdict: fit.verdict, reasons: fit.reasons, ...(fit.option && { option: fit.option }) }]
     );
+    // Library uploads are not assigned to these packages. Known mismatches do
+    // not constrain their shared wire shape; unknown fits still need seller
+    // validation. Retain every package for diagnostics if none is compatible.
+    const compatible =
+      packageScope === 'library' && groups.size > 0
+        ? evaluated.filter(item => item.fit.verdict !== 'does_not_fit')
+        : evaluated;
+    const wirePackages = compatible.length > 0 ? compatible : evaluated;
     const failedPackages = result.perPackage.filter(item => item.verdict === 'does_not_fit');
-    if (evaluated.some(item => item.fit.verdict === 'does_not_fit'))
+    if (wirePackages.some(item => item.fit.verdict === 'does_not_fit'))
       result.refusal = {
         code: 'package_does_not_fit',
         reasons: uniqueCreativeFitReasons(
-          evaluated.filter(item => item.fit.verdict === 'does_not_fit').flatMap(item => item.fit.reasons)
+          wirePackages.filter(item => item.fit.verdict === 'does_not_fit').flatMap(item => item.fit.reasons)
         ),
       };
     // Keep legacy-only contexts and unknown declarations available to the
     // existing identity/owner-aware resolver, retaining complete routing metadata.
-    const prepared = evaluated.map(item => item.fit.selector);
+    const prepared = wirePackages.map(item => item.fit.selector);
     let wireCreative = creative;
     if (
       result.refusal === undefined &&
       wireMode === 'canonical' &&
       !optionReference(normalized.format_option_ref) &&
-      evaluated.some(item => item.fit.requiresOption)
+      wirePackages.some(item => item.fit.requiresOption)
     ) {
-      const refs = evaluated
+      const refs = wirePackages
         .filter(item => item.fit.requiresOption)
         .flatMap(item => (item.fit.option ? [item.fit.option] : []));
       const pin = refs[0];
       if (
         !pin ||
-        refs.length !== evaluated.filter(item => item.fit.requiresOption).length ||
+        refs.length !== wirePackages.filter(item => item.fit.requiresOption).length ||
         !refs.every(ref => sameOptionReference(ref, pin)) ||
-        evaluated.some(
+        wirePackages.some(
           item =>
             fitSelectorLayer(facts, { ...normalized, format_option_ref: pin }, item.fit.selector, legacyFormatConverter)
               .verdict === 'does_not_fit'
@@ -3617,7 +3626,9 @@ function decideCreativePackageFit(
       };
       transferLegacyCreativeMetadata(creative, wireCreative);
     }
-    const ids = packageIds ?? (groups.size > 0 ? new Set(groups.keys()) : undefined);
+    const ids =
+      packageIds ??
+      (groups.size > 0 ? new Set(wirePackages.flatMap(item => (item.id !== undefined ? [item.id] : []))) : undefined);
     const projected =
       wireMode !== 'canonical' && ids && ids.size > 1
         ? projectAssignedCreative(
@@ -3650,7 +3661,9 @@ function decideCreativePackageFit(
         error: new CreativeFormatProjectionError(
           'sync_creatives',
           String(creative.creative_id),
-          'creative does not fit every package',
+          packageScope === 'library'
+            ? 'creative does not fit any supplied package'
+            : 'creative does not fit every package',
           details
         ),
       };
@@ -3752,6 +3765,24 @@ function decideCreativePackageFit(
   }
 }
 
+/** @internal Assignment targets that traffic a creative, excluding removals. */
+export function syncCreativeAssignmentTargets(request: unknown): Array<{ creative_id: string; package_id: string }> {
+  const value = record(request);
+  const assignments = Array.isArray(value?.assignments) ? value.assignments : [];
+  const operations = Array.isArray(value?.assignment_operations)
+    ? value.assignment_operations.filter(operation => {
+        const kind = record(operation)?.operation;
+        return kind === 'assign' || kind === 'replace' || kind === 'merge';
+      })
+    : [];
+  return [...assignments, ...operations].flatMap(assignmentValue => {
+    const assignment = record(assignmentValue);
+    return typeof assignment?.creative_id === 'string' && typeof assignment.package_id === 'string'
+      ? [{ creative_id: assignment.creative_id, package_id: assignment.package_id }]
+      : [];
+  });
+}
+
 export function projectSyncCreativesForDelivery<T>(
   request: T,
   selectorContainers: ReadonlyArray<CreativeFormatSelectorContainer>,
@@ -3801,18 +3832,7 @@ export function projectSyncCreativesForDelivery<T>(
   if (!requestRecord || !Array.isArray(requestRecord.creatives)) {
     return request as ProjectedSyncCreativeRequest<T, 'canonical'>;
   }
-  const assignments = Array.isArray(requestRecord.assignments) ? requestRecord.assignments : [];
-  // Without request assignments, a fully identified package context is the
-  // delivery scope. Keep mixed/unkeyed context on the combined path so none
-  // of its constraints are dropped when grouping selectors by package ID.
-  const implicitPackageIds =
-    assignments.length === 0 && selectorContainers.every(container => typeof container.package_id === 'string')
-      ? new Set(
-          selectorContainers.flatMap(container =>
-            typeof container.package_id === 'string' ? [container.package_id] : []
-          )
-        )
-      : undefined;
+  const assignments = syncCreativeAssignmentTargets(requestRecord);
   let changed = false;
   const creatives = requestRecord.creatives.map(creativeValue => {
     const creative = record(creativeValue);
@@ -3830,19 +3850,6 @@ export function projectSyncCreativesForDelivery<T>(
         : selectorContainers.filter(
             container => typeof container.package_id !== 'string' || assignedPackageIds.has(container.package_id)
           );
-    if (assignments.length > 0 && assignedPackageIds.size === 0) {
-      const projected = projectCreativeForDelivery(
-        creative as unknown as CreativeAsset,
-        { selector_containers: relevant },
-        wireMode,
-        'sync_creatives',
-        legacyFormatConverter,
-        canonicalFormatLegacyResolver,
-        legacyFormatDefinitions
-      );
-      if (projected !== creativeValue) changed = true;
-      return projected;
-    }
     const decision = decideCreativePackageFit(
       creative,
       relevant,
@@ -3853,8 +3860,9 @@ export function projectSyncCreativesForDelivery<T>(
         legacyFormatDefinitions,
         ...options?.creativeFacts?.[String(creative.creative_id)],
       },
-      assignedPackageIds.size > 0 ? assignedPackageIds : implicitPackageIds,
-      options
+      assignedPackageIds.size > 0 ? assignedPackageIds : undefined,
+      options,
+      assignedPackageIds.size > 0 ? 'assigned' : 'library'
     );
     if (decision.error) throw decision.error;
     const projected = decision.result.wire!.creative;
