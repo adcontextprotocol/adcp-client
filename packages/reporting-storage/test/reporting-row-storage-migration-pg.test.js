@@ -5,9 +5,12 @@
  */
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
-const { readFileSync } = require('node:fs');
+const { mkdtempSync, readFileSync, rmSync } = require('node:fs');
+const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { after, before, describe, test } = require('node:test');
+
+const { createRowStorageFixture } = require('./helpers/reporting-row-storage-fixture.js');
 
 const DATABASE_URL = process.env.REPORTING_LEDGER_PG_URL;
 
@@ -18,6 +21,22 @@ describe('REPORTING_ROW_STORAGE_MIGRATION', { skip: !DATABASE_URL && 'PostgreSQL
   let ledger;
 
   const hex = value => createHash('sha256').update(value).digest('hex');
+  const insertBinding = (target, rowBindingId) =>
+    target.query(
+      `INSERT INTO adcp_reporting_row_bindings
+         (row_binding_id, kind, provider, identity_config, identity_sha256, namespace_key)
+       VALUES ($1, 'postgres', 'postgres', '{}'::jsonb, $2, $3)`,
+      [rowBindingId, hex(rowBindingId), 'b'.repeat(64)]
+    );
+  const bindingChecks = target =>
+    target
+      .query(
+        `SELECT conname, pg_get_constraintdef(oid) AS definition FROM pg_constraint
+          WHERE conrelid = to_regclass('adcp_reporting_row_bindings') AND contype = 'c'
+            AND pg_get_constraintdef(oid) LIKE '%row_binding_id%'
+          ORDER BY conname`
+      )
+      .then(result => result.rows);
 
   before(async () => {
     const { Pool } = require('pg');
@@ -221,6 +240,216 @@ describe('REPORTING_ROW_STORAGE_MIGRATION', { skip: !DATABASE_URL && 'PostgreSQL
     }
   });
 
+  describe('row_binding_id follows the AdCP identifier bound (255)', () => {
+    const BOUNDS = 'adcp_reporting_row_bindings_row_binding_id_bounds';
+
+    test('a fresh install admits 255 characters and refuses 256 under one named constraint', async () => {
+      await insertBinding(pool, 'a'.repeat(255));
+      for (const refused of ['a'.repeat(256), '', 'has space', 'a\n', 'é', `${'a'.repeat(254)}\n`]) {
+        await assert.rejects(
+          () => insertBinding(pool, refused),
+          new RegExp(BOUNDS),
+          JSON.stringify(refused).slice(0, 20)
+        );
+      }
+      const checks = await bindingChecks(pool);
+      assert.deepEqual(
+        checks.map(item => item.conname),
+        [BOUNDS]
+      );
+      assert.match(checks[0].definition, /\{1,255\}/);
+    });
+
+    test('a binding with a 255-character ID and credentialRef writes and reads a row set end to end', async t => {
+      const bindingId = `b${'0'.repeat(253)}z`;
+      const credentialRef = `c${'1'.repeat(253)}z`;
+      const root = mkdtempSync(path.join(tmpdir(), 'adcp-binding-bounds-'));
+      t.after(() => rmSync(root, { recursive: true, force: true }));
+      const rowStorage = {
+        bindings: {
+          [bindingId]: {
+            kind: 'object',
+            provider: 'filesystem',
+            location: { root: 'rows' },
+            prefix: 'rows',
+            credentialRef,
+          },
+        },
+        providers: { filesystem: ledger.createFilesystemReportingRowObjectProviderV1({ roots: { rows: root } }) },
+        selectRowBinding: () => bindingId,
+      };
+      const store = new ledger.PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true, rowStorage });
+      await store.readyRowStorage();
+      const stored = await pool.query(
+        'SELECT operational_config FROM adcp_reporting_row_bindings WHERE row_binding_id = $1',
+        [bindingId]
+      );
+      assert.equal(stored.rows[0].operational_config.credentialRef, credentialRef);
+      const fixture = await createRowStorageFixture({ store, suffix: 'long_binding' });
+      const rows = Array.from({ length: 3 }, (_, index) => ({ ordinal: index, value: index }));
+      await store.commitRevision(fixture.revision('rrev_long_binding', 1, rows), fixture.lease);
+      const recorded = await pool.query('SELECT row_binding_id FROM adcp_reporting_row_sets WHERE row_set_id = $1', [
+        'rrev_long_binding',
+      ]);
+      assert.equal(recorded.rows[0].row_binding_id, bindingId, 'the row set references the 255-character ID');
+      const read = await store.getRevision('rrev_long_binding', fixture.request.account.account_id);
+      assert.equal(read.rows.length, 3);
+    });
+
+    test('a database still on the 128-character limit says which migration widens it', async () => {
+      const pinned = `adcp_reporting_row_storage_pinned_${process.pid}`;
+      await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${pinned}" CASCADE`);
+      await bootstrapPool.query(`CREATE SCHEMA "${pinned}"`);
+      const target = new (require('pg').Pool)({
+        connectionString: DATABASE_URL,
+        options: `-c search_path="${pinned}"`,
+      });
+      try {
+        await target.query(ledger.REPORTING_LEDGER_MIGRATION);
+        await target.query(ledger.REPORTING_ROW_STORAGE_MIGRATION);
+        await target.query(`ALTER TABLE adcp_reporting_row_bindings DROP CONSTRAINT ${BOUNDS}`);
+        await target.query(
+          `ALTER TABLE adcp_reporting_row_bindings ADD CONSTRAINT adcp_reporting_row_bindings_row_binding_id_check
+             CHECK (row_binding_id ~ '^[A-Za-z0-9_.:-]{1,128}$')`
+        );
+        const configured = id =>
+          new ledger.ReportingRowStorageV1(target, {
+            bindings: { [id]: { kind: 'postgres' } },
+          });
+        await configured('b'.repeat(128)).ready();
+        await assert.rejects(
+          () => configured('b'.repeat(129)).ready(),
+          error =>
+            error.code === 'STATE_UNAVAILABLE' &&
+            /npx adcp-reporting-storage migrate \(version 0010\)/.test(error.message)
+        );
+        await target.query(ledger.REPORTING_ROW_BINDING_ID_BOUND_MIGRATION);
+        await configured('b'.repeat(255)).ready();
+      } finally {
+        await target.end();
+        await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${pinned}" CASCADE`);
+      }
+    });
+
+    test('the versioned runner applies 0010 to a database that recorded the earlier versions under the old limit', async () => {
+      const recorded = `adcp_reporting_row_storage_recorded_${process.pid}`;
+      await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${recorded}" CASCADE`);
+      await bootstrapPool.query(`CREATE SCHEMA "${recorded}"`);
+      const target = new (require('pg').Pool)({
+        connectionString: DATABASE_URL,
+        options: `-c search_path="${recorded}"`,
+      });
+      try {
+        await ledger.migrate(target);
+        assert.deepEqual(await ledger.pendingMigrations(target), []);
+        // Turn it back into what a database that stopped at the earlier versions looks like.
+        await target.query(`ALTER TABLE adcp_reporting_row_bindings DROP CONSTRAINT ${BOUNDS}`);
+        await target.query(
+          `ALTER TABLE adcp_reporting_row_bindings ADD CONSTRAINT adcp_reporting_row_bindings_row_binding_id_check
+             CHECK (row_binding_id ~ '^[A-Za-z0-9_.:-]{1,128}$')`
+        );
+        await target.query(`DELETE FROM adcp_schema_migrations WHERE version = '0010'`);
+        await assert.rejects(() => insertBinding(target, 'a'.repeat(255)), /row_binding_id_check/);
+        assert.deepEqual(
+          (await ledger.pendingMigrations(target)).map(item => item.version),
+          ['0010']
+        );
+        assert.deepEqual(
+          (await ledger.migrate(target)).map(item => item.version),
+          ['0010']
+        );
+        await insertBinding(target, 'a'.repeat(255));
+        assert.deepEqual(await ledger.migrate(target), [], 'nothing is left to apply');
+        assert.deepEqual(
+          (await bindingChecks(target)).map(item => item.conname),
+          [BOUNDS]
+        );
+      } finally {
+        await target.end();
+        await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${recorded}" CASCADE`);
+      }
+    });
+
+    describe('a database installed with the original 128-character CHECK', () => {
+      const oldSchema = `adcp_reporting_row_storage_bound_${process.pid}`;
+      let old;
+
+      before(async () => {
+        await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${oldSchema}" CASCADE`);
+        await bootstrapPool.query(`CREATE SCHEMA "${oldSchema}"`);
+        old = new (require('pg').Pool)({ connectionString: DATABASE_URL, options: `-c search_path="${oldSchema}"` });
+        await old.query(ledger.REPORTING_LEDGER_MIGRATION);
+        await old.query(
+          readFileSync(path.join(__dirname, 'fixtures', 'reporting-row-storage-migration-15.8.sql'), 'utf8')
+        );
+      });
+
+      after(async () => {
+        if (old) await old.end();
+        await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${oldSchema}" CASCADE`);
+      });
+
+      test('refuses 129 characters before the migration, accepts 255 after it, and reapplying changes nothing', async () => {
+        await assert.rejects(
+          () => insertBinding(old, 'a'.repeat(129)),
+          /adcp_reporting_row_bindings_row_binding_id_check/
+        );
+        await insertBinding(old, 'a'.repeat(128));
+        const before = await bindingChecks(old);
+        assert.deepEqual(
+          before.map(item => item.conname),
+          ['adcp_reporting_row_bindings_row_binding_id_check']
+        );
+        assert.match(before[0].definition, /\{1,128\}/);
+
+        await old.query(ledger.REPORTING_ROW_BINDING_ID_BOUND_MIGRATION);
+        await insertBinding(old, 'a'.repeat(255));
+        await assert.rejects(() => insertBinding(old, 'a'.repeat(256)), new RegExp(BOUNDS));
+        const after = await bindingChecks(old);
+        assert.deepEqual(
+          after.map(item => item.conname),
+          [BOUNDS]
+        );
+        assert.match(after[0].definition, /\{1,255\}/);
+        assert.equal(
+          (await old.query(`SELECT count(*)::int AS count FROM adcp_reporting_row_bindings`)).rows[0].count,
+          2
+        );
+
+        // Reapplying, by itself or as part of the whole row-storage migration, keeps the one constraint untouched.
+        const oid = async () =>
+          (
+            await old.query(
+              `SELECT oid::text AS oid FROM pg_constraint
+                WHERE conrelid = to_regclass('adcp_reporting_row_bindings') AND conname = '${BOUNDS}'`
+            )
+          ).rows[0].oid;
+        const first = await oid();
+        await old.query(ledger.REPORTING_ROW_BINDING_ID_BOUND_MIGRATION);
+        await old.query(ledger.REPORTING_ROW_STORAGE_MIGRATION);
+        assert.equal(await oid(), first, 'a current schema is not altered again');
+        assert.equal((await bindingChecks(old)).length, 1);
+        await insertBinding(old, 'z'.repeat(200));
+      });
+
+      test('the migration is a no-op before the bindings table exists', async () => {
+        const empty = `adcp_reporting_row_storage_empty_${process.pid}`;
+        await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${empty}" CASCADE`);
+        await bootstrapPool.query(`CREATE SCHEMA "${empty}"`);
+        const target = new (require('pg').Pool)({
+          connectionString: DATABASE_URL,
+          options: `-c search_path="${empty}"`,
+        });
+        try {
+          await target.query(ledger.REPORTING_ROW_BINDING_ID_BOUND_MIGRATION);
+        } finally {
+          await target.end();
+          await bootstrapPool.query(`DROP SCHEMA IF EXISTS "${empty}" CASCADE`);
+        }
+      });
+    });
+  });
+
   describe('upgrading a database installed before AdCP field alignment', () => {
     const legacySchema = `adcp_reporting_row_storage_legacy_${process.pid}`;
     let legacy;
@@ -420,7 +649,8 @@ describe('REPORTING_ROW_STORAGE_MIGRATION', { skip: !DATABASE_URL && 'PostgreSQL
         bounds: (
           await queryable.query(
             `SELECT conname FROM pg_constraint WHERE connamespace = current_schema()::regnamespace
-                AND conname LIKE 'adcp_reporting_row_chunks_%_bounds' ORDER BY conname`
+                AND (conname LIKE 'adcp_reporting_row_chunks_%_bounds'
+                  OR conname = 'adcp_reporting_row_bindings_row_binding_id_bounds') ORDER BY conname`
           )
         ).rows,
       });
@@ -444,6 +674,18 @@ describe('REPORTING_ROW_STORAGE_MIGRATION', { skip: !DATABASE_URL && 'PostgreSQL
       `);
       assert.deepEqual(await structure(legacy), expectedStructure, 'upgraded snapshot ignores other schemas');
       assert.deepEqual(await structure(pool), expectedStructure, 'fresh snapshot ignores other schemas');
+    });
+
+    test('the full legacy path ends with the 255-character bound under the named constraint', async () => {
+      await insertBinding(legacy, 'l'.repeat(255));
+      await assert.rejects(
+        () => insertBinding(legacy, 'l'.repeat(256)),
+        /adcp_reporting_row_bindings_row_binding_id_bounds/
+      );
+      assert.deepEqual(
+        (await bindingChecks(legacy)).map(item => item.conname),
+        ['adcp_reporting_row_bindings_row_binding_id_bounds']
+      );
     });
   });
 

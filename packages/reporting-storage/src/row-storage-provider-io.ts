@@ -106,6 +106,19 @@ export function selectReportingRowClient<T>(
   return client;
 }
 
+/**
+ * Bound for the row-storage identifiers a host chooses, `row_binding_id` and `credentialRef`: 1 to 255 characters
+ * of `A-Za-z0-9_.:-`, the AdCP identifier bound (`reporting_revision_id`, `resource_ref`, `destination_ref` use
+ * `^[A-Za-z0-9_.:-]{1,255}$`). The row-bindings `CHECK` constraint enforces the same.
+ */
+export const REPORTING_ROW_IDENTIFIER_MAX_LENGTH = 255;
+const ROW_IDENTIFIER = new RegExp(`^[A-Za-z0-9_.:-]{1,${REPORTING_ROW_IDENTIFIER_MAX_LENGTH}}$`);
+
+/** Whether `value` is a well-formed host-chosen row-storage identifier (a binding ID or credential reference). */
+export function isReportingRowIdentifier(value: unknown): boolean {
+  return typeof value === 'string' && ROW_IDENTIFIER.test(value);
+}
+
 /** Copy a host client map into a closed, frozen lookup. */
 export function reportingRowClientMap<T>(clients: Readonly<Record<string, T>> | undefined): ReadonlyMap<string, T> {
   const map = new Map<string, T>();
@@ -114,7 +127,7 @@ export function reportingRowClientMap<T>(clients: Readonly<Record<string, T>> | 
     throw new ReportingRowStoreError('INVALID_INPUT', 'clients must map credential references to clients');
   }
   for (const [ref, client] of Object.entries(clients)) {
-    if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(ref) || !client) {
+    if (!isReportingRowIdentifier(ref) || !client) {
       throw new ReportingRowStoreError('INVALID_INPUT', 'clients must map credential references to clients');
     }
     map.set(ref, client);

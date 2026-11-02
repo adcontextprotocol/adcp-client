@@ -54,6 +54,7 @@ describe('versioned migrations', () => {
     ]);
     assert.deepEqual(sql('adcp_state'), [require('@adcp/sdk/server').ADCP_STATE_MIGRATION]);
     assert.deepEqual(sql('reporting_orphan_collector_fence'), [lib.REPORTING_ORPHAN_FENCE_MIGRATION]);
+    assert.deepEqual(sql('reporting_row_binding_id_bounds'), [lib.REPORTING_ROW_BINDING_ID_BOUND_MIGRATION]);
     assert.deepEqual(sql('reporting_consumer'), [
       require('@adcp/sdk/reporting/consumer').REPORTING_CONSUMER_POSTGRES_MIGRATION,
     ]);

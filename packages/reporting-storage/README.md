@@ -94,6 +94,7 @@ SDK's `python -m adcp migrate` uses), so concurrent runners serialize. `migrate(
 | 0007    | `reporting_object_writes`          | the GCS write fence (`REPORTING_OBJECT_WRITE_MIGRATION`, `REPORTING_OBJECT_WRITE_AUTHORITY_MIGRATION`)                  |
 | 0008    | `reporting_consumer`               | the buyer consumer (`REPORTING_CONSUMER_POSTGRES_MIGRATION` from `@adcp/sdk/reporting/consumer`)                        |
 | 0009    | `reporting_orphan_collector_fence` | the orphan collector's ownership fence (`REPORTING_ORPHAN_FENCE_MIGRATION`); needed before orphan collection can delete |
+| 0010    | `reporting_row_binding_id_bounds`  | `row_binding_id` widened to AdCP's 255-character identifier bound (`REPORTING_ROW_BINDING_ID_BOUND_MIGRATION`)          |
 
 A schema set up by applying those constants by hand migrates cleanly: the statements are idempotent, re-run as no-ops,
 and the versions are recorded. The constants stay exported as deprecated re-exports for one beta.
