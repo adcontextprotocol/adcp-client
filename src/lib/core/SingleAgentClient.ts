@@ -1603,6 +1603,11 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   /** Auto selects seller IDs only with stable_account_id or an AdCP 4+ wire contract. Natural-key preserves legacy implicit references. */
   accountReferenceMode?: 'auto' | 'natural-key';
   accountStorage?: BuyerAccountStorage;
+  /**
+   * Where `client.reporting.poll()` keeps the acknowledged event snapshot (experimental, AdCP 3.3).
+   * Defaults to process-local; a serverless consumer passes `postgresStorage({ pool }).events`.
+   */
+  reportingEventStore?: import('../principal/reporting-events').ReportingEventStore;
   accountRegistryMaxEntries?: number;
   accountRegistryOptions?: Pick<
     import('./buyer-account-registry').BuyerAccountRegistryOptions,
@@ -10087,10 +10092,14 @@ export class SingleAgentClient {
 
   /**
    * Patch-shaped reporting-subscription writes: `subscribe`, `unsubscribe`, `replaceSubscriptions`,
-   * `listSubscriptions`, `preview` (experimental `media_buy.reporting_subscriptions`, AdCP 3.3).
+   * `listSubscriptions`, `preview`; reads: `reconcile`, `explain`; events: `poll`, `events`,
+   * `handleWebhook` (experimental `media_buy.reporting_subscriptions`, AdCP 3.3).
    */
   get reporting(): ReportingClient {
-    this.reportingClient ??= new ReportingClient(this as unknown as ReportingFacadeClient);
+    this.reportingClient ??= new ReportingClient(
+      this as unknown as ReportingFacadeClient,
+      this.config.reportingEventStore ? { eventStore: this.config.reportingEventStore } : {}
+    );
     return this.reportingClient;
   }
 

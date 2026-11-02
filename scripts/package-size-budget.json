@@ -3,7 +3,7 @@
   "packages": {
     "@adcp/sdk": {
       "ceiling": {
-        "packedBytes": 26000000,
+        "packedBytes": 26300000,
         "unpackedBytes": 135000000,
         "files": 8450
       },

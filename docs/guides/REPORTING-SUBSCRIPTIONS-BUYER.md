@@ -65,8 +65,8 @@ for (const line of report.periods.filter(p => p.responsible_party === 'seller'))
 - **Status.** `delivered`: a current revision of the required finality exists. `pending`: the seller has not planned it yet but is inside `grace` (default `PT1H`), or planned it and is before `expected_at`. `late`: past `expected_at`. `missing_obligation`: the seller has no obligation for it after the grace. `withheld`: the account's authority ended (see below).
 - **`includeNotOwed: true`** adds `not_owed` lines with their reason (`before_confirmation`, `after_stop`, ...) for the audit trail.
 - **Revoked accounts** are unknown to every task, so their periods can't be read. They are listed in `report.accounts` as `unauthorized` with the seller's `withheld_period_count`. Pass the previous report as `previous` and its undelivered periods that ended before `unauthorized_at` are carried over as `withheld`.
-- **Never smaller, only non-definitive.** A failed read marks the account `failed` and `definitive: false`; it never shrinks the owed set.
-- **Fleet.** `multiClient.reporting.reconcile({ concurrency: 4 })` runs every configured seller and returns `{ bySeller, failures, definitive, summary }`.
+- **Never smaller, only non-definitive.** A failed read marks the account `failed` and `definitive: false`; it never shrinks the owed set. `report.issues` names each cause in the Python SDK's shape (`{ code, message, account_id? }`, for example `SUBSCRIPTION_LEDGER_UNAVAILABLE`), each message ending with the fix.
+- **Fleet.** `multiClient.reporting.reconcile({ concurrency: 4 })` runs every configured seller and returns `{ bySeller, issues, definitive, summary }`.
 
 ## Explain
 
@@ -81,7 +81,51 @@ Each `CoverageTrace` (`side: 'buyer'`) is the JSON the seller's `reporting.expla
 
 ## Events
 
-`client.reporting.poll()`, `events()` and `handleWebhook()` arrive in a later beta. Until then, the consumer's `onPrincipalChanged` hook hears each authenticated `principal.changed` doorbell before the scope's accounts are reconciled.
+Events are derived from state, never from a webhook body. `poll()` runs `reconcile`, reads the subscription readback and each account's `subscription_coverage[]`, and compares that snapshot with the one saved by your last `ack()`. One event per difference.
+
+```ts
+// Long-running worker: each batch is acknowledged once the loop body has run for all its events.
+for await (const event of client.reporting.events({ pollEvery: 'PT5M', signal })) {
+  switch (event.type) {
+    case 'revision.available': await ingest(event.data.reporting_revision_id); break;
+    case 'period.late': await alertSeller(event.data); break;
+    case 'coverage.exception_opened': await notifyOps(event.data.account_id, event.data.reason); break;
+    case 'account.unauthorized': await pauseDashboards(event.data.account_id); break;
+  }
+}
+
+// Serverless: one batch per invocation, with a durable store.
+const client = new AgentClient(agent, { reportingEventStore: postgresStorage({ pool }).events });
+const batch = await client.reporting.poll();
+await handle(batch.events);
+await batch.ack();
+
+// Webhook endpoint: the doorbell.
+app.post('/adcp/webhooks', async (req, res) => {
+  const verified = VerifiedWebhook.fromOutcome(await verifier(req), req.body); // throws unless verified
+  const batch = await client.reporting.handleWebhook(verified); // wakes events(), or polls inline
+  if (batch) { await handle(batch.events); await batch.ack(); }
+  res.sendStatus(204);
+});
+```
+
+- **At least once, deterministic ids.** Until `ack()` saves the snapshot nothing moves: a crash replays the same events with the same `id` (`rse_` + `sha256(agent, type, natural key, version)`, identical in the Python SDK). Deduplicate on `event.id`. A second worker acking the same snapshot gets `ReportingEventConflictError` (`REPORTING_EVENTS_CONFLICT`) and polls again.
+- **Storage.** The default store is process-local. Serverless consumers pass `reportingEventStore` on the client (`postgresStorage({ pool }).events`, or `createReportingEventStore({ store })` over any `AdcpStateStore` with `putIfMatch`), or `new ReportingClient(client, { eventStore })`.
+- **Partial reads never fabricate changes.** An account the run could not read keeps its previous state, and a failed roster keeps everything.
+- **Cold start.** `poll({ baseline: true })` on a consumer with no snapshot records the present without emitting it.
+- **Webhooks.** `handleWebhook` takes only a `VerifiedWebhook`, built by `VerifiedWebhook.fromOutcome` from a successful `verifyWebhookSignature` / `createWebhookVerifier` result or an `ok: true` `verifyWebhookRequest` result. Anything else is refused before any read.
+
+| Event | When | `occurred_at` |
+|---|---|---|
+| `revision.available` / `revision.adjusted` | A period gained a current revision, or a new one replaced the one you saw (`superseded_reporting_revision_id`) | when observed |
+| `period.late` / `period.missing_obligation` / `period.withheld` | A period's status became one of these | `expected_at` + grace / period end + grace / when observed |
+| `coverage.exception_opened` / `coverage.exception_closed` | An `excluded[]` entry opened or closed (`reason`, `from`, `until`) | `from` / `until` |
+| `account.covered` | An account entered a subscription (each rejoin is a new event) | when observed |
+| `account.unauthorized` / `account.regranted` | Authority ended, or came back (`chain`: `continued` or `new`) | `unauthorized_at` / `regranted_at` |
+| `subscription.state_changed` | `active`, `inactive` or `action_required` (with `pending_action`) | when observed |
+| `timezone.cutover` | A `timezone_cutovers[]` entry appeared | `effective_at` |
+
+`deriveEvents(previous, current, ...)` in `@adcp/sdk/reporting/advanced` is the diff itself, for custom consumers. `escalation` is not emitted yet.
 
 ## Receipts for billing feeds
 

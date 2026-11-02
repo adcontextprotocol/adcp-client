@@ -265,6 +265,26 @@ describe('client.reporting.reconcile', () => {
     assert.equal(report.definitive, false);
     assert.equal(report.accounts[0].status, 'failed');
     assert.equal(report.accounts[0].error.task, 'get_media_buys');
+    // The Python SDK's ReconcileIssue shape and code.
+    assert.deepEqual(
+      report.issues.map(issue => [issue.code, issue.account_id]),
+      [['SUBSCRIPTION_ACCOUNT_UNREADABLE', report.accounts[0].account_id]]
+    );
+    assert.match(report.issues[0].message, /Retry once get_media_buys answers/);
+    const roster = await new ReportingClient({
+      ...w.buyer,
+      listAccounts: async () => ({ success: false, error: 'down' }),
+    }).reconcile({ now: new Date() });
+    assert.deepEqual(
+      roster.issues.map(issue => [issue.code, issue.account_id]),
+      [['SUBSCRIPTION_ROSTER_UNAVAILABLE', undefined]]
+    );
+    const named = await w.reporting.reconcile({ now: new Date(), accounts: ['acc_unknown'] });
+    assert.deepEqual(
+      named.issues.map(issue => issue.code),
+      ['SUBSCRIPTION_ACCOUNT_NOT_COVERED']
+    );
+    assert.equal(named.definitive, false);
   });
 
   test('a read that never answers fails its account after the read timeout', async () => {
@@ -323,7 +343,9 @@ describe('multiClient.reporting.reconcile', () => {
     multi.agentClients.set('seller-b', { ...b.buyer, getPrincipal: async () => ({ success: false, error: 'down' }) });
     const fleet = await multi.reporting.reconcile({ now: new Date() });
     assert.equal(fleet.bySeller['seller-a'].summary.owed, 2);
-    assert.ok(fleet.failures['seller-b']);
+    assert.ok(
+      fleet.issues.some(issue => issue.agent_id === 'seller-b' && issue.code === 'SUBSCRIPTION_PRINCIPAL_UNAVAILABLE')
+    );
     assert.equal(fleet.definitive, false);
     assert.equal(fleet.summary.owed, 2);
   });

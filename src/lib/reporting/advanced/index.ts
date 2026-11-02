@@ -73,3 +73,6 @@ export {
 
 // The principal identity every reporting-subscription API takes.
 export type { PrincipalRef } from '../../server/principal/types';
+
+// Buyer events: the snapshot-diff function `client.reporting.poll()` runs, for custom consumers.
+export { EVENT_TYPES, SNAPSHOT_VERSION, deriveEvents } from '../../principal/reporting-events';

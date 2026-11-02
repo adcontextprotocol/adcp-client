@@ -23,7 +23,7 @@
 import { PlatformConfigError, PostgresStateStore, createPrincipalStateStore, type PgQueryable } from '@adcp/sdk/server';
 import { createReportingSubscriptionEngineStateStoreV1 } from '@adcp/sdk/reporting/advanced';
 import { createPostgresReportingConsumerRuntimeV1 } from '@adcp/sdk/reporting/consumer';
-import type { ReportingStorage } from '@adcp/sdk/storage';
+import { createReportingEventStore, type ReportingStorage } from '@adcp/sdk/storage';
 import { MIGRATE_COMMAND, migrations, pendingMigrations, type Migration } from './migrations';
 import {
   PostgresReportingLedgerStore,
@@ -95,6 +95,7 @@ export function postgresStorage(options: PostgresStorageOptions): PostgresReport
     ledger,
     principals: createPrincipalStateStore({ store: state }),
     subscriptions: createReportingSubscriptionEngineStateStoreV1({ store: state }),
+    events: createReportingEventStore({ store: state }),
     consumer: {
       checkpointStore: consumer.checkpointStore,
       pendingConsumerStatusStore: consumer.pendingConsumerStatusStore,

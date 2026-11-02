@@ -41,6 +41,7 @@ import { PlatformConfigError } from '../server/decisioning/runtime/validate-plat
 import { createPrincipalStateStore } from '../server/principal/store';
 import type { PrincipalStateStore } from '../server/principal/types';
 import { InMemoryStateStore } from '../server/state-store';
+import { createReportingEventStore, type ReportingEventStore } from '../principal/reporting-events';
 import { MemoryReportingLedgerStore } from './memory-ledger';
 
 /**
@@ -67,6 +68,11 @@ export interface ReportingStorage {
   readonly subscriptions: ReportingSubscriptionEngineStoreV1;
   /** The buyer consumer's checkpoints, pending statuses, change cursors, leases and processed notifications. */
   readonly consumer: ReliableReportingConsumerPersistenceV1;
+  /**
+   * The buyer's acknowledged reporting-event snapshots (`client.reporting.poll()`); pass it as the
+   * client's `reportingEventStore`. Optional so custom storage objects keep compiling.
+   */
+  readonly events?: ReportingEventStore;
   /**
    * Refuses a schema that is behind this release with `REPORTING_SCHEMA_BEHIND`, naming the migrate
    * command and the pending versions. Never changes the schema. The reporting service runs it before
@@ -155,6 +161,7 @@ export function memoryStorage(options: MemoryStorageOptions = {}): ReportingStor
     principals: createPrincipalStateStore({ store: state }),
     subscriptions: createReportingSubscriptionEngineStateStoreV1({ store: state }),
     consumer: createMemoryConsumerPersistence(now),
+    events: createReportingEventStore({ store: state }),
     async checkSchema() {},
     async close() {},
   });
@@ -325,3 +332,7 @@ function createMemoryConsumerPersistence(now: () => Date): ReliableReportingCons
 
   return { checkpointStore, pendingConsumerStatusStore, changesCheckpointStore, workLeases, notifications };
 }
+
+// The buyer's reporting-event snapshot store, for consumers that build their own storage object.
+export { InMemoryReportingEventStore, createReportingEventStore } from '../principal/reporting-events';
+export type { ReportingEventStore } from '../principal/reporting-events';
