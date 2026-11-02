@@ -8,6 +8,7 @@
  * `static/compliance/source/universal/runner-output-contract.yaml`.
  */
 
+import { validateOwedPeriodsMatch, type OwedPeriodsComputation } from './owed-periods-match';
 import { prepareResponseForSchemaValidation, TOOL_RESPONSE_SCHEMAS } from '../../utils/response-schemas';
 import { injectLegacyEnvelopeStatus } from '../../utils/envelope-status-compat';
 import { TRANSPORT_SUFFIX_REGEX } from '../../utils/a2a-discovery';
@@ -64,6 +65,8 @@ import { normalizeOAuthResourceForComparison, redactOAuthUrlForOutput } from './
  */
 export interface ValidationContext {
   taskName: string;
+  /** `owed_periods_match`: the owed sets the runner computed for this step, by subscription_id. */
+  owedPeriods?: Map<string, OwedPeriodsComputation>;
   /** AdCP schema bundle to use for strict AJV validation. */
   adcpVersion?: string;
   /** Server-declared AdCP version to use for response-shape compatibility decisions. */
@@ -373,6 +376,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateCrossResponseFieldEqual(validation, ctx);
     case 'cross_response_count_distinct':
       return validateCrossResponseCountDistinct(validation, ctx);
+    case 'owed_periods_match':
+      return validateOwedPeriodsMatch(validation, ctx.owedPeriods);
     case 'canonical_format_satisfaction':
       if (ctx.taskName !== 'create_media_buy') {
         return {

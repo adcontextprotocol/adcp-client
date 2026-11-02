@@ -239,6 +239,9 @@ export {
   TOOL_INPUT_SHAPE,
   CONTROLLER_SCENARIOS,
   DISCOVERY_ARM_SCENARIOS,
+  REPORTING_SUBSCRIPTION_PROBE_SCENARIO,
+  REPORTING_SUBSCRIPTION_PROBE_OPERATIONS,
+  reportingSubscriptionProbeParamsError,
   SEED_SCENARIOS,
   SEED_MESSAGES,
   SESSION_ENTRY_CAP,
@@ -246,6 +249,9 @@ export {
   createSeedFixtureCache,
 } from './test-controller';
 export type {
+  ReportingSubscriptionProbeOperation,
+  ReportingSubscriptionProbeParams,
+  ReportingSubscriptionProbeSimulated,
   TestControllerStore,
   TestControllerStoreFactory,
   TestControllerStoreOrFactory,

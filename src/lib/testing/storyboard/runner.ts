@@ -6,6 +6,7 @@
  * - runStoryboardStep(): run a single step (stateless, LLM-friendly)
  */
 
+import { prefetchOwedPeriods } from './owed-periods-match';
 import { createStoryboardWebBotAuthFetch } from './web-bot-auth';
 import { jwkThumbprint } from '../../signing/web-bot-auth';
 import { createAgentTransportFetch } from '../../net/agent-transport-fetch';
@@ -9987,8 +9988,17 @@ async function executeStep(
       step.sample_request
     );
 
+    const owedPeriods = await prefetchOwedPeriods(
+      effectiveStep.task,
+      resolvedValidations,
+      (task, params) => executeStoryboardTask(client, task, params),
+      requestRecord.payload as Record<string, unknown> | undefined,
+      validationTaskResult?.data
+    );
+
     const vctx: ValidationContext = {
       taskName: effectiveStep.task,
+      ...(owedPeriods && { owedPeriods }),
       ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
       ...(options._serverAdcpVersion && { responseAdcpVersion: options._serverAdcpVersion }),
       strictResponseSchemaValidation: options.strictResponseSchemaValidation !== false,
@@ -13406,6 +13416,13 @@ function evalContributesIf(expr: string | undefined, priorStepResults: Map<strin
 // ────────────────────────────────────────────────────────────
 
 /**
+ * Tasks whose `brand` is the subject of the request, not the run's buying context. Test-kit brand
+ * injection leaves them exactly as authored: replacing `request_account`'s brand dropped
+ * `brand.countries`, which broke country changes and account selection.
+ */
+export const BRAND_SUBJECT_TASKS: ReadonlySet<string> = new Set(['request_account']);
+
+/**
  * Force every outgoing request onto the storyboard's brand context.
  *
  * Sellers that scope session state by brand (spec-required for multi-tenant
@@ -13447,6 +13464,9 @@ export function applyBrandInvariant(
   // Storyboards that don't exercise brand-scoped tools (e.g. security
   // probes) legitimately run without one and should pass through unchanged.
   if (!options.brand && !options.brand_manifest) return request;
+  // The request's brand is what the step is about (an account request names the brand, with its
+  // countries, that the account is for): never replace it with the run's brand.
+  if (taskName !== undefined && BRAND_SUBJECT_TASKS.has(taskName)) return request;
   const brand = resolveBrand(options);
 
   // Gate brand/account injection on the tool's request schema. Tools that

@@ -1255,6 +1255,18 @@ export type StoryboardValidationCheck =
    * adcp-client#2060.
    */
   | 'canonical_format_satisfaction'
+  /**
+   * Experimental (`media_buy.reporting_subscriptions`). On a `get_reporting_status` periods-view step
+   * for one account: the runner computes the periods `subscription_id` owes the account from wire
+   * state alone (`get_principal`, `list_accounts`, `get_media_buys`, `get_adcp_capabilities`, and
+   * this response's `subscription_coverage` entry) with the SDK coverage function, at
+   * `now = ledger_as_of`, and passes when the response's obligations for the subscription are exactly
+   * that set: no missing and no extra periods, the same `media_buy_ids` and `stub` flag. Periods
+   * before `scope.ledger_retained_from`, or outside the request's `period`, are left out, and a
+   * response with `pagination.has_more` fails as unverifiable. Runner contract: storyboard-schema.yaml
+   * "Owed periods".
+   */
+  | 'owed_periods_match'
   | 'property_list_reference'
   /**
    * Assert the cardinality of the array at `path`. Two configurations are
@@ -1568,6 +1580,8 @@ export interface StoryboardValidation {
    * `buyer_identifier_echo: boolean` shorthand.
    */
   identifier_paths?: string[];
+  /** `owed_periods_match`: the reporting subscription whose obligations are compared. */
+  subscription_id?: string;
   /**
    * Bound the lookup window to traffic recorded since this step's request
    * timestamp (default) or since the request timestamp of `prior_step_id`

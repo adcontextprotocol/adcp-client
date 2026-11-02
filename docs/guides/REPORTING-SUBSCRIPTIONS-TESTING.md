@@ -35,7 +35,7 @@ await kit.assertAgreement('agency-x'); // the seller's frozen owed set == the bu
 ```
 
 - **`assertAgreement(buyer)`** compares the engine's frozen owed set with the owed lines of `client.reporting.reconcile()` from the wire, over every period the seller has frozen. On a difference it throws with the differing periods and, for the first few, the first differing rule from `diffCoverageTraces` of the buyer's and the seller's traces.
-- **The clock.** `advance(duration)` and `advanceTo(instant)` run `runCycle` at every period boundary crossed, so each period is frozen and produced by the cycle that follows its end. The virtual clock cannot pass the real clock: the source executor refuses periods that have not ended in real time. Start in the past with `reportingTestStart(days)`.
+- **The clock.** `advance(duration)` and `advanceTo(instant)` run `runCycle` at every period boundary crossed, so each period is frozen and produced by the cycle that follows its end. The virtual clock may run past the real clock: under `NODE_ENV=test` (or `development`) the service hands each cycle's `now` to the inline source executor, so periods that have not ended in real time are produced too. Outside those environments the executor refuses a simulated clock.
 - **The seller** is `createReferenceReportingSeller(options)`, the same managed composition as the [reference seller](../../examples/reporting-subscriptions-seller/seller.mjs): `memoryStorage()`, a platform serving `accounts.list` (timezone, grant) and `getMediaBuys`, and a source adapter reporting one impression per buy per period. `kit.service` is the Reliable Reporting service, so `kit.service.explainCoverage(...)` works too.
 - **`withReportingTestKit(options, async kit => { ... })`** runs a test body against a fresh kit, for `node:test` or vitest.
 
@@ -53,3 +53,41 @@ Python sellers run the TypeScript storyboard CLI against their URL:
 ```
 npx adcp storyboard run https://seller.example/mcp --storyboards reporting_subscriptions --auth "$TOKEN"
 ```
+
+## Storyboards: owed periods and the conformance probe
+
+**`check: owed_periods_match`** (experimental). On a `get_reporting_status` periods-view step for one account, the runner computes the owed set and compares it with the seller's obligations:
+
+- It computes the periods `subscription_id` owes that account from wire state alone. It reads `get_principal` (paging `prior_versions`), `list_accounts`, `get_media_buys` and `get_adcp_capabilities`, plus this response's `subscription_coverage` entry, and evaluates them with the SDK coverage function at `now = ledger_as_of`.
+- It compares that set with the response's obligations for the subscription, one per (version, offering, period), with the same `media_buy_ids` and `stub` flag.
+- Periods that start before `scope.ledger_retained_from`, or fall outside the request's `period`, are left out, so request the window you mean to check.
+- A response with `pagination.has_more` fails as unverifiable.
+
+```yaml
+- check: owed_periods_match
+  subscription_id: analytics-daily
+  severity: advisory
+  expires_after_version: "17.0.0"
+```
+
+**`comply_test_controller` scenario `reporting_subscription_probe`** (experimental) drives what coverage depends on but a buyer can't change itself:
+
+| Operation | Effect |
+|---|---|
+| `revoke_grant` | Revokes the caller's own grant on a sandbox account. |
+| `regrant` | Restores it, and returns `chain` (`continued` or `new`). |
+| `reduce_grant` | Replaces the grant's `allowed_tasks`. |
+| `set_account_timezone` | Changes the account's timezone, and returns `timezone_cutovers: [{ offering_id, effective_at }]`. |
+| `advance_time` | Advances the sandbox clock. |
+
+- **Wiring it.** Pass `complyTest.reportingSubscriptionProbe` to `createAdcpServerFromPlatform`. Params arrive validated (`reportingSubscriptionProbeParamsError`), and the scenario is advertised in `list_scenarios` and `compliance_testing.scenarios`.
+- **The test kit's seller implements it.** It runs one clock for the seller (the training agent keeps one per caller and resets it on `reset_state`). Under `NODE_ENV=test` the clock may run past real time.
+
+**`npx adcp reporting doctor --agent <url>`** checks the wiring a buyer can see:
+- offerings with `standard_dimensions`, the `subscriptions` block and `status_retention_days`;
+- `get_principal`;
+- every account's IANA `timezone` and `authorization.authorized_at`;
+- `get_media_buys`;
+- whether the probe is advertised.
+
+Every failure names a fix. `runReportingDoctor(client)` from `@adcp/sdk/testing/reporting` returns the same checks.

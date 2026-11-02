@@ -22,6 +22,9 @@ USAGE:
       Compare a buyer trace with a seller trace (files from --json); names the first differing rule.
   adcp reporting reconcile --agent <alias|url> [--since <date>] [--include-not-owed] [--grace PT1H]
       Every owed period with its status, as client.reporting.reconcile() does.
+  adcp reporting doctor --agent <alias|url>
+      Check a seller's subscription wiring from the wire: offerings, subscriptions, get_principal,
+      account timezones and grants, get_media_buys, and the conformance probe. Every failure names a fix.
 
 OPTIONS:
   --subscription <id>   only this subscription
@@ -193,6 +196,24 @@ async function reconcile(args, deps) {
   return report.definitive ? 0 : 1;
 }
 
+async function doctor(args, deps) {
+  const json = args.includes('--json');
+  const client = await buyerClient(args, deps);
+  const { runReportingDoctor } = require('../dist/lib/testing/reporting/index.js');
+  const report = await runReportingDoctor(client);
+  if (json) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    return report.ok ? 0 : 1;
+  }
+  const mark = { pass: 'ok  ', warn: 'warn', fail: 'FAIL' };
+  for (const check of report.checks) {
+    process.stdout.write(`${mark[check.status]}  ${check.id}: ${check.message}\n`);
+    if (check.fix) process.stdout.write(`      fix: ${check.fix}\n`);
+  }
+  process.stdout.write(report.ok ? 'No failures.\n' : 'Fix the failures above, then run the storyboard.\n');
+  return report.ok ? 0 : 1;
+}
+
 async function handleReportingCommand(args, deps) {
   const command = args[0];
   if (!command || command === '--help' || command === '-h' || args.includes('--help')) {
@@ -203,6 +224,7 @@ async function handleReportingCommand(args, deps) {
   if (command === 'explain') return explain(rest, deps);
   if (command === 'diff') return diff(rest);
   if (command === 'reconcile') return reconcile(rest, deps);
+  if (command === 'doctor') return doctor(rest, deps);
   if (deps.extra?.[command]) return deps.extra[command](rest, deps);
   process.stderr.write(`Unknown command: adcp reporting ${command}\n\n${USAGE}`);
   return 2;

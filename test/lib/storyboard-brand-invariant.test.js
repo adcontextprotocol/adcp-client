@@ -582,3 +582,15 @@ describe('runStoryboard: brand invariant on the wire', () => {
     }
   });
 });
+
+describe('applyBrandInvariant leaves a brand-subject request as authored', () => {
+  test('request_account keeps its own brand, countries included', () => {
+    const authored = {
+      idempotency_key: 'k',
+      brand: { domain: 'nova-athletics.example', countries: ['BE', 'DE', 'NL'] },
+      operator: 'agency.example',
+    };
+    const result = applyBrandInvariant(authored, { brand: BRAND }, 'request_account');
+    assert.deepEqual(result, authored);
+  });
+});
