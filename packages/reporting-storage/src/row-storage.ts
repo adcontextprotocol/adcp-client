@@ -512,7 +512,8 @@ export class ReportingRowStorageV1 {
    * not an epoch name are ignored. Two live versions of one epoch's key (a versioned store after a manual
    * delete and re-create) are ambiguous and fail closed with `ROWS_INTEGRITY_FAILED`, as does a chain too
    * long to be one this collector wrote (it prunes to two objects). `tolerant` is for a takeover, which must
-   * be able to supersede a damaged chain: duplicates keep their first version and the page bound is wider.
+   * be able to supersede a damaged chain: every version of every epoch is returned (so it can all be removed) and
+   * the page bound is wider.
    *
    * @internal
    */
@@ -526,6 +527,7 @@ export class ReportingRowStorageV1 {
     const provider = this.providers[binding.provider]!;
     const ownedPrefix = `${binding.prefix}/${this.installation!.namespaceKey}/`;
     const entries = new Map<number, OrphanFenceEntry>();
+    const versions: OrphanFenceEntry[] = [];
     const pageSize = 50;
     let token: string | undefined;
     for (let page = 0; ; page += 1) {
@@ -560,6 +562,8 @@ export class ReportingRowStorageV1 {
         }
         const epoch = orphanFenceEpochOfKey(ownedPrefix, object.objectRef);
         if (epoch === undefined || object.objectRef !== orphanFenceKey(ownedPrefix, epoch)) continue;
+        if (options.tolerant)
+          versions.push({ epoch, objectRef: object.objectRef, nativeVersionRef: object.nativeVersionRef });
         if (entries.has(epoch)) {
           if (options.tolerant) continue;
           throw new ReportingRowStoreError(
@@ -575,7 +579,7 @@ export class ReportingRowStorageV1 {
       }
       token = listed.nextPageToken;
     }
-    return [...entries.values()].sort((a, b) => a.epoch - b.epoch);
+    return (options.tolerant ? versions : [...entries.values()]).sort((a, b) => a.epoch - b.epoch);
   }
 
   /**

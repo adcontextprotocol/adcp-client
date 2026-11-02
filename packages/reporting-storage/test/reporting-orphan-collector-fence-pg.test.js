@@ -322,9 +322,11 @@ describe('orphan collector ownership fence', { skip: !DATABASE_URL && 'PostgreSQ
     );
     assert.ok(onDisk(newer), 'a refused takeover changes nothing');
 
+    const tokenBeforeTakeover = fenceRecord(3).token;
     const taken = await liveStore.takeOverOrphanCollectorFence({ acknowledgePreviousOwnerGone: true });
     assert.deepEqual(taken, [{ bindingIds: ['objects'], epoch: 4, previousEpoch: 3 }]);
-    assert.equal(fenceRecord(4).previous_token, fenceRecord(3).token);
+    assert.equal(fenceRecord(4).previous_token, tokenBeforeTakeover);
+    assert.deepEqual(fenceFiles(), [fenceName(4)], 'a takeover supersedes every older fence object');
     const resumed = await collect(liveStore);
     assert.deepEqual(resumed.fenced, []);
     assert.equal(objectsBinding(resumed).status, 'complete');
@@ -830,6 +832,29 @@ describe('orphan collector ownership fence', { skip: !DATABASE_URL && 'PostgreSQ
     await livePool.query('DELETE FROM adcp_reporting_row_write_intents');
     rmSync(path.join(root, 'orph'), { recursive: true, force: true });
   }
+
+  test('a takeover removes every version of a duplicated chain, so normal collection works again', async () => {
+    await putObject(key('acct/seed.jsonl'));
+    await collect(liveStore);
+    await collect(liveStore);
+    const duplicated = storeWith(livePool, {
+      list: async (input, ctx, next) => {
+        const listed = await next();
+        return isFencePrefix(input)
+          ? {
+              ...listed,
+              objects: [...listed.objects, ...listed.objects.map(entry => ({ ...entry, nativeVersionRef: 'v2' }))],
+            }
+          : listed;
+      },
+    });
+    await duplicated.readyRowStorage();
+    assert.equal(objectsBinding(await collect(duplicated)).fence.cause, 'fence_unreadable');
+    const taken = await duplicated.takeOverOrphanCollectorFence({ acknowledgePreviousOwnerGone: true });
+    assert.equal(taken[0].epoch, 3);
+    assert.deepEqual(fenceFiles(), [fenceName(3)], 'every superseded object is gone, the predecessor included');
+    assert.deepEqual((await collect(liveStore)).fenced, [], 'a clean listing no longer refuses');
+  });
 
   test('a takeover can be limited to named bindings, skips readOnly ones, and refuses a provider that cannot list', async () => {
     const taken = await liveStore.takeOverOrphanCollectorFence({

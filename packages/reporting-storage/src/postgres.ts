@@ -2708,7 +2708,8 @@ ${managedDueArm}       )
    * and a row in `adcp_reporting_orphan_collector_fences`) and deletes only while the object store's
    * highest claim is exactly the one this database recorded. A database copied before the original's last
    * pass sees a newer claim and refuses: its binding is reported `fenced` with a `cause`, in `fenced`, and
-   * in the maintenance warnings, and nothing is deleted. A `dryRun` checks the fence without claiming it
+   * in the maintenance warnings, and nothing more is deleted (a fence that advances mid-pass stops the pass
+   * at the next check, within 25 deletes, and `deleted` keeps what went before). A `dryRun` checks the fence without claiming it
    * and reports fenced bindings the same way. After a restore, or when the original is gone, take the
    * namespace over deliberately with `takeOverOrphanCollectorFence`. Everything the listing finds under
    * the owned prefix with a row-object key is treated as written by this SDK, so do not store other
@@ -3019,7 +3020,7 @@ ${managedDueArm}       )
         const decision = decideOrphanFence(row?.row ?? null, latest);
         return decision.action === 'fenced' ? { ok: false, refusal: decision.refusal } : { ok: true };
       }
-      const claimed = await this.claimOrphanFence(bindingId, scope, signal, async stored => {
+      const claimed = await this.claimOrphanFence(bindingId, scope, signal, true, async stored => {
         const { entries, latest } = await this.latestOrphanFence(bindingId, signal);
         const decision = decideOrphanFence(stored?.row ?? null, latest);
         if (decision.action === 'fenced') return { refusal: decision.refusal };
@@ -3084,6 +3085,7 @@ ${managedDueArm}       )
     bindingId: string,
     scope: string,
     signal: AbortSignal | undefined,
+    keepPredecessor: boolean,
     plan: (
       stored: { row: OrphanFenceRow; claimedAt: string } | null
     ) => Promise<
@@ -3136,10 +3138,11 @@ ${managedDueArm}       )
       if (written.record.token !== planned.record.token) {
         return { kind: 'lost', record: planned.record, found: written.record };
       }
-      // Keep the claim and its predecessor; everything older is superseded.
+      // A claim keeps its predecessor (an unfinished claim is recognised by it) and prunes everything older. A
+      // takeover has just written and confirmed its object, so it supersedes every object and version it saw.
       await this.rowStorage.deleteCollectorFence(
         bindingId,
-        planned.entries.filter(entry => entry.epoch < planned.record.epoch - 1),
+        planned.entries.filter(entry => entry.epoch < planned.record.epoch - (keepPredecessor ? 1 : 0)),
         signal
       );
       return { kind: 'claimed', record: planned.record, previousEpoch: planned.previousEpoch };
@@ -3197,6 +3200,9 @@ ${managedDueArm}       )
    * taking over from a clone fences the original and lets the clone delete its objects: the acknowledgement
    * exists because nothing else can tell them apart. `acknowledgePreviousOwnerGone: true` is required.
    *
+   * A takeover does not stop a collector that is already mid-pass: that pass notices the new epoch at its next
+   * fence check, which is at most 25 deletes later. Stop the previous owner's collector before you take over.
+   *
    * Takes over every writable (or, with `includeReadOnly`, every) object binding whose provider can list, or
    * only the `bindings` named; bindings that share a bucket, prefix and installation share one fence and are
    * reported together. Requires the `0009` migration.
@@ -3239,16 +3245,18 @@ ${managedDueArm}       )
     for (const [scope, bindingIds] of byScope) {
       input.signal?.throwIfAborted();
       const bindingId = bindingIds[0]!;
-      const claimed = await this.claimOrphanFence(bindingId, scope, input.signal, async stored => {
+      const claimed = await this.claimOrphanFence(bindingId, scope, input.signal, false, async stored => {
         const entries = await this.rowStorage.listCollectorFence(bindingId, input.signal, { tolerant: true });
         const newest = entries[entries.length - 1];
         // A malformed newest object is exactly what a takeover is for: its key still gives the epoch to supersede.
-        const previous = newest
-          ? await this.rowStorage.readCollectorFence(bindingId, newest, input.signal).catch(error => {
-              if (isReportingRowStoreError(error) && error.code === 'ROWS_INTEGRITY_FAILED') return null;
-              throw error;
-            })
-          : null;
+        // Several versions of the newest epoch are ambiguous, so none of them names the previous token.
+        const previous =
+          newest && entries.filter(entry => entry.epoch === newest.epoch).length === 1
+            ? await this.rowStorage.readCollectorFence(bindingId, newest, input.signal).catch(error => {
+                if (isReportingRowStoreError(error) && error.code === 'ROWS_INTEGRITY_FAILED') return null;
+                throw error;
+              })
+            : null;
         return {
           record: {
             epoch: Math.max(newest?.epoch ?? 0, stored?.row.epoch ?? 0) + 1,
@@ -6625,7 +6633,7 @@ export interface ReportingOrphanBindingResultV1 {
    * `failed`: the listing or its provider failed (`error` is the stable code). `unsupported`: the
    * binding's provider has no `list`. `read_only`: skipped because the binding is `readOnly`. `fenced`:
    * another database holds the namespace's collector fence (or this database cannot prove it holds it), so
-   * nothing was deleted; `fence` says why.
+   * no further object was deleted (`deleted` counts any that went before a mid-pass refusal); `fence` says why.
    */
   status: 'complete' | 'partial' | 'failed' | 'unsupported' | 'read_only' | 'fenced';
   /** Objects the provider listed, including ones dropped as foreign. */
@@ -6661,7 +6669,7 @@ export interface ReportingOrphanCollectionResultV1 {
   unsupported: string[];
   /** `readOnly` bindings skipped. */
   skippedReadOnly: string[];
-  /** Bindings whose collector fence another database holds: nothing was deleted there. See each binding's `fence`. */
+  /** Bindings whose collector fence another database holds: no further object was deleted there. See each binding's `fence`. */
   fenced: string[];
   /** Dry run only: the orphans a real pass would delete, at most 1000. */
   candidates: {

@@ -211,7 +211,7 @@ service runs for you. See
      deletes anything, and prunes the claims older than the previous one.
    - **Check.** A pass deletes only while the highest epoch in the bucket is
      exactly the claim this database recorded. It re-reads the fence before every
-     page that deletes. Anything else refuses, deletes nothing and reports the
+     page that deletes (and every 25 deletes within one). Anything else refuses, deletes nothing more and reports the
      binding as `fenced` with a `cause` (`fence_advanced`, `claimed_elsewhere`,
      `token_mismatch`, `fence_missing`, `fence_regressed`, `fence_unreadable`,
      `claim_lost`, `migration_required`), in the result's `fenced` list and as a
@@ -234,7 +234,10 @@ service runs for you. See
    - **Takeover.** After restoring a database in place, or when the original is
      gone, call `store.takeOverOrphanCollectorFence({ acknowledgePreviousOwnerGone: true })`
      once. It claims the next epoch for this database and fences every other
-     copy out. It refuses without the acknowledgement. Do not call it from a
+     copy out. It refuses without the acknowledgement. Stop the previous owner's
+     collector first: a pass already running notices the new epoch at its next
+     fence check, up to 25 deletes later, and the provider cannot refuse a delete
+     on the fence's behalf. Do not call it from a
      clone while the original is running: that fences the original and lets the
      clone delete its objects.
 
