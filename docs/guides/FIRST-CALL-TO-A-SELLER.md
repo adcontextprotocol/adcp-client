@@ -55,7 +55,8 @@ never a duplicate); otherwise it calls `sync_accounts`. Agents should switch on
 'contact_seller' | 'none'`), not on `action.kind`, which is extensible.
 `accounts.pending()` lists what is still waiting without a network call.
 Before SDK 17 `ensure()` resolved to the registry record; that call is now
-`accounts.provision()`, with the same arguments.
+`accounts.provision()`, with the same arguments. To change an existing account,
+see [Changing an account](#changing-an-account).
 
 For agent-billed provisioning, pass `billingEntity` with the seller's required
 business identity. `paymentTerms` and `billingEntity` are also accepted by
@@ -200,3 +201,63 @@ a failed refresh. Its error event includes `adcpError`; a mirror becomes
 `error`. Exhaustive state switches must handle the new `degraded` member.
 
 Manual `WholesaleFeedSync.refresh()` and webhook repairs reject failed catalog reads, including failed task results. A failed webhook repair remains eligible for redelivery; acknowledge it only after repair succeeds. Bootstrap `start()` still reports failed task results through its state and error callback/event, and schedules recovery in auto-poll mode.
+
+## Changing an account
+
+On a seller that advertises `account.requests`, `client.accounts.change` changes
+an existing account through `request_account` with `account_id`:
+
+```ts
+const outcome = await client.accounts.change(
+  'acc_nova',
+  { brand: { domain: 'nova.example', countries: ['BE', 'DE'] } },
+  { allowSeparateAccount: true }
+);
+switch (outcome.kind) {
+  case 'updated': // Same account_id, new outcome.revision.
+    break;
+  case 'separate_account': // A new account; outcome.not_carried_over lists what to set up again.
+  case 'matched_existing': // Another existing account; read its money terms from outcome.account.
+    if (outcome.key) await client.accounts.use(outcome.key, outcome.account_id);
+    break;
+  case 'pending': // Keep outcome.request_id; read it back with client.accounts.changeStatus().
+    break;
+  case 'rejected':
+    if (outcome.requiresNewAccount) {
+      /* resend with allowSeparateAccount: true */
+    }
+    break;
+}
+```
+
+`changes` uses wire names: `brand` (to change `countries`; `domain` and
+`brand_id` must stay the account's), `operator_unit`, `currency`, `timezone`,
+`billing`, `billing_entity` and `payment_terms`.
+
+- **Money changes** (`billing`, `billing_entity`, `payment_terms`) need
+  `{ revision }`: the account revision the change was approved against. The SDK
+  never reads it for you, because that would defeat the lost-update protection.
+  Without it nothing is sent: `AccountRequestError` with code
+  `ACCOUNT_REVISION_REQUIRED` and `dispatched: false`. An `updated` outcome's
+  `effective_at` is when the new terms apply; delivery before it is invoiced under
+  the old terms.
+- **Other changes** read `revision` from `list_accounts` when you omit it. On
+  `CONFLICT` they retry once, and only if the fields being changed did not change
+  concurrently. Otherwise the conflict is thrown.
+- `allowSeparateAccount` defaults to `false`. A seller that would accept the
+  change only on a new account then rejects it with
+  `ACCOUNT_CHANGE_REQUIRES_NEW_ACCOUNT`, and `outcome.requiresNewAccount` is true.
+- **No silent re-point.** `separate_account` and `matched_existing` leave the
+  registry's natural key on the old account, which stays usable.
+  `client.accounts.use(key, accountId)` is the explicit step. `use()` reads the
+  account's status from `list_accounts`, so the spend gate still applies.
+  A `separate_account` outcome also lists `subscriptionsNotCovering`, the
+  caller's `account_ids`-scoped reporting subscriptions that name the old account
+  but not the new one. The SDK reads them best effort, through
+  `client.reporting.listSubscriptions()`.
+- Unknown attributes (`ACCOUNT_CHANGE_INVALID`) and sellers without
+  `account.requests` (`ACCOUNT_REQUESTS_UNSUPPORTED`) are refused before dispatch.
+  Change those sellers' accounts with `syncAccounts`.
+
+`nextStep()` accepts change outcomes. It returns `'none'` for `updated`,
+`separate_account` and `matched_existing`.
