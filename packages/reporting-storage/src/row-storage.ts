@@ -1204,7 +1204,7 @@ export class ReportingRowStorageV1 {
         ) {
           throw new ReportingRowStoreError(
             'STATE_UNAVAILABLE',
-            `row binding ID ${JSON.stringify(`${bindingId.slice(0, 32)}...`)} is longer than 128 characters and this ` +
+            'a row binding ID is longer than 128 characters and this ' +
               'database still has the original 128-character limit: run npx adcp-reporting-storage migrate (version 0010)'
           );
         }
