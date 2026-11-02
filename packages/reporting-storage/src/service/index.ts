@@ -253,11 +253,20 @@ function withStorageSubscriptions<TCtxMeta>(
     stateStore: managed.stateStore ?? storage.subscriptions,
     ...(principal !== undefined
       ? {
-          principals: createPrincipalLifecycle({
-            ...principal,
-            notifications: requiredNotifications(principal.notifications),
-            store: storage.principals,
-          }) as SubscriptionOptions<TCtxMeta>['principals'],
+          principals: Object.defineProperty(
+            createPrincipalLifecycle({
+              // notification_configs is always a principal section; the server pairs it with this
+              // task, as the SDK does when it builds the runtime from subscriptions.principal.
+              includeCompatibilityNotificationTask: true,
+              ...principal,
+              notifications: requiredNotifications(principal.notifications),
+              store: storage.principals,
+            }),
+            // Built from subscriptions.principal on the service's behalf: the service owns it and
+            // advertises capability_changes, as with memoryStorage().
+            Symbol.for('adcp.reporting.managedPrincipalRuntime'),
+            { value: true }
+          ) as SubscriptionOptions<TCtxMeta>['principals'],
         }
       : {}),
   } as SubscriptionBlock<TCtxMeta>;

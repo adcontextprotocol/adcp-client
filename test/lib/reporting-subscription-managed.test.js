@@ -53,7 +53,7 @@ function deliveryOffering() {
   };
 }
 
-function world({ list = true, managed = {}, withStorage = false } = {}) {
+function world({ list = true, managed = {}, withStorage = false, storageBuiltRuntime = false } = {}) {
   const origin = Math.floor(Date.now() / DAY) * DAY - 10 * DAY;
   const day = n => new Date(origin + n * DAY).toISOString();
   const clock = { now: new Date(day(0.5)) };
@@ -68,7 +68,16 @@ function world({ list = true, managed = {}, withStorage = false } = {}) {
   const storage = withStorage ? memoryStorage({ now: () => clock.now }) : undefined;
   const { lifecycle: hostLifecycle } = withStorage
     ? { lifecycle: undefined }
-    : createTestPrincipalLifecycle({ clock, resolvePrincipal: scopeOf });
+    : createTestPrincipalLifecycle({
+        clock,
+        resolvePrincipal: scopeOf,
+        // As @adcp/reporting-storage builds it: with the notification_configs task.
+        ...(storageBuiltRuntime ? { includeCompatibilityNotificationTask: true } : {}),
+      });
+  // A runtime a storage package (@adcp/reporting-storage) built from subscriptions.principal.
+  if (storageBuiltRuntime) {
+    Object.defineProperty(hostLifecycle, Symbol.for('adcp.reporting.managedPrincipalRuntime'), { value: true });
+  }
   const request = redactedReportingSourceRequestV1();
   const [template] = request.coverage.constituents;
   const constituent = mediaBuyId => ({
@@ -210,6 +219,13 @@ function world({ list = true, managed = {}, withStorage = false } = {}) {
 }
 
 describe('managed reporting subscriptions', () => {
+  test('capability_changes is advertised for a runtime the service or a storage package built', () => {
+    assert.equal(world().platform.capabilities.capability_changes, undefined, 'a host runtime advertises nothing');
+    const built = world({ storageBuiltRuntime: true }).platform.capabilities.capability_changes;
+    assert.equal(built?.notifications?.registration_task, 'sync_principal');
+    assert.ok(world({ withStorage: true }).platform.capabilities.capability_changes);
+  });
+
   test('the service installs the principal section and advertises both capabilities', () => {
     const { lifecycle, platform, service } = world();
     assert.ok(lifecycle.capabilities.supported_sections.includes('reporting_subscriptions'));

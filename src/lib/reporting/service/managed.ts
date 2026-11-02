@@ -303,6 +303,15 @@ export interface SubscriptionGrants {
   }): Promise<void>;
 }
 
+/**
+ * Marks a principal runtime built from `subscriptions.principal` by a storage package on the service's
+ * behalf (`@adcp/reporting-storage`'s production service builds it over PostgreSQL), so the service
+ * treats it as its own: it advertises `capability_changes` as it does for `principal`.
+ *
+ * @internal
+ */
+export const MANAGED_PRINCIPAL_RUNTIME: unique symbol = Symbol.for('adcp.reporting.managedPrincipalRuntime') as never;
+
 function managedPrincipals<TCtxMeta>(
   options: SubscriptionOptions<TCtxMeta>,
   storage: ReportingStorage | undefined
@@ -1018,7 +1027,9 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
     explainCoverage,
     engine,
     principals,
-    ownsPrincipalRuntime: options.principal !== undefined,
+    ownsPrincipalRuntime:
+      options.principal !== undefined ||
+      (options.principals as unknown as Record<symbol, unknown> | undefined)?.[MANAGED_PRINCIPAL_RUNTIME] === true,
     advanced,
     bindPlatform(value) {
       platform = value as PlatformReads;
