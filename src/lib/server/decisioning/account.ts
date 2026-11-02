@@ -44,6 +44,7 @@ import type {
   GetAccountFinancialsResponse,
   GetAccountFinancialsSuccess,
 } from '../../types/tools.generated';
+import type { AccountRequest } from '../../types/tools.generated';
 import type { ServerPayload } from '../../types/server-payload';
 import { projectReportingDeliveryConfigStates } from '../reporting-delivery-config';
 import {
@@ -92,6 +93,8 @@ export type ReportUsagePayload = ServerPayload<ReportUsageResponse>;
 export type GetAccountFinancialsPayload = ServerPayload<GetAccountFinancialsResponse>;
 export type GetAccountFinancialsSuccessPayload = ServerPayload<GetAccountFinancialsSuccess>;
 export type ListAccountsHandlerResult<TCtxMeta = Record<string, unknown>> = CursorPage<Account<TCtxMeta>>;
+/** A page of the caller's account requests: `account_requests[]` on `list_accounts` (AdCP 3.3). */
+export type ListAccountRequestsHandlerResult = CursorPage<AccountRequest>;
 export type ListAccountChangesHandlerResult = ListAccountChangesPayload;
 export type SyncAccountsHandlerResult = SyncAccountsResultRow[];
 export type SyncGovernanceHandlerResult = SyncGovernanceRow[];
@@ -135,6 +138,13 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
    * one fails those offerings with `COVERAGE_INPUT_INCOMPLETE`, and is never read as UTC.
    */
   timezone?: string;
+
+  /**
+   * The account's optimistic-concurrency revision (AdCP 3.2+). Maps to wire `Account.revision`.
+   * Buyers read it from `list_accounts` and send it with a `request_account` change or a
+   * `sync_accounts` settings update, so a concurrent change is never overwritten.
+   */
+  revision?: number;
 
   /**
    * The advertiser whose rates apply to this account. Maps to wire
@@ -870,6 +880,23 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
   list?(request: ListAccountsRequest, ctx?: ResolveContext): Promise<ListAccountsHandlerResult<TCtxMeta>>;
 
   /**
+   * The caller's account requests on `list_accounts` (AdCP 3.3 experimental `account.requests`).
+   * Called only when the buyer asks for them, with `include_requests`, `request_ids` or
+   * `requests_pagination`; the framework returns `items` as `account_requests[]` and projects
+   * `account_requests_pagination` from `nextCursor` / `totalCount`. The accounts page is unaffected.
+   *
+   * Implementations MUST return only the caller's own requests (identify the caller from
+   * `ctx.authInfo` / `ctx.agent`, as for `list`): every open request (`in_review`, `ambiguous`) plus
+   * requests that changed state in the last 30 days, newest `updated_at` first, at most 100 per page.
+   * With `request.request_ids`, return only those, omitting unknown IDs and other callers' IDs
+   * silently. Page from `request.requests_pagination.cursor`.
+   *
+   * This is how buyers poll a pending request (`client.accounts.refresh()`). Pair it with
+   * `opts.accounts.requestAccount`; requires {@link list}.
+   */
+  listRequests?(request: ListAccountsRequest, ctx?: ResolveContext): Promise<ListAccountRequestsHandlerResult>;
+
+  /**
    * list_account_changes API surface. Returns a durable feed page whose
    * cursor remains bound to the authenticated principal, account, and
    * normalized filters. The framework resolves the request account before
@@ -1171,6 +1198,7 @@ export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount
   if (account.brand !== undefined) wire.brand = account.brand;
   if (account.operator !== undefined) wire.operator = account.operator;
   if (account.timezone !== undefined) wire.timezone = account.timezone;
+  if (account.revision !== undefined) wire.revision = account.revision;
   if (account.advertiser !== undefined) wire.advertiser = account.advertiser;
   if (account.billing_proxy !== undefined) wire.billing_proxy = account.billing_proxy;
   if (account.billing !== undefined) {

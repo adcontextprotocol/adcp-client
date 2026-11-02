@@ -291,6 +291,8 @@ test('createAdcpServer serves raw request_account and media-buy issue handlers o
     version: '1.0.0',
     adcpVersion: ADCP_VERSION,
     validation: { requests: 'strict', responses: 'strict' },
+    // request_account lives in the account block, which requires who bills.
+    capabilities: { account: { supportedBilling: ['agent'] } },
     resolveAccount: async ref => (ref.account_id === 'acct_1' ? { id: ref.account_id } : null),
     accounts: {
       requestAccount: async params => {
@@ -350,6 +352,8 @@ test('a change request may opt in to a separate account and resolve as created',
     version: '1.0.0',
     adcpVersion: ADCP_VERSION,
     validation: { requests: 'strict', responses: 'strict' },
+    // request_account lives in the account block, which requires who bills.
+    capabilities: { account: { supportedBilling: ['agent'] } },
     resolveAccount: async ref => (ref.account_id === 'acct_1' ? { id: ref.account_id } : null),
     accounts: {
       requestAccount: async params => {

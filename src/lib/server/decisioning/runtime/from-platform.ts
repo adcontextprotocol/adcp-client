@@ -2855,6 +2855,25 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const fwLogger = opts.logger ?? DEFAULT_FRAMEWORK_LOGGER;
   const mergeOpts = { mode: opts.mergeSeam ?? 'warn', logger: fwLogger };
 
+  // AdCP 3.3 account.requests: requests are read back through list_accounts (`read_task`), so the
+  // hook that serves them rides on the platform's list_accounts handler.
+  if (platform.accounts.listRequests != null && platform.accounts.list == null) {
+    throw new PlatformConfigError(
+      'accounts.listRequests serves account_requests on list_accounts and needs accounts.list; wire both.'
+    );
+  }
+  if (
+    runtimeOpts.accounts?.requestAccount != null &&
+    platform.accounts.listRequests == null &&
+    runtimeOpts.accounts?.listAccounts == null
+  ) {
+    fwLogger.warn(
+      'request_account is registered without accounts.listRequests: list_accounts (the advertised ' +
+        'account.requests read_task) returns no account_requests, so buyers cannot poll a pending request. ' +
+        'Implement accounts.listRequests.'
+    );
+  }
+
   // Project per-domain capability blocks declared on the platform onto
   // get_adcp_capabilities via createAdcpServer's `overrides.media_buy`
   // deep-merge seam. Adopters declare audience_targeting /
@@ -3229,6 +3248,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ...(principalCapability !== undefined && { principal: structuredClone(principalCapability) }),
     ...(platform.capabilities.capability_changes !== undefined && {
       capability_changes: structuredClone(platform.capabilities.capability_changes),
+    }),
+    ...(platform.capabilities.accountRequests !== undefined && {
+      accountRequests: structuredClone(platform.capabilities.accountRequests),
     }),
     ...(hasOverridesObject && {
       overrides: {
@@ -9271,14 +9293,38 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       return projectSync(
         async () => {
           const page = await accounts.list!(filter, resolveCtx);
+          // AdCP 3.3 account.requests: the caller's requests ride on list_accounts when asked for, and
+          // only on releases that define them (capabilities hide account.requests below 3.3 too).
+          const served = ctx.servedAdcpVersion;
+          const requests =
+            accounts.listRequests &&
+            isAdcpVersionAtLeast(served, '3.3.0-beta.0') &&
+            (filter.include_requests === true ||
+              filter.request_ids !== undefined ||
+              filter.requests_pagination !== undefined)
+              ? await accounts.listRequests(filter, resolveCtx)
+              : undefined;
+          const listed = await projectAccountList(accounts, page.items, resolveCtx, logger);
+          // Account.revision is an AdCP 3.2 field: not served to an earlier release.
+          if (served !== undefined && !isAdcpVersionAtLeast(served, '3.2.0-beta.0')) {
+            for (const row of listed) delete row.revision;
+          }
           const response = {
             status: 'completed' as const,
-            accounts: await projectAccountList(accounts, page.items, resolveCtx, logger),
+            accounts: listed,
             pagination: {
               has_more: page.nextCursor != null,
               ...(page.nextCursor != null && { cursor: page.nextCursor }),
               ...(page.totalCount !== undefined && { total_count: page.totalCount }),
             },
+            ...(requests && {
+              account_requests: requests.items,
+              account_requests_pagination: {
+                has_more: requests.nextCursor != null,
+                ...(requests.nextCursor != null && { cursor: requests.nextCursor }),
+                ...(requests.totalCount !== undefined && { total_count: requests.totalCount }),
+              },
+            }),
           };
           return platform.reporting?.projectListAccounts
             ? platform.reporting.projectListAccounts(filter, response, resolveCtx)
