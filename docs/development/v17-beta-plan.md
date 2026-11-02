@@ -11,7 +11,7 @@ SDK 17 beta adopts the published AdCP `3.3.0-beta.3` protocol bundle and publish
 
 ## SDK changes
 
-The primary pin is `3.3.0-beta.3`, with generated public types, runtime validators, tool metadata and documentation from that bundle. The package retains stable 3.2.7, 3.1.31 and 3.0.25 schemas and compliance corpora. Preview compatibility is exact: `3.3.0-beta.3` and `3.3-beta.3`, without a moving family alias. Moving from beta.2 to beta.3 is a beta-channel break: a beta.2 peer no longer negotiates the preview with this SDK and falls back to a shared stable release. Buyer negotiation requires an exact advertised preview and otherwise uses an available stable release.
+The primary pin is `3.3.0-beta.3`, with generated public types, runtime validators, tool metadata and documentation from that bundle. The package retains stable 3.2.8, 3.1.31 and 3.0.25 schemas and compliance corpora. Preview compatibility is exact: `3.3.0-beta.3` and `3.3-beta.3`, without a moving family alias. Moving from beta.2 to beta.3 is a beta-channel break: a beta.2 peer no longer negotiates the preview with this SDK and falls back to a shared stable release. Buyer negotiation requires an exact advertised preview and otherwise uses an available stable release.
 
 The HTML-markup `display_tag` mapping from [#3361](https://github.com/adcontextprotocol/adcp-client/pull/3361) is included as a major changeset. `display_html` and `display_WxH_html` project to inline-markup `display_tag`; actual `html5` zip creatives no longer match HTML-markup-only products. Delivery retains seller format identity, filters by delivery type and emits markup through the legacy HTML asset contract. SDK 16 keeps its previous mapping. See the [16 → 17 migration guide](../migration-16-to-17.md).
 
