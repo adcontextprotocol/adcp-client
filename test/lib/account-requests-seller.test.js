@@ -324,6 +324,163 @@ describe('account.requests on the platform path', () => {
   });
 });
 
+describe('account requests never echo write-only account fields', () => {
+  const BANK = { account_holder: 'Acme Inc', iban: 'DE89370400440532013000', bic: 'COBADEFFXXX' };
+  const GOVERNANCE_SECRET = 'gov-secret-token-0123456789abcdef';
+  const WEBHOOK_SECRET = 'webhook-secret-0123456789abcdefghij';
+  const DESTINATION_SECRET = 'destination-legal-name-0123456789';
+  const SECRETS = [BANK.iban, GOVERNANCE_SECRET, WEBHOOK_SECRET, DESTINATION_SECRET];
+
+  /** Every credential shape an Account can hold, on the account and echoed into `requested`. */
+  function loadedAccount(accountId) {
+    return {
+      account_id: accountId,
+      name: 'Loaded',
+      status: 'active',
+      revision: 1,
+      billing_entity: { legal_name: 'Acme Inc', bank: { ...BANK } },
+      destination_billing_entity: { legal_name: DESTINATION_SECRET, bank: { ...BANK } },
+      governance_agents: [
+        {
+          url: 'https://governance.example/mcp',
+          authentication: { schemes: ['Bearer'], credentials: GOVERNANCE_SECRET },
+        },
+      ],
+      notification_configs: [
+        {
+          subscriber_id: 'sub_1',
+          url: 'https://buyer.example/webhooks',
+          event_types: ['account.status_changed'],
+          authentication: { schemes: ['HMAC-SHA256'], credentials: WEBHOOK_SECRET },
+        },
+      ],
+    };
+  }
+
+  function loadedRequest(requestId, accountId) {
+    const account = loadedAccount(accountId);
+    return {
+      request_id: requestId,
+      state: 'resolved',
+      resolution: 'created',
+      account_id: accountId,
+      account,
+      requested: {
+        brand: { domain: 'loaded.example' },
+        operator: 'agency.example',
+        // A handler that spreads the inbound request into `requested`.
+        billing_entity: account.billing_entity,
+        destination_billing_entity: account.destination_billing_entity,
+        governance_agents: account.governance_agents,
+        notification_configs: account.notification_configs,
+      },
+      created_at: NOW,
+      updated_at: NOW,
+    };
+  }
+
+  function assertScrubbed(account, label) {
+    assert.equal(account.destination_billing_entity, undefined, `${label}: destination_billing_entity`);
+    assert.deepEqual(account.billing_entity, { legal_name: 'Acme Inc' }, `${label}: billing_entity keeps no bank`);
+    assert.deepEqual(account.governance_agents, [{ url: 'https://governance.example/mcp' }], `${label}: governance`);
+    assert.deepEqual(
+      account.notification_configs.map(config => config.authentication?.credentials),
+      [undefined],
+      `${label}: webhook credentials`
+    );
+    assert.equal(account.notification_configs[0].url, 'https://buyer.example/webhooks', `${label}: webhook url kept`);
+  }
+
+  function assertNoSecrets(payload, label) {
+    const wire = JSON.stringify(payload);
+    for (const secret of SECRETS) assert.ok(!wire.includes(secret), `${label} leaked ${secret}`);
+  }
+
+  test('platform path: list_accounts account_requests[] and request_account, including replay', async t => {
+    const world = sellerWorld();
+    const stored = loadedRequest('areq_loaded', 'acct_loaded');
+    const snapshot = structuredClone(stored);
+    world.requests.set(stored.request_id, { owner: 'buyer-1', record: stored });
+    const server = platformServer(world, {
+      // Production defaults to validation off, so the scrub must not rely on response validation.
+      options: {
+        validation: { requests: 'off', responses: 'off' },
+        accounts: { requestAccount: async () => ({ status: 'completed', request: stored }) },
+      },
+    });
+    t.after(() => server.close());
+
+    const listed = await call(server, 'list_accounts', { include_requests: true });
+    const item = listed.account_requests.find(request => request.request_id === 'areq_loaded');
+    assertScrubbed(item.account, 'account_requests[].account');
+    assertScrubbed(item.requested, 'requested');
+    assertNoSecrets(listed, 'list_accounts');
+
+    const args = { idempotency_key: 'loaded-request-000000001', brand: { domain: 'loaded.example' } };
+    const opened = await call(server, 'request_account', args);
+    assertScrubbed(opened.request.account, 'request_account request.account');
+    assertNoSecrets(opened, 'request_account');
+    const replayed = await call(server, 'request_account', args);
+    assert.equal(replayed.replayed, true);
+    assertNoSecrets(replayed, 'request_account replay');
+
+    assert.deepEqual(stored, snapshot, 'the store record is not mutated');
+  });
+
+  test('createAdcpServer handlers: list_accounts account_requests[] and the failed request_account arm', async t => {
+    const stored = loadedRequest('areq_loaded', 'acct_loaded');
+    const rowAccount = loadedAccount('acct_row');
+    const snapshot = structuredClone({ stored, rowAccount });
+    const server = createAdcpServer({
+      name: 'raw-seller',
+      version: '1.0.0',
+      adcpVersion: ADCP_VERSION,
+      logger: silent,
+      validation: { requests: 'off', responses: 'off' },
+      capabilities: { account: { supportedBilling: ['operator'] } },
+      accounts: {
+        listAccounts: async () => ({
+          accounts: [rowAccount],
+          pagination: { has_more: false },
+          account_requests: [stored],
+          account_requests_pagination: { has_more: false },
+        }),
+        requestAccount: async () => ({
+          status: 'failed',
+          request: { ...stored, state: 'rejected' },
+          errors: [{ code: 'ACCOUNT_SETUP_REQUIRED', message: 'Rejected' }],
+        }),
+      },
+    });
+    t.after(() => server.close());
+
+    const listed = await call(server, 'list_accounts', { include_requests: true });
+    assertScrubbed(listed.accounts[0], 'accounts[]');
+    assertScrubbed(listed.account_requests[0].account, 'account_requests[].account');
+    assertNoSecrets(listed, 'list_accounts');
+
+    const failed = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'request_account',
+          arguments: {
+            adcp_version: WIRE,
+            idempotency_key: 'loaded-request-000000002',
+            brand: { domain: 'x.example' },
+          },
+        },
+      },
+      AUTH
+    );
+    assert.equal(failed.structuredContent.status, 'failed');
+    assertScrubbed(failed.structuredContent.request.account, 'failed request.account');
+    assertNoSecrets(failed, 'failed request_account');
+
+    assert.deepEqual({ stored, rowAccount }, snapshot, 'the handler records are not mutated');
+  });
+});
+
 describe('account.requests on createAdcpServer', () => {
   test('a seller that declares no supported_billing is refused at construction, with the fix', () => {
     // The account block's schema requires supported_billing; who bills is the seller's claim to make.

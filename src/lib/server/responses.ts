@@ -69,6 +69,7 @@ import type {
   GetSignalsResponse,
   ActivateSignalSuccess,
   ListAccountsResponse,
+  RequestAccountResponse,
   ListPropertyListsResponse,
   ListCollectionListsResponse,
   ListContentStandardsResponse,
@@ -199,9 +200,28 @@ function stripBusinessEntityBank<T extends object>(row: T, key: 'billing_entity'
   return stripped as T;
 }
 
-function stripAccountWriteOnlyFields<T extends object>(account: T, syncResult = false): T {
-  // An operator-handoff destination is request-only, including its non-bank
-  // fields. Keep it out of response payloads and the idempotency replay cache.
+function stripGovernanceAgentAuthentication<T extends object>(row: T): T {
+  const governanceAgents = (row as { governance_agents?: unknown }).governance_agents;
+  if (!Array.isArray(governanceAgents)) return row;
+  return {
+    ...row,
+    governance_agents: governanceAgents.map(agent => {
+      if (agent == null || typeof agent !== 'object' || !('authentication' in agent)) return agent;
+      const { authentication: _authentication, ...agentWithoutAuthentication } = agent as Record<string, unknown>;
+      return agentWithoutAuthentication;
+    }),
+  };
+}
+
+/**
+ * Drop every write-only and credential-bearing account field: the operator-handoff
+ * `destination_billing_entity` (request-only, including its non-bank fields),
+ * `billing_entity.bank`, `notification_configs[].authentication.credentials`,
+ * `governance_agents[].authentication`, and the framework-internal `authInfo` /
+ * `ctx_metadata`. Copies; never mutates the input, so a store record passed
+ * straight through stays intact.
+ */
+function stripAccountCredentialFields<T extends object>(account: T): T {
   const {
     destination_billing_entity: _destination,
     authInfo: _authInfo,
@@ -212,7 +232,14 @@ function stripAccountWriteOnlyFields<T extends object>(account: T, syncResult = 
     authInfo?: unknown;
     ctx_metadata?: unknown;
   };
-  const response = stripBusinessEntityBank(stripNotificationConfigSecrets(responseFields), 'billing_entity');
+  return stripGovernanceAgentAuthentication(
+    stripBusinessEntityBank(stripNotificationConfigSecrets(responseFields), 'billing_entity')
+  ) as T;
+}
+
+function stripAccountWriteOnlyFields<T extends object>(account: T, syncResult = false): T {
+  // Keep write-only fields out of response payloads and the idempotency replay cache.
+  const response = stripAccountCredentialFields(account);
   const stripped = { ...response, ...projectAccountResponseIdentityFields(response) } as T;
   if (syncResult) {
     for (const key of ACCOUNT_REQUEST_RESULT_KEYS) delete (stripped as Record<string, unknown>)[key];
@@ -234,6 +261,34 @@ function stripAccountsWriteOnlyFields<T extends { accounts?: unknown }>(data: T,
     ...data,
     accounts: data.accounts.map(account =>
       account != null && typeof account === 'object' ? stripAccountWriteOnlyFields(account, syncResult) : account
+    ),
+  };
+}
+
+/**
+ * An AdCP 3.3 `AccountRequest`: a resolved request embeds the full `Account`,
+ * which gets the same scrub as a `list_accounts` row. `requested` echoes the
+ * buyer's terms and must never echo write-only fields either, so a handler that
+ * spreads the inbound request into it is scrubbed of credentials too.
+ */
+function stripAccountRequestWriteOnlyFields<T extends object>(request: T): T {
+  const { account, requested } = request as { account?: unknown; requested?: unknown };
+  const accountIsObject = account != null && typeof account === 'object';
+  const requestedIsObject = requested != null && typeof requested === 'object';
+  if (!accountIsObject && !requestedIsObject) return request;
+  return {
+    ...request,
+    ...(accountIsObject && { account: stripAccountWriteOnlyFields(account) }),
+    ...(requestedIsObject && { requested: stripAccountCredentialFields(requested) }),
+  };
+}
+
+function stripAccountRequestsWriteOnlyFields<T extends { account_requests?: unknown }>(data: T): T {
+  if (!Array.isArray(data.account_requests)) return data;
+  return {
+    ...data,
+    account_requests: data.account_requests.map(request =>
+      request != null && typeof request === 'object' ? stripAccountRequestWriteOnlyFields(request) : request
     ),
   };
 }
@@ -372,7 +427,8 @@ export function deliveryResponse(data: ServerPayload<GetMediaBuyDeliveryResponse
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function listAccountsResponse(data: ServerPayload<ListAccountsResponse>, summary?: string): McpToolResponse {
-  const stripped = stripAccountsWriteOnlyFields(data);
+  // A resolved account_requests[] item embeds a full Account: scrub it like the rows.
+  const stripped = stripAccountRequestsWriteOnlyFields(stripAccountsWriteOnlyFields(data));
   return {
     content: [{ type: 'text', text: summary ?? `Found ${stripped.accounts.length} accounts` }],
     structuredContent: completedStructuredContent(stripped),
@@ -916,6 +972,28 @@ export function syncAccountsResponse(data: ServerPayload<SyncAccountsResponse>, 
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
     structuredContent: completedStructuredContent(stripped),
+  };
+}
+
+/**
+ * Build a `request_account` response (AdCP 3.3, experimental). The `request`
+ * a seller returns (on the completed and the failed arm) is scrubbed like a
+ * `list_accounts` `account_requests[]` item: a resolved request embeds the full
+ * `Account`, and without this its bank details, governance-agent and webhook
+ * credentials, and `destination_billing_entity` reached the wire and the
+ * idempotency replay cache.
+ *
+ * @internal Framework wrap for `request_account`; not part of the public barrel.
+ */
+export function requestAccountResponse(data: ServerPayload<RequestAccountResponse>, summary?: string): McpToolResponse {
+  const request = (data as { request?: unknown }).request;
+  const stripped =
+    request != null && typeof request === 'object'
+      ? { ...data, request: stripAccountRequestWriteOnlyFields(request) }
+      : data;
+  return {
+    content: [{ type: 'text', text: summary ?? 'request_account completed' }],
+    structuredContent: { ...toStructuredContent(stripped) },
   };
 }
 
