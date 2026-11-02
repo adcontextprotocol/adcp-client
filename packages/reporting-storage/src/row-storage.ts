@@ -295,7 +295,7 @@ export class ReportingRowStorageV1 {
       if (!isReportingRowIdentifier(id)) {
         throw new ReportingRowStoreError(
           'INVALID_INPUT',
-          `invalid row binding ID ${id.length > 64 ? `${id.slice(0, 64)}...` : id}: use 1 to ${REPORTING_ROW_BINDING_ID_MAX_LENGTH} characters of A-Za-z0-9_.:-`
+          `invalid row binding ID ${JSON.stringify(id.length > 64 ? `${id.slice(0, 64)}...` : id)}: use 1 to ${REPORTING_ROW_BINDING_ID_MAX_LENGTH} characters of A-Za-z0-9_.:-`
         );
       }
       const binding = bindings[id]!;
@@ -1178,21 +1178,38 @@ export class ReportingRowStorageV1 {
               ...(binding.credentialRef ? { credentialRef: binding.credentialRef } : {}),
             }
           : {};
-      await this.pool.query(
-        `INSERT INTO adcp_reporting_row_bindings
+      try {
+        await this.pool.query(
+          `INSERT INTO adcp_reporting_row_bindings
            (row_binding_id, kind, provider, identity_config, identity_sha256, operational_config, namespace_key)
          VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb, $7)
          ON CONFLICT (row_binding_id) DO NOTHING`,
-        [
-          bindingId,
-          binding.kind,
-          binding.kind === 'object' ? binding.provider : 'postgres',
-          JSON.stringify(identityConfig),
-          identitySha256,
-          JSON.stringify(operationalConfig),
-          namespaceKey,
-        ]
-      );
+          [
+            bindingId,
+            binding.kind,
+            binding.kind === 'object' ? binding.provider : 'postgres',
+            JSON.stringify(identityConfig),
+            identitySha256,
+            JSON.stringify(operationalConfig),
+            namespaceKey,
+          ]
+        );
+      } catch (error) {
+        // A database that still has the original 128-character CHECK refuses a longer ID with a bare constraint
+        // violation; say which migration widens it.
+        if (
+          bindingId.length > 128 &&
+          (error as { code?: unknown }).code === '23514' &&
+          /row_binding_id/.test(String((error as { constraint?: unknown; message?: unknown }).constraint ?? ''))
+        ) {
+          throw new ReportingRowStoreError(
+            'STATE_UNAVAILABLE',
+            `row binding ID ${JSON.stringify(`${bindingId.slice(0, 32)}...`)} is longer than 128 characters and this ` +
+              'database still has the original 128-character limit: run npx adcp-reporting-storage migrate (version 0010)'
+          );
+        }
+        throw error;
+      }
       const stored = await this.pool.query<{ identity_sha256: string; namespace_key: string; state: string }>(
         'SELECT identity_sha256, namespace_key, state FROM adcp_reporting_row_bindings WHERE row_binding_id = $1',
         [bindingId]

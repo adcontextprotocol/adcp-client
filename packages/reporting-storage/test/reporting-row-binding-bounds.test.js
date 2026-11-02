@@ -7,6 +7,8 @@ const { describe, test } = require('node:test');
 
 const ledger = require('./helpers/ledger.js');
 const { createS3ReportingRowObjectProviderV1 } = require('@adcp/reporting-storage/s3');
+const { createGcsReportingRowObjectProviderV1 } = require('@adcp/reporting-storage/gcs');
+const { createAzureBlobReportingRowObjectProviderV1 } = require('@adcp/reporting-storage/azure');
 
 const provider = {
   name: 'stub',
@@ -36,12 +38,26 @@ describe('row binding identifier bounds', () => {
 
   test('a binding ID of 1 to 255 characters of A-Za-z0-9_.:- is accepted', () => {
     for (const accepted of ['x', id(128), id(129), id(255), `A_b.c:d-${id(247)}`]) {
-      assert.doesNotThrow(() => storage({ [accepted]: objectBinding() }), accepted.length);
+      assert.doesNotThrow(() => storage({ [accepted]: objectBinding() }));
     }
   });
 
   test('a longer, empty or ill-formed binding ID is refused, and the message names the bound', () => {
-    for (const refused of [id(256), id(1000), '', 'has space', 'slash/id', 'é', `${id(10)}\n`]) {
+    const hostile = [
+      id(256),
+      id(1000),
+      '',
+      'has space',
+      'slash/id',
+      'é',
+      `${id(10)}\n`,
+      'a\nb',
+      'a\u0000b',
+      '\uFF41', // a fullwidth letter that looks like "a"
+      '\u0430', // a Cyrillic letter that looks like "a"
+      `${id(255)}\n`,
+    ];
+    for (const refused of hostile) {
       assert.throws(
         () => storage({ [refused]: objectBinding() }),
         error => error.code === 'INVALID_INPUT' && /1 to 255 characters of A-Za-z0-9_\.:-/.test(error.message),
@@ -59,7 +75,7 @@ describe('row binding identifier bounds', () => {
     for (const accepted of ['tenant-eu', id(128), id(129), id(255)]) {
       assert.doesNotThrow(() => storage({ objects: objectBinding({ credentialRef: accepted }) }));
     }
-    for (const refused of [id(256), '', 'has space', 'a/b']) {
+    for (const refused of [id(256), '', 'has space', 'a/b', 'a\nb', null, 123, {}]) {
       assert.throws(
         () => storage({ objects: objectBinding({ credentialRef: refused }) }),
         error => error.code === 'INVALID_INPUT' && /invalid credentialRef: use 1 to 255 characters/.test(error.message)
@@ -67,12 +83,22 @@ describe('row binding identifier bounds', () => {
     }
   });
 
-  test('a provider clients map accepts the same credential references a binding can name', () => {
-    const client = { send() {} };
-    assert.doesNotThrow(() => createS3ReportingRowObjectProviderV1({ client, clients: { [id(255)]: client } }));
-    assert.throws(
-      () => createS3ReportingRowObjectProviderV1({ client, clients: { [id(256)]: client } }),
-      error => error.code === 'INVALID_INPUT'
-    );
+  test('every bundled provider accepts, in its clients map, the same credential references a binding can name', () => {
+    const providers = [
+      [createS3ReportingRowObjectProviderV1, 'client', { send() {} }],
+      [createGcsReportingRowObjectProviderV1, 'storage', { bucket() {} }],
+      [createAzureBlobReportingRowObjectProviderV1, 'client', { getContainerClient() {}, accountName: 'account' }],
+    ];
+    for (const [create, defaultKey, client] of providers) {
+      for (const accepted of [id(128), id(129), id(255)]) {
+        assert.doesNotThrow(() => create({ [defaultKey]: client, clients: { [accepted]: client } }));
+      }
+      for (const refused of [id(256), '', 'has space']) {
+        assert.throws(
+          () => create({ [defaultKey]: client, clients: { [refused]: client } }),
+          error => error.code === 'INVALID_INPUT'
+        );
+      }
+    }
   });
 });
