@@ -198,12 +198,65 @@ service runs for you. See
    of them. The age threshold does not protect against that, which is why a real
    (not dry) pass needs `acknowledgeExclusiveNamespace: true`: it is your statement
    that this database is the only owner. A clone made by copying the deployment
-   copies the flag too, so the flag does not protect it: remove it, or the whole
-   option, from every copy. Disable the option on clones, and after
-   restoring a database in place expect the collector to delete the objects of the
-   row sets the restore lost, which is its purpose.
+   copies the flag too, so the flag alone does not protect it, and a persisted
+   **ownership fence** backs it. It needs migration `0009`
+   (`npx adcp-reporting-storage migrate`); until then every real pass and dry run
+   reports each binding as fenced with cause `migration_required` and deletes
+   nothing.
+
+   - **Claim.** The first real pass claims the namespace: it records
+     `(epoch, token)` in `adcp_reporting_orphan_collector_fences` and writes a
+     create-only object, `{prefix}/{namespace_key}/_collector-fence/{epoch}.json`,
+     for that epoch. Every later real pass claims the next epoch before it
+     deletes anything, and prunes the claims older than the previous one.
+   - **Check.** A pass deletes only while the highest epoch in the bucket is
+     exactly the claim this database recorded. It re-reads the fence before every
+     page that deletes (and every 25 deletes within one). Anything else refuses, deletes nothing more and reports the
+     binding as `fenced` with a `cause` (`fence_advanced`, `claimed_elsewhere`,
+     `token_mismatch`, `fence_missing`, `fence_regressed`, `fence_unreadable`,
+     `claim_lost`, `migration_required`), in the result's `fenced` list and as a
+     maintenance warning. Bindings that share a bucket, prefix and installation
+     share one fence.
+   - **Clones and restores.** A copy that still holds an older claim sees the
+     live database's newer epoch and refuses. So does a database restored to an
+     earlier state. A `dryRun` reads the fence without claiming it, so it
+     reports a fenced binding too and writes nothing.
+   - **First claim wins.** Nothing in the database distinguishes a copy from the
+     original until one of them claims. When you roll the fence out, claim from the
+     live database first: one real pass, or `takeOverOrphanCollectorFence` (on a
+     namespace nobody has claimed it is a claim and nothing more). If a clone collects before the original
+     has run a pass since the copy was taken, the clone claims first and the
+     original is fenced, and the warning is the signal. The age threshold still
+     holds: the clone cannot delete an object the original wrote after the copy
+     until that object is `minAgeSeconds` old, so turn the clone's collector off
+     within that window. Run orphan collection only on the live database, and
+     never copy the deployment with the option on.
+   - **Takeover.** After restoring a database in place, or when the original is
+     gone, call `store.takeOverOrphanCollectorFence({ acknowledgePreviousOwnerGone: true })`
+     once. It claims the next epoch for this database and fences every other
+     copy out. It refuses without the acknowledgement. Stop the previous owner's
+     collector first: a pass already running notices the new epoch at its next
+     fence check, up to 25 deletes later, and the provider cannot refuse a delete
+     on the fence's behalf. Do not call it from a
+     clone while the original is running: that fences the original and lets the
+     clone delete its objects.
+
+   A fenced binding is checked again within the hour (never a whole `intervalSeconds`
+   later), so applying `0009` or taking the namespace over resumes collection
+   without a restart. A pass writes one small fence object per pass (and prunes
+   the older ones), so the binding's credentials need write access, including a
+   `readOnly` binding collected with `includeReadOnly`. Keep `_collector-fence/` out
+   of bucket lifecycle rules and manual cleanup: deleting the newest fence object
+   makes an older copy look current again. The claim holds a database connection
+   and an advisory lock across the object-store listing and read.
+
+   After a restore in place, expect the collector to delete the objects of the
+   row sets the restore lost once you have taken the namespace over, which is its
+   purpose.
    The cost grows with bucket size: one listing request per page, plus one
-   database query per page and one transaction per deleted object.
+   database query per page and one transaction per deleted object. The fence
+   adds a small listing and a read per pass, and one more before each deleting
+   page.
 
 Alert on these row-storage signals:
 
@@ -216,6 +269,10 @@ Alert on these row-storage signals:
   host does not configure, and `overdue` (expired more than 24 hours ago, still
   unswept) means no host is handling them and their objects are leaking. The
   maintenance helper reports both through `onError`.
+- The `orphan object collection` task reporting `fenced` bindings: another
+  database holds the namespace's collector fence, or this one cannot prove it
+  does. The `fence.cause` says why; see the ownership fence above before you
+  take the namespace over.
 - The `orphan object collection` task reporting `failed` or `unsupported`
   bindings (their provider cannot list, so nothing there is collected). A listing
   that fails is retried from the page that failed (or from the start, if it was

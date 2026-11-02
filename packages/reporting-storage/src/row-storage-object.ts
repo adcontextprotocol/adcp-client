@@ -176,7 +176,9 @@ export interface ReportingRowObjectProviderV1 {
    * too, never delete markers), the stored size, and the time the version was written. Return only keys
    * under `prefix`. A page may be short; `nextPageToken` is absent on the last page. A token is only
    * valid for the same `prefix` and location. Leave out an entry that cannot be addressed or aged (no
-   * usable version, size or write time) and count it in `skipped` rather than failing the page.
+   * usable version, size or write time) and count it in `skipped` rather than failing the page. The listing must
+   * be strongly consistent for keys it has already returned from `putIfAbsent` (read-after-write): the orphan
+   * collector's ownership fence reads the newest claim by listing.
    */
   list?(
     input: ReportingRowObjectListInputV1,

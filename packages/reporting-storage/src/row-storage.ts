@@ -19,6 +19,18 @@ import {
   ReportingRowStoreError,
   isReportingRowStoreError,
 } from '@adcp/sdk/reporting/ledger';
+import {
+  ORPHAN_FENCE_MAX_BYTES,
+  encodeOrphanFenceRecord,
+  isOrphanFenceKey,
+  orphanFenceDirectory,
+  orphanFenceEpochOfKey,
+  orphanFenceKey,
+  orphanFenceScope,
+  parseOrphanFenceRecord,
+  type OrphanFenceEntry,
+  type OrphanFenceRecord,
+} from './orphan-fence';
 import { probeReportingRowStorageSchemaV1 } from './row-storage-migration';
 import {
   isReportingRowIdentifier,
@@ -456,6 +468,8 @@ export class ReportingRowStorageV1 {
     const objects: ReportingRowObjectListEntryV1[] = [];
     let foreign = Number.isSafeInteger(page.skipped) && page.skipped! > 0 ? page.skipped! : 0;
     for (const entry of page.objects) {
+      // The collector's own fence chain lives under the owned prefix; it is not a row object and not foreign.
+      if (entry && typeof entry.objectRef === 'string' && isOrphanFenceKey(ownedPrefix, entry.objectRef)) continue;
       if (
         !entry ||
         typeof entry.objectRef !== 'string' ||
@@ -474,6 +488,240 @@ export class ReportingRowStorageV1 {
       objects.push(entry);
     }
     return { ownedPrefix, objects, foreign, ...(page.nextPageToken ? { nextPageToken: page.nextPageToken } : {}) };
+  }
+
+  /**
+   * The physical location of an object binding's collector fence: the scope its database row is keyed by, and
+   * the object-store directory that holds its chain. Bindings that share provider, location, prefix and
+   * installation share a fence. Throws `STATE_UNAVAILABLE` for a binding that is not an object binding, and
+   * `INVALID_INPUT` when its provider cannot list (the fence is read by listing).
+   *
+   * @internal
+   */
+  async collectorFenceLocation(bindingId: string): Promise<{ scope: string; directory: string; namespaceKey: string }> {
+    await this.ready();
+    const binding = this.bindings[bindingId];
+    if (!binding || binding.kind !== 'object') {
+      throw new ReportingRowStoreError('STATE_UNAVAILABLE', `row binding ${bindingId} is not configured for objects`);
+    }
+    const provider = this.providers[binding.provider]!;
+    if (typeof provider.list !== 'function') {
+      throw new ReportingRowStoreError('INVALID_INPUT', `row binding ${bindingId}'s provider cannot list objects`);
+    }
+    const namespaceKey = this.installation!.namespaceKey;
+    return {
+      scope: orphanFenceScope({
+        // The provider's own name, not this host's registry key: two registry entries of one kind that reach
+        // the same bucket and prefix are one physical fence.
+        provider: provider.name,
+        location: binding.location,
+        prefix: binding.prefix,
+        namespaceKey,
+      }),
+      directory: orphanFenceDirectory(`${binding.prefix}/${namespaceKey}/`),
+      namespaceKey,
+    };
+  }
+
+  /**
+   * Every fence object of a binding's namespace, ordered by epoch. Keys under the fence directory that are
+   * not an epoch name are ignored. Two live versions of one epoch's key (a versioned store after a manual
+   * delete and re-create) are ambiguous and fail closed with `ROWS_INTEGRITY_FAILED`, as does a chain too
+   * long to be one this collector wrote (it prunes to two objects). `tolerant` is for a takeover, which must
+   * be able to supersede a damaged chain: every version of every epoch is returned (so it can all be removed) and
+   * the page bound is wider.
+   *
+   * @internal
+   */
+  async listCollectorFence(
+    bindingId: string,
+    signal?: AbortSignal,
+    options: { tolerant?: boolean } = {}
+  ): Promise<OrphanFenceEntry[]> {
+    const { directory } = await this.collectorFenceLocation(bindingId);
+    const binding = this.bindings[bindingId] as ReportingObjectRowBindingV1;
+    const provider = this.providers[binding.provider]!;
+    const ownedPrefix = `${binding.prefix}/${this.installation!.namespaceKey}/`;
+    const entries = new Map<number, OrphanFenceEntry>();
+    const versions: OrphanFenceEntry[] = [];
+    const pageSize = 50;
+    let token: string | undefined;
+    for (let page = 0; ; page += 1) {
+      if (page >= (options.tolerant ? 200 : 20)) {
+        throw new ReportingRowStoreError(
+          'ROWS_INTEGRITY_FAILED',
+          'the collector fence directory holds too many objects'
+        );
+      }
+      const context = { signal: deadlineSignal(this.readDeadline, signal) };
+      const listed = await this.provider(() =>
+        provider.list!(
+          {
+            ...providerLocation(binding),
+            prefix: directory,
+            pageSize,
+            ...(token !== undefined ? { pageToken: token } : {}),
+          },
+          context
+        )
+      );
+      if (!listed || !Array.isArray(listed.objects) || listed.objects.length > pageSize) {
+        throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'provider returned an invalid listing');
+      }
+      for (const object of listed.objects) {
+        if (!object || typeof object.objectRef !== 'string' || typeof object.nativeVersionRef !== 'string') continue;
+        if (
+          object.nativeVersionRef.length < 1 ||
+          object.nativeVersionRef.length > REPORTING_ROW_NATIVE_VERSION_REF_MAX_LENGTH
+        ) {
+          continue;
+        }
+        const epoch = orphanFenceEpochOfKey(ownedPrefix, object.objectRef);
+        if (epoch === undefined || object.objectRef !== orphanFenceKey(ownedPrefix, epoch)) continue;
+        if (options.tolerant)
+          versions.push({ epoch, objectRef: object.objectRef, nativeVersionRef: object.nativeVersionRef });
+        if (entries.has(epoch)) {
+          if (options.tolerant) continue;
+          throw new ReportingRowStoreError(
+            'ROWS_INTEGRITY_FAILED',
+            'the collector fence holds two versions of one epoch'
+          );
+        }
+        entries.set(epoch, { epoch, objectRef: object.objectRef, nativeVersionRef: object.nativeVersionRef });
+      }
+      if (listed.nextPageToken === undefined) break;
+      if (typeof listed.nextPageToken !== 'string' || listed.nextPageToken === '' || listed.nextPageToken === token) {
+        throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'provider returned an invalid page token');
+      }
+      token = listed.nextPageToken;
+    }
+    return (options.tolerant ? versions : [...entries.values()]).sort((a, b) => a.epoch - b.epoch);
+  }
+
+  /**
+   * Read and verify one fence object. A missing version is `PROVIDER_UNAVAILABLE` (it was listed a moment ago,
+   * so this is a race to retry); content that is not exactly a fence of this namespace and epoch is
+   * `ROWS_INTEGRITY_FAILED`.
+   *
+   * @internal
+   */
+  async readCollectorFence(
+    bindingId: string,
+    entry: OrphanFenceEntry,
+    signal?: AbortSignal
+  ): Promise<OrphanFenceRecord> {
+    await this.ready();
+    const binding = this.bindings[bindingId];
+    if (!binding || binding.kind !== 'object') {
+      throw new ReportingRowStoreError('STATE_UNAVAILABLE', `row binding ${bindingId} is not configured for objects`);
+    }
+    const provider = this.providers[binding.provider]!;
+    let bytes: Uint8Array | null;
+    try {
+      bytes = await this.provider(() =>
+        provider.get(
+          {
+            ...providerLocation(binding),
+            objectRef: entry.objectRef,
+            nativeVersionRef: entry.nativeVersionRef,
+            maxBytes: ORPHAN_FENCE_MAX_BYTES,
+          },
+          { signal: deadlineSignal(this.readDeadline, signal) }
+        )
+      );
+    } catch (error) {
+      // An object over the read cap is the same finding as bad content.
+      if (isReportingRowStoreError(error) && error.code === 'ROWS_INTEGRITY_FAILED') {
+        throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'the collector fence object is malformed');
+      }
+      throw error;
+    }
+    if (bytes === null) {
+      throw new ReportingRowStoreError(
+        'PROVIDER_UNAVAILABLE',
+        'a collector fence object disappeared while it was read'
+      );
+    }
+    const record = parseOrphanFenceRecord(bytes, {
+      namespaceKey: this.installation!.namespaceKey,
+      epoch: entry.epoch,
+    });
+    if (!record) {
+      throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'the collector fence object is malformed');
+    }
+    return record;
+  }
+
+  /**
+   * Create-only write of one epoch's fence object. When the key is taken, returns the record already there
+   * (verified), so the caller can tell its own earlier write from another database's claim.
+   *
+   * @internal
+   */
+  async putCollectorFence(
+    bindingId: string,
+    record: OrphanFenceRecord,
+    signal?: AbortSignal
+  ): Promise<{ created: boolean; record: OrphanFenceRecord }> {
+    await this.ready();
+    const binding = this.bindings[bindingId];
+    if (!binding || binding.kind !== 'object') {
+      throw new ReportingRowStoreError('STATE_UNAVAILABLE', `row binding ${bindingId} is not configured for objects`);
+    }
+    const provider = this.providers[binding.provider]!;
+    const { namespaceKey, installationId } = this.installation!;
+    const objectRef = orphanFenceKey(`${binding.prefix}/${namespaceKey}/`, record.epoch);
+    const put = await this.provider(() =>
+      provider.putIfAbsent(
+        {
+          ...providerLocation(binding),
+          objectRef,
+          bytes: encodeOrphanFenceRecord(namespaceKey, record),
+          contentType: 'application/x-ndjson',
+          metadata: { 'adcp-installation': installationId, 'adcp-collector-fence': String(record.epoch) },
+        },
+        { signal: deadlineSignal(this.writeDeadline, signal) }
+      )
+    );
+    assertNativeVersionRef(put?.nativeVersionRef);
+    if (put.created) return { created: true, record };
+    return {
+      created: false,
+      record: await this.readCollectorFence(
+        bindingId,
+        { epoch: record.epoch, objectRef, nativeVersionRef: put.nativeVersionRef },
+        signal
+      ),
+    };
+  }
+
+  /**
+   * Delete superseded fence objects. Best effort: a failure leaves a stale object that the next claim prunes.
+   *
+   * @internal
+   */
+  async deleteCollectorFence(
+    bindingId: string,
+    entries: readonly OrphanFenceEntry[],
+    signal?: AbortSignal
+  ): Promise<void> {
+    await this.ready();
+    const binding = this.bindings[bindingId];
+    if (!binding || binding.kind !== 'object') return;
+    const provider = this.providers[binding.provider]!;
+    for (const entry of entries) {
+      signal?.throwIfAborted();
+      try {
+        await this.provider(() =>
+          provider.delete(
+            { ...providerLocation(binding), objectRef: entry.objectRef, nativeVersionRef: entry.nativeVersionRef },
+            { signal: deadlineSignal(this.writeDeadline, signal) }
+          )
+        );
+      } catch {
+        signal?.throwIfAborted();
+      }
+    }
   }
 
   /** Probe the schema and every provider, and register (or verify) every configured binding. Idempotent. */

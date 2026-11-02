@@ -438,3 +438,26 @@ export async function probeReportingRowStorageSchemaV1(pool: QueryablePoolV1): P
   if (!installationId) throw new Error('Reporting row storage installation identity is missing');
   return { installationId };
 }
+
+/**
+ * The orphan collector's ownership fence (adcontextprotocol/adcp-client#3292): one row per fence, recording the
+ * `(epoch, token)` this database last claimed in the object store. A collector deletes only while the object
+ * store's highest fence epoch is exactly the claim recorded here, so a clone or restore of this database that
+ * the original has since out-claimed refuses to delete. Applied as migration `0009`. Idempotent.
+ *
+ * Until it is applied, `collectOrphanedRowObjects` reports every binding as fenced with cause
+ * `migration_required` (a `dryRun` included) and deletes nothing.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export const REPORTING_ORPHAN_FENCE_MIGRATION = `
+CREATE TABLE IF NOT EXISTS adcp_reporting_orphan_collector_fences (
+  fence_scope TEXT COLLATE "C" PRIMARY KEY CHECK (fence_scope ~ '^[0-9a-f]{64}$'),
+  epoch BIGINT NOT NULL CHECK (epoch >= 1),
+  token TEXT COLLATE "C" NOT NULL
+    CHECK (token ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
+  previous_token TEXT COLLATE "C"
+    CHECK (previous_token IS NULL OR previous_token ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
+  claimed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+`.trim();

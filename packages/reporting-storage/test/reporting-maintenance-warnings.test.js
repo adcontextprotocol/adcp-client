@@ -50,6 +50,7 @@ describe('orphan object collection task', () => {
     failed: 0,
     unsupported: [],
     skippedReadOnly: [],
+    fenced: [],
     candidates: [],
     cursors: {},
     completed: [],
@@ -135,6 +136,34 @@ describe('orphan object collection task', () => {
     );
     assert.deepEqual(orphanState.completed, [], 'a finished cycle starts the next one from scratch');
     assert.ok(orphanState.nextCycleAt > Date.now());
+  });
+
+  test('a fenced binding is a warning that names the cause and the takeover, and the cycle still rests', async () => {
+    const orphanState = { cursors: {} };
+    const fenced = async () =>
+      orphanResult({
+        fenced: ['objects'],
+        bindings: [
+          {
+            bindingId: 'objects',
+            status: 'fenced',
+            fence: {
+              cause: 'fence_advanced',
+              detail: 'another database has collected. call takeOverOrphanCollectorFence',
+              fenceEpoch: 3,
+              recordedEpoch: 1,
+            },
+          },
+        ],
+      });
+    const { task } = await runWith(fenced, {
+      orphanCollection: { enabled: true, acknowledgeExclusiveNamespace: true },
+      orphanState,
+    });
+    assert.match(task.partialFailure.message, /refused to delete for row binding objects/);
+    assert.match(task.partialFailure.message, /fence_advanced/);
+    assert.match(task.partialFailure.message, /takeOverOrphanCollectorFence/);
+    assert.ok(orphanState.nextCycleAt > Date.now(), 'a refusal is not retried every pass');
   });
 
   test('a failed binding keeps the task retrying every pass and names its cause; a rejected collector is a failed task', async () => {
