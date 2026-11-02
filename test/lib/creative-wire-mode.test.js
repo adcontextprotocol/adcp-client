@@ -303,7 +303,13 @@ describe('request-local 3.1 product creative wire evidence (#3312)', () => {
     assets: { image: { asset_type: 'image', url: 'https://cdn.example/ad.png', width: 300, height: 250 } },
   };
   const baseContainer = { package_id: 'pkg-1', format_options: [option] };
-  const request = { account: { account_id: 'account-1' }, idempotency_key: 'product-wire-001', creatives: [creative] };
+  // Keep transport-evidence tests in explicit assignment scope; library full-fit gates are covered separately.
+  const request = {
+    account: { account_id: 'account-1' },
+    idempotency_key: 'product-wire-001',
+    creatives: [creative],
+    assignments: [{ creative_id: 'c1', package_id: 'pkg-1' }],
+  };
 
   // The public MCP integration suite exercises how discovery installs this proof.
   // These unit fixtures model a verified seller response in this client's scope.
@@ -505,6 +511,23 @@ describe('request-local 3.1 product creative wire evidence (#3312)', () => {
       assert.equal(captured.creatives[0].format_id.id, formatId.id);
       assert.equal(captured.creatives[0].format_kind, undefined);
     }
+  });
+
+  test('library evidence uses the configured wire release rather than an older schema pin', async () => {
+    const client = new SingleAgentClient(AGENT, { adcpVersion: '3.0', wireAdcpVersion: '3.1' });
+    prime(client, { adcp: { major_versions: [3], supported_versions: ['3.1'] } });
+    const container = structuredClone(baseContainer);
+    container.format_options[0].technical_requirements_complete = true;
+    markSellerContainer(client, container);
+    const input = { ...request, creatives: [{ ...creative, assets: { image_main: creative.assets.image } }] };
+    delete input.assignments;
+    let captured;
+    client.executeAndHandle = async (_task, _handler, params) => {
+      captured = params;
+      return { success: true, status: 'completed', data: {} };
+    };
+    await client.syncCreatives(input, undefined, { creativeFormatProjection: { selectorContainers: [container] } });
+    assert.deepEqual(captured.creatives[0], input.creatives[0]);
   });
 
   test('required slots and size ranges can establish support without an option pin', async () => {

@@ -47,7 +47,15 @@ const creativeFormatProjection = {
 };
 ```
 
-Use that object as the client's existing `creativeFormatProjection` option. This avoids a plan based on measurements that delivery never receives. Library-only creatives remain library upserts when request assignments refer to other creatives. With omitted or empty request assignments, supplied packages form the assignment scope.
+Use that object as the client's existing `creativeFormatProjection` option. This avoids a plan based on measurements that delivery never receives.
+
+An omitted or empty `assignments` list is a library sync, not an assignment to every supplied package. For each unassigned creative, sync evaluates the supplied package hints independently and chooses its wire representation from the packages with a positive `fits` verdict. Non-fitting and unresolved packages do not participate in that library wire decision. All applicable unscoped constraints still bind each candidate. If no candidate is proven to fit, or the fitting packages cannot share one wire representation, projection refuses with package diagnostics. It never drops a positively fitting package merely to find an easier wire shape.
+
+Explicit assignments retain the stricter rule: every targeted package participates. Positive `assignment_operations` (`assign`, `replace`, and `merge`) also identify targets; `unassign` does not assign the removed creative. Authored assignment fields are preserved. Bare package IDs synthesized for other creatives' assignments do not create a new library fit requirement without an actual routing catalog.
+
+Public `fitCreativeToPackages(creative, packages, options)` remains a strict plan for the full supplied target set. Its per-package report helps callers select targets; call it again with those chosen targets to plan an assignment. Its shared wire decision can therefore refuse a mixed package set while an unassigned library sync succeeds using only that creative's fitting subset. Both paths use the same facts and fit checks with different wire scopes.
+
+On a 3.1 peer, native seller declarations can establish canonical wire support for a library upload only through a positively fitting package. The evidence check uses the same measurements, routing callbacks and applicable layers as projection. A rejected native package cannot lend canonical evidence to a fitting legacy-only route. Product evidence remains scoped to the current request.
 
 For resolved VAST, `vastInlineCreatives` supplies linear creative groups and their `media_files`. Each linear group needs one complete MediaFile satisfying all declared requirements; facts from different files cannot be combined. MIME comparisons trim whitespace and ignore case. Missing facts remain unknown. This is not XML parsing or wrapper resolution. Player/placement dimensions are separate from encoded rendition dimensions; legacy shared-reference dimension reconciliation keeps its existing strict behavior. If a downgrade path cannot preserve a non-default image density or another reference parameter, it refuses instead of silently discarding the parameter. Adaptive bitrate envelope evidence and other unsupported constraints cannot establish full acceptance.
 

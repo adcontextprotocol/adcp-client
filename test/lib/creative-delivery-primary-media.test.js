@@ -19,7 +19,16 @@ const creative = (kind = 'image', asset = image()) => ({
   assets: { media: asset },
 });
 const sync = (input, selector = { format_ids: imageRefs }) =>
-  projectSyncCreativesForDelivery({ creatives: [input] }, [selector], 'legacy').creatives[0];
+  projectSyncCreativesForDelivery(
+    {
+      creatives: [input],
+      ...(selector.package_id && {
+        assignments: [{ creative_id: input.creative_id, package_id: selector.package_id }],
+      }),
+    },
+    [selector],
+    'legacy'
+  ).creatives[0];
 
 const cases = [
   ['image dimensions', 'image', image(), imageRefs],

@@ -364,6 +364,7 @@ import {
   CreativeFormatCapabilityError,
   CreativeFormatProjectionError,
   canUseProductOptionsForCreativeWire,
+  fitCreativeToPackages,
   projectMediaBuyCreativesForDelivery,
   projectCreativeForDelivery,
   projectSyncCreativesForDelivery,
@@ -2637,7 +2638,7 @@ export class SingleAgentClient {
         ? event => config.onTransportActivity!(canonicalCreativeTransportActivity(event))
         : undefined,
       governance: config.governance,
-      adcpVersion: this.resolvedAdcpVersion,
+      adcpVersion: this.config.wireAdcpVersion ?? this.resolvedAdcpVersion,
       ...(config.wireAdcpVersion !== undefined && { wireAdcpVersion: config.wireAdcpVersion }),
       ...(config.versionEnvelope !== undefined && { versionEnvelope: config.versionEnvelope }),
       transport: config.transport,
@@ -8659,7 +8660,11 @@ export class SingleAgentClient {
       : [];
     const selectorContainers = [...configuredSelectorContainers, ...assignmentPackageContainers];
     const wireMode = await this.resolveCreativeWireMode('sync_creatives', taskOptions, true, () =>
-      this.productOptionsSupportCanonicalWire('sync_creatives', params, selectorContainers, options)
+      this.productOptionsSupportCanonicalWire('sync_creatives', params, selectorContainers, {
+        ...options,
+        legacyFormatConverter: effectiveLegacyFormatConverter,
+        canonicalFormatLegacyResolver: effectiveCanonicalFormatLegacyResolver,
+      })
     );
     const wireParams = this.projectUndeclaredFormatOptions(
       projectSyncCreativesForDelivery(
@@ -8790,7 +8795,12 @@ export class SingleAgentClient {
     taskType: 'sync_creatives' | 'create_media_buy' | 'update_media_buy',
     request: unknown,
     selectorContainers: readonly CreativeFormatSelectorContainer[] = [],
-    options?: CreativeDeliveryTaskOptions
+    options?: CreativeDeliveryTaskOptions & {
+      creativeFormatProjection?: Pick<
+        SyncCreativeFormatProjection,
+        'legacyFormatDefinitions' | 'creativeFacts' | 'playerSizedRefs'
+      >;
+    }
   ): boolean {
     if (!isPlainRecord(request) || this.usesScopedDiscoveryTransport(options)) return false;
     const scopeKey = this.getCapabilityEvidenceScope().scopeKey;
@@ -8885,10 +8895,28 @@ export class SingleAgentClient {
       if (!Array.isArray(request.creatives) || request.creatives.length === 0) return false;
       const creatives = request.creatives;
       const assignments = Array.isArray(request.assignments) ? request.assignments : [];
+      const operations = Array.isArray(request.assignment_operations) ? request.assignment_operations : [];
+      if (
+        (request.assignments !== undefined && !Array.isArray(request.assignments)) ||
+        (request.assignment_operations !== undefined && !Array.isArray(request.assignment_operations)) ||
+        operations.some(
+          value =>
+            !isPlainRecord(value) ||
+            typeof value.operation !== 'string' ||
+            !['assign', 'unassign', 'replace', 'merge'].includes(value.operation) ||
+            typeof value.creative_id !== 'string' ||
+            typeof value.package_id !== 'string'
+        )
+      )
+        return false;
+      const targets = [
+        ...assignments,
+        ...operations.filter(value => isPlainRecord(value) && value.operation !== 'unassign'),
+      ];
       // Existing creatives have no manifest here to compare against the seller's
       // declarations. They cannot borrow evidence from another uploaded creative.
       if (
-        !assignments.every(
+        !targets.every(
           value =>
             isPlainRecord(value) &&
             typeof value.package_id === 'string' &&
@@ -8900,7 +8928,7 @@ export class SingleAgentClient {
       return creatives.every(creative => {
         if (!isPlainRecord(creative)) return false;
         const assigned = new Set(
-          assignments.flatMap(value =>
+          targets.flatMap(value =>
             isPlainRecord(value) && value.creative_id === creative.creative_id && typeof value.package_id === 'string'
               ? [value.package_id]
               : []
@@ -8910,8 +8938,42 @@ export class SingleAgentClient {
           assigned.size === 0
             ? selectorContainers
             : selectorContainers.filter(
-                container => typeof container.package_id === 'string' && assigned.has(container.package_id)
+                container => typeof container.package_id !== 'string' || assigned.has(container.package_id)
               );
+        if (assigned.size === 0) {
+          // A library upload needs request-scoped seller evidence for one
+          // applicable package, rather than acceptance by unrelated sizes.
+          // Repeated package layers and unscoped restrictions still bind.
+          const groups = new Map<string, CreativeFormatSelectorContainer[]>();
+          for (const container of relevant) {
+            if (typeof container.package_id !== 'string') continue;
+            const group = groups.get(container.package_id) ?? [];
+            group.push(container);
+            groups.set(container.package_id, group);
+          }
+          if (groups.size > 0) {
+            const fitting = new Set(
+              fitCreativeToPackages(creative as unknown as import('../types/tools.generated').CreativeAsset, relevant, {
+                adcpVersion: this.resolvedAdcpVersion,
+                wireMode: 'canonical',
+                legacyFormatConverter: options?.legacyFormatConverter,
+                canonicalFormatLegacyResolver: options?.canonicalFormatLegacyResolver,
+                legacyFormatDefinitions: options?.creativeFormatProjection?.legacyFormatDefinitions,
+                ...options?.creativeFormatProjection?.creativeFacts?.[String(creative.creative_id)],
+              })
+                .perPackage.filter(entry => entry.verdict === 'fits')
+                .map(entry => entry.package_id)
+            );
+            return (
+              relevant
+                .filter(container => typeof container.package_id !== 'string')
+                .every(container => accepts(container, creative)) &&
+              [...groups].some(
+                ([id, group]) => fitting.has(id) && group.every(container => accepts(container, creative))
+              )
+            );
+          }
+        }
         return (
           relevant.length > 0 &&
           [...assigned].every(id => relevant.some(container => container.package_id === id)) &&

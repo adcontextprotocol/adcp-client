@@ -1055,85 +1055,71 @@ describe('legacy format_id reconciliation by constraint satisfaction (#3506)', (
     });
   });
 
+  // #3570 corrects #3562: these are library hints, not implicit assignments.
   for (const assignments of [undefined, []]) {
     const label = assignments === undefined ? 'omitted' : 'empty';
-    for (const mode of ['legacy', 'unknown']) {
-      test(`${label} assignments reconcile every supplied package on ${mode} wire`, () => {
+    for (const mode of ['legacy', 'unknown', 'canonical']) {
+      test(`${label} assignments refuse when every supplied package remains unproven on ${mode} wire`, () => {
         const selectors = twelvePackages();
         const input = { creatives: [unsizedCreative()], ...(assignments && { assignments }) };
-        const before = structuredClone({ input, selectors });
-        for (const ordered of [selectors, [...selectors].reverse()]) {
-          const result = project(input, ordered, undefined, mode);
-          assert.deepEqual(result.creatives[0].format_id, {
-            agent_url: OWNER,
-            id: 'video_vast',
-            width: 940,
-            height: 529,
-          });
-          assert.equal(Object.hasOwn(result, 'assignments'), assignments !== undefined);
-          assert.deepEqual(result.assignments, assignments);
-        }
-        assert.deepEqual({ input, selectors }, before);
+        assert.throws(
+          () => project(input, selectors, undefined, mode),
+          error => {
+            assert.ok(error instanceof CreativeFormatProjectionError);
+            assert.match(error.message, /no supplied package is proven to fit/);
+            assert.equal(error.details.package_refs.length, selectors.length);
+            return true;
+          }
+        );
       });
     }
-    test(`${label} assignments report package conflicts instead of pooling their references`, () => {
+    test(`${label} assignments retain every positively fitting player's legacy wire constraints`, () => {
       const selectors = [vastPackage('A', { width: 940, height: 529 }), vastPackage('B', { width: 640, height: 360 })];
-      const input = { creatives: [unsizedCreative()], ...(assignments && { assignments }) };
-      const error = refusal(input, selectors);
+      for (const selector of selectors) selector.format_options[0].technical_requirements_complete = true;
+      const value = { ...unsizedCreative(), format_parameters: { duration_ms: 30000 } };
+      const error = refusal({ creatives: [value], ...(assignments && { assignments }) }, selectors);
       assert.equal(error.details.conflicts[0].constraint, 'size');
       assert.deepEqual(
         error.details.package_refs.map(entry => entry.package_id),
         ['A', 'B']
       );
     });
-    test(`${label} assignments refuse a creative that only fits one supplied package`, () => {
+    test(`${label} assignments select only the matching player when a creative supplies placement dimensions`, () => {
       const selectors = [vastPackage('A', { width: 640, height: 360 }), vastPackage('B', { width: 940, height: 529 })];
-      const value = { ...unsizedCreative(), format_parameters: { width: 640, height: 360 } };
+      for (const selector of selectors) selector.format_options[0].technical_requirements_complete = true;
+      const value = { ...unsizedCreative(), format_parameters: { width: 640, height: 360, duration_ms: 30000 } };
       const input = { creatives: [value], ...(assignments && { assignments }) };
-      const error = refusal(input, selectors);
-      assert.deepEqual(
-        error.details.package_refs.map(entry => entry.package_id),
-        ['A', 'B']
-      );
-      assert.match(error.details.package_refs[1].reason, /cannot select/);
-    });
-    test(`${label} assignments leave canonical wire unchanged`, () => {
-      const input = { creatives: [unsizedCreative()], ...(assignments && { assignments }) };
-      assert.equal(project(input, twelvePackages(), undefined, 'canonical'), input);
+      const output = project(input, selectors);
+      assert.deepEqual(output.creatives[0].format_id, selectors[0].format_ids[0]);
+      assert.equal(Object.hasOwn(output, 'assignments'), assignments !== undefined);
+      assert.deepEqual(output.assignments, assignments);
     });
     test(`${label} assignments preserve constraints from mixed package and product context`, () => {
       const productContext = vastPackage('product-only', { width: 640, height: 360 });
       delete productContext.package_id;
-      const selectors = [
-        vastPackage('A', { width: 940, height: 529 }),
-        vastPackage('B', { width: 940, height: 529 }),
-        productContext,
-      ];
-      const input = { creatives: [unsizedCreative()], ...(assignments && { assignments }) };
+      const selectors = [vastPackage('A', { width: 940, height: 529 }), productContext];
+      for (const selector of selectors) selector.format_options[0].technical_requirements_complete = true;
+      const input = {
+        creatives: [{ ...unsizedCreative(), format_parameters: { duration_ms: 30000 } }],
+        ...(assignments && { assignments }),
+      };
       assert.throws(() => project(input, selectors), CreativeFormatProjectionError);
     });
-    test(`${label} assignments enforce each package's legacy opt-out`, () => {
+    test(`${label} assignments still enforce a fitting package's legacy opt-out`, () => {
       const selectors = [vastPackage('A'), vastPackage('B')];
+      for (const selector of selectors) selector.format_options[0].technical_requirements_complete = true;
       selectors[1].format_options[0].canonical_formats_only = true;
-      const input = { creatives: [unsizedCreative()], ...(assignments && { assignments }) };
-      const error = refusal(input, selectors);
+      const value = { ...unsizedCreative(), format_parameters: { duration_ms: 30000 } };
+      const error = refusal({ creatives: [value], ...(assignments && { assignments }) }, selectors);
       assert.match(error.details.package_refs.find(entry => entry.package_id === 'B').reason, /forbids legacy/);
-    });
-    test(`${label} assignments enforce a creative's pinned option on every package`, () => {
-      const selectors = [vastPackage('A'), vastPackage('B')];
-      selectors[0].format_options[0].format_option_id = 'selected';
-      selectors[1].format_options[0].format_option_id = 'other';
-      const value = { ...unsizedCreative(), format_option_ref: { scope: 'product', format_option_id: 'selected' } };
-      const input = { creatives: [value], ...(assignments && { assignments }) };
-      const error = refusal(input, selectors);
-      assert.match(error.details.package_refs.find(entry => entry.package_id === 'B').reason, /selected/);
     });
   }
 
   test('assignments for another creative do not implicitly assign a library-only creative', () => {
     const selectors = [vastPackage('A', { width: 640, height: 360 }), vastPackage('B', { width: 940, height: 529 })];
+    for (const selector of selectors) selector.format_options[0].technical_requirements_complete = true;
     const input = {
-      creatives: [{ ...unsizedCreative(), format_parameters: { width: 640, height: 360 } }],
+      creatives: [{ ...unsizedCreative(), format_parameters: { width: 640, height: 360, duration_ms: 30000 } }],
       assignments: [{ creative_id: 'another-creative', package_id: 'B' }],
     };
     const result = project(input, selectors);
