@@ -158,6 +158,11 @@ export type FeedResponse = Omit<GeneratedFeedResponse, 'events'> & {
  */
 export interface ResolvedBrand extends Omit<GeneratedResolvedBrand, 'parent_brand'> {
   parent_brand?: string;
+  /** Complete selected brand.json entry from the response's winning identity source.
+   * Absent on older registries or when a unique entry is unavailable; never
+   * infer a brand/house authorization relationship from this convenience field.
+   */
+  brand?: Record<string, unknown>;
   /**
    * @deprecated Legacy caller-facing trust tier from registry versions before
    * `source` and `relationship_trust`. Modern registry responses may omit
