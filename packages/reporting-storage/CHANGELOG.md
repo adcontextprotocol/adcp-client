@@ -2,6 +2,8 @@
 
 ## 0.3.0-beta.5
 
+This release accompanies SDK `17.0.0-beta.15`; its `^17.0.0-beta.14` peer range accepts that version. SDK beta.14 was not published.
+
 ### Patch Changes
 
 - c238cb4: BigQuery warehouse sink (experimental): the per-revision metadata load and the `current_rows` dependency on it are now part of the documented sink contract, and `revisionsTableId` is checked to be a string (#3285).
