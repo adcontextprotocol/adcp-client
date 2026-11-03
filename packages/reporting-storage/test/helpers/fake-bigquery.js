@@ -55,6 +55,8 @@ function createFakeBigQuery({
     droppedLoadFields: [], // { jobId, fields } the service ignored inside configuration.load
     cancels: [], // { jobId, projectId, location } for every job().cancel()
   };
+  // Queued faults for `failNextLoad(tableId, how)`, consumed by the next submission to that table.
+  const loadFailures = [];
   // Fields BigQuery defines on JobConfiguration, not on JobConfigurationLoad.
   const JOB_LEVEL_FIELDS = ['labels', 'jobTimeoutMs'];
 
@@ -100,6 +102,23 @@ function createFakeBigQuery({
           const jobKey = `${owner}/${metadata.jobId}`;
           state.loadOptions.push({ tableId, options: structuredClone(metadata) });
           if (state.jobs.has(jobKey)) throw apiError(409, `Already Exists: Job ${jobKey}`);
+          const failure = loadFailures.findIndex(entry => entry.tableId === tableId);
+          if (failure >= 0) {
+            const [{ how }] = loadFailures.splice(failure, 1);
+            // A lost response: the job was never created, so a later run uploads it.
+            if (how === 'network') throw new Error('socket hang up');
+            // A load that BigQuery ran and rejected (for example a column the table lacks): the job exists, DONE
+            // with an error, and landed nothing.
+            const errorResult = { reason: 'invalid', message: 'no such field' };
+            state.jobs.set(jobKey, {
+              jobReference: { jobId: metadata.jobId, projectId: owner, location: options.location },
+              status: { state: 'DONE', errorResult, errors: [errorResult] },
+              configuration: { load: { destinationTable: { projectId: project, datasetId, tableId } } },
+              _lines: [],
+              _tableKey: tableKey,
+            });
+            throw Object.assign(new Error('Job failed'), { errors: [errorResult] });
+          }
           const lines = contents
             .split('\n')
             .filter(Boolean)
@@ -272,6 +291,10 @@ function createFakeBigQuery({
     dataset,
     job,
     query,
+    /** Make the next load to `tableId` fail: `network` loses it before a job exists, `job` runs it and rejects it. */
+    failNextLoad(tableId, how) {
+      loadFailures.push({ tableId, how });
+    },
   };
 }
 

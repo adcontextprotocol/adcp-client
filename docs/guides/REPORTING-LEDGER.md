@@ -1309,6 +1309,73 @@ setInterval(() => {
 }, 15 * 60_000);
 ```
 
+#### The two-table contract
+
+The sink writes two tables, and the second is part of its contract. The rows
+table holds the report rows. The **revisions table** holds one metadata line per
+revision: `reporting_revision_id`, `reporting_obligation_id`, `account_id`,
+`revision_number`, `finality`, `period_date`, `supersedes_reporting_revision_id`,
+`period_start`, `period_end`, `source_timezone`, `observed_at`, `data_through`,
+`revision_content_sha256`, `row_count` and `control_totals`. The reference DDL
+(`sink.defaultTablesSql`) declares exactly these columns, and a test pins the
+DDL to what the sink loads. The `current_rows` view picks each obligation's
+current revision from the revisions table, so the rows table alone cannot tell
+you which revision is current.
+
+- **The revisions table is required.** `revisionsTableId` has no default and no
+  way to turn it off, and the sink refuses to start without it. A custom table
+  must keep every column above: the load sets no schema and no
+  `ignoreUnknownValues`, so a missing column fails the revisions job (and only
+  that job: the rows job ran first and has already landed).
+- **Load order.** Each batch loads the rows table first, then the revisions table,
+  as two separate load jobs. BigQuery has no transaction across tables. The
+  cursor advances only after both jobs have finished cleanly.
+- **Visibility.** A revision's rows can be visible in the rows table before its
+  metadata is in the revisions table: between the two jobs of a batch, and for as
+  long as the revisions load keeps failing. `current_rows` shows only revisions
+  whose metadata has loaded. While a newer revision's metadata is pending, each
+  affected obligation keeps showing its previous revision, and an obligation
+  whose first revision is pending shows nothing. The reverse does not happen: a
+  revisions row implies its rows landed, because the rows job finished before the
+  revisions job was submitted. Read the two tables in one query (the view does),
+  or read the revisions table first.
+- **What to query.** For current figures, query `current_rows`. For revision
+  history and audit, query the revisions table and join it to the rows table on
+  `reporting_revision_id`. Do not sum the rows table alone: it holds every loaded
+  revision, and cumulative snapshots double-count. To alert on metadata that is
+  lagging, look for rows with no revisions row:
+
+  ```sql
+  SELECT DISTINCT r.reporting_revision_id
+    FROM `analytics-prod.reporting.media_buy_delivery_rows` AS r
+    LEFT JOIN `analytics-prod.reporting.media_buy_delivery_revisions` AS v USING (reporting_revision_id)
+   WHERE v.reporting_revision_id IS NULL
+  ```
+
+  A non-empty result for a few minutes is the window between the two jobs. One
+  that persists means the revisions load is failing.
+- **Recovery when the revisions load fails.** The batch plan stays in PostgreSQL
+  and the cursor does not move, so nothing is lost and nothing needs editing by
+  hand. The next `runOnce()` finds the rows job by its ID, accepts it as loaded
+  and does not upload it again, then retries only the revisions job. A network
+  error or timeout retries under the same job ID (BigQuery may have created the
+  job, and the sink looks it up before it uploads). A job BigQuery ran and
+  rejected is retried under a new attempt suffix: the run that sees the failed
+  job advances the attempt and rejects, and the next run submits it. A load job
+  is atomic, so a failed one lands nothing and the rows are never duplicated.
+  Fix the cause (usually a column the revisions table lacks), keep running, and
+  `current_rows` catches up on its own. Do not insert or delete warehouse rows to
+  repair it, and do not `reset()`: a reset reloads the history and duplicates it
+  unless you empty the tables first. If the failure outlasts `maxFeedHoldDays`,
+  change retention stops waiting for the sink and `runOnce()` reports the retired
+  revisions as `missing`.
+- **Why the loader is custom.** The alternative is an Iceberg or Delta Lake table
+  behind the object-storage interface, which BigQuery reads as an external table.
+  That path carries no revisions table and no `current_rows` view, so an adopter
+  who takes it owns the leaf-revision query.
+
+#### How a run loads
+
 - Each run follows the change feed and reads every revision's rows through the
   store's verified reader. It loads rows first and revision metadata second,
   in one load job per table per tick. The sink always adds
@@ -1445,7 +1512,8 @@ setInterval(() => {
   Do not discard the plan automatically: its load jobs may have succeeded.
 - Query `current_rows`, not the raw rows table. Pacing snapshots are
   cumulative, so summing across revisions double-counts. The view keeps each
-  obligation's current revision.
+  obligation's current revision, read from the revisions table (see
+  "The two-table contract" above for what is visible while that table lags).
 - The sink registers as a change-feed consumer, so `pruneChanges` keeps changes
   it has not loaded yet, and `retireExpiredPeriods` keeps the periods it has not
   loaded yet, in both cases only while its cursor was saved within

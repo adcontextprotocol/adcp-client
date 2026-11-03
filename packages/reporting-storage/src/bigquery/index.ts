@@ -41,6 +41,46 @@ import { reportingPeriodDate } from '@adcp/sdk/reporting/ledger';
  * ID: the sink grows that table's deadline instead (persisted with the plan).
  * Concurrent runs claim one durable plan with compare-and-swap. Replays of
  * that plan share job IDs; stale runs cannot change its attempts or cursor.
+ *
+ * Two tables, in this order (the sink contract):
+ *
+ * 1. **Load order.** Each batch loads the rows table first, then the revisions table, as two separate
+ *    load jobs with their own deterministic job IDs. BigQuery has no transaction across tables.
+ *    The cursor advances only after both jobs have finished cleanly.
+ * 2. **The revisions table is required**, not an optional extra. It holds one metadata line per
+ *    revision: `reporting_revision_id`, `reporting_obligation_id`, `account_id`, `revision_number`,
+ *    `finality`, `period_date`, `supersedes_reporting_revision_id`, `period_start`, `period_end`,
+ *    `source_timezone`, `observed_at`, `data_through`, `revision_content_sha256`, `row_count` and
+ *    `control_totals` (the reference DDL, `defaultTablesSql`, names exactly these). The loads set no
+ *    schema and no `ignoreUnknownValues`, so a custom table must accept every one of these columns:
+ *    a missing column fails the revisions job, never the rows job that ran before it.
+ * 3. **`current_rows` reads through the revisions table.** It joins the rows table to the highest
+ *    `revision_number` per obligation *in the revisions table* (an official revision is terminal, so the
+ *    highest number is the official one when it exists). A revision's rows with no revisions row are not in
+ *    `current_rows`.
+ * 4. **Visibility.** Rows can be visible in the rows table before their revision metadata: between the two
+ *    jobs of a batch, and for as long as the revisions load keeps failing. `current_rows` then still shows
+ *    each affected obligation's previous revision (or nothing, for an obligation whose first revision has
+ *    not landed). The reverse never happens: a revisions row implies its rows landed, because the rows job
+ *    finished before the revisions job was submitted. Read the two tables in one query (the view), or read
+ *    the revisions table first.
+ * 5. **What to query.** Current figures: `current_rows`. Revision history and audit: the revisions table,
+ *    joined to the rows table on `reporting_revision_id`. Never sum the rows table alone: it holds every
+ *    loaded revision, and cumulative snapshots double-count. Pending metadata, if you want to alert on it:
+ *    rows whose `reporting_revision_id` has no revisions row (anti-join the two tables).
+ * 6. **Recovery when the revisions load fails.** The batch plan stays in PostgreSQL and the cursor does not
+ *    move. The next `runOnce()` looks the rows job up by ID, accepts it as loaded and does not upload it
+ *    again, then retries only the revisions job: under the same job ID while that job is running or its
+ *    outcome is unknown (a network error or timeout), and under a new attempt suffix once BigQuery reports it
+ *    finished with an error (the run after that failure advances the attempt, the one after it submits).
+ *    A load job is atomic, so a failed one landed nothing and rows are never duplicated. Fix the cause (for
+ *    example add the missing column to the revisions table) and keep running; do not insert or delete rows
+ *    by hand. If the failure outlasts `max_feed_hold_days`, change retention stops waiting for the sink and
+ *    `runOnce()` reports the retired revisions as `missing`.
+ *
+ * The alternative is an Iceberg or Delta Lake table behind the object-storage interface, read by BigQuery as
+ * an external table. That carries neither the revisions table nor `current_rows`, so an adopter taking it
+ * owns the leaf-revision query.
  */
 
 /**
@@ -134,6 +174,12 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
   projectId?: string;
   datasetId: string;
   rowsTableId: string;
+  /**
+   * The per-revision metadata table. Required: every batch loads it after the rows table, and the
+   * `current_rows` view reads through it, so rows whose revision has no row here are not current. It must
+   * accept every column of the reference DDL (`defaultTablesSql`); the load sets no schema.
+   * See the sink contract on {@link createBigQueryReportingWarehouseSinkV1}.
+   */
   revisionsTableId: string;
   /**
    * Dataset location. When omitted, the first `runOnce()` reads and caches it from dataset metadata
@@ -193,8 +239,9 @@ export interface CreateBigQueryReportingWarehouseSinkOptionsV1 {
  */
 export interface BigQueryReportingWarehouseSinkV1 {
   /**
-   * Load at most one batch. Resolves with what was loaded; `idle` when no
-   * revision changes were selected. Idle ticks can advance past other feed changes.
+   * Load at most one batch: the rows table, then the revisions table. Resolves with what was loaded; `idle` when no
+   * revision changes were selected. If the revisions load fails, the rows already landed stay (they are not in
+   * `current_rows` until their revisions row lands) and the next call retries only the revisions load. Idle ticks can advance past other feed changes.
    * An overlapping run that loses its plan or cursor claim rejects. Retry
    * `runOnce()` to resume the current durable plan or committed cursor.
    *
@@ -234,9 +281,15 @@ export interface BigQueryReportingWarehouseSinkV1 {
    * Resolves with whether a saved sink state existed.
    */
   reset(options?: { discardRetainedPlan?: boolean }): Promise<{ cleared: boolean }>;
-  /** DDL for the default rows and revisions tables (partitioned and clustered). */
+  /**
+   * DDL for the default rows and revisions tables (partitioned and clustered). A custom revisions table must
+   * keep every column this DDL declares, because the load names them all and sets no schema.
+   */
   readonly defaultTablesSql: string;
-  /** DDL for the reference `current_rows` view. */
+  /**
+   * DDL for the reference `current_rows` view: the rows of each obligation's highest-numbered revision in the
+   * revisions table. It returns no row for a revision whose metadata has not loaded.
+   */
   readonly currentRowsViewSql: string;
 }
 
@@ -249,6 +302,12 @@ const DATASET_OR_TABLE = /^[A-Za-z_][A-Za-z0-9_]{0,1023}$/;
 const NAME = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 /**
+ * Create the warehouse sink. Each `runOnce()` loads one batch into two tables, rows first and then the
+ * per-revision metadata in `revisionsTableId`; `current_rows` joins the two. Rows can be visible before their
+ * revision metadata, and `current_rows` shows only revisions whose metadata has loaded. The full contract
+ * (load order, visibility, what to query, recovery when the revisions load fails) is on the module doc above and
+ * in `docs/guides/REPORTING-LEDGER.md`.
+ *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function createBigQueryReportingWarehouseSinkV1(
@@ -266,7 +325,9 @@ export function createBigQueryReportingWarehouseSinkV1(
     ['rowsTableId', options.rowsTableId],
     ['revisionsTableId', options.revisionsTableId],
   ] as const) {
-    if (!DATASET_OR_TABLE.test(value)) throw new TypeError(`BigQuery ${label} is invalid`);
+    // A string check first: the regex alone accepts `undefined`, so an untyped caller that omitted the
+    // required revisions table would be sent to a table literally named "undefined".
+    if (typeof value !== 'string' || !DATASET_OR_TABLE.test(value)) throw new TypeError(`BigQuery ${label} is invalid`);
   }
   const loadTimeout = options.loadTimeoutMilliseconds ?? 600_000;
   if (!Number.isSafeInteger(loadTimeout) || loadTimeout < 1_000 || loadTimeout > MAX_LOAD_TIMEOUT) {
@@ -860,7 +921,9 @@ function qualified(tables: WarehouseTablesV1, table: string): string {
 }
 
 /**
- * DDL for the default warehouse tables: partitioned by period date, clustered by account and revision.
+ * DDL for the default warehouse tables: partitioned by period date, clustered by account and revision. The
+ * revisions table is part of the sink contract: its columns are exactly the metadata the sink loads for each
+ * revision, and a custom table must keep all of them.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
@@ -904,6 +967,12 @@ CLUSTER BY account_id, reporting_obligation_id;`.trim();
  * DDL for the reference `current_rows` view: only each obligation's current
  * revision (its official revision, otherwise its latest snapshot). Summing
  * cumulative snapshots across revisions double-counts; query this view.
+ *
+ * The view reads through the revisions table: "current" is the highest `revision_number` among the revisions
+ * rows that have loaded, and the rows table is filtered to that revision. A revision whose rows have landed
+ * but whose revisions row has not (the revisions load lags or is failing) is not current, so the obligation
+ * keeps showing its previous revision, or nothing if it has none. The sink loads a revision's rows before its
+ * revisions row, so the reverse (a current revision with missing rows) does not occur.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
