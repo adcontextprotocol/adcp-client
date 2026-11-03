@@ -339,6 +339,7 @@ export function owedSubscriptionPeriodsV1(input: OwedSubscriptionPeriodsInputV1)
   const chains = authorityChains(input.account.grants, input.status_retention_days);
   const timezones = timezoneTimeline(input.account.timezone, input.coverage?.timezone_cutovers);
   const removals = exceptionWindows(input.coverage);
+  const packageRemovals = packageExclusionWindows(input.coverage);
   const offeringsById = new Map<string, ReportingSubscriptionOfferingV1>();
   for (const offering of input.offerings) {
     if (offeringsById.has(offering.offering_id))
@@ -381,9 +382,13 @@ export function owedSubscriptionPeriodsV1(input: OwedSubscriptionPeriodsInputV1)
         const confirmedAt = Math.min(...resolved.packages.values());
         const owes = (start: number, end: number): boolean => {
           if (coveringRemoval(removals, buy.media_buy_id, offering.offering_id, start) !== undefined) return false;
+          // The packages resolving the offering that are owed the period (adcp#8718): at least one,
+          // and not all of them removed by one package_ids exception covering its start.
+          const owing = owingPackages(resolved, end);
+          if (owing.length === 0) return false;
+          if (packageRemoved(packageRemovals, buy.media_buy_id, offering.offering_id, start, owing)) return false;
           const flight = flightAt(flights, end);
           return (
-            packageOwed(resolved, end) &&
             flight.start < flight.stop && // an empty flight overlaps nothing
             start < flight.stop &&
             end > flight.start &&
@@ -483,13 +488,14 @@ function firstOwedBoundary(calendar: ReportingPeriodCalendarV1, handoff: number,
 }
 
 /**
- * The confirmation rule per package (adcp#8718): a period ending at `end` is owed when at least one
- * package resolving the offering is owed it, that is, `end` is after that package's own
- * confirmed_at (the buy's, or its later `added_at`).
+ * The confirmation rule per package (adcp#8718): the packages resolving the offering that are owed a
+ * period ending at `end`, those whose own confirmed_at (the buy's, or a later `added_at`) is before
+ * it. The buy owes the period when at least one is.
  */
-function packageOwed(resolved: ResolvedOffering, end: number): boolean {
-  for (const confirmedAt of resolved.packages.values()) if (end > confirmedAt) return true;
-  return false;
+function owingPackages(resolved: ResolvedOffering, end: number): string[] {
+  const owing: string[] = [];
+  for (const [id, confirmedAt] of resolved.packages) if (end > confirmedAt) owing.push(id);
+  return owing;
 }
 
 /**
@@ -823,6 +829,45 @@ interface ExceptionWindow extends Window {
   offeringId?: string;
 }
 
+/**
+ * `excluded[]` entries naming packages (`overridden`, `offering_unsupported`), as half-open windows.
+ * They remove packages from the buy's coverage, not periods: a period whose start one covers is
+ * removed only when the entry names every package that resolves the offering and is owed the period
+ * (adcp#8681, adcp#8718).
+ */
+function packageExclusionWindows(coverage: OwedSubscriptionPeriodsInputV1['coverage']): PackageExceptionWindow[] {
+  return (coverage?.excluded ?? [])
+    .filter(entry => entry.package_ids !== undefined)
+    .map(entry => ({
+      from: instant(entry.from, 'excluded.from'),
+      until: entry.until === undefined ? Number.POSITIVE_INFINITY : instant(entry.until, 'excluded.until'),
+      ...(entry.media_buy_id !== undefined ? { mediaBuyId: entry.media_buy_id } : {}),
+      ...(entry.offering_id !== undefined ? { offeringId: entry.offering_id } : {}),
+      packageIds: new Set(entry.package_ids),
+    }));
+}
+
+interface PackageExceptionWindow extends ExceptionWindow {
+  packageIds: ReadonlySet<string>;
+}
+
+function packageRemoved(
+  windows: readonly PackageExceptionWindow[],
+  mediaBuyId: string,
+  offeringId: string,
+  start: number,
+  owing: readonly string[]
+): boolean {
+  return windows.some(
+    window =>
+      (window.mediaBuyId === undefined || window.mediaBuyId === mediaBuyId) &&
+      (window.offeringId === undefined || window.offeringId === offeringId) &&
+      start >= window.from &&
+      start < window.until &&
+      owing.every(id => window.packageIds.has(id))
+  );
+}
+
 function exceptionWindows(coverage: OwedSubscriptionPeriodsInputV1['coverage']): ExceptionWindow[] {
   const windows: ExceptionWindow[] = [];
   for (const entry of coverage?.excluded ?? []) {
@@ -943,20 +988,22 @@ function buildRegimes(
     if (offering.withdrawn_at !== undefined) points.add(instant(offering.withdrawn_at, 'withdrawn_at'));
   }
   for (const cutover of timezones.cutovers) points.add(cutover.at);
-  // Package-level exceptions change which packages the buy resolves for (adcp#8619).
-  for (const window of packageExclusions(input.coverage, buy.media_buy_id)) {
-    points.add(window.from);
-    if (Number.isFinite(window.until)) points.add(window.until);
-  }
+  // Package-level exceptions are not resolution changes: they remove periods only when they name every
+  // package owed them (packageRemoved), so they never start a regime or hand periods over.
   const ordered = [...points].sort((left, right) => left - right);
   const regimes: Array<Regime | null> = [];
   // adcp#8619: membership edits (account_ids, exclude_account_ids) apply in place and the seller
-  // records them per account as excluded_by_buyer intervals. When such an entry is published, the
-  // intervals govern membership instead of the version's current lists, so periods that started
-  // before a removal stay owed.
-  const membershipByExceptions = (input.coverage?.excluded ?? []).some(
-    entry => entry.reason === 'excluded_by_buyer' && entry.media_buy_id === undefined
-  );
+  // records them per account as excluded_by_buyer intervals. For a version whose span such an entry
+  // overlaps, the intervals govern membership instead of the version's current lists, so periods
+  // that started before a removal stay owed (adcp#8681). Other versions keep their own lists.
+  const buyerExclusions = (input.coverage?.excluded ?? [])
+    .filter(entry => entry.reason === 'excluded_by_buyer')
+    .map(entry => ({
+      from: instant(entry.from, 'excluded.from'),
+      until: entry.until === undefined ? Number.POSITIVE_INFINITY : instant(entry.until, 'excluded.until'),
+    }));
+  const membershipEdited = (candidate: NormalizedVersion) =>
+    buyerExclusions.some(window => window.from < candidate.endsAt && window.until > candidate.acceptedAt);
   // The regime active before a deactivation, while the subscription stays inactive (adcp#8622).
   let pendingResume: { regime: Regime; at: number } | undefined;
   for (let index = 0; index < ordered.length; index += 1) {
@@ -970,7 +1017,7 @@ function buildRegimes(
     const inScope =
       configuration !== undefined &&
       reportingSubscriptionScopeIncludesV1(
-        membershipByExceptions
+        membershipEdited(version)
           ? {
               scope: { all_authorized_accounts: true },
               ...(configuration.operator_domains ? { operator_domains: configuration.operator_domains } : {}),
@@ -1044,13 +1091,7 @@ function resolveForBuy(
   calendars: Map<string, ReportingPeriodCalendarV1>
 ): ResolvedOffering[] {
   const packagesByOffering = new Map<string, Map<string, number>>();
-  const removed = packageExclusions(input.coverage, buy.media_buy_id).filter(
-    window => at >= window.from && at < window.until
-  );
   for (const pkg of buy.packages) {
-    // A package-level exception (overridden: another subscription of the caller owes it; or
-    // offering_unsupported) removes the package from the buy's coverage, not the buy's periods.
-    if (removed.some(window => window.packageIds.includes(pkg.package_id))) continue;
     // A package added after confirmation resolves from the start; it is owed only the periods that
     // end after its added_at, so adding it is never a cutover (adcp#8718).
     const confirmedAt = packageConfirmedAt(buy, pkg);

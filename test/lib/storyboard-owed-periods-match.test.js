@@ -130,7 +130,12 @@ describe('owed_periods_match', () => {
   test('the window starts at the later of the expected start and the capped retention bound', () => {
     const asOf = '2030-06-30T00:00:00.000Z';
     assert.deepEqual(
-      owedPeriodsWindowStart({ expectedStart: null, ledgerRetainedFrom: null, ledgerAsOf: asOf, statusRetentionDays: 7 }),
+      owedPeriodsWindowStart({
+        expectedStart: null,
+        ledgerRetainedFrom: null,
+        ledgerAsOf: asOf,
+        statusRetentionDays: 7,
+      }),
       { start: null, bound: null }
     );
     assert.deepEqual(

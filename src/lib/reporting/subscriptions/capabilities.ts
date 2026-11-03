@@ -159,8 +159,6 @@ export function checkReportingSubscriptionOfferingsV1(
 function declaresRequiredString(schema: unknown, name: string): boolean {
   const object = schema as { required?: unknown; properties?: Record<string, { type?: unknown } | undefined> } | null;
   return (
-    Array.isArray(object?.required) &&
-    object.required.includes(name) &&
-    object.properties?.[name]?.type === 'string'
+    Array.isArray(object?.required) && object.required.includes(name) && object.properties?.[name]?.type === 'string'
   );
 }

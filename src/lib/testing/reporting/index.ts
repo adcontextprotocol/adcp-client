@@ -446,7 +446,8 @@ export function createReportingTestKit(options: ReportingTestKitOptions): Report
   } = {};
   const callerOf = (ctx: { authInfo?: unknown }) => {
     const caller = (ctx.authInfo as { clientId?: string } | undefined)?.clientId;
-    if (!caller) throw new TestControllerError('INVALID_STATE', 'The probe acts on the caller’s own grant; authenticate.');
+    if (!caller)
+      throw new TestControllerError('INVALID_STATE', 'The probe acts on the caller’s own grant; authenticate.');
     return caller;
   };
   const seller = createReferenceReportingSeller({
@@ -545,7 +546,12 @@ export function createReportingTestKit(options: ReportingTestKitOptions): Report
     for (const [accountId, timezone] of changes.timezones) account(accountId).timezone = timezone;
     for (const [accountId, tasks] of changes.grants) {
       const current = account(accountId).grants.get(caller);
-      const same = tasks === null ? !current : current !== undefined && current !== null && JSON.stringify(current.allowed_tasks) === JSON.stringify(tasks);
+      const same =
+        tasks === null
+          ? !current
+          : current !== undefined &&
+            current !== null &&
+            JSON.stringify(current.allowed_tasks) === JSON.stringify(tasks);
       if (!same) await changeGrant(caller, accountId, tasks);
     }
     await runCycle();
@@ -827,7 +833,9 @@ export function createReportingTestKit(options: ReportingTestKitOptions): Report
         if (!found) throw new TypeError(`No buy ${JSON.stringify(mediaBuyId)} in the kit`);
         const packages = found.packages ?? [{ package_id: 'pkg-1' }];
         if (packages.some(item => item.package_id === pkg.package_id)) {
-          throw new TypeError(`Buy ${JSON.stringify(mediaBuyId)} already has package ${JSON.stringify(pkg.package_id)}`);
+          throw new TypeError(
+            `Buy ${JSON.stringify(mediaBuyId)} already has package ${JSON.stringify(pkg.package_id)}`
+          );
         }
         found.packages = [
           ...packages,

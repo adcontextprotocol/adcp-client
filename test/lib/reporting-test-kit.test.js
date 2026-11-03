@@ -94,7 +94,10 @@ describe('createReportingTestKit', () => {
 
   test('a package added after confirmation is owed from the period containing added_at, not as a cutover (adcp#8718)', async () => {
     const k = kit({
-      offerings: [offerings.dailyAnalytics({ offering_id: 'off_a' }), offerings.dailyAnalytics({ offering_id: 'off_b' })],
+      offerings: [
+        offerings.dailyAnalytics({ offering_id: 'off_a' }),
+        offerings.dailyAnalytics({ offering_id: 'off_b' }),
+      ],
       buys: [
         {
           media_buy_id: 'mb_1',
@@ -230,7 +233,11 @@ describe('comply_test_controller reporting_subscription_probe', () => {
     assert.equal(accounts.data.accounts.find(item => item.account_id === 'acc_a').timezone, 'Europe/Paris');
 
     // SetAccountTimezoneResult (adcp#8717): a call that changes nothing has no changed_at.
-    const same = await probe(buyer, { operation: 'set_account_timezone', account_id: 'acc_a', timezone: 'Europe/Paris' });
+    const same = await probe(buyer, {
+      operation: 'set_account_timezone',
+      account_id: 'acc_a',
+      timezone: 'Europe/Paris',
+    });
     assert.equal(same.data.simulated.previous_timezone, 'Europe/Paris');
     assert.equal('changed_at' in same.data.simulated, false);
     assert.deepEqual(same.data.simulated.timezone_cutovers, []);
