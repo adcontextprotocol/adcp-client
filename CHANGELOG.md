@@ -1,5 +1,60 @@
 # Changelog
 
+## 17.0.0-beta.15
+
+This beta also includes the changes listed under the unpublished `17.0.0-beta.14` entry below, including the shared legacy-format library-sync fix (#3609) and complete registry brand entries.
+
+### Major Changes
+
+- a52a31e: Breaking: default MCP controller registration (`registerTestController`,
+  `createComplyController().register`, and wrappers spreading `TOOL_INPUT_SHAPE`)
+  now requires `account: { sandbox: true, ...identity }`, matching AdCP 3.1 and later.
+  The account object preserves complete natural identity or an opaque account ID
+  through MCP parsing, so per-request store factories can resolve the seed scope.
+
+  All callers, including `list_scenarios` probes and AdCP 3.0 callers that previously
+  omitted the account, must add the sandbox assertion. The assertion is caller
+  intent; adopters must still authorize against persisted sandbox account state.
+  The SDK reporting doctor now sends it on its own scenario probe. This change
+  belongs to SDK 17 and must not be backported unchanged to the stable SDK 16 line.
+
+  The platform controller wrapper retains its existing optional-account compatibility
+  shape and trusted principal/target authorization gates, while accepting operator
+  unit, currency, and timezone. Public opaque AccountRefs remain `{ account_id }`;
+  only the controller carrier adds `sandbox: true`.
+
+### Minor Changes
+
+- a52a31e: Add native field_excludes negative membership checks and the intrinsic
+  field_excludes_runner requirement. Inspect every wildcard terminal without the
+  10,000-value collection cap so large catalogs cannot hide a prohibited value.
+  Empty results and additional matching products remain valid. Reject malformed
+  paths and unresolved comparator references instead of silently proving absence.
+
+### Patch Changes
+
+- a52a31e: Scope automatic product and pricing-option fixtures to the account used by the
+  storyboard's effective public requests, retaining complete natural identity or an
+  opaque account reference across ordinary, routed and fixture-resolution seeds.
+  Resolve run-brand overrides, context inputs, provisioning account aliases and
+  later timezone enrichment consistently; refuse ambiguous or unresolved account
+  scope. Independent account provisioning seeds retain their existing targets.
+  Include operator unit, currency and timezone in the server's natural-account seed
+  cache scope so one account cannot reuse another account's fixture cache entries.
+
+  Preserve provenance creative_policy.accepted_verifiers agent URLs when stripping
+  legacy creative-format identity, including URLs shared with a format provider.
+
+  Preserve complete account identity through the platform controller wrapper and
+  refuse catalog auto-seeds without a resolved account instead of reporting a
+  successful fixture write after dropping it.
+
+- 291ea7d: Preserve the authored create_media_buy brand when the storyboard runner has no
+  explicit run-brand override. The fixture-aware buyer enricher previously replaced
+  that brand with test.example even when the account correctly named the fixture's
+  advertiser, causing strict sellers to refuse an otherwise valid auction buy.
+  An explicit run-brand option continues to override the request and account together.
+
 ## 17.0.0-beta.14
 
 ### Minor Changes
