@@ -53,7 +53,8 @@ import { reportingPeriodDate } from '@adcp/sdk/reporting/ledger';
  *    `source_timezone`, `observed_at`, `data_through`, `revision_content_sha256`, `row_count` and
  *    `control_totals` (the reference DDL, `defaultTablesSql`, names exactly these). The loads set no
  *    schema and no `ignoreUnknownValues`, so a custom table must accept every one of these columns:
- *    a missing column fails the revisions job, never the rows job that ran before it.
+ *    a missing column fails the revisions job (the rows job ran first and, if its own table is right, has
+ *    landed), and so does a `NOT NULL` column the line leaves out.
  * 3. **`current_rows` reads through the revisions table.** It joins the rows table to the highest
  *    `revision_number` per obligation *in the revisions table* (an official revision is terminal, so the
  *    highest number is the official one when it exists). A revision's rows with no revisions row are not in
@@ -72,11 +73,13 @@ import { reportingPeriodDate } from '@adcp/sdk/reporting/ledger';
  *    move. The next `runOnce()` looks the rows job up by ID, accepts it as loaded and does not upload it
  *    again, then retries only the revisions job: under the same job ID while that job is running or its
  *    outcome is unknown (a network error or timeout), and under a new attempt suffix once BigQuery reports it
- *    finished with an error (the run after that failure advances the attempt, the one after it submits).
- *    A load job is atomic, so a failed one landed nothing and rows are never duplicated. Fix the cause (for
- *    example add the missing column to the revisions table) and keep running; do not insert or delete rows
- *    by hand. If the failure outlasts `max_feed_hold_days`, change retention stops waiting for the sink and
- *    `runOnce()` reports the retired revisions as `missing`.
+ *    finished with an error (the first run after that failure sees the failed job, advances the attempt and
+ *    rejects; the run after it submits). A load job is atomic, so a failed one landed nothing and rows are never
+ *    duplicated. Fix the cause (for example add the missing column to the revisions table) and keep running; do
+ *    not insert or delete rows by hand. If the failure outlasts `maxFeedHoldDays`, change retention stops
+ *    waiting for the sink: `runOnce()` then reports the retired revisions as `missing` and loads no metadata for
+ *    them, so rows already loaded for them stay in the rows table with no revisions row and never appear in
+ *    `current_rows`. Backfill their metadata or delete those rows by `reporting_revision_id`.
  *
  * The alternative is an Iceberg or Delta Lake table behind the object-storage interface, read by BigQuery as
  * an external table. That carries neither the revisions table nor `current_rows`, so an adopter taking it

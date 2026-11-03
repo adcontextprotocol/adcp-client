@@ -2507,7 +2507,11 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
               'MIN(reporting_revision_id) AS reporting_revision_id, COUNT(*) AS n ' +
               `FROM \`${PROJECT}.${DATASET}.current_rows\` GROUP BY reporting_obligation_id ORDER BY reporting_obligation_id`,
           })
-        )[0].map(row => [row.reporting_revision_id, Number(row.n)]);
+        )[0]
+          .map(row => [row.reporting_obligation_id, row.reporting_revision_id, Number(row.n)])
+          // The double lists an obligation whose current revision has no rows as a zero count; a GROUP BY over the real
+          // view returns no group for it, so only groups with rows count.
+          .filter(([, , n]) => n > 0);
       /** Revisions whose rows landed and whose metadata has not: the anti-join the docs suggest for alerting. */
       const pendingMetadata = () => {
         const loaded = new Set(revisionsTable().map(revision => revision.reporting_revision_id));
@@ -2521,11 +2525,14 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
     function ddlColumns(sql, tableId) {
       const body = new RegExp(`CREATE TABLE IF NOT EXISTS \`[^\`]*\\.${tableId}\` \\(([\\s\\S]*?)\\n\\)`).exec(sql);
       assert.ok(body, `the DDL creates ${tableId}`);
-      return body[1]
-        .split('\n')
-        .map(line => /^\s+(\w+) [A-Z0-9]+( NOT NULL)?,?$/.exec(line))
-        .filter(Boolean)
-        .map(match => ({ name: match[1], notNull: Boolean(match[2]) }));
+      const lines = body[1].split('\n').filter(line => line.trim());
+      const parsed = lines.map(line => /^\s+(\w+) [A-Z0-9]+( NOT NULL)?,?$/.exec(line));
+      // A column type this simple parser cannot read must fail the test, never vanish from the comparison.
+      assert.ok(
+        parsed.every(Boolean),
+        `every ${tableId} DDL line parses as "name TYPE [NOT NULL]": ${lines.join(' | ')}`
+      );
+      return parsed.map(match => ({ name: match[1], notNull: Boolean(match[2]) }));
     }
 
     test('the reference DDL and the metadata the sink loads name the same columns', async () => {
@@ -2554,7 +2561,7 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
       }
     });
 
-    test('the view reads through the revisions table, which the sink requires', async () => {
+    test('the view is built over the rows and revisions tables, and the sink requires the revisions table', async () => {
       const bigquery = createFakeBigQuery({ clientProject: PROJECT });
       const sink = newSink(fakeBigQuery());
       await bigquery.dataset(DATASET, { projectId: PROJECT }).create();
@@ -2566,6 +2573,7 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
         revisions: `${PROJECT}.${DATASET}.revisions`,
       });
       assert.match(sink.currentRowsViewSql, /GROUP BY reporting_obligation_id/);
+      assert.match(sink.currentRowsViewSql, /USING \(reporting_obligation_id, reporting_revision_id\)/);
       assert.match(sink.currentRowsViewSql, /ARRAY_AGG\(reporting_revision_id ORDER BY revision_number DESC LIMIT 1\)/);
       for (const revisionsTableId of [undefined, '', null]) {
         assert.throws(
@@ -2599,38 +2607,46 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
 
       assert.deepEqual(await t.sink.runOnce(), { idle: false, revisions: 1, rows: 4, missing: [] });
       assert.equal(t.rowsTable().length, 4, 'the retry did not load the rows again');
-      assert.deepEqual(await t.currentRows(), [[id, 4]]);
+      assert.deepEqual(await t.currentRows(), [[t.isolated.obligation.reporting_obligation_id, id, 4]]);
       assert.deepEqual(t.pendingMetadata(), []);
       assert.equal(t.jobIds().filter(job => job.includes('_rows')).length, 1, 'one rows job');
     });
 
-    for (const how of ['network', 'job']) {
+    for (const [how, failure] of [
+      ['network', /socket hang up/],
+      ['job', /Job failed/],
+    ]) {
       test(`while a newer revision's metadata load fails (${how}), current_rows keeps the previous revision, and the retry never duplicates rows`, async () => {
         const t = await contract();
+        const obligation = t.isolated.obligation.reporting_obligation_id;
         const first = `rrev_contract_a_${sequence}_${how}`;
         const second = `rrev_contract_b_${sequence}_${how}`;
         await store.commitRevision(t.isolated.revision(first, 1, rows.slice(0, 5)), t.isolated.lease);
         await t.sink.runOnce();
-        assert.deepEqual(await t.currentRows(), [[first, 5]]);
+        assert.deepEqual(await t.currentRows(), [[obligation, first, 5]]);
 
         await store.commitRevision(
           t.isolated.revision(second, 2, rows.slice(0, 9), { supersedes_reporting_revision_id: first }),
           t.isolated.lease
         );
         t.bigquery.failNextLoad('revisions', how);
-        await assert.rejects(() => t.sink.runOnce(), /socket hang up|Job failed/);
+        await assert.rejects(() => t.sink.runOnce(), failure);
         assert.equal(t.rowsTable().length, 5 + 9, 'both revisions are in the rows table');
-        assert.deepEqual(await t.currentRows(), [[first, 5]], 'current_rows still shows the previous revision');
+        assert.deepEqual(await t.currentRows(), [[obligation, first, 5]], 'current_rows still shows the previous one');
         assert.deepEqual(t.pendingMetadata(), [second]);
 
         if (how === 'job') {
           // BigQuery ran and rejected the job: the next run learns that and advances only the revisions attempt.
           await assert.rejects(() => t.sink.runOnce(), /will be retried as a new attempt/);
-          assert.deepEqual(await t.currentRows(), [[first, 5]], 'still the previous revision between attempts');
+          assert.deepEqual(
+            await t.currentRows(),
+            [[obligation, first, 5]],
+            'still the previous revision between attempts'
+          );
         }
         assert.deepEqual(await t.sink.runOnce(), { idle: false, revisions: 1, rows: 9, missing: [] });
         assert.equal(t.rowsTable().length, 5 + 9, 'the rows were loaded once');
-        assert.deepEqual(await t.currentRows(), [[second, 9]], 'the new revision is current once its metadata lands');
+        assert.deepEqual(await t.currentRows(), [[obligation, second, 9]], 'the new revision is current once loaded');
         assert.deepEqual(t.pendingMetadata(), []);
         const jobs = t.jobIds();
         assert.equal(jobs.filter(job => /_rows(_a\d+)?$/.test(job)).length, 2, 'one rows job per batch');
@@ -2642,5 +2658,88 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
         assert.ok(!jobs.some(job => /_rows_a\d+$/.test(job)), 'the rows job never needed a new attempt');
       });
     }
+
+    for (const [how, failure] of [
+      ['network', /socket hang up/],
+      ['job', /Job failed/],
+    ]) {
+      test(`when the rows load fails (${how}), no revisions row is loaded before it, so current_rows never points at missing rows`, async () => {
+        const t = await contract();
+        const obligation = t.isolated.obligation.reporting_obligation_id;
+        const first = `rrev_contract_rows_a_${sequence}_${how}`;
+        const second = `rrev_contract_rows_b_${sequence}_${how}`;
+        await store.commitRevision(t.isolated.revision(first, 1, rows.slice(0, 3)), t.isolated.lease);
+        await t.sink.runOnce();
+        await store.commitRevision(
+          t.isolated.revision(second, 2, rows.slice(0, 6), { supersedes_reporting_revision_id: first }),
+          t.isolated.lease
+        );
+        t.bigquery.failNextLoad('revision_rows', how);
+        await assert.rejects(() => t.sink.runOnce(), failure);
+        assert.deepEqual(
+          t.revisionsTable().map(revision => revision.reporting_revision_id),
+          [first],
+          'the revisions load did not run ahead of its rows'
+        );
+        assert.deepEqual(await t.currentRows(), [[obligation, first, 3]]);
+        assert.equal(
+          t.jobIds().filter(job => /_revs(_a\d+)?$/.test(job)).length,
+          1,
+          'no revisions job was submitted for the batch whose rows failed'
+        );
+
+        if (how === 'job') await assert.rejects(() => t.sink.runOnce(), /will be retried as a new attempt/);
+        assert.deepEqual(await t.sink.runOnce(), { idle: false, revisions: 1, rows: 6, missing: [] });
+        assert.equal(t.rowsTable().length, 3 + 6, 'the second batch landed once');
+        assert.deepEqual(await t.currentRows(), [[obligation, second, 6]]);
+        assert.deepEqual(t.pendingMetadata(), []);
+      });
+    }
+
+    test('a lagging revisions load affects only the obligations in its batch, and a zero-row revision is current with no rows', async () => {
+      const t = await contract();
+      const other = await createRowStorageFixture({
+        store,
+        suffix: `contract_other_${sequence}`,
+        accountId: `acct_contract_${sequence}`,
+      });
+      const a1 = `rrev_contract_two_a_${sequence}`;
+      const b1 = `rrev_contract_two_b_${sequence}`;
+      const a2 = `rrev_contract_two_a2_${sequence}`;
+      await store.commitRevision(t.isolated.revision(a1, 1, rows.slice(0, 5)), t.isolated.lease);
+      await t.sink.runOnce();
+      // Obligation B's first revision is in the failing batch; obligation A is untouched by it.
+      await store.commitRevision(other.revision(b1, 1, rows.slice(0, 2)), other.lease);
+      t.bigquery.failNextLoad('revisions', 'network');
+      await assert.rejects(() => t.sink.runOnce(), /socket hang up/);
+      const obligationA = t.isolated.obligation.reporting_obligation_id;
+      const obligationB = other.obligation.reporting_obligation_id;
+      assert.deepEqual(await t.currentRows(), [[obligationA, a1, 5]], 'B is absent, A is unaffected');
+      await t.sink.runOnce();
+      assert.deepEqual(
+        await t.currentRows(),
+        [
+          [obligationA, a1, 5],
+          [obligationB, b1, 2],
+        ].sort((left, right) => (left[0] < right[0] ? -1 : 1))
+      );
+
+      // A newest revision with no rows is current: its metadata says row_count 0 and the obligation shows nothing.
+      await store.commitRevision(
+        t.isolated.revision(a2, 2, [], { supersedes_reporting_revision_id: a1 }),
+        t.isolated.lease
+      );
+      await t.sink.runOnce();
+      assert.deepEqual(
+        t.revisionsTable().find(revision => revision.reporting_revision_id === a2)?.row_count,
+        0,
+        'the zero-row revision has its metadata line'
+      );
+      assert.deepEqual(
+        await t.currentRows(),
+        [[obligationB, b1, 2]],
+        'A now shows no rows: its current revision has none'
+      );
+    });
   });
 });

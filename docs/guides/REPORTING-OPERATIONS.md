@@ -298,9 +298,9 @@ Alert on these row-storage signals:
   `listCurrentRevisions`. A first read with no cursor can also throw it when a
   prune commits mid-read; retry it. A new warehouse sink stuck on it after such
   a race recovers with `sink.reset()`.
-- The warehouse sink's `runOnce()` rejects while rows keep appearing in the rows
-  table with no row in the revisions table (the anti-join in "The two-table
-  contract"). The revisions load is failing. The plan is retained and the rows are
+- The warehouse sink's `runOnce()` keeps rejecting and the anti-join in "The
+  two-table contract" returns the same revision IDs run after run: rows are in the
+  rows table with no row in the revisions table. The revisions load is failing. The plan is retained and the rows are
   already loaded, so fix the cause (usually a column the revisions table lacks) and
   keep running: the retry loads only the revisions and `current_rows` catches up.
   Do not edit the tables by hand and do not `reset()`.

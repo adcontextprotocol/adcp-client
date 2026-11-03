@@ -1353,22 +1353,27 @@ you which revision is current.
   ```
 
   A non-empty result for a few minutes is the window between the two jobs. One
-  that persists means the revisions load is failing.
+  that persists means the revisions load is failing (add a `period_date` filter
+  to bound the scan on large tables).
 - **Recovery when the revisions load fails.** The batch plan stays in PostgreSQL
   and the cursor does not move, so nothing is lost and nothing needs editing by
   hand. The next `runOnce()` finds the rows job by its ID, accepts it as loaded
   and does not upload it again, then retries only the revisions job. A network
   error or timeout retries under the same job ID (BigQuery may have created the
   job, and the sink looks it up before it uploads). A job BigQuery ran and
-  rejected is retried under a new attempt suffix: the run that sees the failed
-  job advances the attempt and rejects, and the next run submits it. A load job
-  is atomic, so a failed one lands nothing and the rows are never duplicated.
-  Fix the cause (usually a column the revisions table lacks), keep running, and
-  `current_rows` catches up on its own. Do not insert or delete warehouse rows to
-  repair it, and do not `reset()`: a reset reloads the history and duplicates it
-  unless you empty the tables first. If the failure outlasts `maxFeedHoldDays`,
-  change retention stops waiting for the sink and `runOnce()` reports the retired
-  revisions as `missing`.
+  rejected is retried under a new attempt suffix: the run that first sees the
+  failed job advances the attempt and rejects, and the run after it submits. A
+  load job is atomic, so a failed one lands nothing and the rows are never
+  duplicated. Fix the cause (usually a column the revisions table lacks), keep
+  running, and `current_rows` catches up on its own. Do not insert or delete
+  warehouse rows to repair it, and do not `reset()`: a reset reloads the history
+  and duplicates it unless you empty the tables first. The exception is a failure
+  that outlasts `maxFeedHoldDays`: change retention then stops waiting for the
+  sink, and `runOnce()` reports the retired revisions as `missing` and loads no
+  metadata for them. Their rows, already loaded, stay in the rows table with no
+  revisions row (so the anti-join above keeps returning them and they never
+  appear in `current_rows`); backfill their metadata or delete those rows by
+  `reporting_revision_id`.
 - **Why the loader is custom.** The alternative is an Iceberg or Delta Lake table
   behind the object-storage interface, which BigQuery reads as an external table.
   That path carries no revisions table and no `current_rows` view, so an adopter
