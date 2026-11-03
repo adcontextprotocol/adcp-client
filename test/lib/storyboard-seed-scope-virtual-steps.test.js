@@ -10,6 +10,8 @@ const { runControllerSeeding } = require(path.join(compiledRoot, 'lib/testing/st
 const { parseStoryboard } = require(path.join(compiledRoot, 'lib/testing/storyboard/loader.js'));
 const { buildRequest } = require(path.join(compiledRoot, 'lib/testing/storyboard/request-builder.js'));
 const { applyBrandInvariant } = require(path.join(compiledRoot, 'lib/testing/storyboard/account-policy.js'));
+const { getToolSchemaDocument } = require(path.join(compiledRoot, 'lib/validation/schema-loader.js'));
+const { ADCP_VERSION } = require(path.join(compiledRoot, 'lib/version.js'));
 
 const account = {
   brand: { domain: 'acmeoutdoor.example' },
@@ -56,7 +58,7 @@ function rateLimitStep(scope) {
   };
 }
 
-async function seed(source, context = {}) {
+async function seed(source, context = {}, runOptions = {}) {
   const calls = [];
   const result = await runControllerSeeding(
     {
@@ -73,6 +75,7 @@ async function seed(source, context = {}) {
       adcpVersion: '3.0.25',
       agentTools: ['comply_test_controller'],
       _controllerCapabilities: { detected: true, scenarios },
+      ...runOptions,
     },
     context
   );
@@ -268,6 +271,63 @@ test('conflicting actual rate-limit target and custom seller accounts still fail
     assert.equal(calls.length, 0, 'true account ambiguity must stop both product and pricing writes');
     assert.match(JSON.stringify(result), /multiple accounts/);
   }
+});
+
+test('format discovery follows the selected schema while primary scoped-format defaults remain genuine', async () => {
+  const step = { id: 'formats', title: 'Discover formats', task: 'list_creative_formats', sample_request: {} };
+  // The tool index selects bundled/media-buy, not the separate creative
+  // namespace document with the same filename. Assert the actual authority.
+  for (const version of ['3.0.25', '3.1.31']) {
+    const document = getToolSchemaDocument(step.task, 'request', version);
+    assert.match(document.schema.$id, /\/media-buy\/list-creative-formats-request\.json$/);
+    assert.equal(Object.hasOwn(document.schema.properties, 'account'), false);
+    const options = { brand: account.brand, sandbox: true, adcpVersion: version };
+    const request = applyBrandInvariant(buildRequest(step, {}, options), options, step.task);
+    assert.equal(Object.hasOwn(request, 'account'), false);
+    assert.equal(Object.hasOwn(request, 'brand'), false);
+    const { result, calls } = await seed(storyboard([realStep(), step]), {}, options);
+    assert.equal(result.allPassed, true, JSON.stringify(result));
+    assert.equal(calls.length, 2);
+    for (const call of calls) assert.deepEqual(call.account, account);
+  }
+  const document = getToolSchemaDocument(step.task, 'request', ADCP_VERSION);
+  assert.equal(Object.hasOwn(document.schema.properties, 'account'), true);
+  for (const version of [ADCP_VERSION, undefined]) {
+    const options = { brand: account.brand, sandbox: true, adcpVersion: version };
+    const request = applyBrandInvariant(buildRequest(step, {}, options), options, step.task);
+    assert.deepEqual(request.account, { brand: account.brand, operator: account.brand.domain, sandbox: true });
+    const { result, calls } = await seed(storyboard([realStep(), step]), {}, options);
+    assert.equal(result.allPassed, false, JSON.stringify(result));
+    assert.equal(calls.length, 0, 'current scoped-format defaults must still conflict before writes');
+    assert.match(JSON.stringify(result), /multiple accounts/);
+  }
+  // Re-selecting an older version must not inherit the primary lookup above.
+  assert.equal(
+    Object.hasOwn(
+      applyBrandInvariant(
+        {},
+        {
+          brand: account.brand,
+          adcpVersion: '3.0.25',
+        },
+        step.task
+      ),
+      'account'
+    ),
+    false
+  );
+});
+
+test('the untouched frozen 3.0 schema-validation corpus does not invent format-discovery ownership', async () => {
+  const source = parseStoryboard(
+    readFileSync(path.resolve(compiledRoot, '../compliance/cache/3.0.25/universal/schema-validation.yaml'), 'utf8')
+  );
+  assert.ok(source.phases.some(phase => phase.steps.some(step => step.task === 'list_creative_formats')));
+  const { result, calls } = await seed(source);
+  assert.equal(result.allPassed, true, JSON.stringify(result));
+  const catalogCalls = calls.filter(call => ['seed_product', 'seed_pricing_option'].includes(call.scenario));
+  assert.ok(catalogCalls.length >= 2);
+  for (const call of catalogCalls) assert.deepEqual(call.account, account);
 });
 
 test('the unmodified published frozen 3.0 idempotency corpus seeds one account with a run brand', async () => {

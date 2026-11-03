@@ -167,6 +167,12 @@ function storyboardSeedScope(
       );
     const controllerMetadata = step.task === 'comply_test_controller' && request.scenario === 'list_scenarios';
     if (request.account === undefined && (controllerMetadata || formatOnlyValidation)) continue;
+    // The controller builder supplies a sandbox account even on legacy
+    // versions whose request schema omits that routing carrier. Mirror its
+    // default so real seed/force/simulate operations still expose ambiguity.
+    if (request.account === undefined && step.task === 'comply_test_controller') {
+      request.account = { ...resolveAccount(options), sandbox: true };
+    }
     request = applyBrandInvariant(request, options, step.task, { omit_account: step.omit_account });
     if (request.account === undefined) continue;
     if (JSON.stringify(request.account).includes('$generate:')) {
