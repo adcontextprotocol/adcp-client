@@ -2899,16 +2899,22 @@ function projectAssignedCreative(
     // accepted by every package. Retry only their intersection, retaining all
     // option pins and per-package size/duration checks. A retry never recurses.
     if (!sharedIdentity && conflicts.some(conflict => conflict.constraint === 'format_id')) {
+      const sharedValues: Record<string, unknown>[] = [];
       for (const identity of sharedCandidates ?? []) {
         try {
-          return projectAssignedCreative(creative, packageIds, selectors, converter, resolver, definitions, options, {
-            identity,
-            resolvers: packageResolvers,
-          });
+          sharedValues.push(
+            projectAssignedCreative(creative, packageIds, selectors, converter, resolver, definitions, options, {
+              identity,
+              resolvers: packageResolvers,
+            })
+          );
         } catch (error) {
           if (!(error instanceof CreativeFormatProjectionError)) throw error;
         }
       }
+      // Different viable owners or IDs remain ambiguous; package ordering
+      // must not decide the creative's wire identity.
+      if (sharedValues.length === 1) return sharedValues[0]!;
     }
     // Deprecated `playerSizedRefs` host override, kept with its beta.5 meaning
     // for the one case declarations cannot settle: packages that state
