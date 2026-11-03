@@ -40,6 +40,7 @@ export const SERIAL_TESTS = [
   'reporting-gcp-validation-pg.test.js',
   'reporting-head-of-line-pg.test.js',
   'reporting-host-reads-pg.test.js',
+  'reporting-orphan-collector-fence-pg.test.js',
   'reporting-row-orphan-collector-pg.test.js',
   'reporting-row-retention-pg.test.js',
 ];

@@ -1,5 +1,9 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { withExternalSchemaRoot } = require('../../dist/lib/validation/schema-loader');
 const { validateRequest, validateResponse } = require('../../dist/lib/validation/schema-validator');
 const { buildAdcpValidationErrorPayload, buildValidationError } = require('../../dist/lib/validation/schema-errors');
 const { jsonPointerToJsonPathLite } = require('../../dist/lib/utils/pointer-utils');
@@ -63,17 +67,28 @@ describe('forbidden-field validation diagnostics (#3114)', () => {
     });
   }
 
-  it('leaves other not shapes opaque instead of inventing a field-level cause', () => {
-    // 3.2.7 forbids media_buy_id on the error arm with a bare `not: { required }`.
-    // AdCP 3.3.0-beta.1 uses the recognized forbidden-field `not: { anyOf }` shape.
-    const outcome = validateResponse(
-      'buy_products',
-      {
-        status: 'failed',
-        errors: [{ code: 'INVALID_REQUEST', message: 'Invalid request' }],
-        media_buy_id: 'media-buy-1',
-      },
-      '3.2.7'
+  it('leaves other not shapes opaque instead of inventing a field-level cause', t => {
+    // 3.2.8 and the 3.3 betas forbid media_buy_id on the error arm with the recognized
+    // forbidden-field `not: { anyOf }` shape. Exercise the bare `not: { required }`
+    // guard 3.2.7 used in an isolated schema fixture.
+    const version = '3.2.8';
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-opaque-not-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const relative = 'bundled/media-buy/buy-products-response.json';
+    const schema = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../schemas/cache', version, relative)));
+    schema.allOf[0].oneOf.find(arm => arm.properties.status.const === 'failed').not = { required: ['media_buy_id'] };
+    fs.mkdirSync(path.join(root, 'bundled/media-buy'), { recursive: true });
+    fs.writeFileSync(path.join(root, relative), JSON.stringify(schema));
+    const outcome = withExternalSchemaRoot(version, root, () =>
+      validateResponse(
+        'buy_products',
+        {
+          status: 'failed',
+          errors: [{ code: 'INVALID_REQUEST', message: 'Invalid request' }],
+          media_buy_id: 'media-buy-1',
+        },
+        version
+      )
     );
     assert.equal(outcome.valid, false);
     // Success/Error union diagnostics still select the actionable surviving arm.

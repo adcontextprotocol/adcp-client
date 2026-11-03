@@ -703,6 +703,12 @@ const store = new PostgresReportingLedgerStore(pool, {
 await store.readyRowStorage();
 ```
 
+- A binding ID (the key in `bindings`) is 1 to 255 characters of `A-Za-z0-9_.:-`, the
+  AdCP identifier bound that `reporting_revision_id`, `resource_ref` and `destination_ref` use, so an ID
+  derived from an AdCP destination reference fits. The same bound applies to a binding's `credentialRef`
+  and to the keys of a provider's `clients` map. Both limits were 128 before migration `0010`; the
+  `adcp_reporting_row_bindings` `CHECK` is widened by migration `0010`. The bound is exported as
+  `REPORTING_ROW_BINDING_ID_MAX_LENGTH` and `REPORTING_ROW_CREDENTIAL_REF_MAX_LENGTH`.
 - Each chunk is one object, written create-only. If an object already exists at
   a planned key, it is adopted only when its bytes decode to the exact chunk;
   otherwise the commit fails with `CONTENT_CONFLICT`.
@@ -738,16 +744,71 @@ await store.readyRowStorage();
   several row sets. Every delete path (period retirement, compaction and the
   intent sweep) therefore skips an object while a live row set outside the
   operation still references the same binding, key and native version, or an
-  open write intent created it. (With unique keys, a create-only write only
-  finds an existing object when a writer retries the same row set.) The check
-  and delete run under the per-object lock described below. The reference check and the delete run in one
-  transaction under a per-object advisory lock, and a commit that adopts an
-  existing object takes the same lock, proves the object is still there and
-  holds the lock until its chunk rows commit. A delete that wins the lock makes the adopting
-  commit fail with `STATE_UNAVAILABLE` (the writer re-uploads once its intent
-  lapses); a commit that wins is seen by the delete, which skips. A skipped
-  object is deleted by the retirement, compaction or sweep of the last row set
-  that referenced it, so it is not leaked.
+  open write intent created it. With unique keys, a create-only write only
+  finds an existing object when a writer retries the same row set.
+- **Object deletes and commits take no per-object lock, with one exception.**
+  Retirement, compaction and the intent sweep run the reference check as a
+  plain query, then delete the exact native version, holding no transaction or
+  pooled connection across the provider call. They are safe without a lock
+  because of five fences, none of which is the lock:
+  1. Every writable key includes `{revision_key}` (a SHA-256 of the row set ID)
+     and `{content_sha256}`, so one row set alone can ever name a key through a
+     writable binding. A committed row set is replayed: a late writer that
+     passed the replay check can adopt its just-committed object, but its
+     commit inserts nothing (the row set exists), so it cannot reference an
+     object a retirement or compaction then deletes. A `readOnly` binding's old
+     template can map several row sets to one object, but nothing adopts through
+     it; there the reference check and fence 4 are the whole argument. Bindings
+     that share one bucket and prefix must route a row set to one binding across
+     attempts, because the reference check is per binding (the orphan collector
+     checks every binding).
+  2. A header-only revision's commit holds the account lock and `FOR SHARE`-locks
+     a predecessor that must still be `live`. Retirement and compaction mark a
+     row set `pruning` under the same account lock before they delete anything,
+     and a `pruning` row set neither counts as a reference nor can be shared. So
+     a sharer commits first (its chunk rows then make the delete skip) or fails
+     with `STATE_UNAVAILABLE` and re-uploads under its own key.
+  3. The intent sweep moves an expired `open` intent to `sweeping` under the
+     account lock; a writer closes that intent, still `open`, in the commit
+     transaction that inserts its chunk rows. Exactly one wins, so a writer past
+     its lease cannot commit objects the sweep deletes, and a retry cannot take
+     over an intent being swept. A takeover renews the expiry, so the sweep
+     cannot claim it.
+  4. Concurrent retirements and compactions count only row sets that are not
+     `pruning`, each after committing its own `pruning` state, so at least one
+     of any two deletes a shared object and none can both skip it.
+  5. Deletes name an exact native version, so one cannot remove an object
+     re-created at the same key. This needs write-unique native versions, a
+     provider requirement the conformance check `write-unique-version` tests.
+
+  The advisory lock `adcp-reporting-object:{binding_id}:{object_ref}` stays in
+  two places that pair with each other, because nothing else orders them. A
+  commit that adopts an object its own intent did not record (an earlier
+  attempt's `PUT` landed before the intent recorded it, or a writer created it
+  after a takeover) takes the lock, in key order, before it proves the object with
+  a version-pinned `stat`, and holds it until its chunk rows commit. An object its own intent recorded takes
+  no lock: until the transaction commits, the open intent names it. The orphan
+  collector deletes only objects no record names, so each of its deletes takes
+  the lock of every binding (they can share a bucket and prefix), repeats the
+  reference check under it, and then deletes. A collector that wins makes the
+  adopting commit fail its version-pinned `stat` with `STATE_UNAVAILABLE` (the
+  writer re-uploads once its intent lapses); a commit that wins is seen by the
+  collector, which skips. The collector's clone fence is a separate protection:
+  an advisory lock is per database and cannot order a clone against the
+  original. A skipped object is deleted by the retirement, compaction or sweep
+  of the last row set that referenced it, so it is not leaked.
+- **Cross-SDK contract.** A ledger database has one writer SDK (the design record's
+  §5), so the Python and JavaScript SDKs need not agree on a lock to coexist; this
+  is the intended contract for both, with the same key text. The Python side
+  (adcp-client-python#1492) mirrors it: (1) the delete paths above take no object lock; (2) the key text
+  is `adcp-reporting-object:` + binding ID + `:` + object ref, hashed with
+  `hashtextextended(text, 0)` for `pg_advisory_xact_lock`; (3) an adopting commit
+  locks only adopted objects absent from its own intent's `created_objects`
+  (matching on object ref and native version), in object-ref order, after the
+  account lock and after closing its intent, then proves each adopted object with
+  a version-pinned `stat`; (4) the orphan collector locks every binding's key for
+  the object, sorted by binding ID, in the transaction that repeats the
+  reference check and deletes. Lock order is account lock, then object locks.
 - An upload runs only while the obligation lease still covers
   `writeDeadlineMilliseconds` plus five seconds. A fenced write intent records
   every object the upload created, and the ledger commit closes the intent in
@@ -774,7 +835,7 @@ await store.readyRowStorage();
   absent, without reading the body. The commit transaction uses it to prove an
   adopted object is unchanged (native versions are write-unique, so the same
   version at the recorded size is the same bytes) instead of downloading it
-  while holding the account and object locks. A provider without `stat` falls
+  while holding the account lock. A provider without `stat` falls
   back to reading the whole object there. All bundled providers implement it.
   Also implement the optional `list({ prefix, pageToken, pageSize })`, which
   returns `{ objects: [{ objectRef, nativeVersionRef, sizeBytes, createdAt }],
@@ -1303,6 +1364,80 @@ setInterval(() => {
 }, 15 * 60_000);
 ```
 
+#### The two-table contract
+
+The sink writes two tables, and the second is part of its contract. The rows
+table holds the report rows. The **revisions table** holds one metadata line per
+revision: `reporting_revision_id`, `reporting_obligation_id`, `account_id`,
+`revision_number`, `finality`, `period_date`, `supersedes_reporting_revision_id`,
+`period_start`, `period_end`, `source_timezone`, `observed_at`, `data_through`,
+`revision_content_sha256`, `row_count` and `control_totals`. The reference DDL
+(`sink.defaultTablesSql`) declares exactly these columns, and a test pins the
+DDL to what the sink loads. The `current_rows` view picks each obligation's
+current revision from the revisions table, so the rows table alone cannot tell
+you which revision is current.
+
+- **The revisions table is required.** `revisionsTableId` has no default and no
+  way to turn it off, and the sink refuses to start without it. A custom table
+  must keep every column above: the load sets no schema and no
+  `ignoreUnknownValues`, so a missing column fails the revisions job (and only
+  that job: the rows job ran first and has already landed).
+- **Load order.** Each batch loads the rows table first, then the revisions table,
+  as two separate load jobs. BigQuery has no transaction across tables. The
+  cursor advances only after both jobs have finished cleanly.
+- **Visibility.** A revision's rows can be visible in the rows table before its
+  metadata is in the revisions table: between the two jobs of a batch, and for as
+  long as the revisions load keeps failing. `current_rows` shows only revisions
+  whose metadata has loaded. While a newer revision's metadata is pending, each
+  affected obligation keeps showing its previous revision, and an obligation
+  whose first revision is pending shows nothing. The reverse does not happen
+  through the sink: a revisions row implies its rows landed, because the rows job
+  finished before the revisions job was submitted (so long as nothing outside the
+  sink deletes or truncates the tables, which adopter-managed table retention
+  can). Read the two tables in one query (the view does), or read the revisions
+  table first.
+- **What to query.** For current figures, query `current_rows`. For revision
+  history and audit, query the revisions table and join it to the rows table on
+  `reporting_revision_id`. Do not sum the rows table alone: it holds every loaded
+  revision, and cumulative snapshots double-count. To alert on metadata that is
+  lagging, look for rows with no revisions row:
+
+  ```sql
+  SELECT DISTINCT r.reporting_revision_id
+    FROM `analytics-prod.reporting.media_buy_delivery_rows` AS r
+    LEFT JOIN `analytics-prod.reporting.media_buy_delivery_revisions` AS v USING (reporting_revision_id)
+   WHERE v.reporting_revision_id IS NULL
+  ```
+
+  A non-empty result for a few minutes is the window between the two jobs. One
+  that persists means the revisions load is failing (add a `period_date` filter
+  to bound the scan on large tables).
+- **Recovery when the revisions load fails.** The batch plan stays in PostgreSQL
+  and the cursor does not move, so nothing is lost and nothing needs editing by
+  hand. The next `runOnce()` finds the rows job by its ID, accepts it as loaded
+  and does not upload it again, then retries only the revisions job. A network
+  error or timeout retries under the same job ID (BigQuery may have created the
+  job, and the sink looks it up before it uploads). A job BigQuery ran and
+  rejected is retried under a new attempt suffix: the run that first sees the
+  failed job advances the attempt and rejects, and the run after it submits. A
+  load job is atomic, so a failed one lands nothing and the rows are never
+  duplicated. Fix the cause (usually a column the revisions table lacks), keep
+  running, and `current_rows` catches up on its own. Do not insert or delete
+  warehouse rows to repair it, and do not `reset()`: a reset reloads the history
+  and duplicates it unless you empty the tables first. The exception is a failure
+  that outlasts `maxFeedHoldDays`: change retention then stops waiting for the
+  sink, and `runOnce()` reports the retired revisions as `missing` and loads no
+  metadata for them. Their rows, already loaded, stay in the rows table with no
+  revisions row (so the anti-join above keeps returning them and they never
+  appear in `current_rows`); backfill their metadata or delete those rows by
+  `reporting_revision_id`.
+- **Why the loader is custom.** The alternative is an Iceberg or Delta Lake table
+  behind the object-storage interface, which BigQuery reads as an external table.
+  That path carries no revisions table and no `current_rows` view, so an adopter
+  who takes it owns the leaf-revision query.
+
+#### How a run loads
+
 - Each run follows the change feed and reads every revision's rows through the
   store's verified reader. It loads rows first and revision metadata second,
   in one load job per table per tick. The sink always adds
@@ -1439,7 +1574,8 @@ setInterval(() => {
   Do not discard the plan automatically: its load jobs may have succeeded.
 - Query `current_rows`, not the raw rows table. Pacing snapshots are
   cumulative, so summing across revisions double-counts. The view keeps each
-  obligation's current revision.
+  obligation's current revision, read from the revisions table (see
+  "The two-table contract" above for what is visible while that table lags).
 - The sink registers as a change-feed consumer, so `pruneChanges` keeps changes
   it has not loaded yet, and `retireExpiredPeriods` keeps the periods it has not
   loaded yet, in both cases only while its cursor was saved within

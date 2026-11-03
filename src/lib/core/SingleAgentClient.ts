@@ -368,6 +368,7 @@ import {
   projectMediaBuyCreativesForDelivery,
   projectCreativeForDelivery,
   projectSyncCreativesForDelivery,
+  syncCreativeAssignmentTargets,
   projectUndeclaredFormatOptionSelectors,
   resolveCreativeFormatWireMode,
   stripLegacyCreativeIdentity,
@@ -8651,13 +8652,9 @@ export class SingleAgentClient {
         typeof container.package_id === 'string' ? [container.package_id] : []
       )
     );
-    const assignmentPackageContainers = Array.isArray(params.assignments)
-      ? params.assignments.flatMap(assignment =>
-          typeof assignment.package_id === 'string' && !configuredPackageIds.has(assignment.package_id)
-            ? [{ package_id: assignment.package_id }]
-            : []
-        )
-      : [];
+    const assignmentPackageContainers = syncCreativeAssignmentTargets(params).flatMap(assignment =>
+      !configuredPackageIds.has(assignment.package_id) ? [{ package_id: assignment.package_id }] : []
+    );
     const selectorContainers = [...configuredSelectorContainers, ...assignmentPackageContainers];
     const wireMode = await this.resolveCreativeWireMode('sync_creatives', taskOptions, true, () =>
       this.productOptionsSupportCanonicalWire('sync_creatives', params, selectorContainers, {
@@ -8938,8 +8935,16 @@ export class SingleAgentClient {
           assigned.size === 0
             ? selectorContainers
             : selectorContainers.filter(
-                container => typeof container.package_id !== 'string' || assigned.has(container.package_id)
+                container => typeof container.package_id === 'string' && assigned.has(container.package_id)
               );
+        // Preserve the established full-scope proof, including declarations
+        // whose remaining technical validation belongs to the seller.
+        if (
+          relevant.length > 0 &&
+          [...assigned].every(id => relevant.some(container => container.package_id === id)) &&
+          relevant.every(container => accepts(container, creative))
+        )
+          return true;
         if (assigned.size === 0) {
           // A library upload needs request-scoped seller evidence for one
           // applicable package, rather than acceptance by unrelated sizes.
@@ -8974,11 +8979,7 @@ export class SingleAgentClient {
             );
           }
         }
-        return (
-          relevant.length > 0 &&
-          [...assigned].every(id => relevant.some(container => container.package_id === id)) &&
-          relevant.every(container => accepts(container, creative))
-        );
+        return false;
       });
     }
     const packages = ['packages', 'new_packages'].flatMap(key => (Array.isArray(request[key]) ? request[key] : []));

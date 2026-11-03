@@ -4,7 +4,7 @@ import * as path from 'path';
 
 import { canonicalize } from '@adcp/sdk';
 import { ReportingRowStoreError, reportingPeriodDate } from '@adcp/sdk/reporting/ledger';
-import { isReportingRowInstant } from './row-storage-provider-io';
+import { REPORTING_ROW_IDENTIFIER_MAX_LENGTH, isReportingRowInstant } from './row-storage-provider-io';
 
 /**
  * Object-storage providers for revision row chunks (shared SDK persistence
@@ -45,6 +45,21 @@ export const REPORTING_ROW_OBJECT_REF_MAX_LENGTH = 1024;
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export const REPORTING_ROW_NATIVE_VERSION_REF_MAX_LENGTH = 1024;
+/**
+ * Bound on a row binding ID, 1 to 255 characters of `A-Za-z0-9_.:-`: the AdCP identifier bound that
+ * `reporting_revision_id`, `resource_ref` and `destination_ref` use (`^[A-Za-z0-9_.:-]{1,255}$`). The
+ * `adcp_reporting_row_bindings` `CHECK` constraint enforces the same.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export const REPORTING_ROW_BINDING_ID_MAX_LENGTH = REPORTING_ROW_IDENTIFIER_MAX_LENGTH;
+/**
+ * Bound on a binding's `credentialRef` (and on the keys of a provider's `clients` map): the same 1 to 255
+ * characters of `A-Za-z0-9_.:-` as a row binding ID.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export const REPORTING_ROW_CREDENTIAL_REF_MAX_LENGTH = REPORTING_ROW_IDENTIFIER_MAX_LENGTH;
 
 /**
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
@@ -161,7 +176,9 @@ export interface ReportingRowObjectProviderV1 {
    * too, never delete markers), the stored size, and the time the version was written. Return only keys
    * under `prefix`. A page may be short; `nextPageToken` is absent on the last page. A token is only
    * valid for the same `prefix` and location. Leave out an entry that cannot be addressed or aged (no
-   * usable version, size or write time) and count it in `skipped` rather than failing the page.
+   * usable version, size or write time) and count it in `skipped` rather than failing the page. The listing must
+   * be strongly consistent for keys it has already returned from `putIfAbsent` (read-after-write): the orphan
+   * collector's ownership fence reads the newest claim by listing.
    */
   list?(
     input: ReportingRowObjectListInputV1,

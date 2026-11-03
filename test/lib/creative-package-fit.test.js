@@ -471,7 +471,7 @@ test('rejects a tall banner against a small horizontal package before sync', () 
   assert.equal(decision.wire, undefined);
   assert.throws(
     () => projectSyncCreativesForDelivery({ creatives: [creative] }, packages, 'canonical'),
-    /no supplied package is proven to fit/
+    /does not fit/
   );
 });
 test('same aspect ratio does not imply resizing permission', () => {
@@ -1122,10 +1122,7 @@ test('planning can retain the same deprecated explicit VAST player-size override
   const policy = { playerSizedRefs: 'omit_unstated_size' };
   const result = fit(creative, packages, { adcpVersion: '3.1.0', ...policy });
   const sync = projectSyncCreativesForDelivery(
-    {
-      creatives: [creative],
-      assignments: packages.map(pkg => ({ creative_id: creative.creative_id, package_id: pkg.package_id })),
-    },
+    { creatives: [creative] },
     packages,
     'legacy',
     undefined,

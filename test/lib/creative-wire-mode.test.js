@@ -303,13 +303,7 @@ describe('request-local 3.1 product creative wire evidence (#3312)', () => {
     assets: { image: { asset_type: 'image', url: 'https://cdn.example/ad.png', width: 300, height: 250 } },
   };
   const baseContainer = { package_id: 'pkg-1', format_options: [option] };
-  // Keep transport-evidence tests in explicit assignment scope; library full-fit gates are covered separately.
-  const request = {
-    account: { account_id: 'account-1' },
-    idempotency_key: 'product-wire-001',
-    creatives: [creative],
-    assignments: [{ creative_id: 'c1', package_id: 'pkg-1' }],
-  };
+  const request = { account: { account_id: 'account-1' }, idempotency_key: 'product-wire-001', creatives: [creative] };
 
   // The public MCP integration suite exercises how discovery installs this proof.
   // These unit fixtures model a verified seller response in this client's scope.
@@ -519,6 +513,12 @@ describe('request-local 3.1 product creative wire evidence (#3312)', () => {
     const container = structuredClone(baseContainer);
     container.format_options[0].technical_requirements_complete = true;
     markSellerContainer(client, container);
+    const other = structuredClone(baseContainer);
+    other.package_id = 'pkg-2';
+    other.format_options[0].format_option_id = 'tall';
+    other.format_options[0].params.height = 600;
+    other.format_options[0].technical_requirements_complete = true;
+    markSellerContainer(client, other);
     const input = { ...request, creatives: [{ ...creative, assets: { image_main: creative.assets.image } }] };
     delete input.assignments;
     let captured;
@@ -526,7 +526,9 @@ describe('request-local 3.1 product creative wire evidence (#3312)', () => {
       captured = params;
       return { success: true, status: 'completed', data: {} };
     };
-    await client.syncCreatives(input, undefined, { creativeFormatProjection: { selectorContainers: [container] } });
+    await client.syncCreatives(input, undefined, {
+      creativeFormatProjection: { selectorContainers: [container, other] },
+    });
     assert.deepEqual(captured.creatives[0], input.creatives[0]);
   });
 

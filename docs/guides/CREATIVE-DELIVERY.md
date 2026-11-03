@@ -179,6 +179,17 @@ identical:
   package resolved to alone, so the result never depends on unrelated packages
   that leave the constraint open.
 
+A creative without explicit assignments is a library upsert. The SDK evaluates
+each supplied package independently and excludes known non-fitting packages
+from the shared wire decision. A 300x250 and a 300x600 creative can therefore
+sync together against a mixed-size buy, each using its own compatible legacy
+ref. Packages with insufficient facts remain subject to seller validation.
+Projection refuses if no package is compatible, or if the remaining packages
+cannot share one wire representation, such as VAST players with conflicting
+legacy sizes. Assignments for other creatives do not assign the library upload.
+Explicit `assign`, `replace`, and `merge` entries in `assignment_operations`
+also require the creative to fit their target packages; `unassign` does not.
+
 So a VAST creative assigned to nine packages declaring `video_vast` at 940x529
 and three declaring an unsized `video_vast` is sent once as
 `{ id: 'video_vast', width: 940, height: 529 }`, and when no package states a
@@ -259,8 +270,10 @@ support and do not reuse this inferred product evidence.
 Assignment-only sync and updates containing only an existing `package_id` keep
 their existing wire behavior. Pass the matching selectors for this request to
 use the product-based fallback; package IDs alone do not establish support.
-Without assignments, each creative must match every supplied container; use
-assignments or split mixed-format batches when the products accept different kinds.
+For this product-based canonical-support inference only, without assignments
+each creative must match every supplied container; use assignments or split
+mixed-format batches when the products accept different kinds. Library wire
+projection uses the compatible-package rule above after the wire mode is resolved.
 
 Without matching product evidence, unknown peers receive a legacy projection
 only when the selected product provides one unambiguous ref. Ambiguous or

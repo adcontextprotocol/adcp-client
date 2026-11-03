@@ -132,7 +132,7 @@ test('refreshes synthesized steps after a custom signing vector changes without 
       .replace('phases: []', 'phases:\n  - id: positive_vectors\n    title: Positive vectors\n    steps: []')
   );
   const vectors = path.join(dir, 'test-vectors/request-signing');
-  fs.cpSync(path.join(__dirname, '../../compliance/cache/3.2.7/test-vectors/request-signing'), vectors, {
+  fs.cpSync(path.join(__dirname, '../../compliance/cache/3.2.8/test-vectors/request-signing'), vectors, {
     recursive: true,
   });
   const options = { complianceDir: dir, version: '3.2.7' };

@@ -1,5 +1,79 @@
 # @adcp/reporting-storage
 
+## 0.3.0-beta.4
+
+### Minor Changes
+
+- 8c55809: Reporting storage (experimental): the orphaned-object collector is fenced against a cloned or restored ledger database (#3292).
+
+  A clone or point-in-time restore of the ledger database shares the live database's installation identity, namespace key and configuration, so it also shares `acknowledgeExclusiveNamespace: true`. Its collector saw an older set of references and would have deleted the live database's newer row objects. A real `collectOrphanedRowObjects` pass now claims the namespace first and refuses to delete when another database holds a newer claim.
+  - **Fence.** A chain of create-only objects, one per epoch, under `{prefix}/{namespace_key}/_collector-fence/`, each holding a random token. The database records its last claim in `adcp_reporting_orphan_collector_fences`. A pass deletes only while the highest epoch in the bucket is exactly the claim the database recorded; it claims the next epoch before it deletes anything and re-reads the fence before every page that deletes and every 25 deletes within one. A copy taken before the original's latest claim sees a higher epoch and refuses.
+  - **Reporting.** A refused binding has `status: 'fenced'` and `fence: { cause, detail, fenceEpoch?, recordedEpoch? }`; the result has a new required `fenced: string[]`, and the maintenance task raises a warning. Causes: `fence_advanced`, `claimed_elsewhere`, `token_mismatch`, `fence_missing`, `fence_regressed`, `fence_unreadable`, `claim_lost`, `migration_required`. `dryRun` reads the fence without claiming it and reports fenced bindings too.
+  - **Takeover.** New `store.takeOverOrphanCollectorFence({ acknowledgePreviousOwnerGone: true, bindings?, includeReadOnly? })` for a database restored in place or whose predecessor is gone. It claims the next epoch and fences every other copy out; stop the previous owner's collector first, because a pass already running notices the new epoch at its next fence check (at most 25 deletes later).
+  - **Limit.** Nothing in the database tells a copy from the original until one of them claims, so the first claim wins. Run orphan collection only on the live database, never on a copy of the deployment, and claim from the live database first when you roll this out. A fenced binding is checked again within the hour.
+
+  Migration note (minor, breaking only for orphan collection):
+  1. Run `npx adcp-reporting-storage migrate`: new version `0009`, `reporting_orphan_collector_fence` (additive; the SQL is exported as `REPORTING_ORPHAN_FENCE_MIGRATION`). Until it is applied, a pass reports every binding as `fenced` with cause `migration_required` and deletes nothing, and `postgresStorage().checkSchema()` names `0009` as pending.
+  2. Run one real pass on the live database before any staging copy runs a collector.
+  3. A custom store that implements `collectOrphanedRowObjects` for the maintenance task must return `fenced: []`. `ReportingOrphanBindingResultV1.status` gains `'fenced'`.
+  4. Fence objects live in your object-store prefix. The provider contract is unchanged (create-only `putIfAbsent`, `get`, `list`, `delete`), except that `list` must now reflect keys `putIfAbsent` has already returned (read-after-write), as the bundled providers do. Run `runReportingRowObjectProviderConformanceV1` on a custom provider.
+
+  See `docs/guides/REPORTING-OPERATIONS.md` and `docs/migration-reporting-storage-package.md`.
+
+- 76d8a9c: Reporting storage (experimental): `row_binding_id` and `credentialRef` accept up to 255 characters, the AdCP identifier bound (#3282).
+
+  Both were capped at 128 characters, tighter than every comparable AdCP identifier (`reporting_revision_id`, `resource_ref` and `destination_ref` use `^[A-Za-z0-9_.:-]{1,255}$`), so an adopter that derives binding IDs from AdCP destination references could be refused for no protocol reason. The configuration check, the `adcp_reporting_row_bindings` `CHECK` constraint and the keys of a provider's `clients` map now share one bound. The bound is exported as `REPORTING_ROW_BINDING_ID_MAX_LENGTH` and `REPORTING_ROW_CREDENTIAL_REF_MAX_LENGTH`, and the configuration errors say it.
+
+  Why minor and not patch: widening what is accepted breaks nobody, but a stored `CHECK` has to change, so this ships a new versioned migration that `postgresStorage().checkSchema()` requires (`REPORTING_SCHEMA_BEHIND` until applied). Every existing deployment must run `migrate` before its application upgrades, and per the stability policy a schema change goes in a minor of `@adcp/reporting-storage`.
+
+  Migration note:
+  1. Run `npx adcp-reporting-storage migrate`: new version `0010`, `reporting_row_binding_id_bounds` (the SQL is exported as `REPORTING_ROW_BINDING_ID_BOUND_MIGRATION`). It drops the old unnamed 128-character `CHECK` and adds `adcp_reporting_row_bindings_row_binding_id_bounds` (255), only when the database still has the old one, so a current schema is untouched and nothing takes a lock. No data migration. A database that applies `REPORTING_ROW_STORAGE_MIGRATION` by hand gets the same change, and a fresh install is created with the new constraint.
+  2. Until it runs, a binding ID longer than 128 characters passes the configuration check and registration fails with `STATE_UNAVAILABLE` naming `npx adcp-reporting-storage migrate (version 0010)`. Nothing that was valid before is refused.
+  3. The Python SDK carries the same item (adcp-client-python#1498); keep the shared DDL equal when you upgrade both.
+
+  See `docs/migration-reporting-storage-package.md` and `docs/guides/REPORTING-LEDGER.md`.
+
+### Patch Changes
+
+- Updated dependencies [d534771]
+- Updated dependencies [0bf2bcc]
+- Updated dependencies [047f45c]
+- Updated dependencies [dd367d5]
+  - @adcp/sdk@17.0.0-beta.13
+
+## 0.3.0-beta.3
+
+### Minor Changes
+
+- 8374d8d: Reporting subscriptions (experimental, AdCP 3.3): buyer events.
+  - `client.reporting.poll()` returns the events since the last acknowledgement, derived by comparing what the seller reports now (`reconcile`, the subscription readback, each account's `subscription_coverage[]`) with the snapshot saved by the last `batch.ack()`. Delivery is at least once with deterministic ids (`rse_` + `sha256(agent, type, natural key, version)`, the same ids as the Python SDK). A partial read never fabricates a change, and `poll({ baseline: true })` records the present without emitting it.
+  - `client.reporting.events({ pollEvery, signal })` is the loop: each batch is acknowledged after the loop body has run for all its events.
+  - `client.reporting.handleWebhook(verified)` treats a seller webhook as a doorbell: it wakes a running `events()` loop or polls inline. It takes only a `VerifiedWebhook`, built by `VerifiedWebhook.fromOutcome` from a successful signature verification.
+  - Event types: `revision.available`, `revision.adjusted`, `period.late`, `period.missing_obligation`, `period.withheld`, `coverage.exception_opened`, `coverage.exception_closed`, `account.covered`, `account.unauthorized`, `account.regranted`, `subscription.state_changed`, `timezone.cutover`.
+  - Snapshots live in a `ReportingEventStore` with compare-and-set (`ReportingEventConflictError` when another worker acknowledged first). `memoryStorage().events` and `postgresStorage({ pool }).events` provide one, `createReportingEventStore({ store })` builds one over any `AdcpStateStore` with `putIfMatch`, and the client takes it as `reportingEventStore`.
+  - `@adcp/sdk/reporting/advanced` adds `deriveEvents`, `EVENT_TYPES` and `SNAPSHOT_VERSION`.
+
+### Patch Changes
+
+- 8856bbd: The production service refuses `subscriptions.principal` without `notifications` with a message naming the fix. `@adcp/sdk` now lets development storage omit it; PostgreSQL storage still needs a delivering runtime.
+- f31e94f: Reporting subscriptions (experimental, AdCP 3.3): a PostgreSQL production seller configured with `subscriptions.principal` now serves the same principal surface as the `memoryStorage()` seller. `createPostgresReliableReportingProductionService` builds the principal runtime with the `notification_configs` task (`syncAgentNotificationConfigs`) and marks it as service-built, so the service advertises `capability_changes` for it. Before, it served neither.
+- Updated dependencies [a831111]
+- Updated dependencies [b296a8a]
+- Updated dependencies [9cf1b55]
+- Updated dependencies [6141030]
+- Updated dependencies [ed8f98d]
+- Updated dependencies [b5f7461]
+- Updated dependencies [d134d82]
+- Updated dependencies [f31e94f]
+- Updated dependencies [8374d8d]
+- Updated dependencies [e4b43a3]
+- Updated dependencies [7cfccfd]
+- Updated dependencies [1da37d9]
+- Updated dependencies [dc8cad8]
+- Updated dependencies [b7b9ec8]
+- Updated dependencies [8856bbd]
+  - @adcp/sdk@17.0.0-beta.12
+
 ## 0.3.0-beta.2
 
 ### Minor Changes

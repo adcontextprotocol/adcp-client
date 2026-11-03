@@ -473,7 +473,7 @@ describe('createAdcpServer', () => {
       const requestProposalsTool = listed.tools.find(tool => tool.name === 'request_proposals');
       const officialRequestSchema = JSON.parse(
         readFileSync(
-          'schemas/cache/3.2.7/mcp/2026-07-28/profiles/media-buy/media-buy/request-proposals-request.json',
+          'schemas/cache/3.2.8/mcp/2026-07-28/profiles/media-buy/media-buy/request-proposals-request.json',
           'utf8'
         )
       );
