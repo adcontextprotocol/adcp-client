@@ -2696,6 +2696,46 @@ describe('BigQuery warehouse sink', { skip: !DATABASE_URL && 'PostgreSQL URL not
       });
     }
 
+    test('a revisions load that fails past retention leaves orphan rows: replay reports missing, loads no metadata and advances', async () => {
+      const t = await contract();
+      const id = `rrev_contract_retired_${sequence}`;
+      await store.commitRevision(t.isolated.revision(id, 1, rows.slice(0, 3)), t.isolated.lease);
+      t.bigquery.failNextLoad('revisions', 'network');
+      await assert.rejects(() => t.sink.runOnce(), /socket hang up/);
+      assert.deepEqual(t.pendingMetadata(), [id], 'rows landed, metadata did not');
+
+      // The period is retired while the batch is retained (the sink has registered no feed consumer, so
+      // nothing holds retention back).
+      const obligationId = t.isolated.obligation.reporting_obligation_id;
+      await pool.query(
+        `UPDATE adcp_reporting_obligations
+            SET period_start = period_start - INTERVAL '40 days', period_end = period_end - INTERVAL '40 days',
+                created_at = created_at - INTERVAL '40 days', lease_expires_at = clock_timestamp() - INTERVAL '1 second'
+          WHERE obligation_id = $1`,
+        [obligationId]
+      );
+      await pool.query(
+        `UPDATE adcp_reporting_revisions SET recorded_at = recorded_at - INTERVAL '40 days' WHERE obligation_id = $1`,
+        [obligationId]
+      );
+      const retired = await store.retireExpiredPeriods({
+        statusRetentionDays: 30,
+        account_id: `acct_contract_${sequence}`,
+      });
+      assert.equal(retired.retired, 1);
+
+      assert.deepEqual(await t.sink.runOnce(), { idle: false, revisions: 0, rows: 0, missing: [id] });
+      assert.equal(t.revisionsTable().length, 0, 'no metadata is loaded for a revision the ledger no longer has');
+      assert.equal(t.rowsTable().length, 3, 'its rows, already loaded, stay');
+      assert.deepEqual(t.pendingMetadata(), [id], 'the anti-join keeps returning them');
+      assert.deepEqual(await t.currentRows(), [], 'and they never appear in current_rows');
+      assert.deepEqual(
+        await t.sink.runOnce(),
+        { idle: true, revisions: 0, rows: 0, missing: [] },
+        'the cursor advanced'
+      );
+    });
+
     test('a lagging revisions load affects only the obligations in its batch, and a zero-row revision is current with no rows', async () => {
       const t = await contract();
       const other = await createRowStorageFixture({

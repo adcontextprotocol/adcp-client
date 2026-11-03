@@ -1335,10 +1335,12 @@ you which revision is current.
   long as the revisions load keeps failing. `current_rows` shows only revisions
   whose metadata has loaded. While a newer revision's metadata is pending, each
   affected obligation keeps showing its previous revision, and an obligation
-  whose first revision is pending shows nothing. The reverse does not happen: a
-  revisions row implies its rows landed, because the rows job finished before the
-  revisions job was submitted. Read the two tables in one query (the view does),
-  or read the revisions table first.
+  whose first revision is pending shows nothing. The reverse does not happen
+  through the sink: a revisions row implies its rows landed, because the rows job
+  finished before the revisions job was submitted (so long as nothing outside the
+  sink deletes or truncates the tables, which adopter-managed table retention
+  can). Read the two tables in one query (the view does), or read the revisions
+  table first.
 - **What to query.** For current figures, query `current_rows`. For revision
   history and audit, query the revisions table and join it to the rows table on
   `reporting_revision_id`. Do not sum the rows table alone: it holds every loaded

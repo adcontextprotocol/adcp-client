@@ -62,8 +62,9 @@ import { reportingPeriodDate } from '@adcp/sdk/reporting/ledger';
  * 4. **Visibility.** Rows can be visible in the rows table before their revision metadata: between the two
  *    jobs of a batch, and for as long as the revisions load keeps failing. `current_rows` then still shows
  *    each affected obligation's previous revision (or nothing, for an obligation whose first revision has
- *    not landed). The reverse never happens: a revisions row implies its rows landed, because the rows job
- *    finished before the revisions job was submitted. Read the two tables in one query (the view), or read
+ *    not landed). The reverse does not happen through the sink: a revisions row implies its rows landed, because
+ *    the rows job finished before the revisions job was submitted (so long as nothing outside the sink deletes
+ *    or truncates the destination tables). Read the two tables in one query (the view), or read
  *    the revisions table first.
  * 5. **What to query.** Current figures: `current_rows`. Revision history and audit: the revisions table,
  *    joined to the rows table on `reporting_revision_id`. Never sum the rows table alone: it holds every
@@ -975,7 +976,8 @@ CLUSTER BY account_id, reporting_obligation_id;`.trim();
  * rows that have loaded, and the rows table is filtered to that revision. A revision whose rows have landed
  * but whose revisions row has not (the revisions load lags or is failing) is not current, so the obligation
  * keeps showing its previous revision, or nothing if it has none. The sink loads a revision's rows before its
- * revisions row, so the reverse (a current revision with missing rows) does not occur.
+ * revisions row, so the reverse (a current revision with missing rows) does not occur unless something outside the
+ * sink deletes rows.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
