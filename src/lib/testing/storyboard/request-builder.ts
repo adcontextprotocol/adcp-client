@@ -533,7 +533,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     return {
       ...fixtureBody,
       account: resolveMediaBuyAccount(fixtureBody.account, context.account, options),
-      brand: resolveBrand(options),
+      brand: fixtureBody.brand ?? resolveBrand(options),
       start_time: startTime,
       end_time: endTime,
       packages,

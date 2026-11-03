@@ -854,7 +854,15 @@ function makeSeedCacheScope(input: Record<string, unknown>): string | undefined 
     input.account ??
     (context != null && typeof context === 'object' ? (context as { account?: unknown }).account : undefined);
   if (account != null && typeof account === 'object') {
-    const accountRef = account as { account_id?: unknown; brand?: unknown; operator?: unknown; sandbox?: unknown };
+    const accountRef = account as {
+      account_id?: unknown;
+      brand?: unknown;
+      operator?: unknown;
+      operator_unit?: unknown;
+      currency?: unknown;
+      timezone?: unknown;
+      sandbox?: unknown;
+    };
     if (typeof accountRef.account_id === 'string' && accountRef.account_id.length > 0) {
       parts.push(`account_id:${accountRef.account_id}`);
     } else if (
@@ -866,6 +874,9 @@ function makeSeedCacheScope(input: Record<string, unknown>): string | undefined 
         `account_ref:${canonicalJson({
           ...(accountRef.brand !== undefined && { brand: accountRef.brand }),
           ...(accountRef.operator !== undefined && { operator: accountRef.operator }),
+          ...(accountRef.operator_unit !== undefined && { operator_unit: accountRef.operator_unit }),
+          ...(accountRef.currency !== undefined && { currency: accountRef.currency }),
+          ...(accountRef.timezone !== undefined && { timezone: accountRef.timezone }),
           ...(accountRef.sandbox !== undefined && { sandbox: accountRef.sandbox }),
         })}`
       );
@@ -1601,43 +1612,20 @@ export function toMcpResponse(data: ComplyTestControllerResponse): McpToolRespon
  * the `inputSchema` argument to `server.registerTool(...)` in custom wrappers
  * so the request shape stays in sync with {@link registerTestController}.
  *
- * Matches `ComplyTestControllerRequest` from the generated schema: `scenario`
- * (required), `params` (scenario-specific), and the universal `context` / `ext`
- * envelope fields. No top-level `account` or `brand` — AdCP routes account
- * and brand context through `context` on this tool.
- *
- * **Extending for vendor fields.** Custom wrappers that carry tenant or
- * account references in top-level fields can extend the shape locally.
- * Those buyer-supplied fields are identifiers only: resolve them through a
- * trusted server-side account resolver before making authorization decisions.
- * Both `account` and `brand` are commonly added — storyboard fixtures and
- * v5-shaped wrappers often send them alongside `params`:
- *
- * ```ts
- * const MY_SHAPE = {
- *   ...TOOL_INPUT_SHAPE,
- *   account: z.object({ account_id: z.string() }).passthrough().optional(),
- *   brand: z.object({ domain: z.string() }).passthrough().optional(),
- * };
- * server.registerTool(
- *   'comply_test_controller',
- *   { description: 'Sandbox only.', inputSchema: MY_SHAPE },
- *   async input => {
- *     const account = await accounts.resolve(input.account, trustedRequestContext());
- *     if (!isSandboxOrMockAccount(account)) return toMcpResponse({ ... });
- *     return toMcpResponse(await handleTestControllerRequest(store, input as Record<string, unknown>));
- *   }
- * );
- * ```
- *
- * Adopters routing through `createAdcpServerFromPlatform(platform, { complyTest })`
- * pass the same fields via `complyTest.inputSchema` (see
- * `ComplyControllerConfig.inputSchema` in `@adcp/sdk/testing`).
- *
- * This keeps the default registration protocol-compliant while giving
- * wrapper authors a documented extension point.
+ * Preserve the optional open account carrier for AdCP 3.0 callers. AdCP 3.1
+ * and later callers must include sandbox: true per their wire contract. Keep complete natural account identity
+ * or an opaque account_id so a per-request store factory can resolve it.
+ * The assertion is caller intent, not sandbox authority. Resolve and authorize
+ * the supplied identity against trusted persisted state before making writes.
+ * Custom wrappers can extend the remaining top-level shape for vendor fields.
  */
 export const TOOL_INPUT_SHAPE = {
+  account: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe(
+      'Optional legacy-compatible account carrier; AdCP 3.1 callers include sandbox: true and sellers verify persisted sandbox state'
+    ),
   scenario: z.string().describe('Scenario to execute (e.g., list_scenarios, force_account_status)'),
   params: z.record(z.string(), z.unknown()).optional().describe('Scenario-specific parameters'),
   context: z.record(z.string(), z.unknown()).optional().describe('AdCP context object'),

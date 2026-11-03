@@ -137,6 +137,36 @@ export function resolvePathAll(obj: unknown, path: string): unknown[] {
   return results;
 }
 
+/**
+ * Visit every defined terminal without retaining the expanded result set.
+ * Negative membership must inspect the entire response: the bounded
+ * `resolvePathAll` prefix cannot prove a value is absent beyond its cap.
+ */
+export function* iteratePathAll(obj: unknown, path: string): Generator<unknown> {
+  const segments = parsePathWithWildcards(path);
+  if (segments.length === 0) return;
+  function* visit(current: unknown, index: number): Generator<unknown> {
+    if (index === segments.length) {
+      if (current !== undefined) yield current;
+      return;
+    }
+    if (current === null || current === undefined) return;
+    const segment = segments[index]!;
+    if (segment === WILDCARD) {
+      if (Array.isArray(current)) for (const item of current) yield* visit(item, index + 1);
+    } else if (typeof segment === 'number') {
+      if (Array.isArray(current)) yield* visit(current[segment], index + 1);
+    } else if (
+      !FORBIDDEN_KEYS.has(segment) &&
+      typeof current === 'object' &&
+      Object.prototype.hasOwnProperty.call(current, segment)
+    ) {
+      yield* visit((current as Record<string, unknown>)[segment], index + 1);
+    }
+  }
+  yield* visit(obj, 0);
+}
+
 const PORTABLE_IDENTIFIER_SEGMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*(?:\[\*\])?$/;
 const RESERVED_IDENTIFIER_ROOTS = new Set(['request', 'response', 'context']);
 
