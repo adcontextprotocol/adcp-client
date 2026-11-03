@@ -86,7 +86,7 @@ function buildStoryboard(stepValidations) {
             task: 'create_media_buy',
             stateful: true,
             sample_request: {
-              brand: { brand_id: 'b1' },
+              brand: { domain: 'advertiser.example' },
               account: { account_id: 'a1' },
               start_time: '2026-05-01T00:00:00Z',
               end_time: '2026-07-31T23:59:59Z',
@@ -331,4 +331,32 @@ describe('runStoryboardStep: A2A wire-shape capture (issue #904)', () => {
       await new Promise(resolve => server.close(resolve));
     }
   });
+});
+
+it('refuses an authored brand without its required domain instead of replacing it with a test brand', async () => {
+  let dispatched = 0;
+  const fixture = await startA2aFixture({
+    mediaBuy: {
+      createMediaBuy: async () => {
+        dispatched++;
+        return { status: 'submitted', task_id: 'must-not-dispatch' };
+      },
+    },
+  });
+  try {
+    const storyboard = buildStoryboard([]);
+    const malformedBrand = { brand_id: 'b1' };
+    storyboard.phases[0].steps[0].sample_request.brand = malformedBrand;
+    const result = await runStoryboardStep(fixture.url, storyboard, 'create_media_buy_async', {
+      protocol: 'a2a',
+      allow_http: true,
+    });
+    assert.strictEqual(result.passed, false, JSON.stringify(result));
+    assert.match(result.error, /brand\.domain/);
+    assert.deepStrictEqual(result.request.payload.brand, malformedBrand);
+    assert.strictEqual(dispatched, 0, 'invalid authored identity must be refused before seller mutation');
+    assert.deepStrictEqual(storyboard.phases[0].steps[0].sample_request.brand, malformedBrand);
+  } finally {
+    await fixture.close();
+  }
 });
