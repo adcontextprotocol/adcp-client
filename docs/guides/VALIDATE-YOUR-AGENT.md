@@ -875,3 +875,12 @@ Random seed on nightly broadens the surface; fixed seed on per-PR keeps reproduc
 For creative evaluator security fixtures, see
 [Creative evaluator build probes](CREATIVE-BUILD-PROBE.md) for valid route/input
 preparation, provisioned legacy selectors and explicit coverage gaps.
+
+SDK 17 controller registration preserves complete account identity and requires
+`account: { sandbox: true }` on every controller call, including `list_scenarios`.
+Callers that used the AdCP 3.0 account-less form must add this assertion before
+upgrading default MCP registration. `account_id` may accompany the assertion on
+the controller carrier; ordinary public opaque AccountRefs remain `{account_id}`.
+The platform wrapper retains its optional-account compatibility shape and trusted
+principal/target sandbox authorization. A caller assertion never grants sandbox
+authority by itself.

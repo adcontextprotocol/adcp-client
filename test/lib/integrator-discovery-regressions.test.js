@@ -233,7 +233,7 @@ test('seeding preserves opaque account references and refuses ambiguous or live 
     for (const request of requests.filter(request =>
       ['seed_product', 'seed_pricing_option'].includes(request.scenario)
     ))
-      assert.deepEqual(request.account, { account_id: 'opaque-account' });
+      assert.deepEqual(request.account, { account_id: 'opaque-account', sandbox: true });
   }
   for (const live of [false, true]) {
     const storyboard = board('unsafe', 8);
@@ -635,4 +635,37 @@ test('an explicit seed account conflicting with the effective run brand fails be
     0
   );
   assert.ok(result.phases[0].steps.some(step => /conflicts with the run-scoped brand/.test(step.error ?? '')));
+});
+
+test('opaque account identity uses the controller sandbox carrier without opening the public AccountRef', async () => {
+  const source = board('opaque-wire', 8);
+  delete source.fixtures.accounts;
+  source.phases[0].steps[0].sample_request.account = { account_id: 'existing-sandbox-account' };
+  const calls = [];
+  const result = await runStoryboard('https://seller.example/mcp', source, {
+    context: { account: { account_id: 'existing-sandbox-account' } },
+    agentTools: ['comply_test_controller', 'get_products'],
+    _profile: { tools: ['comply_test_controller', 'get_products'] },
+    _controllerCapabilities: { detected: true, scenarios },
+    _client: {
+      resetContext() {},
+      async executeTask(tool, request) {
+        calls.push({ tool, request });
+        return { success: true, data: { success: true } };
+      },
+      async getProducts(request) {
+        calls.push({ tool: 'get_products', request });
+        return { success: true, data: { products: [] } };
+      },
+    },
+  });
+  assert.equal(result.overall_passed, true, JSON.stringify(result));
+  const seeds = calls.filter(call => ['seed_product', 'seed_pricing_option'].includes(call.request.scenario));
+  assert.equal(seeds.length, 2);
+  for (const call of seeds)
+    assert.deepEqual(call.request.account, { account_id: 'existing-sandbox-account', sandbox: true });
+  assert.deepEqual(calls.find(call => call.tool === 'get_products').request.account, {
+    account_id: 'existing-sandbox-account',
+  });
+  assert.deepEqual(source.phases[0].steps[0].sample_request.account, { account_id: 'existing-sandbox-account' });
 });

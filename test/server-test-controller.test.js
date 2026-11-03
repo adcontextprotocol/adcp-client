@@ -1615,13 +1615,13 @@ describe('registerTestController compliance_testing auto-emission', () => {
 // ── TOOL_INPUT_SHAPE ───────────────────────────────────────
 
 describe('TOOL_INPUT_SHAPE', () => {
-  it('exposes exactly the four canonical fields (no account — not in AdCP schema)', () => {
-    assert.deepStrictEqual(Object.keys(TOOL_INPUT_SHAPE).sort(), ['context', 'ext', 'params', 'scenario']);
+  it('exposes the canonical controller account and operation fields', () => {
+    assert.deepStrictEqual(Object.keys(TOOL_INPUT_SHAPE).sort(), ['account', 'context', 'ext', 'params', 'scenario']);
   });
 
-  it('requires scenario and parses an otherwise-empty request', () => {
+  it('requires scenario and a sandbox account assertion', () => {
     const schema = z.object(TOOL_INPUT_SHAPE);
-    assert.doesNotThrow(() => schema.parse({ scenario: 'list_scenarios' }));
+    assert.doesNotThrow(() => schema.parse({ scenario: 'list_scenarios', account: { sandbox: true } }));
   });
 
   it('rejects a request missing scenario', () => {
@@ -1633,6 +1633,7 @@ describe('TOOL_INPUT_SHAPE', () => {
     const schema = z.object(TOOL_INPUT_SHAPE);
     assert.doesNotThrow(() =>
       schema.parse({
+        account: { sandbox: true },
         scenario: 'force_account_status',
         params: { account_id: 'acct-1', status: 'suspended' },
         context: { session_id: 'sess_1' },
@@ -1995,4 +1996,141 @@ it('seed cache isolates complete natural account dimensions within one storyboar
   );
   assert.equal(replay.success, false, 'same exact account still enforces divergent replay refusal');
   assert.equal(writes.length, scopes.length);
+});
+
+it('registered MCP controller preserves full account identity before factory resolution and enforces its sandbox assertion', async t => {
+  const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+  const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+  const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
+  const { registerTestController } = require('../dist/lib/server/test-controller');
+  const server = new McpServer({ name: 'Scoped controller', version: '1.0.0' });
+  const client = new Client({ name: 'Controller regression buyer', version: '1.0.0' });
+  const received = [];
+  const writes = [];
+  registerTestController(server, {
+    scenarios: ['seed_product', 'seed_pricing_option'],
+    async createStore(input) {
+      received.push(structuredClone(input));
+      // Real adopters resolve and authorize this identity against persisted
+      // account state before returning the scoped store. This store records
+      // the carrier received through the actual MCP registration boundary.
+      return {
+        async seedProduct(id, fixture) {
+          writes.push({ account: input.account, id, fixture });
+        },
+        async seedPricingOption(product, id, fixture) {
+          writes.push({ account: input.account, product, id, fixture });
+        },
+      };
+    },
+  });
+  const [buyerTransport, sellerTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(sellerTransport);
+  await client.connect(buyerTransport);
+  t.after(async () => {
+    await client.close();
+    await server.close();
+  });
+  const account = {
+    brand: { domain: 'acme.example', countries: ['US', 'CA'] },
+    operator: 'pinnacle.example',
+    operator_unit: { id: 'complete-unit' },
+    currency: 'USD',
+    timezone: 'America/New_York',
+    sandbox: true,
+  };
+  const tool = (await client.listTools()).tools.find(tool => tool.name === 'comply_test_controller');
+  assert.ok(tool.inputSchema.required.includes('account'));
+  for (const [scenario, params, scope] of [
+    ['seed_product', { product_id: 'same-product', fixture: { channels: ['olv'] } }, account],
+    [
+      'seed_pricing_option',
+      { product_id: 'same-product', pricing_option_id: 'auction', fixture: { floor_price: 5 } },
+      account,
+    ],
+    [
+      'seed_product',
+      { product_id: 'same-product', fixture: { channels: ['display'] } },
+      { account_id: 'opaque-id', sandbox: true },
+    ],
+  ]) {
+    const result = await client.callTool({
+      name: 'comply_test_controller',
+      arguments: { scenario, params, account: scope },
+    });
+    assert.equal(result.isError, undefined, JSON.stringify(result));
+    assert.equal(result.structuredContent.success, true, JSON.stringify(result));
+    assert.deepEqual(received.at(-1).account, scope);
+    assert.deepEqual(writes.at(-1).account, scope);
+  }
+  const accepted = received.length;
+  for (const invalid of [undefined, { account_id: 'opaque-id' }, { ...account, sandbox: false }]) {
+    const result = await client.callTool({
+      name: 'comply_test_controller',
+      arguments: {
+        scenario: 'seed_product',
+        params: { product_id: 'must-not-write', fixture: {} },
+        ...(invalid !== undefined && { account: invalid }),
+      },
+    });
+    assert.equal(result.isError, true);
+  }
+  assert.equal(received.length, accepted, 'invalid account assertions never reach the store factory');
+  assert.equal(writes.length, accepted);
+});
+
+it('createComplyController registration preserves scoped identity and the reporting doctor sends its required sandbox probe', async t => {
+  const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+  const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+  const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
+  const { createComplyController } = require('../dist/lib/testing/comply-controller');
+  const { runReportingDoctor } = require('../dist/lib/testing/reporting');
+  const server = new McpServer({ name: 'Adapter controller', version: '1.0.0' });
+  const client = new Client({ name: 'Adapter buyer', version: '1.0.0' });
+  const writes = [];
+  createComplyController({
+    sandboxGate: () => true,
+    seed: {
+      product(params, ctx) {
+        writes.push({ params, account: ctx.input.account });
+      },
+    },
+    reportingSubscriptionProbe: () => ({ success: true }),
+  }).register(server);
+  const [buyerTransport, sellerTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(sellerTransport);
+  await client.connect(buyerTransport);
+  t.after(async () => {
+    await client.close();
+    await server.close();
+  });
+  const account = {
+    brand: { domain: 'acme.example' },
+    operator: 'pinnacle.example',
+    operator_unit: { id: 'adapter-unit' },
+    currency: 'CAD',
+    timezone: 'UTC',
+    sandbox: true,
+  };
+  const good = await client.callTool({
+    name: 'comply_test_controller',
+    arguments: { scenario: 'seed_product', params: { product_id: 'adapter-product', fixture: {} }, account },
+  });
+  assert.equal(good.isError, undefined, JSON.stringify(good));
+  assert.deepEqual(writes[0].account, account);
+  for (const scope of [undefined, { sandbox: false }]) {
+    const result = await client.callTool({
+      name: 'comply_test_controller',
+      arguments: { scenario: 'list_scenarios', ...(scope && { account: scope }) },
+    });
+    assert.equal(result.isError, true);
+  }
+  const report = await runReportingDoctor({
+    async complyTestController(args) {
+      const result = await client.callTool({ name: 'comply_test_controller', arguments: args });
+      return { success: !result.isError, data: result.structuredContent };
+    },
+  });
+  assert.equal(report.checks.find(check => check.id === 'controller.probe').status, 'pass');
+  assert.equal(writes.length, 1, 'scenario probes do not create fixtures');
 });

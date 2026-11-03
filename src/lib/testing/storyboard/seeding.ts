@@ -87,7 +87,7 @@ function storyboardSeedScope(
       );
     }
     return {
-      account: typeof context.account.account_id === 'string' ? context.account : { ...context.account, sandbox: true },
+      account: { ...context.account, sandbox: true },
     };
   }
   const provisioningAliases = new Map<string, Record<string, unknown>>();
@@ -176,7 +176,7 @@ function storyboardSeedScope(
         account.operator.length > 0);
     if (!hasIdentity) continue;
     if (account.sandbox === false) throw new Error('Automatic fixture seeding requires a sandbox account');
-    const sandboxAccount = typeof account.account_id === 'string' ? account : { ...account, sandbox: true };
+    const sandboxAccount: Record<string, unknown> = { ...account, sandbox: true };
     const { currency: _currency, timezone: _timezone, ...identity } = sandboxAccount;
     const key = canonicalize(identity);
     (deferred ? deferredScopes : resolvedScopes).add(key);
