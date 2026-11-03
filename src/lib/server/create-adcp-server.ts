@@ -187,6 +187,7 @@ import {
   updateRightsResponse,
   syncAccountsResponse,
   syncGovernanceResponse,
+  requestAccountResponse,
   reportUsageResponse,
   toStructuredContent,
   _getExplicitResponseSummary,
@@ -3569,7 +3570,7 @@ const TOOL_META: Record<string, ToolMeta> = {
   sync_accounts: { wrap: syncAccountsResponse, annotations: IDEMP },
   sync_governance: { wrap: syncGovernanceResponse, annotations: IDEMP },
   get_account_financials: { wrap: null, annotations: RO },
-  request_account: { wrap: null, annotations: IDEMP },
+  request_account: { wrap: requestAccountResponse, annotations: IDEMP },
   report_usage: { wrap: reportUsageResponse, annotations: MUT },
 
   // Event Tracking
