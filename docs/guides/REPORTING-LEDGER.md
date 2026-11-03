@@ -752,9 +752,16 @@ await store.readyRowStorage();
   pooled connection across the provider call. They are safe without a lock
   because of five fences, none of which is the lock:
   1. Every writable key includes `{revision_key}` (a SHA-256 of the row set ID)
-     and `{content_sha256}`, so one row set alone can ever name a key. A
-     committed row set is replayed, never re-uploaded, so nothing adopts an
-     object a retirement or compaction is deleting.
+     and `{content_sha256}`, so one row set alone can ever name a key through a
+     writable binding. A committed row set is replayed: a late writer that
+     passed the replay check can adopt its just-committed object, but its
+     commit inserts nothing (the row set exists), so it cannot reference an
+     object a retirement or compaction then deletes. A `readOnly` binding's old
+     template can map several row sets to one object, but nothing adopts through
+     it; there the reference check and fence 4 are the whole argument. Bindings
+     that share one bucket and prefix must route a row set to one binding across
+     attempts, because the reference check is per binding (the orphan collector
+     checks every binding).
   2. A header-only revision's commit holds the account lock and `FOR SHARE`-locks
      a predecessor that must still be `live`. Retirement and compaction mark a
      row set `pruning` under the same account lock before they delete anything,
@@ -771,7 +778,8 @@ await store.readyRowStorage();
      `pruning`, each after committing its own `pruning` state, so at least one
      of any two deletes a shared object and none can both skip it.
   5. Deletes name an exact native version, so one cannot remove an object
-     re-created at the same key.
+     re-created at the same key. This needs write-unique native versions, a
+     provider requirement the conformance check `write-unique-version` tests.
 
   The advisory lock `adcp-reporting-object:{binding_id}:{object_ref}` stays in
   two places that pair with each other, because nothing else orders them. A
@@ -789,10 +797,10 @@ await store.readyRowStorage();
   an advisory lock is per database and cannot order a clone against the
   original. A skipped object is deleted by the retirement, compaction or sweep
   of the last row set that referenced it, so it is not leaked.
-- **Cross-SDK contract.** A ledger database has one writer SDK, so the Python and
-  JavaScript SDKs need not agree on a lock to coexist, but they use the same
-  key text and the same rule so that either can read the other's description.
-  The contract: (1) the delete paths above take no object lock; (2) the key text
+- **Cross-SDK contract.** A ledger database has one writer SDK (the design record's
+  §5), so the Python and JavaScript SDKs need not agree on a lock to coexist; this
+  is the intended contract for both, with the same key text. The Python side
+  (adcp-client-python#1492) mirrors it: (1) the delete paths above take no object lock; (2) the key text
   is `adcp-reporting-object:` + binding ID + `:` + object ref, hashed with
   `hashtextextended(text, 0)` for `pg_advisory_xact_lock`; (3) an adopting commit
   locks only adopted objects absent from its own intent's `created_objects`

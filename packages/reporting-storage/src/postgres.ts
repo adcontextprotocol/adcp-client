@@ -2219,9 +2219,10 @@ ${managedDueArm}       )
       { preBeginAdvisoryLock: accountLock(accountId) }
     );
     // Phase 2: external bytes, at their recorded versions. Row sets written under an older
-    // template without {revision_key} can name an object another obligation or account also
-    // references, so each delete is skipped while a live row set outside this period still
-    // references it (see deleteUnreferencedObjects).
+    // template without {revision_key} (readOnly bindings only) can name an object another obligation
+    // or account also references, so each delete is skipped while a live row set outside this period
+    // still references it. No lock orders that: the `pruning` state committed in phase 1 does (see
+    // deleteUnreferencedObjects).
     if (rowStorage) {
       const objects = await this.query<{ row_binding_id: string; object_ref: string; native_version_ref: string }>(
         `SELECT DISTINCT row_set.row_binding_id, chunk.object_ref, chunk.native_version_ref
@@ -2603,29 +2604,14 @@ ${managedDueArm}       )
           async client => {
             // An older writer still running during a rolling upgrade may append the pre-alignment keys
             // (`objectKey`, `nativeVersion`); read both so its objects are still swept.
-            const updated = await client.query<{
-              created_objects: {
-                object_ref?: string;
-                native_version_ref?: string;
-                objectKey?: string;
-                nativeVersion?: string;
-              }[];
-            }>(
+            const updated = await client.query<{ created_objects: RecordedIntentObject[] }>(
               `UPDATE adcp_reporting_row_write_intents SET state = 'sweeping'
                 WHERE row_binding_id = $1 AND row_set_id = $2 AND content_sha256 = $3
                   AND (state = 'sweeping' OR expires_at <= clock_timestamp())
                 RETURNING created_objects`,
               key
             );
-            return updated.rows[0]?.created_objects
-              .map(object => ({
-                objectRef: object.object_ref ?? object.objectKey,
-                nativeVersionRef: object.native_version_ref ?? object.nativeVersion,
-              }))
-              .filter(
-                (object): object is { objectRef: string; nativeVersionRef: string } =>
-                  typeof object.objectRef === 'string' && typeof object.nativeVersionRef === 'string'
-              );
+            return updated.rows[0] ? recordedIntentObjects(updated.rows[0].created_objects) : undefined;
           },
           { preBeginAdvisoryLock: accountLock(intent.account_id) }
         );
@@ -3317,9 +3303,15 @@ ${managedDueArm}       )
    * Why the check needs no lock against a committing writer (the proof, case by case):
    *
    * - Every writable template includes `{revision_key}` (a SHA-256 of the row set ID) and
-   *   `{content_sha256}`, so only one row set can ever name a given key. Whatever deletes an object
-   *   named by a committed chunk row or an open intent is deleting an object only that row set could
-   *   commit, and a committed row set is replayed, never re-uploaded.
+   *   `{content_sha256}`, so only one row set can ever name a given key through a writable binding.
+   *   Whatever deletes an object named by a committed chunk row or an open intent is deleting an object
+   *   only that row set could commit. A committed row set is replayed: a late writer that passed the
+   *   replay check can still adopt its just-committed object, but its commit inserts nothing (the row set
+   *   exists), so it cannot reference an object a retirement or compaction then deletes. A `readOnly`
+   *   binding's old template can map several row sets to one object, but nothing adopts through it; there
+   *   the reference check and the `pruning` order below are the whole argument (and no lock ever covered
+   *   more). Bindings that share one bucket and prefix must route a row set to one binding across
+   *   attempts: the reference check is per binding outside the orphan collector.
    * - Header-only revisions share chunks within an obligation. The sharing commit holds the account
    *   lock and `FOR SHARE`-locks a predecessor that must still be `live`; retirement and compaction
    *   move a row set to `pruning` under the same account lock before they delete anything. So a
@@ -3345,7 +3337,7 @@ ${managedDueArm}       )
     signal?: AbortSignal
   ): Promise<number> {
     let deleted = 0;
-    const pool = { query: (text: string, values?: unknown[]) => this.query(text, values) };
+    const pool: RowObjectQueryable = { query: (text, values) => this.query(text, values) };
     for (const object of objects) {
       signal?.throwIfAborted();
       if (await this.isRowObjectReferenced(pool, bindingId, object, scope)) continue;
@@ -3400,7 +3392,7 @@ ${managedDueArm}       )
    * exact object version. `anyBinding` widens the check to every binding (the orphan collector's).
    */
   private async isRowObjectReferenced(
-    queryable: { query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[] }> },
+    queryable: RowObjectQueryable,
     bindingId: string,
     object: { objectRef: string; nativeVersionRef: string },
     scope: { obligationId?: string; rowSetId?: string; anyBinding?: boolean }
@@ -3584,8 +3576,8 @@ ${managedDueArm}       )
         .filter(locator => !locator.created)
         .sort((left, right) => (left.objectRef < right.objectRef ? -1 : left.objectRef > right.objectRef ? 1 : 0));
       const recorded = new Set(
-        (closed.rows[0]?.created_objects ?? []).map(
-          object => `${object.object_ref ?? object.objectKey}\u0000${object.native_version_ref ?? object.nativeVersion}`
+        recordedIntentObjects(closed.rows[0]?.created_objects).map(
+          object => `${object.objectRef}\u0000${object.nativeVersionRef}`
         )
       );
       for (const locator of adopted) {
@@ -6765,7 +6757,6 @@ function withRows<T extends { rows: Record<string, unknown>[] }>(value: T, rows:
   return Array.isArray(value.rows) ? value : { ...value, rows: clone(rows) };
 }
 
-/** Locations for an object-kind row set: freshly uploaded under an intent, or shared from identical rows. */
 /** One entry of a write intent's `created_objects`; an older writer records `objectKey` and `nativeVersion`. */
 interface RecordedIntentObject {
   object_ref?: string;
@@ -6774,6 +6765,27 @@ interface RecordedIntentObject {
   nativeVersion?: string;
 }
 
+/** The objects a write intent recorded, reading both the current keys and an older writer's pre-alignment keys. */
+function recordedIntentObjects(
+  entries: readonly RecordedIntentObject[] | undefined
+): { objectRef: string; nativeVersionRef: string }[] {
+  return (entries ?? [])
+    .map(entry => ({
+      objectRef: entry.object_ref ?? entry.objectKey,
+      nativeVersionRef: entry.native_version_ref ?? entry.nativeVersion,
+    }))
+    .filter(
+      (object): object is { objectRef: string; nativeVersionRef: string } =>
+        typeof object.objectRef === 'string' && typeof object.nativeVersionRef === 'string'
+    );
+}
+
+/** The part of a pool or transaction client the reference check needs. */
+interface RowObjectQueryable {
+  query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[] }>;
+}
+
+/** Locations for an object-kind row set: freshly uploaded under an intent, or shared from identical rows. */
 type RowSetUploadV1 =
   | { locators: ReportingRowChunkLocatorV1[]; ownerToken: string; sharedFrom?: undefined }
   | { locators: ReportingRowChunkLocatorV1[]; sharedFrom: string; ownerToken?: undefined };

@@ -20,7 +20,7 @@ const { createHash } = require('node:crypto');
 const { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
-const { after, before, describe, test } = require('node:test');
+const { after, afterEach, before, describe, test } = require('node:test');
 
 const { createRowStorageFixture } = require('./helpers/reporting-row-storage-fixture.js');
 
@@ -169,7 +169,9 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
       async delete(input, context) {
         heldAtDelete.push(pool.totalCount - pool.idleCount);
         const hook = beforeDelete;
-        if (hook && (await hook(input)) !== 'keep') beforeDelete = undefined;
+        // Cleared first: a delete the hook itself provokes must not re-enter it. `keep` re-arms it for the next delete.
+        beforeDelete = undefined;
+        if (hook && (await hook(input)) === 'keep') beforeDelete = hook;
         return base.delete(input, context);
       },
       async get(input, context) {
@@ -203,6 +205,12 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
       },
     });
     await store.readyRowStorage();
+  });
+
+  afterEach(() => {
+    // A failed test must not leave a hook armed for the next one.
+    afterAdoptedRead = undefined;
+    beforeDelete = undefined;
   });
 
   after(async () => {
@@ -308,14 +316,16 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     await expire(first);
     await expire(second);
     const held = await holdObjectLock(chunkA.object_ref);
+    const retiring = retire();
     try {
       heldAtDelete = [];
-      const result = await within(retire());
+      const result = await within(retiring);
       assert.notEqual(result, timedOut, 'retirement does not wait on the object lock');
       assert.equal(result.retired, 2);
     } finally {
       await held.release();
     }
+    await retiring;
     assert.equal(existsSync(fileOf(chunkA)), false);
     assert.ok(heldAtDelete.length > 0, 'the provider was asked to delete');
     assert.ok(
@@ -338,14 +348,16 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
       ]
     );
     const held = await holdObjectLock(objectRef);
+    heldAtDelete = [];
+    const sweeping = store.sweepRowWriteIntents();
     try {
-      heldAtDelete = [];
-      const result = await within(store.sweepRowWriteIntents());
+      const result = await within(sweeping);
       assert.notEqual(result, timedOut, 'the sweep does not wait on the object lock');
       assert.equal(result.objectsDeleted, 1);
     } finally {
       await held.release();
     }
+    await sweeping;
     assert.equal(existsSync(file), false);
     assert.deepEqual(heldAtDelete, [0]);
   });
@@ -407,14 +419,16 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     const recorded = await abandonedAttempt(target);
     await expireIntent(target);
     const held = await holdObjectLock(recorded.object_ref);
+    providerCalls = { get: 0, stat: 0 };
+    const committing = store.commitAdjustment(adjustmentFor(target), target.fixture.lease);
     try {
-      providerCalls = { get: 0, stat: 0 };
-      const result = await within(store.commitAdjustment(adjustmentFor(target), target.fixture.lease));
+      const result = await within(committing);
       assert.notEqual(result, timedOut, 'adopting an object the writer recorded does not wait on the object lock');
       assert.equal(result.inserted, true);
     } finally {
       await held.release();
     }
+    await committing;
     assert.equal(providerCalls.stat, 1, 'the adopted object is still proven with a version-pinned stat');
     assert.deepEqual(
       (await chunksOf(target.adjustmentId)).map(chunk => chunk.object_ref),
@@ -428,6 +442,50 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
       0
     );
     assert.deepEqual(await adjustmentRows(target), current);
+  });
+
+  test('a retry whose intent was written by an older writer (pre-alignment keys) also adopts without the lock', async () => {
+    const target = await freshTarget('legacykeys');
+    const recorded = await abandonedAttempt(target);
+    await pool.query(`UPDATE adcp_reporting_row_write_intents SET created_objects = $2::jsonb WHERE row_set_id = $1`, [
+      target.adjustmentId,
+      JSON.stringify([{ objectKey: recorded.object_ref, nativeVersion: recorded.native_version_ref }]),
+    ]);
+    await expireIntent(target);
+    const held = await holdObjectLock(recorded.object_ref);
+    const committing = store.commitAdjustment(adjustmentFor(target), target.fixture.lease);
+    try {
+      const result = await within(committing);
+      assert.notEqual(result, timedOut, 'the pre-alignment record is read like the current one');
+      assert.equal(result.inserted, true);
+    } finally {
+      await held.release();
+    }
+    await committing;
+    assert.deepEqual(await adjustmentRows(target), current);
+  });
+
+  test('a retry takes the object lock when its intent names the key at a different native version', async () => {
+    const target = await freshTarget('otherversion');
+    const recorded = await abandonedAttempt(target);
+    await pool.query(`UPDATE adcp_reporting_row_write_intents SET created_objects = $2::jsonb WHERE row_set_id = $1`, [
+      target.adjustmentId,
+      JSON.stringify([{ object_ref: recorded.object_ref, native_version_ref: 'some-other-version' }]),
+    ]);
+    await expireIntent(target);
+    const held = await holdObjectLock(recorded.object_ref);
+    let committed = false;
+    const committing = store.commitAdjustment(adjustmentFor(target), target.fixture.lease).then(result => {
+      committed = true;
+      return result;
+    });
+    try {
+      await untilWaiting(objectLockKey(recorded.object_ref));
+      assert.equal(committed, false, 'a record of another version does not vouch for the adopted one');
+    } finally {
+      await held.release();
+    }
+    assert.equal((await committing).inserted, true);
   });
 
   test('a retry still takes the object lock for an adopted object its intent does not name', async () => {
@@ -456,10 +514,10 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.deepEqual(await adjustmentRows(target), current);
   });
 
-  test('a writer past its lease cannot commit the objects its expired intent lost to the sweep', async () => {
+  test('a writer whose intent expired before its commit cannot commit the objects the sweep deleted', async () => {
     const target = await freshTarget('pastlease');
     let sweep;
-    // The lease and the intent lapse while the writer is between its upload and its commit.
+    // The intent lapses while the writer is between its upload and its commit (a stalled or partitioned writer).
     const restore = afterUpload(async () => {
       await expireIntent(target);
       sweep = await store.sweepRowWriteIntents();
@@ -509,7 +567,7 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.deepEqual(await adjustmentRows(target), current);
   });
 
-  test('a sweep that claims an expired intent first makes a retry wait, and the swept writer cannot commit', async () => {
+  test('a retry cannot take over an intent the sweep has claimed, and commits nothing', async () => {
     const target = await freshTarget('sweepfirst');
     await abandonedAttempt(target);
     await expireIntent(target);
@@ -573,10 +631,36 @@ describe('reporting shared row objects', { skip: !DATABASE_URL && 'PostgreSQL UR
       );
       await expire(first);
       await expire(second);
-      const [a, b] = await Promise.all([
-        store.retireExpiredPeriods({ statusRetentionDays: 30, account_id: accountId(first) }),
-        store.retireExpiredPeriods({ statusRetentionDays: 30, account_id: accountId(second) }),
-      ]);
+      // Hold both retirements at the shared object's reference check until both have committed `pruning` (phase
+      // 1 precedes the check): the interleaving in which a check that counted `pruning` row sets would make both skip.
+      const original = store.isRowObjectReferenced;
+      let arrived = 0;
+      let open;
+      const gate = new Promise(resolve => {
+        open = resolve;
+      });
+      const timer = setTimeout(() => open(), 3_000);
+      store.isRowObjectReferenced = async function (queryable, bindingId, object, scope) {
+        if (object.objectRef === chunkA.object_ref) {
+          arrived += 1;
+          if (arrived === 2) open();
+          await gate;
+        }
+        return original.call(this, queryable, bindingId, object, scope);
+      };
+      let a;
+      let b;
+      try {
+        [a, b] = await Promise.all([
+          store.retireExpiredPeriods({ statusRetentionDays: 30, account_id: accountId(first) }),
+          store.retireExpiredPeriods({ statusRetentionDays: 30, account_id: accountId(second) }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+        store.isRowObjectReferenced = original;
+      }
+      assert.equal(arrived, 2, 'both retirements reached the shared object together');
+      assert.deepEqual([a.retired, b.retired], [1, 1]);
       assert.equal(a.failed.length + b.failed.length, 0);
       assert.equal(existsSync(fileOf(chunkA)), false, `round ${round}: the last retirement deletes the object`);
       assert.equal(
@@ -1072,7 +1156,7 @@ describe('reporting compaction with a shared object', { skip: !DATABASE_URL && '
 
   test('a header-only revision whose predecessor is compacted before its commit fails cleanly and then re-uploads', async () => {
     const a = await chain('cmp_hdr');
-    const [r1, r2, r3] = a.ids;
+    const [r1, , r3] = a.ids;
     const obligationId = a.fixture.obligation.reporting_obligation_id;
     const [sharedObject] = await chunkRefs(r1);
     // The writer holds a live lease while it prepares; compaction runs only once the lease has lapsed.
@@ -1101,7 +1185,10 @@ describe('reporting compaction with a shared object', { skip: !DATABASE_URL && '
     try {
       await assert.rejects(
         () => store.commitRevision(pulse, a.fixture.lease),
-        error => ledger.isReportingRowStoreError(error) && error.code === 'STATE_UNAVAILABLE'
+        error =>
+          ledger.isReportingRowStoreError(error) &&
+          error.code === 'STATE_UNAVAILABLE' &&
+          /no longer live/.test(error.message)
       );
     } finally {
       store.rowStorage.findShareable = original;
@@ -1115,9 +1202,8 @@ describe('reporting compaction with a shared object', { skip: !DATABASE_URL && '
     // A retry no longer finds a live predecessor to share, so it uploads its own object and commits.
     assert.equal((await store.commitRevision(pulse, a.fixture.lease)).inserted, true);
     const [ownObject] = await chunkRefs('rrev_cmp_hdr_4');
-    assert.notEqual(ownObject, sharedObject);
-    assert.ok(existsSync(path.join(root, ownObject)));
+    assert.ok(existsSync(path.join(root, ownObject)), 'the retry uploaded its own object');
+    assert.equal(existsSync(path.join(root, sharedObject)), false, 'the deleted predecessor object stays deleted');
     assert.deepEqual((await store.getRevision('rrev_cmp_hdr_4', a.fixture.request.account.account_id)).rows, rows);
-    void r2;
   });
 });
