@@ -11,6 +11,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { applyBrandInvariant } from './account-policy';
+import { isRunnerOwnedTask, REPLAY_WEBHOOK_VECTOR_TASK } from './runner-owned-task';
 import { prepareCreativeBuildProbe } from './creative-build-probe';
 import {
   createTestClient,
@@ -480,19 +481,6 @@ const CANONICAL_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> 
  */
 const MCP_SESSION_PROBE_REQUEST_TIMEOUT_MS = 5_000;
 
-const REPLAY_WEBHOOK_VECTOR_TASK = 'replay_webhook_vector';
-
-function isRunnerOwnedTask(task: string): boolean {
-  return (
-    task === VALIDATION_ONLY_TASK ||
-    task === MCP_SESSION_PROBE_TASK ||
-    task === 'assert_contribution' ||
-    task === REPLAY_WEBHOOK_VECTOR_TASK ||
-    TRUSTED_MATCH_PUBLISHER_AUTH_TASKS.has(task) ||
-    PROBE_TASKS.has(task) ||
-    WEBHOOK_ASSERTION_TASKS.has(task)
-  );
-}
 const REPLAY_TRUSTED_MATCH_CONTEXT_VECTOR_TASK = 'replay_trusted_match_context_vector';
 const WEBHOOK_REPLAY_DEFAULT_TIMEOUT_MS = 10_000;
 
