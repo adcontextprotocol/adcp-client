@@ -1015,6 +1015,7 @@ function buildRegimes(
     const version = versions.find(candidate => current(candidate) && !inactiveAt(candidate));
     const configuration = version?.record.configuration;
     const inScope =
+      version !== undefined &&
       configuration !== undefined &&
       reportingSubscriptionScopeIncludesV1(
         membershipEdited(version)
