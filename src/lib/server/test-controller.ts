@@ -944,7 +944,15 @@ function makeSeedCacheScope(input: Record<string, unknown>): string | undefined 
     input.account ??
     (context != null && typeof context === 'object' ? (context as { account?: unknown }).account : undefined);
   if (account != null && typeof account === 'object') {
-    const accountRef = account as { account_id?: unknown; brand?: unknown; operator?: unknown; sandbox?: unknown };
+    const accountRef = account as {
+      account_id?: unknown;
+      brand?: unknown;
+      operator?: unknown;
+      operator_unit?: unknown;
+      currency?: unknown;
+      timezone?: unknown;
+      sandbox?: unknown;
+    };
     if (typeof accountRef.account_id === 'string' && accountRef.account_id.length > 0) {
       parts.push(`account_id:${accountRef.account_id}`);
     } else if (
@@ -956,6 +964,9 @@ function makeSeedCacheScope(input: Record<string, unknown>): string | undefined 
         `account_ref:${canonicalJson({
           ...(accountRef.brand !== undefined && { brand: accountRef.brand }),
           ...(accountRef.operator !== undefined && { operator: accountRef.operator }),
+          ...(accountRef.operator_unit !== undefined && { operator_unit: accountRef.operator_unit }),
+          ...(accountRef.currency !== undefined && { currency: accountRef.currency }),
+          ...(accountRef.timezone !== undefined && { timezone: accountRef.timezone }),
           ...(accountRef.sandbox !== undefined && { sandbox: accountRef.sandbox }),
         })}`
       );

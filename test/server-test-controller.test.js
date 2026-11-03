@@ -1945,3 +1945,54 @@ describe('deterministic stale-cache forcing', () => {
     });
   }
 });
+
+it('seed cache isolates complete natural account dimensions within one storyboard correlation', async () => {
+  const writes = [];
+  const store = {
+    async seedProduct(id, fixture) {
+      writes.push({ id, fixture });
+    },
+  };
+  const seedCache = createSeedFixtureCache();
+  const base = { brand: { domain: 'acme.example', countries: ['US'] }, operator: 'pinnacle.example', sandbox: true };
+  const scopes = [
+    { ...base, operator_unit: { id: 'unit-a' }, currency: 'USD', timezone: 'UTC' },
+    { ...base, operator_unit: { id: 'unit-b' }, currency: 'USD', timezone: 'UTC' },
+    { ...base, operator_unit: { id: 'unit-a' }, currency: 'CAD', timezone: 'UTC' },
+    { ...base, operator_unit: { id: 'unit-a' }, currency: 'USD', timezone: 'America/New_York' },
+    {
+      ...base,
+      brand: { ...base.brand, countries: ['CA'] },
+      operator_unit: { id: 'unit-a' },
+      currency: 'USD',
+      timezone: 'UTC',
+    },
+  ];
+  for (let i = 0; i < scopes.length; i++) {
+    const result = await handleTestControllerRequest(
+      store,
+      {
+        scenario: 'seed_product',
+        account: scopes[i],
+        context: { correlation_id: 'same-storyboard' },
+        params: { product_id: 'shared-id', fixture: { floor_price: i + 1 } },
+      },
+      { seedCache }
+    );
+    assert.equal(result.success, true, JSON.stringify(result));
+    assert.equal(result.message, 'Fixture seeded');
+  }
+  assert.equal(writes.length, scopes.length);
+  const replay = await handleTestControllerRequest(
+    store,
+    {
+      scenario: 'seed_product',
+      account: scopes[0],
+      context: { correlation_id: 'same-storyboard' },
+      params: { product_id: 'shared-id', fixture: { floor_price: 999 } },
+    },
+    { seedCache }
+  );
+  assert.equal(replay.success, false, 'same exact account still enforces divergent replay refusal');
+  assert.equal(writes.length, scopes.length);
+});

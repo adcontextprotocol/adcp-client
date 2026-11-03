@@ -99,6 +99,8 @@ export interface Storyboard {
    *     not actually present.
    *   - `collect_product_pages_runner` — intrinsic support for explicit wholesale
    *     all-page steps; unavailable on older runners that ignore this metadata.
+   *   - `field_excludes_runner` — intrinsic full-response negative membership support;
+   *     older runners skip before seeding instead of ignoring an unknown check.
    *   - `real_wire` — always available. Tag scenarios that observe
    *     production behavior with this when you want them excluded from
    *     a future `--mock-only` mode; today the tag is a no-op gate.
@@ -1088,6 +1090,9 @@ export type StoryboardValidationCheck =
   // When the path has no wildcard segments this reduces to scalar equality
   // / array membership depending on what the path resolves to.
   | 'field_contains'
+  // Inverse membership: no resolved value may match; empty arrays pass.
+  // Uses full-response streaming traversal rather than a capped prefix.
+  | 'field_excludes'
   | 'status_code'
   | 'error_code'
   // HTTP-probe checks (for raw_probe tasks)
@@ -2662,6 +2667,7 @@ export interface RunnerSelectionResult {
 export type RequirementName =
   | 'controller'
   | 'collect_product_pages_runner'
+  | 'field_excludes_runner'
   | 'seeded_state'
   | 'real_wire'
   | 'webhook_receiver'
@@ -2682,6 +2688,7 @@ export type RequirementName =
 export const KNOWN_REQUIREMENTS: ReadonlySet<RequirementName> = new Set([
   'controller',
   'collect_product_pages_runner',
+  'field_excludes_runner',
   'seeded_state',
   'real_wire',
   'webhook_receiver',

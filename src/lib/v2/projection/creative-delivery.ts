@@ -377,12 +377,17 @@ export function stripLegacyCreativeIdentity<T>(value: T): CanonicalCreativeRespo
     typeof ownDataValue(owner, 'list_id') === 'string' &&
     typeof key === 'string' &&
     /(^|_)(?:property_list|collection_list|list_ref)($|_)/.test(key);
+  // A provenance verifier is a protocol agent identity, even when a seller
+  // also uses that URL as a legacy creative-format provider.
+  const nonCreativeVerifierContext = (key: string | undefined): boolean => key === 'accepted_verifiers';
   const explicitNonCreativeContextKey = (key: string | undefined): boolean =>
     nonCreativeAgentContext(key) ||
+    nonCreativeVerifierContext(key) ||
     (typeof key === 'string' && /(^|_)(?:signal_ids?|property_list|collection_list|list_ref)($|_)/.test(key));
   const standaloneLegacyTuple = (owner: Record<string, unknown>, ownerKey?: string): boolean => {
     if (
       nonCreativeAgentContext(ownerKey) ||
+      nonCreativeVerifierContext(ownerKey) ||
       nonCreativeSignalContext(owner, ownerKey) ||
       nonCreativeListContext(owner, ownerKey)
     ) {
@@ -398,6 +403,7 @@ export function stripLegacyCreativeIdentity<T>(value: T): CanonicalCreativeRespo
     if (key === 'agent_url') {
       return (
         nonCreativeAgentContext(ownerKey) ||
+        nonCreativeVerifierContext(ownerKey) ||
         nonCreativeSignalContext(owner, ownerKey) ||
         nonCreativeListContext(owner, ownerKey) ||
         (typeof ownDataValue(owner, 'id') === 'string' && !standaloneLegacyTuple(owner, ownerKey))
