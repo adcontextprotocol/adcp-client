@@ -411,8 +411,17 @@ test('seed scope uses a lone complete account fixture and ignores intentionally 
 test('published AdCP 3.1 audience fixtures distinguish sandbox routing metadata from account identity', async () => {
   const path = require('node:path');
   const { loadStoryboardFile } = require('../../dist/lib/testing/storyboard/loader');
+  const declaredCache = require('../../package.json').files.find(file =>
+    /^compliance\/cache\/3\.1\.\d+\/\*\*\/\*$/.test(file)
+  );
+  assert.ok(declaredCache, 'package declares the maintained AdCP 3.1 corpus');
   const source = loadStoryboardFile(
-    path.join(__dirname, '../../compliance/cache/3.1.31/protocols/media-buy/scenarios/audience_buy_flow.yaml')
+    path.join(
+      __dirname,
+      '../..',
+      declaredCache.replace('/**/*', ''),
+      'protocols/media-buy/scenarios/audience_buy_flow.yaml'
+    )
   );
   const account = source.phases
     .flatMap(phase => phase.steps)

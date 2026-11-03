@@ -2040,7 +2040,11 @@ it('registered MCP controller preserves full account identity before factory res
     sandbox: true,
   };
   const tool = (await client.listTools()).tools.find(tool => tool.name === 'comply_test_controller');
-  assert.ok(tool.inputSchema.required.includes('account'));
+  assert.equal(
+    tool.inputSchema.required?.includes('account') ?? false,
+    false,
+    'stable ingress preserves optional AdCP 3.0 carrier'
+  );
   for (const [scenario, params, scope] of [
     ['seed_product', { product_id: 'same-product', fixture: { channels: ['olv'] } }, account],
     [

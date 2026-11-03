@@ -1146,9 +1146,9 @@ function selectLegacyRef(
   creative: Record<string, unknown>,
   container: CreativeFormatSelectorContainer,
   canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
-  operation = 'creative_delivery'
+  operation = 'creative_delivery',
+  candidates = candidatesFromContainer(container, canonicalFormatLegacyResolver, operation)
 ): V1FormatId | undefined {
-  let candidates = candidatesFromContainer(container, canonicalFormatLegacyResolver, operation);
   const creativeOptionRef = optionReference(creative.format_option_ref);
   const selectedOptionRefs = Array.isArray(container.format_option_refs)
     ? container.format_option_refs.flatMap(value => {
@@ -1827,6 +1827,157 @@ export function projectMediaBuyCreativesForDelivery<T>(
     | ProjectedMediaBuyCreativeRequest<T, 'legacy'>;
 }
 
+/** Keep repeated selection/diagnostic reads on the same caller resolver answers. */
+function memoizePackageResolver(
+  resolver: CanonicalFormatLegacyResolver | undefined
+): CanonicalFormatLegacyResolver | undefined {
+  if (!resolver) return undefined;
+  type Answer = { ok: true; value: ReturnType<CanonicalFormatLegacyResolver> } | { ok: false; error: unknown };
+  const cache = new WeakMap<object, Map<string, Answer>>();
+  return context => {
+    const owner =
+      context.source === 'product'
+        ? context.declaration
+        : context.source === 'creative'
+          ? context.creative
+          : context.selector;
+    const key = JSON.stringify([
+      context.source,
+      context.field,
+      context.source === 'product' ? context.productId : context.operation,
+    ]);
+    let answers = cache.get(owner);
+    if (!answers) {
+      answers = new Map();
+      cache.set(owner, answers);
+    }
+    let answer = answers.get(key);
+    if (!answer) {
+      try {
+        // The caller may reuse one mutable mapping object between answers.
+        answer = {
+          ok: true,
+          value: resolveCanonicalFormatLegacyRefs(resolver, context, context.source === 'creative'),
+        };
+      } catch (error) {
+        answer = { ok: false, error };
+      }
+      answers.set(key, answer);
+    }
+    if (!answer.ok) throw answer.error;
+    return answer.value;
+  };
+}
+
+/**
+ * SDK 16 has no package-fit API. Keep its existing canonical kinds and selector
+ * rules, but intersect their compatible legacy identities instead of selecting
+ * a ref from their union. A library upload may ignore unrelated package kinds;
+ * an explicit assignment must be representable by every named package.
+ */
+function projectSharedLegacyCreative(
+  creative: Record<string, unknown>,
+  selectors: ReadonlyArray<CreativeFormatSelectorContainer>,
+  assigned: boolean,
+  resolver: CanonicalFormatLegacyResolver | undefined,
+  definitions: readonly V1FormatDefinition[] | undefined
+): Record<string, unknown> | undefined {
+  // Preserve the existing explicit legacy identity and converter routes. This
+  // backport only changes selection of canonical inputs among seller refs.
+  if (typeof creative.format_kind !== 'string' || creative.format_id !== undefined || selectors.length < 2)
+    return undefined;
+  const formatKind = creative.format_kind;
+  // Unscoped or unmapped declarations retain SDK 16's existing resolver path;
+  // absence of mapping evidence does not establish a package mismatch.
+  if (selectors.some(selector => typeof selector.package_id !== 'string')) return undefined;
+  const byPackage = new Map<string, CreativeFormatSelectorContainer[]>();
+  for (const selector of selectors) {
+    const group = byPackage.get(selector.package_id!) ?? [];
+    group.push(selector);
+    byPackage.set(selector.package_id!, group);
+  }
+  if (byPackage.size < 2) return undefined;
+  const packages = [...byPackage].map(([package_id, containers]) =>
+    containers.length === 1 ? containers[0]! : { package_id, selector_containers: containers }
+  );
+  const compatible: Array<{ selector: CreativeFormatSelectorContainer; candidates: LegacyCandidate[] }> = [];
+  const fail = (message: string): never => {
+    throw new CreativeFormatProjectionError('sync_creatives', String(creative.creative_id), message);
+  };
+  for (const selector of packages) {
+    const known = candidatesFromContainer(selector, resolver, 'sync_creatives');
+    if (known.length === 0 || known.some(candidate => candidate.formatKind === undefined)) return undefined;
+    const sameKind = known.filter(candidate => candidate.formatKind === formatKind);
+    const constraints =
+      creativeFormatParameterConstraints(creative) ??
+      (sameKind.length > 1 ? primaryMediaConstraints(creative) : undefined);
+    const mediaKind = ['image', 'video_hosted', 'audio_hosted'].includes(String(formatKind));
+    // A nested selector retains its own option pins; flattening first would
+    // let a sibling's unselected mapping satisfy this package's identity.
+    const scopedCandidates = (container: CreativeFormatSelectorContainer): LegacyCandidate[] => {
+      const children = container.selector_containers;
+      const available = Array.isArray(children)
+        ? children.flatMap(child => scopedCandidates(child))
+        : candidatesFromContainer(container, resolver, 'sync_creatives');
+      if (
+        containerOptsOutOfLegacy(
+          { ...container, selector_containers: undefined },
+          formatKind,
+          optionReference(creative.format_option_ref)
+        )
+      )
+        return [];
+      return available.filter(
+        candidate =>
+          candidate.formatKind === formatKind &&
+          (!constraints ||
+            !refContradictsConstraints(candidate.ref, constraints, mediaKind ? candidate.selectorParams : undefined)) &&
+          selectLegacyRef(creative, container, undefined, 'sync_creatives', [candidate]) !== undefined
+      );
+    };
+    const candidates = scopedCandidates(selector);
+    if (candidates.length === 0) {
+      if (assigned) fail('the canonical creative has no compatible legacy reference for every assigned package');
+      continue;
+    }
+    compatible.push({ selector, candidates });
+  }
+  if (compatible.length === 0) return undefined;
+  let shared = compatible[0]!.candidates.map(candidate => candidate.ref);
+  for (const { candidates } of compatible.slice(1))
+    shared = shared.filter(ref => candidates.some(candidate => sameLegacyIdentity(ref, candidate.ref)));
+  if (shared.length === 0) fail('the compatible packages do not share a legacy format identity');
+  const candidates = uniqueCandidates(
+    compatible.flatMap(item =>
+      item.candidates.filter(candidate => shared.some(ref => sameLegacyIdentity(ref, candidate.ref)))
+    )
+  );
+  const selected = selectLegacyRef(
+    creative,
+    { selector_containers: compatible.map(item => item.selector) },
+    undefined,
+    'sync_creatives',
+    candidates
+  );
+  if (!selected) fail('the compatible packages do not share one unambiguous legacy format reference');
+  // Verify the selected wire constraints against each package. Identity alone
+  // does not permit borrowing a width, height, duration or option from another.
+  for (const { selector, candidates } of compatible) {
+    const matching = candidates.filter(candidate => sameLegacyIdentity(candidate.ref, selected!));
+    const ref = selectLegacyRef(creative, selector, undefined, 'sync_creatives', matching);
+    if (
+      !ref ||
+      ['width', 'height', 'duration_ms'].some(key => {
+        const left = selected![key as keyof V1FormatId];
+        const right = ref[key as keyof V1FormatId];
+        return left !== undefined && right !== undefined && left !== right;
+      })
+    )
+      fail('the shared legacy identity has incompatible package constraints');
+  }
+  return projectCreative(creative, selected!, definitions);
+}
+
 export function projectSyncCreativesForDelivery<T>(
   request: T,
   selectorContainers: ReadonlyArray<CreativeFormatSelectorContainer>,
@@ -1881,18 +2032,29 @@ export function projectSyncCreativesForDelivery<T>(
         : selectorContainers.filter(
             container => typeof container.package_id === 'string' && assignedPackageIds.has(container.package_id)
           );
+    const scopedResolver = memoizePackageResolver(canonicalFormatLegacyResolver);
     const combined: CreativeFormatSelectorContainer = {
       selector_containers: relevant,
     };
-    const projected = projectCreativeForDelivery(
-      creative as unknown as CreativeAsset,
-      combined,
-      wireMode,
-      'sync_creatives',
-      legacyFormatConverter,
-      canonicalFormatLegacyResolver,
-      legacyFormatDefinitions
-    );
+    const projected =
+      (wireMode !== 'canonical'
+        ? projectSharedLegacyCreative(
+            creative,
+            relevant,
+            assignedPackageIds.size > 0,
+            scopedResolver,
+            legacyFormatDefinitions
+          )
+        : undefined) ??
+      projectCreativeForDelivery(
+        creative as unknown as CreativeAsset,
+        combined,
+        wireMode,
+        'sync_creatives',
+        legacyFormatConverter,
+        scopedResolver,
+        legacyFormatDefinitions
+      );
     if (projected !== creativeValue) changed = true;
     return projected;
   });
