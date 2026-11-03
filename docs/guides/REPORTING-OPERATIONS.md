@@ -180,10 +180,13 @@ service runs for you. See
    `minAgeSeconds` ago (default 7 days, never less than 1 day, which must stay
    well above the write deadline plus intent expiry); no row set that is not yet
    `pruned` has a chunk at that key and no write intent lists it, at any version;
-   and, under the per-object advisory lock every other delete takes, no `live` or
-   `unavailable` row set references that exact version and no open intent
-   created it, checked under every binding because two bindings can share a
-   bucket and prefix (a retired binding kept `readOnly` next to its successor).
+   and, under the per-object advisory lock (the only delete that takes it: a
+   commit that adopts an object its own intent did not record takes the same
+   lock, so the two cannot interleave), no `live` or `unavailable` row set
+   references that exact version and no open intent created it, checked under
+   every binding because two bindings can share a bucket and prefix (a retired
+   binding kept `readOnly` next to its successor). Retirement, compaction and the
+   intent sweep take no lock and hold no connection across their provider deletes.
    `readOnly` bindings are skipped unless `includeReadOnly: true`. A binding
    whose provider has no `list` is reported as `unsupported` (and as a
    maintenance warning), never silently skipped. Everything under the owned prefix

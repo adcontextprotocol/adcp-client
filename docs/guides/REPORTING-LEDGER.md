@@ -744,16 +744,63 @@ await store.readyRowStorage();
   several row sets. Every delete path (period retirement, compaction and the
   intent sweep) therefore skips an object while a live row set outside the
   operation still references the same binding, key and native version, or an
-  open write intent created it. (With unique keys, a create-only write only
-  finds an existing object when a writer retries the same row set.) The check
-  and delete run under the per-object lock described below. The reference check and the delete run in one
-  transaction under a per-object advisory lock, and a commit that adopts an
-  existing object takes the same lock, proves the object is still there and
-  holds the lock until its chunk rows commit. A delete that wins the lock makes the adopting
-  commit fail with `STATE_UNAVAILABLE` (the writer re-uploads once its intent
-  lapses); a commit that wins is seen by the delete, which skips. A skipped
-  object is deleted by the retirement, compaction or sweep of the last row set
-  that referenced it, so it is not leaked.
+  open write intent created it. With unique keys, a create-only write only
+  finds an existing object when a writer retries the same row set.
+- **Object deletes and commits take no per-object lock, with one exception.**
+  Retirement, compaction and the intent sweep run the reference check as a
+  plain query, then delete the exact native version, holding no transaction or
+  pooled connection across the provider call. They are safe without a lock
+  because of five fences, none of which is the lock:
+  1. Every writable key includes `{revision_key}` (a SHA-256 of the row set ID)
+     and `{content_sha256}`, so one row set alone can ever name a key. A
+     committed row set is replayed, never re-uploaded, so nothing adopts an
+     object a retirement or compaction is deleting.
+  2. A header-only revision's commit holds the account lock and `FOR SHARE`-locks
+     a predecessor that must still be `live`. Retirement and compaction mark a
+     row set `pruning` under the same account lock before they delete anything,
+     and a `pruning` row set neither counts as a reference nor can be shared. So
+     a sharer commits first (its chunk rows then make the delete skip) or fails
+     with `STATE_UNAVAILABLE` and re-uploads under its own key.
+  3. The intent sweep moves an expired `open` intent to `sweeping` under the
+     account lock; a writer closes that intent, still `open`, in the commit
+     transaction that inserts its chunk rows. Exactly one wins, so a writer past
+     its lease cannot commit objects the sweep deletes, and a retry cannot take
+     over an intent being swept. A takeover renews the expiry, so the sweep
+     cannot claim it.
+  4. Concurrent retirements and compactions count only row sets that are not
+     `pruning`, each after committing its own `pruning` state, so at least one
+     of any two deletes a shared object and none can both skip it.
+  5. Deletes name an exact native version, so one cannot remove an object
+     re-created at the same key.
+
+  The advisory lock `adcp-reporting-object:{binding_id}:{object_ref}` stays in
+  two places that pair with each other, because nothing else orders them. A
+  commit that adopts an object its own intent did not record (an earlier
+  attempt's `PUT` landed before the intent recorded it, or a writer created it
+  after a takeover) takes the lock, in key order, before it proves the object with
+  a version-pinned `stat`, and holds it until its chunk rows commit. An object its own intent recorded takes
+  no lock: until the transaction commits, the open intent names it. The orphan
+  collector deletes only objects no record names, so each of its deletes takes
+  the lock of every binding (they can share a bucket and prefix), repeats the
+  reference check under it, and then deletes. A collector that wins makes the
+  adopting commit fail its version-pinned `stat` with `STATE_UNAVAILABLE` (the
+  writer re-uploads once its intent lapses); a commit that wins is seen by the
+  collector, which skips. The collector's clone fence is a separate protection:
+  an advisory lock is per database and cannot order a clone against the
+  original. A skipped object is deleted by the retirement, compaction or sweep
+  of the last row set that referenced it, so it is not leaked.
+- **Cross-SDK contract.** A ledger database has one writer SDK, so the Python and
+  JavaScript SDKs need not agree on a lock to coexist, but they use the same
+  key text and the same rule so that either can read the other's description.
+  The contract: (1) the delete paths above take no object lock; (2) the key text
+  is `adcp-reporting-object:` + binding ID + `:` + object ref, hashed with
+  `hashtextextended(text, 0)` for `pg_advisory_xact_lock`; (3) an adopting commit
+  locks only adopted objects absent from its own intent's `created_objects`
+  (matching on object ref and native version), in object-ref order, after the
+  account lock and after closing its intent, then proves each adopted object with
+  a version-pinned `stat`; (4) the orphan collector locks every binding's key for
+  the object, sorted by binding ID, in the transaction that repeats the
+  reference check and deletes. Lock order is account lock, then object locks.
 - An upload runs only while the obligation lease still covers
   `writeDeadlineMilliseconds` plus five seconds. A fenced write intent records
   every object the upload created, and the ledger commit closes the intent in
@@ -780,7 +827,7 @@ await store.readyRowStorage();
   absent, without reading the body. The commit transaction uses it to prove an
   adopted object is unchanged (native versions are write-unique, so the same
   version at the recorded size is the same bytes) instead of downloading it
-  while holding the account and object locks. A provider without `stat` falls
+  while holding the account lock. A provider without `stat` falls
   back to reading the whole object there. All bundled providers implement it.
   Also implement the optional `list({ prefix, pageToken, pageSize })`, which
   returns `{ objects: [{ objectRef, nativeVersionRef, sizeBytes, createdAt }],
