@@ -42,6 +42,7 @@ import {
   parsePathWithWildcards,
   resolvePath,
   resolvePathAll,
+  iteratePathAll,
   resolvePortableIdentifierPathAll,
   toJsonPointer,
   validatePortableIdentifierPath,
@@ -326,6 +327,7 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateFieldValueOrAbsent(validation, resolveTarget(ctx));
     case 'field_pattern':
       return validateFieldPattern(validation, resolveTarget(ctx));
+    case 'field_excludes':
     case 'field_contains':
       return validateFieldContains(validation, resolveTarget(ctx));
     case 'status_code':
@@ -1570,7 +1572,7 @@ function validateFieldPattern(validation: StoryboardValidation, taskResult: Task
 
 function validateFieldContains(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
   const checkName = validation.check;
-  if (!validation.path) {
+  if (typeof validation.path !== 'string' || !validation.path) {
     return {
       check: checkName,
       passed: false,
@@ -1583,6 +1585,18 @@ function validateFieldContains(validation: StoryboardValidation, taskResult: Tas
     };
   }
 
+  if (validation.allowed_values !== undefined && !Array.isArray(validation.allowed_values)) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      json_pointer: toJsonPointer(validation.path),
+      error: `${checkName} allowed_values must be an array`,
+      expected: 'an array of values',
+      actual: validation.allowed_values,
+    };
+  }
   if (validation.value === undefined && !validation.allowed_values?.length) {
     return {
       check: checkName,
@@ -1596,6 +1610,9 @@ function validateFieldContains(validation: StoryboardValidation, taskResult: Tas
     };
   }
 
+  if (checkName === 'field_excludes') {
+    return validateFieldExcludes(validation, taskResult);
+  }
   const resolved = resolvePathAll(taskResult.data, validation.path);
   const pointer = toJsonPointer(validation.path);
 
@@ -1627,6 +1644,57 @@ function validateFieldContains(validation: StoryboardValidation, taskResult: Tas
     expected,
     actual: resolved,
   };
+}
+
+/** Full-observation inverse of field_contains, with bounded diagnostic memory. */
+function validateFieldExcludes(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
+  const path = validation.path!;
+  const candidates = validation.allowed_values?.length ? validation.allowed_values : [validation.value];
+  const expected = { excludes: validation.allowed_values?.length ? validation.allowed_values : validation.value };
+  const base = {
+    check: validation.check,
+    description: validation.description,
+    path,
+    json_pointer: toJsonPointer(path),
+  };
+  const unresolvedContext = (value: unknown): boolean => {
+    if (typeof value === 'string') return /^\$context\./.test(value);
+    if (Array.isArray(value)) return value.some(unresolvedContext);
+    return value !== null && typeof value === 'object' && Object.values(value).some(unresolvedContext);
+  };
+  if (candidates.some(unresolvedContext)) {
+    return {
+      ...base,
+      passed: false,
+      error: 'field_excludes comparator contains an unresolved context reference',
+      expected: 'a resolved value or allowed_values comparator',
+      actual: candidates,
+    };
+  }
+  // A malformed path cannot establish absence. Keep the wildcard grammar
+  // shared with field_contains, including [] shorthand and numeric indexes.
+  if (
+    path.length > 1024 ||
+    !/^[^.[\]]+(?:\[(?:\d+|\*)?\]|\.[^.[\]]+)*$/.test(path) ||
+    parsePathWithWildcards(path).some(
+      segment => typeof segment === 'string' && ['__proto__', 'constructor', 'prototype'].includes(segment)
+    )
+  ) {
+    return {
+      ...base,
+      passed: false,
+      error: 'Invalid field_excludes path',
+      expected: 'a valid safe storyboard path',
+      actual: path,
+    };
+  }
+  const comparisonKey = comparisonKeyFromPath(path);
+  for (const actual of iteratePathAll(taskResult.data, path)) {
+    if (candidates.some(candidate => containsValueMatches(actual, candidate, comparisonKey))) {
+      return { ...base, passed: false, error: `Prohibited value found at ${path}`, expected, actual: [actual] };
+    }
+  }
+  return { ...base, passed: true };
 }
 
 // ────────────────────────────────────────────────────────────

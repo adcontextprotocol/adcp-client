@@ -378,12 +378,8 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
   });
 
   it('F10: complyTest.inputSchema extends the canonical TOOL_INPUT_SHAPE', async () => {
-    // Round-5 spike (training-agent): adopters routed through
-    // createAdcpServerFromPlatform(platform, { complyTest }) couldn't extend the
-    // canonical schema with a top-level `account` field — the
-    // documented `{ ...TOOL_INPUT_SHAPE, account: ... }` extension
-    // pattern was unreachable through the v6 wiring path. The
-    // inputSchema option is the seam.
+    // Adopters can extend the canonical controller shape with vendor
+    // fields through complyTest.inputSchema.
     const { z } = require('zod');
     let receivedAccount = null;
     const server = createAdcpServerFromPlatform(basePlatform({ withComplianceTesting: true }), {
@@ -392,10 +388,7 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
       validation: { requests: 'off', responses: 'off' },
       complyTest: {
         inputSchema: {
-          // Extension: storyboard fixtures send a top-level `account`
-          // (rather than `context.account`); the spec-canonical shape
-          // strips it but adopters can opt in via this seam.
-          account: z.object({ account_id: z.string() }).passthrough().optional(),
+          vendor_scope: z.string().optional(),
         },
         force: {
           creative_status: async params => {
@@ -422,9 +415,8 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
         arguments: {
           scenario: 'force_creative_status',
           params: { creative_id: 'cr_42', status: 'approved' },
-          // Top-level account — the extension allows this without the
-          // schema validator rejecting it as unknown.
-          account: { account_id: 'acc_extension_test' },
+          account: { account_id: 'acc_extension_test', sandbox: true },
+          vendor_scope: 'sandbox-integration',
         },
       },
     });

@@ -42,7 +42,10 @@ import {
 } from './fixture-resolution';
 import { readCollectionWitness, type CollectionSelectionWitness } from './collection-selection';
 import { resolvePath } from './path';
+import { injectContext, applyContextInputs } from './context';
+import { applyBrandInvariant } from './account-policy';
 import { redactSecrets } from '../../utils/redact-secrets';
+import { canonicalize } from '../../utils/jcs';
 import { redactDiscoveryEvidence as redactDiscoveryResponse } from '../discovery-evidence';
 import { redactCredentialPatterns } from '../../utils/redact-credential-patterns';
 import type {
@@ -58,7 +61,169 @@ import type {
   StoryboardPhaseResult,
   StoryboardRunOptions,
   StoryboardStepResult,
+  StoryboardStep,
 } from './types';
+
+/** Seed into the same account used by the storyboard's public requests. */
+function storyboardSeedScope(
+  storyboard: Storyboard,
+  context: StoryboardContext,
+  options: StoryboardRunOptions,
+  call: SeedCall
+): Record<string, unknown> {
+  if (call.scenario !== 'seed_product' && call.scenario !== 'seed_pricing_option') return {};
+  if (context.account !== undefined) {
+    if (!isPlainRecord(context.account) || /\$(?:context\.|generate:)/.test(JSON.stringify(context.account))) {
+      throw new Error('Automatic fixture seeding needs a resolved context.account reference');
+    }
+    if (context.account.sandbox === false) throw new Error('Automatic fixture seeding requires a sandbox account');
+    if (
+      typeof context.account.account_id !== 'string' &&
+      (options.brand || options.brand_manifest) &&
+      canonicalize(context.account.brand) !== canonicalize(resolveBrand(options))
+    ) {
+      throw new Error(
+        'Explicit fixture context.account conflicts with the run-scoped brand; choose one account identity'
+      );
+    }
+    return {
+      account: { ...context.account, sandbox: true },
+    };
+  }
+  const provisioningAliases = new Map<string, Record<string, unknown>>();
+  const provisioningAccounts: Record<string, unknown>[] = [];
+  for (const phase of storyboard.phases)
+    for (const step of phase.steps) {
+      if (step.task !== 'sync_accounts' || step.expect_error) continue;
+      const request = injectContext(step.sample_request ?? {}, context);
+      if (!Array.isArray(request.accounts) || request.accounts.length !== 1) continue;
+      const row = request.accounts[0];
+      if (!isPlainRecord(row) || !isPlainRecord(row.brand) || typeof row.operator !== 'string') continue;
+      const { brand, operator, operator_unit, currency, timezone, sandbox } = row;
+      const account = {
+        brand,
+        operator,
+        ...(operator_unit !== undefined && { operator_unit }),
+        ...(currency !== undefined && { currency }),
+        ...(timezone !== undefined && { timezone }),
+        ...(sandbox !== undefined && { sandbox }),
+      };
+      provisioningAccounts.push(account);
+      for (const output of step.context_outputs ?? []) {
+        if (output.path === 'accounts[0].account_id' && output.key) provisioningAliases.set(output.key, account);
+      }
+    }
+  const accounts = new Map<string, Record<string, unknown>>();
+  const resolvedScopes = new Set<string>();
+  const deferredScopes = new Set<string>();
+  const seedScopeSteps: StoryboardStep[] = [
+    ...storyboard.phases.flatMap(phase => phase.steps),
+    ...provisioningAccounts.map((account, index) => ({
+      id: `seed-scope-${index}`,
+      title: 'Seed scope from account provisioning',
+      task: 'sync_accounts',
+      sample_request: { account },
+    })),
+  ];
+  for (const step of seedScopeSteps) {
+    if (step.expect_error || step.omit_account) continue;
+    const source = options.request ?? step.sample_request ?? {};
+    if (JSON.stringify(source.account ?? {}).includes('$generate:')) {
+      throw new Error('Automatic fixture seeding needs an explicit resolved account for generated identities');
+    }
+    let request = injectContext(
+      {
+        ...(source.account !== undefined && { account: source.account }),
+        buying_mode: source.buying_mode,
+        discovery_mode: source.discovery_mode,
+      },
+      context
+    );
+    if (step.context_inputs?.length) request = applyContextInputs(request, step.context_inputs, context);
+    request = applyBrandInvariant(request, options, step.task, { omit_account: step.omit_account });
+    if (request.account === undefined) continue;
+    if (JSON.stringify(request.account).includes('$generate:')) {
+      throw new Error('Automatic fixture seeding needs an explicit resolved account for generated identities');
+    }
+    let injected: unknown = request.account;
+    if (isPlainRecord(injected) && typeof injected.account_id === 'string') {
+      const capture = /^\$context\.(\w+)$/.exec(injected.account_id)?.[1];
+      if (capture && provisioningAliases.has(capture)) injected = provisioningAliases.get(capture);
+    }
+    if (!isPlainRecord(injected)) throw new Error('Automatic fixture seeding needs a resolved account reference');
+    const account = { ...injected };
+    // Later requests may echo timezone/currency captured from provisioning.
+    // They can share an earlier resolved identity, but cannot establish a
+    // seed scope on their own while those optional dimensions are unknown.
+    let deferred = false;
+    for (const key of ['currency', 'timezone']) {
+      if (typeof account[key] === 'string' && /^\$context\./.test(account[key])) {
+        delete account[key];
+        deferred = true;
+      }
+    }
+    if (JSON.stringify(account).includes('$context.')) {
+      throw new Error('Automatic fixture seeding needs a resolved account reference');
+    }
+    // Controller samples often author only { sandbox: true }; that is
+    // routing metadata, not a second account identity.
+    const hasIdentity =
+      (typeof account.account_id === 'string' && account.account_id.length > 0) ||
+      (isPlainRecord(account.brand) &&
+        typeof account.brand.domain === 'string' &&
+        account.brand.domain.length > 0 &&
+        typeof account.operator === 'string' &&
+        account.operator.length > 0);
+    if (!hasIdentity) continue;
+    if (account.sandbox === false) throw new Error('Automatic fixture seeding requires a sandbox account');
+    const sandboxAccount: Record<string, unknown> = { ...account, sandbox: true };
+    const { currency: _currency, timezone: _timezone, ...identity } = sandboxAccount;
+    const key = canonicalize(identity);
+    (deferred ? deferredScopes : resolvedScopes).add(key);
+    const prior = accounts.get(key);
+    if (prior) {
+      for (const dimension of ['currency', 'timezone']) {
+        if (
+          prior[dimension] !== undefined &&
+          sandboxAccount[dimension] !== undefined &&
+          prior[dimension] !== sandboxAccount[dimension]
+        ) {
+          throw new Error(
+            'Automatic fixture seeding needs an explicit context.account when a storyboard uses multiple accounts'
+          );
+        }
+      }
+    }
+    accounts.set(key, { ...prior, ...sandboxAccount });
+  }
+  if ([...deferredScopes].some(key => !resolvedScopes.has(key))) {
+    throw new Error('Automatic fixture seeding needs a resolved account reference before later account enrichment');
+  }
+  if (accounts.size === 1) return { account: [...accounts.values()][0] };
+  if (accounts.size > 1) {
+    throw new Error(
+      'Automatic fixture seeding needs an explicit context.account when a storyboard uses multiple accounts'
+    );
+  }
+  const sandboxAccounts = (storyboard.fixtures?.accounts ?? []).flatMap(entry => {
+    const fixture = isPlainRecord(entry.fixture) ? entry.fixture : entry;
+    if (fixture.sandbox !== true || !isPlainRecord(fixture.brand) || typeof fixture.operator !== 'string') return [];
+    const { brand, operator, operator_unit, currency, timezone } = fixture;
+    return [
+      {
+        brand,
+        operator,
+        ...(operator_unit !== undefined && { operator_unit }),
+        ...(currency !== undefined && { currency }),
+        ...(timezone !== undefined && { timezone }),
+        sandbox: true,
+      },
+    ];
+  });
+  if (sandboxAccounts.length === 1) return { account: sandboxAccounts[0] };
+  if (sandboxAccounts.length > 1) throw new Error('Automatic fixture seeding needs an explicit context.account');
+  return {};
+}
 
 /** Synthetic phase id used in `StoryboardResult.phases[]` for the seed pass. */
 export const CONTROLLER_SEEDING_PHASE_ID = '__controller_seeding__';
@@ -423,7 +588,12 @@ export async function runControllerSeeding(
       try {
         const raw = await callControllerRaw(
           client,
-          { scenario: call.scenario, params: call.params, context: seedContext },
+          {
+            ...storyboardSeedScope(storyboard, context, options, call),
+            scenario: call.scenario,
+            params: call.params,
+            context: seedContext,
+          },
           options
         );
         const data = raw.data as { success?: boolean; error?: string; error_detail?: string } | undefined;
@@ -868,6 +1038,7 @@ async function runDeclaredFixtureResolution(
           const raw = await callControllerRaw(
             seedClient,
             {
+              ...storyboardSeedScope(storyboard, context, seedOptions, call),
               scenario: call.scenario,
               params: isPlainRecord(controllerRequest.params) ? controllerRequest.params : call.params,
               context: seedContext,
@@ -903,6 +1074,7 @@ async function runDeclaredFixtureResolution(
                     // `call.params` when the bound params are not a plain
                     // record, and adds the seeding correlation context.
                     payload: redactSecrets({
+                      ...storyboardSeedScope(storyboard, context, seedOptions, call),
                       scenario: call.scenario,
                       params: isPlainRecord(controllerRequest.params) ? controllerRequest.params : call.params,
                       context: seedContext,
@@ -1397,7 +1569,12 @@ async function executeLegacySeedCall(
   try {
     const raw = await callControllerRaw(
       client,
-      { scenario: call.scenario, params: call.params, context: seedContext },
+      {
+        ...storyboardSeedScope(storyboard, context, options, call),
+        scenario: call.scenario,
+        params: call.params,
+        context: seedContext,
+      },
       options
     );
     const data = raw.data as { success?: boolean; error?: string; error_detail?: string } | undefined;
