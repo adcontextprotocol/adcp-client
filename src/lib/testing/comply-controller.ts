@@ -468,24 +468,23 @@ export interface ComplyControllerConfig {
 
   /**
    * Extra Zod fields to merge into the canonical `comply_test_controller`
-   * input schema. Use this when a custom wrapper carries a tenant or account
-   * reference in a top-level field that the spec-canonical
-   * {@link TOOL_INPUT_SHAPE} doesn't include. Treat such fields only as
+   * input schema. Use this when a custom wrapper carries a vendor field
+   * that the spec-canonical {@link TOOL_INPUT_SHAPE} does not include. Treat such fields only as
    * identifiers for trusted server-side resolution; never use their contents
    * directly as sandbox authority.
    * Keys override canonical fields if there's a name collision; the
    * resulting shape is what the framework passes to
    * `mcp.registerTool(..., { inputSchema })` at registration.
    *
-   * Mirrors the documented `{ ...TOOL_INPUT_SHAPE, account: ... }`
+   * Mirrors the `{ ...TOOL_INPUT_SHAPE, vendor_field: ... }`
    * pattern from `test-controller.ts` so adopters routed through
    * `createAdcpServerFromPlatform(platform, { complyTest })` get the same
    * extension seam as adopters wiring `registerTestController` directly.
    *
-   * Storyboard fixtures that send a top-level `account` or `brand`
-   * (rather than `context.account` / `context.brand`) are the canonical
-   * cases for this option — both are stripped by the spec-canonical
-   * shape.
+   * The canonical top-level `account` already preserves all identity fields
+   * while preserving AdCP 3.0 compatibility. AdCP 3.1 callers include
+   * sandbox: true. Resolve its identity through trusted
+   * account state; the caller assertion cannot grant sandbox authority.
    *
    * @example
    * ```ts
@@ -493,8 +492,7 @@ export interface ComplyControllerConfig {
    *
    * complyTest: {
    *   inputSchema: {
-   *     account: z.object({ account_id: z.string() }).passthrough().optional(),
-   *     brand: z.object({ domain: z.string() }).passthrough().optional(),
+   *     vendor_scope: z.string().optional(),
    *   },
    *   force: { ... },
    * }

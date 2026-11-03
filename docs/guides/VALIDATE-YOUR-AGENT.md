@@ -288,6 +288,41 @@ Either way, subsequent runs reuse the cached tokens (auto-refresh on expiry via 
 
 **Output:** JSON with `tracks[].status` (`passed`/`failed`/`skipped`), `steps[]` with diagnostics, and validations per step.
 
+### Account-scoped fixtures and negative membership
+
+Automatic `seed_product` and `seed_pricing_option` calls use the complete account
+reference used by the storyboard: `context.account`, otherwise the single resolved
+account in its effective sample requests or single-account provisioning request,
+otherwise a single sandbox account fixture. Request overrides, context inputs, and
+the run brand use the same account rules as public requests. Account provisioning
+seeds retain their independent targets; only product and pricing seeds need a
+shared catalog scope. Natural
+keys retain brand countries, operator, operator unit, currency, and timezone. Opaque
+`account_id` references stay opaque. A storyboard that uses several accounts must
+provide an explicit `context.account` for its seeds; unresolved or ambiguous scope
+fails setup rather than seeding a different default account. This is account
+scoping, not a sandbox reset: fixtures for the same account may still coexist.
+
+For product-filter checks, exclude a known negative control rather than assuming
+only one product can match. A validation entry can use:
+
+```yaml
+check: field_excludes
+path: products[*].product_id
+value: filter_negative_control
+description: The seeded display control is absent from an OLV result
+```
+
+Declare `requires: [field_excludes_runner]` at the storyboard root (alongside
+`controller` when needed). Supporting SDKs satisfy this intrinsic requirement;
+older SDKs skip the scenario before seeding instead of silently ignoring an unknown
+check. The matcher has the same scalar, deep-subset, and `allowed_values` semantics
+as `field_contains`, inverted over **every** resolved terminal. Empty arrays pass;
+additional matching products are allowed. Failed checks report the prohibited
+terminal in the `actual` array and `expected.excludes` while preserving the
+seller's response. Diagnostic evidence is bounded to the matching terminal;
+absence is checked across the complete result.
+
 ### `adcp fuzz` — property-based schema fuzzing
 
 Generates schema-valid requests, calls your agent, checks every response under the two-path oracle (schema-valid success *or* well-formed AdCP error envelope with uppercase reason code). Anything else — 500, stack traces, lowercase error codes, token leaks — fails.
@@ -840,3 +875,9 @@ Random seed on nightly broadens the surface; fixed seed on per-PR keeps reproduc
 For creative evaluator security fixtures, see
 [Creative evaluator build probes](CREATIVE-BUILD-PROBE.md) for valid route/input
 preparation, provisioned legacy selectors and explicit coverage gaps.
+
+SDK 16 controller registration preserves an optional open account carrier for
+AdCP 3.0 compatibility. AdCP 3.1 callers must include `account: { sandbox: true,
+...identity }` under their wire contract. Public opaque AccountRefs remain
+`{account_id}`; the controller carrier adds the sandbox assertion. Resolve the
+supplied identity against trusted sandbox account state before writing fixtures.

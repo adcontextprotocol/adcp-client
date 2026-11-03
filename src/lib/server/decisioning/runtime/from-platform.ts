@@ -211,6 +211,7 @@ import {
   type ComplyControllerConfig,
 } from '../../../testing/comply-controller';
 import type { TestControllerBridge } from '../../test-controller-bridge';
+import { TestControllerError } from '../../test-controller';
 import { mergeSeedProduct } from '../../../testing/seed-merge';
 import {
   getSdkServer,
@@ -3727,7 +3728,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
                 'Verify the request envelope carries an account ref and the sandboxGate is configured correctly.',
               { product_id: params.product_id }
             );
-            return;
+            throw new TestControllerError(
+              'INVALID_PARAMS',
+              'seed_product requires a resolved sandbox account; no fixture was written'
+            );
           }
           autoSeedStoreFor(autoSeedStore, accountId).set(params.product_id, {
             ...params.fixture,
@@ -3745,7 +3749,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
                 'Verify the request envelope carries an account ref and the sandboxGate is configured correctly.',
               { product_id: params.product_id, pricing_option_id: params.pricing_option_id }
             );
-            return;
+            throw new TestControllerError(
+              'INVALID_PARAMS',
+              'seed_pricing_option requires a resolved sandbox account; no fixture was written'
+            );
           }
           const accountStore = autoSeedStoreFor(autoSeedStore, accountId);
           const existing = accountStore.get(params.product_id) as Record<string, unknown> | undefined;
@@ -3804,24 +3811,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       // an MCP-side concern; A2A and other transports are wired separately.
       controller.register(server);
     } else {
-      // Permit a top-level `account` field on the wire so the gate can read
-      // the buyer's account ref. The canonical AdCP shape strips it (account
-      // routes through `context.account`), but adopters' storyboard fixtures
-      // commonly send it at the top level — `TOOL_INPUT_SHAPE`'s JSDoc in
-      // `src/lib/server/test-controller.ts` documents this extension as the
-      // supported escape hatch.
-      //
-      // Schema is the full canonical `AccountReference` per
-      // `schemas/cache/3.0.6/core/account-ref.json`: oneOf
-      //   { account_id }                       — explicit accounts
-      //   { brand, operator, sandbox? }        — implicit accounts
-      // Modeled here as a single object with all four fields optional so
-      // either arm passes; resolvers narrow on the shape at dispatch.
-      // `brand` content is `unknown()` because the inner `brand-ref.json`
-      // shape is itself a oneOf and resolvers (not the gate) validate it.
-      // Top-level `.strict()` still blocks unknown keys at the framework
-      // boundary so a buyer can't stuff `__proto__` / arbitrary payloads
-      // into adopters' resolvers.
+      // Preserve the controller's complete account identity through the
+      // platform wrapper's compatibility shape. Sandbox authorization below
+      // still comes from the trusted principal/target resolvers, never from
+      // buyer-supplied account fields.
       const gatedInputSchema = {
         ...controller.toolDefinition.inputSchema,
         account: z
@@ -3829,6 +3822,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             account_id: z.string().min(1).optional(),
             brand: z.unknown().optional(),
             operator: z.string().optional(),
+            operator_unit: z.unknown().optional(),
+            currency: z.string().optional(),
+            timezone: z.string().optional(),
             sandbox: z.boolean().optional(),
           })
           .strict()
