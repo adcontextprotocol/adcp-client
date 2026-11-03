@@ -44,6 +44,7 @@ import { readCollectionWitness, type CollectionSelectionWitness } from './collec
 import { resolvePath } from './path';
 import { injectContext, applyContextInputs } from './context';
 import { applyBrandInvariant } from './account-policy';
+import { isRunnerOwnedTask } from './runner-owned-task';
 import { redactSecrets } from '../../utils/redact-secrets';
 import { canonicalize } from '../../utils/jcs';
 import { redactDiscoveryEvidence as redactDiscoveryResponse } from '../discovery-evidence';
@@ -64,7 +65,7 @@ import type {
   StoryboardStep,
 } from './types';
 
-/** Seed into the same account used by the storyboard's public requests. */
+/** Prefer the owner identified by authored requests, explicit context or account fixtures. */
 function storyboardSeedScope(
   storyboard: Storyboard,
   context: StoryboardContext,
@@ -125,7 +126,18 @@ function storyboardSeedScope(
       sample_request: { account },
     })),
   ];
-  for (const step of seedScopeSteps) {
+  for (const authoredStep of seedScopeSteps) {
+    // The rate-limit assertion dispatches its nested seller request. Other
+    // runner operations have no seller envelope to enrich or use as scope.
+    const step =
+      authoredStep.task === 'expect_rate_limit_not_replayed' && authoredStep.rate_limit_trip
+        ? {
+            ...authoredStep,
+            task: authoredStep.rate_limit_trip.trip_target_task,
+            sample_request: authoredStep.rate_limit_trip.trip_target_sample_request,
+          }
+        : authoredStep;
+    if (isRunnerOwnedTask(step.task)) continue;
     if (step.expect_error || step.omit_account) continue;
     const source = options.request ?? step.sample_request ?? {};
     if (JSON.stringify(source.account ?? {}).includes('$generate:')) {
@@ -136,10 +148,25 @@ function storyboardSeedScope(
         ...(source.account !== undefined && { account: source.account }),
         buying_mode: source.buying_mode,
         discovery_mode: source.discovery_mode,
+        ...(step.task === 'validate_input' && { targets: source.targets }),
+        ...(step.task === 'comply_test_controller' && { scenario: source.scenario }),
       },
       context
     );
     if (step.context_inputs?.length) request = applyContextInputs(request, step.context_inputs, context);
+    // Controller capability discovery and format-only validation do not identify the
+    // catalog owner. Other real requests retain their runtime default account
+    // so a mixed default/authored namespace still fails before seed writes.
+    const formatOnlyValidation =
+      step.task === 'validate_input' &&
+      Array.isArray(request.targets) &&
+      request.targets.length > 0 &&
+      request.targets.every(
+        target =>
+          isPlainRecord(target) && ['canonical', 'third_party_format', 'capability'].includes(String(target.kind))
+      );
+    const controllerMetadata = step.task === 'comply_test_controller' && request.scenario === 'list_scenarios';
+    if (request.account === undefined && (controllerMetadata || formatOnlyValidation)) continue;
     request = applyBrandInvariant(request, options, step.task, { omit_account: step.omit_account });
     if (request.account === undefined) continue;
     if (JSON.stringify(request.account).includes('$generate:')) {
