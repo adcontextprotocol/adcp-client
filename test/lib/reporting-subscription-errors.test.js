@@ -77,7 +77,7 @@ function keys() {
 describe('error-codes.json', () => {
   test('every code maps to the TS class it names, with its recovery and dispatched rule', () => {
     const classes = { ReportingSubscriptionError, CoverageInputError, PlatformConfigError };
-    assert.equal(VOCABULARY.codes.length, 14);
+    assert.equal(VOCABULARY.codes.length, 15);
     for (const entry of VOCABULARY.codes) {
       const Class = classes[entry.sdk_classes.typescript];
       assert.ok(Class, `${entry.code}: unknown TS class ${entry.sdk_classes.typescript}`);
@@ -92,6 +92,29 @@ describe('error-codes.json', () => {
       else assert.equal('dispatched' in error, false, entry.code);
     }
   });
+});
+
+// The seller offering checks (adcp#8718), vendored byte for byte with error-codes.json.
+const OFFERING_CHECKS = require('../fixtures/reporting-subscriptions/canonical/offering-checks.json');
+
+describe('offering-checks.json', () => {
+  test('the vectors use only the frozen seller codes', () => {
+    const codes = new Set(VOCABULARY.codes.map(entry => entry.code));
+    assert.ok(OFFERING_CHECKS.cases.length >= 8);
+    for (const testCase of OFFERING_CHECKS.cases) {
+      for (const failure of testCase.expected) assert.ok(codes.has(failure.code), `${testCase.id}: ${failure.code}`);
+    }
+  });
+
+  for (const testCase of OFFERING_CHECKS.cases) {
+    test(testCase.id, () => {
+      const actual = advanced.checkReportingSubscriptionOfferingsV1(
+        testCase.input.offerings,
+        testCase.input.row_schemas ?? {}
+      );
+      assert.deepEqual(actual, testCase.expected, testCase.rule);
+    });
+  }
 });
 
 describe('ReportingSubscriptionError', () => {

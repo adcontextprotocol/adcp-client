@@ -97,6 +97,7 @@ The frozen vocabulary is the spec's `reason-codes.json` (`static/compliance/sour
 | `outside_flight` | not owed | flight | Not owed: the period ends {end}, at or before {buy} starts at {start_time}. |
 | `after_stop` | not owed | flight | Not owed: the period starts {start}, at or after {buy} stopped at {stop_time}. |
 | `before_confirmation` | not owed | confirmation | Not owed: the period ends {end}, before {buy} was confirmed at {confirmed_at}. |
+| `before_package_added` | not owed | confirmation | Not owed: the period ends {end}, at or before {offering} joined {buy}: every package resolving it was added after confirmation, the first at {added_at}. |
 | `excluded:capacity` | not owed | exception | Not owed: account {account} is beyond the seller's subscription capacity from {from}. |
 | `excluded:overridden` | not owed | exception | Not owed: another of the caller's delivery configurations takes {account} for this feed from {from}. |
 | `excluded:action_required` | not owed | exception | Not owed: the seller serves account {account} only after a pending action completes; excluded from {from}. |
@@ -115,6 +116,8 @@ Each case is one of the spec's canonical vectors, which `test/lib/reporting-subs
 ### Confirmation day
 
 A period that ends at or before the buy's `confirmed_at` is not owed (`before_confirmation`). The period in which the buy is confirmed ends after it, so it is owed in full.
+
+A package added after `confirmed_at` carries `added_at` on `get_media_buys`, its own `confirmed_at` (AdCP 3.3.0-beta.4). The buy owes a period of an offering when at least one package resolving it is owed that period, so the period containing a package's `added_at` is owed in full, and a period every resolving package joined after is `before_package_added`. Adding a package is never a cutover. A `package_ids` exception removes a period when it names every package that resolves the offering and is owed the period, so packages added and later excluded compose.
 
 > Not owed: the period ends 2026-11-04T05:00Z, before mb_123 was confirmed at 2026-11-04T10:00Z.
 
@@ -136,7 +139,7 @@ When a cutover hands a billing feed to a schedule with no boundary at E, the str
 
 ### Sticky resolution
 
-A package resolves once per (buy, version), at the later of `accepted_at` and `confirmed_at`, among the offerings available then. An offering published later never re-resolves it; a resolved offering's `withdrawn_at` is a cutover.
+A package resolves once per (buy, version), at the later of `accepted_at` and its own `confirmed_at` (the buy's, or its `added_at` when later), among the offerings available then. An offering published later never re-resolves it; a resolved offering's `withdrawn_at` is a cutover.
 
 ### Reactivation
 

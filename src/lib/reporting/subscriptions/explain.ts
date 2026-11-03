@@ -148,6 +148,8 @@ export const EXPLAIN_TEMPLATES: Readonly<Record<CoverageReason, string>> = {
   outside_flight: 'Not owed: the period ends {period_end}, at or before {media_buy_id} starts at {start_time}.',
   after_stop: 'Not owed: the period starts {period_start}, at or after {media_buy_id} stopped at {stop_time}.',
   before_confirmation: 'Not owed: the period ends {period_end}, before {media_buy_id} was confirmed{confirmed_clause}.',
+  before_package_added:
+    'Not owed: the period ends {period_end}, at or before {offering_id} joined {media_buy_id}: every package resolving it was added after confirmation, the first at {added_at}.',
   'excluded:capacity': "Not owed: account {account_id} is beyond the seller's subscription capacity from {from}.",
   'excluded:overridden':
     "Not owed: another of the caller's delivery configurations takes {account_id} for this feed from {from}.",
@@ -811,7 +813,28 @@ function classify(
     });
     return done();
   }
-  pass('confirmation', confirmationFacts);
+  // adcp#8718: a package added after confirmed_at is owed from its added_at; the buy owes the period
+  // when at least one package resolving the offering is owed it.
+  const packageConfirmed = regime && offeringId !== null ? regime.packages.get(offeringId) : undefined;
+  const added =
+    packageConfirmed !== undefined && confirmedAt !== undefined
+      ? [...packageConfirmed].filter(([, at]) => at > confirmedAt)
+      : [];
+  if (added.length > 0) {
+    const packageFacts = {
+      ...confirmationFacts,
+      packages_added_at: Object.fromEntries(
+        added.sort(([left], [right]) => compareReportingIdsByteOrderV1(left, right)).map(([id, at]) => [id, z(at)])
+      ),
+    };
+    if (![...packageConfirmed!.values()].some(at => end > at)) {
+      fail('confirmation', 'before_package_added', packageFacts, {
+        added_at: Math.min(...packageConfirmed!.values()),
+      });
+      return done();
+    }
+    pass('confirmation', packageFacts);
+  } else pass('confirmation', confirmationFacts);
 
   // exception
   const exception = ctx.removals.find(
@@ -954,6 +977,8 @@ function buyFacts(buy: ReportingSubscriptionBuyV1): Record<string, unknown> {
       .map(pkg => ({
         package_id: pkg.package_id,
         reporting_delivery_offering_ids: [...pkg.reporting_delivery_offering_ids].sort(),
+        // adcp#8718: present only for a package added after confirmation, so earlier digests hold.
+        ...(pkg.added_at !== undefined ? { added_at: z(internals.instant(pkg.added_at, 'buy')) } : {}),
       })),
     flight_history: (buy.flight_history ?? []).map(entry => ({
       superseded_at: instant(entry.recorded_at),

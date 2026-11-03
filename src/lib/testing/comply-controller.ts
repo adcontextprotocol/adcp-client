@@ -58,6 +58,7 @@ import {
   type TestControllerStore,
   type UpstreamTrafficSuccessResponse,
   REPORTING_SUBSCRIPTION_PROBE_SCENARIO,
+  RESET_STATE_SCENARIO,
   type ReportingSubscriptionProbeParams,
   type ReportingSubscriptionProbeSimulated,
 } from '../server/test-controller';
@@ -470,6 +471,15 @@ export interface ComplyControllerConfig {
     | (SimulationSuccess & { simulated: ReportingSubscriptionProbeSimulated });
 
   /**
+   * `reset_state` (adcp#8717): return the caller's sandbox to a baseline. The storyboard runner calls
+   * it once before each storyboard when it is advertised. Required with `reportingSubscriptionProbe`:
+   * it must unpin the caller's sandbox clock (so `simulated_now` reads the seller's wall clock again
+   * until the next `advance_time`) and discard every grant and timezone change the probe made for
+   * the caller.
+   */
+  resetState?: (ctx: ComplyControllerContext) => Promise<void> | void;
+
+  /**
    * `query_provenance_audit_observations` adapter. When omitted, provenance
    * audit-observation storyboards grade as not applicable after scenario
    * discovery.
@@ -687,6 +697,9 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
   if (config.reportingSubscriptionProbe) {
     store.reportingSubscriptionProbe = params => Promise.resolve(config.reportingSubscriptionProbe!(params, ctx));
   }
+  if (config.resetState) {
+    store.resetState = () => Promise.resolve(config.resetState!(ctx));
+  }
   if (queryProvenanceAuditObservations) {
     store.queryProvenanceAuditObservations = params => Promise.resolve(queryProvenanceAuditObservations(params, ctx));
   }
@@ -722,6 +735,7 @@ function advertisedScenarios(config: ComplyControllerConfig): string[] {
   if (config.force?.catalog_item_status) out.push('force_catalog_item_status');
   if (config.queryUpstreamTraffic) out.push(CONTROLLER_SCENARIOS.QUERY_UPSTREAM_TRAFFIC);
   if (config.reportingSubscriptionProbe) out.push(REPORTING_SUBSCRIPTION_PROBE_SCENARIO);
+  if (config.resetState) out.push(RESET_STATE_SCENARIO);
   if (config.queryProvenanceAuditObservations) {
     out.push(CONTROLLER_SCENARIOS.QUERY_PROVENANCE_AUDIT_OBSERVATIONS);
   }
@@ -753,6 +767,12 @@ export async function _handleComplyControllerWithResolvedAuthority(
 
 /** Create a comply_test_controller scaffold from domain-grouped adapters. */
 export function createComplyController(config: ComplyControllerConfig): ComplyController {
+  // adcp#8717: a seller that lists reporting_subscription_probe MUST also list reset_state.
+  if (config.reportingSubscriptionProbe && !config.resetState) {
+    throw new TypeError(
+      'createComplyController: reportingSubscriptionProbe requires resetState. A seller that lists reporting_subscription_probe must also list reset_state, which unpins the caller’s sandbox clock and discards the probe’s grant and timezone changes (adcp#8717).'
+    );
+  }
   const seedCache = config.seedCache ?? createSeedFixtureCache();
   const scenarios = advertisedScenarios(config);
   // Stable reference so factory answers list_scenarios without invoking

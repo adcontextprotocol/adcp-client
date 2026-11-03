@@ -50,6 +50,7 @@ import type {
 } from '../../server/principal/reporting-subscriptions';
 import { createReportingPeriodCalendarV1, type ReportingPeriodCalendarV1 } from './calendar';
 import {
+  coverageInternalsV1,
   owedSubscriptionPeriodsV1,
   groupOwedSubscriptionPeriodsV1,
   type OwedSubscriptionObligationV1,
@@ -777,7 +778,8 @@ export function createReportingSubscriptionEngineV1(
     pkg: ReportingSubscriptionBuyV1['packages'][number],
     at: number
   ) {
-    const confirmedAt = buy.confirmed_at ? Date.parse(buy.confirmed_at) : Number.NEGATIVE_INFINITY;
+    // adcp#8718: a package added after confirmation resolves at its own added_at.
+    const confirmedAt = coverageInternalsV1.packageConfirmedAt(buy, pkg);
     return resolveReportingSubscriptionPackageV1({
       selector: version.configuration.selector,
       reconciliation_mode: version.configuration.reconciliation_mode,
@@ -1465,7 +1467,15 @@ export function createReportingSubscriptionEngineV1(
         }
         openCalendars = [...openByOffering.values()];
       } else {
-        at = Math.max(accepted, Date.parse(buy.confirmed_at));
+        // A package added after confirmation is owed (and unsupported) from its added_at (adcp#8718).
+        at = Math.max(
+          accepted,
+          Math.min(
+            ...buy.packages
+              .filter(pkg => unsupported.includes(pkg.package_id))
+              .map(pkg => coverageInternalsV1.packageConfirmedAt(buy, pkg))
+          )
+        );
       }
       desired.push(
         unsupported.length === buy.packages.length
@@ -1611,8 +1621,12 @@ export function createReportingSubscriptionEngineV1(
     if (!previousBuys) return revisions;
     const version = entry.versions.at(-1)!;
     const after = new Map(buys.map(buy => [buy.media_buy_id, buy]));
-    for (const previous of previousBuys) {
-      const next = after.get(previous.media_buy_id);
+    for (const recorded of previousBuys) {
+      const next = after.get(recorded.media_buy_id);
+      // adcp#8718: adding a package is never a cutover. A package that appeared since the previous
+      // reconcile and carries added_at is owed from there by the coverage rule itself, so it joins
+      // the earlier snapshot instead of revising the buy.
+      const previous = next ? withAddedPackages(recorded, next) : recorded;
       const resolvedBefore = resolveBuy(version, previous, nowMs);
       const resolvedAfter = next ? resolveBuy(version, next, nowMs) : [];
       if (JSON.stringify(resolvedBefore) === JSON.stringify(resolvedAfter)) continue;
@@ -1624,6 +1638,19 @@ export function createReportingSubscriptionEngineV1(
       });
     }
     return revisions;
+  }
+
+  /**
+   * `previous` with the packages of `current` that it lacks and that carry `added_at` (adcp#8718):
+   * such a package is owed from its own added_at whichever snapshot resolves the period.
+   */
+  function withAddedPackages(
+    previous: ReportingSubscriptionBuyV1,
+    current: ReportingSubscriptionBuyV1
+  ): ReportingSubscriptionBuyV1 {
+    const known = new Set(previous.packages.map(pkg => pkg.package_id));
+    const added = current.packages.filter(pkg => pkg.added_at !== undefined && !known.has(pkg.package_id));
+    return added.length === 0 ? previous : { ...previous, packages: [...previous.packages, ...added] };
   }
 
   /**
@@ -1651,11 +1678,14 @@ export function createReportingSubscriptionEngineV1(
       const list = byBuy.get(period.media_buy_id);
       return !list || Date.parse(period.period_start) >= Date.parse(list.at(-1)!.effective_at);
     });
+    const currentBuys = new Map(buys.map(buy => [buy.media_buy_id, buy]));
     for (const list of byBuy.values()) {
       let floor = Number.NEGATIVE_INFINITY;
       for (const revision of list) {
         const until = Date.parse(revision.effective_at);
-        for (const period of computeOwed(entry, current, accountId, [revision.previous], iso(nowMs))) {
+        const latest = currentBuys.get(revision.media_buy_id);
+        const previous = latest ? withAddedPackages(revision.previous, latest) : revision.previous;
+        for (const period of computeOwed(entry, current, accountId, [previous], iso(nowMs))) {
           const start = Date.parse(period.period_start);
           if (start >= floor && start < until) periods.push(period);
         }

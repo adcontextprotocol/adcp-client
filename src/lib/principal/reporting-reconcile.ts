@@ -416,6 +416,8 @@ function toBuy(
         reporting_delivery_offering_ids: Array.isArray(item.reporting_delivery_offering_ids)
           ? [...(item.reporting_delivery_offering_ids as string[])]
           : every,
+        // adcp#8718: a package added after confirmation is owed from its own added_at.
+        ...(typeof item.added_at === 'string' ? { added_at: item.added_at } : {}),
       })),
   };
 }
@@ -1181,7 +1183,15 @@ export async function reconcileReportingFleet(
  */
 export async function owedObligationsFromWire(
   wireClient: ReportingReadClient,
-  input: { accountId: string; subscriptionId: string; now: string; coverage?: Json; readTimeoutMilliseconds?: number }
+  input: {
+    accountId: string;
+    subscriptionId: string;
+    now: string;
+    coverage?: Json;
+    readTimeoutMilliseconds?: number;
+    /** Receives the seller's advertised `status_retention_days`, read from `get_adcp_capabilities`. */
+    onStatusRetentionDays?: (days: number | undefined) => void;
+  }
 ): Promise<OwedSubscriptionObligationV1[]> {
   const client = withReadTimeout(wireClient, input.readTimeoutMilliseconds);
   const now = instantOf(input.now, 'now');
@@ -1217,6 +1227,7 @@ export async function owedObligationsFromWire(
     state.prior_versions = priors;
   }
   const seller = await readSeller(client);
+  input.onStatusRetentionDays?.(seller.statusRetentionDays);
   const roster = await readRoster(client);
   const account = roster.find(item => item.account_id === input.accountId);
   if (!account) {

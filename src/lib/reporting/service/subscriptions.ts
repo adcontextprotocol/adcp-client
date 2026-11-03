@@ -170,13 +170,15 @@ export async function withReportingSubscriptionCoverageV1<TCtxMeta>(
  * account with `SCOPE_INSUFFICIENT`, not as an unknown identifier. Call it once the account is resolved:
  * an `authorization` whose `allowed_tasks` leaves out `task` is refused; an absent `authorization`, or one
  * that restricts no task, passes. A billing obligation the buyer can't receipt stays receipt-pending,
- * attributed to the buyer.
+ * attributed to the buyer. A grant reduced to tasks without `get_reporting_status` is a loss of
+ * reporting authority (adcp#8718): the account is listed in `accounts_unauthorized[]` with the
+ * reduction instant, and `get_reporting_status` for it is refused here with `SCOPE_INSUFFICIENT`.
  *
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export function assertReportingTaskGrantedV1(
   context: unknown,
-  task: 'sync_reporting_receipts' | 'sync_reporting_status'
+  task: 'get_reporting_status' | 'sync_reporting_receipts' | 'sync_reporting_status'
 ): void {
   const account = (context as { account?: { id?: unknown; authorization?: { allowed_tasks?: unknown } } } | undefined)
     ?.account;
