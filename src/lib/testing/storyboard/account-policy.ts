@@ -60,8 +60,8 @@ export function applyBrandInvariant(
   // declare `additionalProperties: false` without listing the field will fail
   // the framework's strict AJV validator if we inject it (#940). Fails open
   // when taskName is absent or the schema isn't available.
-  const topBrandOk = !taskName || schemaAllowsTopLevelField(taskName, 'brand');
-  const topAccountOk = !taskName || schemaAllowsTopLevelField(taskName, 'account');
+  const topBrandOk = !taskName || schemaAllowsTopLevelField(taskName, 'brand', options.adcpVersion);
+  const topAccountOk = !taskName || schemaAllowsTopLevelField(taskName, 'account', options.adcpVersion);
 
   const result: Record<string, unknown> = { ...request };
   if (topBrandOk) result.brand = brand;
