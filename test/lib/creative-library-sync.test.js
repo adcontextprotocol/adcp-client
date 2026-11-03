@@ -28,6 +28,262 @@ const creative = height => ({
   },
 });
 
+for (const mode of ['legacy', 'unknown']) {
+  test(`library sync: finds a shared generic HTML ref after package preferences disagree on ${mode} wire (#3609)`, () => {
+    for (const height of [250, 600]) {
+      const sized = packages.find(pkg => pkg.package_id === `p${height}`);
+      const unsized = {
+        package_id: 'unsized',
+        product_id: 'any-html-size',
+        format_ids: [{ agent_url: OWNER, id: 'display_html' }],
+      };
+      for (const selectors of [
+        [sized, unsized],
+        [unsized, sized],
+        [{ ...sized, format_ids: [...sized.format_ids].reverse() }, unsized],
+      ]) {
+        for (const assignments of [undefined, []]) {
+          const input = { creatives: [creative(height)], ...(assignments && { assignments }) };
+          const before = structuredClone({ input, selectors });
+          const result = projectSyncCreativesForDelivery(input, selectors, mode);
+          assert.deepEqual(result.creatives[0].format_id, { ...htmlRef(height), id: 'display_html' });
+          assert.deepEqual(result.creatives[0].assets.html_creative, { asset_type: 'html', content: '<div/>' });
+          assert.deepEqual(result.assignments, assignments);
+          assert.deepEqual({ input, selectors }, before);
+        }
+      }
+    }
+  });
+
+  test(`library sync: a shared identity cannot bypass a contradictory size on ${mode} wire`, () => {
+    const selectors = [
+      { ...packages[1], format_ids: [{ ...htmlRef(250), id: 'display_html' }, htmlRef(600)] },
+      { package_id: 'unsized', format_ids: [{ agent_url: OWNER, id: 'display_html' }] },
+    ];
+    assert.throws(
+      () => projectSyncCreativesForDelivery({ creatives: [creative(600)] }, selectors, mode),
+      CreativeFormatProjectionError
+    );
+  });
+
+  test(`library sync: unrelated format owners do not establish a shared identity on ${mode} wire`, () => {
+    const selectors = [
+      packages[1],
+      {
+        package_id: 'other-owner',
+        format_ids: [{ agent_url: 'https://other.example/formats', id: 'display_html' }],
+      },
+    ];
+    assert.throws(
+      () => projectSyncCreativesForDelivery({ creatives: [creative(600)] }, selectors, mode),
+      CreativeFormatProjectionError
+    );
+  });
+
+  test(`library sync: the shared identity must be accepted by every compatible package on ${mode} wire`, () => {
+    const selectors = [
+      packages[1],
+      { package_id: 'unsized', format_ids: [{ agent_url: OWNER, id: 'display_html' }] },
+      { package_id: 'fixed-only', format_ids: [htmlRef(600)] },
+    ];
+    assert.throws(
+      () => projectSyncCreativesForDelivery({ creatives: [creative(600)] }, selectors, mode),
+      CreativeFormatProjectionError
+    );
+  });
+
+  test(`library sync: explicit assignments and the fit API agree on a shared HTML reference on ${mode} wire`, () => {
+    const selectors = [packages[1], { package_id: 'unsized', format_ids: [{ agent_url: OWNER, id: 'display_html' }] }];
+    const input = {
+      creatives: [creative(600)],
+      assignments: selectors.map(({ package_id }) => ({ creative_id: 'c600', package_id })),
+    };
+    const result = projectSyncCreativesForDelivery(input, selectors, mode);
+    const fit = fitCreativeToPackages(input.creatives[0], selectors, { adcpVersion: '3.1.31', wireMode: mode });
+    assert.deepEqual(result.creatives[0].format_id, { ...htmlRef(600), id: 'display_html' });
+    assert.deepEqual(result.assignments, input.assignments);
+    assert.deepEqual(fit.wire.creative, result.creatives[0]);
+    assert.equal(fit.refusal, undefined);
+  });
+
+  test(`library sync: shared-identity retries reuse product resolver answers on ${mode} wire`, () => {
+    const selectors = [
+      {
+        package_id: 'sized',
+        format_options: [
+          {
+            format_option_id: 'sized',
+            format_kind: 'display_tag',
+            params: { width: 300, height: 600, supported_delivery_types: ['inline_markup'] },
+          },
+        ],
+      },
+      {
+        package_id: 'unsized',
+        format_options: [
+          {
+            format_option_id: 'unsized',
+            format_kind: 'display_tag',
+            params: { supported_delivery_types: ['inline_markup'] },
+          },
+        ],
+      },
+    ];
+    const calls = [];
+    const resolver = context => {
+      assert.equal(context.source, 'product');
+      calls.push(context.declaration.format_option_id);
+      assert.ok(calls.length <= 2, 'each product mapping should be resolved only once');
+      return context.declaration.format_option_id === 'sized'
+        ? [{ ...htmlRef(600), id: 'display_html' }, htmlRef(600)]
+        : { agent_url: OWNER, id: 'display_html' };
+    };
+    const result = projectSyncCreativesForDelivery(
+      { creatives: [creative(600)] },
+      selectors,
+      mode,
+      undefined,
+      resolver
+    );
+    assert.deepEqual(result.creatives[0].format_id, { ...htmlRef(600), id: 'display_html' });
+    assert.deepEqual(calls, ['sized', 'unsized']);
+  });
+
+  test(`library sync: several shared format owners remain ambiguous regardless of ordering on ${mode} wire`, () => {
+    const other = { agent_url: 'https://formats.example', id: 'display_html' };
+    const generic = { ...htmlRef(600), id: 'display_html' };
+    const sized = { package_id: 'sized', format_ids: [generic, htmlRef(600), other] };
+    const alternate = {
+      package_id: 'alternate',
+      format_ids: [
+        { agent_url: OWNER, id: 'display_html' },
+        { ...other, width: 300, height: 600 },
+      ],
+    };
+    for (const format_ids of [sized.format_ids, [...sized.format_ids].reverse()]) {
+      for (const selectors of [
+        [{ ...sized, format_ids }, alternate],
+        [alternate, { ...sized, format_ids }],
+      ]) {
+        assert.throws(
+          () => projectSyncCreativesForDelivery({ creatives: [creative(600)] }, selectors, mode),
+          CreativeFormatProjectionError
+        );
+      }
+    }
+  });
+
+  test(`library sync: several shared IDs from one owner remain ambiguous on ${mode} wire`, () => {
+    const ref = (id, sized = true) => ({ agent_url: OWNER, id, ...(sized && { width: 300, height: 600 }) });
+    const image = {
+      creative_id: 'image',
+      name: 'Image 300x600',
+      format_kind: 'image',
+      format_parameters: { width: 300, height: 600 },
+      assets: { image: { asset_type: 'image', url: 'https://cdn.example/image.png', width: 300, height: 600 } },
+    };
+    const selectors = [
+      {
+        package_id: 'specific',
+        format_ids: [ref('display_300x600_image'), ref('display_image'), ref('display_static')],
+      },
+      { package_id: 'image-first', format_ids: [ref('display_image'), ref('display_static', false)] },
+      { package_id: 'static-first', format_ids: [ref('display_static'), ref('display_image', false)] },
+    ];
+    for (const ordered of [selectors, [...selectors].reverse()])
+      assert.throws(
+        () => projectSyncCreativesForDelivery({ creatives: [image] }, ordered, mode),
+        CreativeFormatProjectionError
+      );
+  });
+
+  test(`library sync: asset-only image size cannot be lost when narrowing shared candidates on ${mode} wire`, () => {
+    const image = {
+      creative_id: 'image',
+      name: 'Image 300x600',
+      format_kind: 'image',
+      assets: { image: { asset_type: 'image', url: 'https://cdn.example/image.png', width: 300, height: 600 } },
+    };
+    const selectors = [
+      {
+        package_id: 'sized',
+        format_ids: [
+          { agent_url: OWNER, id: 'display_image', width: 300, height: 250 },
+          { agent_url: OWNER, id: 'display_300x600_image', width: 300, height: 600 },
+        ],
+      },
+      { package_id: 'unsized', format_ids: [{ agent_url: OWNER, id: 'display_image' }] },
+    ];
+    assert.throws(
+      () => projectSyncCreativesForDelivery({ creatives: [image] }, selectors, mode),
+      CreativeFormatProjectionError
+    );
+  });
+
+  test(`library sync: shared-identity retries cannot borrow refs from unselected options on ${mode} wire`, () => {
+    const option = (format_option_id, ref) => ({
+      format_option_id,
+      format_kind: 'display_tag',
+      params: { width: 300, height: 600, supported_delivery_types: ['inline_markup'] },
+      v1_format_ref: [ref],
+    });
+    const pin = { scope: 'product', format_option_id: 'selected' };
+    for (const source of ['creative', 'package']) {
+      const selectors = [
+        {
+          package_id: 'sized',
+          format_options: [
+            option('selected', htmlRef(600)),
+            option('unselected', { ...htmlRef(600), id: 'display_html' }),
+          ],
+        },
+        {
+          package_id: 'generic',
+          format_options: [option('selected', { ...htmlRef(600), id: 'display_html' })],
+        },
+      ].map(selector => ({ ...selector, ...(source === 'package' && { format_option_refs: [pin] }) }));
+      const input = {
+        creatives: [{ ...creative(600), ...(source === 'creative' && { format_option_ref: pin }) }],
+        assignments: selectors.map(({ package_id }) => ({ creative_id: 'c600', package_id })),
+      };
+      assert.throws(() => projectSyncCreativesForDelivery(input, selectors, mode), CreativeFormatProjectionError);
+    }
+  });
+
+  test(`library sync: SingleAgentClient forwards shared HTML refs for a mixed-size library on ${mode} wire`, async () => {
+    const { SingleAgentClient } = require('../../dist/lib');
+    const client = new SingleAgentClient(
+      { id: 'seller', name: 'Seller', protocol: 'mcp', agent_uri: 'https://seller.example/mcp' },
+      { adcpVersion: '3.1.31', validation: { requests: 'off', responses: 'off' } }
+    );
+    client.resolveCreativeWireMode = async () => mode;
+    const calls = [];
+    client.executeAndHandle = async (tool, _handler, params) => {
+      calls.push({ tool, params });
+      return { success: true, status: 'completed' };
+    };
+    await client.syncCreatives(
+      { account: { account_id: 'account' }, creatives: [creative(250), creative(600)] },
+      undefined,
+      {
+        creativeFormatProjection: {
+          selectorContainers: [
+            ...packages,
+            { package_id: 'unsized', format_ids: [{ agent_url: OWNER, id: 'display_html' }] },
+          ],
+        },
+      }
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].tool, 'sync_creatives');
+    assert.deepEqual(
+      calls[0].params.creatives.map(item => item.format_id),
+      [250, 600].map(height => ({ ...htmlRef(height), id: 'display_html' }))
+    );
+    assert.equal(calls[0].params.assignments, undefined);
+  });
+}
+
 for (const mode of ['legacy', 'unknown', 'canonical']) {
   for (const assignments of [undefined, []]) {
     test(`library sync: mixed sizes with ${assignments ? 'empty' : 'omitted'} assignments on ${mode} wire (#3570)`, () => {

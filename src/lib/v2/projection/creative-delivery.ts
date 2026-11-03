@@ -1302,9 +1302,9 @@ function selectLegacyRef(
   creative: Record<string, unknown>,
   container: CreativeFormatSelectorContainer,
   canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
-  operation = 'creative_delivery'
+  operation = 'creative_delivery',
+  candidates = candidatesFromContainer(container, canonicalFormatLegacyResolver, operation)
 ): V1FormatId | undefined {
-  let candidates = candidatesFromContainer(container, canonicalFormatLegacyResolver, operation);
   const creativeOptionRef = optionReference(creative.format_option_ref);
   const selectedOptionRefs = Array.isArray(container.format_option_refs)
     ? container.format_option_refs.flatMap(value => {
@@ -2659,7 +2659,7 @@ function reconcileLegacyAssignmentRefs(
   return { value };
 }
 
-/** Resolve assignments independently before selecting the one creative wire identity. */
+/** Resolve assignments independently, then search shared identities if their preferred refs conflict. */
 function projectAssignedCreative(
   creative: Record<string, unknown>,
   packageIds: ReadonlySet<string>,
@@ -2667,10 +2667,17 @@ function projectAssignedCreative(
   converter: LegacyFormatConverter | undefined,
   resolver: CanonicalFormatLegacyResolver | undefined,
   definitions: readonly V1FormatDefinition[] | undefined,
-  options: Pick<SyncCreativeFormatProjection, 'playerSizedRefs'> | undefined
+  options: Pick<SyncCreativeFormatProjection, 'playerSizedRefs'> | undefined,
+  search?: {
+    identity: V1FormatId;
+    resolvers: Map<string, CanonicalFormatLegacyResolver | undefined>;
+  }
 ): Record<string, unknown> {
+  const sharedIdentity = search?.identity;
+  const packageResolvers = search?.resolvers ?? new Map<string, CanonicalFormatLegacyResolver | undefined>();
   const packageRefs: NonNullable<CreativeFormatProjectionError['details']>['package_refs'][number][] = [];
   const resolved: ResolvedLegacyAssignment[] = [];
+  let sharedCandidates: V1FormatId[] | undefined;
   const parameterKeys = new Set<string>();
   let compatibleParameters = true;
   const playerSized = creative.format_kind === 'video_vast' || creative.format_kind === 'audio_vast';
@@ -2710,7 +2717,10 @@ function projectAssignedCreative(
     const containers = byPackage.get(packageId) ?? [];
     const selector =
       containers.length === 1 ? containers[0]! : { package_id: packageId, selector_containers: containers };
-    const memoizedResolver = memoizePackageResolver(resolver);
+    // Shared-identity retries must use the same snapshotted answers as the
+    // independent resolutions, while keeping creative mappings package-scoped.
+    if (!packageResolvers.has(packageId)) packageResolvers.set(packageId, memoizePackageResolver(resolver));
+    const memoizedResolver = packageResolvers.get(packageId);
     let creativeResolverRef: V1FormatId | undefined;
     const packageResolver: CanonicalFormatLegacyResolver | undefined = memoizedResolver
       ? context => {
@@ -2723,6 +2733,12 @@ function projectAssignedCreative(
     try {
       const allCandidates = candidatesFromContainer(selector, packageResolver, 'sync_creatives');
       knownCandidates = assignedLegacyCandidates(creative, selector, allCandidates);
+      const available = knownCandidates.filter(candidate => !candidate.canonicalOnly).map(candidate => candidate.ref);
+      sharedCandidates = sharedCandidates
+        ? sharedCandidates.filter(ref => available.some(candidate => sameLegacyIdentity(ref, candidate)))
+        : available.filter(
+            (ref, index) => available.findIndex(candidate => sameLegacyIdentity(ref, candidate)) === index
+          );
       const missingSelectedMapping =
         allCandidates.length > 0 &&
         knownCandidates.length === 0 &&
@@ -2743,15 +2759,37 @@ function projectAssignedCreative(
           'the package forbids legacy creative formats'
         );
       }
-      let value = projectCreativeForDelivery(
-        selectionCreative as unknown as CreativeAsset,
-        selector,
-        'legacy',
-        'sync_creatives',
-        converter,
-        packageResolver,
-        definitions
-      ) as unknown as Record<string, unknown>;
+      let value: Record<string, unknown>;
+      if (sharedIdentity) {
+        const canonical = canonicalizeCreative(selectionCreative, selector, 'sync_creatives', converter);
+        transferLegacyCreativeMetadata(selectionCreative, canonical);
+        const ref = selectLegacyRef(
+          legacyRef(selectionCreative.format_id) ? selectionCreative : canonical,
+          selector,
+          packageResolver,
+          'sync_creatives',
+          knownCandidates.filter(
+            candidate => !candidate.canonicalOnly && sameLegacyIdentity(candidate.ref, sharedIdentity)
+          )
+        );
+        if (!ref)
+          throw new CreativeFormatProjectionError(
+            'sync_creatives',
+            String(creative.creative_id),
+            'the shared legacy format identity has no unambiguous compatible reference for this package'
+          );
+        value = projectCreative(canonical, ref, definitions, 'sync_creatives');
+      } else {
+        value = projectCreativeForDelivery(
+          selectionCreative as unknown as CreativeAsset,
+          selector,
+          'legacy',
+          'sync_creatives',
+          converter,
+          packageResolver,
+          definitions
+        ) as unknown as Record<string, unknown>;
+      }
       if (selectionCreative !== creative) {
         const restored = { ...value };
         if (Object.hasOwn(creative, 'format_parameters')) restored.format_parameters = creative.format_parameters;
@@ -2857,6 +2895,27 @@ function projectAssignedCreative(
     const reconciled = reconcileLegacyAssignmentRefs(resolved);
     if ('value' in reconciled) return reconciled.value;
     conflicts = reconciled.conflicts;
+    // Local specificity is a preference: another advertised identity may be
+    // accepted by every package. Retry only their intersection, retaining all
+    // option pins and per-package size/duration checks. A retry never recurses.
+    if (!sharedIdentity && conflicts.some(conflict => conflict.constraint === 'format_id')) {
+      const sharedValues: Record<string, unknown>[] = [];
+      for (const identity of sharedCandidates ?? []) {
+        try {
+          sharedValues.push(
+            projectAssignedCreative(creative, packageIds, selectors, converter, resolver, definitions, options, {
+              identity,
+              resolvers: packageResolvers,
+            })
+          );
+        } catch (error) {
+          if (!(error instanceof CreativeFormatProjectionError)) throw error;
+        }
+      }
+      // Different viable owners or IDs remain ambiguous; package ordering
+      // must not decide the creative's wire identity.
+      if (sharedValues.length === 1) return sharedValues[0]!;
+    }
     // Deprecated `playerSizedRefs` host override, kept with its beta.5 meaning
     // for the one case declarations cannot settle: packages that state
     // different player sizes. The host asserts the seller accepts a VAST ref
