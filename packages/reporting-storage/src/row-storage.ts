@@ -374,9 +374,9 @@ export class ReportingRowStorageV1 {
    * skipped: it never takes commits, so nothing can adopt through it, and every delete is
    * reference-checked.
    *
-   * Since the reference-checked, per-object-locked delete this is no longer the only guard: every
-   * delete path now skips an object another row set still references. It is kept as defense in
-   * depth for compaction, the one path that deletes content while the obligation stays live.
+   * Since the reference-checked delete this is no longer the only guard: every delete path now
+   * skips an object another row set still references. It is kept as defense in depth for
+   * compaction, the one path that deletes content while the obligation stays live.
    */
   assertCompactionSafeKeyTemplates(): void {
     const unsafe = Object.entries(this.bindings)
@@ -1190,14 +1190,16 @@ export class ReportingRowStorageV1 {
 
   /**
    * Prove each object is still present at its recorded version with the recorded size.
-   * A commit that adopted an object another row set created calls this under the object's
-   * lock, so a concurrent delete either finished first (this throws, the commit fails and
-   * the writer re-uploads) or sees the commit's chunk reference and skips the delete.
+   * A commit that adopted an existing object calls this inside its ledger transaction. An object
+   * the writer's own intent recorded is named by that open intent until the commit, so no delete
+   * touches it. An object no record names is also locked first (`writePreparedRowSet`), so the one
+   * delete that can reach it, the orphan collector's, either finished first (this throws, the
+   * commit fails and the writer re-uploads) or sees the commit's chunk reference and skips.
    *
    * Native versions are write-unique (S3 VersionId, Azure versionId, GCS generation, filesystem
    * `ino:birthtime:mtime:size`), so a version-pinned metadata check, "this exact version exists at the
    * recorded size", proves the object unchanged without downloading it while the commit holds its
-   * locks. Bytes were verified when the object was uploaded or adopted. A custom provider without
+   * transaction. Bytes were verified when the object was uploaded or adopted. A custom provider without
    * `stat` falls back to reading the whole object and comparing its physical digest.
    */
   async assertObjectsPresent(

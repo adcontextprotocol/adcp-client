@@ -62,8 +62,10 @@ read-only binding is exempt from the requirement, is never chosen for new
 writes, and is still used for reads and retirement (`readyRowStorage` still
 probes it, so keep its location reachable). Compaction ignores read-only
 bindings, because nothing can adopt through them. The
-reference-checked deletes and the per-object lock are unchanged, because
-header-only revisions still share chunks within an obligation.
+reference-checked deletes are unchanged, because header-only revisions still
+share chunks within an obligation. (The per-object lock this note once said was
+unchanged has since been removed from every path but the orphan collector; see
+`docs/guides/REPORTING-LEDGER.md`.)
 
 ## Renamed fields
 

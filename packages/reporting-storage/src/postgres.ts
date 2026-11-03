@@ -2219,9 +2219,10 @@ ${managedDueArm}       )
       { preBeginAdvisoryLock: accountLock(accountId) }
     );
     // Phase 2: external bytes, at their recorded versions. Row sets written under an older
-    // template without {revision_key} can name an object another obligation or account also
-    // references, so each delete is skipped while a live row set outside this period still
-    // references it (see deleteUnreferencedObjects).
+    // template without {revision_key} (readOnly bindings only) can name an object another obligation
+    // or account also references, so each delete is skipped while a live row set outside this period
+    // still references it. No lock orders that: the `pruning` state committed in phase 1 does (see
+    // deleteUnreferencedObjects).
     if (rowStorage) {
       const objects = await this.query<{ row_binding_id: string; object_ref: string; native_version_ref: string }>(
         `SELECT DISTINCT row_set.row_binding_id, chunk.object_ref, chunk.native_version_ref
@@ -2603,29 +2604,14 @@ ${managedDueArm}       )
           async client => {
             // An older writer still running during a rolling upgrade may append the pre-alignment keys
             // (`objectKey`, `nativeVersion`); read both so its objects are still swept.
-            const updated = await client.query<{
-              created_objects: {
-                object_ref?: string;
-                native_version_ref?: string;
-                objectKey?: string;
-                nativeVersion?: string;
-              }[];
-            }>(
+            const updated = await client.query<{ created_objects: RecordedIntentObject[] }>(
               `UPDATE adcp_reporting_row_write_intents SET state = 'sweeping'
                 WHERE row_binding_id = $1 AND row_set_id = $2 AND content_sha256 = $3
                   AND (state = 'sweeping' OR expires_at <= clock_timestamp())
                 RETURNING created_objects`,
               key
             );
-            return updated.rows[0]?.created_objects
-              .map(object => ({
-                objectRef: object.object_ref ?? object.objectKey,
-                nativeVersionRef: object.native_version_ref ?? object.nativeVersion,
-              }))
-              .filter(
-                (object): object is { objectRef: string; nativeVersionRef: string } =>
-                  typeof object.objectRef === 'string' && typeof object.nativeVersionRef === 'string'
-              );
+            return updated.rows[0] ? recordedIntentObjects(updated.rows[0].created_objects) : undefined;
           },
           { preBeginAdvisoryLock: accountLock(intent.account_id) }
         );
@@ -2690,7 +2676,8 @@ ${managedDueArm}       )
    * - no row set that is not already `pruned` has a chunk at its key, and no write intent lists it,
    *   at any version and under any binding (a pre-check that errs towards leaking, because two
    *   bindings can share a bucket and prefix);
-   * - under the per-object advisory lock, no `live` or `unavailable` row set under any binding
+   * - under the per-object advisory lock of every binding (taken only here and by a commit that adopts
+   *   an object its own intent did not record), no `live` or `unavailable` row set under any binding
    *   references that exact version and no open intent created it (the check every other delete makes,
    *   widened to every binding), and the provider deletes that exact version.
    *
@@ -2928,14 +2915,14 @@ ${managedDueArm}       )
             }
             sinceFenceCheck += 1;
             try {
-              // The per-object lock and exact-version reference check every other delete makes.
-              const removed = await this.deleteUnreferencedObjects(
+              // The only delete that takes the per-object lock: no record names this object, so a commit may be
+              // adopting it unrecorded. The exact-version reference check runs under that lock.
+              const removed = await this.deleteOrphanedObject(
                 summary.id,
-                [{ objectRef: entry.objectRef, nativeVersionRef: entry.nativeVersionRef }],
-                { anyBinding: true },
+                { objectRef: entry.objectRef, nativeVersionRef: entry.nativeVersionRef },
                 input.signal
               );
-              if (removed > 0) outcome.deleted += 1;
+              if (removed) outcome.deleted += 1;
               else outcome.referenced += 1;
             } catch {
               input.signal?.throwIfAborted();
@@ -3303,90 +3290,140 @@ ${managedDueArm}       )
   }
 
   /**
-   * Delete external row objects, skipping any object another row set still references.
+   * Delete external row objects, skipping any object another row set still references. Takes no
+   * advisory lock and holds no transaction (or pooled connection) across the provider delete.
    *
-   * Object keys are unique per row set (every writable template includes `{revision_key}`), but header-only
-   * revisions share chunks within an obligation and rows written under an older template can name one
-   * object from several row sets. An object is therefore deleted only when no
-   * chunk of a live (or unavailable) row set outside this operation references the same binding,
-   * key and native version, and no other open write intent created it. Row sets already `pruning`
-   * or `pruned` do not count: their own operation deletes the object, and counting them would let
-   * two concurrent retirements each skip the object and leak it. `scope` names what this
-   * operation is deleting: an obligation (retirement) or a row set (compaction).
+   * An object is deleted only when no chunk of a live (or unavailable) row set outside this
+   * operation references the same binding, key and native version, and no other open write intent
+   * created it. Row sets already `pruning` or `pruned` do not count: their own operation deletes
+   * the object, and counting them would let two concurrent retirements each skip the object and
+   * leak it. `scope` names what this operation is deleting: an obligation (retirement) or a row set
+   * (compaction); the intent sweep passes neither.
    *
-   * The check and the provider delete run in one transaction under a per-object advisory lock.
-   * A commit that adopts an existing object takes the same lock before it inserts its chunk rows
-   * and re-verifies the object under it (`writePreparedRowSet`), and holds it until commit. So
-   * either the delete wins the lock and the adopting commit then fails cleanly, or the commit wins
-   * and the delete sees its chunk rows and skips. A skipped object stays for the row set that owns
-   * it: that row set's own retirement, compaction or sweep deletes it, because by then nothing
-   * else references it. Locks are taken one object at a time, never while waiting on the account
-   * lock, so commits (account lock, then object locks) cannot deadlock with these deletes.
+   * Why the check needs no lock against a committing writer (the proof, case by case):
+   *
+   * - Every writable template includes `{revision_key}` (a SHA-256 of the row set ID) and
+   *   `{content_sha256}`, so only one row set can ever name a given key through a writable binding.
+   *   Whatever deletes an object named by a committed chunk row or an open intent is deleting an object
+   *   only that row set could commit. A committed row set is replayed: a late writer that passed the
+   *   replay check can still adopt its just-committed object, but its commit inserts nothing (the row set
+   *   exists), so it cannot reference an object a retirement or compaction then deletes. A `readOnly`
+   *   binding's old template can map several row sets to one object, but nothing adopts through it; there
+   *   the reference check and the `pruning` order below are the whole argument (and no lock ever covered
+   *   more). Bindings that share one bucket and prefix must route a row set to one binding across
+   *   attempts: the reference check is per binding outside the orphan collector.
+   * - Header-only revisions share chunks within an obligation. The sharing commit holds the account
+   *   lock and `FOR SHARE`-locks a predecessor that must still be `live`; retirement and compaction
+   *   move a row set to `pruning` under the same account lock before they delete anything. So a
+   *   sharer either commits first (its chunk rows are then visible to the check, which skips the
+   *   delete) or fails with `STATE_UNAVAILABLE`.
+   * - The intent sweep moves an expired `open` intent to `sweeping` under the account lock, and the
+   *   writer closes that intent, still `open`, in the commit transaction that inserts its chunk
+   *   rows. Exactly one wins; a writer past its lease cannot commit objects the sweep deletes.
+   * - Concurrent retirements and compactions are ordered by the state each commits before its check.
+   * - Deletes are pinned to an exact native version, so one cannot remove a re-created object.
+   *
+   * The one delete that still needs a lock is of an object no record names
+   * (`collectOrphanedRowObjects`): `deleteOrphanedObject` takes the per-object lock that a commit
+   * adopting an unrecorded object also takes (`writePreparedRowSet`).
+   *
+   * A skipped object stays for the row set that owns it: that row set's own retirement,
+   * compaction or sweep deletes it, because by then nothing else references it.
    */
   private async deleteUnreferencedObjects(
     bindingId: string,
     objects: readonly { objectRef: string; nativeVersionRef: string }[],
-    scope: { obligationId?: string; rowSetId?: string; anyBinding?: boolean },
+    scope: { obligationId?: string; rowSetId?: string },
     signal?: AbortSignal
   ): Promise<number> {
     let deleted = 0;
+    const pool: RowObjectQueryable = { query: (text, values) => this.query(text, values) };
     for (const object of objects) {
       signal?.throwIfAborted();
-      const removed = await this.transaction(async client => {
-        // A writer adopting an object takes the lock of its own binding only. When bindings can share a
-        // bucket and prefix, take every binding's lock for this object, in a fixed order, so the delete is
-        // serialized with an adoption through any of them. Writers hold one such lock, so no cycle forms.
-        const lockBindings = scope.anyBinding
-          ? [
-              ...new Set([
-                bindingId,
-                ...this.rowStorage.objectBindingIds(),
-                ...(
-                  await client.query<{ row_binding_id: string }>(
-                    `SELECT row_binding_id FROM adcp_reporting_row_bindings`
-                  )
-                ).rows.map(row => row.row_binding_id),
-              ]),
-            ].sort()
-          : [bindingId];
-        for (const lockBinding of lockBindings) {
-          await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-            objectLock(lockBinding, object.objectRef),
-          ]);
-        }
-        const referenced = await client.query(
-          `(SELECT 1 FROM adcp_reporting_row_chunks chunk
-              JOIN adcp_reporting_row_sets row_set ON row_set.row_set_id = chunk.row_set_id
-             WHERE ($8::boolean OR row_set.row_binding_id = $1) AND chunk.object_ref = $2
-               AND chunk.native_version_ref = $3
-               AND row_set.rows_state IN ('live', 'unavailable')
-               AND ($4::text IS NULL OR chunk.obligation_id <> $4)
-               AND ($5::text IS NULL OR chunk.row_set_id <> $5)
-             LIMIT 1)
-           UNION ALL
-           (SELECT 1 FROM adcp_reporting_row_write_intents intent
-             WHERE ($8::boolean OR intent.row_binding_id = $1) AND intent.state = 'open'
-               AND (intent.created_objects @> $6::jsonb OR intent.created_objects @> $7::jsonb)
-             LIMIT 1)`,
-          [
-            bindingId,
-            object.objectRef,
-            object.nativeVersionRef,
-            scope.obligationId ?? null,
-            scope.rowSetId ?? null,
-            JSON.stringify([{ object_ref: object.objectRef, native_version_ref: object.nativeVersionRef }]),
-            // An older writer still running during a rolling upgrade records the pre-alignment keys.
-            JSON.stringify([{ objectKey: object.objectRef, nativeVersion: object.nativeVersionRef }]),
-            scope.anyBinding === true,
-          ]
-        );
-        if (referenced.rows.length > 0) return false;
-        await this.rowStorage.deleteObjects(bindingId, [object], signal);
-        return true;
-      });
-      if (removed) deleted += 1;
+      if (await this.isRowObjectReferenced(pool, bindingId, object, scope)) continue;
+      await this.rowStorage.deleteObjects(bindingId, [object], signal);
+      deleted += 1;
     }
     return deleted;
+  }
+
+  /**
+   * Delete one object that no ledger record named when `collectOrphanedRowObjects` listed it, under the
+   * advisory lock `adcp-reporting-object:{binding}:{objectRef}` of every binding that can name it. This is
+   * the only delete that takes the lock: an object no record names can be adopted, unrecorded, by a
+   * writer's commit (a retry that finds an object an earlier attempt created but never recorded), and that
+   * commit takes the same lock before it proves the object and inserts its chunk rows. So either this
+   * delete wins and the commit's version-pinned `stat` fails it cleanly, or the commit wins and this
+   * check sees its chunk rows and skips.
+   *
+   * A writer takes the lock of its own binding only, so every binding (those this host configures and
+   * those the database has registered, which can share a bucket and prefix) is locked here, in a fixed
+   * order. Writers hold one such lock, so no cycle forms. A commit takes the account lock, then object
+   * locks; this delete never waits on the account lock while holding an object lock.
+   */
+  private async deleteOrphanedObject(
+    bindingId: string,
+    object: { objectRef: string; nativeVersionRef: string },
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    return this.transaction(async client => {
+      const lockBindings = [
+        ...new Set([
+          bindingId,
+          ...this.rowStorage.objectBindingIds(),
+          ...(
+            await client.query<{ row_binding_id: string }>(`SELECT row_binding_id FROM adcp_reporting_row_bindings`)
+          ).rows.map(row => row.row_binding_id),
+        ]),
+      ].sort();
+      for (const lockBinding of lockBindings) {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+          objectLock(lockBinding, object.objectRef),
+        ]);
+      }
+      if (await this.isRowObjectReferenced(client, bindingId, object, { anyBinding: true })) return false;
+      await this.rowStorage.deleteObjects(bindingId, [object], signal);
+      return true;
+    });
+  }
+
+  /**
+   * Whether a live or unavailable row set outside `scope`, or an open write intent, still names this
+   * exact object version. `anyBinding` widens the check to every binding (the orphan collector's).
+   */
+  private async isRowObjectReferenced(
+    queryable: RowObjectQueryable,
+    bindingId: string,
+    object: { objectRef: string; nativeVersionRef: string },
+    scope: { obligationId?: string; rowSetId?: string; anyBinding?: boolean }
+  ): Promise<boolean> {
+    const referenced = await queryable.query(
+      `(SELECT 1 FROM adcp_reporting_row_chunks chunk
+          JOIN adcp_reporting_row_sets row_set ON row_set.row_set_id = chunk.row_set_id
+         WHERE ($8::boolean OR row_set.row_binding_id = $1) AND chunk.object_ref = $2
+           AND chunk.native_version_ref = $3
+           AND row_set.rows_state IN ('live', 'unavailable')
+           AND ($4::text IS NULL OR chunk.obligation_id <> $4)
+           AND ($5::text IS NULL OR chunk.row_set_id <> $5)
+         LIMIT 1)
+       UNION ALL
+       (SELECT 1 FROM adcp_reporting_row_write_intents intent
+         WHERE ($8::boolean OR intent.row_binding_id = $1) AND intent.state = 'open'
+           AND (intent.created_objects @> $6::jsonb OR intent.created_objects @> $7::jsonb)
+         LIMIT 1)`,
+      [
+        bindingId,
+        object.objectRef,
+        object.nativeVersionRef,
+        scope.obligationId ?? null,
+        scope.rowSetId ?? null,
+        JSON.stringify([{ object_ref: object.objectRef, native_version_ref: object.nativeVersionRef }]),
+        // An older writer still running during a rolling upgrade records the pre-alignment keys.
+        JSON.stringify([{ objectKey: object.objectRef, nativeVersion: object.nativeVersionRef }]),
+        scope.anyBinding === true,
+      ]
+    );
+    return referenced.rows.length > 0;
   }
 
   private async optionalTables(): Promise<ReadonlySet<string>> {
@@ -3509,25 +3546,42 @@ ${managedDueArm}       )
         throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'the shared row set is no longer live');
       }
     } else {
-      const closed = await client.query(
+      // Closing the intent and inserting the chunk rows are one transaction, so a reader of the ledger sees
+      // an object named by this open intent or by committed chunk rows, never neither.
+      const closed = await client.query<{ created_objects: RecordedIntentObject[] }>(
         `DELETE FROM adcp_reporting_row_write_intents
           WHERE row_binding_id = $1 AND row_set_id = $2 AND content_sha256 = $3
-            AND owner_token = $4 AND state = 'open'`,
+            AND owner_token = $4 AND state = 'open'
+        RETURNING created_objects`,
         [prepared.bindingId, prepared.input.rowSetId, prepared.input.binding.sha256, upload.ownerToken]
       );
       if (closed.rowCount !== 1) {
         throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'the row upload intent was taken over or swept');
       }
-    }
-    if (!upload.sharedFrom) {
-      // A create-only write that found an object already there adopted it. Lock each adopted
-      // object (in key order) until this transaction ends, then prove it is still there: a
-      // delete holding the lock finished first and fails this commit, any later delete sees the
-      // chunk rows inserted below and skips (`deleteUnreferencedObjects`).
+      // A create-only write that found an object already there adopted it. Prove each adopted object is
+      // still there at its recorded version (a version-pinned `stat`, no download).
+      //
+      // An object this writer's own intent recorded as created (an earlier attempt at this row set that
+      // was taken over) needs no lock: until this transaction commits the open intent names it, so no
+      // delete skips the reference check, the intent sweep cannot claim an intent this commit just closed
+      // or one a takeover renewed, and the object's key is unique to this row set, so no other row set's
+      // retirement or compaction names it.
+      //
+      // An adopted object the intent does not record (an earlier attempt's PUT that landed before it was
+      // recorded, or one the writer created after a takeover) is named by no record. Only the orphan
+      // collector deletes such an object, and it deletes under the per-object lock: take it, in key
+      // order, until this transaction ends. A delete that held it finished first and the `stat` below
+      // fails this commit, and any later delete sees the chunk rows inserted below and skips.
       const adopted = upload.locators
         .filter(locator => !locator.created)
         .sort((left, right) => (left.objectRef < right.objectRef ? -1 : left.objectRef > right.objectRef ? 1 : 0));
+      const recorded = new Set(
+        recordedIntentObjects(closed.rows[0]?.created_objects).map(
+          object => `${object.objectRef}\u0000${object.nativeVersionRef}`
+        )
+      );
       for (const locator of adopted) {
+        if (recorded.has(`${locator.objectRef}\u0000${locator.nativeVersionRef}`)) continue;
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
           objectLock(prepared.bindingId, locator.objectRef),
         ]);
@@ -6391,7 +6445,10 @@ function accountLock(accountId: string): string {
   return `adcp-reporting-account:${accountId}`;
 }
 
-/** Serializes deleting an external row object against a commit that adopts it. */
+/**
+ * Serializes the orphan collector's delete of an object no record names against a commit that adopts that
+ * object without having recorded it. No other delete or commit takes it.
+ */
 function objectLock(bindingId: string, objectRef: string): string {
   return `adcp-reporting-object:${bindingId}:${objectRef}`;
 }
@@ -6698,6 +6755,34 @@ function withoutRows<T extends { rows: unknown }>(value: T): Omit<T, 'rows'> {
 /** Restore rows the caller already holds onto a stored document that omits them. */
 function withRows<T extends { rows: Record<string, unknown>[] }>(value: T, rows: Record<string, unknown>[]): T {
   return Array.isArray(value.rows) ? value : { ...value, rows: clone(rows) };
+}
+
+/** One entry of a write intent's `created_objects`; an older writer records `objectKey` and `nativeVersion`. */
+interface RecordedIntentObject {
+  object_ref?: string;
+  native_version_ref?: string;
+  objectKey?: string;
+  nativeVersion?: string;
+}
+
+/** The objects a write intent recorded, reading both the current keys and an older writer's pre-alignment keys. */
+function recordedIntentObjects(
+  entries: readonly RecordedIntentObject[] | undefined
+): { objectRef: string; nativeVersionRef: string }[] {
+  return (entries ?? [])
+    .map(entry => ({
+      objectRef: entry.object_ref ?? entry.objectKey,
+      nativeVersionRef: entry.native_version_ref ?? entry.nativeVersion,
+    }))
+    .filter(
+      (object): object is { objectRef: string; nativeVersionRef: string } =>
+        typeof object.objectRef === 'string' && typeof object.nativeVersionRef === 'string'
+    );
+}
+
+/** The part of a pool or transaction client the reference check needs. */
+interface RowObjectQueryable {
+  query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[] }>;
 }
 
 /** Locations for an object-kind row set: freshly uploaded under an intent, or shared from identical rows. */
