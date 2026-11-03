@@ -339,6 +339,12 @@ describe('RegistryClient', () => {
         canonical_domain: 'leaf.example',
         brand_name: 'Leaf',
         source: 'hosted',
+        brand: {
+          id: 'leaf',
+          names: [{ 'en-GB': 'Leaf' }],
+          tagline: [{ 'en-GB': 'Made for everyday' }],
+          fonts: { primary: { family: 'Example Sans' } },
+        },
         claimed_house_domain: 'house.example',
         relationship_trust: 'leaf_only',
         promoted_from_schema: 'https://schemas.adcontextprotocol.org/brand/v1/brand.json',
