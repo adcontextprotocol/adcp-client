@@ -1,5 +1,15 @@
 # Changelog
 
+## 17.0.0-beta.14
+
+### Minor Changes
+
+- a1c936e: Expose the registry resolver's optional complete `brand` entry on `ResolvedBrand` and add `selectBrandEntry` for independently fetched or cached brand.json documents. Preserve localized names, taglines, fonts, tone, and other identity fields without flattening them. Selection requires a unique match and never falls back to the first portfolio entry. Export the helper from the package root, brand, and client entrypoints.
+
+### Patch Changes
+
+- 83d47c4: Fix legacy `sync_creatives` projection when packages prefer different format IDs but accept a shared reference. Try shared advertised identities before refusing, so a library upload can use sized `display_html` alongside a package declaring unsized `display_html`. Preserve format ownership, selected options, size and duration constraints, and refusals when several shared identities remain ambiguous.
+
 ## 17.0.0-beta.13
 
 ### Patch Changes
