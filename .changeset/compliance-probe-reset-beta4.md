@@ -1,0 +1,9 @@
+---
+'@adcp/sdk': minor
+---
+
+Compliance tooling for the AdCP 3.3.0-beta.4 `reporting_subscription_probe` contract (adcp#8717).
+
+- **`reset_state`.** `TestControllerStore.resetState()` and `ComplyControllerConfig.resetState(ctx)` advertise and serve the `reset_state` scenario (`SeedSuccess`), in `list_scenarios` and `compliance_testing.scenarios`. `RESET_STATE_SCENARIO` is exported. A seller that lists `reporting_subscription_probe` must also list `reset_state`, so `createComplyController` (and `createAdcpServerFromPlatform` with `complyTest`) now throws when `reportingSubscriptionProbe` is set without `resetState`. The reset must unpin the caller's sandbox clock and discard the probe's grant and timezone changes. The reference test kit implements it.
+- **`set_account_timezone` result.** `ReportingSubscriptionProbeSetAccountTimezoneResult` types `SetAccountTimezoneResult`: `simulated_now`, `account_id`, `previous_timezone`, `timezone`, `changed_at` (absent when nothing changed) and `timezone_cutovers[]`, each with `offering_id`, `previous_timezone`, `timezone` and `effective_at`. The test kit returns exactly this shape.
+- **`owed_periods_match`.** The storyboard runner compares over the spec's window: from the later of the request's `period.start` and `scope.ledger_retained_from`, where the retention bound is capped at `ledger_as_of` minus `status_retention_days`. Periods that start before the window are dropped from both sides, and a failure names the window start and the bound that set it (`expected_start`, `ledger_retained_from` or `retention_cap`). A seller that purged obligations inside `status_retention_days` now fails the check.
