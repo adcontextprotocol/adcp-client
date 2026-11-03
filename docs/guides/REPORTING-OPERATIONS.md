@@ -131,7 +131,11 @@ service runs for you. See
    cannot hold the table indefinitely.
 5. **Warehouse sink.** Apply `REPORTING_WAREHOUSE_SINK_MIGRATION`, create the
    tables, and the `current_rows` view, then schedule `runOnce`. Point analysts
-   at `current_rows`. Set the sink's `location` to the dataset's location: replay
+   at `current_rows`. The sink loads two tables per batch, rows first and then the
+   required revisions table that `current_rows` reads through, so rows can be
+   visible before their revision metadata and `current_rows` shows only revisions
+   whose metadata has loaded (`docs/guides/REPORTING-LEDGER.md`, "The two-table
+   contract"). Set the sink's `location` to the dataset's location: replay
    lookups of load jobs need it outside the US and EU multi-regions, and the sink
    warns once per process when it is unset. When upgrading from 15.9.0, stop
    every 15.9.0 sink worker before starting newer ones, then re-apply
@@ -297,6 +301,12 @@ Alert on these row-storage signals:
   `listCurrentRevisions`. A first read with no cursor can also throw it when a
   prune commits mid-read; retry it. A new warehouse sink stuck on it after such
   a race recovers with `sink.reset()`.
+- The warehouse sink's `runOnce()` keeps rejecting and the anti-join in "The
+  two-table contract" returns the same revision IDs run after run: rows are in the
+  rows table with no row in the revisions table. The revisions load is failing. The plan is retained and the rows are
+  already loaded, so fix the cause (usually a column the revisions table lacks) and
+  keep running: the retry loads only the revisions and `current_rows` catches up.
+  Do not edit the tables by hand and do not `reset()`.
 - A non-empty `missing` from the warehouse sink's `runOnce()`. The sink was down
   longer than `maxFeedHoldDays`, retention stopped waiting for it, and the
   warehouse lacks those revisions. Backfill them or accept the gap, and keep
