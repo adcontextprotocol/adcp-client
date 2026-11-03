@@ -53,7 +53,7 @@ import { WebhookSignatureError } from '../../signing/errors';
 import { InMemoryReplayStore, type ReplayStore } from '../../signing/replay';
 import { InMemoryRevocationStore, type RevocationStore } from '../../signing/revocation';
 import type { RequestLike } from '../../signing/canonicalize';
-import { getSchemaValidatorByRef } from '../../validation/schema-loader';
+import { getSchemaDocumentByRef, getSchemaValidatorByRef } from '../../validation/schema-loader';
 import { ADCP_VERSION } from '../../version';
 import { ConfigurationError } from '../../errors';
 
@@ -573,7 +573,7 @@ export async function executeWebhookAssertionStep(
   } else
     switch (step.task) {
       case 'expect_webhook': {
-        const outcome = await runExpectWebhook(step, filter, receiver);
+        const outcome = await runExpectWebhook(step, filter, receiver, options.adcpVersion ?? ADCP_VERSION);
         validations = outcome.validations;
         passed = outcome.passed;
         let changeKey: string | undefined;
@@ -790,7 +790,8 @@ async function runExpectNoWebhook(
 async function runExpectWebhook(
   step: StoryboardStep,
   filter: WebhookFilter,
-  receiver: WebhookReceiver
+  receiver: WebhookReceiver,
+  adcpVersion: string
 ): Promise<{ validations: ValidationResult[]; passed: boolean; webhook?: CapturedWebhook }> {
   const timeoutMs = clampTimeoutSeconds(step.timeout_seconds, DEFAULT_TIMEOUT_SECONDS) * 1000;
   const checkIdempotency = step.expect_idempotency_key !== false;
@@ -828,7 +829,7 @@ async function runExpectWebhook(
     );
   }
 
-  const schemaCheck = validateWebhookPayloadSchema(step, first);
+  const schemaCheck = validateWebhookPayloadSchema(step, first, adcpVersion);
   if (schemaCheck && !schemaCheck.passed) return { validations: [schemaCheck], passed: false };
 
   if (checkIdempotency) {
@@ -1094,12 +1095,17 @@ function mapSignatureErrorCode(
 // Helpers
 // ────────────────────────────────────────────────────────────
 
-function validateWebhookPayloadSchema(step: StoryboardStep, webhook: CapturedWebhook): ValidationResult | undefined {
+function validateWebhookPayloadSchema(
+  step: StoryboardStep,
+  webhook: CapturedWebhook,
+  adcpVersion: string
+): ValidationResult | undefined {
   const schemaRef = step.webhook_payload_schema_ref ?? step.response_schema_webhook_ref;
   if (!schemaRef) return undefined;
 
-  const { schema_id, schema_url } = resolveWebhookSchemaIdentity(schemaRef);
-  const validator = getSchemaValidatorByRef(schemaRef);
+  // The harness selects the contract; webhook body metadata is untrusted.
+  const { schema_id, schema_url } = resolveWebhookSchemaIdentity(schemaRef, adcpVersion);
+  const validator = getSchemaValidatorByRef(schemaRef, adcpVersion);
   if (!validator) {
     return {
       check: 'expect_webhook',
@@ -1158,9 +1164,13 @@ function validateWebhookPayloadSchema(step: StoryboardStep, webhook: CapturedWeb
   };
 }
 
-function resolveWebhookSchemaIdentity(schemaRef: string): { schema_id: string; schema_url: string } {
-  const trimmed = schemaRef.replace(/^\/+/, '');
-  const schemaId = `/schemas/${ADCP_VERSION}/${trimmed}`;
+function resolveWebhookSchemaIdentity(
+  schemaRef: string,
+  adcpVersion: string
+): { schema_id: string; schema_url: string } {
+  const document = getSchemaDocumentByRef(schemaRef, adcpVersion);
+  const ref = document?.schemaRef ?? schemaRef.replace(/^\/+/, '');
+  const schemaId = `/schemas/${document?.resolvedVersion ?? adcpVersion}/${ref}`;
   return { schema_id: schemaId, schema_url: `${SCHEMA_URL_BASE}${schemaId}` };
 }
 
