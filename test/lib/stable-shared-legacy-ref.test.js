@@ -162,3 +162,40 @@ test('nested package selectors retain each child option pin before intersecting 
     /do not share a legacy format identity/
   );
 });
+
+for (const [kind, matching, other, media] of [
+  [
+    'image',
+    'display_300x250_image',
+    'display_728x90_image',
+    { asset_type: 'image', url: 'https://assets.example/image.png', width: 300, height: 250 },
+  ],
+  [
+    'video_hosted',
+    'video_30s',
+    'video_15s',
+    { asset_type: 'video', url: 'https://assets.example/video.mp4', duration_ms: 30000 },
+  ],
+]) {
+  test(`library ${kind} uses intrinsic media facts to ignore a mismatching single-ref package`, () => {
+    const source = { creative_id: `intrinsic-${kind}`, format_kind: kind, assets: { media } };
+    const selectors = [
+      { package_id: 'matching', format_ids: [ref(matching, kind === 'video_hosted' ? { duration_ms: 30000 } : {})] },
+      { package_id: 'other', format_ids: [ref(other, kind === 'video_hosted' ? { duration_ms: 15000 } : {})] },
+    ];
+    for (const ordered of [selectors, [...selectors].reverse()]) {
+      assert.equal(project(source, ordered).format_id.id, matching);
+      assert.throws(() => project(source, ordered, 'legacy', true), /no compatible legacy reference/);
+    }
+  });
+}
+test('seller declarations cannot make an unknown canonical input kind valid', () => {
+  const selectors = ['one', 'two'].map(package_id => ({
+    package_id,
+    format_options: [{ format_kind: 'invented_kind', v1_format_ref: [ref('display_html')] }],
+  }));
+  assert.throws(
+    () => project({ ...creative(), format_kind: 'invented_kind' }, selectors),
+    /unknown canonical format_kind/
+  );
+});

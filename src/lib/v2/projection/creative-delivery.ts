@@ -1887,6 +1887,7 @@ function projectSharedLegacyCreative(
   if (typeof creative.format_kind !== 'string' || creative.format_id !== undefined || selectors.length < 2)
     return undefined;
   const formatKind = creative.format_kind;
+  if (!CANONICAL_FORMAT_KINDS.has(formatKind as CanonicalFormatKind)) return undefined;
   // Unscoped or unmapped declarations retain SDK 16's existing resolver path;
   // absence of mapping evidence does not establish a package mismatch.
   if (selectors.some(selector => typeof selector.package_id !== 'string')) return undefined;
@@ -1907,10 +1908,9 @@ function projectSharedLegacyCreative(
   for (const selector of packages) {
     const known = candidatesFromContainer(selector, resolver, 'sync_creatives');
     if (known.length === 0 || known.some(candidate => candidate.formatKind === undefined)) return undefined;
-    const sameKind = known.filter(candidate => candidate.formatKind === formatKind);
-    const constraints =
-      creativeFormatParameterConstraints(creative) ??
-      (sameKind.length > 1 ? primaryMediaConstraints(creative) : undefined);
+    // The intersection narrows a catalog to package-local candidates. Keep
+    // intrinsic media facts even when each package advertises only one ref.
+    const constraints = creativeFormatParameterConstraints(creative) ?? primaryMediaConstraints(creative);
     const mediaKind = ['image', 'video_hosted', 'audio_hosted'].includes(String(formatKind));
     // A nested selector retains its own option pins; flattening first would
     // let a sibling's unselected mapping satisfy this package's identity.
