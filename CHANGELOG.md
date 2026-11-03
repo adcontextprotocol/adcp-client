@@ -1,5 +1,17 @@
 # Changelog
 
+## 17.0.0-beta.13
+
+### Patch Changes
+
+- d534771: Fix mixed-size creative library syncs by excluding known non-fitting packages from an unassigned creative's shared wire decision. Apply the same fit checks and option selection to library uploads when assignments name other creatives; these uploads now refuse when no supplied package can accept them. Preserve strict assignment checks for both assignments and assignment_operations (assign, replace, and merge), refuse conflicting compatible wire references, and retain all public per-package fit verdicts.
+- 0bf2bcc: Version translation no longer removes protocol envelope fields. When a response was converted down to an older release whose task schema didn't compose the protocol envelope (the 3.2 proposal-flow responses, which AdCP 3.2.x and 3.3 fix as DR-0036 correction (b)), the schema projection treated `status`, `message`, `context` and the other envelope fields as newer-only and removed them, so a 3.2 buyer could receive a 3.3 server's `list_products` response without its `status`. The projection now keeps every property the release's protocol and version envelopes declare at the payload root.
+- 047f45c: Security: `list_accounts` `account_requests[]` and `request_account` responses no longer echo write-only account credentials. A resolved AdCP 3.3 account request embeds a full `Account`, and the SDK served it without the scrub it applies to `list_accounts` account rows. If your seller stored any of these on the account (or spread the inbound request into `requested`), they reached the buyer and the idempotency replay cache: `billing_entity.bank`, `governance_agents[].authentication` (the bearer the seller uses to call the governance agent), `notification_configs[].authentication.credentials` (webhook signing secrets), and `destination_billing_entity`. Affected: `request_account` on `createAdcpServer` and `createAdcpServerFromPlatform` since 17.0.0-beta.10, raw `listAccounts` handlers returning `account_requests` since 17.0.0-beta.10, and `accounts.listRequests` on the platform path since 17.0.0-beta.12. Stable 16.x lines do not serve account requests and are not affected.
+
+  Both paths now run each request's `account` through the same scrubber as account rows, and strip the same credential fields from `requested`, on the completed and failed arms and before the response is cached for replay. Your stored records are not modified. The account scrubber now also drops `governance_agents[].authentication` on every account it handles, which closes the same gap for raw (`createAdcpServer`) `list_accounts`, `sync_accounts` and `get_media_buys` handlers that returned it. No code change is needed. If a credential may have been served, rotate it: webhook signing secrets and governance-agent tokens first.
+
+- dd367d5: Package the signed AdCP 3.2.8 bundle as the maintained 3.2 line, replacing 3.2.7, to match SDK 16.6. A pair that negotiates 3.2 now validates against 3.2.8, which carries the DR-0036 corrections: the reopened 3.2 proposal-flow roots, the envelope composition on every task payload, and the `adcp_version` echo. `3.2.8` is advertised alongside the earlier 3.2 patches. Explicit `--compliance-version 3.2.7` pins advance to `3.2.8`.
+
 ## 17.0.0-beta.12
 
 ### Minor Changes
