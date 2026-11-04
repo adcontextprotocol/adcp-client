@@ -62,25 +62,44 @@ const ACCOUNT_SUBJECT_TASKS: ReadonlySet<string> = new Set([
  * `comply_test_controller` scenarios whose `account` is the account under test rather than the
  * scope of a buying operation.
  *
- * `force_account_status` drives one specific account's state machine — its `params.account_id` is
- * that account's assigned id — so the scope it travels with has to be that same account. The
- * controller's own request schema (`compliance/comply-test-controller-request.json`) does not
- * `$ref` `core/account-ref.json`; its hook is "the seller MUST refuse the request if the targeted
- * account is not a sandbox account in the seller's persisted records", which a hybrid key can
- * never satisfy. `TOOL_INPUT_SHAPE.account` in `src/lib/server/test-controller.ts` states the SDK
- * side of the same contract: "complete natural account identity or an opaque account_id so a
- * per-request store factory can resolve it".
+ * `force_account_status` is the live case. Its `allOf` arm in
+ * `compliance/comply-test-controller-request.json` constrains `params` (`required:
+ * [account_id, status]`) and leaves `account` unconstrained, so the natural-key path is reachable:
+ * `params.account_id` is the target account's assigned id, and the scope it travels with has to be
+ * that same account. The controller's blanket sandbox gate — "the seller MUST refuse the request
+ * if the targeted account is not a sandbox account in the seller's persisted records", which
+ * applies to every scenario, not just this one — is what a hybrid key can never satisfy.
+ * `TOOL_INPUT_SHAPE.account` in `src/lib/server/test-controller.ts` states the SDK side of the
+ * same contract: "complete natural account identity or an opaque account_id so a per-request store
+ * factory can resolve it". Note the controller's `account` object is OPEN
+ * (`required: [sandbox]`, `additionalProperties: true`) and does NOT `$ref`
+ * `core/account-ref.json`, so it is a routing carrier, not the closed AccountReference `oneOf`.
  *
- * `expire_account_change_cursor` invalidates one account's change-feed cursor and is subject for
- * the same reason.
+ * `expire_account_change_cursor` is belt-and-braces, not a live path: 3.2.8 and 3.3.0-beta.3
+ * constrain that scenario's `account` to `required: [account_id]`, and 3.0.25 / 3.1.31 do not
+ * define the scenario at all. A conformant request therefore carries an id, which never reaches
+ * the brand merge. The entry only bites a carrier that also volunteers `brand`/`operator` routing
+ * metadata alongside the id, where preserving it is still the right answer.
  *
  * NOT the complement of `OPERATION_SCOPED_CONTROLLER_SCENARIOS` in `./request-builder.ts` — that
  * set decides which scenarios the BUILDER resolves against the run's media-buy account; this one
- * decides whose brand survives. The two are deliberately separate lists and must stay disjoint;
- * keep them in sync by hand. Scenarios in neither set keep the run's buying brand, which is the
- * pre-existing behavior. `simulate_budget_spend` is one of those: its `params` schema is
- * `anyOf: [{required: [account_id]}, {required: [media_buy_id]}]`, and only the `account_id` arm
- * is account-subject — it stays out rather than being half-classified here.
+ * decides whose brand survives. The two are deliberately separate lists, must stay disjoint, and
+ * are kept in sync by hand. Scenarios in neither set keep the run's buying brand, which is the
+ * pre-existing behavior. Specifically out, with reasons:
+ *
+ *   - `simulate_budget_spend` is already in `OPERATION_SCOPED_CONTROLLER_SCENARIOS`, and the two
+ *     sets must not overlap — that, not its shape, is why it is absent here. Its `params` are
+ *     `anyOf: [{required: [account_id]}, {required: [media_buy_id]}]`, and in the `account_id`
+ *     arm the builder still resolves the scope to the run's media-buy account rather than the
+ *     account being spent against. That is a pre-existing builder-side gap, left open here rather
+ *     than settled.
+ *   - `seed_account` is not target-account-subject at all: `request-builder.ts` gives it the
+ *     authorized CALLER's scope by design, and `test-controller.ts` uses `params.account_id` only
+ *     to name the account being created and to prefix the seed cache. The scope and the target are
+ *     different entities for this scenario, so preserving the scope's brand would be wrong.
+ *   - `simulate_later_proposal` matches the `force_account_status` shape (`params.required:
+ *     [account_id, opportunity_id]`) but is 3.3.0-beta.3-only and no shipped storyboard uses it.
+ *     Bounded deferral: add it when a storyboard exercises it, not speculatively.
  */
 const ACCOUNT_SUBJECT_CONTROLLER_SCENARIOS: ReadonlySet<string> = new Set([
   'force_account_status',

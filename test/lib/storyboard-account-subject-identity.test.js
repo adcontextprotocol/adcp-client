@@ -21,6 +21,7 @@
 
 const { describe, test, it } = require('node:test');
 const assert = require('node:assert/strict');
+const { z } = require('zod');
 
 const { applyBrandInvariant, runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 
@@ -115,12 +116,28 @@ describe('applyBrandInvariant: account-subject requests keep the resolved identi
   });
 
   test('expire_account_change_cursor keeps the account whose cursor it invalidates', () => {
-    const result = applyBrandInvariant(
-      { account: { ...TEST_ACCOUNT }, scenario: 'expire_account_change_cursor' },
-      { brand: RUN_BRAND },
-      'comply_test_controller'
-    );
-    assert.deepEqual(result.account, TEST_ACCOUNT);
+    // Belt-and-braces entry, exercised with a request the release actually accepts. 3.2.8 and
+    // 3.3.0-beta.3 constrain this scenario's `account` to `required: [account_id]` (3.0.25 and
+    // 3.1.31 do not define the scenario at all), so a pure natural key is not a legal carrier
+    // here. The controller's `account` is an OPEN routing object (`required: [sandbox]`,
+    // `additionalProperties: true`) and does not `$ref` the closed `core/account-ref.json` id
+    // arm, so an id plus brand/operator routing metadata is valid — and that hybrid-shaped
+    // carrier is the only shape where the carve-out can bite.
+    const { getSchemaValidatorByRef } = require('../../dist/lib/validation/schema-loader.js');
+    const carrier = { account_id: 'acct_luma_shared', sandbox: true, brand: TEST_BRAND, operator: 'test.example' };
+    const request = {
+      account: carrier,
+      scenario: 'expire_account_change_cursor',
+      params: { account_id: 'acct_luma_shared' },
+    };
+    const validate = getSchemaValidatorByRef('compliance/comply-test-controller-request.json', '3.2.8', undefined, {
+      allErrors: true,
+    });
+    assert.equal(typeof validate, 'function', '3.2.8 controller request schema must be in the shipped bundle');
+    assert.ok(validate(request), `carrier is not a valid 3.2.8 request: ${JSON.stringify(validate.errors)}`);
+
+    const result = applyBrandInvariant(request, { brand: RUN_BRAND }, 'comply_test_controller');
+    assert.deepEqual(result.account, carrier);
   });
 });
 
@@ -404,11 +421,22 @@ function createStrictAccountSeller() {
   server[ADCP_CAPABILITIES].compliance_testing = { scenarios: ['force_account_status'] };
 
   const controller = controllerValidators();
+  const violations = [];
+  // An `assert` thrown inside an MCP tool callback becomes an isError CallToolResult, which the
+  // runner reports as a generic step failure with the AJV output swallowed. Collect instead and
+  // assert after the run so a schema violation names itself.
+  const check = (direction, payload) => {
+    try {
+      controller[direction](payload);
+    } catch (error) {
+      violations.push(`${direction}: ${error.message}`);
+    }
+  };
   // Every dispatch, both directions. `reply` validates what `toMcpResponse` actually serialized,
   // not the object literal handed to it, so a refusal is held to the same contract as a success.
   const reply = payload => {
     const serialized = toMcpResponse(payload);
-    controller.response(JSON.parse(JSON.stringify(serialized.structuredContent)));
+    check('response', JSON.parse(JSON.stringify(serialized.structuredContent)));
     return serialized;
   };
 
@@ -416,11 +444,17 @@ function createStrictAccountSeller() {
     'comply_test_controller',
     {
       description: 'Strict account-aware state machine for this regression.',
-      inputSchema: TOOL_INPUT_SHAPE,
+      // `brand` is an OBSERVER, not a schema relaxation. `registerTool` parses arguments with
+      // `z.object(shape)`, which strips undeclared keys — so without this the test could never
+      // see whether the runner put a top-level `brand` on the wire, and the commit's "stops
+      // adding an undeclared top-level brand" claim would have no wire-level assertion. The
+      // controller request root is `additionalProperties: true`, so carrying the field through is
+      // still valid under the release's own schema, which every dispatch is validated against.
+      inputSchema: { ...TOOL_INPUT_SHAPE, brand: z.unknown().optional() },
     },
     async input => {
       wire.push({ tool: 'comply_test_controller', params: input });
-      controller.request(JSON.parse(JSON.stringify(input)));
+      check('request', JSON.parse(JSON.stringify(input)));
       if (input.scenario === 'list_scenarios') {
         return reply({ status: 'completed', success: true, scenarios: ['force_account_status'] });
       }
@@ -431,13 +465,10 @@ function createStrictAccountSeller() {
       const scope = lookup(input.account);
       if (!target) {
         // Static message: an error string is wire-visible, so it must not reflect caller input.
-        return reply({
-          status: 'completed',
-          success: false,
-          error: 'NOT_FOUND',
-          message: 'Unknown target account',
-          details: { account_id: input.params?.account_id },
-        });
+        // Static reason only: this fixture gets copied into adopter code, and an error envelope
+        // is the wrong place to echo caller-supplied input back onto the wire. The full request
+        // and the store lookup are already captured locally for assertions.
+        return reply({ status: 'completed', success: false, error: 'NOT_FOUND', message: 'Unknown target account' });
       }
       if (!scope || scope.account_id !== target.account_id) {
         // The hybrid reference lands here: a scope that owns nothing, or that
@@ -447,7 +478,6 @@ function createStrictAccountSeller() {
           success: false,
           error: 'NOT_FOUND',
           message: 'Account scope does not own the target account',
-          details: { account_id: input.params?.account_id, resolved_scope: scope?.account_id ?? null },
         });
       }
       const previous = target.status;
@@ -461,7 +491,7 @@ function createStrictAccountSeller() {
     }
   );
 
-  return { server, store, wire, lookup, controller };
+  return { server, store, wire, lookup, controller, violations };
 }
 
 const ACCOUNT_LIFECYCLE_STORYBOARD = {
@@ -583,7 +613,7 @@ describe('runStoryboard: account-subject identity on the wire', () => {
   it('provisions, reads back and drives one account while the run brand is someone else', async t => {
     const { serve } = require('../../dist/lib/index.js');
 
-    const { server, store, wire } = createStrictAccountSeller();
+    const { server, store, wire, violations } = createStrictAccountSeller();
     const http = serve(() => server, {
       port: 0,
       authenticate: () => ({ principal: 'account-subject-regression-buyer' }),
@@ -612,6 +642,7 @@ describe('runStoryboard: account-subject identity on the wire', () => {
       agentTools,
     });
 
+    assert.deepEqual(violations, [], 'every controller dispatch must satisfy the selected release');
     assert.equal(result.overall_passed, true, JSON.stringify(result, null, 2));
     assert.equal(result.failed_count, 0, JSON.stringify(result, null, 2));
 
@@ -625,6 +656,17 @@ describe('runStoryboard: account-subject identity on the wire', () => {
 
     const dispatches = wire.filter(c => c.tool === 'comply_test_controller');
     assert.equal(dispatches.length, 3, 'suspend, reactivate and the unowned-scope refusal');
+    for (const call of dispatches) {
+      // The published controller request declares `account`, not a top-level `brand`. Now that
+      // the schema ships, `schemaAllowsTopLevelField` gates on it and the run-brand invariant
+      // stops adding the undeclared field. The observer in `inputSchema` is what makes this
+      // visible; without it Zod would strip the key and the assertion would pass vacuously.
+      assert.equal(
+        Object.hasOwn(call.params, 'brand'),
+        false,
+        `controller request carried an undeclared top-level brand: ${JSON.stringify(call.params.brand)}`
+      );
+    }
     const transitions = dispatches.filter(c => c.params.account.brand?.domain === 'test.example');
     assert.equal(transitions.length, 2);
     const refused = dispatches.find(c => c.params.account.brand?.domain === 'competitor.example');

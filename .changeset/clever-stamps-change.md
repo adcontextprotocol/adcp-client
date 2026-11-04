@@ -45,10 +45,27 @@ transitively, per selected version: 3.0.25 and 3.1.31 ship exactly the two entry
 at all. Files are copied byte-for-byte from the published cache; nothing else under `compliance/`
 is packaged.
 
-Two intended consequences: `getValidator` / `getSchemaValidatorByRef` now resolve for
-`comply_test_controller` on every supported version, and `schemaAllowsTopLevelField` gates its
-fields from the declared schema instead of failing open. The published request declares `account`
-but no top-level `brand`, so the storyboard runner stops adding an undeclared, non-canonical
-top-level `brand` to controller requests — that field was a schema-valid extension under
-`additionalProperties: true`, never an invalid request, and `account` remains the declared identity
-carrier.
+Three intended consequences, none of which change the wire contract — the SDK stops being blind to
+a schema the release already publishes:
+
+1. `getValidator` / `getSchemaValidatorByRef` resolve for `comply_test_controller` on every
+   supported version, so callers can finally validate both directions of a tool the SDK tells them
+   to drive.
+2. `schemaAllowsTopLevelField` gates the controller's fields from the declared schema instead of
+   failing open. 3.1.31, 3.2.8 and 3.3.0-beta.3 declare `account` but no top-level `brand` (3.0.25
+   declares neither), so the storyboard runner stops adding an undeclared, non-canonical top-level
+   `brand`. That field was a schema-valid extension under `additionalProperties: true`, never an
+   invalid request, and `account` remains the declared identity carrier.
+3. **Conformance runs now actually grade controller responses.** Previously no schema was
+   registered for the tool on an installed package, so every controller step's `response_schema`
+   check was a no-op. The test client's response validation defaults to strict, so a controller
+   response that was always non-conformant can now fail a step that previously passed, with no
+   change to the agent under test. The two usual causes are a missing top-level `status`
+   (`core/protocol-envelope.json` has `required: ['status']`; the SDK's own `registerTestController`
+   always sets it) and an `error` value outside the published enum.
+   `strictResponseSchemaValidation: false` downgrades the verdict to a warning while you fix the
+   response. On the ordinary API client, request and response validation still default to `'warn'`
+   — only a caller that explicitly opted into `validation: { requests: 'strict' }` or
+   `{ responses: 'strict' }` will now reject a payload, and only one that was already invalid.
+   No new field is required of anyone: `status` was required by the published envelope before this
+   release and still is.

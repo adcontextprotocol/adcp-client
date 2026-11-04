@@ -25,11 +25,12 @@
  *   - `tmp/` and most transport-projection (`mcp/`) subtrees. The active MCP
  *     media-buy role profile is retained for exact `tools/list` request-schema
  *     discovery.
- *   - everything under `compliance/` except the published
- *     `comply-test-controller-{request,response}.json` documents and the
- *     sibling documents they `$ref`, which ship so `getSchemaValidatorByRef`
+ *   - anything under `compliance/` outside the closure reachable from the
+ *     published `comply-test-controller-{request,response}.json` documents.
+ *     Those, and the siblings they `$ref`, ship so `getSchemaValidatorByRef`
  *     can validate the controller tool against the selected release (see
- *     `complianceBundleFiles`).
+ *     `complianceBundleFiles`). On every currently published cache that
+ *     closure happens to be the whole directory.
  *
  * Invoked by the `build:lib` npm script after tsc emits JS.
  */
@@ -49,6 +50,10 @@ const COMPLIANCE_BUNDLE_ENTRY_POINTS = [
   'comply-test-controller-response.json',
 ] as const;
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * The `compliance/` files to copy for one source bundle: the two controller entry points plus the
  * sibling documents they `$ref`, transitively. 3.0.25 and 3.1.31 need only the entry points;
@@ -56,12 +61,15 @@ const COMPLIANCE_BUNDLE_ENTRY_POINTS = [
  * which in turn `$ref`s `compliance/get-creative-features-completion.json` — without them AJV
  * cannot compile the controller validator at all ("can't resolve reference …/task-completion-data.json").
  * Seeding from the entry points rather than hardcoding a file list keeps the set minimal by
- * construction and correct when a release adds or drops a sibling. Files are copied verbatim from
- * the selected published cache; nothing here is generated.
+ * construction and correct when a release adds or drops a sibling. Be honest about what that buys
+ * today: on all four currently published caches the reachable closure IS the entire `compliance/`
+ * directory, so this filter trims nothing right now — it is forward-looking, not presently
+ * selective. Only absolute or root-relative same-version refs are followed; a bare-relative
+ * `"./x.json"` form would be missed, and none exists in any published cache. The per-version
+ * compile assertion in `test/lib/schema-bundle-compliance-controller.test.js` is the net that
+ * catches either case. Files are copied verbatim from the selected published cache; nothing here
+ * is generated.
  */
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 function complianceBundleFiles(srcRoot: string, version: string): ReadonlySet<string> {
   const dir = path.resolve(srcRoot, 'compliance');

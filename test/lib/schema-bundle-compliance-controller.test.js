@@ -16,9 +16,12 @@
  * which `$ref`s `compliance/get-creative-features-completion.json` — omit either and AJV cannot
  * compile the validator. Nothing else under `compliance/` is packaged.
  *
- * These assertions fail if the copy rule is reverted (no validator), if the closure is trimmed to
- * the two entry points (3.2 / 3.3 compilation throws on the unresolvable `$ref`), or if the whole
- * directory is shipped instead (3.1 would gain files the controller never references).
+ * These assertions fail if the copy rule is reverted (no validator) or if the closure is trimmed
+ * to the two entry points (3.2 / 3.3 compilation throws on the unresolvable `$ref`). They do NOT
+ * currently distinguish the closure from an unfiltered copy of the directory: on all four
+ * published caches the reachable closure IS the whole `compliance/` directory, so there is no
+ * over-ship to catch yet. The load-bearing guards here are the per-version AJV compile, the
+ * byte-identity check against the published cache, and real payload validation.
  */
 
 const { describe, test } = require('node:test');
@@ -51,7 +54,12 @@ function shippedBundles() {
     .filter(bundle => typeof bundle.version === 'string');
 }
 
-/** The sibling `compliance/` documents reachable from the two entry points, per release. */
+/**
+ * The sibling `compliance/` documents reachable from the two entry points, per release.
+ * Deliberately a looser, independent reimplementation of `complianceBundleFiles` — the ref regex
+ * here is unanchored and has no basename charset — so a `$ref` form the production rule rejects
+ * shows up as a mismatch instead of silently shipping a bundle that cannot compile.
+ */
 function expectedClosure(version) {
   const dir = path.join(CACHE_ROOT, version, 'compliance');
   const selected = new Set();
@@ -112,16 +120,12 @@ describe('shipped schema bundle: comply_test_controller', () => {
 
       test('the bundle ships the reachable closure and nothing else from compliance/', () => {
         const shipped = new Set(readdirSync(path.join(BUNDLE_ROOT, key, 'compliance')));
-        assert.deepEqual([...shipped].sort(), [...expectedClosure(version)].sort());
-        const published = new Set(readdirSync(path.join(CACHE_ROOT, version, 'compliance')));
-        for (const name of published) {
-          if (!shipped.has(name)) {
-            assert.ok(
-              !ENTRY_POINTS.includes(name),
-              `${name} is an entry point and must ship, but it is missing from ${key}`
-            );
-          }
+        for (const name of ENTRY_POINTS) {
+          // Checked before the set comparison: a renamed entry point would drop out of both the
+          // shipped set and the computed closure, and the deepEqual alone would still pass.
+          assert.ok(shipped.has(name), `${name} is an entry point and must ship, but is missing from ${key}`);
         }
+        assert.deepEqual([...shipped].sort(), [...expectedClosure(version)].sort());
       });
     });
   }

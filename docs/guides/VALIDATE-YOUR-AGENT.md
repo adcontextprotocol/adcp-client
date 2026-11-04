@@ -301,7 +301,20 @@ scenarios — where an already-resolved `account.brand` reaches the wire verbati
 is only added when the reference carries none. Account provisioning
 seeds retain their independent targets; only product and pricing seeds need a
 shared catalog scope. Natural
-keys retain brand countries, operator, operator unit, currency, and timezone. Opaque
+keys retain brand countries, operator, operator unit, currency, and timezone.
+
+**`comply_test_controller` responses are graded from SDK 17.0.0-beta.17 on.** Earlier SDK packages
+did not ship `compliance/comply-test-controller-{request,response}.json`, so the runner had no
+schema for the tool and every controller step's `response_schema` check was a no-op. The schemas
+now ship, the test client's response validation defaults to strict
+(`strictResponseSchemaValidation`), and a controller response that was always non-conformant can
+now fail a step that previously passed — with no change to your agent. The two usual causes are a
+missing top-level `status` (`core/protocol-envelope.json` has `required: ['status']`; the SDK's own
+`registerTestController` always sets it) and an `error` value outside the published enum
+(`INVALID_TRANSITION`, `INVALID_STATE`, `NOT_FOUND`, `UNKNOWN_SCENARIO`, `INVALID_PARAMS`,
+`FORBIDDEN`, `JCS_NON_FINITE_NUMBER`, `INTERNAL_ERROR`). Fix the response; the contract did not
+change, only the SDK's ability to see it. `strictResponseSchemaValidation: false` downgrades the
+verdict to a warning while you do. Opaque
 `account_id` references stay opaque. A storyboard that uses several accounts must
 provide an explicit `context.account` for its seeds; unresolved or ambiguous scope
 fails setup rather than seeding a different default account. This is account
