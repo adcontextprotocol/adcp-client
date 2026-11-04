@@ -21,6 +21,44 @@ export const ACCOUNT_FREE_DISCOVERY_TASKS: ReadonlySet<string> = new Set([
 export const BRAND_SUBJECT_TASKS: ReadonlySet<string> = new Set(['request_account']);
 
 /**
+ * Tasks whose `account` names the account the request is ABOUT, rather than the buying context
+ * the run operates under.
+ *
+ * `list_accounts.account` is specified as an "exact account filter" (see
+ * `account/list-accounts-request.json`): the seller returns only accounts matching that reference.
+ * A natural-key AccountReference is a composite identity (`brand` + `operator` + optional
+ * `sandbox`) — replacing one half of it does not re-scope the filter onto the run's brand, it
+ * addresses a *different*, usually nonexistent, account. A run that provisions
+ * `{brand: test.example, operator: test.example}` via `sync_accounts` and then reads it back with
+ * `account: $context.account` was shipping `{brand: <run brand>, operator: test.example}` on the
+ * wire: schema-valid, nobody's account, `accounts: []` / `total_count: 0` from a correct seller.
+ */
+export const ACCOUNT_SUBJECT_TASKS: ReadonlySet<string> = new Set(['list_accounts']);
+
+/**
+ * `comply_test_controller` scenarios whose `account` is the account under test rather than the
+ * scope of a buying operation. `force_account_status` drives one specific account's state machine
+ * (its `params.account_id` is that account's assigned id), so the scope it travels with has to be
+ * that same account. Operation-scoped scenarios (`force_create_media_buy_arm`, `simulate_delivery`,
+ * …) stay on the run's buying context so the arm they prime matches the operation that follows.
+ */
+export const ACCOUNT_SUBJECT_CONTROLLER_SCENARIOS: ReadonlySet<string> = new Set(['force_account_status']);
+
+/**
+ * True when this request's `account` identifies the subject of the operation, so an already
+ * resolved identity must reach the wire unchanged.
+ */
+function isAccountSubjectRequest(request: Record<string, unknown>, taskName: string | undefined): boolean {
+  if (taskName === undefined) return false;
+  if (ACCOUNT_SUBJECT_TASKS.has(taskName)) return true;
+  return (
+    taskName === 'comply_test_controller' &&
+    typeof request.scenario === 'string' &&
+    ACCOUNT_SUBJECT_CONTROLLER_SCENARIOS.has(request.scenario)
+  );
+}
+
+/**
  * Force every outgoing request onto the storyboard's brand context.
  *
  * Sellers that scope session state by brand (spec-required for multi-tenant
@@ -38,7 +76,10 @@ export const BRAND_SUBJECT_TASKS: ReadonlySet<string> = new Set(['request_accoun
  *     (brand belongs inside each `Plan` object) — injecting it would fail
  *     the framework's strict AJV validation (#940).
  *   - `account.brand` — merged into an existing `account` object only when
- *     it uses the natural-key variant (`{brand, operator, sandbox?}`). The
+ *     it uses the natural-key variant (`{brand, operator, sandbox?}`), and
+ *     only as an ADDITION when the request is account-subject (see
+ *     {@link ACCOUNT_SUBJECT_TASKS}): there the account is the thing being
+ *     addressed, so a resolved identity survives verbatim. The
  *     `{account_id}` variant is closed (`additionalProperties: false`); merging
  *     `brand` into it produces a payload that matches neither `oneOf` branch
  *     and is rejected by AJV strict request validation. Detect the natural-key
@@ -106,9 +147,15 @@ export function applyBrandInvariant(
           ((taskName === 'get_products' && request.buying_mode === 'wholesale') ||
             (taskName === 'get_signals' && request.discovery_mode === 'wholesale')) &&
           acct.brand !== undefined;
+        // Account-subject requests address one specific account. Its brand is half of a composite
+        // natural key, not the run's session scope: overwriting it keeps the resolved `operator`
+        // and yields a schema-valid reference to an account nobody provisioned. Only ever ADD the
+        // run brand to an account that carries none (the natural-key arm requires `brand`, so a
+        // brand-less reference is unusable as authored) — never replace one that is already there.
+        const preserveSubjectAccountBrand = isAccountSubjectRequest(request, taskName) && acct.brand !== undefined;
         const merged: Record<string, unknown> = {
           ...acct,
-          brand: preserveWholesaleAccountBrand ? acct.brand : brand,
+          brand: preserveWholesaleAccountBrand || preserveSubjectAccountBrand ? acct.brand : brand,
         };
         // The natural-key arm of AccountReference requires `operator` (per
         // schemas/cache/{version}/core/account-ref.json). A fixture or earlier

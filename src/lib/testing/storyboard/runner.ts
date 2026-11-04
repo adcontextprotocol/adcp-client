@@ -13405,7 +13405,12 @@ function evalContributesIf(expr: string | undefined, priorStepResults: Map<strin
 // Brand/account invariant
 // ────────────────────────────────────────────────────────────
 
-export { applyBrandInvariant, BRAND_SUBJECT_TASKS } from './account-policy';
+export {
+  applyBrandInvariant,
+  BRAND_SUBJECT_TASKS,
+  ACCOUNT_SUBJECT_TASKS,
+  ACCOUNT_SUBJECT_CONTROLLER_SCENARIOS,
+} from './account-policy';
 
 /**
  * Inject `ext.adcp.disable_sandbox: true` into the outgoing request when the
