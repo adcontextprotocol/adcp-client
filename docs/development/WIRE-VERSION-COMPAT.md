@@ -82,6 +82,18 @@ Build tooling also understands exact AdCP 3.3.0 `beta.N` and `rc.N` pins. Such a
 
 Conformance validates current and unversioned response payloads without synthesizing task status. The existing status-optional compatibility shim applies only to explicitly declared AdCP 3.0 payloads, and never to status-free compact tools. Closed response schemas admit only the canonical version-envelope fields alongside their declared task fields; other root restrictions and nested-body constraints remain enforced.
 
+### Packaged `comply_test_controller` schemas
+
+The published `compliance/` controller documents ship inside each selected bundle: the request and response schemas plus the siblings they `$ref`, transitively. That is 2 files for 3.0.25, 2 for 3.1.30, and 4 for 3.2.8 — the latter adds `task-completion-data.json` and the `get-creative-features-completion.json` it references, without which AJV cannot compile the controller validator at all. Files are copied byte-for-byte from the selected published cache; the rest of `compliance/` still stays out of the package.
+
+Three consequences are visible to adopters who did not change their agent:
+
+- **Controller validators resolve.** `getValidator` and `getSchemaValidatorByRef('compliance/comply-test-controller-*.json', version)` now return a validator against an installed package. Previously the documents were absent from the package, so lookups returned `undefined` and the checks that depend on them did not run for this tool.
+- **Declared-field gating has a schema to consult.** The runner stops adding an undeclared root `brand` to controller requests, and the controller `account` stays canonical on the releases that declare it. 3.1.30 and 3.2.8 declare `account`; 3.0.25 declares neither `account` nor a root `brand`.
+- **Selected-release response JSON Schema validation actually runs.** An existing nonconformant controller can therefore newly fail conformance steps with no agent change. This is not a new wire contract: `status` was already required through the 3.1.30 and 3.2.8 protocol envelopes, and is not required by 3.0.25.
+
+`src/lib/testing/client.ts` defaults `validation.responses` to `strict`, so testing-surface runs see these checks first; the ordinary client surface warns separately. The generated Zod projection check is a separate layer and is unchanged. For the temporary legacy escape hatch and its CLI equivalent, see [Validate your agent](../guides/VALIDATE-YOUR-AGENT.md) — reserve it for migration harnesses rather than routine compliance runs.
+
 ## Future major-version support
 
 Adding another protocol major requires an explicit support decision and a reviewed wire translation layer. Keep translation, request/response schemas, and tests tied to the selected release. Validate responses against the version actually negotiated, preserve unsupported-field errors, and never silently downgrade to an end-of-life protocol.

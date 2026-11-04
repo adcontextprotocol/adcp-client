@@ -13,6 +13,28 @@ export const ACCOUNT_FREE_DISCOVERY_TASKS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * This maintained repair preserves resolved identities only for exact account
+ * listing and the account status controller. Other account-subject tools are
+ * deliberately outside this bounded port.
+ */
+const ACCOUNT_SUBJECT_TASKS: ReadonlySet<string> = new Set(['list_accounts']);
+const ACCOUNT_SUBJECT_CONTROLLER_SCENARIOS: ReadonlySet<string> = new Set(['force_account_status']);
+
+/**
+ * True when this request's `account` identifies the subject of the operation, so an already
+ * resolved identity must reach the wire unchanged.
+ */
+function isAccountSubjectRequest(request: Record<string, unknown>, taskName: string | undefined): boolean {
+  if (taskName === undefined) return false;
+  if (ACCOUNT_SUBJECT_TASKS.has(taskName)) return true;
+  return (
+    taskName === 'comply_test_controller' &&
+    typeof request.scenario === 'string' &&
+    ACCOUNT_SUBJECT_CONTROLLER_SCENARIOS.has(request.scenario)
+  );
+}
+
+/**
  * Force every outgoing request onto the storyboard's brand context.
  *
  * Sellers that scope session state by brand (spec-required for multi-tenant
@@ -30,7 +52,9 @@ export const ACCOUNT_FREE_DISCOVERY_TASKS: ReadonlySet<string> = new Set([
  *     (brand belongs inside each `Plan` object) — injecting it would fail
  *     the framework's strict AJV validation (#940).
  *   - `account.brand` — merged into an existing `account` object only when
- *     it uses the natural-key variant (`{brand, operator, sandbox?}`). The
+ *     it uses the natural-key variant (`{brand, operator, sandbox?}`). For
+ *     exact account listing and account status controls, an already present
+ *     brand identifies the subject account and is preserved. The
  *     `{account_id}` variant is closed (`additionalProperties: false`); merging
  *     `brand` into it produces a payload that matches neither `oneOf` branch
  *     and is rejected by AJV strict request validation. Detect the natural-key
@@ -95,9 +119,19 @@ export function applyBrandInvariant(
           ((taskName === 'get_products' && request.buying_mode === 'wholesale') ||
             (taskName === 'get_signals' && request.discovery_mode === 'wholesale')) &&
           acct.brand !== undefined;
+        // Account-subject requests address one specific account. Its brand is half of a composite
+        // natural key, not the run's session scope: overwriting it keeps the resolved `operator`
+        // and yields a schema-valid reference to an account nobody provisioned. Only ever ADD the
+        // run brand to an account that carries none (the natural-key arm requires `brand`, so a
+        // brand-less reference is unusable as authored) — never replace one that is already there.
+        const preserveSubjectAccountBrand =
+          isAccountSubjectRequest(request, taskName) && Object.hasOwn(acct, 'brand') && acct.brand !== undefined;
+        // `Object.hasOwn` rather than a bare read: the sibling sandbox gate in
+        // `src/lib/server/account-mode.ts` hardened the same way so a `Object.prototype` stamp
+        // cannot silently flip an identity decision.
         const merged: Record<string, unknown> = {
           ...acct,
-          brand: preserveWholesaleAccountBrand ? acct.brand : brand,
+          brand: preserveWholesaleAccountBrand || preserveSubjectAccountBrand ? acct.brand : brand,
         };
         // The natural-key arm of AccountReference requires `operator` (per
         // schemas/cache/{version}/core/account-ref.json). A fixture or earlier

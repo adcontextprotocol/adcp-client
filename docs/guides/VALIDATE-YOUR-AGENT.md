@@ -113,6 +113,13 @@ An explicit external `schemaRoot` always remains authoritative.
 The CLI equivalent is `--no-strict-response-schema-validation`; reserve it for
 temporary legacy compatibility harnesses rather than routine compliance runs.
 
+The packaged `comply_test_controller` request and response schemas make this
+concrete for that tool: once they resolve from an installed package, the
+selected release's response JSON Schema validation runs, so a controller that
+was already nonconformant can newly fail a step without any agent change. See
+[Packaged `comply_test_controller` schemas](../development/WIRE-VERSION-COMPAT.md#packaged-comply_test_controller-schemas)
+for the per-release file counts and declared-field consequences.
+
 **Flags you'll actually use:**
 
 - `--tracks <a,b,c>` — limit to named tracks (e.g., `core,products,security_baseline`)
