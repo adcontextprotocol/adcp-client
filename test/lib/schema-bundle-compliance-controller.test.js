@@ -14,7 +14,7 @@
  * transitively, per selected version. 3.0.25 and 3.1.31 need only the two entry points; 3.2.8 and
  * 3.3.0-beta.3 publish a request schema that `$ref`s `compliance/task-completion-data.json`,
  * which `$ref`s `compliance/get-creative-features-completion.json` — omit either and AJV cannot
- * compile the validator. Nothing else under `compliance/` is packaged.
+ * compile the validator. Nothing outside that closure is packaged.
  *
  * These assertions fail if the copy rule is reverted (no validator) or if the closure is trimmed
  * to the two entry points (3.2 / 3.3 compilation throws on the unresolvable `$ref`). They do NOT

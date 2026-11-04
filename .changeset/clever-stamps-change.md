@@ -42,8 +42,9 @@ build now carries those two documents plus the sibling `compliance/` documents t
 transitively, per selected version: 3.0.25 and 3.1.31 ship exactly the two entry points, while
 3.2.8 and 3.3.0-beta.3 also ship `task-completion-data.json` and
 `get-creative-features-completion.json`, without which AJV cannot compile the controller validator
-at all. Files are copied byte-for-byte from the published cache; nothing else under `compliance/`
-is packaged.
+at all. Files are copied byte-for-byte from the published cache. Nothing outside that closure is
+packaged — which today means nothing is excluded, because on all four published caches the
+reachable closure happens to be the whole `compliance/` directory.
 
 Three intended consequences, none of which change the wire contract — the SDK stops being blind to
 a schema the release already publishes:
@@ -56,16 +57,20 @@ a schema the release already publishes:
    declares neither), so the storyboard runner stops adding an undeclared, non-canonical top-level
    `brand`. That field was a schema-valid extension under `additionalProperties: true`, never an
    invalid request, and `account` remains the declared identity carrier.
-3. **Conformance runs now actually grade controller responses.** Previously no schema was
-   registered for the tool on an installed package, so every controller step's `response_schema`
-   check was a no-op. The test client's response validation defaults to strict, so a controller
-   response that was always non-conformant can now fail a step that previously passed, with no
-   change to the agent under test. The two usual causes are a missing top-level `status`
-   (`core/protocol-envelope.json` has `required: ['status']`; the SDK's own `registerTestController`
-   always sets it) and an `error` value outside the published enum.
-   `strictResponseSchemaValidation: false` downgrades the verdict to a warning while you fix the
-   response. On the ordinary API client, request and response validation still default to `'warn'`
-   — only a caller that explicitly opted into `validation: { requests: 'strict' }` or
-   `{ responses: 'strict' }` will now reject a payload, and only one that was already invalid.
-   No new field is required of anyone: `status` was required by the published envelope before this
-   release and still is.
+3. **Conformance runs now grade controller responses against the selected release.** On an
+   installed package the controller's JSON Schema was unavailable, so that check could not run;
+   the SDK's generated Zod projection is a separate, weaker check and is unchanged. The test
+   client's response validation defaults to strict, so a controller response that was always
+   non-conformant can now fail a step that previously passed, with no change to the agent under
+   test. Validate against the response schema of the release you pin and read the `oneOf` arm
+   matching the request's `scenario`. Two causes worth checking first: a missing top-level `status`
+   — the response composes `core/protocol-envelope.json` (`required: ['status']`) on 3.1.31, 3.2.8
+   and 3.3.0-beta.3, while 3.0.25 composes no envelope and does not require it — and an `error`
+   outside the published enum (3.0.25 omits `JCS_NON_FINITE_NUMBER`).
+   `strictResponseSchemaValidation: false`, or the CLI
+   `--no-strict-response-schema-validation`, restores the informational-only posture while you fix
+   the response; reserve it for temporary legacy harnesses. On the ordinary API client, request and
+   response validation still default to `'warn'` — only a caller that explicitly opted into
+   `validation: { requests: 'strict' }` or `{ responses: 'strict' }` will now reject a payload, and
+   only one that was already invalid. No new field is required of anyone: on every release that
+   composes the protocol envelope, `status` was required before this change and still is.
