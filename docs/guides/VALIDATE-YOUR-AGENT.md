@@ -113,6 +113,13 @@ An explicit external `schemaRoot` always remains authoritative.
 The CLI equivalent is `--no-strict-response-schema-validation`; reserve it for
 temporary legacy compatibility harnesses rather than routine compliance runs.
 
+The packaged `comply_test_controller` request and response schemas make this
+concrete for that tool: once they resolve from an installed package, the
+selected release's response JSON Schema validation runs, so a controller that
+was already nonconformant can newly fail a step without any agent change. See
+[Packaged `comply_test_controller` schemas](https://github.com/adcontextprotocol/adcp-client/blob/16.x/docs/development/WIRE-VERSION-COMPAT.md#packaged-comply_test_controller-schemas)
+for the per-release file counts and declared-field consequences.
+
 **Flags you'll actually use:**
 
 - `--tracks <a,b,c>` — limit to named tracks (e.g., `core,products,security_baseline`)
@@ -464,6 +471,8 @@ npx @adcp/sdk@15.9 storyboard run \
 The `deterministic_testing` universal storyboard — plus rejection-branch and delivery-reporting sub-scenarios across several specialisms — requires your agent to expose `comply_test_controller`. Without it, the grader records `controller_detected: false` and skips or fails every step that needs a forced state transition, simulated delivery, or seeded error condition.
 
 **Use `createComplyController`** — adapter-based scaffold that handles dispatch, param validation, typed error envelopes, and re-seed idempotency for you:
+
+On AdCP 3.1+ the runner validates every controller response against the selected release's schema, and the protocol envelope requires `status`; 3.0.25 composes no such envelope and has no `status` requirement. The request schema is enforced too — 3.1.30 and 3.2.8 require the sandbox `account` assertion, 3.0.25 declares no `account` at all.
 
 ```typescript
 import { createComplyController, TestControllerError } from '@adcp/sdk/testing';
@@ -831,6 +840,7 @@ Hints also land in machine-readable output:
 | `Error: MCP session probe could not run: …` | Not an authentication result at all: a wire version this SDK does not implement, a response shape the official MCP client rejects, or an exchange that never completed. Nothing was learned about your credentials; fix the named protocol problem and re-run |
 | `extraction.note` reads `MCP session probe graded <tool> at <stage>` | Which protected tool the verdict rests on, and where the agent decided (`initialize` for session-boundary auth, `tools/call` for per-operation auth). The verdict is evidence that the mechanism is enforced **at that tool** — it is not a claim that every tool enforces auth |
 | `storyboard run` reports `Agent requires OAuth` / exits without running | Save tokens once with `adcp --save-auth <alias> <url> --oauth`, or pass `--oauth` to `storyboard run` to complete auth inline |
+| A `comply_test_controller` step newly fails `response_schema` after an SDK upgrade | The controller response schemas now ship with the package, so the selected release's strict validation actually runs for this tool. On AdCP 3.1+ the protocol envelope requires `status`; 3.0.25 has no such requirement. Not a new wire contract — see [Packaged `comply_test_controller` schemas](https://github.com/adcontextprotocol/adcp-client/blob/16.x/docs/development/WIRE-VERSION-COMPAT.md#packaged-comply_test_controller-schemas). Temporary migration unblock only: `--no-strict-response-schema-validation` |
 | `storyboard run` prints `💡 Hint: Rejected …` below an error | Catalog inconsistency between the two tools — see [§ Reading hint lines](#reading--hint-lines-context-value-rejections) above |
 | `fuzz` reports `500` status with stack trace | Validate inputs and return `adcpError('REFERENCE_NOT_FOUND', ...)` instead |
 | `fuzz` reports `response_shape_mismatch` | Response drifted from schema — regen with `npm run sync-schemas` + check your handler |
