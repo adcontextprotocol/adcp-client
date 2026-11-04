@@ -126,9 +126,11 @@ export function applyBrandInvariant(
         // brand-less reference is unusable as authored) — never replace one that is already there.
         const preserveSubjectAccountBrand =
           isAccountSubjectRequest(request, taskName) && Object.hasOwn(acct, 'brand') && acct.brand !== undefined;
-        // `Object.hasOwn` rather than a bare read: the sibling sandbox gate in
-        // `src/lib/server/account-mode.ts` hardened the same way so a `Object.prototype` stamp
-        // cannot silently flip an identity decision.
+        // `Object.hasOwn` rather than a bare read, matching the sibling sandbox gate in
+        // `src/lib/server/account-mode.ts`: an inherited `Object.prototype.brand` must not make
+        // this branch *preserve* a brand the request never carried. The claim is scoped to that
+        // one decision — the enclosing `isNaturalKeyVariant` test above still uses `in`, so it is
+        // not a prototype-hardening guarantee for the function as a whole.
         const merged: Record<string, unknown> = {
           ...acct,
           brand: preserveWholesaleAccountBrand || preserveSubjectAccountBrand ? acct.brand : brand,
