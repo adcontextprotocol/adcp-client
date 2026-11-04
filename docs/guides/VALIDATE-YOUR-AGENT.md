@@ -294,7 +294,11 @@ Automatic `seed_product` and `seed_pricing_option` calls use the complete accoun
 reference used by the storyboard: `context.account`, otherwise the single resolved
 account in its effective sample requests or single-account provisioning request,
 otherwise a single sandbox account fixture. Request overrides, context inputs, and
-the run brand use the same account rules as public requests. Account provisioning
+the run brand use the same account rules as public requests, except on tasks whose `account` names
+the account the request is *about* — `list_accounts`, `get_account_financials`,
+`list_account_changes`, and the `force_account_status` / `expire_account_change_cursor` controller
+scenarios — where an already-resolved `account.brand` reaches the wire verbatim and the run brand
+is only added when the reference carries none. Account provisioning
 seeds retain their independent targets; only product and pricing seeds need a
 shared catalog scope. Natural
 keys retain brand countries, operator, operator unit, currency, and timezone. Opaque

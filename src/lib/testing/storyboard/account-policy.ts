@@ -24,25 +24,68 @@ export const BRAND_SUBJECT_TASKS: ReadonlySet<string> = new Set(['request_accoun
  * Tasks whose `account` names the account the request is ABOUT, rather than the buying context
  * the run operates under.
  *
- * `list_accounts.account` is specified as an "exact account filter" (see
- * `account/list-accounts-request.json`): the seller returns only accounts matching that reference.
- * A natural-key AccountReference is a composite identity (`brand` + `operator` + optional
- * `sandbox`) — replacing one half of it does not re-scope the filter onto the run's brand, it
- * addresses a *different*, usually nonexistent, account. A run that provisions
+ * A natural-key AccountReference is a composite identity — `core/account-ref.json`'s second
+ * `oneOf` arm is `required: [brand, operator]`, `additionalProperties: false`, in every supported
+ * release (3.0.25 / 3.1.31 / 3.2.8 / 3.3.0-beta.3), and 3.2 widened it further with
+ * `operator_unit` / `currency` / `timezone`. Replacing one half of it does not re-scope the
+ * request onto the run's brand; it addresses a *different* account. A run that provisions
  * `{brand: test.example, operator: test.example}` via `sync_accounts` and then reads it back with
  * `account: $context.account` was shipping `{brand: <run brand>, operator: test.example}` on the
  * wire: schema-valid, nobody's account, `accounts: []` / `total_count: 0` from a correct seller.
+ * Under 3.3 it is worse than an empty read — `core/account-ref.json` resolves a natural key only
+ * when exactly one of the caller's accounts matches and returns `ACCOUNT_AMBIGUOUS` otherwise, so
+ * a substituted brand can resolve to a different *real* account.
+ *
+ * Per task, from the request schemas:
+ *   - `list_accounts.account` (3.1+; 3.0.25 declares no `account`) — "exact account filter" in
+ *     3.1.31 / 3.2.8; 3.3.0-beta.3 relaxes multiplicity ("several matches are not an error") but
+ *     keeps it a filter over the account's own parties, and explicitly keeps the natural key valid
+ *     as a `list_accounts` filter after deprecating it as an account-scoped reference.
+ *   - `get_account_financials.account` (all releases, `required`) — "Account to query financials
+ *     for. Must be an operator-billed account." Operator-billed is precisely the case where the
+ *     account's brand is not the run's buying brand.
+ *   - `list_account_changes.account` (3.2+, `required`) — "Account whose change feed to read. The
+ *     resolved account and returned cursor are bound to the authenticated principal." A hybrid key
+ *     mints a cursor against the wrong account, so a negative cursor-reuse path can false-pass.
+ *
+ * Not in this set and deliberately so: `sync_accounts` / `sync_governance` carry their identities
+ * nested under `accounts[]`, which this helper never reaches; `request_account` is brand-subject
+ * (see {@link BRAND_SUBJECT_TASKS}); `report_usage` declares no `account`.
  */
-export const ACCOUNT_SUBJECT_TASKS: ReadonlySet<string> = new Set(['list_accounts']);
+const ACCOUNT_SUBJECT_TASKS: ReadonlySet<string> = new Set([
+  'list_accounts',
+  'get_account_financials',
+  'list_account_changes',
+]);
 
 /**
  * `comply_test_controller` scenarios whose `account` is the account under test rather than the
- * scope of a buying operation. `force_account_status` drives one specific account's state machine
- * (its `params.account_id` is that account's assigned id), so the scope it travels with has to be
- * that same account. Operation-scoped scenarios (`force_create_media_buy_arm`, `simulate_delivery`,
- * …) stay on the run's buying context so the arm they prime matches the operation that follows.
+ * scope of a buying operation.
+ *
+ * `force_account_status` drives one specific account's state machine — its `params.account_id` is
+ * that account's assigned id — so the scope it travels with has to be that same account. The
+ * controller's own request schema (`compliance/comply-test-controller-request.json`) does not
+ * `$ref` `core/account-ref.json`; its hook is "the seller MUST refuse the request if the targeted
+ * account is not a sandbox account in the seller's persisted records", which a hybrid key can
+ * never satisfy. `TOOL_INPUT_SHAPE.account` in `src/lib/server/test-controller.ts` states the SDK
+ * side of the same contract: "complete natural account identity or an opaque account_id so a
+ * per-request store factory can resolve it".
+ *
+ * `expire_account_change_cursor` invalidates one account's change-feed cursor and is subject for
+ * the same reason.
+ *
+ * NOT the complement of `OPERATION_SCOPED_CONTROLLER_SCENARIOS` in `./request-builder.ts` — that
+ * set decides which scenarios the BUILDER resolves against the run's media-buy account; this one
+ * decides whose brand survives. The two are deliberately separate lists and must stay disjoint;
+ * keep them in sync by hand. Scenarios in neither set keep the run's buying brand, which is the
+ * pre-existing behavior. `simulate_budget_spend` is one of those: its `params` schema is
+ * `anyOf: [{required: [account_id]}, {required: [media_buy_id]}]`, and only the `account_id` arm
+ * is account-subject — it stays out rather than being half-classified here.
  */
-export const ACCOUNT_SUBJECT_CONTROLLER_SCENARIOS: ReadonlySet<string> = new Set(['force_account_status']);
+const ACCOUNT_SUBJECT_CONTROLLER_SCENARIOS: ReadonlySet<string> = new Set([
+  'force_account_status',
+  'expire_account_change_cursor',
+]);
 
 /**
  * True when this request's `account` identifies the subject of the operation, so an already
@@ -152,7 +195,11 @@ export function applyBrandInvariant(
         // and yields a schema-valid reference to an account nobody provisioned. Only ever ADD the
         // run brand to an account that carries none (the natural-key arm requires `brand`, so a
         // brand-less reference is unusable as authored) — never replace one that is already there.
-        const preserveSubjectAccountBrand = isAccountSubjectRequest(request, taskName) && acct.brand !== undefined;
+        const preserveSubjectAccountBrand =
+          isAccountSubjectRequest(request, taskName) && Object.hasOwn(acct, 'brand') && acct.brand !== undefined;
+        // `Object.hasOwn` rather than a bare read: the sibling sandbox gate in
+        // `src/lib/server/account-mode.ts` hardened the same way so a `Object.prototype` stamp
+        // cannot silently flip an identity decision.
         const merged: Record<string, unknown> = {
           ...acct,
           brand: preserveWholesaleAccountBrand || preserveSubjectAccountBrand ? acct.brand : brand,
@@ -178,6 +225,9 @@ export function applyBrandInvariant(
     // enumerates the caller's visible accounts. Synthesizing the runner's
     // default natural key would silently narrow pagination and discovery
     // storyboards to one brand.
+    // NOTE: this `list_accounts` rule (never SYNTHESIZE an account) is a different rule from
+    // ACCOUNT_SUBJECT_TASKS above (never OVERWRITE an account's brand). Both name
+    // `list_accounts`; neither implies the other.
     result.account = resolveAccount(options);
   }
   return result;
