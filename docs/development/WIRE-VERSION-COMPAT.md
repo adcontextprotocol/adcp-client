@@ -66,17 +66,26 @@ from `@adcp/sdk/v2/projection`. These advisories remain outside the wire JSON.
 
 ```text
 schemas/cache/
-├── 3.2.7/       # primary SDK pin
-├── 3.1.29/      # maintained stable release
+├── 3.2.8/       # primary SDK pin
+├── 3.1.32/      # maintained stable release
+├── 3.1.30/      # maintained stable release (exact historical corpus)
 ├── 3.0.25/      # maintained stable release
 └── latest/      # symlink to the primary pin
 ```
 
 Run `npm run sync-schemas:all` to refresh the primary and maintained bundles. Run `npm run generate-types:all` to regenerate public types, then `npm run build:lib` to build and copy supported schemas into the package. `copy-schemas-to-dist.ts` excludes retired AdCP 2 caches even when present locally. `check-publish-protocol-artifacts.mjs` checks the published schema inventory and rejects retired type exports.
 
-The v16 primary pin is AdCP 3.2.7, including its signed schema and compliance bundles. The patch refresh preserves the public request/response types and the existing pathways to AdCP 3.1 and 3.0.
+The v16 primary pin is AdCP 3.2.8, including its signed schema and compliance bundles. It is unchanged by maintained 3.1 adoption: a side bundle never repins the primary, and `sync-schemas` leaves the primary skills and the `latest` pointer alone for any non-primary version. The patch refresh preserves the public request/response types and the existing pathways to AdCP 3.1 and 3.0.
 
-Compliance pins select exact fixture bytes, unlike same-minor wire schema aliases. SDK 16.5.0 packages the 3.2.7 corpus; when upgrading from SDK 16.4.0, update explicit `--compliance-version 3.2.5` flags to `3.2.7`. A development pin of `3.2.6` must likewise advance. Retain the matching historical SDK if a run requires that older corpus. The maintained 3.1.29 and 3.0.25 corpora remain packaged.
+Compliance pins select exact fixture bytes, unlike same-minor wire schema aliases. Retain the matching historical SDK if a run requires an older corpus. The maintained 3.1.32, 3.1.30 and 3.0.25 corpora are all packaged.
+
+That distinction matters when two patches of the same minor are maintained together. `copy-schemas-to-dist.ts` groups source schema caches by minor and ships the highest patch, so `dist/lib/schemas-data/3.1/` resolves to 3.1.32 — the **schema** alias deliberately collapses. The **compliance** corpora do not: `compliance/cache/3.1.30/` and `compliance/cache/3.1.32/` both ship with their own exact bytes, so a run pinned with `--compliance-version 3.1.30` still gets the fixtures it pinned. Do not read the retained 3.1.30 source cache as a promise that the packaged **schema** directory keeps 3.1.30 bytes; it does not.
+
+Comparing the two releases' schema trees, they differ only in release identifiers and generated timestamps — no structural validation-rule changes were found between them. That is a statement about these two releases as they ship today, not a general guarantee about release selectors or `$id` values: a future patch could carry real schema changes, and the alias would still collapse to it.
+
+`COMPATIBLE_ADCP_VERSIONS` describes accepted wire versions, not the inventory of packaged compliance corpora. This package ships corpora for 3.0.25, 3.1.30, 3.1.32 and 3.2.8; it does not include an exact 3.1.31 compliance cache.
+
+Four storyboards are inert on SDK 16 under 3.1.32. `media_buy_seller/canonical_formats` and `pricing_currency_filter` are present in 3.1.30 with no requirement and run there; in 3.1.32 both declare the `collect_product_pages_runner` requirement, which this SDK does not implement, so they report `requirement_unmet` and skip. `canonical_custom_formats` and `canonical_experimental_formats` are new in 3.1.32 and inert for the same reason — they are not lost coverage, they never ran here. Four unique storyboards, eight mirrored copies across the `domains/` and `protocols/` trees. The requirement reporting is deliberately truthful rather than relaxed, and any future native qualification must disclose these gaps rather than claim full coverage.
 
 Build tooling also understands exact AdCP 3.3.0 `beta.N` and `rc.N` pins. Such a build retains maintained AdCP 3.0, 3.1, and 3.2 GA aliases through 3.2.7 while advertising only the selected prerelease, without a moving beta/RC-family alias. This prepares the v17 integration; the stable v16 compatibility list continues to advertise only AdCP 3.2 and earlier.
 
@@ -84,13 +93,13 @@ Conformance validates current and unversioned response payloads without synthesi
 
 ### Packaged `comply_test_controller` schemas
 
-The published `compliance/` controller documents ship inside each selected bundle: the request and response schemas plus the siblings they `$ref`, transitively. That is 2 compliance-local siblings for 3.0.25, 2 for 3.1.30, and 4 for 3.2.8 — the latter adds `task-completion-data.json` and the `get-creative-features-completion.json` it references, without which AJV cannot compile the controller validator at all. Files are copied byte-for-byte from the selected published cache; the rest of `compliance/` still stays out of the package. The counts are compliance-local only: a controller response also `$ref`s `core/` and `creative/` documents, which ship whole as before and are not affected by this filter.
+The published `compliance/` controller documents ship inside each selected bundle: the request and response schemas plus the siblings they `$ref`, transitively. That is 2 compliance-local siblings for 3.0.25, 2 for 3.1.32, and 4 for 3.2.8 — the latter adds `task-completion-data.json` and the `get-creative-features-completion.json` it references, without which AJV cannot compile the controller validator at all. Files are copied byte-for-byte from the selected published cache; the rest of `compliance/` still stays out of the package. The counts are compliance-local only: a controller response also `$ref`s `core/` and `creative/` documents, which ship whole as before and are not affected by this filter.
 
 Three consequences are visible to adopters who did not change their agent:
 
 - **Controller validators resolve.** `getSchemaValidatorByRef('compliance/comply-test-controller-request.json', version)` and its `-response` counterpart now return a validator against an installed package, as do `getValidator('comply_test_controller', 'request', version)` and `getValidator('comply_test_controller', 'sync', version)`. Note the `Direction` argument: `'sync'` is the terminal response variant, and `getValidator(..., 'response', ...)` is not a legal direction — it returns `undefined`. Previously the documents were absent from the package, so lookups returned `undefined` and the checks that depend on them did not run for this tool.
-- **Declared-field gating has a schema to consult.** The runner stops adding an undeclared root `brand` to controller requests, and the controller `account` stays canonical on the releases that declare it. 3.1.30 and 3.2.8 declare `account`; 3.0.25 declares neither `account` nor a root `brand`.
-- **Selected-release response JSON Schema validation actually runs.** An existing nonconformant controller can therefore newly fail conformance steps with no agent change. This is not a new wire contract: `status` was already required through the 3.1.30 and 3.2.8 protocol envelopes, and is not required by 3.0.25.
+- **Declared-field gating has a schema to consult.** The runner stops adding an undeclared root `brand` to controller requests, and the controller `account` stays canonical on the releases that declare it. 3.1.32 and 3.2.8 declare `account`; 3.0.25 declares neither `account` nor a root `brand`.
+- **Selected-release response JSON Schema validation actually runs.** An existing nonconformant controller can therefore newly fail conformance steps with no agent change. This is not a new wire contract: `status` was already required through the 3.1.32 and 3.2.8 protocol envelopes, and is not required by 3.0.25.
 - **Request-side effects.** Because the request schema also resolves now, two further things change for this tool. `validateRequest` actually checks controller requests — at the `'warn'` default this is new log noise, but a run configured with `validation: { requests: 'strict' }` gets hard failures where it previously got silence. And because the request schema declares no root `brand`, declared-field gating now suppresses one: controller requests that previously carried a run-scoped root `brand` by fail-open no longer do. A seller that keys sandbox session state off `brand.domain` rather than the `account` it resolves should re-run its storyboards; `npm run compliance:fork-matrix` covers the bundled reference adapters. On a 3.0.25-pinned run the same canonical-schema fallback can strip `account` as well, since that release declares neither field — unless the agent's own tool input schema declares it. None of this is a new wire contract; it is the declared schema being consulted where it previously could not be.
 
 `src/lib/testing/client.ts` defaults `validation.responses` to `strict`, so testing-surface runs see these checks first; the ordinary client surface warns separately. The generated Zod projection check is a separate layer and is unchanged. For the temporary legacy escape hatch and its CLI equivalent, see [Validate your agent](../guides/VALIDATE-YOUR-AGENT.md) — reserve it for migration harnesses rather than routine compliance runs.

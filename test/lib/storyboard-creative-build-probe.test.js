@@ -819,7 +819,9 @@ test('unsupported legacy canonical kinds name the actual schema bundle in the fi
     '3.1.30'
   );
   assert.equal(result.status, 'unsatisfied');
-  assert.match(result.detail, /unvalidated kind.*3.1.30.*audio_vast/);
+  // The probe requests 3.1.30; the 3.1 bundle serves 3.1.32, and the diagnostic
+  // names the bundle it actually validated against rather than the request.
+  assert.match(result.detail, /unvalidated kind.*3\.1\.32.*audio_vast/);
 });
 
 test('unknown-kind diagnostics escape producer controls and bound display without changing the catalog', () => {

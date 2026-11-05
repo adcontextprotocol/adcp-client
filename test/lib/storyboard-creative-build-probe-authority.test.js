@@ -254,7 +254,9 @@ for (const standalone of [false, true]) {
       else {
         assert.equal(result.failed_count, 0);
         assert.equal(result.passed_count, 0);
-        assert.match(result.coverage_gaps[0].detail, /3\.1\.30.*audio_vast/);
+        // Request pin is 3.1.29; the 3.1 bundle serves 3.1.32, and the gap detail
+        // names the bundle it actually validated against rather than the request.
+        assert.match(result.coverage_gaps[0].detail, /3\.1\.32.*audio_vast/);
       }
     });
   }
