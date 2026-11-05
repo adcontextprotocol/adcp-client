@@ -22,9 +22,15 @@
  *   - superseded prerelease bundles that are not the current ADCP_VERSION
  *   - older patch versions of stable releases — collapsed into the
  *     highest-patch sibling
- *   - `tmp/`, `compliance/`, and most transport-projection (`mcp/`)
- *     subtrees. The active MCP media-buy role profile is retained for exact
- *     `tools/list` request-schema discovery.
+ *   - `tmp/` and most transport-projection (`mcp/`) subtrees. The active MCP
+ *     media-buy role profile is retained for exact `tools/list` request-schema
+ *     discovery.
+ *   - anything under `compliance/` outside the closure reachable from the
+ *     published `comply-test-controller-{request,response}.json` documents.
+ *     Those, and the siblings they `$ref`, ship so `getSchemaValidatorByRef`
+ *     can validate the controller tool against the selected release (see
+ *     `complianceBundleFiles`). On every currently published cache that
+ *     closure happens to be the whole directory.
  *
  * Invoked by the `build:lib` npm script after tsc emits JS.
  */
@@ -33,6 +39,61 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rm
 import path from 'path';
 import { brotliCompressSync, constants as zlibConstants } from 'node:zlib';
 import { compactBundledSchema } from './compact-schema-bundle';
+
+/**
+ * Entry points for the `compliance/` documents carried into the shipped schema bundle: the
+ * `comply_test_controller` request and response schemas. Everything else under `compliance/`
+ * stays out of the package.
+ */
+const COMPLIANCE_BUNDLE_ENTRY_POINTS = [
+  'comply-test-controller-request.json',
+  'comply-test-controller-response.json',
+] as const;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The `compliance/` files to copy for one source bundle: the two controller entry points plus the
+ * sibling documents they `$ref`, transitively. 3.0.25 and 3.1.31 need only the entry points;
+ * 3.2.8 and 3.3.0-beta.3 publish a request schema that `$ref`s `compliance/task-completion-data.json`,
+ * which in turn `$ref`s `compliance/get-creative-features-completion.json` — without them AJV
+ * cannot compile the controller validator at all ("can't resolve reference …/task-completion-data.json").
+ * Seeding from the entry points rather than hardcoding a file list keeps the set minimal by
+ * construction and correct when a release adds or drops a sibling. Be honest about what that buys
+ * today: on all four currently published caches the reachable closure IS the entire `compliance/`
+ * directory, so this filter trims nothing right now — it is forward-looking, not presently
+ * selective. Only absolute or root-relative same-version refs are followed; a bare-relative
+ * `"./x.json"` form would be missed, and none exists in any published cache. The per-version
+ * compile assertion in `test/lib/schema-bundle-compliance-controller.test.js` is the net that
+ * catches either case. Files are copied verbatim from the selected published cache; nothing here
+ * is generated.
+ */
+
+function complianceBundleFiles(srcRoot: string, version: string): ReadonlySet<string> {
+  const dir = path.resolve(srcRoot, 'compliance');
+  const selected = new Set<string>();
+  const pending: string[] = [...COMPLIANCE_BUNDLE_ENTRY_POINTS];
+  // Same-version, same-directory, plain-basename refs only. A `$ref` that points outside this
+  // bundle's `compliance/` directory — another release, a parent path, a URL-escaped separator —
+  // is not followed, and the resolved path is re-checked for containment before any read.
+  const siblingRef = new RegExp(
+    `^(?:https?://[^/]+)?/schemas/${escapeRegExp(version)}/compliance/([A-Za-z0-9][A-Za-z0-9._-]*\\.json)(?:#.*)?$`
+  );
+  while (pending.length > 0) {
+    const name = pending.pop()!;
+    if (selected.has(name)) continue;
+    const file = path.resolve(dir, name);
+    if (path.dirname(file) !== dir || !existsSync(file)) continue;
+    selected.add(name);
+    for (const [, ref] of readFileSync(file, 'utf8').matchAll(/"\$ref"\s*:\s*"([^"]+)"/g)) {
+      const sibling = siblingRef.exec(ref!)?.[1];
+      if (sibling !== undefined) pending.push(sibling);
+    }
+  }
+  return selected;
+}
 
 interface ParsedVersion {
   version: string;
@@ -398,6 +459,7 @@ function main(): void {
     const srcRoot = path.join(cacheRoot, source.version);
     const destRoot = path.join(destBase, key);
     const allowedMcpFiles = mcpInputProjectionPaths(srcRoot);
+    const allowedComplianceFiles = complianceBundleFiles(srcRoot, source.version);
     rmSync(destRoot, { recursive: true, force: true });
     mkdirSync(destRoot, { recursive: true });
     cpSync(srcRoot, destRoot, {
@@ -407,7 +469,18 @@ function main(): void {
         if (!rel) return true;
         const parts = rel.split(path.sep);
         const top = parts[0];
-        if (top === 'tmp' || top === 'compliance' || top === 'bundled') return false;
+        if (top === 'tmp' || top === 'bundled') return false;
+        // `compliance/` is not shipped wholesale, but the comply_test_controller request and
+        // response schemas are the only way a caller can validate the tool it is told to drive.
+        // Without them `getSchemaValidatorByRef('compliance/comply-test-controller-*.json', v)`
+        // returns `undefined` against an installed package even though the release publishes both
+        // files, and `schemaAllowsTopLevelField` fails open for the tool. Copy those two and the
+        // siblings they `$ref`, byte-for-byte from the selected published cache; everything else
+        // under `compliance/` stays out.
+        if (top === 'compliance') {
+          if (parts.length === 1) return true;
+          return parts.length === 2 && allowedComplianceFiles.has(parts[1]!);
+        }
         if (top === 'mcp') {
           return [...allowedMcpFiles].some(allowed => allowed === rel || allowed.startsWith(`${rel}${path.sep}`));
         }

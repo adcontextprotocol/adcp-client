@@ -4,7 +4,7 @@
 /**
  * AdCP SDK library version
  */
-export const LIBRARY_VERSION = '17.0.0-beta.15';
+export const LIBRARY_VERSION = '17.0.0-beta.17';
 
 /**
  * AdCP specification version this library is built for
@@ -114,10 +114,10 @@ export type AdcpVersion = (typeof COMPATIBLE_ADCP_VERSIONS)[number];
  * Full version information
  */
 export const VERSION_INFO = {
-  library: '17.0.0-beta.15',
+  library: '17.0.0-beta.17',
   adcp: '3.3.0-beta.3',
   compatibleVersions: COMPATIBLE_ADCP_VERSIONS,
-  generatedAt: '2026-11-03T12:43:16.598Z',
+  generatedAt: '2026-11-04T07:33:28.225Z',
 } as const;
 
 /**
