@@ -2096,6 +2096,7 @@ it('createComplyController registration preserves scoped identity and the report
       },
     },
     reportingSubscriptionProbe: () => ({ success: true }),
+    resetState: () => {},
   }).register(server);
   const [buyerTransport, sellerTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(sellerTransport);

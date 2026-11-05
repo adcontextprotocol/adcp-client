@@ -1,7 +1,7 @@
 /**
  * `check: owed_periods_match` (experimental, media_buy.reporting_subscriptions): the runner computes
  * the owed set from wire state with the SDK coverage function and compares it with the seller's
- * obligations in a get_reporting_status periods view, starting at ledger_retained_from.
+ * obligations in a get_reporting_status periods view over the comparison window (adcp#8717).
  */
 const assert = require('node:assert/strict');
 const { describe, test } = require('node:test');
@@ -9,6 +9,7 @@ const { describe, test } = require('node:test');
 process.env.NODE_ENV = 'test';
 
 const {
+  owedPeriodsWindowStart,
   prefetchOwedPeriods,
   validateOwedPeriodsMatch,
 } = require('../../dist/lib/testing/storyboard/owed-periods-match.js');
@@ -82,7 +83,7 @@ describe('owed_periods_match', () => {
     assert.match(different.error, /different/);
   });
 
-  test('periods before ledger_retained_from are left out', async () => {
+  test('a seller that purged inside status_retention_days fails on the periods it dropped', async () => {
     const { call, request, response } = await world();
     const ours = response.periods.filter(item => item.delivery_config_id === 'analytics-daily');
     const trimmed = structuredClone(response);
@@ -90,9 +91,94 @@ describe('owed_periods_match', () => {
     trimmed.periods = trimmed.periods.filter(
       item => !(item.delivery_config_id === 'analytics-daily' && item.period.start === first)
     );
+    // ledger_retained_from is capped at ledger_as_of minus status_retention_days, which is earlier
+    // than the request's period.start here, so the window starts at the expected start (adcp#8717).
     trimmed.scope = { ...trimmed.scope, ledger_retained_from: ours[1].period.start };
     const result = await grade(call, request, trimmed);
+    assert.equal(result.passed, false);
+    assert.match(result.error, /missing 1/);
+    assert.match(result.error, /expected_start/);
+  });
+
+  test('an obligation the seller returns for a period before the window start is ignored (adcp#8717)', async () => {
+    const { call, request, response } = await world();
+    const ours = response.periods.filter(item => item.delivery_config_id === 'analytics-daily');
+    const early = structuredClone(response);
+    // An obligation the coverage rule does not owe, but before the window: not counted as extra.
+    early.periods.push({
+      ...structuredClone(ours[0]),
+      period: { start: day(-3), end: day(-2) },
+    });
+    const result = await grade(call, request, early);
     assert.equal(result.passed, true, result.error);
+  });
+
+  test('ledger_retained_from is capped at ledger_as_of minus status_retention_days (adcp#8717)', async () => {
+    const { call, request, response } = await world();
+    const ours = response.periods.filter(item => item.delivery_config_id === 'analytics-daily');
+    const purged = structuredClone(response);
+    // A seller claiming it retains nothing before ledger_as_of: the cap keeps status_retention_days of
+    // obligations required, so the periods it dropped inside that window are missing.
+    purged.scope = { ...purged.scope, ledger_retained_from: purged.ledger_as_of };
+    purged.periods = purged.periods.filter(item => item.delivery_config_id !== 'analytics-daily');
+    const result = await grade(call, { ...request, period: { end: request.period.end } }, purged);
+    assert.equal(result.passed, false);
+    assert.match(result.error, new RegExp(`missing ${ours.length}`));
+    assert.match(result.error, /retention_cap/);
+  });
+
+  test('the window starts at the later of the expected start and the capped retention bound', () => {
+    const asOf = '2030-06-30T00:00:00.000Z';
+    assert.deepEqual(
+      owedPeriodsWindowStart({
+        expectedStart: null,
+        ledgerRetainedFrom: null,
+        ledgerAsOf: asOf,
+        statusRetentionDays: 7,
+      }),
+      { start: null, bound: null }
+    );
+    assert.deepEqual(
+      owedPeriodsWindowStart({
+        expectedStart: '2030-06-01T00:00:00Z',
+        ledgerRetainedFrom: '2030-06-10T00:00:00Z',
+        ledgerAsOf: asOf,
+        statusRetentionDays: 90,
+      }),
+      // Capped at 2030-04-01, before the expected start.
+      { start: '2030-06-01T00:00:00.000Z', bound: 'expected_start' }
+    );
+    assert.deepEqual(
+      owedPeriodsWindowStart({
+        expectedStart: '2030-06-01T00:00:00Z',
+        ledgerRetainedFrom: '2030-06-20T00:00:00Z',
+        ledgerAsOf: asOf,
+        statusRetentionDays: 7,
+      }),
+      { start: '2030-06-20T00:00:00.000Z', bound: 'ledger_retained_from' }
+    );
+    assert.deepEqual(
+      owedPeriodsWindowStart({
+        expectedStart: '2030-06-01T00:00:00Z',
+        ledgerRetainedFrom: '2030-06-29T00:00:00Z',
+        ledgerAsOf: asOf,
+        statusRetentionDays: 7,
+      }),
+      { start: '2030-06-23T00:00:00.000Z', bound: 'retention_cap' }
+    );
+    assert.deepEqual(
+      owedPeriodsWindowStart({
+        expectedStart: '2030-06-25T00:00:00Z',
+        ledgerRetainedFrom: '2030-06-29T00:00:00Z',
+        ledgerAsOf: asOf,
+        statusRetentionDays: 7,
+      }),
+      { start: '2030-06-25T00:00:00.000Z', bound: 'expected_start' }
+    );
+    assert.deepEqual(
+      owedPeriodsWindowStart({ expectedStart: '2030-06-25T00:00:00Z', ledgerRetainedFrom: null, ledgerAsOf: asOf }),
+      { start: '2030-06-25T00:00:00.000Z', bound: 'expected_start' }
+    );
   });
 
   test('is unverifiable on more pages, the wrong view, or no subscription', async () => {

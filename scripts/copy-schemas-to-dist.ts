@@ -57,7 +57,7 @@ function escapeRegExp(value: string): string {
 /**
  * The `compliance/` files to copy for one source bundle: the two controller entry points plus the
  * sibling documents they `$ref`, transitively. 3.0.25 and 3.1.31 need only the entry points;
- * 3.2.8 and 3.3.0-beta.3 publish a request schema that `$ref`s `compliance/task-completion-data.json`,
+ * 3.2.8 and 3.3.0-beta.4 publish a request schema that `$ref`s `compliance/task-completion-data.json`,
  * which in turn `$ref`s `compliance/get-creative-features-completion.json` — without them AJV
  * cannot compile the controller validator at all ("can't resolve reference …/task-completion-data.json").
  * Seeding from the entry points rather than hardcoding a file list keeps the set minimal by

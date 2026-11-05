@@ -43,6 +43,7 @@ export const COVERAGE_REASONS = [
   { code: 'outside_flight', verdict: 'not_owed', rule: 'flight', side: 'both' },
   { code: 'after_stop', verdict: 'not_owed', rule: 'flight', side: 'both' },
   { code: 'before_confirmation', verdict: 'not_owed', rule: 'confirmation', side: 'both' },
+  { code: 'before_package_added', verdict: 'not_owed', rule: 'confirmation', side: 'both' },
   { code: 'excluded:capacity', verdict: 'not_owed', rule: 'exception', side: 'both' },
   { code: 'excluded:overridden', verdict: 'not_owed', rule: 'exception', side: 'both' },
   { code: 'excluded:action_required', verdict: 'not_owed', rule: 'exception', side: 'both' },

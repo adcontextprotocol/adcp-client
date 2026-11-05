@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-10-31T11:39:54.297Z
+// Generated at: 2026-11-05T09:47:22.658Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -7909,7 +7909,12 @@ export const ReportingSubscriptionSchema = /* @__PURE__ */ (() => (z.object({}).
         destination_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
         path_template: z.string().optional()
     }).passthrough().optional(),
-    destination_overrides: nonemptyArray(z.object({}).passthrough().and(z.union([z.object({}).passthrough(), z.object({}).passthrough()]).describe("Must also satisfy at least one of these alternatives.")).and(z.union([z.object({}).passthrough(), z.object({}).passthrough()]).describe("Must also satisfy at least one of these alternatives."))).max(64).optional()
+    destination_overrides: nonemptyArray(z.object({
+        account_ids: nonemptyArray(z.string()).max(1000).optional(),
+        operator_domains: nonemptyArray(z.string()).max(64).optional(),
+        destination_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
+        path_template: z.string().optional()
+    }).passthrough()).max(64).optional()
 }).passthrough())))();
 
 export const ReportingSubscriptionAccountExceptionsSchema = /* @__PURE__ */ (() => (z.object({
@@ -8306,7 +8311,7 @@ export const ReportingConsumerStatusSchema = /* @__PURE__ */ (() => ((() => {
           });
       })()))();
 
-export const ReportingScheduleOfferingSchema = /* @__PURE__ */ (() => (z.object({}).passthrough().merge(z.object({
+export const ReportingScheduleOfferingSchema = /* @__PURE__ */ (() => (z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({
     period_duration: z.string(),
     alignment: ReportingScheduleAlignmentSchema,
     period_anchor_policy: z.union([z.literal("fixed"), z.literal("configurable")]).optional(),
@@ -8515,7 +8520,7 @@ export const ReportingVerificationSchema = /* @__PURE__ */ (() => (z.object({}).
     }).strict().optional()
 }).strict())))();
 
-export const ReportingScheduleSchema = /* @__PURE__ */ (() => (z.object({}).strict().merge(z.object({
+export const ReportingScheduleSchema = /* @__PURE__ */ (() => (z.object({}).strict().merge(z.object({}).strict()).merge(z.object({
     period_duration: z.string(),
     alignment: ReportingScheduleAlignmentSchema,
     period_anchor: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
@@ -9358,7 +9363,11 @@ export const BillingNotSupportedDetailsSchema = /* @__PURE__ */ (() => (z.object
 
 export const BudgetTooLowDetailsSchema = /* @__PURE__ */ (() => (z.object({
     minimum_budget: z.number().optional(),
-    currency: z.string().optional()
+    currency: z.string().optional(),
+    budget_field: z.string().min(1).optional(),
+    basis: z.union([z.literal("daily"), z.literal("lifetime")]).optional(),
+    constraint: z.string().min(1).optional(),
+    related_field: z.string().min(1).optional()
 }).passthrough()))();
 
 export const ConflictDetailsSchema = /* @__PURE__ */ (() => (z.object({
@@ -11132,12 +11141,17 @@ export const GroupDaastTrackerAssetSchema = /* @__PURE__ */ (() => (BaseGroupAss
 export const GroupAssetSlotSchema = /* @__PURE__ */ (() => (z.union([GroupImageAssetSchema, GroupVideoAssetSchema, GroupAudioAssetSchema, GroupTextAssetSchema, GroupMarkdownAssetSchema, GroupHtmlAssetSchema, GroupCssAssetSchema, GroupJavaScriptAssetSchema, GroupVastAssetSchema, GroupDaastAssetSchema, GroupUrlAssetSchema, GroupWebhookAssetSchema])))();
 
 export const ExplicitPackagesWithSellerOptimizedAllocationSchema = /* @__PURE__ */ (() => (z.object({
+    opportunity: z.object({}).passthrough().optional(),
     budget_allocation: z.object({
         mode: z.literal("seller_optimized")
     }).passthrough()
 }).passthrough()))();
 
-export const CommittedProposalExecutionSchema = /* @__PURE__ */ (() => (z.object({}).passthrough()))();
+export const CommittedProposalExecutionSchema = /* @__PURE__ */ (() => (z.object({
+    opportunity: z.object({
+        status: z.literal("closed").optional()
+    }).passthrough().optional()
+}).passthrough()))();
 
 export const CreativeAssignmentSchema = /* @__PURE__ */ (() => (z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
     creative_id: z.string(),
@@ -19442,6 +19456,7 @@ export const PackageRequestSchema: z.ZodObject<{ [K in keyof PackageRequest]-?: 
 }).passthrough())))();
 
 export const ExplicitPackagesWithFixedAllocationSchema: z.ZodType = /* @__PURE__ */ (() => (z.object({
+    opportunity: z.object({}).passthrough().optional(),
     budget_allocation: z.object({
         mode: z.literal("fixed")
     }).passthrough().optional(),
@@ -19928,6 +19943,7 @@ export const PackageStatusSchema: z.ZodObject<{ [K in keyof PackageStatus]-?: un
     start_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
     end_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
     reporting_delivery_offering_ids: z.array(ReportingDeliveryOfferingIDSchema).max(64).optional(),
+    added_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
     start_requires_all_creatives_approved: z.boolean().optional(),
     paused: z.boolean().optional(),
     canceled: z.boolean().optional(),
@@ -21227,6 +21243,7 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
     creative: z.object({
         supports_compliance: z.boolean().optional(),
         has_creative_library: z.boolean().optional(),
+        supports_provenance: z.boolean().optional(),
         stable_creative_ids: z.boolean().optional(),
         supports_revisions: z.boolean().optional(),
         supports_assignment_merge: z.boolean().optional(),
@@ -22733,9 +22750,7 @@ export const CreateMediaBuyRequestSchema: z.ZodObject<{ [K in keyof CreateMediaB
     plan_id: z.string().optional(),
     account: AccountReferenceSchema,
     proposal_id: z.string().optional(),
-    opportunity: OpportunityContextSchema.merge(z.object({
-        status: z.literal("closed").optional()
-    }).passthrough()).optional(),
+    opportunity: OpportunityContextSchema.optional(),
     total_budget: z.object({
         amount: z.number().min(0),
         currency: z.string().regex(/^[A-Z]{3}$/)

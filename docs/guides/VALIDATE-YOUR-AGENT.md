@@ -322,7 +322,7 @@ shows only the first five AJV issues, so the summary is often arm-by-arm noise r
 error you need. Two causes worth checking first:
 
 - **A missing top-level `status`.** The response composes `core/protocol-envelope.json`
-  (`required: ['status']`) on 3.1.31, 3.2.8 and 3.3.0-beta.3. AdCP 3.0.25 composes no envelope and
+  (`required: ['status']`) on 3.1.31, 3.2.8 and 3.3.0-beta.4. AdCP 3.0.25 composes no envelope and
   does not require it. The SDK's own `registerTestController` always sets it.
 - **An `error` outside the published enum** — `INVALID_TRANSITION`, `INVALID_STATE`, `NOT_FOUND`,
   `UNKNOWN_SCENARIO`, `INVALID_PARAMS`, `FORBIDDEN`, `JCS_NON_FINITE_NUMBER`, `INTERNAL_ERROR`

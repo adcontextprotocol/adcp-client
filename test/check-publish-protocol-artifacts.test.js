@@ -8,7 +8,7 @@ const modulePromise = import(
   pathToFileURL(path.resolve(__dirname, '..', 'scripts', 'check-publish-protocol-artifacts.mjs')).href
 );
 
-const currentProtocolVersion = '3.3.0-beta.3';
+const currentProtocolVersion = '3.3.0-beta.4';
 const compatibleVersions = [
   'v3',
   '3.0.1',
@@ -18,7 +18,7 @@ const compatibleVersions = [
   '3.2.8',
   '3.2',
   currentProtocolVersion,
-  '3.3-beta.3',
+  '3.3-beta.4',
 ];
 
 function fixture(overrides = {}) {

@@ -329,6 +329,11 @@ export const BriefAsset_ObjectiveValues = ["awareness", "consideration", "conver
 /** single | BudgetChangeConstraints.kind */
 export const BudgetChangeConstraints_KindValues = ["budget"] as const;
 
+// ====== BudgetTooLowDetails ======
+
+/** single | BudgetTooLowDetails.basis */
+export const BudgetTooLowDetails_BasisValues = ["daily", "lifetime"] as const;
+
 // ====== BuildCreativeAsyncInputRequired ======
 
 /** single | BuildCreativeAsyncInputRequired.reason */

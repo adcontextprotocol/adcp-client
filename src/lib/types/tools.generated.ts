@@ -1635,7 +1635,7 @@ export type CreativeAssignment = {
    */
   creative_id: string;
   /**
-   * Additional measurement trackers for this creative on this package only, fired alongside the creative's own trackers without changing the library creative, its revision, or its approval. Requires creative.supports_assignment_trackers: true; buyers MUST NOT send this field otherwise and unsupported agents MUST reject it with UNSUPPORTED_FEATURE. The seller MUST fire every accepted tracker at its declared event or reject the assignment through existing assignment errors; trackers MUST NOT be silently dropped. Creative and assignment trackers together count against the effective format's tracker-slot limits, including canonical params.slots[].max and legacy repeatable-group max_count. Each assignment tracker consumes one compatible slot occurrence without moving creative assets; reject if no allocation satisfies each slot's type, event role, and count constraints. Each accepted occurrence fires once per logical event; identical URLs are not deduplicated. A supplied list replaces the prior assignment tracker list. Omission from a complete package creative_assignments replacement clears the assignment trackers; omitting the entire replacement array leaves assignments unchanged. Empty arrays and null are not accepted.
+   * Additional measurement trackers for this creative on this package only, fired alongside the creative's own trackers without changing the library creative, its revision, or its approval. Requires creative.supports_assignment_trackers: true; buyers MUST NOT send this field otherwise and unsupported agents MUST reject it with UNSUPPORTED_FEATURE. The seller MUST fire every accepted tracker at its declared event or reject the assignment through existing assignment errors; trackers MUST NOT be silently dropped. Creative and assignment trackers together count against the effective format's tracker-slot limits, including canonical params.slots[].max and legacy repeatable-group max_count. Each assignment tracker consumes one compatible tracker-slot occurrence without moving creative assets (impression_tracker takes impression, click_tracker takes click, viewability_tracker takes viewable_* and audible_video_complete, any other pixel_tracker slot takes any event); reject if no allocation satisfies each slot's event and count constraints. These limits apply only when the effective format declares at least one tracker slot: a format that declares none makes no slot-limit claim, and the seller still fires every accepted tracker or rejects the assignment. Each accepted occurrence fires once per logical event; identical URLs are not deduplicated. A supplied list replaces the prior assignment tracker list. Omission from a complete package creative_assignments replacement clears the assignment trackers; omitting the entire replacement array leaves assignments unchanged. Empty arrays and null are not accepted.
    *
    * @minItems 1
    */
@@ -1676,7 +1676,7 @@ export type CreativeAssignment = {
    */
   creative_id: string;
   /**
-   * Additional measurement trackers for this creative on this package only, fired alongside the creative's own trackers without changing the library creative, its revision, or its approval. Requires creative.supports_assignment_trackers: true; buyers MUST NOT send this field otherwise and unsupported agents MUST reject it with UNSUPPORTED_FEATURE. The seller MUST fire every accepted tracker at its declared event or reject the assignment through existing assignment errors; trackers MUST NOT be silently dropped. Creative and assignment trackers together count against the effective format's tracker-slot limits, including canonical params.slots[].max and legacy repeatable-group max_count. Each assignment tracker consumes one compatible slot occurrence without moving creative assets; reject if no allocation satisfies each slot's type, event role, and count constraints. Each accepted occurrence fires once per logical event; identical URLs are not deduplicated. A supplied list replaces the prior assignment tracker list. Omission from a complete package creative_assignments replacement clears the assignment trackers; omitting the entire replacement array leaves assignments unchanged. Empty arrays and null are not accepted.
+   * Additional measurement trackers for this creative on this package only, fired alongside the creative's own trackers without changing the library creative, its revision, or its approval. Requires creative.supports_assignment_trackers: true; buyers MUST NOT send this field otherwise and unsupported agents MUST reject it with UNSUPPORTED_FEATURE. The seller MUST fire every accepted tracker at its declared event or reject the assignment through existing assignment errors; trackers MUST NOT be silently dropped. Creative and assignment trackers together count against the effective format's tracker-slot limits, including canonical params.slots[].max and legacy repeatable-group max_count. Each assignment tracker consumes one compatible tracker-slot occurrence without moving creative assets (impression_tracker takes impression, click_tracker takes click, viewability_tracker takes viewable_* and audible_video_complete, any other pixel_tracker slot takes any event); reject if no allocation satisfies each slot's event and count constraints. These limits apply only when the effective format declares at least one tracker slot: a format that declares none makes no slot-limit claim, and the seller still fires every accepted tracker or rejects the assignment. Each accepted occurrence fires once per logical event; identical URLs are not deduplicated. A supplied list replaces the prior assignment tracker list. Omission from a complete package creative_assignments replacement clears the assignment trackers; omitting the entire replacement array leaves assignments unchanged. Empty arrays and null are not accepted.
    *
    * @minItems 1
    */
@@ -14985,11 +14985,9 @@ export type CreateMediaBuyRequest = (
    */
   proposal_id?: string;
   /**
-   * Optional planning-cycle closure. Sellers infer successful proposal execution as closed with close_reason accepted_with_seller when status is omitted; when status is present it MUST be closed with that reason. If the proposal was issued under an opportunity_id, a supplied ID MUST match it.
+   * Optional planning-cycle context. In AdCP 3.3 and later, explicit packages may carry opportunity_id for correlation only: status, close_reason, close_detail, and later_proposals MUST be omitted, and the buy MUST NOT change opportunity status or consent. The opaque ID is buyer-assigned; sellers MAY correlate messages with the same ID only within the same seller and buyer account and MUST NOT use it for authorization or cross-account linking. Buyers send this explicit-package context only to sellers advertising the negotiated release that supports it. In proposal mode, sellers infer successful execution as closed with close_reason accepted_with_seller when status is omitted; when status is present it MUST be closed with that reason. If the proposal was issued under an opportunity_id, a supplied ID MUST match it.
    */
-  opportunity?: OpportunityContext & {
-    status?: 'closed';
-  };
+  opportunity?: OpportunityContext;
   /**
    * Hard aggregate lifetime budget for the media buy. Required when executing a proposal and for seller-optimized explicit packages. Optional in fixed explicit-package mode; when present there, amount MUST equal the sum of package budgets. For a fixed proposal, the publisher applies allocation percentages to this amount. For a seller-optimized proposal or explicit buy, packages draw dynamically from this shared total.
    */
@@ -15361,6 +15359,8 @@ export type PackageRequest = AdCPVersionEnvelope & {
   ext?: ExtensionObject;
 };
 export interface ExplicitPackagesWithFixedAllocation {
+  opportunity?: {
+  };
   budget_allocation?: {
     mode: 'fixed';
   };
@@ -15368,11 +15368,16 @@ export interface ExplicitPackagesWithFixedAllocation {
   })[];
 }
 export interface ExplicitPackagesWithSellerOptimizedAllocation {
+  opportunity?: {
+  };
   budget_allocation: {
     mode: 'seller_optimized';
   };
 }
 export interface CommittedProposalExecution {
+  opportunity?: {
+    status?: 'closed';
+  };
 }
 
 // create_media_buy response
@@ -17557,6 +17562,7 @@ export type ReportingReconciliationMode = 'delivery_only' | 'consumer_receipt';
  */
 export type ReportingSchedule = {
 } & {
+} & {
   /**
    * Strictly positive ISO 8601 duration of each reporting period, such as PT15M, P1D, or P1M.
    */
@@ -19474,10 +19480,15 @@ export interface PackageStatus {
    */
   end_time?: string;
   /**
-   * The reporting delivery offerings this package can satisfy (media_buy.reporting_subscriptions): its product's reporting_capabilities.reporting_delivery_offering_ids after account-level narrowing, fixed when the package is confirmed. A later product or catalog change does not alter it, so a buyer resolves a subscription selector per package from this list and each offering's available_from and withdrawn_at. An offering in it stops being a candidate at its withdrawn_at. Sellers advertising media_buy.reporting_subscriptions MUST include it on every package, [] when none applies.
+   * The reporting delivery offerings this package can satisfy (media_buy.reporting_subscriptions): its product's reporting_capabilities.reporting_delivery_offering_ids after account-level narrowing, fixed when the package is confirmed (for a package added to a confirmed buy, at its added_at). A later product or catalog change does not alter it, so a buyer resolves a subscription selector per package from this list and each offering's available_from and withdrawn_at. An offering in it stops being a candidate at its withdrawn_at. Sellers advertising media_buy.reporting_subscriptions MUST include it on every package, [] when none applies.
    * @maxItems 64
    */
   reporting_delivery_offering_ids?: ReportingDeliveryOfferingID[];
+  /**
+   * When this package was added to the buy, for a package added after the buy's confirmed_at (media_buy.reporting_subscriptions). It is the package's own confirmed_at for reporting-subscription coverage: the package is owed the periods that end after the later of the buy's confirmed_at and added_at, so the period containing added_at is owed in full, and it resolves subscription selectors at the later of the subscription version's accepted_at and that instant. Absent means the package was part of the buy when it was confirmed. A value at or before confirmed_at, such as for a package added while the buy awaited confirmation, has the same effect as absence. Sellers advertising media_buy.reporting_subscriptions MUST include it on every package added after the buy's confirmed_at. Immutable once set, and retained with the package record.
+   * @format date-time
+   */
+  added_at?: string;
   /**
    * AdCP 3.3 initial-start policy. False (default) serves eligible approved assignments. True MUST retain booking and inventory commitment but block first enablement for serving until every current assignment is approved in all applicable package scopes; an empty set or library approval alone is insufficient. Retain pending-review/rejected assignments; same-creative_id resubmission needs no reassignment. Flight, pause, format-coverage and commitment constraints still apply. After first enablement, ordinary serving and impairment rules apply. Opt-in requires media_buy.features.creative_start_policy: true; otherwise buyers MUST NOT send true and sellers MUST reject true with UNSUPPORTED_FEATURE before mutation. Stage the full initial set atomically or while paused; the gate cannot anticipate future assignments. Sellers MUST echo the effective value on package readback, including false when defaulted.
    */
@@ -21923,7 +21934,7 @@ export type ReportingReceipt = {
   received_at?: string;
 };
 /**
- * Exceptions to one principal-level reporting subscription's coverage of one account (experimental, media_buy.reporting_subscriptions), returned in get_reporting_status. Coverage itself is computable by the buyer without asking, by the rule in reporting-subscription.json: each visible confirmed buy and resolved offering is owed the complete periods of that offering's published schedule that start on or after the first boundary at or after the later of the version's accepted_at and the account's authorized_at, that end after the buy's confirmed_at, and that overlap the buy's flight. The seller reports only exceptions. Each removes the periods whose start falls in the half-open interval [from, until) of cutover instants; none adds one. Readable only while the caller is authorized for the account; loss of authority is reported in the caller's own get_principal subscription state.
+ * Exceptions to one principal-level reporting subscription's coverage of one account (experimental, media_buy.reporting_subscriptions), returned in get_reporting_status. Coverage itself is computable by the buyer without asking, by the rule in reporting-subscription.json: each visible confirmed buy and resolved offering is owed the complete periods of that offering's published schedule that start on or after the first boundary at or after the later of the version's accepted_at and the account's authorized_at, that end after the buy's confirmed_at (for a package added later, after that package's added_at), and that overlap the buy's flight. The seller reports only exceptions. Each removes the periods whose start falls in the half-open interval [from, until) of cutover instants; none adds one. Readable only while the caller is authorized for the account; loss of authority is reported in the caller's own get_principal subscription state.
  */
 export type ReportingSubscriptionCoverage = {
 } & {
@@ -27392,7 +27403,7 @@ export interface SyncCreativesRequest {
      */
     package_id: string;
     /**
-     * Additional measurement trackers for this creative on this package only, fired alongside the creative's own trackers without changing the library creative, its revision, or its approval. Requires creative.supports_assignment_trackers: true; buyers MUST NOT send this field otherwise and unsupported agents MUST reject it with UNSUPPORTED_FEATURE. The seller MUST fire every accepted tracker at its declared event or reject the assignment through existing assignment errors; trackers MUST NOT be silently dropped. Creative and assignment trackers together count against the effective format's tracker-slot limits, including canonical params.slots[].max and legacy repeatable-group max_count. Each assignment tracker consumes one compatible slot occurrence without moving creative assets; reject if no allocation satisfies each slot's type, event role, and count constraints. Each accepted occurrence fires once per logical event; identical URLs are not deduplicated. A supplied list replaces the prior assignment tracker list. Omission on an additive upsert preserves existing assignment trackers. To clear them, atomically unassign then assign without this field, retaining any other authored assignment settings. Empty arrays and null are not accepted.
+     * Additional measurement trackers for this creative on this package only, fired alongside the creative's own trackers without changing the library creative, its revision, or its approval. Requires creative.supports_assignment_trackers: true; buyers MUST NOT send this field otherwise and unsupported agents MUST reject it with UNSUPPORTED_FEATURE. The seller MUST fire every accepted tracker at its declared event or reject the assignment through existing assignment errors; trackers MUST NOT be silently dropped. Creative and assignment trackers together count against the effective format's tracker-slot limits, including canonical params.slots[].max and legacy repeatable-group max_count. Each assignment tracker consumes one compatible tracker-slot occurrence without moving creative assets (impression_tracker takes impression, click_tracker takes click, viewability_tracker takes viewable_* and audible_video_complete, any other pixel_tracker slot takes any event); reject if no allocation satisfies each slot's event and count constraints. These limits apply only when the effective format declares at least one tracker slot: a format that declares none makes no slot-limit claim, and the seller still fires every accepted tracker or rejects the assignment. Each accepted occurrence fires once per logical event; identical URLs are not deduplicated. A supplied list replaces the prior assignment tracker list. Omission on an additive upsert preserves existing assignment trackers. To clear them, atomically unassign then assign without this field, retaining any other authored assignment settings. Empty arrays and null are not accepted.
      */
     trackers?: AssignmentTracker[];
     landing_page_url?: MacroBearingURL;
@@ -27502,7 +27513,7 @@ export interface AssignOrUpdate {
    */
   package_id: string;
   /**
-   * Additional measurement trackers for this creative on this package only, fired alongside the creative's own trackers without changing the library creative, its revision, or its approval. Requires creative.supports_assignment_trackers: true; buyers MUST NOT send this field otherwise and unsupported agents MUST reject it with UNSUPPORTED_FEATURE. The seller MUST fire every accepted tracker at its declared event or reject the assignment through existing assignment errors; trackers MUST NOT be silently dropped. Creative and assignment trackers together count against the effective format's tracker-slot limits, including canonical params.slots[].max and legacy repeatable-group max_count. Each assignment tracker consumes one compatible slot occurrence without moving creative assets; reject if no allocation satisfies each slot's type, event role, and count constraints. Each accepted occurrence fires once per logical event; identical URLs are not deduplicated. A supplied list replaces the prior assignment tracker list. Omission on an additive upsert preserves existing assignment trackers. To clear them, atomically unassign then assign without this field, retaining any other authored assignment settings. Empty arrays and null are not accepted.
+   * Additional measurement trackers for this creative on this package only, fired alongside the creative's own trackers without changing the library creative, its revision, or its approval. Requires creative.supports_assignment_trackers: true; buyers MUST NOT send this field otherwise and unsupported agents MUST reject it with UNSUPPORTED_FEATURE. The seller MUST fire every accepted tracker at its declared event or reject the assignment through existing assignment errors; trackers MUST NOT be silently dropped. Creative and assignment trackers together count against the effective format's tracker-slot limits, including canonical params.slots[].max and legacy repeatable-group max_count. Each assignment tracker consumes one compatible tracker-slot occurrence without moving creative assets (impression_tracker takes impression, click_tracker takes click, viewability_tracker takes viewable_* and audible_video_complete, any other pixel_tracker slot takes any event); reject if no allocation satisfies each slot's event and count constraints. These limits apply only when the effective format declares at least one tracker slot: a format that declares none makes no slot-limit claim, and the seller still fires every accepted tracker or rejects the assignment. Each accepted occurrence fires once per logical event; identical URLs are not deduplicated. A supplied list replaces the prior assignment tracker list. Omission on an additive upsert preserves existing assignment trackers. To clear them, atomically unassign then assign without this field, retaining any other authored assignment settings. Empty arrays and null are not accepted.
    */
   trackers?: AssignmentTracker[];
   landing_page_url?: MacroBearingURL11;
@@ -27524,6 +27535,9 @@ export interface Unassign {
    */
   package_id: string;
 }
+/**
+ * Atomically swap the currently assigned replaces_creative_id for creative_id on package_id. The replacement takes over the replaced assignment's authored settings: weight, placement routing (placement_ids and placement_refs), rotation_mode, group_id, sequence_position, assignment trackers, and the landing_page_url override. Supplied weight replaces the transferred weight. Supplied placement_ids replaces the transferred placement routing entirely: neither the replaced assignment's placement_ids nor its placement_refs transfer. The seller MUST validate every transferred setting against the replacement (format tracker slots, landing-page applicability, destination review) and MUST reject the atomic request rather than drop or partially apply one. To change transferred trackers or the landing page in the same request, follow this operation with an assign for creative_id.
+ */
 export interface ReplaceAssignment {
   operation: 'replace';
   /**
@@ -27532,7 +27546,7 @@ export interface ReplaceAssignment {
    */
   creative_id: string;
   /**
-   * Currently assigned creative ID to remove atomically.
+   * Currently assigned creative ID to remove atomically. Its authored assignment settings transfer to creative_id.
    * @minLength 1
    */
   replaces_creative_id: string;
@@ -27541,10 +27555,14 @@ export interface ReplaceAssignment {
    */
   package_id: string;
   /**
+   * Delivery weight for the replacement. Omitted: the replaced assignment's weight transfers.
    * @minimum 0
    * @maximum 100
    */
   weight?: number;
+  /**
+   * Placement routing for the replacement. Supplied: replaces the transferred routing entirely, including any placement_refs. Omitted: the replaced assignment's placement_ids and placement_refs transfer.
+   */
   placement_ids?: string[];
 }
 /**
@@ -36090,6 +36108,7 @@ export type ReportingPrimaryKey = string;
  */
 export type ReportingScheduleOffering = {
 } & {
+} & {
   period_duration: string;
   alignment: ReportingScheduleAlignment;
   /**
@@ -37398,6 +37417,10 @@ export interface GetAdCPCapabilitiesResponse {
      */
     has_creative_library?: boolean;
     /**
+     * When true, this seller supports provenance policy enforcement on sync_creatives: it publishes applicable creative_policy requirements and accepted_verifiers on products, enforces those requirements per creative, and verifies claims against its own trusted verifier allowlist when a policy calls for verification. Merely hosting a creative library or retaining provenance metadata does not imply this capability. False or absent makes provenance-enforcement conformance storyboards not applicable; it does not exempt a seller from enforcing any provenance policy it publishes.
+     */
+    supports_provenance?: boolean;
+    /**
      * When true, this agent gives every creative that entered its library outside sync_creatives (seller UI or API, automation, or another system) a creative_id that is stable for the creative's lifetime and unique within the account, so a buyer connecting to an existing advertiser can reference those creatives in later requests. The agent MUST keep such IDs stable, MUST NOT reuse a creative_id a buyer has used on the account, and under sync_creatives delete_missing MUST NOT archive those creatives. Requires has_creative_library: true. When false or absent, sellers SHOULD follow the same rules but buyers MUST NOT rely on them.
      */
     stable_creative_ids?: boolean;
@@ -37432,7 +37455,7 @@ export interface GetAdCPCapabilitiesResponse {
       max_propagation_seconds?: number;
     };
     /**
-     * When true, this agent accepts trackers on creative assignments in create_media_buy, update_media_buy, and sync_creatives, fires them in addition to the creative's own trackers or rejects the assignment, enforces shared format tracker-slot limits, and returns the assignment-scoped tracker list in list_creatives and get_media_buys readback. Requires has_creative_library: true. When false or absent, the agent MUST reject the field with UNSUPPORTED_FEATURE and buyers MUST NOT send it.
+     * When true, this agent accepts trackers on creative assignments in create_media_buy, update_media_buy, and sync_creatives, fires them in addition to the creative's own trackers or rejects the assignment, enforces shared format tracker-slot limits where the format declares tracker slots, and returns the assignment-scoped tracker list in list_creatives and get_media_buys readback. Requires has_creative_library: true. When false or absent, the agent MUST reject the field with UNSUPPORTED_FEATURE and buyers MUST NOT send it.
      */
     supports_assignment_trackers?: boolean;
     /**
@@ -38945,19 +38968,26 @@ export type ReportingSubscription = {
    * @minItems 1
    * @maxItems 64
    */
-  destination_overrides?: ({
-    } & (
-      | {
-        }
-      | {
-        }
-    ) &
-      (
-        | {
-          }
-        | {
-          }
-      ))[];
+  destination_overrides?: {
+      /**
+       * @minItems 1
+       * @maxItems 1000
+       */
+      account_ids?: [string, ...string[]];
+      /**
+       * @minItems 1
+       * @maxItems 64
+       */
+      operator_domains?: [string, ...string[]];
+      /**
+       * A destination_id in the caller's principal reporting_destinations.
+       */
+      destination_id: string;
+      /**
+       * As destination.path_template, for the accounts this entry routes. MUST contain {account_id} when the entry can select more than one account. Omitted: destination.path_template applies.
+       */
+      path_template?: string;
+    }[];
 };
 /**
  * This task begins after authentication: AdCP defines no credential-registration protocol, and the seller’s authorization system (OAuth, API keys, signed requests, workload identity) issues and maps credentials before the first call. Declaratively synchronize selected sections of the authenticated principal's standing configuration with one AdCP agent. The principal is a party: a buyer agent, or an operator-side identity acting through any client. Use this task only to change state; read current state, the configuration version, and destination setup progress through get_principal, and prefer this task over the narrower sync_agent_notification_configs when both are advertised. This task does not register a buyer agent: the stable principal MAY be a delegated human user or an autonomous workload. Identity is resolved from authenticated transport and MUST NOT be accepted from request-body agent URLs, signing key IDs, account IDs, or other self-asserted fields. Each present section is the caller's complete desired set and replaces only that section; omitted sections remain unchanged. All submitted sections apply atomically or none do. This task configures reusable principal resources but grants no advertiser-account authority. Sellers implementing it MUST advertise adcp.principal and protocol.principal.
@@ -39274,7 +39304,7 @@ export type ReportingSubscriptionState = {
     destination_ref: string;
   }[];
   /**
-   * Accounts this subscription covered whose authority the caller has since lost, in account_id byte order, so a revoked grant reads differently from a seller that stopped publishing. At most 1000 are listed inline; accounts_unauthorized_count gives the total, and the rest are read through get_principal reporting_subscription_page. Only accounts the subscription previously covered appear. Entries carry no current account data and nothing created after unauthorized_at. An entry is removed on re-grant and is otherwise retained for status_retention_days after unauthorized_at; after that it drops, and a later re-grant is a fresh coverage start from authorized_at with no gap claimed. Every addition or removal fires principal.changed with reason reporting_subscription_changed.
+   * Accounts this subscription covered whose authority the caller has since lost, in account_id byte order, so a revoked grant reads differently from a seller that stopped publishing. A grant reduced to allowed_tasks without get_reporting_status is such a loss, listed from the reduction; a reduced grant that still lists get_reporting_status is not. At most 1000 are listed inline; accounts_unauthorized_count gives the total, and the rest are read through get_principal reporting_subscription_page. Only accounts the subscription previously covered appear. Entries carry no current account data and nothing created after unauthorized_at. An entry is removed on re-grant, including when get_reporting_status is added back to a reduced grant, and is otherwise retained for status_retention_days after unauthorized_at; after that it drops, and a later re-grant is a fresh coverage start from authorized_at with no gap claimed. Every addition or removal fires principal.changed with reason reporting_subscription_changed.
    *
    * @maxItems 1000
    */
@@ -39477,7 +39507,7 @@ export interface ReportingSubscriptionAccountExceptions {
 export interface ReportingSubscriptionUnauthorizedAccount {
   account_id: string;
   /**
-   * When the caller's authority for the account ended. Nothing is delivered for periods ending after it, including on retries.
+   * When the caller's authority for the account ended: the revocation, or the reduction of its grant to allowed_tasks without get_reporting_status. Nothing is delivered for periods ending after it, including on retries.
    */
   unauthorized_at: string;
   /**
@@ -40317,7 +40347,7 @@ export interface AccountAuthorization {
    */
   authorized_at?: string;
   /**
-   * The latest re-grant within the caller's current authorization chain for this account: when authority last resumed after a loss that the re-grant continued, because it came before the previous unauthorized_at plus status_retention_days. Absent while the chain has had no re-grant. A re-grant that starts a new chain sets authorized_at to the re-grant time and leaves this absent. Reporting subscriptions owe withheld periods at this instant plus the offering's delivery_sla, and an unbackfilled gap ends at the first period boundary at or after it. Sellers advertising media_buy.reporting_subscriptions MUST populate it whenever the current chain has a re-grant.
+   * The latest re-grant within the caller's current authorization chain for this account: when authority last resumed after a loss that the re-grant continued, because it came before the previous unauthorized_at plus status_retention_days. Absent while the chain has had no re-grant. A re-grant that starts a new chain sets authorized_at to the re-grant time and leaves this absent. Reporting subscriptions owe withheld periods at this instant plus the offering's delivery_sla, and an unbackfilled gap ends at the first period boundary at or after it. Sellers advertising media_buy.reporting_subscriptions MUST populate it whenever the current chain has a re-grant. For reporting subscriptions, a grant reduced to allowed_tasks without get_reporting_status is a loss of authority at the reduction (unauthorized_at in accounts_unauthorized), and adding get_reporting_status back is a re-grant: it continues the chain and sets regranted_at, or starts a new chain, by the same rule.
    */
   regranted_at?: string;
   /**
@@ -41818,7 +41848,7 @@ export interface ComplyTestControllerRequest {
    */
   adcp_major_version?: number;
   /**
-   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'reporting_subscription_probe' (experimental, media_buy.reporting_subscriptions) revokes, re-grants, or reduces the caller's own grant on a sandbox account, changes a sandbox account's timezone, or advances the sandbox clock, so storyboards can test reporting-subscription coverage across grants and cutovers against a remote seller. 'force_*' and 'simulate_*' trigger state transitions. 'reporting_core_lifecycle_probe' installs a caller/account-scoped Core fixture whose first elapsed obligation is visible before any report, advances its virtual clock into delayed or action_required, and can publish deterministic zero-row or non-empty revisions, restate a provisional revision, restate one the caller already received, or cross the consumer-status deadline and consumer-mismatch escalation boundaries, without waiting for wall-clock boundaries. 'force_hold_unavailable' (experimental, media_buy.hold_policy) makes the next refine_proposals finalize of one draft proposal fail with hold_unavailable, its batch siblings with batch_aborted, and is then consumed. Other scenarios provide deterministic sandbox probes for their documented lifecycle checks. Runners and sellers MUST accept unknown scenario strings - new scenarios may be added in additive releases.
+   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'reporting_subscription_probe' (experimental, media_buy.reporting_subscriptions) revokes, re-grants, or reduces the caller's own grant on a sandbox account, changes a sandbox account's timezone, or advances the sandbox clock, so storyboards can test reporting-subscription coverage across grants and cutovers against a remote seller. 'reset_state' takes no params and returns the authenticated caller's sandbox to a baseline; a runner that finds it in list_scenarios calls it once before each storyboard. It acts only on the caller's own sandbox state, and what it discards is implementation-defined except where a scenario names its reset effects: a seller that lists reporting_subscription_probe MUST also list reset_state, which MUST unpin the caller's sandbox clock (simulated_now reads the seller's wall clock again until the next advance_time) and discard every grant and timezone change the probe made for the caller. 'force_*' and 'simulate_*' trigger state transitions. 'reporting_core_lifecycle_probe' installs a caller/account-scoped Core fixture whose first elapsed obligation is visible before any report, advances its virtual clock into delayed or action_required, and can publish deterministic zero-row or non-empty revisions, restate a provisional revision, restate one the caller already received, or cross the consumer-status deadline and consumer-mismatch escalation boundaries, without waiting for wall-clock boundaries. 'force_hold_unavailable' (experimental, media_buy.hold_policy) makes the next refine_proposals finalize of one draft proposal fail with hold_unavailable, its batch siblings with batch_aborted, and is then consumed. Other scenarios provide deterministic sandbox probes for their documented lifecycle checks. Runners and sellers MUST accept unknown scenario strings - new scenarios may be added in additive releases.
    */
   scenario: string;
   /**
@@ -42371,7 +42401,7 @@ export type ComplyTestControllerResponse = {
 export interface ListScenariosSuccess {
   success: true;
   /**
-   * Scenarios this seller has implemented. Runners and sellers MUST accept unknown scenario strings (open-for-extension) — new scenarios may be added in additive releases. Adopters who advertise `catalog_item_availability_probe` support deterministic cross-principal reference, eligibility-gate, expiry-clock, and catalog-generation tests for the catalog availability storyboard. Adopters who advertise `compact_product_lifecycle_probe` support deterministic synchronous list/request/finalize/decline/accept/control/readback behavior for a prepared product and strict post-deadline expiry of a committed proposal. Adopters who advertise `compact_direct_buy_lifecycle_probe` support deterministic synchronous list/buy/control/readback behavior for a prepared product. Adopters who advertise `reporting_core_lifecycle_probe` support deterministic obligation-before-report, clock-health, zero-row reporting, provisional-restatement, and post-received restatement-grace tests without wall-clock waits. Adopters who advertise `reporting_subscription_probe` (experimental) support deterministic grant revocation, re-grant, grant reduction, account timezone cutover, and sandbox clock tests for reporting-subscription coverage. `reliable_reporting_core_integrity_probe`, `reliable_reporting_managed_delivery_probe`, and `reliable_reporting_reconciled_billing_probe` seed the source-calendar/checkpoint, managed-resource, and receipt/adjustment workflows used by the Reliable Reporting tier storyboards. Adopters who advertise `force_creative_purge` opt in to deterministic creative purge coverage for account-level lifecycle webhooks. Adopters who advertise `force_media_buy_purge` opt in to deterministic deletion-independent idempotency replay coverage. Adopters who advertise `seed_measurement_catalog` opt in to deterministic measurement-catalog fixtures used by vendor_metric precondition storyboards. Adopters who advertise `query_upstream_traffic` opt in to the upstream-traffic conformance contract; storyboards that declare `check: upstream_traffic` grade not_applicable against adopters who do not advertise it. Adopters who advertise `query_provenance_audit_observations` opt in to sandbox-only audit-observation assertions for accepted creatives. Adopters who advertise `force_upstream_unavailable` opt in to stale-cache conformance testing via the `stale_response_advisory` storyboard. Adopters who advertise `force_hold_unavailable` opt in to deterministic hold-failure coverage for `refine_proposals` finalize (experimental, `media_buy.hold_policy`).
+   * Scenarios this seller has implemented. Runners and sellers MUST accept unknown scenario strings (open-for-extension) — new scenarios may be added in additive releases. Adopters who advertise `catalog_item_availability_probe` support deterministic cross-principal reference, eligibility-gate, expiry-clock, and catalog-generation tests for the catalog availability storyboard. Adopters who advertise `compact_product_lifecycle_probe` support deterministic synchronous list/request/finalize/decline/accept/control/readback behavior for a prepared product and strict post-deadline expiry of a committed proposal. Adopters who advertise `compact_direct_buy_lifecycle_probe` support deterministic synchronous list/buy/control/readback behavior for a prepared product. Adopters who advertise `reporting_core_lifecycle_probe` support deterministic obligation-before-report, clock-health, zero-row reporting, provisional-restatement, and post-received restatement-grace tests without wall-clock waits. Adopters who advertise `reporting_subscription_probe` (experimental) support deterministic grant revocation, re-grant, grant reduction, account timezone cutover, and sandbox clock tests for reporting-subscription coverage, and MUST also advertise `reset_state`. Adopters who advertise `reset_state` return the caller's sandbox to a baseline when a runner calls it before each storyboard; for `reporting_subscription_probe` that unpins the sandbox clock and discards the probe's grant and timezone changes. `reliable_reporting_core_integrity_probe`, `reliable_reporting_managed_delivery_probe`, and `reliable_reporting_reconciled_billing_probe` seed the source-calendar/checkpoint, managed-resource, and receipt/adjustment workflows used by the Reliable Reporting tier storyboards. Adopters who advertise `force_creative_purge` opt in to deterministic creative purge coverage for account-level lifecycle webhooks. Adopters who advertise `force_media_buy_purge` opt in to deterministic deletion-independent idempotency replay coverage. Adopters who advertise `seed_measurement_catalog` opt in to deterministic measurement-catalog fixtures used by vendor_metric precondition storyboards. Adopters who advertise `query_upstream_traffic` opt in to the upstream-traffic conformance contract; storyboards that declare `check: upstream_traffic` grade not_applicable against adopters who do not advertise it. Adopters who advertise `query_provenance_audit_observations` opt in to sandbox-only audit-observation assertions for accepted creatives. Adopters who advertise `force_upstream_unavailable` opt in to stale-cache conformance testing via the `stale_response_advisory` storyboard. Adopters who advertise `force_hold_unavailable` opt in to deterministic hold-failure coverage for `refine_proposals` finalize (experimental, `media_buy.hold_policy`).
    */
   scenarios: string[];
   context?: ContextObject;
@@ -42394,7 +42424,7 @@ export interface StateTransitionSuccess {
   ext?: ExtensionObject;
 }
 /**
- * A simulate_delivery, simulate_budget_spend, simulate_later_proposal, catalog_item_availability_probe, compact_product_lifecycle_probe, compact_direct_buy_lifecycle_probe, reporting_core_lifecycle_probe, reporting_subscription_probe, or Reliable Reporting tier-probe operation succeeded. For delivery: simulated contains the metrics injected by this call (impressions/clicks/plays/reported_spend/conversions plus optional DOOH, reach, frequency, reach-window, and viewability values) and cumulative contains running totals or latest non-additive metric state. For budget: simulated contains spend_percentage/computed_spend/budget. For a later proposal: simulated contains proposal_id, opportunity_id, and later_reason of the created snapshot. For catalog availability: simulated reports seeded foreign identity, actual eligibility gates, processed expiry time, or delete/recreate generation rotation according to params.operation. For compact product lifecycle: simulated reports deterministic preparation through MediaBuy control/readback or strict post-deadline proposal expiry. For compact direct-buy lifecycle: simulated reports deterministic preparation. For reporting Core: simulated reports the fixed virtual time plus stable account, configuration, obligation, and revision identifiers created or advanced by the operation; prepare also reports the complete resolved configuration, period, expected_at, and recovery_deadline, restate_snapshot reports the new revision plus supersedes_reporting_revision_id, and restate_after_received additionally reports received_reporting_revision_id, restated_at, and stale_received_grace_deadline; advance_past_status_deadline reports expected_at, automated_recovery_window_seconds, and the crossed consumer_status_deadline; and advance_past_escalation reports issue_id, issue_opened_at, consumer_mismatch_escalation_seconds, consumer_mismatch_escalation_deadline, expected_recommended_action, and any still-future stale_received_grace_deadline. For reporting subscriptions: simulated reports simulated_now and account_id; revoke_grant adds unauthorized_at; regrant adds authorized_at, regranted_at when the re-grant continued the chain, and chain (continued or new); reduce_grant adds the applied allowed_tasks; set_account_timezone adds previous_timezone, timezone, and the per-offering effective_at cutover instants; advance_time adds the applied simulated_now. Reliable Reporting tier probes return the exact seeded ledger IDs, checkpoints, notification order, resource lifecycle evidence, and receipt bodies required by their storyboards.
+ * A simulate_delivery, simulate_budget_spend, simulate_later_proposal, catalog_item_availability_probe, compact_product_lifecycle_probe, compact_direct_buy_lifecycle_probe, reporting_core_lifecycle_probe, reporting_subscription_probe, or Reliable Reporting tier-probe operation succeeded. For delivery: simulated contains the metrics injected by this call (impressions/clicks/plays/reported_spend/conversions plus optional DOOH, reach, frequency, reach-window, and viewability values) and cumulative contains running totals or latest non-additive metric state. For budget: simulated contains spend_percentage/computed_spend/budget. For a later proposal: simulated contains proposal_id, opportunity_id, and later_reason of the created snapshot. For catalog availability: simulated reports seeded foreign identity, actual eligibility gates, processed expiry time, or delete/recreate generation rotation according to params.operation. For compact product lifecycle: simulated reports deterministic preparation through MediaBuy control/readback or strict post-deadline proposal expiry. For compact direct-buy lifecycle: simulated reports deterministic preparation. For reporting Core: simulated reports the fixed virtual time plus stable account, configuration, obligation, and revision identifiers created or advanced by the operation; prepare also reports the complete resolved configuration, period, expected_at, and recovery_deadline, restate_snapshot reports the new revision plus supersedes_reporting_revision_id, and restate_after_received additionally reports received_reporting_revision_id, restated_at, and stale_received_grace_deadline; advance_past_status_deadline reports expected_at, automated_recovery_window_seconds, and the crossed consumer_status_deadline; and advance_past_escalation reports issue_id, issue_opened_at, consumer_mismatch_escalation_seconds, consumer_mismatch_escalation_deadline, expected_recommended_action, and any still-future stale_received_grace_deadline. For reporting subscriptions: simulated reports simulated_now and account_id; revoke_grant adds unauthorized_at; regrant adds authorized_at, regranted_at when the re-grant continued the chain, and chain (continued or new); reduce_grant adds the applied allowed_tasks; set_account_timezone returns SetAccountTimezoneResult (previous_timezone, timezone, changed_at, and the per-offering timezone_cutovers); advance_time adds the applied simulated_now. Reliable Reporting tier probes return the exact seeded ledger IDs, checkpoints, notification order, resource lifecycle evidence, and receipt bodies required by their storyboards.
  */
 export interface SimulationSuccess {
   success: true;
@@ -42453,7 +42483,7 @@ export interface ForcedDirectiveSuccess {
   ext?: ExtensionObject;
 }
 /**
- * A seed_* scenario successfully pre-populated a fixture in the seller's test state
+ * A seed_* scenario successfully pre-populated a fixture in the seller's test state, or reset_state returned the caller's sandbox to its baseline.
  */
 export interface SeedSuccess {
   success: true;

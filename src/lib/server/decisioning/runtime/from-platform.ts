@@ -4818,6 +4818,7 @@ function deriveScenariosFromAdapters(
   if (cfg.queryProvenanceAuditObservations) out.push('query_provenance_audit_observations');
   if (cfg.force?.upstream_unavailable) out.push('force_upstream_unavailable');
   if (cfg.reportingSubscriptionProbe) out.push('reporting_subscription_probe');
+  if (cfg.resetState) out.push('reset_state' as (typeof out)[number]);
   return out;
 }
 

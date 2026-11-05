@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-11-04
+> Generated at: 2026-11-05
 > Library: @adcp/sdk v17.0.0-beta.17
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -11,7 +11,7 @@
 
 AdCP is an open protocol for AI agents to buy, manage, and optimize advertising programmatically. It defines MCP tools that agents call on publisher ad servers — discover inventory, create media buys, sync creatives, manage brand safety, and track delivery. Every tool follows request/response JSON schemas; the TypeScript client wraps them with async task handling, conversation context, and governance middleware.
 
-## Start here: AdCP 3.3.0-beta.3
+## Start here: AdCP 3.3.0-beta.4
 
 The SDK requires Node.js `^20.19.0 || >=22.12.0`. Install this reference's release train with `npm install @adcp/sdk@beta`; use the documentation from the exact published SDK version you install. For reproducible CLI runs, pin that exact SDK version. After installation, `node -p "require('@adcp/sdk').ADCP_VERSION"` reports its protocol pin; `ls node_modules/@adcp/sdk/compliance/cache` lists its packaged compliance versions. The `adcp-3.2` npm tag selects the maintained SDK 16 line. SDK 17 previews use `beta` and are intended for development and staging.
 
@@ -1313,6 +1313,9 @@ Flow: `get_adcp_capabilities → sync_creatives → list_creatives`
 **Policy-backed creative rejections** — Reports each violated registry policy as its own CREATIVE_REJECTED error entry.
 Flow: `get_products → sync_creatives`
 
+**A replace keeps the replaced assignment's trackers and landing page** — Verifies that sync_creatives assignment_operations assign attaches assignment trackers and a landing-page override, and that replace transfers both to the replacement creative so a swap changes the creative and nothing else.
+Flow: `get_adcp_capabilities → sync_creatives → get_media_buys → sync_creatives → get_media_buys → list_creatives`
+
 **Seller refuses an undeclared change to a live creative and leaves it unchanged** — Verifies that a seller declaring creative.live_updates without format refuses a format change to a live creative with CREATIVE_LIVE_UPDATE_UNSUPPORTED, names the refused kind and the live package, returns the same refusal on dry_run, and leaves the creative unchanged.
 Flow: `sync_creatives → comply_test_controller → sync_creatives → list_creatives`
 
@@ -1558,6 +1561,24 @@ Flow: `create_media_buy → sync_plans → sync_accounts → sync_governance →
 **Seller accepts corrected buy after governance denial** — Verifies that a buyer can recover from GOVERNANCE_DENIED by shrinking the buy to fit the amended plan, obtaining a fresh intent approval, and retrying.
 Flow: `create_media_buy → sync_accounts → get_products → sync_plans → sync_governance → get_products → check_governance → sync_plans → create_media_buy → check_governance → create_media_buy`
 
+**extend_hold within and past the hold policy's limits** — Extends a hold within max_total_duration and checks the successor and the superseded source; checks that a hold already at its ceiling and a hold whose policy is not extendable return hold_unavailable, that an all-or-none extension batch aborts its sibling, and that extending a commitment with no hold fails with INVALID_STATE.
+Flow: `comply_test_controller → request_proposals → refine_proposals → accept_proposal → refine_proposals → request_proposals → refine_proposals → request_proposals → refine_proposals → request_proposals → refine_proposals → comply_test_controller → accept_proposal`
+
+**Hold bounds are measured from hold_placed_at** — Finalizes drafts under a declared hold_policy and checks that the committed proposal carries the draft's policy forward with hold_placed_at, that expires_at lies within min_duration and max_duration of it, that an exact retry returns the original hold_placed_at and expires_at, and, on the sandbox clock, the exact hold window and its lapse.
+Flow: `comply_test_controller → list_products → request_proposals → refine_proposals → request_proposals → comply_test_controller → refine_proposals → comply_test_controller → refine_proposals → comply_test_controller → accept_proposal`
+
+**Terms-only entries, mixed drafts, and the hold_semantics default** — Checks that a draft mixing holdable and non-holdable products is terms-only and finalizes without a hold, that a product without hold_policy follows the agent's hold_semantics, and that in a forced hold failure a terms-only sibling returns batch_aborted, never hold_unavailable.
+Flow: `comply_test_controller → request_proposals → refine_proposals → request_proposals → refine_proposals → request_proposals → refine_proposals → request_proposals → refine_proposals → request_proposals → comply_test_controller → refine_proposals`
+
+**Callers below 3.3 never see hold fields** — Pins a caller to AdCP 3.2 and checks that products, drafts, and committed proposals carry no hold_policy, hold_placed_at, hold_rank, or holds, and that a terms-only draft served at 3.3 cannot be finalized by a 3.2 caller (UNSUPPORTED_FEATURE).
+Flow: `comply_test_controller → request_proposals → refine_proposals → request_proposals → refine_proposals`
+
+**Two buyers hold the same rankable slot first and second** — Two buyers finalize drafts over the same rankable product: the first gets hold_rank 1 and the second hold_rank 2. When the first buyer declines its hold, the second buyer's hold moves to first position and can be accepted.
+Flow: `comply_test_controller → request_proposals → refine_proposals → decline_proposals → accept_proposal`
+
+**A hold failure aborts the whole finalize batch** — Registers force_hold_unavailable for the second of two drafts, finalizes both in one request, and checks the all-or-none outcome: the named draft returns hold_unavailable, its sibling batch_aborted, nothing is committed, and an exact retry replays the failure.
+Flow: `comply_test_controller → request_proposals → comply_test_controller → refine_proposals`
+
 **Inline media-buy creatives without sync_creatives** — Verifies that a seller advertising inline_creative_management accepts package creatives on create_media_buy and update_media_buy without requiring the Creative Protocol or sync_creatives.
 Flow: `get_adcp_capabilities → get_products → create_media_buy → update_media_buy → get_media_buys → create_media_buy → update_media_buy → get_media_buys → create_media_buy → update_media_buy → get_media_buys → get_products → create_media_buy → update_media_buy → get_media_buys`
 
@@ -1653,6 +1674,12 @@ Flow: `get_adcp_capabilities → sync_accounts → request_proposals → refine_
 
 **Seller handles product refinement** — Verifies that a media buy seller supports buying_mode: refine with product-level and request-level changes.
 Flow: `sync_accounts → get_products`
+
+**Reporting subscription admission under max_accounts** — With max_accounts 3, opens four accounts an hour apart under one all-accounts subscription. The fourth waits with a capacity exception, listed in accounts_with_exceptions; when the first account's grant is revoked it is admitted, the capacity exception closes, and the revoked account is listed under accounts_unauthorized.
+Flow: `get_adcp_capabilities → sync_accounts → comply_test_controller → sync_accounts → comply_test_controller → sync_accounts → comply_test_controller → sync_accounts → comply_test_controller → sync_principal → get_reporting_status → comply_test_controller → get_reporting_status → get_principal`
+
+**Reporting subscription coverage over time** — Registers a principal-level reporting subscription and drives it over a sandbox clock: several periods, a version cutover onto misaligned boundaries, deactivation and reactivation, a wind-down grant, revocation and re-grant within and after retention, an account timezone change across a DST transition, and a grant reduced without get_reporting_status and then restored. At each read the owed periods computed from wire state must equal the seller's obligations.
+Flow: `get_adcp_capabilities → sync_accounts → comply_test_controller → list_accounts → get_products → sync_principal → comply_test_controller → sync_principal → comply_test_controller → get_reporting_status → sync_principal → comply_test_controller → sync_principal → comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status → get_principal → sync_reporting_receipts → comply_test_controller → get_reporting_status → get_principal → comply_test_controller → list_accounts → comply_test_controller → get_reporting_status → comply_test_controller → list_accounts → comply_test_controller → get_reporting_status → comply_test_controller → get_principal → get_reporting_status → comply_test_controller → list_accounts → get_principal → get_reporting_status`
 
 **Revenue-share pricing and settlement** — Verifies contingent revenue-share discovery, commitment without a bid, commissionable-value delivery, and formula-checked usage reconciliation.
 Flow: `sync_accounts → sync_event_sources → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery → report_usage`
@@ -1851,6 +1878,9 @@ Flow: `get_adcp_capabilities → get_brand_identity → get_rights → acquire_r
 **Account identity reconciliation** — Deprecated in 3.3 with account.identity_updates. Validates revision-guarded operator identity rekeying, collision safety, and former-key redirects for sellers that advertise identity updates.
 Flow: `get_adcp_capabilities → list_accounts → sync_accounts → list_accounts → sync_accounts → list_accounts → sync_accounts → list_accounts → comply_test_controller → sync_accounts → list_accounts → get_media_buys → sync_accounts → list_accounts → sync_accounts → list_accounts → sync_accounts → list_accounts → sync_accounts → list_accounts → sync_accounts → list_accounts → sync_accounts → list_accounts`
 
+**Account requests: open, change, and read back** — Opens a fresh sandbox account with request_account, reads the request back through list_accounts, checks the change rules (revision guards, fields that never change, unreachable accounts), and drives the change outcomes: updated, a separate account only with allow_separate_account and its distinct refusal code, matched to an account the caller holds, a buyer sign-up action, reduced and revoked grants, and a seller review that resolves on the sandbox clock.
+Flow: `get_adcp_capabilities → request_account → list_accounts → request_account → list_accounts → request_account → list_accounts → request_account → list_accounts → request_account → comply_test_controller → request_account → get_media_buys → comply_test_controller → request_account → get_media_buys → list_accounts → comply_test_controller → list_accounts → request_account → comply_test_controller → list_accounts`
+
 **Agent notification config lifecycle** — Validates the 3.2 agent-level capabilities.changed registration surface: advertised revision fencing, NO_AUTH rejection, and dry-run clear semantics.
 Flow: `get_adcp_capabilities → sync_agent_notification_configs`
 
@@ -2035,7 +2065,7 @@ Agents use the `recovery` classification to decide what to do: `transient` → r
 | `BUDGET_CAP_REACHED` | correctable | build_creative stopped producing early because the next leaf would exceed the request's max_spend ceiling. Normally a SUCCESSFUL partial build (BuildCreativeVariantSuccess with budget_status: 'capped' and an advisory BUDGET_CAP_REACHED entry — every returned leaf is real and billed); returned as a terminal error only when even the first leaf would exceed the cap (no partial possible). Distinct from BUDGET_EXCEEDED (would exceed a media-buy/package allocation — a rejection) and BUDGET_EXHAUSTED (already spent). |
 | `BUDGET_EXCEEDED` | correctable | Operation would exceed the allocated budget for the media buy or package. Distinct from BUDGET_EXHAUSTED (already spent) and BUDGET_TOO_LOW (below minimum). |
 | `BUDGET_EXHAUSTED` | terminal | Account or campaign budget has been fully spent. Distinct from BUDGET_TOO_LOW (rejected at submission). |
-| `BUDGET_TOO_LOW` | correctable | Budget is below the seller's minimum. |
+| `BUDGET_TOO_LOW` | correctable | Budget is below the seller's minimum. Optional recovery details follow error-details/budget-too-low.json: minimum_budget and currency describe the floor; basis distinguishes daily and lifetime budgets, constraint identifies its cause, budget_field identifies the constrained budget when error.field instead names a contributing bid, and related_field can identify that bid. error.field retains its existing consistency with issues[0].pointer. Without an unambiguous budget locator, the amount is diagnostic; reconcile current state before choosing a change. |
 | `CAMPAIGN_SUSPENDED` | transient | Campaign governance has been suspended pending human review; the governance agent MUST reject `check_governance` and `report_plan_outcome` calls on the affected plan until the escalation is resolved. Distinct from `ACCOUNT_SUSPENDED` (account-wide) — this is scoped to a single plan/campaign. |
 | `CATALOG_LIMIT_EXCEEDED` | correctable | The account has reached its maximum catalog count. |
 | `COMMITTED_RESOURCE_PURGED` | terminal | The requested mutation committed, but the affected resource was independently deleted or purged for a reason outside that requested mutation before the seller could durably record the canonical success response. The write stands even though the resource no longer exists, so sellers SHOULD set error.mutation_outcome to applied and MUST NOT set not_applied; this code does not describe the successful outcome of a requested delete operation. Sellers MUST retain the idempotency key record and canonical request hash independently of the resource until at least committed_at + replay_ttl_seconds, and exact replays MUST return this terminal outcome with replayed: true without re-executing the mutation. If the canonical success response was already durably recorded, sellers return that historical response under the normal replay rule instead. Distinct from CONFLICT (a transient concurrent modification before a stable result) and MEDIA_BUY_NOT_FOUND (a request targeting a resource that was already absent). |

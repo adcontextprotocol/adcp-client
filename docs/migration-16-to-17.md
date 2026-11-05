@@ -1,6 +1,6 @@
 # Migrating from SDK 16 to 17
 
-SDK 17 beta pins the signed AdCP `3.3.0-beta.3` release. Use the beta in
+SDK 17 beta pins the signed AdCP `3.3.0-beta.4` release. Use the beta in
 development and staging; production remains on SDK 16 and AdCP 3.2.
 
 ## Companion packages
@@ -106,7 +106,7 @@ request release. Existing cursor, account identity, and acknowledgement checks
 still apply.
 
 A `3.3.0` or `3.3` configuration pin does not select a beta. Use the exact
-`3.3.0-beta.3` bundle (wire alias `3.3-beta.3`); unavailable pins now produce a
+`3.3.0-beta.4` bundle (wire alias `3.3-beta.4`); unavailable pins now produce a
 short list of bundled release lines instead of every compatible patch.
 
 ## pnpm peer resolution
@@ -140,7 +140,7 @@ and [peer-dependency settings](https://pnpm.io/settings#dedupepeerdependents).
 
 The SDK packages the exact 3.3 beta schema and compliance bundle alongside
 maintained AdCP 3.2.8, 3.1.31 and 3.0.25 bundles. A seller must advertise
-`3.3-beta.3` (or its full bundle version, `3.3.0-beta.3`) before the buyer
+`3.3-beta.4` (or its full bundle version, `3.3.0-beta.4`) before the buyer
 selects that preview. A different beta, a moving `3.3-beta` alias, or a
 served-version echo alone does not establish support. The buyer can negotiate
 an older stable release the seller advertises. Missing or synthetic capability
@@ -151,6 +151,38 @@ evidence cannot authorize a preview request.
 server handlers are `mediaBuy.listCollections` and `mediaBuy.listProposals`,
 or optional methods on `MediaBuyLifecyclePlatform`. Their synchronous results
 use `outcome` and do not acquire a synthetic task `status` field.
+
+## AdCP 3.3.0-beta.4
+
+SDK 17 now pins AdCP `3.3.0-beta.4` and no longer packages or advertises
+`3.3.0-beta.3`. Preview negotiation is exact, so a beta.3 peer and a beta.4
+peer settle on a stable release they share, and an explicit
+`adcpVersion: '3.3.0-beta.3'` pin fails with a configuration error.
+
+- **Packages added after confirmation (adcp#8718).** Sellers advertising
+  reporting subscriptions must serve `packages[].added_at` on `get_media_buys`
+  for every package added after `confirmed_at`. Coverage owes such a package
+  from the period containing `added_at`; adding a package is never a cutover.
+  `ReportingSubscriptionBuyPackageV1.added_at` carries it through the
+  `subscriptions.buys` and `listAccountBuys` hooks.
+- **Reduced grants (adcp#8718).** A grant reduced to tasks without
+  `get_reporting_status` is a loss of reporting authority: the account is
+  listed in `accounts_unauthorized[]`, and `get_reporting_status` for it is
+  refused with `SCOPE_INSUFFICIENT`. Restoring the task is a re-grant.
+- **`SUBSCRIPTIONS_REQUIRE_ACCOUNT_ID_KEY`.** A managed-delivery offering
+  without `account_id` in `reporting_profile.primary_keys` is refused with this
+  code instead of `PLATFORM_CONFIG_INVALID`.
+- **`destination_overrides[]` type.** The generated item type is one object
+  with `account_ids`, `operator_domains`, `destination_id` and
+  `path_template`; beta.3 generated an intersection of empty objects.
+- **Durations.** `reporting-schedule` and `reporting-schedule-offering` reject
+  a `period_duration` mixing date and time components (`P1DT12H`) under any
+  alignment but `utc`.
+- **Conformance probe (adcp#8717).** A seller listing
+  `reporting_subscription_probe` must list `reset_state`:
+  `createComplyController` refuses `reportingSubscriptionProbe` without
+  `resetState`. `set_account_timezone` returns `SetAccountTimezoneResult`, and
+  `owed_periods_match` compares over the spec's retention window.
 
 ## AdCP 3.3.0-beta.3
 
