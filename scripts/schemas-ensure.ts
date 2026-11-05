@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Idempotent guard for the schema cache. Tests load schemas from
- * `schemas/cache/{current,3.1.30,3.0.25,v2.5}/` (gitignored, populated by
+ * `schemas/cache/{current,3.1.32,3.1.30,3.0.25,v2.5}/` (gitignored, populated by
  * `npm run sync-schemas:all`). Fresh clones, branch switches that wipe
  * the cache, and `git clean -fdx` all leave a dev environment that
  * silently fails ~9 test suites with "AdCP schema data for version 'v2.5'
@@ -27,6 +27,9 @@ const CACHE_ROOT = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_ROOT = path.join(REPO_ROOT, 'compliance/cache');
 const STABLE_3_0_SCHEMA_VERSION = '3.0.25';
 const STABLE_3_1_SCHEMA_VERSION = '3.1.30';
+// Maintained alongside — not replacing — 3.1.30. The older corpus is a promised
+// historical pin; dropping it would lose exact compliance bytes adopters pin to.
+const MAINTAINED_3_1_SCHEMA_VERSION = '3.1.32';
 
 function currentAdcpVersion(): string {
   return readFileSync(path.join(REPO_ROOT, 'ADCP_VERSION'), 'utf8').trim();
@@ -51,6 +54,10 @@ function hasStableV31Cache(): boolean {
   return existsSync(path.join(CACHE_ROOT, STABLE_3_1_SCHEMA_VERSION));
 }
 
+function hasMaintainedV31Cache(): boolean {
+  return existsSync(path.join(CACHE_ROOT, MAINTAINED_3_1_SCHEMA_VERSION));
+}
+
 function hasCurrentComplianceCache(): boolean {
   return existsSync(path.join(COMPLIANCE_CACHE_ROOT, currentAdcpVersion()));
 }
@@ -61,6 +68,10 @@ function hasStableV30ComplianceCache(): boolean {
 
 function hasStableV31ComplianceCache(): boolean {
   return existsSync(path.join(COMPLIANCE_CACHE_ROOT, STABLE_3_1_SCHEMA_VERSION));
+}
+
+function hasMaintainedV31ComplianceCache(): boolean {
+  return existsSync(path.join(COMPLIANCE_CACHE_ROOT, MAINTAINED_3_1_SCHEMA_VERSION));
 }
 
 function pointLatestAtCurrent(cacheRoot: string, current: string): void {
@@ -78,15 +89,19 @@ const stableV31Ok = hasStableV31Cache();
 const currentComplianceOk = hasCurrentComplianceCache();
 const stableV30ComplianceOk = hasStableV30ComplianceCache();
 const stableV31ComplianceOk = hasStableV31ComplianceCache();
+const maintainedV31Ok = hasMaintainedV31Cache();
+const maintainedV31ComplianceOk = hasMaintainedV31ComplianceCache();
 
 const current = currentAdcpVersion();
 if (
   currentV3Ok &&
   stableV30Ok &&
   stableV31Ok &&
+  maintainedV31Ok &&
   currentComplianceOk &&
   stableV30ComplianceOk &&
-  stableV31ComplianceOk
+  stableV31ComplianceOk &&
+  maintainedV31ComplianceOk
 ) {
   pointLatestAtCurrent(CACHE_ROOT, current);
   pointLatestAtCurrent(COMPLIANCE_CACHE_ROOT, current);
@@ -99,6 +114,7 @@ const scripts: string[] = [];
 if (!currentV3Ok || !currentComplianceOk) scripts.push('sync-schemas');
 if (!stableV30Ok || !stableV30ComplianceOk) scripts.push(`sync-schemas -- ${STABLE_3_0_SCHEMA_VERSION}`);
 if (!stableV31Ok || !stableV31ComplianceOk) scripts.push(`sync-schemas -- ${STABLE_3_1_SCHEMA_VERSION}`);
+if (!maintainedV31Ok || !maintainedV31ComplianceOk) scripts.push(`sync-schemas -- ${MAINTAINED_3_1_SCHEMA_VERSION}`);
 
 console.log(`[schemas:ensure] Missing or provenance-stale schema cache; running: ${scripts.join(', ')}`);
 

@@ -2,15 +2,28 @@
  * Native controller-schema packaging on maintained SDK16.
  *
  * Adapted from the reviewed a3c4 main regression, using only actual retained
- * 3.0.25 / 3.1.30 / primary3.2.8 schemas. The older controller declares neither
+ * 3.0.25 / 3.1.32 / primary 3.2.8 schemas. The older controller declares neither
  * account nor brand and composes no protocol envelope; later releases declare
  * the sandbox account carrier and require task status on responses. Keep these
  * contracts distinct rather than imposing newer fields on the frozen release.
  *
+ * `SELECTED` names the release each shipped bundle actually resolves to, not
+ * every corpus the package carries. Schema bundles collapse by minor and ship
+ * the highest patch, so the `3.1` bundle selects 3.1.32 once that release is
+ * adopted.
+ *
+ * `CACHE_ROOT` below is `schemas/cache` — JSON schema inputs. It is NOT the
+ * storyboard corpus at `compliance/cache/<version>/`, and nothing in this file
+ * inspects that corpus or proves its packaged byte identity. Retention of the
+ * 3.1.30 corpus is a separate claim with its own separate evidence: the real
+ * pre/post-sync hashes of `compliance/cache/3.1.30/` taken at adoption time,
+ * plus the actual `npm pack` and installed-package bytes. Do not read anything
+ * here as that guarantee.
+ *
  * The reachable closure currently equals each compliance directory. These
  * tests therefore prove native compilation, byte identity and real versioned
  * payload behavior; they do not claim to distinguish today's closure from an
- * unfiltered directory copy or to qualify a future3.1.32 corpus.
+ * unfiltered directory copy.
  */
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -30,7 +43,10 @@ const CACHE_ROOT = path.join(REPO_ROOT, 'schemas', 'cache');
 const ENTRY_POINTS = ['comply-test-controller-request.json', 'comply-test-controller-response.json'];
 const SELECTED = [
   { key: '3.0', version: '3.0.25', declaresAccount: false, protocolEnvelope: false, closureSize: 2 },
-  { key: '3.1', version: '3.1.30', declaresAccount: true, protocolEnvelope: true, closureSize: 2 },
+  // closureSize here is the expectation to re-confirm against the real published
+  // 3.1.32 corpus at adoption time; a wrong value fails this suite loudly rather
+  // than passing silently, which is the intended behaviour.
+  { key: '3.1', version: '3.1.32', declaresAccount: true, protocolEnvelope: true, closureSize: 2 },
   { key: '3.2', version: '3.2.8', declaresAccount: true, protocolEnvelope: true, closureSize: 4 },
 ];
 const readJson = file => JSON.parse(readFileSync(file, 'utf8'));
@@ -170,9 +186,9 @@ describe('SDK16 native controller schemas', () => {
     });
   }
 
-  test('primary3.2.8 retains both transitive completion dependencies', () => {
+  test('primary 3.2.8 retains both transitive completion dependencies', () => {
     assert.deepEqual([...expectedClosure('3.0.25')].sort(), [...ENTRY_POINTS].sort());
-    assert.deepEqual([...expectedClosure('3.1.30')].sort(), [...ENTRY_POINTS].sort());
+    assert.deepEqual([...expectedClosure('3.1.32')].sort(), [...ENTRY_POINTS].sort());
     assert.deepEqual(
       [...expectedClosure('3.2.8')].sort(),
       [...ENTRY_POINTS, 'task-completion-data.json', 'get-creative-features-completion.json'].sort()

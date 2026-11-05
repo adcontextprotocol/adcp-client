@@ -66,17 +66,20 @@ from `@adcp/sdk/v2/projection`. These advisories remain outside the wire JSON.
 
 ```text
 schemas/cache/
-├── 3.2.7/       # primary SDK pin
-├── 3.1.29/      # maintained stable release
+├── 3.2.8/       # primary SDK pin
+├── 3.1.32/      # maintained stable release
+├── 3.1.30/      # maintained stable release (exact historical corpus)
 ├── 3.0.25/      # maintained stable release
 └── latest/      # symlink to the primary pin
 ```
 
 Run `npm run sync-schemas:all` to refresh the primary and maintained bundles. Run `npm run generate-types:all` to regenerate public types, then `npm run build:lib` to build and copy supported schemas into the package. `copy-schemas-to-dist.ts` excludes retired AdCP 2 caches even when present locally. `check-publish-protocol-artifacts.mjs` checks the published schema inventory and rejects retired type exports.
 
-The v16 primary pin is AdCP 3.2.7, including its signed schema and compliance bundles. The patch refresh preserves the public request/response types and the existing pathways to AdCP 3.1 and 3.0.
+The v16 primary pin is AdCP 3.2.8, including its signed schema and compliance bundles. It is unchanged by maintained 3.1 adoption: a side bundle never repins the primary, and `sync-schemas` leaves the primary skills and the `latest` pointer alone for any non-primary version. The patch refresh preserves the public request/response types and the existing pathways to AdCP 3.1 and 3.0.
 
-Compliance pins select exact fixture bytes, unlike same-minor wire schema aliases. SDK 16.5.0 packages the 3.2.7 corpus; when upgrading from SDK 16.4.0, update explicit `--compliance-version 3.2.5` flags to `3.2.7`. A development pin of `3.2.6` must likewise advance. Retain the matching historical SDK if a run requires that older corpus. The maintained 3.1.29 and 3.0.25 corpora remain packaged.
+Compliance pins select exact fixture bytes, unlike same-minor wire schema aliases. Retain the matching historical SDK if a run requires an older corpus. The maintained 3.1.32, 3.1.30 and 3.0.25 corpora are all packaged.
+
+That distinction matters when two patches of the same minor are maintained together. `copy-schemas-to-dist.ts` groups source schema caches by minor and ships the highest patch, so `dist/lib/schemas-data/3.1/` resolves to 3.1.32 — the **schema** alias deliberately collapses. The **compliance** corpora do not: `compliance/cache/3.1.30/` and `compliance/cache/3.1.32/` both ship with their own exact bytes, so a run pinned with `--compliance-version 3.1.30` still gets the fixtures it pinned. Do not read the retained 3.1.30 source cache as a promise that the packaged **schema** directory keeps 3.1.30 bytes; it does not.
 
 Build tooling also understands exact AdCP 3.3.0 `beta.N` and `rc.N` pins. Such a build retains maintained AdCP 3.0, 3.1, and 3.2 GA aliases through 3.2.7 while advertising only the selected prerelease, without a moving beta/RC-family alias. This prepares the v17 integration; the stable v16 compatibility list continues to advertise only AdCP 3.2 and earlier.
 

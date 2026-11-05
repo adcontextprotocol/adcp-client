@@ -280,24 +280,56 @@ describe('applyBrandInvariant: ordinary run-brand behavior is untouched', () => 
  * received and the `structuredContent` `toMcpResponse` actually produced,
  * refusal branches included. Nothing here relaxes a schema or invents a payload.
  */
+// Two different things, deliberately not the same constant.
+//
+// ADCP_WIRE_VERSION is the full release this run REQUESTS — what the storyboard
+// run is configured with as `adcpVersion`, and what every schema lookup below
+// asks for, exactly as this regression originally did. It is a requested
+// release identifier, not a literal wire field: the request carries the
+// negotiated 3.1 minor, not the string "3.1.30" as `adcp_version`.
+//
+// SELECTED_NATIVE_VERSION is the release the packaged bundle actually SERVES
+// for that request. Schema bundles collapse by minor and ship the highest
+// patch, so a 3.1 request resolves to 3.1.32 once that release is adopted.
+// Keeping the lookup on the requested release while asserting the served one
+// is what proves the collapse instead of assuming it.
 const ADCP_WIRE_VERSION = '3.1.30';
+const SELECTED_NATIVE_VERSION = '3.1.32';
 
 /** The release's own controller schemas, from the shipped bundle. Not a local copy. */
 function controllerValidators() {
   const { getSchemaDocumentByRef, getSchemaValidatorByRef } = require('../../dist/lib/validation/schema-loader.js');
   const bind = direction => {
     const ref = `compliance/comply-test-controller-${direction}.json`;
+
+    // Look up by the REQUESTED release, unchanged from the original regression.
     const doc = getSchemaDocumentByRef(ref, ADCP_WIRE_VERSION);
-    assert.ok(doc, `${ref} is not in the shipped ${ADCP_WIRE_VERSION} bundle`);
+    assert.ok(doc, `${ref} is not reachable for requested release ${ADCP_WIRE_VERSION}`);
+
+    // ...but assert what was actually served.
     assert.equal(
       doc.schema.$id,
-      `/schemas/${ADCP_WIRE_VERSION}/${ref}`,
-      'controller validation must bind the selected release, not another one'
+      `/schemas/${SELECTED_NATIVE_VERSION}/${ref}`,
+      'controller validation must bind the selected native release, not another one'
     );
-    assert.equal(doc.resolvedVersion, ADCP_WIRE_VERSION);
+    assert.equal(doc.resolvedVersion, SELECTED_NATIVE_VERSION);
+
+    // Cross-check against a direct selected-native lookup. Compare the whole
+    // schema body, not just the $id string: matching identifiers would not rule
+    // out two different documents sharing an id.
+    const direct = getSchemaDocumentByRef(ref, SELECTED_NATIVE_VERSION);
+    assert.ok(direct, `${ref} is not in the shipped ${SELECTED_NATIVE_VERSION} bundle`);
+    assert.equal(direct.resolvedVersion, SELECTED_NATIVE_VERSION);
+    assert.deepEqual(
+      doc.schema,
+      direct.schema,
+      'the requested-release lookup must reach the identical native document, body and all'
+    );
+
     const validate = getSchemaValidatorByRef(ref, ADCP_WIRE_VERSION, undefined, { allErrors: true });
     assert.equal(typeof validate, 'function', `${ref} did not compile`);
     assert.equal(validate.schema.$id, doc.schema.$id, 'compiled validator must bind the selected native document');
+    assert.deepEqual(validate.schema, direct.schema, 'the compiled validator must be that same document');
     return validate;
   };
   const request = bind('request');
@@ -306,14 +338,14 @@ function controllerValidators() {
     request: payload => {
       assert.ok(
         request(payload),
-        `controller request violates ${ADCP_WIRE_VERSION}: ${JSON.stringify(request.errors)}`
+        `controller request violates ${SELECTED_NATIVE_VERSION}: ${JSON.stringify(request.errors)}`
       );
       return payload;
     },
     response: payload => {
       assert.ok(
         response(payload),
-        `controller response violates ${ADCP_WIRE_VERSION}: ${JSON.stringify(response.errors)}`
+        `controller response violates ${SELECTED_NATIVE_VERSION}: ${JSON.stringify(response.errors)}`
       );
       return payload;
     },
