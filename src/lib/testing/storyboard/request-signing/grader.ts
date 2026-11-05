@@ -122,6 +122,13 @@ export interface GradeOptions extends LoadVectorsOptions {
    */
   agentProtocolMethodsRequiredFor?: readonly string[];
   /**
+   * The agent's `get_adcp_capabilities` response, used to evaluate a vector's
+   * `applies_when` condition (adcp#8064). A vector whose condition does not
+   * hold skips as `capability_profile_mismatch`. Without this option,
+   * conditional vectors are graded.
+   */
+  agentCapabilities?: Record<string, unknown>;
+  /**
    * Transport shape the agent speaks. `'mcp'` (default) wraps each
    * vector body in a JSON-RPC `tools/call` envelope and POSTs to the MCP
    * mount path (`agentUrl`) — use when grading an MCP agent whose verifier
@@ -491,7 +498,8 @@ export function semanticVectorExclusion(
 /**
  * Centralized skip decisions. Checks (in order): onlyVectors filter,
  * operator skipVectors, agent-capability-profile mismatch
- * (`agentCapability` wired), transport-ungradable, MCP-mode URL-edge
+ * (`agentCapability` wired), an unmet `applies_when` condition
+ * (`agentCapabilities` wired), transport-ungradable, MCP-mode URL-edge
  * flattening, rate-abuse opt-out, stateful-contract missing, and the
  * live-side-effect gate.
  */
@@ -554,6 +562,10 @@ function preflightSkip(
         diagnostic: requiredForMismatch.diagnostic,
       };
     }
+  }
+  const appliesWhen = appliesWhenExclusion(vector, options.agentCapabilities);
+  if (appliesWhen) {
+    return { ...base, skipped: true, skip_reason: appliesWhen.skip_reason, diagnostic: appliesWhen.diagnostic };
   }
   // Transport-ungradable comes from the shared helper so the grader and the
   // storyboard probe can't drift on which vectors no HTTP binding can carry.
@@ -1368,6 +1380,52 @@ export function advertisedRequiredForExclusion(
       `Vector asserts required_for includes [${missing.join(', ')}] but the agent declares ` +
       `required_for [${agentRequiredFor.join(', ')}]. The vector tests a rejection path the ` +
       `agent has not opted into; add the operation to request_signing.required_for to grade it.`,
+  };
+}
+
+const APPLIES_WHEN_GRAMMAR = /^\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*(==|!=)\s*(.+?)\s*$/;
+
+const capabilityRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * Evaluate a vector's `applies_when` condition (adcp#8064) against the agent's
+ * advertised `get_adcp_capabilities` response. A vector whose condition does
+ * not hold tests a path the agent does not offer, so it skips as
+ * `capability_profile_mismatch` instead of failing. Vector 027 uses this:
+ * condition (b) of `request_signature_required` applies only while
+ * `webhook_signing.legacy_hmac_fallback` is `true`, and an absent
+ * `webhook_signing` block does not satisfy it.
+ *
+ * Supported form: a dotted capability path compared with `==` or `!=` to a
+ * JSON scalar. Without capabilities, or with any other expression, the vector
+ * stays graded, so a condition the grader cannot read never hides a failure.
+ */
+export function appliesWhenExclusion(
+  vector: PositiveVector | NegativeVector,
+  agentCapabilities: unknown
+): SemanticVectorExclusion | undefined {
+  const expression = vector.applies_when;
+  if (expression === undefined || !capabilityRecord(agentCapabilities)) return undefined;
+  const [, path, operator, literal] = APPLIES_WHEN_GRAMMAR.exec(expression) ?? [];
+  if (!path || !operator || !literal) return undefined;
+  let expected: unknown;
+  try {
+    expected = JSON.parse(literal);
+  } catch {
+    return undefined;
+  }
+  // JSON scalars only; an array or object literal is outside the supported form.
+  if (typeof expected === 'object' && expected !== null) return undefined;
+  let actual: unknown = agentCapabilities;
+  for (const segment of path.split('.')) {
+    const descriptor = capabilityRecord(actual) ? Object.getOwnPropertyDescriptor(actual, segment) : undefined;
+    actual = descriptor && 'value' in descriptor ? descriptor.value : undefined;
+  }
+  if ((actual === expected) === (operator === '==')) return undefined;
+  return {
+    skip_reason: 'capability_profile_mismatch',
+    diagnostic: `Vector applies only when \`${expression}\`, which the agent's advertised capabilities do not satisfy.`,
   };
 }
 
