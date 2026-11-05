@@ -411,6 +411,13 @@ export function stripLegacyCreativeIdentity<T>(value: T): CanonicalCreativeRespo
     }
     return !/(^|_)(?:creative|format|legacy|offending|target|input|output)($|_)/.test(key);
   };
+  // A platform extension reference URI is based on its owning agent's URL by
+  // contract, so it can share a prefix with a legacy agent_url. It is the
+  // canonical schema location, not legacy routing identity (#3592).
+  const platformExtensionUri = (key: string, owner: Record<string, unknown>, ownerKey?: string): boolean =>
+    key === 'uri' &&
+    (ownerKey === 'format_schema' || ownerKey === 'platform_extensions') &&
+    typeof ownDataValue(owner, 'uri') === 'string';
   const legacyKey = (key: string, owner: Record<string, unknown>, ownerKey?: string): boolean => {
     if (creativeIdentityKey(key)) return true;
     if (!/(^|_)agent_url($|_)/.test(key)) return false;
@@ -612,7 +619,10 @@ export function stripLegacyCreativeIdentity<T>(value: T): CanonicalCreativeRespo
         changed = true;
         continue;
       }
-      const safe = preservesNonCreativeAgentUrl(key, owner, ownerKey) ? child : strip(child, key);
+      const safe =
+        preservesNonCreativeAgentUrl(key, owner, ownerKey) || platformExtensionUri(key, owner, ownerKey)
+          ? child
+          : strip(child, key);
       if (safe !== child) changed = true;
       if (plain && typeof key === 'string' && descriptor.enumerable) result[key] = safe;
       else Object.defineProperty(result, key, { ...descriptor, value: safe });
