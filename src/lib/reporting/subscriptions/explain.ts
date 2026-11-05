@@ -816,10 +816,8 @@ function classify(
   // adcp#8718: a package added after confirmed_at is owed from its added_at; the buy owes the period
   // when at least one package resolving the offering is owed it.
   const packageConfirmed = regime && offeringId !== null ? regime.packages.get(offeringId) : undefined;
-  const added =
-    packageConfirmed !== undefined && confirmedAt !== undefined
-      ? [...packageConfirmed].filter(([, at]) => at > confirmedAt)
-      : [];
+  // The confirmation check above returned unless confirmedAt is defined.
+  const added = packageConfirmed !== undefined ? [...packageConfirmed].filter(([, at]) => at > confirmedAt) : [];
   if (added.length > 0) {
     const packageFacts = {
       ...confirmationFacts,
