@@ -1,5 +1,110 @@
 # Changelog
 
+## 16.7.0
+
+### Minor Changes
+
+- 63d61dc: Add native field_excludes negative membership checks and the intrinsic
+  field_excludes_runner requirement. Inspect every wildcard terminal without the
+  10,000-value collection cap so large catalogs cannot hide a prohibited value.
+  Empty results and additional matching products remain valid. Reject malformed
+  paths and unresolved comparator references instead of silently proving absence.
+
+### Patch Changes
+
+- ff87222: Reduce cold MCP output-schema compilation and validation memory by factoring large remote schemas into small referenced validators. Preserve seller constraints, reference scopes, formats, and protocol dialects. Add required regression checks for generated function size and repeated output validation, and reduce discovery's peak-memory budget to 512 MiB.
+- 60c97b7: Preserve an already-resolved account brand on list/status-account requests, and ship the published `comply_test_controller` schemas in the packaged bundle.
+
+  **Storyboard brand invariant (`list_accounts`, `comply_test_controller` scenario `force_account_status`)**
+
+  The storyboard brand invariant overwrote `account.brand` on every natural-key account reference with the run's brand. For requests whose `account` _is_ the subject of the operation, that brand is half of a composite natural key rather than the run's session scope: overwriting it kept the resolved `operator` and produced a schema-valid reference to an account nobody provisioned. Those two operations now keep an explicitly supplied `account.brand` and only ever add the run brand to a reference that carries none.
+
+  The preservation check uses `Object.hasOwn`, matching the sibling sandbox gate in `src/lib/server/account-mode.ts`, so an inherited `Object.prototype.brand` cannot make this branch preserve a brand the request never carried. That is the only claim: the enclosing natural-key test is pre-existing and still uses `in`, so this is not prototype hardening for the whole function. Malformed brand values are passed through to validation rather than substituted. A _missing_ `operator` is still scaffolded, as it has been since #1419 — it is now derived from the preserved brand's domain rather than the run brand's, which is the point of the repair, not an exception to it.
+
+  Deliberately bounded: this covers `list_accounts` and `force_account_status` only. `request_account` keeps its existing run-brand behavior, and other account-subject tools — including the supported financial and change-feed operations — are unchanged and still affected. This is not a general account-subject exemption. The `{account_id}` arm of `AccountReference` stays closed, ID-only references, omitted accounts, unfiltered listing and the existing wholesale `get_products` / `get_signals` exceptions all behave as before.
+
+  **Packaged `compliance/` schemas**
+
+  `compliance/` was excluded from the published bundle wholesale, so `getSchemaValidatorByRef('compliance/comply-test-controller-*.json', version)` returned `undefined` against an installed package even though every supported release publishes both documents, and `schemaAllowsTopLevelField` failed open for the tool. The build now copies the controller request and response plus the siblings they `$ref`, transitively and byte-for-byte, from the selected published cache. Only absolute or root-relative same-version refs within the same `compliance/` directory are followed, and each resolved path is re-checked for containment before it is read. Nothing is fetched or generated.
+
+  Per-version consequences, from the retained published caches:
+  - **3.0.25** — 2 files. The controller request declares neither `account` nor a top-level `brand`, and the response composes no protocol envelope, so no sandbox-account carrier or task-status requirement applies.
+  - **3.1.30** — 2 files. The request requires the sandbox `account` assertion; the response composes the version envelope and then the protocol envelope, and that protocol envelope requires `status`.
+  - **3.2.8** — 4 files. Same request and response requirements as 3.1.30, plus `task-completion-data.json` and the `get-creative-features-completion.json` it references. Without those two AJV cannot compile the controller validator at all.
+
+  Three consequences are visible without any agent change. `getSchemaValidatorByRef('compliance/comply-test-controller-request.json', version)` and its `-response` counterpart now return a validator against an installed package, as do `getValidator('comply_test_controller', 'request', version)` and `getValidator('comply_test_controller', 'sync', version)` — `'sync'` is the terminal response variant, and `getValidator(..., 'response', ...)` is not a legal `Direction` and returns `undefined`. The documents were previously absent and every such lookup returned `undefined`. Declared-field gating now has a schema to consult, so the runner stops adding an undeclared root `brand` to controller requests and the controller `account` stays canonical on the releases that declare it — 3.1.30 and 3.2.8 declare `account`, 3.0.25 declares neither `account` nor a root `brand`. And the selected release's response JSON Schema validation actually runs for this tool, so a controller that was already nonconformant can newly fail a conformance step. The request schema resolves too, so `validateRequest` now actually checks controller requests — new log noise at the `'warn'` default, hard failures for anyone running `validation: { requests: 'strict' }` — and, since that schema declares no root `brand`, a run-scoped root `brand` that previously rode along by fail-open is now suppressed. That is not a new wire contract: `status` was already required through the 3.1.30 and 3.2.8 protocol envelopes and is not required by 3.0.25. `src/lib/testing/client.ts` defaults `validation.responses` to `strict`, so testing-surface runs see this first; the ordinary client surface warns separately, and the generated Zod projection check is a separate layer that is unchanged. `docs/development/WIRE-VERSION-COMPAT.md` records the per-release file counts and points at the existing temporary legacy escape hatch in `docs/guides/VALIDATE-YOUR-AGENT.md`.
+
+  Seeding the copy set from the entry points keeps it minimal by construction, but it trims nothing today: on all three retained caches the reachable closure is the entire `compliance/` directory. The filter is forward-looking, not presently selective. A bare-relative `"./x.json"` ref would not be followed; none exists in any published cache, and the per-version compile assertion in the new packaging test is the net for either case.
+
+  Existing bundle behavior is otherwise untouched: highest-patch collapsing, the retained MCP media-buy role projection, `tmp/` and `bundled/` exclusion, compact bundles and prior compatibility handling all stay as they were.
+
+- 63d61dc: Scope automatic product and pricing-option fixtures to the account used by the
+  storyboard's effective public requests, retaining complete natural identity or an
+  opaque account reference across ordinary, routed and fixture-resolution seeds.
+  Resolve run-brand overrides, context inputs, provisioning account aliases and
+  later timezone enrichment consistently; refuse ambiguous or unresolved account
+  scope. Independent account provisioning seeds retain their existing targets.
+  Include operator unit, currency and timezone in the server's natural-account seed
+  cache scope so one account cannot reuse another account's fixture cache entries.
+
+  Preserve provenance creative_policy.accepted_verifiers agent URLs when stripping
+  legacy creative-format identity, including URLs shared with a format provider.
+
+  Preserve complete account identity through the platform controller wrapper and
+  refuse catalog auto-seeds without a resolved account instead of reporting a
+  successful fixture write after dropping it.
+
+  Preserve the optional open controller account carrier at MCP ingress so full
+  identity reaches per-request store factories without rejecting valid AdCP 3.0
+  requests. AdCP 3.1 callers still supply their required sandbox assertion.
+
+- 63d61dc: Preserve the authored create_media_buy brand when the storyboard runner has no
+  explicit run-brand override. The fixture-aware buyer enricher previously replaced
+  that brand with test.example even when the account correctly named the fixture's
+  advertiser, causing strict sellers to refuse an otherwise valid auction buy.
+  An explicit run-brand option continues to override the request and account together.
+- 49c7f16: Reuse compiled MCP output-schema validators across tool listings and connections with a content-keyed LRU capped at 256 entries and 64 MiB of serialized schemas per MCP era. Preserve legacy and modern JSON Schema validation behavior, isolate schemas with conflicting `$id` values, and release compiler caches on eviction. Schemas exceeding the byte budget still validate but are not cached; generated validator code contributes additional memory beyond the schema-byte allowance.
+
+  Add reproducible performance comparisons using real AdCP schemas, with CI guards for repeated compilation, event-loop stalls, peak RSS, retained heap, and compiler retention after LRU eviction. Reports include an uncached reproduction and a hidden-cache memory-leak negative control.
+
+- 63d61dc: Synchronize the registry OpenAPI snapshot and generated response types with the
+  official additive brand entry field. Keep existing brand_manifest semantics and
+  relationship authorization unchanged.
+- 63d61dc: For canonical creatives with known package declarations sent to legacy sellers,
+  choose a legacy format identity shared by every compatible package instead of selecting from their
+  union. Preserve SDK 16's canonical kinds and wire mappings; explicit assignments
+  still require a compatible reference in every assigned package, with owner,
+  option and dimension constraints retained. Unscoped or unmapped selectors and
+  explicit legacy creative identities retain SDK 16's existing projection route.
+- d4883a3: Validate storyboard webhook payloads against the run's selected AdCP release and report the exact resolved schema version. A 3.0 run now grades its webhook result against the 3.0 contract, while incoming webhook version claims cannot change the selected validator. Runs without a version pin keep the SDK default.
+- 6553bfa: Adopt the maintained AdCP 3.1.32 compliance corpus alongside the existing 3.1.30 and 3.0.25 corpora.
+
+  `sync-schemas:all`, `schemas:ensure` and the published-artifact validator now treat 3.1.32 as a maintained side bundle. It is synced through the ordinary signature-required route from the official origin, with no mirror, trust or custom-bundle override, and the validator requires it in the packed inventory the same way it already requires 3.1.30 and 3.0.25.
+
+  Added alongside, not instead of. `compliance/cache/3.1.30/` keeps its exact bytes and stays packaged, so a run pinned with `--compliance-version 3.1.30` still resolves the fixtures it pinned.
+
+  One asymmetry is worth stating plainly, because the two caches behave differently. Schema bundles collapse by minor: `copy-schemas-to-dist.ts` ships the highest patch per minor, so `dist/lib/schemas-data/3.1/` resolves to 3.1.32 and the packaged 3.1 _schema_ directory no longer carries 3.1.30 bytes. Compliance corpora do not collapse — both patch directories ship with their own bytes. Retaining the 3.1.30 source cache is a promise about compliance fixtures, not about the schema alias.
+
+  Comparing the two releases' schema trees, they differ only in release identifiers and generated timestamps; no structural validation-rule changes were found between them.
+
+  `COMPATIBLE_ADCP_VERSIONS` describes accepted wire versions, not the inventory of packaged compliance corpora. This package ships corpora for 3.0.25, 3.1.30, 3.1.32 and 3.2.8; it does not include an exact 3.1.31 compliance cache.
+
+  Not strictly additive for storyboard coverage. Four unique storyboards (eight mirrored copies) are inert on this SDK under 3.1.32 because they declare the `collect_product_pages_runner` requirement, which SDK 16 does not implement. Two of them — `media_buy_seller/canonical_formats` and `pricing_currency_filter` — carry no requirement in 3.1.30 and do run there, so pinning 3.1.32 instead loses that coverage; they report `requirement_unmet` and skip rather than failing silently. The other two, `canonical_custom_formats` and `canonical_experimental_formats`, are new in 3.1.32 and inert for the same reason, so they are not lost coverage. Nothing was relaxed to make them pass.
+
+  The primary pin is unchanged at AdCP 3.2.8, with its skills, codegen provenance and `latest` pointer untouched; a side sync never repins the primary. `LAST_3_1_GA_PATCH` advances from 30 to 32 so the generated compatibility enumeration covers the new patch.
+
+- 7e7d903: Keep runner-local assertions, probes, accountless controller capability discovery and
+  format-only validation requests from inventing a second catalog account through run-brand defaults.
+  Rate-limit trip assertions still contribute the account of their actual nested
+  seller request, and conflicting authored or default buyer accounts continue to fail
+  before catalog seeding. Preserve frozen AdCP 3.0 storyboards without changing
+  their contents or the SDK's protocol/cache pins.
+
+  Use the run's selected AdCP schema for brand/account field presence checks,
+  so legacy format discovery does not acquire the primary version's scoped
+  account. Preserve the controller builder's actual sandbox default when checking
+  mutating-controller account ambiguity on legacy versions.
+
 ## 16.6.1
 
 ### Patch Changes
