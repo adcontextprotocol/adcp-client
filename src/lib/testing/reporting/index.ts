@@ -119,7 +119,11 @@ export interface ReferenceReportingSeller {
     >;
     buys: Map<string, ReportingTestBuy & { canceled_at?: string; completed_at?: string }>;
   };
-  readonly clock: { now: Date };
+  /**
+   * The seller's sandbox clock. Setting `now` pins it; `unpin()` (what `reset_state` does, adcp#8717)
+   * makes `now` read the wall clock again until the next assignment.
+   */
+  readonly clock: { now: Date; unpin(): void };
 }
 
 const FULL_GRANT = ['get_reporting_status', 'sync_reporting_receipts', 'sync_reporting_status', 'get_media_buys'];
@@ -172,8 +176,19 @@ export const offerings = {
 export function createReferenceReportingSeller(
   options: ReportingTestKitOptions & { complyTest?: ComplyControllerConfig }
 ): ReferenceReportingSeller {
-  const clock = { now: new Date(options.start) };
-  if (!Number.isFinite(clock.now.getTime())) throw new TypeError('start must be an RFC 3339 instant');
+  let pinned: Date | undefined = new Date(options.start);
+  if (!Number.isFinite(pinned.getTime())) throw new TypeError('start must be an RFC 3339 instant');
+  const clock = {
+    get now(): Date {
+      return pinned ?? new Date();
+    },
+    set now(value: Date) {
+      pinned = value;
+    },
+    unpin(): void {
+      pinned = undefined;
+    },
+  };
   const now = () => clock.now;
   const tenantId = options.tenantId ?? 'reference';
   const deliveryOfferings = options.offerings ?? [offerings.dailyAnalytics()];
@@ -518,41 +533,71 @@ export function createReportingTestKit(options: ReportingTestKitOptions): Report
     await runCycle();
   };
 
-  // What each caller's probe changed, with the value before its first change, so reset_state can
-  // undo it (adcp#8717).
-  const probeChanges = new Map<
-    string,
-    { grants: Map<string, readonly string[] | null>; timezones: Map<string, string> }
-  >();
-  const changesOf = (caller: string) => {
-    let changes = probeChanges.get(caller);
-    if (!changes) probeChanges.set(caller, (changes = { grants: new Map(), timezones: new Map() }));
-    return changes;
+  // What each caller's probe changed, with the value before its first change and the engine's account
+  // record then, so reset_state can discard the changes with the coverage history they recorded
+  // (adcp#8717). The kit keeps the accounts, with the changes undone.
+  type Baseline = {
+    grant?: readonly string[] | null;
+    timezone?: string;
+    engine: { value: Record<string, unknown> } | null;
   };
-  const rememberGrant = (caller: string, accountId: string) => {
-    const grants = changesOf(caller).grants;
-    if (grants.has(accountId)) return;
-    const grant = account(accountId).grants.get(caller);
-    grants.set(accountId, grant ? [...grant.allowed_tasks] : null);
+  const probeChanges = new Map<string, Map<string, Baseline>>();
+  const remember = async (caller: string, accountId: string, what: 'grant' | 'timezone') => {
+    let accounts = probeChanges.get(caller);
+    if (!accounts) probeChanges.set(caller, (accounts = new Map()));
+    let baseline = accounts.get(accountId);
+    if (!baseline) {
+      const record = await seller.storage.subscriptions.get(principalOf(caller), `account:${accountId}`);
+      baseline = { engine: record ? { value: structuredClone(record.value) } : null };
+      accounts.set(accountId, baseline);
+    }
+    const found = account(accountId);
+    if (what === 'grant' && !('grant' in baseline)) {
+      const grant = found.grants.get(caller);
+      baseline.grant = grant ? [...grant.allowed_tasks] : null;
+    }
+    if (what === 'timezone' && baseline.timezone === undefined) baseline.timezone = found.timezone;
   };
+  const rememberGrant = (caller: string, accountId: string) => remember(caller, accountId, 'grant');
 
   bound.reset = async caller => {
-    const changes = probeChanges.get(caller);
+    // reset_state unpins the sandbox clock: simulated_now reads the wall clock until the next
+    // advance_time. The kit has one clock for its seller, so this unpins it for every caller.
+    clock.unpin();
+    const accounts = probeChanges.get(caller);
     probeChanges.delete(caller);
-    if (!changes) return;
-    // The kit has one virtual clock, which is its seller's wall clock: there is no pinned clock to
-    // release, so the reset leaves it where it is. Grants and timezones go back to their values before
-    // the probe first changed them.
-    for (const [accountId, timezone] of changes.timezones) account(accountId).timezone = timezone;
-    for (const [accountId, tasks] of changes.grants) {
-      const current = account(accountId).grants.get(caller);
-      const same =
-        tasks === null
-          ? !current
-          : current !== undefined &&
-            current !== null &&
-            JSON.stringify(current.allowed_tasks) === JSON.stringify(tasks);
-      if (!same) await changeGrant(caller, accountId, tasks);
+    for (const [accountId, baseline] of accounts ?? []) {
+      const found = account(accountId);
+      if (baseline.timezone !== undefined) found.timezone = baseline.timezone;
+      if ('grant' in baseline) {
+        found.grants.set(caller, baseline.grant ? { allowed_tasks: [...baseline.grant] } : null);
+      }
+      // Put the engine's account record (grant journal, gaps, cutovers, frozen periods) back to what it
+      // was before the probe's first change, so the history the changes recorded is discarded.
+      const store = seller.storage.subscriptions;
+      const principal = principalOf(caller);
+      const key = `account:${accountId}`;
+      if (baseline.engine) {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const current = await store.get(principal, key);
+          const result = await store.put(
+            principal,
+            key,
+            structuredClone(baseline.engine.value),
+            current?.revision ?? null
+          );
+          if (result.outcome === 'applied') break;
+        }
+      }
+      // Mark the principal due, with the restored grant, so the next cycle reconciles it.
+      const grant = found.grants.get(caller);
+      await service.grants!.changed({
+        principal,
+        accountId,
+        at: clock.now.toISOString(),
+        authorized: grant !== null && grant !== undefined,
+        ...(grant ? { allowedTasks: [...grant.allowed_tasks] } : {}),
+      });
     }
     await runCycle();
   };
@@ -572,11 +617,11 @@ export function createReportingTestKit(options: ReportingTestKitOptions): Report
     if (!found) throw new TestControllerError('NOT_FOUND', `No sandbox account ${JSON.stringify(accountId)}`);
     switch (params.operation) {
       case 'revoke_grant':
-        rememberGrant(caller, accountId);
+        await rememberGrant(caller, accountId);
         await changeGrant(caller, accountId, null);
         return { simulated_now: at(), account_id: accountId, unauthorized_at: at() };
       case 'regrant': {
-        rememberGrant(caller, accountId);
+        await rememberGrant(caller, accountId);
         await changeGrant(caller, accountId, FULL_GRANT);
         const listed = await buyer(caller).call('list_accounts', {});
         const item = ((listed.data as { accounts?: Json[] } | undefined)?.accounts ?? []).find(
@@ -595,7 +640,7 @@ export function createReportingTestKit(options: ReportingTestKitOptions): Report
       }
       case 'reduce_grant':
         // A reduction without get_reporting_status is a loss of reporting authority (adcp#8718).
-        rememberGrant(caller, accountId);
+        await rememberGrant(caller, accountId);
         await changeGrant(caller, accountId, params.allowed_tasks);
         return { simulated_now: at(), account_id: accountId, allowed_tasks: [...params.allowed_tasks] };
       case 'set_account_timezone': {
@@ -610,8 +655,7 @@ export function createReportingTestKit(options: ReportingTestKitOptions): Report
             timezone_cutovers: [],
           };
         }
-        const timezones = changesOf(caller).timezones;
-        if (!timezones.has(accountId)) timezones.set(accountId, previous);
+        await remember(caller, accountId, 'timezone');
         found.timezone = params.timezone;
         // Account-timezone periods cut over at the first old-timezone boundary at or after the change.
         const cutovers = (service.capabilities.offerings ?? []).flatMap(offering => {

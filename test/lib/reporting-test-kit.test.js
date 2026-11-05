@@ -271,12 +271,24 @@ describe('comply_test_controller reporting_subscription_probe', () => {
     await probe(buyer, { operation: 'advance_time', target_time: day(2) });
     await probe(buyer, { operation: 'revoke_grant', account_id: 'acc_a' });
     await probe(buyer, { operation: 'set_account_timezone', account_id: 'acc_a', timezone: 'Europe/Paris' });
+    const before = Date.now();
     const reset = await buyer.call('comply_test_controller', { scenario: 'reset_state' });
     assert.equal(reset.data.success, true, JSON.stringify(reset));
+    // The sandbox clock is unpinned: it reads the wall clock until the next advance_time.
+    const unpinned = k.clock.now().getTime();
+    assert.ok(unpinned >= before && unpinned <= Date.now(), 'simulated_now reads the wall clock');
     const accounts = await buyer.call('list_accounts', {});
     const account = accounts.data.accounts.find(item => item.account_id === 'acc_a');
     assert.ok(account, 'the grant is back');
     assert.equal(account.timezone, 'America/New_York');
+    // The revocation's coverage history is discarded with it: no lost authority, no re-grant.
+    assert.equal(account.authorization.regranted_at, undefined);
+    const state = (await buyer.call('get_principal', {})).data.result.configuration.reporting_subscriptions[0];
+    assert.deepEqual(state.accounts_unauthorized ?? [], []);
+    // advance_time pins it again.
+    const target = new Date(Date.now() + 86_400_000).toISOString();
+    const pinned = await probe(buyer, { operation: 'advance_time', target_time: target });
+    assert.equal(pinned.data.simulated.simulated_now, target);
     // A second reset has nothing to undo.
     assert.equal((await buyer.call('comply_test_controller', { scenario: 'reset_state' })).data.success, true);
   });
