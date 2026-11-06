@@ -216,6 +216,32 @@ describe('creative format delivery projection', () => {
     assert.doesNotMatch(prefixed.message, /creative\.example|custom_takeover_v1/);
   });
 
+  for (const referenceKey of ['format_schema', 'platform_extensions']) {
+    for (const referenceFirst of [true, false]) {
+      test(`keeps ${referenceKey} policy separate for shared references (${referenceFirst ? 'reference' : 'diagnostic'} first)`, () => {
+        const agentUrl = 'https://creative.example/translated/acme-outdoor';
+        const uri = `${agentUrl}/schemas/custom_takeover_v1`;
+        const digest = `sha256:${'a'.repeat(64)}`;
+        const reference = { uri, digest };
+        const shared = referenceKey === 'platform_extensions' ? [reference] : reference;
+        const fields = referenceFirst
+          ? { [referenceKey]: shared, landing: shared }
+          : { landing: shared, [referenceKey]: shared };
+        const payload = {
+          format_ids: [{ agent_url: agentUrl, id: 'custom_takeover_v1' }],
+          ...fields,
+        };
+        const safe = stripLegacyCreativeIdentity(payload);
+        const canonical = referenceKey === 'platform_extensions' ? safe[referenceKey][0] : safe[referenceKey];
+        const diagnostic = referenceKey === 'platform_extensions' ? safe.landing[0] : safe.landing;
+        assert.deepEqual(canonical, { uri, digest });
+        assert.deepEqual(diagnostic, { uri: '[legacy creative identity]/schemas/custom_takeover_v1', digest });
+        assert.equal(safe.format_ids, undefined);
+        assert.deepEqual(reference, { uri, digest }, 'seller-owned reference stays unchanged');
+      });
+    }
+  }
+
   test('preserves beta.6 canonical format kinds in diagnostics and canonical delivery', () => {
     for (const formatKind of ['seller_rendered_stateful_display', 'coordinated_placements']) {
       const safe = stripLegacyCreativeIdentity({
