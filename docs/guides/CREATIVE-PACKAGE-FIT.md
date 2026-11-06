@@ -6,7 +6,7 @@
 import { fitCreativeToPackages } from '@adcp/sdk';
 
 const decision = fitCreativeToPackages(creative, packages, {
-  adcpVersion: '3.3.0-beta.3',
+  adcpVersion: '3.3.0-beta.4',
   primaryAssetFacts: { width: 600, height: 500, pixel_ratio: 2 },
 });
 
@@ -54,3 +54,5 @@ For resolved VAST, `vastInlineCreatives` supplies linear creative groups and the
 The optional `legacyFormatConverter`, `canonicalFormatLegacyResolver`, and `legacyFormatDefinitions` use existing exact-owner migration contracts. Callback exceptions propagate to the caller; invalid callback answers remain projection refusals. No network lookup is added. Pass JSON-compatible immutable inputs. The function does not mutate them. It does not establish seller ownership, catalog authenticity, or renderer behavior.
 
 The broader fit-vector corpus proposed in adcontextprotocol/adcp#8644 and cross-SDK parity remain separate work. This API does not claim those implementations exist.
+
+On a 3.1 peer, mixed library hints can establish canonical wire support through a positively fitting package with native seller declarations. This fallback uses the same measurements, routing callbacks and applicable layers as projection; a rejected native package cannot lend evidence to a fitting legacy-only route. Existing full-scope native evidence retains its seller-validation behavior, and product evidence stays scoped to the current request.

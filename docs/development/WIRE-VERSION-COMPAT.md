@@ -79,7 +79,7 @@ from `@adcp/sdk/v2/projection`. These advisories remain outside the wire JSON.
 
 ```text
 schemas/cache/
-├── 3.3.0-beta.3/ # primary SDK pin
+├── 3.3.0-beta.4/ # primary SDK pin
 ├── 3.2.8/        # maintained stable release
 ├── 3.1.31/      # maintained stable release
 ├── 3.0.25/      # maintained stable release
@@ -96,7 +96,7 @@ Run `npm run sync-schemas:all` to refresh the primary and maintained bundles. Ru
 - If that happens, the two things to edit are `COMPLIANCE_BUNDLE_ENTRY_POINTS` (which documents seed the walk) and the `siblingRef` regex inside `complianceBundleFiles` (which ref forms are followed — currently a same-version, same-directory plain basename, with any host component — or none — accepted and ignored, since the name only ever selects a file already present in that verified cache directory; a bare-relative `"./x.json"` form is not followed and none exists in any published cache).
 - Shipping these schemas puts `comply_test_controller` in the schema-loader's file index. Three consequences, all intended: `getValidator` / `getSchemaValidatorByRef` resolve for it; `schemaAllowsTopLevelField` gates its fields from the declared schema instead of failing open (so the storyboard runner no longer adds an undeclared top-level `brand`, which was a valid `additionalProperties: true` extension, never an invalid request); and conformance runs now actually grade controller responses — see [Validate your agent](../guides/VALIDATE-YOUR-AGENT.md).
 
-The v17 beta primary pin is the signed AdCP 3.3.0-beta.3 bundle; it replaces 3.3.0-beta.2, which is no longer packaged or advertised. Stable SDK 16 remains on AdCP 3.2.8. The beta retains stable AdCP 3.2.8, 3.1.31 and 3.0.25 bundles for negotiation, schema projection and compliance runs.
+The v17 beta primary pin is the signed AdCP 3.3.0-beta.4 bundle; it replaces 3.3.0-beta.3, which is no longer packaged or advertised. Stable SDK 16 remains on AdCP 3.2.8. The beta retains stable AdCP 3.2.8, 3.1.31 and 3.0.25 bundles for negotiation, schema projection and compliance runs.
 
 Compliance pins select exact fixture bytes, unlike same-minor wire schema aliases. SDK 16.5.0 packages the 3.2.7 corpus; when upgrading from SDK 16.4.0, update explicit `--compliance-version 3.2.5` flags to `3.2.7`. A development pin of `3.2.6` must likewise advance. SDK 16.6.0 and SDK 17 beta package the 3.2.8 corpus, so explicit `--compliance-version 3.2.7` flags advance to `3.2.8`. Retain the matching historical SDK if a run requires that older corpus. The maintained 3.1.31 and 3.0.25 corpora remain packaged.
 

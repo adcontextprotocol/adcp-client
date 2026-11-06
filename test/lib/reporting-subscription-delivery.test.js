@@ -276,8 +276,14 @@ describe('managed subscription delivery in the Core service', () => {
   });
 
   test('a managed offering whose primary keys omit account_id is refused at creation (adcp#8619)', async () => {
-    await assert.rejects(world({ primaryKeys: ['media_buy_id'] }), error =>
-      /primary_keys omit account_id/.test(error.message)
+    // adcp#8718: the frozen code replaces the generic PLATFORM_CONFIG_INVALID fallback.
+    await assert.rejects(
+      world({ primaryKeys: ['media_buy_id'] }),
+      error =>
+        /primary_keys omit account_id/.test(error.message) &&
+        error.name === 'PlatformConfigError' &&
+        error.code === 'SUBSCRIPTIONS_REQUIRE_ACCOUNT_ID_KEY' &&
+        error.recovery === 'correctable'
     );
   });
 

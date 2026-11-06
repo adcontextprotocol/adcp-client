@@ -254,6 +254,178 @@ describe('canonical wire: format options the seller did not declare', () => {
     }
   }
 
+  test('3.1 seller declarations support mixed-size unassigned library uploads', async () => {
+    const products = [250, 600].map(height => ({
+      ...legacyOnlyProduct(`library-${height}`, undefined),
+      format_options: [
+        {
+          format_option_id: `size-${height}`,
+          format_kind: 'image',
+          params: { width: 300, height },
+          technical_requirements_complete: true,
+        },
+      ],
+    }));
+    const seller = await canonicalSeller(
+      products,
+      { wireAdcpVersion: '3.1.29', productCache: createProductCache() },
+      {
+        version: '3.1.29',
+        cacheScope: 'account',
+        declareCanonicalCreatives: false,
+      }
+    );
+    try {
+      const discovered = await seller.agent.getProducts({ buying_mode: 'brief', brief: 'Display', account: ACCOUNT });
+      const selectors = discovered.data.products.map((product, index) => ({ ...product, package_id: `p${index}` }));
+      const creatives = [250, 600].map(height => ({
+        creative_id: `library-${height}`,
+        name: 'Acme library banner',
+        format_kind: 'image',
+        assets: { image_main: { asset_type: 'image', url: 'https://assets.example/banner.png', width: 300, height } },
+      }));
+      for (const assignments of [undefined, []]) {
+        const result = await seller.agent.syncCreatives(
+          { account: ACCOUNT, creatives, ...(assignments && { assignments }) },
+          undefined,
+          {
+            creativeFormatProjection: { selectorContainers: selectors },
+          }
+        );
+        assert.strictEqual(result.success, true);
+        assert.deepStrictEqual(seller.captured.sync.creatives, creatives);
+        assert.strictEqual(Object.hasOwn(seller.captured.sync, 'assignments'), assignments !== undefined);
+        assert.deepStrictEqual(seller.captured.sync.assignments, assignments);
+        assert.strictEqual(
+          await seller.agent.resolveCreativeFormatWireMode('sync_creatives'),
+          'unknown',
+          'product evidence stays request scoped'
+        );
+      }
+    } finally {
+      await seller.close();
+    }
+  });
+
+  test('3.1 public MCP client uploads a mixed-size legacy library and keeps explicit assignments strict', async () => {
+    const products = [250, 600].map(height =>
+      legacyOnlyProduct(`legacy-${height}`, [
+        { agent_url: AAO, id: 'display_html', width: 300, height },
+        { agent_url: AAO, id: `display_300x${height}_html`, width: 300, height },
+      ])
+    );
+    const seller = await canonicalSeller(
+      products,
+      { wireAdcpVersion: '3.1.29' },
+      {
+        version: '3.1.29',
+        canonicalCreatives: false,
+        syncCreativeWire: 'legacy',
+      }
+    );
+    try {
+      const selectors = products.map((product, index) => ({ ...product, package_id: `p${index}` }));
+      const creatives = [250, 600].map(height => ({
+        creative_id: `library-${height}`,
+        name: 'Acme library banner',
+        format_kind: 'display_tag',
+        format_parameters: { width: 300, height },
+        assets: {
+          html_creative: {
+            asset_type: 'display_tag',
+            delivery_type: 'inline_markup',
+            markup_type: 'standard',
+            markup: '<div>Acme</div>',
+          },
+        },
+      }));
+      for (const assignments of [undefined, []]) {
+        const result = await seller.agent.syncCreatives(
+          { account: ACCOUNT, creatives, ...(assignments && { assignments }) },
+          undefined,
+          {
+            creativeFormatProjection: { selectorContainers: selectors },
+          }
+        );
+        assert.strictEqual(result.success, true);
+        assert.deepStrictEqual(
+          seller.captured.sync.creatives.map(value => value.format_id.id),
+          ['display_300x250_html', 'display_300x600_html']
+        );
+        assert.strictEqual(Object.hasOwn(seller.captured.sync, 'assignments'), assignments !== undefined);
+        assert.deepStrictEqual(seller.captured.sync.assignments, assignments);
+      }
+      seller.captured.sync = undefined;
+      await assert.rejects(
+        seller.agent.syncCreatives(
+          {
+            account: ACCOUNT,
+            creatives: [creatives[0]],
+            assignments: [
+              { creative_id: creatives[0].creative_id, package_id: 'p0' },
+              { creative_id: creatives[0].creative_id, package_id: 'p1' },
+            ],
+          },
+          undefined,
+          { creativeFormatProjection: { selectorContainers: selectors } }
+        ),
+        { code: 'ADCP_CREATIVE_FORMAT_PROJECTION_FAILED' }
+      );
+      assert.strictEqual(seller.captured.sync, undefined, 'incompatible explicit assignments never reach the seller');
+    } finally {
+      await seller.close();
+    }
+  });
+
+  test('a rejected native package cannot lend canonical wire evidence to a fitting legacy package', async () => {
+    const native = {
+      ...legacyOnlyProduct('native-jpeg', undefined),
+      format_options: [
+        {
+          format_option_id: 'native-image',
+          format_kind: 'image',
+          params: { width: 300, height: 250, max_file_size_kb: 1 },
+          technical_requirements_complete: true,
+        },
+      ],
+    };
+    const legacy = legacyOnlyProduct('legacy-png', [{ agent_url: AAO, id: 'display_300x250_image' }]);
+    const seller = await canonicalSeller(
+      [native, legacy],
+      { wireAdcpVersion: '3.1.29' },
+      { version: '3.1.29', declareCanonicalCreatives: false }
+    );
+    try {
+      const discovered = await seller.agent.getProducts({ buying_mode: 'brief', brief: 'Display', account: ACCOUNT });
+      const selectors = [
+        { ...discovered.data.products[0], package_id: 'native' },
+        { ...legacy, package_id: 'legacy' },
+      ];
+      const creative = {
+        creative_id: 'png',
+        name: 'Acme PNG',
+        format_kind: 'image',
+        assets: {
+          image_main: {
+            asset_type: 'image',
+            url: 'https://assets.example/banner.png',
+            width: 300,
+            height: 250,
+            mime_type: 'image/png',
+            file_size_bytes: 2000,
+          },
+        },
+      };
+      await seller.agent.syncCreatives({ account: ACCOUNT, creatives: [creative] }, undefined, {
+        creativeFormatProjection: { selectorContainers: selectors },
+      });
+      assert.strictEqual(seller.captured.sync.creatives[0].format_kind, undefined);
+      assert.strictEqual(seller.captured.sync.creatives[0].format_id.id, 'display_300x250_image');
+    } finally {
+      await seller.close();
+    }
+  });
+
   test('a legacy html5/_html mismatch does not block a pinned image creative', async () => {
     const sellerProduct = pairedProduct();
     sellerProduct.format_ids.push({ agent_url: AAO, id: 'display_300x250_html' });

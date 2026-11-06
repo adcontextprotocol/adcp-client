@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.3.0-beta.3
-// Generated at: 2026-10-31T11:38:21.151Z
+// Generated AdCP core types from official schemas v3.3.0-beta.4
+// Generated at: 2026-11-05T09:45:53.995Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -7033,7 +7033,7 @@ export type CreativeAssignment = {
    */
   creative_id: string;
   /**
-   * Additional measurement trackers for this creative on this package only, fired alongside the creative's own trackers without changing the library creative, its revision, or its approval. Requires creative.supports_assignment_trackers: true; buyers MUST NOT send this field otherwise and unsupported agents MUST reject it with UNSUPPORTED_FEATURE. The seller MUST fire every accepted tracker at its declared event or reject the assignment through existing assignment errors; trackers MUST NOT be silently dropped. Creative and assignment trackers together count against the effective format's tracker-slot limits, including canonical params.slots[].max and legacy repeatable-group max_count. Each assignment tracker consumes one compatible slot occurrence without moving creative assets; reject if no allocation satisfies each slot's type, event role, and count constraints. Each accepted occurrence fires once per logical event; identical URLs are not deduplicated. A supplied list replaces the prior assignment tracker list. Omission from a complete package creative_assignments replacement clears the assignment trackers; omitting the entire replacement array leaves assignments unchanged. Empty arrays and null are not accepted.
+   * Additional measurement trackers for this creative on this package only, fired alongside the creative's own trackers without changing the library creative, its revision, or its approval. Requires creative.supports_assignment_trackers: true; buyers MUST NOT send this field otherwise and unsupported agents MUST reject it with UNSUPPORTED_FEATURE. The seller MUST fire every accepted tracker at its declared event or reject the assignment through existing assignment errors; trackers MUST NOT be silently dropped. Creative and assignment trackers together count against the effective format's tracker-slot limits, including canonical params.slots[].max and legacy repeatable-group max_count. Each assignment tracker consumes one compatible tracker-slot occurrence without moving creative assets (impression_tracker takes impression, click_tracker takes click, viewability_tracker takes viewable_* and audible_video_complete, any other pixel_tracker slot takes any event); reject if no allocation satisfies each slot's event and count constraints. These limits apply only when the effective format declares at least one tracker slot: a format that declares none makes no slot-limit claim, and the seller still fires every accepted tracker or rejects the assignment. Each accepted occurrence fires once per logical event; identical URLs are not deduplicated. A supplied list replaces the prior assignment tracker list. Omission from a complete package creative_assignments replacement clears the assignment trackers; omitting the entire replacement array leaves assignments unchanged. Empty arrays and null are not accepted.
    *
    * @minItems 1
    */
@@ -17512,6 +17512,7 @@ export type ReportingReconciliationMode = 'delivery_only' | 'consumer_receipt';
  * The period and deadline contract from which reporting obligations are created. Every elapsed period produces an obligation even when it has zero rows or production fails, so a consumer can distinguish empty from missing.
  */
 export type ReportingSchedule = {
+} & {
 } & {
   /**
    * Strictly positive ISO 8601 duration of each reporting period, such as PT15M, P1D, or P1M.
@@ -29597,7 +29598,7 @@ export interface AccountAuthorization {
    */
   authorized_at?: string;
   /**
-   * The latest re-grant within the caller's current authorization chain for this account: when authority last resumed after a loss that the re-grant continued, because it came before the previous unauthorized_at plus status_retention_days. Absent while the chain has had no re-grant. A re-grant that starts a new chain sets authorized_at to the re-grant time and leaves this absent. Reporting subscriptions owe withheld periods at this instant plus the offering's delivery_sla, and an unbackfilled gap ends at the first period boundary at or after it. Sellers advertising media_buy.reporting_subscriptions MUST populate it whenever the current chain has a re-grant.
+   * The latest re-grant within the caller's current authorization chain for this account: when authority last resumed after a loss that the re-grant continued, because it came before the previous unauthorized_at plus status_retention_days. Absent while the chain has had no re-grant. A re-grant that starts a new chain sets authorized_at to the re-grant time and leaves this absent. Reporting subscriptions owe withheld periods at this instant plus the offering's delivery_sla, and an unbackfilled gap ends at the first period boundary at or after it. Sellers advertising media_buy.reporting_subscriptions MUST populate it whenever the current chain has a re-grant. For reporting subscriptions, a grant reduced to allowed_tasks without get_reporting_status is a loss of authority at the reduction (unauthorized_at in accounts_unauthorized), and adding get_reporting_status back is a re-grant: it continues the chain and sets regranted_at, or starts a new chain, by the same rule.
    * @format date-time
    */
   regranted_at?: string;
@@ -36144,7 +36145,7 @@ export type ReportingSubscriptionState = {
     destination_ref: string;
   }[];
   /**
-   * Accounts this subscription covered whose authority the caller has since lost, in account_id byte order, so a revoked grant reads differently from a seller that stopped publishing. At most 1000 are listed inline; accounts_unauthorized_count gives the total, and the rest are read through get_principal reporting_subscription_page. Only accounts the subscription previously covered appear. Entries carry no current account data and nothing created after unauthorized_at. An entry is removed on re-grant and is otherwise retained for status_retention_days after unauthorized_at; after that it drops, and a later re-grant is a fresh coverage start from authorized_at with no gap claimed. Every addition or removal fires principal.changed with reason reporting_subscription_changed.
+   * Accounts this subscription covered whose authority the caller has since lost, in account_id byte order, so a revoked grant reads differently from a seller that stopped publishing. A grant reduced to allowed_tasks without get_reporting_status is such a loss, listed from the reduction; a reduced grant that still lists get_reporting_status is not. At most 1000 are listed inline; accounts_unauthorized_count gives the total, and the rest are read through get_principal reporting_subscription_page. Only accounts the subscription previously covered appear. Entries carry no current account data and nothing created after unauthorized_at. An entry is removed on re-grant, including when get_reporting_status is added back to a reduced grant, and is otherwise retained for status_retention_days after unauthorized_at; after that it drops, and a later re-grant is a fresh coverage start from authorized_at with no gap claimed. Every addition or removal fires principal.changed with reason reporting_subscription_changed.
    *
    * @maxItems 1000
    */
@@ -36255,19 +36256,26 @@ export type ReportingSubscription = {
    * @minItems 1
    * @maxItems 64
    */
-  destination_overrides?: ({
-    } & (
-      | {
-        }
-      | {
-        }
-    ) &
-      (
-        | {
-          }
-        | {
-          }
-      ))[];
+  destination_overrides?: {
+      /**
+       * @minItems 1
+       * @maxItems 1000
+       */
+      account_ids?: [string, ...string[]];
+      /**
+       * @minItems 1
+       * @maxItems 64
+       */
+      operator_domains?: [string, ...string[]];
+      /**
+       * A destination_id in the caller's principal reporting_destinations.
+       */
+      destination_id: string;
+      /**
+       * As destination.path_template, for the accounts this entry routes. MUST contain {account_id} when the entry can select more than one account. Omitted: destination.path_template applies.
+       */
+      path_template?: string;
+    }[];
 };
 /**
  * Complete principal-scoped standing configuration visible after sync or read. Secrets are never returned. The seller keys this state by its own agent identity and the stable authenticated caller principal. Each section is present when and only when the seller advertises it in principal.supported_sections, so an empty supported array is distinguishable from an unsupported section.
@@ -36335,7 +36343,7 @@ export interface ReportingSubscriptionAccountExceptions {
 export interface ReportingSubscriptionUnauthorizedAccount {
   account_id: string;
   /**
-   * When the caller's authority for the account ended. Nothing is delivered for periods ending after it, including on retries.
+   * When the caller's authority for the account ended: the revocation, or the reduction of its grant to allowed_tasks without get_reporting_status. Nothing is delivered for periods ending after it, including on retries.
    */
   unauthorized_at: string;
   /**
@@ -39405,7 +39413,7 @@ export type ReportingSubscriptionExclusionReason =
   | 'excluded_by_buyer'
   | 'action_required';
 /**
- * Exceptions to one principal-level reporting subscription's coverage of one account (experimental, media_buy.reporting_subscriptions), returned in get_reporting_status. Coverage itself is computable by the buyer without asking, by the rule in reporting-subscription.json: each visible confirmed buy and resolved offering is owed the complete periods of that offering's published schedule that start on or after the first boundary at or after the later of the version's accepted_at and the account's authorized_at, that end after the buy's confirmed_at, and that overlap the buy's flight. The seller reports only exceptions. Each removes the periods whose start falls in the half-open interval [from, until) of cutover instants; none adds one. Readable only while the caller is authorized for the account; loss of authority is reported in the caller's own get_principal subscription state.
+ * Exceptions to one principal-level reporting subscription's coverage of one account (experimental, media_buy.reporting_subscriptions), returned in get_reporting_status. Coverage itself is computable by the buyer without asking, by the rule in reporting-subscription.json: each visible confirmed buy and resolved offering is owed the complete periods of that offering's published schedule that start on or after the first boundary at or after the later of the version's accepted_at and the account's authorized_at, that end after the buy's confirmed_at (for a package added later, after that package's added_at), and that overlap the buy's flight. The seller reports only exceptions. Each removes the periods whose start falls in the half-open interval [from, until) of cutover instants; none adds one. Readable only while the caller is authorized for the account; loss of authority is reported in the caller's own get_principal subscription state.
  */
 export interface ReportingSubscriptionCoverage {
   /**
@@ -39452,7 +39460,7 @@ export interface ReportingSubscriptionCoverage {
      */
     until?: string;
     /**
-     * With media_buy_id and reason offering_unsupported: only these packages lack a matching offering. With reason overridden: only these packages resolved an offering another subscription of the caller owes. The buy stays covered for its other packages; these are removed from its coverage rather than its periods.
+     * With media_buy_id and reason offering_unsupported: only these packages lack a matching offering. With reason overridden: only these packages resolved an offering another subscription of the caller owes. The buy stays covered for its other packages; these are removed from its coverage rather than its periods. When the entry names every package of the buy that resolves an offering (with offering_id, that offering) and is owed the period, nothing keeps the buy covered for it, so the buy's periods for that offering that start in [from, until) are not owed. A package added after the buy's confirmed_at is owed only the periods that end after its added_at, so it does not keep the buy covered for earlier periods.
      */
     package_ids?: ReportingPackageID[];
     /**
@@ -42594,13 +42602,32 @@ export interface BillingNotSupportedDetails {
  */
 export interface BudgetTooLowDetails {
   /**
-   * Seller's minimum budget for this product
+   * Minimum acceptable amount for the constrained budget, in currency. budget_field identifies that budget when present; otherwise error.field can identify it only when it unambiguously names a budget control. If neither identifies the budget, this amount is diagnostic and buyers must reconcile current state before choosing a budget change. For a bid-dependent floor, report the computed required budget amount, not the bid value or the additional amount needed.
    */
   minimum_budget?: number;
   /**
    * ISO 4217 currency code
    */
   currency?: string;
+  /**
+   * JSONPath-lite locator for the constrained budget in the request's target scope, separate from error.field and issues[].pointer, whose existing semantics are unchanged. May name a retained budget omitted from an update. packages[i] always indexes a submitted request row, resolved through its package_id on updates, never a readback array index. Omit if the affected package has no submitted row or the budget cannot otherwise be located unambiguously; do not fabricate an index. Buyers must read and reconcile a retained budget before changing it.
+   * @minLength 1
+   */
+  budget_field?: string;
+  /**
+   * Period of the constrained budget identified by budget_field, or by error.field when it unambiguously names a budget control. daily does not imply hard-cap or averaged semantics. lifetime applies to a package or media-buy lifetime budget. Omission means undeclared; buyers must not infer a period from minimum_budget alone.
+   */
+  basis?: 'daily' | 'lifetime';
+  /**
+   * Cause of the budget floor, separate from its period. product_minimum identifies a seller's minimum for the selected product/pricing option; effective_bid_floor identifies a minimum computed from the effective bidding policy. Other non-empty values are permitted; buyers that do not recognize one can still use the amount, currency, period, and an unambiguous budget locator for recovery.
+   * @minLength 1
+   */
+  constraint?: string;
+  /**
+   * Request field path for an input contributing to the floor, using the same JSONPath-lite convention as error.field. For effective_bid_floor this identifies a buyer-authored bid that contributes to the computed minimum; budget_field separately identifies the constrained budget. Omit when no contributing request field can be identified; do not invent a path to a seller default.
+   * @minLength 1
+   */
+  related_field?: string;
 }
 
 

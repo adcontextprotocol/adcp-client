@@ -213,6 +213,16 @@ export const REPORTING_CORE_LIFECYCLE_PROBE_SCENARIO = 'reporting_core_lifecycle
  */
 export const REPORTING_SUBSCRIPTION_PROBE_SCENARIO = 'reporting_subscription_probe' as const;
 
+/**
+ * `reset_state` (adcp#8717): takes no params and returns the authenticated caller's sandbox to a
+ * baseline. The storyboard runner calls it once before each storyboard when `list_scenarios` lists
+ * it. A seller that lists `reporting_subscription_probe` MUST also list `reset_state`, and the reset
+ * MUST unpin the caller's sandbox clock (so `simulated_now` reads the seller's wall clock again
+ * until the next `advance_time`) and discard every grant and timezone change the probe made for the
+ * caller. Succeeds with `SeedSuccess` (`{ success: true }`).
+ */
+export const RESET_STATE_SCENARIO = 'reset_state' as const;
+
 /** The `reporting_subscription_probe` operations. */
 export const REPORTING_SUBSCRIPTION_PROBE_OPERATIONS = [
   'revoke_grant',
@@ -232,9 +242,40 @@ export type ReportingSubscriptionProbeParams =
   | { operation: 'advance_time'; target_time: string; account_id?: string };
 
 /**
+ * One `timezone_cutovers[]` entry of a `set_account_timezone` result: shaped as a `get_reporting_status`
+ * `subscription_coverage[].timezone_cutovers[]` entry, always with `offering_id` and `previous_timezone`.
+ */
+export interface ReportingSubscriptionProbeTimezoneCutover {
+  offering_id: string;
+  previous_timezone: string;
+  timezone: string;
+  /** The end of the offering's last old-timezone period that started before `changed_at`. */
+  effective_at: string;
+  [key: string]: unknown;
+}
+
+/**
+ * `SimulationSuccess.simulated` for `set_account_timezone` (`SetAccountTimezoneResult`, adcp#8717).
+ */
+export interface ReportingSubscriptionProbeSetAccountTimezoneResult {
+  simulated_now: string;
+  account_id: string;
+  /** The account's zone before the call; equal to `timezone` when the call changed nothing. */
+  previous_timezone: string;
+  /** The account's zone after the call, as `list_accounts` shows it. */
+  timezone: string;
+  /** The sandbox instant the change applied (the call's `simulated_now`). Absent when nothing changed. */
+  changed_at?: string;
+  /** One per account_timezone-aligned offering the seller offers; empty when nothing changed. */
+  timezone_cutovers: ReportingSubscriptionProbeTimezoneCutover[];
+  [key: string]: unknown;
+}
+
+/**
  * The `simulated` object of a `reporting_subscription_probe` success. `simulated_now` is the caller's
- * virtual clock after the operation (one clock per caller; a `reset_state` resets it). Every operation
- * but `advance_time` echoes `account_id`.
+ * virtual clock after the operation (one clock per caller; `reset_state` unpins it). Every operation
+ * but `advance_time` echoes `account_id`; `set_account_timezone` returns
+ * {@link ReportingSubscriptionProbeSetAccountTimezoneResult}.
  */
 export interface ReportingSubscriptionProbeSimulated {
   simulated_now: string;
@@ -252,8 +293,10 @@ export interface ReportingSubscriptionProbeSimulated {
   /** `set_account_timezone`. */
   previous_timezone?: string;
   timezone?: string;
-  /** `set_account_timezone`: the cutover instant of each affected offering. */
-  timezone_cutovers?: Array<{ offering_id: string; effective_at: string }>;
+  /** `set_account_timezone`: when the change applied; absent when nothing changed. */
+  changed_at?: string;
+  /** `set_account_timezone`: the cutover of each account_timezone-aligned offering. */
+  timezone_cutovers?: ReportingSubscriptionProbeTimezoneCutover[];
   [key: string]: unknown;
 }
 
@@ -340,6 +383,12 @@ export interface TestControllerStore {
   reportingSubscriptionProbe?(
     params: ReportingSubscriptionProbeParams
   ): Promise<SimulationSuccess & { simulated: ReportingSubscriptionProbeSimulated }>;
+  /**
+   * `reset_state` (adcp#8717): return the caller's sandbox to a baseline. Advertised when present. A
+   * store with `reportingSubscriptionProbe` must implement it: unpin the caller's sandbox clock and
+   * discard every grant and timezone change the probe made for the caller.
+   */
+  resetState?(): Promise<void>;
   /** Transition a creative to the specified status. */
   forceCreativeStatus?(
     creativeId: string,
@@ -782,6 +831,7 @@ function allScenariosFromStore(store: TestControllerStore): string[] {
   if (typeof store.forceGetSignalsArm === 'function') out.push(DISCOVERY_ARM_SCENARIOS.FORCE_GET_SIGNALS_ARM);
   if (typeof store.reportingCoreLifecycleProbe === 'function') out.push(REPORTING_CORE_LIFECYCLE_PROBE_SCENARIO);
   if (typeof store.reportingSubscriptionProbe === 'function') out.push(REPORTING_SUBSCRIPTION_PROBE_SCENARIO);
+  if (typeof store.resetState === 'function') out.push(RESET_STATE_SCENARIO);
   return out;
 }
 
@@ -1632,6 +1682,14 @@ async function handleTestControllerRequestImpl(
         return wrapStoreSuccess(
           await store.reportingSubscriptionProbe(probe as unknown as ReportingSubscriptionProbeParams)
         );
+      }
+
+      case RESET_STATE_SCENARIO: {
+        if (!store.resetState) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        await store.resetState();
+        return wrapStoreSuccess({ success: true, message: 'Sandbox reset' });
       }
 
       default:
