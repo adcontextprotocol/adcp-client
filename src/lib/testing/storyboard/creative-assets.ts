@@ -1,3 +1,6 @@
+import { isDeepStrictEqual } from 'node:util';
+import { canonicalizeAgentUrl } from '../../discovery/resolve-agent-properties';
+import { getSchemaValidatorByRef } from '../../validation/schema-loader';
 import type { StoryboardContext } from './types';
 
 export const BUILD_ASSETS_FROM_FORMAT_DIRECTIVE = '$build_assets_from_format';
@@ -38,6 +41,131 @@ type AssetBuildResult = { ok: true; asset: JsonObject } | { ok: false; constrain
 type AssetsBuildResult = { ok: true; assets: JsonObject } | { ok: false; failure: AssetsBuildFailure };
 
 type RequiredSlotsResult = { ok: true; slots: RequiredSlot[] } | { ok: false; constraint: string };
+
+type FormatResolution = { ok: true; format: JsonObject } | { ok: false; failure: AssetsBuildFailure };
+
+function resolveTestKitFormat(value: JsonObject, testKit: unknown): FormatResolution {
+  const malformed = (constraint: string): FormatResolution => ({
+    ok: false,
+    failure: { reason: 'malformed_directive', constraint },
+  });
+  const unavailable = (constraint: string): FormatResolution => ({
+    ok: false,
+    failure: { reason: 'fixture_unavailable', slotId: 'format declaration', assetType: 'format', constraint },
+  });
+  if (value.catalog !== 'test_kit' || Object.keys(value).length !== 2 || !Object.hasOwn(value, 'format_id')) {
+    return malformed('offline catalog directive must contain only format_id and catalog: test_kit');
+  }
+  const normalizeReference = (reference: unknown): JsonObject | undefined => {
+    const validate = getSchemaValidatorByRef('core/format-id.json');
+    if (!validate) throw new Error('Missing bundled core/format-id.json schema');
+    if (!validate(reference) || !isObject(reference) || typeof reference.agent_url !== 'string') return undefined;
+    const agentUrl = canonicalizeAgentUrl(reference.agent_url);
+    return agentUrl ? { ...reference, agent_url: agentUrl } : undefined;
+  };
+  const requested = normalizeReference(value.format_id);
+  if (!requested) return malformed('offline catalog directive requires a complete valid FormatId');
+  const catalog = isObject(testKit) ? testKit.creative_formats : undefined;
+  if (catalog === undefined) return unavailable('test_kit.creative_formats was not supplied');
+  if (!Array.isArray(catalog)) return malformed('test_kit.creative_formats must be an array of Format declarations');
+  let match: JsonObject | undefined;
+  const validateFormat = getSchemaValidatorByRef('core/format.json');
+  if (!validateFormat) throw new Error('Missing bundled core/format.json schema');
+  for (const [index, candidate] of catalog.entries()) {
+    if (!validateFormat(candidate) || !isObject(candidate) || !Array.isArray(candidate.assets)) {
+      return malformed(`test_kit.creative_formats[${index}] must be a valid Format with an explicit assets array`);
+    }
+    const reference = normalizeReference(candidate.format_id);
+    if (!reference) return malformed(`test_kit.creative_formats[${index}].format_id is invalid`);
+    const slotIds = new Set<string>();
+    for (const slot of candidate.assets) {
+      if (!isObject(slot)) return malformed(`test_kit.creative_formats[${index}].assets contains an invalid slot`);
+      const slotId = slot.item_type === 'repeatable_group' ? slot.asset_group_id : slot.asset_id;
+      if (typeof slotId !== 'string' || slotIds.has(slotId)) {
+        return malformed(`test_kit.creative_formats[${index}].assets must have unique string slot identifiers`);
+      }
+      slotIds.add(slotId);
+      if (slot.item_type === 'repeatable_group' && Array.isArray(slot.assets)) {
+        const childIds = slot.assets.map(child => (isObject(child) ? child.asset_id : undefined));
+        if (new Set(childIds).size !== childIds.length) {
+          return malformed(`test_kit.creative_formats[${index}].assets contains duplicate group asset identifiers`);
+        }
+      }
+    }
+    if (!isDeepStrictEqual(reference, requested)) continue;
+    if (match) return malformed('test_kit.creative_formats contains duplicate exact FormatId matches');
+    match = candidate;
+  }
+  if (!match) return unavailable('test_kit.creative_formats has no exact match for the captured FormatId');
+  if (isObject(match.accessibility) && match.accessibility.requires_accessible_assets === true) {
+    return unavailable('cannot synthesize the declared accessible asset metadata');
+  }
+  if (isObject(match.delivery) && Object.keys(match.delivery).length > 0) {
+    return unavailable('cannot verify the declared delivery constraints');
+  }
+  for (const slot of match.assets as JsonObject[]) {
+    if (slot.required !== true || !isObject(slot.requirements)) continue;
+    const requirements = slot.requirements;
+    if (requirements.parameters_from_format_id === true && requested.width === undefined) {
+      return unavailable('required slot needs logical dimensions from a parameterized FormatId');
+    }
+    if (
+      requirements.parameters_from_format_id === true &&
+      [requirements, requirements.dimensions].filter(isObject).some(dimensions =>
+        ['width', 'height'].some(axis => {
+          const logical = asNumber(requested[axis]);
+          return (
+            dimensions[axis] !== undefined &&
+            logical !== undefined &&
+            dimensions[axis] !== logical * (asNumber(requested.pixel_ratio) ?? 1)
+          );
+        })
+      )
+    ) {
+      return unavailable('required slot dimensions contradict the parameterized FormatId');
+    }
+    if (
+      isObject(requirements.dimensions) &&
+      Object.keys(requirements.dimensions).some(key => !['width', 'height'].includes(key))
+    ) {
+      return unavailable('cannot verify nested slot dimension constraints');
+    }
+  }
+  const unsupported = Object.keys(requested).find(
+    key => !['agent_url', 'id', 'width', 'height', 'pixel_ratio'].includes(key)
+  );
+  if (unsupported || (requested.pixel_ratio !== undefined && requested.pixel_ratio !== 1)) {
+    return unavailable(`cannot synthesize format parameter "${unsupported ?? 'pixel_ratio'}"`);
+  }
+  const renders = Array.isArray(match.renders) ? match.renders : [];
+  if (renders.length > 1) return unavailable('cannot synthesize multiple format renders');
+  for (const render of renders) {
+    if (!isObject(render)) return malformed('format render must be an object');
+    const dimensions = isObject(render.dimensions) ? render.dimensions : {};
+    if (
+      Object.keys(dimensions).some(key => !['width', 'height', 'unit'].includes(key)) ||
+      (dimensions.unit !== undefined && dimensions.unit !== 'px') ||
+      (render.parameters_from_format_id === true && requested.width === undefined) ||
+      ['width', 'height'].some(
+        key => requested[key] !== undefined && dimensions[key] !== undefined && requested[key] !== dimensions[key]
+      )
+    ) {
+      return unavailable('cannot synthesize the declared render constraints');
+    }
+  }
+  // Only the legacy schema's asset contract and render fields govern this
+  // path. Canonical/helper extension fields cannot replace assets or size.
+  const assets = (match.assets as JsonObject[]).map(slot => {
+    const legacySlot = { ...slot };
+    delete legacySlot.width;
+    delete legacySlot.height;
+    return legacySlot;
+  });
+  return {
+    ok: true,
+    format: { format_id: match.format_id, assets, ...(match.renders ? { renders: match.renders } : {}) },
+  };
+}
 
 function isObject(value: unknown): value is JsonObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -110,7 +238,7 @@ function dimensionsFromId(format: JsonObject): Dimensions {
   return match ? { width: Number(match[1]), height: Number(match[2]) } : {};
 }
 
-function formatDimensions(format: JsonObject): Dimensions {
+function formatDimensions(format: JsonObject, inferFromId = true): Dimensions {
   const nestedFormatId = isObject(format.format_id) ? format.format_id : {};
   const direct = {
     width: asNumber(format.width) ?? asNumber(nestedFormatId.width),
@@ -127,7 +255,7 @@ function formatDimensions(format: JsonObject): Dimensions {
     if (width !== undefined || height !== undefined) return { width, height };
   }
 
-  return dimensionsFromId(format);
+  return inferFromId ? dimensionsFromId(format) : {};
 }
 
 function slotDimensions(slot: JsonObject, fallback: Dimensions): Dimensions {
@@ -139,7 +267,7 @@ function slotDimensions(slot: JsonObject, fallback: Dimensions): Dimensions {
   };
 }
 
-function requiredSlots(format: JsonObject): RequiredSlotsResult {
+function requiredSlots(format: JsonObject, inferFromId = true): RequiredSlotsResult {
   const canonicalSlots = Array.isArray(format.slots) ? format.slots : undefined;
   const legacySlots = Array.isArray(format.assets)
     ? format.assets
@@ -148,7 +276,7 @@ function requiredSlots(format: JsonObject): RequiredSlotsResult {
       : undefined;
   const usesAssetsRequired = canonicalSlots === undefined && !Array.isArray(format.assets) && legacySlots !== undefined;
   const slots = canonicalSlots ?? legacySlots ?? [];
-  const fallback = formatDimensions(format);
+  const fallback = formatDimensions(format, inferFromId);
   const container = canonicalSlots !== undefined ? 'slots' : usesAssetsRequired ? 'assets_required' : 'assets';
 
   const required: RequiredSlot[] = [];
@@ -429,11 +557,28 @@ function buildAsset(slot: RequiredSlot, testKit: unknown): AssetBuildResult {
 }
 
 function buildAssets(value: unknown, context: StoryboardContext, testKit: unknown): AssetsBuildResult {
+  const offlineCatalog = isObject(value) && Object.hasOwn(value, 'catalog');
+  if (offlineCatalog && isObject(value)) {
+    const resolved = resolveTestKitFormat(value, testKit);
+    if (!resolved.ok) return resolved;
+    value = resolved.format;
+    if (isObject(testKit) && isObject(testKit.assets) && Array.isArray(testKit.assets.images)) {
+      testKit = {
+        ...testKit,
+        assets: {
+          ...testKit.assets,
+          images: testKit.assets.images.filter(
+            image => isObject(image) && (image.pixel_ratio === undefined || image.pixel_ratio === 1)
+          ),
+        },
+      };
+    }
+  }
   const resolved = resolveFormat(value, context);
   if (!resolved.ok) {
     return { ok: false, failure: { reason: resolved.reason, constraint: resolved.constraint } };
   }
-  const required = requiredSlots(resolved.format);
+  const required = requiredSlots(resolved.format, !offlineCatalog);
   if (!required.ok) {
     return { ok: false, failure: { reason: 'malformed_directive', constraint: required.constraint } };
   }
@@ -452,7 +597,12 @@ function buildAssets(value: unknown, context: StoryboardContext, testKit: unknow
         },
       };
     }
-    built[slot.id] = result.asset;
+    Object.defineProperty(built, slot.id, {
+      value: result.asset,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
   }
   return { ok: true, assets: built };
 }
