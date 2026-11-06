@@ -168,3 +168,71 @@ describe('authoritativeOnly turns guessing off', () => {
     assert.equal(isAaoAgentUrl(SELLER), false);
   });
 });
+
+describe('a legacyFormatConverter outranks a guess at a seller URL', () => {
+  const sellerTag = {
+    format_option_id: 'seller_tag',
+    format_kind: 'display_tag',
+    params: { sizes: [{ width: 300, height: 250 }] },
+  };
+
+  function recordingConverter(result) {
+    const calls = [];
+    const converter = context => {
+      calls.push(context.formatId);
+      return typeof result === 'function' ? result(context) : result;
+    };
+    return { calls, converter };
+  }
+
+  test("the converter's declaration wins over a registry id glob guess", () => {
+    const ref = { agent_url: SELLER, id: 'display_300x250' };
+    const { calls, converter } = recordingConverter(sellerTag);
+    const { product, diagnostics, routes } = toAdditiveCanonicalProduct(legacyProduct([ref]), {
+      legacyFormatConverter: converter,
+    });
+    assert.deepEqual(diagnostics, []);
+    assert.equal(product.format_options[0].format_kind, 'display_tag');
+    assert.equal(product.format_options[0].format_option_id, 'seller_tag');
+    assert.equal('inferred_from_id' in routes[0], false);
+    assert.deepEqual(calls, [ref]);
+  });
+
+  test('a converter that declines leaves the marked guess, and is asked once', () => {
+    for (const id of ['display_300x250', 'display_300x250_image']) {
+      const ref = { agent_url: SELLER, id };
+      const { calls, converter } = recordingConverter(undefined);
+      const { v2, legacyRoutes } = projectV1ProductToV2(legacyProduct([ref]), { legacyFormatConverter: converter });
+      assert.equal(v2.format_options[0].format_kind, 'image', id);
+      assert.equal(legacyRoutes[0].inferred_from_id, true, id);
+      assert.equal(calls.length, 1, id);
+    }
+  });
+
+  test('a converter that throws fails closed instead of falling back to the guess', () => {
+    const ref = { agent_url: SELLER, id: 'display_300x250' };
+    const { v2, diagnostics } = projectV1ProductToV2(legacyProduct([ref]), {
+      legacyFormatConverter: () => {
+        throw new Error('seller catalog unavailable');
+      },
+    });
+    assert.deepEqual(v2.format_options, []);
+    assert.equal(diagnostics[0].code, 'FORMAT_PROJECTION_FAILED');
+    assert.equal(diagnostics[0].error.details.resolution_failure, 'custom_converter_failed');
+  });
+
+  test("the AAO agent's own mappings still run before the converter", () => {
+    const refs = [
+      { agent_url: AAO, id: 'display_300x250_image' },
+      { agent_url: AAO, id: 'display_300x250' },
+    ];
+    const { calls, converter } = recordingConverter(sellerTag);
+    const { v2, diagnostics } = projectV1ProductToV2(legacyProduct(refs), { legacyFormatConverter: converter });
+    assert.deepEqual(diagnostics, []);
+    assert.deepEqual(
+      v2.format_options.map(option => option.format_kind),
+      ['image', 'image']
+    );
+    assert.deepEqual(calls, []);
+  });
+});
