@@ -169,6 +169,79 @@ describe('creative format delivery projection', () => {
     assert.equal(safe.format_id, undefined);
   });
 
+  // adcp-client#3592: a platform extension reference URI is based on its owning
+  // agent URL, so it shares that agent's legacy format_ids URL by design.
+  test('keeps platform extension reference URIs that share a legacy agent URL', () => {
+    const agentUrl = 'https://creative.example/translated/acme-outdoor';
+    const schemaUri = `${agentUrl}/schemas/custom_takeover_v1`;
+    const digest = `sha256:${'a'.repeat(64)}`;
+    const prefixed = stripLegacyCreativeIdentity({
+      products: [
+        {
+          product_id: 'custom-takeover',
+          format_ids: [{ agent_url: agentUrl, id: 'custom_takeover_v1' }],
+          format_options: [{ format_kind: 'custom', format_schema: { uri: schemaUri, digest } }],
+        },
+        {
+          product_id: 'display',
+          format_ids: [{ agent_url: agentUrl, id: 'display_300x250_image' }],
+          format_options: [
+            {
+              format_kind: 'image',
+              params: { width: 300, height: 250 },
+              platform_extensions: [{ uri: schemaUri, digest }],
+            },
+          ],
+        },
+      ],
+      landing: { uri: schemaUri },
+      message: `custom_takeover_v1 is served from ${agentUrl}`,
+    });
+    const exact = stripLegacyCreativeIdentity({
+      products: [
+        {
+          product_id: 'exact-match',
+          format_ids: [{ agent_url: schemaUri, id: 'custom_takeover_v1' }],
+          format_options: [{ format_kind: 'custom', format_schema: { uri: schemaUri, digest } }],
+        },
+      ],
+    });
+
+    assert.deepEqual(prefixed.products[0].format_options[0].format_schema, { uri: schemaUri, digest });
+    assert.deepEqual(prefixed.products[1].format_options[0].platform_extensions, [{ uri: schemaUri, digest }]);
+    assert.deepEqual(exact.products[0].format_options[0].format_schema, { uri: schemaUri, digest });
+    for (const product of [...prefixed.products, ...exact.products]) assert.equal(product.format_ids, undefined);
+    // Only extension references are exempt; other strings still fail closed.
+    assert.equal(prefixed.landing.uri, '[legacy creative identity]/schemas/custom_takeover_v1');
+    assert.doesNotMatch(prefixed.message, /creative\.example|custom_takeover_v1/);
+  });
+
+  for (const referenceKey of ['format_schema', 'platform_extensions']) {
+    for (const referenceFirst of [true, false]) {
+      test(`keeps ${referenceKey} policy separate for shared references (${referenceFirst ? 'reference' : 'diagnostic'} first)`, () => {
+        const agentUrl = 'https://creative.example/translated/acme-outdoor';
+        const uri = `${agentUrl}/schemas/custom_takeover_v1`;
+        const digest = `sha256:${'a'.repeat(64)}`;
+        const reference = { uri, digest };
+        const shared = referenceKey === 'platform_extensions' ? [reference] : reference;
+        const fields = referenceFirst
+          ? { [referenceKey]: shared, landing: shared }
+          : { landing: shared, [referenceKey]: shared };
+        const payload = {
+          format_ids: [{ agent_url: agentUrl, id: 'custom_takeover_v1' }],
+          ...fields,
+        };
+        const safe = stripLegacyCreativeIdentity(payload);
+        const canonical = referenceKey === 'platform_extensions' ? safe[referenceKey][0] : safe[referenceKey];
+        const diagnostic = referenceKey === 'platform_extensions' ? safe.landing[0] : safe.landing;
+        assert.deepEqual(canonical, { uri, digest });
+        assert.deepEqual(diagnostic, { uri: '[legacy creative identity]/schemas/custom_takeover_v1', digest });
+        assert.equal(safe.format_ids, undefined);
+        assert.deepEqual(reference, { uri, digest }, 'seller-owned reference stays unchanged');
+      });
+    }
+  }
+
   test('preserves beta.6 canonical format kinds in diagnostics and canonical delivery', () => {
     for (const formatKind of ['seller_rendered_stateful_display', 'coordinated_placements']) {
       const safe = stripLegacyCreativeIdentity({

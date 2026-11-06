@@ -411,6 +411,13 @@ export function stripLegacyCreativeIdentity<T>(value: T): CanonicalCreativeRespo
     }
     return !/(^|_)(?:creative|format|legacy|offending|target|input|output)($|_)/.test(key);
   };
+  // A platform extension reference URI is based on its owning agent's URL by
+  // contract, so it can share a prefix with a legacy agent_url. It is the
+  // canonical schema location, not legacy routing identity (#3592).
+  const platformExtensionContext = (key: string | undefined): boolean =>
+    key === 'format_schema' || key === 'platform_extensions';
+  const platformExtensionUri = (key: string, owner: Record<string, unknown>, ownerKey?: string): boolean =>
+    key === 'uri' && platformExtensionContext(ownerKey) && typeof ownDataValue(owner, 'uri') === 'string';
   const legacyKey = (key: string, owner: Record<string, unknown>, ownerKey?: string): boolean => {
     if (creativeIdentityKey(key)) return true;
     if (!/(^|_)agent_url($|_)/.test(key)) return false;
@@ -508,11 +515,12 @@ export function stripLegacyCreativeIdentity<T>(value: T): CanonicalCreativeRespo
 
   // The same object can appear once under an explicit agent field and once
   // under an ambiguous extension field. Cache by policy context so an allowed
-  // agent occurrence cannot make a later ambiguous tuple fail open (or vice
-  // versa based on property order).
+  // agent or platform-reference occurrence cannot make a later diagnostic
+  // occurrence fail open (or corrupt a canonical reference when visited last).
   const seenByContext = {
     default: new WeakMap<object, unknown>(),
     nonCreativeAgent: new WeakMap<object, unknown>(),
+    platformExtension: new WeakMap<object, unknown>(),
   };
   const hasCustomToJSON = (candidate: object): boolean => {
     let cursor: object | null = candidate;
@@ -526,7 +534,11 @@ export function stripLegacyCreativeIdentity<T>(value: T): CanonicalCreativeRespo
   const strip = (current: unknown, ownerKey?: string): unknown => {
     if (typeof current === 'string') return sanitizeText(current, ownerKey);
     if (current === null || typeof current !== 'object') return current;
-    const seen = explicitNonCreativeContextKey(ownerKey) ? seenByContext.nonCreativeAgent : seenByContext.default;
+    const seen = platformExtensionContext(ownerKey)
+      ? seenByContext.platformExtension
+      : explicitNonCreativeContextKey(ownerKey)
+        ? seenByContext.nonCreativeAgent
+        : seenByContext.default;
     const cached = seen.get(current);
     if (cached !== undefined) return cached;
     if (Array.isArray(current)) {
@@ -612,7 +624,10 @@ export function stripLegacyCreativeIdentity<T>(value: T): CanonicalCreativeRespo
         changed = true;
         continue;
       }
-      const safe = preservesNonCreativeAgentUrl(key, owner, ownerKey) ? child : strip(child, key);
+      const safe =
+        preservesNonCreativeAgentUrl(key, owner, ownerKey) || platformExtensionUri(key, owner, ownerKey)
+          ? child
+          : strip(child, key);
       if (safe !== child) changed = true;
       if (plain && typeof key === 'string' && descriptor.enumerable) result[key] = safe;
       else Object.defineProperty(result, key, { ...descriptor, value: safe });
