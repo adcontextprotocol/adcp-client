@@ -127,6 +127,7 @@ export type PackageSelectionMetadata = {
 const legacyRefsByDeclaration = new WeakMap<object, readonly V1FormatId[]>();
 const selectedOptionsByRefs = new WeakMap<object, readonly DeclarationWithMetadata[]>();
 const sellerDeclaredByDeclaration = new WeakMap<object, boolean | 'synthesized'>();
+const inferredFromIdDeclarations = new WeakSet<object>();
 export interface SellerFormatEvidence {
   scopeKey: string;
   accountScope: string;
@@ -175,6 +176,19 @@ export function isSynthesizedFormatOption(declaration: object): boolean {
   return sellerDeclaredByDeclaration.get(declaration) === 'synthesized';
 }
 
+/**
+ * The projector guessed this option's kind and params from the AAO naming
+ * conventions applied to an id at another agent's URL. No catalog entry or
+ * converter declared it.
+ */
+export function rememberInferredFromIdFormatOption(declaration: object): void {
+  inferredFromIdDeclarations.add(declaration);
+}
+
+export function isInferredFromIdFormatOption(declaration: object): boolean {
+  return inferredFromIdDeclarations.has(declaration);
+}
+
 export function concealLegacyFormatRefs(
   declaration: ProductFormatDeclaration | V2ProductFormatDeclaration | CanonicalFormatDeclaration
 ): DeclarationWithMetadata {
@@ -183,6 +197,7 @@ export function concealLegacyFormatRefs(
   const refsToConceal = Array.isArray(existingHidden) && existingHidden.length > 0 ? existingHidden : refs;
   const declared = sellerDeclaredByDeclaration.get(declaration as object);
   if (declared !== undefined) sellerDeclaredByDeclaration.set(canonical, declared);
+  if (inferredFromIdDeclarations.has(declaration as object)) inferredFromIdDeclarations.add(canonical);
   const evidence = sellerEvidenceByDeclaration.get(declaration as object);
   if (evidence) sellerEvidenceByDeclaration.set(canonical, evidence);
   if (Array.isArray(refsToConceal) && refsToConceal.length > 0) {
@@ -226,6 +241,7 @@ export function transferLegacyCreativeMetadata(source: object, target: object): 
   if (selected) selectedOptionsByRefs.set(target, selected);
   const declared = sellerDeclaredByDeclaration.get(source);
   if (declared !== undefined) sellerDeclaredByDeclaration.set(target, declared);
+  if (inferredFromIdDeclarations.has(source)) inferredFromIdDeclarations.add(target);
   const evidence = sellerEvidenceByDeclaration.get(source);
   if (evidence) sellerEvidenceByDeclaration.set(target, evidence);
 }
@@ -246,6 +262,7 @@ export function structuredCloneWithLegacyCreativeMetadata<T>(value: T): T {
     transferCreativeDeliveryDiagnostics(source, target);
     const declared = sellerDeclaredByDeclaration.get(source);
     if (declared !== undefined) sellerDeclaredByDeclaration.set(target, declared);
+    if (inferredFromIdDeclarations.has(source)) inferredFromIdDeclarations.add(target);
     const evidence = sellerEvidenceByDeclaration.get(source);
     if (evidence) sellerEvidenceByDeclaration.set(target, evidence);
     const refs = legacyRefsByDeclaration.get(source);

@@ -3210,7 +3210,7 @@ function evaluateLegacyFormatFit(
           name: 'Legacy creative fit',
           format_ids: [raw as unknown as V1FormatId],
         },
-        { _authoritativeOnly: true, legacyFormatConverter }
+        { authoritativeOnly: true, legacyFormatConverter }
       ).v2.format_options[0]
     : undefined;
   if (sourceDeclaration) {

@@ -1,5 +1,9 @@
 import type { FormatOptionReference } from '../../types/tools.generated';
-import { legacyFormatRefsForDeclaration, sellerDeclaredFormatOption } from './legacy-metadata';
+import {
+  isInferredFromIdFormatOption,
+  legacyFormatRefsForDeclaration,
+  sellerDeclaredFormatOption,
+} from './legacy-metadata';
 import type { CanonicalFormatLegacyResolutionContext, CanonicalFormatLegacyResolver } from './v2-to-v1';
 import type { V1FormatId, V2ProductFormatDeclaration } from './types';
 
@@ -30,6 +34,17 @@ export interface CanonicalFormatLegacyRoute {
    * before dispatch.
    */
   canonical_selector?: { format_kind: string; params?: unknown };
+  /**
+   * `true` when the SDK guessed this option's `format_kind` and `params` from
+   * the legacy id's name (an AAO id alias or a registry id glob) at an agent
+   * URL other than the AAO reference creative agent. That agent owns its ids,
+   * so the guess may be wrong: `display_300x250` can be a third-party tag, not
+   * an image. Absent when a catalog entry, catalog snapshot or
+   * `legacyFormatConverter` declared the option. Compare a guessed option
+   * against the seller's own `format_options[]` only as a hint, or project
+   * with `authoritativeOnly: true` to skip guesses.
+   */
+  inferred_from_id?: true;
 }
 
 /** The direct canonical selector for a format option the seller did not declare. */
@@ -212,6 +227,7 @@ export function legacyRoutesForProduct(
               ...(selector.params !== undefined && { params: selector.params }),
             },
           }),
+        ...(isInferredFromIdFormatOption(declaration) && { inferred_from_id: true as const }),
       },
     ];
   });

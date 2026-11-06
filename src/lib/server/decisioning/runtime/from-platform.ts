@@ -1497,7 +1497,7 @@ function matchLegacyRefToDeclaration(
         description: ownerId,
         format_ids: [ref],
       },
-      { legacyFormatConverter, _authoritativeOnly: authoritativeOnly }
+      { legacyFormatConverter, authoritativeOnly }
     );
     if (projected.diagnostics.length > 0 || projected.v2.format_options.length !== 1) return 'unresolved';
     const expected = projected.v2.format_options[0]!;

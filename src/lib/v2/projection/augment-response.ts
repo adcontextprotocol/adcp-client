@@ -362,6 +362,10 @@ export function toCanonicalFormatOptionsWithRoutes(
  * before being forwarded to a legacy seller. Rebuild the write-side resolver
  * with `canonicalFormatLegacyResolverFromRoutes(restoredRoutes)`.
  *
+ * A legacy id at a seller's own agent URL may be projected by a guess from its
+ * name (`display_300x250` read as `image`). Its route carries
+ * `inferred_from_id: true`; pass `authoritativeOnly: true` to skip guesses.
+ *
  * @throws TypeError when a canonical declaration uses a direct legacy identity
  * alias such as `agent_url` or `agentUrl` instead of `v1_format_ref`.
  */

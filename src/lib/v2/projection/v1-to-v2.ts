@@ -68,6 +68,7 @@ import type { CanonicalFormatLegacyRoute } from './legacy-routes';
 import {
   concealLegacyFormatRefs,
   legacyFormatRefsForDeclaration,
+  rememberInferredFromIdFormatOption,
   rememberSynthesizedFormatOption,
   transferLegacyCreativeMetadata,
 } from './legacy-metadata';
@@ -163,12 +164,19 @@ export interface V1ToV2ProjectionOptions {
   /** @internal Disable buyer-only route inference when assembling seller wire responses. */
   _inferDualEmissionLegacyRefs?: boolean;
   /**
-   * @internal Resolve a ref only from authoritative sources: catalog snapshots,
-   * an exact catalog entry, and the explicit converter. Ids under an agent URL
-   * other than the AAO reference agent skip the AAO naming guesses (the bare-id
-   * alias and the registry id-glob), because that agent, not the AAO, says what
-   * its ids mean. Used to check a seller's own declarations against its refs.
+   * Resolve a ref only from authoritative sources: catalog snapshots, an exact
+   * AAO catalog entry, and `legacyFormatConverter`. Ids under an agent URL
+   * other than the AAO reference creative agent skip the AAO naming guesses
+   * (the bare-id alias and the registry id glob), because that agent, not the
+   * AAO, says what its ids mean. A ref only a guess could resolve gets a
+   * `FORMAT_PROJECTION_FAILED` diagnostic instead of a declaration.
+   *
+   * Default `false`: guesses still apply, and the routes mark each guessed
+   * option with `inferred_from_id: true`. Set `true` before comparing a
+   * projection against a seller's own `format_options[]`.
    */
+  authoritativeOnly?: boolean;
+  /** @internal @deprecated Use `authoritativeOnly`. */
   _authoritativeOnly?: boolean;
 }
 
@@ -379,14 +387,15 @@ function projectWithLegacyConverter(
 
 /**
  * Project a single v1 `format_id` to a v2 `ProductFormatDeclaration`,
- * or to a diagnostic when no projection is possible.
+ * or to a diagnostic when no projection is possible. `inferredFromId` marks a
+ * declaration guessed from the id's name at another agent's URL.
  */
 function projectFormatId(
   fid: V1FormatId,
   productId: string,
   field: string,
   options?: V1ToV2ProjectionOptions
-): { decl?: V2ProductFormatDeclaration; diagnostic?: ProjectionDiagnostic } {
+): { decl?: V2ProductFormatDeclaration; diagnostic?: ProjectionDiagnostic; inferredFromId?: true } {
   const hasWidth = fid.width !== undefined;
   const hasHeight = fid.height !== undefined;
   const invalidDimensions =
@@ -437,7 +446,9 @@ function projectFormatId(
     canonicalAgentUrl !== null &&
     new URL(canonicalAgentUrl).protocol === 'https:' &&
     !isLikelyPrivateUrl(canonicalAgentUrl);
-  const aaoGuessesApply = options?._authoritativeOnly !== true || isAaoAgentUrl(fid.agent_url);
+  const atAaoAgent = isAaoAgentUrl(fid.agent_url);
+  const authoritativeOnly = options?.authoritativeOnly === true || options?._authoritativeOnly === true;
+  const aaoGuessesApply = !authoritativeOnly || atAaoAgent;
   const uniqueAliasEntry =
     exactCatalogEntry === undefined && mayUseUniqueAlias && aaoGuessesApply
       ? lookupUniqueV1FormatById(fid.id, options?._catalogPath)
@@ -491,6 +502,8 @@ function projectFormatId(
         params,
         v1_format_ref: [fid],
       },
+      // An entry found only by its bare id describes the AAO's id, not this agent's.
+      ...(exactCatalogEntry === undefined && !atAaoAgent && { inferredFromId: true as const }),
     };
   }
 
@@ -534,6 +547,7 @@ function projectFormatId(
         params: buildParams(fid, globMatch.parameters),
         v1_format_ref: [fid],
       },
+      ...(!atAaoAgent && { inferredFromId: true as const }),
     };
   }
 
@@ -601,13 +615,14 @@ export function projectV1ProductToV2(v1: V1ProductInput, options?: V1ToV2Project
   for (let i = 0; i < inputFormatIds.length; i++) {
     const fid = inputFormatIds[i]! as V1FormatId;
     const field = `products[${v1.product_id}].format_ids[${i}]`;
-    const { decl, diagnostic } = projectFormatId(fid, v1.product_id, field, options);
+    const { decl, diagnostic, inferredFromId } = projectFormatId(fid, v1.product_id, field, options);
     if (decl) {
-      format_options.push(
+      const option =
         typeof decl.format_option_id === 'string' && decl.format_option_id.length > 0
           ? decl
-          : { ...decl, format_option_id: migratedFormatOptionId(fid) }
-      );
+          : { ...decl, format_option_id: migratedFormatOptionId(fid) };
+      if (inferredFromId) rememberInferredFromIdFormatOption(option);
+      format_options.push(option);
     }
     if (diagnostic) diagnostics.push(diagnostic);
   }
@@ -806,7 +821,10 @@ function sameIdentity(left: V1FormatId, right: V1FormatId): boolean {
 }
 
 function compatible(option: Record<string, unknown>, ref: V1FormatId): boolean {
-  const known = canonicalDeclarationFromBareId(ref.id, { agentUrl: ref.agent_url });
+  // The seller's own option says what its id means. Only an authoritative
+  // mapping may contradict it; a guess from the id's name never vetoes it.
+  const bare: V1FormatId = { agent_url: ref.agent_url, id: ref.id };
+  const known = projectFormatId(bare, `<bare:${ref.id}>`, `bareFormatId(${ref.id})`, { authoritativeOnly: true }).decl;
   if (known && known.format_kind !== option.format_kind) return false;
   const params = record(option.params) ?? {};
   const knownParams = record(known?.params) ?? {};

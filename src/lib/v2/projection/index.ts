@@ -161,6 +161,7 @@ export {
 } from './catalog-snapshot';
 
 export {
+  isAaoAgentUrl,
   loadCatalog,
   lookupV1Format,
   findCatalogEntryByCanonicalAndSize,
