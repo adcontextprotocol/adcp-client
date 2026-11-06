@@ -507,6 +507,31 @@ describe('request-local 3.1 product creative wire evidence (#3312)', () => {
     }
   });
 
+  test('library evidence uses the configured wire release rather than an older schema pin', async () => {
+    const client = new SingleAgentClient(AGENT, { adcpVersion: '3.0', wireAdcpVersion: '3.1' });
+    prime(client, { adcp: { major_versions: [3], supported_versions: ['3.1'] } });
+    const container = structuredClone(baseContainer);
+    container.format_options[0].technical_requirements_complete = true;
+    markSellerContainer(client, container);
+    const other = structuredClone(baseContainer);
+    other.package_id = 'pkg-2';
+    other.format_options[0].format_option_id = 'tall';
+    other.format_options[0].params.height = 600;
+    other.format_options[0].technical_requirements_complete = true;
+    markSellerContainer(client, other);
+    const input = { ...request, creatives: [{ ...creative, assets: { image_main: creative.assets.image } }] };
+    delete input.assignments;
+    let captured;
+    client.executeAndHandle = async (_task, _handler, params) => {
+      captured = params;
+      return { success: true, status: 'completed', data: {} };
+    };
+    await client.syncCreatives(input, undefined, {
+      creativeFormatProjection: { selectorContainers: [container, other] },
+    });
+    assert.deepEqual(captured.creatives[0], input.creatives[0]);
+  });
+
   test('required slots and size ranges can establish support without an option pin', async () => {
     const client = new SingleAgentClient(AGENT, { wireAdcpVersion: '3.1' });
     prime(client, { adcp: { major_versions: [3], supported_versions: ['3.1'] } });
