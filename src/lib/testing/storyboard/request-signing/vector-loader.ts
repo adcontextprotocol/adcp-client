@@ -318,6 +318,7 @@ function parsePositive(id: string, raw: unknown): PositiveVector {
     jwks_override,
     expected_signature_base: typeof r.expected_signature_base === 'string' ? r.expected_signature_base : undefined,
     spec_reference: typeof r.spec_reference === 'string' ? r.spec_reference : undefined,
+    applies_when: optionalAppliesWhen(id, r),
   };
 }
 
@@ -356,6 +357,7 @@ function parseNegative(id: string, raw: unknown): NegativeVector {
     expected_failed_step: failedStep,
     requires_contract: contract,
     spec_reference: typeof r.spec_reference === 'string' ? r.spec_reference : undefined,
+    applies_when: optionalAppliesWhen(id, r),
   };
 }
 
@@ -363,6 +365,10 @@ function optionalSigningProfileVersion(vector: Record<string, unknown>): string 
   // Older cached bundles predate the explicit marker; every root vector in
   // those bundles exercises the legacy 3.1 binary profile.
   return typeof vector.signing_profile_version === 'string' ? vector.signing_profile_version : '3.1';
+}
+
+function optionalAppliesWhen(id: string, vector: Record<string, unknown>): string | undefined {
+  return vector.applies_when === undefined ? undefined : str(vector.applies_when, `${id}.applies_when`);
 }
 
 function parseJwksSelector(
