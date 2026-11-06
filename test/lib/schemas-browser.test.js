@@ -49,6 +49,59 @@ test('browser schemas publish declaration paths for modern and legacy TypeScript
   }
 });
 
+// Browser-safe entries must keep their declaration graph browser-safe too:
+// a declaration that names a type through the root barrel loads the signing
+// stack and Node-only packages such as `redis` into adopters' type checks.
+for (const specifier of ['@adcp/sdk/schemas/browser', '@adcp/sdk/media-buy/actions']) {
+  for (const extension of ['mts', 'cts']) {
+    test(`${specifier} ${extension === 'mts' ? 'ESM' : 'CommonJS'} declarations stay inside browser-safe modules`, () => {
+      const ts = require('typescript');
+      const fixture = resolve(`__browser-declarations-fixture__.${extension}`);
+      const source =
+        extension === 'mts'
+          ? `import * as entry from '${specifier}'; export const value = entry;`
+          : `import entry = require('${specifier}'); export const value = entry;`;
+      const options = {
+        module: ts.ModuleKind.NodeNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        target: ts.ScriptTarget.ES2022,
+        lib: ['lib.es2022.d.ts', 'lib.dom.d.ts'],
+        types: [],
+        noEmit: true,
+        skipLibCheck: true,
+      };
+      const host = ts.createCompilerHost(options);
+      const getSourceFile = host.getSourceFile.bind(host);
+      host.getSourceFile = (fileName, languageVersion, ...rest) =>
+        resolve(fileName) === fixture
+          ? ts.createSourceFile(fileName, source, languageVersion, true)
+          : getSourceFile(fileName, languageVersion, ...rest);
+      const fileExists = host.fileExists.bind(host);
+      host.fileExists = fileName => resolve(fileName) === fixture || fileExists(fileName);
+      const program = ts.createProgram([fixture], options, host);
+
+      const files = program
+        .getSourceFiles()
+        .filter(file => !program.isSourceFileDefaultLibrary(file) && resolve(file.fileName) !== fixture)
+        .map(file => resolve(file.fileName));
+      const sdkDist = resolve('dist/lib');
+      assert.ok(
+        files.some(file => file.startsWith(sdkDist)),
+        `${specifier} did not resolve to dist declarations`
+      );
+      const forbidden = files.filter(file => {
+        if (file.startsWith(sdkDist)) {
+          const path = file.slice(sdkDist.length + 1);
+          return /^index\.d\.[cm]?ts$|^(signing|server|protocols|core|testing)\//.test(path);
+        }
+        // Zod is the only runtime dependency of the browser entries.
+        return !/[\\/]node_modules[\\/]zod[\\/]/.test(file);
+      });
+      assert.deepEqual(forbidden, [], `declaration graph left browser-safe modules:\n${forbidden.join('\n')}`);
+    });
+  }
+}
+
 test('a single browser schema drops unrelated validators and stays within its size budget', async t => {
   const result = await build({
     stdin: {

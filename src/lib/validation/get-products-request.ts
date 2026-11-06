@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { GetProductsRequestSchema as GeneratedGetProductsRequestSchema } from '../types/schemas.generated';
 import { GetProductsRequest_FieldsValues } from '../types/inline-enums.generated';
-import type { CanonicalGetProductsRequest } from '../v2/projection/creative-delivery';
+import type { CanonicalGetProductsRequest } from '../v2/projection/types';
 
 type LooseObjectShapeFor<T extends object> = {
   [K in keyof T]-?: undefined extends T[K]
@@ -21,8 +21,11 @@ export type LooseObjectSchemaFor<T extends object> = {
 } & z.ZodObject<LooseObjectShapeFor<T>, z.core.$loose> &
   z.ZodType<T & Record<string, unknown>, T & Record<string, unknown>>;
 
+// Annotated so declaration emit names the generated module instead of
+// re-deriving the shape through the root barrel (and its Node-only types).
 /** Wire-compatible request schema, including the legacy `format_ids` selector. */
-export const LegacyGetProductsRequestSchema = GeneratedGetProductsRequestSchema;
+export const LegacyGetProductsRequestSchema: typeof GeneratedGetProductsRequestSchema =
+  GeneratedGetProductsRequestSchema;
 
 type CanonicalGetProductsField = NonNullable<CanonicalGetProductsRequest['fields']>[number];
 const canonicalGetProductsFields = /* @__PURE__ */ GetProductsRequest_FieldsValues.filter(

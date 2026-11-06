@@ -13,8 +13,20 @@
 import type {
   CanonicalFormatOption,
   FormatReferenceStructuredObject,
+  GetProductsRequest,
   ProductFormatDeclaration,
 } from '../../types/tools.generated';
+
+type CanonicalGetProductsField = Exclude<NonNullable<GetProductsRequest['fields']>[number], 'format_ids'>;
+/**
+ * Primary product discovery request cannot ask the SDK to expose legacy format IDs.
+ *
+ * Declared here rather than in `creative-delivery` so the browser-safe
+ * `GetProductsRequestSchema` declaration does not pull in Node-only types.
+ */
+export type CanonicalGetProductsRequest = Omit<GetProductsRequest, 'fields'> & {
+  fields?: CanonicalGetProductsField[];
+};
 
 /** v1 format_id (`{ agent_url, id }`). Same shape in 3.0 and 3.1. */
 export interface V1FormatId {
