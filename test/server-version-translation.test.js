@@ -188,3 +188,28 @@ describe('version translation visibility and async results', () => {
     assert.strictEqual(current.structuredContent.result.name, 'Q1 launch');
   });
 });
+
+describe('envelope fields survive response down-conversion', () => {
+  const { downgradeResponse } = require('../dist/lib/adapters/version/index');
+  it('keeps protocol-envelope fields a 3.2 proposal-flow schema does not compose', () => {
+    const response = {
+      status: 'completed',
+      message: 'Listed one product.',
+      context: { trace: 'abc' },
+      outcome: 'listed',
+      feed_version: 'feed-1',
+      cache_scope: 'public',
+      products: [{ product_id: 'prod_1', name: 'Premium video', hold_policy: { available: false } }],
+    };
+    const { data, drifts } = downgradeResponse('list_products', response, {
+      fromVersion: '3.3.0-beta.4',
+      toVersion: '3.2',
+    });
+    assert.strictEqual(data.status, 'completed');
+    assert.strictEqual(data.message, 'Listed one product.');
+    assert.deepStrictEqual(data.context, { trace: 'abc' });
+    assert.strictEqual(data.products[0].hold_policy, undefined, 'the 3.3 field is still removed');
+    const reported = drifts.flatMap(drift => drift.strippedFields ?? []);
+    assert.ok(!reported.includes('status'));
+  });
+});

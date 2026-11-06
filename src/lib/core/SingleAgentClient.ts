@@ -367,6 +367,7 @@ import {
   projectMediaBuyCreativesForDelivery,
   projectCreativeForDelivery,
   projectSyncCreativesForDelivery,
+  syncCreativeAssignmentTargets,
   projectUndeclaredFormatOptionSelectors,
   resolveCreativeFormatWireMode,
   stripLegacyCreativeIdentity,
@@ -2263,6 +2264,7 @@ export class SingleAgentClient {
             }
             return found;
           },
+          subscriptions: async () => (await this.reporting.listSubscriptions()).subscriptions,
         },
         normalizeOptions: async (options, taskOptions) => {
           if (options.billing) return options;
@@ -8649,13 +8651,9 @@ export class SingleAgentClient {
         typeof container.package_id === 'string' ? [container.package_id] : []
       )
     );
-    const assignmentPackageContainers = Array.isArray(params.assignments)
-      ? params.assignments.flatMap(assignment =>
-          typeof assignment.package_id === 'string' && !configuredPackageIds.has(assignment.package_id)
-            ? [{ package_id: assignment.package_id }]
-            : []
-        )
-      : [];
+    const assignmentPackageContainers = syncCreativeAssignmentTargets(params).flatMap(assignment =>
+      !configuredPackageIds.has(assignment.package_id) ? [{ package_id: assignment.package_id }] : []
+    );
     const selectorContainers = [...configuredSelectorContainers, ...assignmentPackageContainers];
     const wireMode = await this.resolveCreativeWireMode('sync_creatives', taskOptions, true, () =>
       this.productOptionsSupportCanonicalWire('sync_creatives', params, selectorContainers, options)

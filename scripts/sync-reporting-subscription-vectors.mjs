@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 const REPOSITORY = 'adcontextprotocol/adcp';
 const UPSTREAM = 'static/compliance/source/test-vectors/reporting-subscriptions';
-const FILES = ['case.schema.json', 'error-codes.json', 'reason-codes.json', 'vectors.json'];
+const FILES = ['case.schema.json', 'error-codes.json', 'offering-checks.json', 'reason-codes.json', 'vectors.json'];
 const target = join(
   dirname(fileURLToPath(import.meta.url)),
   '..',

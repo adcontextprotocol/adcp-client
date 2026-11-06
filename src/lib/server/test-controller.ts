@@ -213,6 +213,16 @@ export const REPORTING_CORE_LIFECYCLE_PROBE_SCENARIO = 'reporting_core_lifecycle
  */
 export const REPORTING_SUBSCRIPTION_PROBE_SCENARIO = 'reporting_subscription_probe' as const;
 
+/**
+ * `reset_state` (adcp#8717): takes no params and returns the authenticated caller's sandbox to a
+ * baseline. The storyboard runner calls it once before each storyboard when `list_scenarios` lists
+ * it. A seller that lists `reporting_subscription_probe` MUST also list `reset_state`, and the reset
+ * MUST unpin the caller's sandbox clock (so `simulated_now` reads the seller's wall clock again
+ * until the next `advance_time`) and discard every grant and timezone change the probe made for the
+ * caller. Succeeds with `SeedSuccess` (`{ success: true }`).
+ */
+export const RESET_STATE_SCENARIO = 'reset_state' as const;
+
 /** The `reporting_subscription_probe` operations. */
 export const REPORTING_SUBSCRIPTION_PROBE_OPERATIONS = [
   'revoke_grant',
@@ -232,9 +242,40 @@ export type ReportingSubscriptionProbeParams =
   | { operation: 'advance_time'; target_time: string; account_id?: string };
 
 /**
+ * One `timezone_cutovers[]` entry of a `set_account_timezone` result: shaped as a `get_reporting_status`
+ * `subscription_coverage[].timezone_cutovers[]` entry, always with `offering_id` and `previous_timezone`.
+ */
+export interface ReportingSubscriptionProbeTimezoneCutover {
+  offering_id: string;
+  previous_timezone: string;
+  timezone: string;
+  /** The end of the offering's last old-timezone period that started before `changed_at`. */
+  effective_at: string;
+  [key: string]: unknown;
+}
+
+/**
+ * `SimulationSuccess.simulated` for `set_account_timezone` (`SetAccountTimezoneResult`, adcp#8717).
+ */
+export interface ReportingSubscriptionProbeSetAccountTimezoneResult {
+  simulated_now: string;
+  account_id: string;
+  /** The account's zone before the call; equal to `timezone` when the call changed nothing. */
+  previous_timezone: string;
+  /** The account's zone after the call, as `list_accounts` shows it. */
+  timezone: string;
+  /** The sandbox instant the change applied (the call's `simulated_now`). Absent when nothing changed. */
+  changed_at?: string;
+  /** One per account_timezone-aligned offering the seller offers; empty when nothing changed. */
+  timezone_cutovers: ReportingSubscriptionProbeTimezoneCutover[];
+  [key: string]: unknown;
+}
+
+/**
  * The `simulated` object of a `reporting_subscription_probe` success. `simulated_now` is the caller's
- * virtual clock after the operation (one clock per caller; a `reset_state` resets it). Every operation
- * but `advance_time` echoes `account_id`.
+ * virtual clock after the operation (one clock per caller; `reset_state` unpins it). Every operation
+ * but `advance_time` echoes `account_id`; `set_account_timezone` returns
+ * {@link ReportingSubscriptionProbeSetAccountTimezoneResult}.
  */
 export interface ReportingSubscriptionProbeSimulated {
   simulated_now: string;
@@ -252,8 +293,10 @@ export interface ReportingSubscriptionProbeSimulated {
   /** `set_account_timezone`. */
   previous_timezone?: string;
   timezone?: string;
-  /** `set_account_timezone`: the cutover instant of each affected offering. */
-  timezone_cutovers?: Array<{ offering_id: string; effective_at: string }>;
+  /** `set_account_timezone`: when the change applied; absent when nothing changed. */
+  changed_at?: string;
+  /** `set_account_timezone`: the cutover of each account_timezone-aligned offering. */
+  timezone_cutovers?: ReportingSubscriptionProbeTimezoneCutover[];
   [key: string]: unknown;
 }
 
@@ -340,6 +383,12 @@ export interface TestControllerStore {
   reportingSubscriptionProbe?(
     params: ReportingSubscriptionProbeParams
   ): Promise<SimulationSuccess & { simulated: ReportingSubscriptionProbeSimulated }>;
+  /**
+   * `reset_state` (adcp#8717): return the caller's sandbox to a baseline. Advertised when present. A
+   * store with `reportingSubscriptionProbe` must implement it: unpin the caller's sandbox clock and
+   * discard every grant and timezone change the probe made for the caller.
+   */
+  resetState?(): Promise<void>;
   /** Transition a creative to the specified status. */
   forceCreativeStatus?(
     creativeId: string,
@@ -782,6 +831,7 @@ function allScenariosFromStore(store: TestControllerStore): string[] {
   if (typeof store.forceGetSignalsArm === 'function') out.push(DISCOVERY_ARM_SCENARIOS.FORCE_GET_SIGNALS_ARM);
   if (typeof store.reportingCoreLifecycleProbe === 'function') out.push(REPORTING_CORE_LIFECYCLE_PROBE_SCENARIO);
   if (typeof store.reportingSubscriptionProbe === 'function') out.push(REPORTING_SUBSCRIPTION_PROBE_SCENARIO);
+  if (typeof store.resetState === 'function') out.push(RESET_STATE_SCENARIO);
   return out;
 }
 
@@ -944,7 +994,15 @@ function makeSeedCacheScope(input: Record<string, unknown>): string | undefined 
     input.account ??
     (context != null && typeof context === 'object' ? (context as { account?: unknown }).account : undefined);
   if (account != null && typeof account === 'object') {
-    const accountRef = account as { account_id?: unknown; brand?: unknown; operator?: unknown; sandbox?: unknown };
+    const accountRef = account as {
+      account_id?: unknown;
+      brand?: unknown;
+      operator?: unknown;
+      operator_unit?: unknown;
+      currency?: unknown;
+      timezone?: unknown;
+      sandbox?: unknown;
+    };
     if (typeof accountRef.account_id === 'string' && accountRef.account_id.length > 0) {
       parts.push(`account_id:${accountRef.account_id}`);
     } else if (
@@ -956,6 +1014,9 @@ function makeSeedCacheScope(input: Record<string, unknown>): string | undefined 
         `account_ref:${canonicalJson({
           ...(accountRef.brand !== undefined && { brand: accountRef.brand }),
           ...(accountRef.operator !== undefined && { operator: accountRef.operator }),
+          ...(accountRef.operator_unit !== undefined && { operator_unit: accountRef.operator_unit }),
+          ...(accountRef.currency !== undefined && { currency: accountRef.currency }),
+          ...(accountRef.timezone !== undefined && { timezone: accountRef.timezone }),
           ...(accountRef.sandbox !== undefined && { sandbox: accountRef.sandbox }),
         })}`
       );
@@ -1623,6 +1684,14 @@ async function handleTestControllerRequestImpl(
         );
       }
 
+      case RESET_STATE_SCENARIO: {
+        if (!store.resetState) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        await store.resetState();
+        return wrapStoreSuccess({ success: true, message: 'Sandbox reset' });
+      }
+
       default:
         return controllerError('UNKNOWN_SCENARIO', 'Unrecognized scenario name');
     }
@@ -1703,43 +1772,18 @@ export function toMcpResponse(data: ComplyTestControllerResponse): McpToolRespon
  * the `inputSchema` argument to `server.registerTool(...)` in custom wrappers
  * so the request shape stays in sync with {@link registerTestController}.
  *
- * Matches `ComplyTestControllerRequest` from the generated schema: `scenario`
- * (required), `params` (scenario-specific), and the universal `context` / `ext`
- * envelope fields. No top-level `account` or `brand` — AdCP routes account
- * and brand context through `context` on this tool.
- *
- * **Extending for vendor fields.** Custom wrappers that carry tenant or
- * account references in top-level fields can extend the shape locally.
- * Those buyer-supplied fields are identifiers only: resolve them through a
- * trusted server-side account resolver before making authorization decisions.
- * Both `account` and `brand` are commonly added — storyboard fixtures and
- * v5-shaped wrappers often send them alongside `params`:
- *
- * ```ts
- * const MY_SHAPE = {
- *   ...TOOL_INPUT_SHAPE,
- *   account: z.object({ account_id: z.string() }).passthrough().optional(),
- *   brand: z.object({ domain: z.string() }).passthrough().optional(),
- * };
- * server.registerTool(
- *   'comply_test_controller',
- *   { description: 'Sandbox only.', inputSchema: MY_SHAPE },
- *   async input => {
- *     const account = await accounts.resolve(input.account, trustedRequestContext());
- *     if (!isSandboxOrMockAccount(account)) return toMcpResponse({ ... });
- *     return toMcpResponse(await handleTestControllerRequest(store, input as Record<string, unknown>));
- *   }
- * );
- * ```
- *
- * Adopters routing through `createAdcpServerFromPlatform(platform, { complyTest })`
- * pass the same fields via `complyTest.inputSchema` (see
- * `ComplyControllerConfig.inputSchema` in `@adcp/sdk/testing`).
- *
- * This keeps the default registration protocol-compliant while giving
- * wrapper authors a documented extension point.
+ * Matches the controller request's required sandbox assertion. The account
+ * object is open in the protocol: preserve complete natural account identity
+ * or an opaque account_id so a per-request store factory can resolve it.
+ * The assertion is caller intent, not sandbox authority. Resolve and authorize
+ * the supplied identity against trusted persisted state before making writes.
+ * Custom wrappers can extend the remaining top-level shape for vendor fields.
  */
 export const TOOL_INPUT_SHAPE = {
+  account: z
+    .object({ sandbox: z.literal(true) })
+    .passthrough()
+    .describe('Sandbox account assertion and complete routing identity; verify sandbox status against persisted state'),
   scenario: z.string().describe('Scenario to execute (e.g., list_scenarios, force_account_status)'),
   params: z.record(z.string(), z.unknown()).optional().describe('Scenario-specific parameters'),
   context: z.record(z.string(), z.unknown()).optional().describe('AdCP context object'),

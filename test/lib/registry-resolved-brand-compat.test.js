@@ -25,9 +25,13 @@ declare const resolved: ResolvedBrand;
 
 const legacyProvenance: 'canonical' | 'community' | 'enriched' | undefined = resolved.provenance;
 const compatibleBrand: ResolvedBrand = { ...resolved, provenance: 'canonical' };
+const completeEntry: Record<string, unknown> | undefined = resolved.brand;
+const withEntry: ResolvedBrand = { ...resolved, brand: { id: 'spark', names: [{ en: 'Spark' }] } };
 
 void legacyProvenance;
 void compatibleBrand;
+void completeEntry;
+void withEntry;
 `,
       'utf8'
     );

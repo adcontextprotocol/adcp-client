@@ -8,8 +8,13 @@
  * - Before grading, the runner reads as the same caller `get_principal` (paging `prior_versions`),
  *   `list_accounts`, `get_media_buys` and `get_adcp_capabilities`, and takes the subscription's
  *   `subscription_coverage` entry from this response.
- * - `now` is the response's `ledger_as_of`. Periods are kept when they start at or after
- *   `scope.ledger_retained_from` and fall inside the request's `period` when one is set.
+ * - `now` is the response's `ledger_as_of`. The two sets are compared over one window (adcp#8717).
+ *   The window starts at the later of the expected start (the request's `period.start`, or no lower
+ *   bound) and the retention bound: `scope.ledger_retained_from`, capped at `ledger_as_of` minus
+ *   `status_retention_days` (exact 86,400-second days), because the seller keeps obligations
+ *   queryable at least that long. Periods that start before the window start are dropped from both
+ *   sides: an owed one is not required and a returned one is not a mismatch. When the request sets
+ *   a period, only periods ending inside it are compared.
  * - It passes when the owed set equals the response's obligations whose `delivery_config_id` is the
  *   subscription id: one per (`delivery_config_version`, `offering_id`, `period.start`,
  *   `period.end`), with the same `media_buy_ids` and `stub` flag, compared as instants. A response
@@ -22,8 +27,48 @@ type Json = Record<string, unknown>;
 
 /** What the runner computed before grading, per `subscription_id`. */
 export type OwedPeriodsComputation =
-  | { kind: 'computed'; expected: OwedKey[]; observed: OwedKey[] }
+  | { kind: 'computed'; expected: OwedKey[]; observed: OwedKey[]; window: OwedPeriodsWindow }
   | { kind: 'unverifiable'; error: string };
+
+/**
+ * Where the comparison starts and which bound set it: the request's `period.start`
+ * (`expected_start`), the response's `scope.ledger_retained_from`, or `ledger_as_of` minus
+ * `status_retention_days` (`retention_cap`). `start` is null when neither bound applies.
+ */
+export interface OwedPeriodsWindow {
+  start: string | null;
+  bound: 'expected_start' | 'ledger_retained_from' | 'retention_cap' | null;
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * The comparison window's start (storyboard-schema.yaml, "Owed periods", adcp#8717): the later of the
+ * expected start and the retention bound, where the retention bound is `ledger_retained_from` capped
+ * at `ledger_as_of − status_retention_days`. On a tie the expected start names the bound.
+ */
+export function owedPeriodsWindowStart(input: {
+  expectedStart: string | null;
+  ledgerRetainedFrom: string | null;
+  ledgerAsOf: string;
+  statusRetentionDays?: number | undefined;
+}): OwedPeriodsWindow {
+  let retention: { at: number; bound: 'ledger_retained_from' | 'retention_cap' } | undefined;
+  if (input.ledgerRetainedFrom !== null) {
+    retention = { at: Date.parse(input.ledgerRetainedFrom), bound: 'ledger_retained_from' };
+    const days = input.statusRetentionDays;
+    if (typeof days === 'number' && Number.isFinite(days) && days >= 0) {
+      const cap = Date.parse(input.ledgerAsOf) - days * DAY_MS;
+      if (cap < retention.at) retention = { at: cap, bound: 'retention_cap' };
+    }
+  }
+  const expected = input.expectedStart === null ? undefined : Date.parse(input.expectedStart);
+  if (expected === undefined && retention === undefined) return { start: null, bound: null };
+  if (retention === undefined || (expected !== undefined && expected >= retention.at)) {
+    return { start: new Date(expected!).toISOString(), bound: 'expected_start' };
+  }
+  return { start: new Date(retention.at).toISOString(), bound: retention.bound };
+}
 
 export interface OwedKey {
   delivery_config_version: number;
@@ -91,10 +136,7 @@ export async function prefetchOwedPeriods(
     const window = request?.period as { start?: string; end?: string } | undefined;
     const from = instant(window?.start);
     const until = instant(window?.end);
-    const keep = (start: string, end: string) =>
-      (retainedFrom === null || start >= retainedFrom) &&
-      (from === null || start >= from) &&
-      (until === null || end <= until);
+    let statusRetentionDays: number | undefined;
     try {
       const owed = await owedObligationsFromWire(
         {
@@ -103,8 +145,25 @@ export async function prefetchOwedPeriods(
           getAdcpCapabilities: params => call('get_adcp_capabilities', params) as never,
           getMediaBuys: params => call('get_media_buys', params) as never,
         },
-        { accountId, subscriptionId, now: asOf, ...(coverage ? { coverage } : {}) }
+        {
+          accountId,
+          subscriptionId,
+          now: asOf,
+          ...(coverage ? { coverage } : {}),
+          onStatusRetentionDays: days => {
+            statusRetentionDays = days;
+          },
+        }
       );
+      const windowStart = owedPeriodsWindowStart({
+        expectedStart: from,
+        ledgerRetainedFrom: retainedFrom,
+        ledgerAsOf: asOf,
+        statusRetentionDays,
+      });
+      // Instants are canonical toISOString strings, so they compare lexicographically.
+      const keep = (start: string, end: string) =>
+        (windowStart.start === null || start >= windowStart.start) && (until === null || end <= until);
       const expected = owed
         .map(item => ({
           delivery_config_version: item.subscription_version,
@@ -129,7 +188,7 @@ export async function prefetchOwedPeriods(
           };
         })
         .filter(item => keep(item.period_start, item.period_end));
-      results.set(subscriptionId, { kind: 'computed', expected, observed });
+      results.set(subscriptionId, { kind: 'computed', expected, observed, window: windowStart });
     } catch (error) {
       fail(`could not compute the owed set from wire state: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -183,7 +242,7 @@ export function validateOwedPeriodsMatch(
   return {
     ...base,
     passed: false,
-    error: `The seller's obligations for ${subscriptionId} differ from the owed set computed from wire state (${parts.join('; ')}).`,
+    error: `The seller's obligations for ${subscriptionId} differ from the owed set computed from wire state (${parts.join('; ')}). ${windowText(computed.window)}`,
     expected: computed.expected,
     actual: computed.observed,
   } as ValidationResult;
@@ -191,4 +250,15 @@ export function validateOwedPeriodsMatch(
 
 function describe(key: OwedKey): string {
   return `v${key.delivery_config_version} ${key.offering_id ?? '-'} [${key.period_start}, ${key.period_end})${key.stub ? ' stub' : ''}`;
+}
+
+function windowText(window: OwedPeriodsWindow): string {
+  if (window.start === null) return 'Compared every owed period: no period.start and no scope.ledger_retained_from.';
+  const why =
+    window.bound === 'expected_start'
+      ? "the request's period.start"
+      : window.bound === 'ledger_retained_from'
+        ? "the response's scope.ledger_retained_from"
+        : 'ledger_as_of minus status_retention_days, which caps scope.ledger_retained_from';
+  return `Compared periods starting at or after ${window.start} (window start set by ${why}: ${window.bound}).`;
 }

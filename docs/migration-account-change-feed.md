@@ -267,7 +267,7 @@ a persistent subscription runtime into the SDK.
 
 `streamAccountChanges` uses negotiated response metadata, the served-version echo,
 or the client's configured AdCP version to select the page schema. For a custom
-reader without SDK metadata, pass `adcpVersion: '3.2.7'` in the stream options and
+reader without SDK metadata, pass `adcpVersion: '3.2.8'` in the stream options and
 send the same release in your reader's requests. AdCP 3.3 requires nonempty
 `changed_paths` on seller-originated changes; AdCP 3.2 does not.
 

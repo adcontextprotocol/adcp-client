@@ -288,6 +288,71 @@ Either way, subsequent runs reuse the cached tokens (auto-refresh on expiry via 
 
 **Output:** JSON with `tracks[].status` (`passed`/`failed`/`skipped`), `steps[]` with diagnostics, and validations per step.
 
+### Account-scoped fixtures and negative membership
+
+Automatic `seed_product` and `seed_pricing_option` calls use the complete account
+reference used by the storyboard: `context.account`, otherwise the single resolved
+account in its effective sample requests or single-account provisioning request,
+otherwise a single sandbox account fixture. Request overrides, context inputs, and
+the run brand use the same account rules as public requests, except on tasks whose `account` names
+the account the request is *about* — `list_accounts`, `get_account_financials`,
+`list_account_changes`, and the `force_account_status` / `expire_account_change_cursor` controller
+scenarios — where an already-resolved `account.brand` reaches the wire verbatim and the run brand
+is only added when the reference carries none. Account provisioning
+seeds retain their independent targets; only product and pricing seeds need a
+shared catalog scope. Natural
+keys retain brand countries, operator, operator unit, currency, and timezone.
+ Opaque
+`account_id` references stay opaque. A storyboard that uses several accounts must
+provide an explicit `context.account` for its seeds; unresolved or ambiguous scope
+fails setup rather than seeding a different default account. This is account
+scoping, not a sandbox reset: fixtures for the same account may still coexist.
+
+### `comply_test_controller` responses are graded now
+
+Earlier SDK packages did not ship `compliance/comply-test-controller-{request,response}.json`, so
+the selected release's JSON Schema check was unavailable for this tool. Packaging them enables it.
+The SDK's generated Zod projection is a separate, weaker check and is unchanged. The test client's
+response validation defaults to strict, so a controller response that the published JSON Schema
+rejects can now fail a step that previously passed — with no change to your agent.
+
+Validate your controller response against the response schema of the release you pin, and read the
+`oneOf` arm that matches the request's `scenario`. The arms are scenario-shaped and the step text
+shows only the first five AJV issues, so the summary is often arm-by-arm noise rather than the
+error you need. Two causes worth checking first:
+
+- **A missing top-level `status`.** The response composes `core/protocol-envelope.json`
+  (`required: ['status']`) on 3.1.31, 3.2.8 and 3.3.0-beta.4. AdCP 3.0.25 composes no envelope and
+  does not require it. The SDK's own `registerTestController` always sets it.
+- **An `error` outside the published enum** — `INVALID_TRANSITION`, `INVALID_STATE`, `NOT_FOUND`,
+  `UNKNOWN_SCENARIO`, `INVALID_PARAMS`, `FORBIDDEN`, `JCS_NON_FINITE_NUMBER`, `INTERNAL_ERROR`
+  (3.0.25 omits `JCS_NON_FINITE_NUMBER`).
+
+Fix the response: the contract did not change, only the SDK's ability to see it. If you need the
+old informational-only posture while you do, use the `strictResponseSchemaValidation: false` /
+`--no-strict-response-schema-validation` escape hatch described above — and heed the caveat there
+about reserving it for temporary legacy harnesses.
+
+For product-filter checks, exclude a known negative control rather than assuming
+only one product can match. A validation entry can use:
+
+```yaml
+check: field_excludes
+path: products[*].product_id
+value: filter_negative_control
+description: The seeded display control is absent from an OLV result
+```
+
+Declare `requires: [field_excludes_runner]` at the storyboard root (alongside
+`controller` when needed). Supporting SDKs satisfy this intrinsic requirement;
+older SDKs skip the scenario before seeding instead of silently ignoring an unknown
+check. The matcher has the same scalar, deep-subset, and `allowed_values` semantics
+as `field_contains`, inverted over **every** resolved terminal. Empty arrays pass;
+additional matching products are allowed. Failed checks report the prohibited
+terminal in the `actual` array and `expected.excludes` while preserving the
+seller's response. Diagnostic evidence is bounded to the matching terminal;
+absence is checked across the complete result.
+
 ### `adcp fuzz` — property-based schema fuzzing
 
 Generates schema-valid requests, calls your agent, checks every response under the two-path oracle (schema-valid success *or* well-formed AdCP error envelope with uppercase reason code). Anything else — 500, stack traces, lowercase error codes, token leaks — fails.
@@ -840,3 +905,12 @@ Random seed on nightly broadens the surface; fixed seed on per-PR keeps reproduc
 For creative evaluator security fixtures, see
 [Creative evaluator build probes](CREATIVE-BUILD-PROBE.md) for valid route/input
 preparation, provisioned legacy selectors and explicit coverage gaps.
+
+SDK 17 controller registration preserves complete account identity and requires
+`account: { sandbox: true }` on every controller call, including `list_scenarios`.
+Callers that used the AdCP 3.0 account-less form must add this assertion before
+upgrading default MCP registration. `account_id` may accompany the assertion on
+the controller carrier; ordinary public opaque AccountRefs remain `{account_id}`.
+The platform wrapper retains its optional-account compatibility shape and trusted
+principal/target sandbox authorization. A caller assertion never grants sandbox
+authority by itself.

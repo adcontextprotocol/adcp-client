@@ -3,6 +3,8 @@ import type { GetBrandIdentitySuccess } from '../types/core.generated';
 
 export { BrandDomainValidationError, isDevelopmentBrandDomain, validateBrandDomain } from './domain';
 export type { BrandDomainValidationCode, ValidateBrandDomainOptions } from './domain';
+export { selectBrandEntry } from './selection';
+export type { BrandEntrySelector } from './selection';
 
 export type BrandJsonRecord = Record<string, unknown>;
 type ProtocolBrandLogo = NonNullable<GetBrandIdentitySuccess['logos']>[number];

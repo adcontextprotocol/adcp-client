@@ -69,8 +69,11 @@ export interface ReportingTestBuy {
   confirmed_at: string | null;
   start_time: string;
   end_time: string;
-  /** Defaults to one package listing every offering. */
-  packages?: Array<{ package_id: string; reporting_delivery_offering_ids?: string[] }>;
+  /**
+   * Defaults to one package listing every offering. `added_at` marks a package added after
+   * `confirmed_at`; `get_media_buys` serves it, as sellers advertising subscriptions must (adcp#8718).
+   */
+  packages?: Array<{ package_id: string; reporting_delivery_offering_ids?: string[]; added_at?: string }>;
 }
 
 /** Options for {@link createReportingTestKit} and {@link createReferenceReportingSeller}. */
@@ -116,7 +119,11 @@ export interface ReferenceReportingSeller {
     >;
     buys: Map<string, ReportingTestBuy & { canceled_at?: string; completed_at?: string }>;
   };
-  readonly clock: { now: Date };
+  /**
+   * The seller's sandbox clock. Setting `now` pins it; `unpin()` (what `reset_state` does, adcp#8717)
+   * makes `now` read the wall clock again until the next assignment.
+   */
+  readonly clock: { now: Date; unpin(): void };
 }
 
 const FULL_GRANT = ['get_reporting_status', 'sync_reporting_receipts', 'sync_reporting_status', 'get_media_buys'];
@@ -169,8 +176,19 @@ export const offerings = {
 export function createReferenceReportingSeller(
   options: ReportingTestKitOptions & { complyTest?: ComplyControllerConfig }
 ): ReferenceReportingSeller {
-  const clock = { now: new Date(options.start) };
-  if (!Number.isFinite(clock.now.getTime())) throw new TypeError('start must be an RFC 3339 instant');
+  let pinned: Date | undefined = new Date(options.start);
+  if (!Number.isFinite(pinned.getTime())) throw new TypeError('start must be an RFC 3339 instant');
+  const clock = {
+    get now(): Date {
+      return pinned ?? new Date();
+    },
+    set now(value: Date) {
+      pinned = value;
+    },
+    unpin(): void {
+      pinned = undefined;
+    },
+  };
   const now = () => clock.now;
   const tenantId = options.tenantId ?? 'reference';
   const deliveryOfferings = options.offerings ?? [offerings.dailyAnalytics()];
@@ -307,8 +325,12 @@ export function createReferenceReportingSeller(
           };
         }
         const account = ref?.account_id ? state.accounts.get(ref.account_id) : undefined;
-        // A revoked account is unknown to every task.
-        return account && grantOf(account.account_id, ctx) ? toAccount(account) : null;
+        // A revoked account is unknown to every task; a reduced grant carries its allowed_tasks, so a
+        // task it leaves out is refused with SCOPE_INSUFFICIENT.
+        const grant = account ? grantOf(account.account_id, ctx) : undefined;
+        return account && grant
+          ? { ...toAccount(account), authorization: { allowed_tasks: [...grant.allowed_tasks] } }
+          : null;
       },
       upsert: async () => [],
       list: async (_request: unknown, ctx: unknown) => ({
@@ -337,6 +359,7 @@ export function createReferenceReportingSeller(
               package_id: pkg.package_id,
               reporting_delivery_offering_ids:
                 pkg.reporting_delivery_offering_ids ?? deliveryOfferings.map(offering => offering.offering_id),
+              ...(pkg.added_at !== undefined ? { added_at: pkg.added_at } : {}),
             })),
           })),
       }),
@@ -398,6 +421,11 @@ export interface ReportingTestKit {
   };
   readonly buys: {
     add(buy: ReportingTestBuy): void;
+    /**
+     * Add a package to a buy now. On a confirmed buy the package carries `added_at` (the kit's
+     * clock), so it is owed from the period containing it and adding it is not a cutover (adcp#8718).
+     */
+    addPackage(mediaBuyId: string, pkg: { package_id: string; reporting_delivery_offering_ids?: string[] }): void;
     cancel(mediaBuyId: string): void;
     complete(mediaBuyId: string): void;
   };
@@ -429,17 +457,24 @@ export function createReportingTestKit(options: ReportingTestKitOptions): Report
   // comply_test_controller reporting_subscription_probe, bound below once the levers exist.
   const bound: {
     probe?: (params: ReportingSubscriptionProbeParams, buyerId: string) => Promise<ReportingSubscriptionProbeSimulated>;
+    reset?: (buyerId: string) => Promise<void>;
   } = {};
+  const callerOf = (ctx: { authInfo?: unknown }) => {
+    const caller = (ctx.authInfo as { clientId?: string } | undefined)?.clientId;
+    if (!caller)
+      throw new TestControllerError('INVALID_STATE', 'The probe acts on the caller’s own grant; authenticate.');
+    return caller;
+  };
   const seller = createReferenceReportingSeller({
     ...options,
     complyTest: {
       sandboxGate: () => true,
-      reportingSubscriptionProbe: async (params, ctx) => {
-        const caller = (ctx.authInfo as { clientId?: string } | undefined)?.clientId;
-        if (!caller)
-          throw new TestControllerError('INVALID_STATE', 'The probe acts on the caller’s own grant; authenticate.');
-        return { success: true, simulated: await bound.probe!(params, caller) };
-      },
+      reportingSubscriptionProbe: async (params, ctx) => ({
+        success: true,
+        simulated: await bound.probe!(params, callerOf(ctx)),
+      }),
+      // adcp#8717: a seller listing reporting_subscription_probe lists reset_state.
+      resetState: async ctx => bound.reset!(callerOf(ctx)),
     },
   });
   const { service, state, clock } = seller;
@@ -498,6 +533,75 @@ export function createReportingTestKit(options: ReportingTestKitOptions): Report
     await runCycle();
   };
 
+  // What each caller's probe changed, with the value before its first change and the engine's account
+  // record then, so reset_state can discard the changes with the coverage history they recorded
+  // (adcp#8717). The kit keeps the accounts, with the changes undone.
+  type Baseline = {
+    grant?: readonly string[] | null;
+    timezone?: string;
+    engine: { value: Record<string, unknown> } | null;
+  };
+  const probeChanges = new Map<string, Map<string, Baseline>>();
+  const remember = async (caller: string, accountId: string, what: 'grant' | 'timezone') => {
+    let accounts = probeChanges.get(caller);
+    if (!accounts) probeChanges.set(caller, (accounts = new Map()));
+    let baseline = accounts.get(accountId);
+    if (!baseline) {
+      const record = await seller.storage.subscriptions.get(principalOf(caller), `account:${accountId}`);
+      baseline = { engine: record ? { value: structuredClone(record.value) } : null };
+      accounts.set(accountId, baseline);
+    }
+    const found = account(accountId);
+    if (what === 'grant' && !('grant' in baseline)) {
+      const grant = found.grants.get(caller);
+      baseline.grant = grant ? [...grant.allowed_tasks] : null;
+    }
+    if (what === 'timezone' && baseline.timezone === undefined) baseline.timezone = found.timezone;
+  };
+  const rememberGrant = (caller: string, accountId: string) => remember(caller, accountId, 'grant');
+
+  bound.reset = async caller => {
+    // reset_state unpins the sandbox clock: simulated_now reads the wall clock until the next
+    // advance_time. The kit has one clock for its seller, so this unpins it for every caller.
+    clock.unpin();
+    const accounts = probeChanges.get(caller);
+    probeChanges.delete(caller);
+    for (const [accountId, baseline] of accounts ?? []) {
+      const found = account(accountId);
+      if (baseline.timezone !== undefined) found.timezone = baseline.timezone;
+      if ('grant' in baseline) {
+        found.grants.set(caller, baseline.grant ? { allowed_tasks: [...baseline.grant] } : null);
+      }
+      // Put the engine's account record (grant journal, gaps, cutovers, frozen periods) back to what it
+      // was before the probe's first change, so the history the changes recorded is discarded.
+      const store = seller.storage.subscriptions;
+      const principal = principalOf(caller);
+      const key = `account:${accountId}`;
+      if (baseline.engine) {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const current = await store.get(principal, key);
+          const result = await store.put(
+            principal,
+            key,
+            structuredClone(baseline.engine.value),
+            current?.revision ?? null
+          );
+          if (result.outcome === 'applied') break;
+        }
+      }
+      // Mark the principal due, with the restored grant, so the next cycle reconciles it.
+      const grant = found.grants.get(caller);
+      await service.grants!.changed({
+        principal,
+        accountId,
+        at: clock.now.toISOString(),
+        authorized: grant !== null && grant !== undefined,
+        ...(grant ? { allowedTasks: [...grant.allowed_tasks] } : {}),
+      });
+    }
+    await runCycle();
+  };
+
   bound.probe = async (params, caller) => {
     const at = () => clock.now.toISOString();
     if (params.operation === 'advance_time') {
@@ -513,9 +617,11 @@ export function createReportingTestKit(options: ReportingTestKitOptions): Report
     if (!found) throw new TestControllerError('NOT_FOUND', `No sandbox account ${JSON.stringify(accountId)}`);
     switch (params.operation) {
       case 'revoke_grant':
+        await rememberGrant(caller, accountId);
         await changeGrant(caller, accountId, null);
         return { simulated_now: at(), account_id: accountId, unauthorized_at: at() };
       case 'regrant': {
+        await rememberGrant(caller, accountId);
         await changeGrant(caller, accountId, FULL_GRANT);
         const listed = await buyer(caller).call('list_accounts', {});
         const item = ((listed.data as { accounts?: Json[] } | undefined)?.accounts ?? []).find(
@@ -533,15 +639,28 @@ export function createReportingTestKit(options: ReportingTestKitOptions): Report
         };
       }
       case 'reduce_grant':
+        // A reduction without get_reporting_status is a loss of reporting authority (adcp#8718).
+        await rememberGrant(caller, accountId);
         await changeGrant(caller, accountId, params.allowed_tasks);
         return { simulated_now: at(), account_id: accountId, allowed_tasks: [...params.allowed_tasks] };
       case 'set_account_timezone': {
+        // SetAccountTimezoneResult (adcp#8717).
         const previous = found.timezone;
+        if (previous === params.timezone) {
+          return {
+            simulated_now: at(),
+            account_id: accountId,
+            previous_timezone: previous,
+            timezone: previous,
+            timezone_cutovers: [],
+          };
+        }
+        await remember(caller, accountId, 'timezone');
         found.timezone = params.timezone;
         // Account-timezone periods cut over at the first old-timezone boundary at or after the change.
         const cutovers = (service.capabilities.offerings ?? []).flatMap(offering => {
           const schedule = offering.schedule as { period_duration: string; alignment: string };
-          if (schedule.alignment !== 'account_timezone' || previous === params.timezone) return [];
+          if (schedule.alignment !== 'account_timezone') return [];
           try {
             const calendar = createReportingPeriodCalendarV1({
               period_duration: schedule.period_duration,
@@ -551,6 +670,8 @@ export function createReportingTestKit(options: ReportingTestKitOptions): Report
             return [
               {
                 offering_id: offering.offering_id,
+                previous_timezone: previous,
+                timezone: params.timezone,
                 effective_at: new Date(calendar.next(clock.now.getTime() - 1)).toISOString(),
               },
             ];
@@ -564,6 +685,7 @@ export function createReportingTestKit(options: ReportingTestKitOptions): Report
           account_id: accountId,
           previous_timezone: previous,
           timezone: params.timezone,
+          changed_at: at(),
           timezone_cutovers: cutovers,
         };
       }
@@ -749,6 +871,20 @@ export function createReportingTestKit(options: ReportingTestKitOptions): Report
     buys: {
       add(item) {
         state.buys.set(item.media_buy_id, structuredClone(item));
+      },
+      addPackage(mediaBuyId, pkg) {
+        const found = state.buys.get(mediaBuyId);
+        if (!found) throw new TypeError(`No buy ${JSON.stringify(mediaBuyId)} in the kit`);
+        const packages = found.packages ?? [{ package_id: 'pkg-1' }];
+        if (packages.some(item => item.package_id === pkg.package_id)) {
+          throw new TypeError(
+            `Buy ${JSON.stringify(mediaBuyId)} already has package ${JSON.stringify(pkg.package_id)}`
+          );
+        }
+        found.packages = [
+          ...packages,
+          { ...structuredClone(pkg), ...(found.confirmed_at !== null ? { added_at: clock.now.toISOString() } : {}) },
+        ];
       },
       cancel(mediaBuyId) {
         const found = state.buys.get(mediaBuyId);

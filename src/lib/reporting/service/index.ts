@@ -73,7 +73,10 @@ import type { PrincipalRef } from '../../server/principal/types';
 import type { PrincipalLifecycleRuntime } from '../../server/principal/runtime';
 import { reportingSubscriptionDestinationForAccount } from '../../server/principal/reporting-subscriptions';
 import { isReportingStorage, requireDurable, type ReportingStorage } from '../../storage';
-import { reportingConfigurationCapabilitiesV1 } from '../subscriptions/capabilities';
+import {
+  checkReportingSubscriptionOfferingsV1,
+  reportingConfigurationCapabilitiesV1,
+} from '../subscriptions/capabilities';
 import {
   assertReportingTaskGrantedV1,
   type ReliableReportingSubscriptionsOptionsV1,
@@ -725,30 +728,21 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       );
     }
     // Sellers advertising subscriptions MUST publish standard_dimensions on every offering
-    // (adcontextprotocol/adcp#8585), so buyers resolve match from the wire as the engine does.
-    for (const offering of deliveryOfferings) {
-      if (!Array.isArray(offering.standard_dimensions)) {
-        throw new PlatformConfigError(
-          `Reporting offering ${JSON.stringify(offering.offering_id)} must publish standard_dimensions when ` +
-            'reporting subscriptions are advertised. Publish standard_dimensions (empty for totals-only) on the offering.',
-          { code: 'SUBSCRIPTIONS_REQUIRE_STANDARD_DIMENSIONS', configField: 'adapters' }
-        );
-      }
-      // adcontextprotocol/adcp#8619: rows of several accounts may land in one consolidated destination,
-      // so every managed-delivery offering keys its rows by account_id.
-      if (
-        offering.method !== undefined &&
-        !(offering.reporting_profile?.primary_keys as readonly unknown[] | undefined)?.includes('account_id')
-      ) {
-        throw new PlatformConfigError(
-          `Reporting offering ${JSON.stringify(offering.offering_id)} delivers to a managed destination but its ` +
-            'reporting_profile.primary_keys omit account_id. Declare account_id as a required string in the row ' +
-            'schema and list it in primary_keys when reporting subscriptions are advertised (adcp#8619).',
-          // The frozen error vocabulary (error-codes.json) has no code for this rule yet; the generic
-          // configuration code applies until the spec adds one.
-          { configField: 'adapters' }
-        );
-      }
+    // (adcontextprotocol/adcp#8585), and every managed-delivery offering keys its rows by account_id,
+    // because rows of several accounts may land in one consolidated destination (adcp#8619). The codes
+    // are the frozen ones of the spec's error-codes.json (adcp#8718).
+    const [failure, ...others] = checkReportingSubscriptionOfferingsV1(deliveryOfferings);
+    if (failure) {
+      const more = others.length > 0 ? ` (${others.length} more offering check(s) also fail)` : '';
+      throw new PlatformConfigError(
+        failure.code === 'SUBSCRIPTIONS_REQUIRE_STANDARD_DIMENSIONS'
+          ? `Reporting offering ${JSON.stringify(failure.offering_id)} must publish standard_dimensions when ` +
+              `reporting subscriptions are advertised. Publish standard_dimensions (empty for totals-only) on the offering${more}.`
+          : `Reporting offering ${JSON.stringify(failure.offering_id)} delivers to a managed destination but its ` +
+              'reporting_profile.primary_keys omit account_id. Declare account_id as a required string in the row ' +
+              `schema and list it in primary_keys when reporting subscriptions are advertised${more}.`,
+        { code: failure.code, configField: 'adapters' }
+      );
     }
   }
   // Without subscriptions this is exactly the pre-3.3 shape.
@@ -825,6 +819,9 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     capabilities,
     getReportingStatus: subscriptionOptions
       ? async (request, context) => {
+          // adcp#8718: a grant reduced without get_reporting_status is a loss of reporting authority,
+          // and get_reporting_status for that account is refused with SCOPE_INSUFFICIENT.
+          assertReportingTaskGrantedV1(context, 'get_reporting_status');
           const response = await getReportingStatus(request, context as never);
           return withReportingSubscriptionCoverageV1(response, context as never, subscriptionOptions);
         }

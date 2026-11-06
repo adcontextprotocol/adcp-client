@@ -212,6 +212,7 @@ import {
   type ComplyControllerConfig,
 } from '../../../testing/comply-controller';
 import type { TestControllerBridge } from '../../test-controller-bridge';
+import { TestControllerError } from '../../test-controller';
 import { mergeSeedProduct } from '../../../testing/seed-merge';
 import {
   getSdkServer,
@@ -2855,6 +2856,25 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const fwLogger = opts.logger ?? DEFAULT_FRAMEWORK_LOGGER;
   const mergeOpts = { mode: opts.mergeSeam ?? 'warn', logger: fwLogger };
 
+  // AdCP 3.3 account.requests: requests are read back through list_accounts (`read_task`), so the
+  // hook that serves them rides on the platform's list_accounts handler.
+  if (platform.accounts.listRequests != null && platform.accounts.list == null) {
+    throw new PlatformConfigError(
+      'accounts.listRequests serves account_requests on list_accounts and needs accounts.list; wire both.'
+    );
+  }
+  if (
+    runtimeOpts.accounts?.requestAccount != null &&
+    platform.accounts.listRequests == null &&
+    runtimeOpts.accounts?.listAccounts == null
+  ) {
+    fwLogger.warn(
+      'request_account is registered without accounts.listRequests: list_accounts (the advertised ' +
+        'account.requests read_task) returns no account_requests, so buyers cannot poll a pending request. ' +
+        'Implement accounts.listRequests.'
+    );
+  }
+
   // Project per-domain capability blocks declared on the platform onto
   // get_adcp_capabilities via createAdcpServer's `overrides.media_buy`
   // deep-merge seam. Adopters declare audience_targeting /
@@ -3229,6 +3249,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ...(principalCapability !== undefined && { principal: structuredClone(principalCapability) }),
     ...(platform.capabilities.capability_changes !== undefined && {
       capability_changes: structuredClone(platform.capabilities.capability_changes),
+    }),
+    ...(platform.capabilities.accountRequests !== undefined && {
+      accountRequests: structuredClone(platform.capabilities.accountRequests),
     }),
     ...(hasOverridesObject && {
       overrides: {
@@ -3767,7 +3790,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
                 'Verify the request envelope carries an account ref and the sandboxGate is configured correctly.',
               { product_id: params.product_id }
             );
-            return;
+            throw new TestControllerError(
+              'INVALID_PARAMS',
+              'seed_product requires a resolved sandbox account; no fixture was written'
+            );
           }
           autoSeedStoreFor(autoSeedStore, accountId).set(params.product_id, {
             ...params.fixture,
@@ -3785,7 +3811,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
                 'Verify the request envelope carries an account ref and the sandboxGate is configured correctly.',
               { product_id: params.product_id, pricing_option_id: params.pricing_option_id }
             );
-            return;
+            throw new TestControllerError(
+              'INVALID_PARAMS',
+              'seed_pricing_option requires a resolved sandbox account; no fixture was written'
+            );
           }
           const accountStore = autoSeedStoreFor(autoSeedStore, accountId);
           const existing = accountStore.get(params.product_id) as Record<string, unknown> | undefined;
@@ -3844,24 +3873,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       // an MCP-side concern; A2A and other transports are wired separately.
       controller.register(server);
     } else {
-      // Permit a top-level `account` field on the wire so the gate can read
-      // the buyer's account ref. The canonical AdCP shape strips it (account
-      // routes through `context.account`), but adopters' storyboard fixtures
-      // commonly send it at the top level — `TOOL_INPUT_SHAPE`'s JSDoc in
-      // `src/lib/server/test-controller.ts` documents this extension as the
-      // supported escape hatch.
-      //
-      // Schema is the full canonical `AccountReference` per
-      // `schemas/cache/3.0.6/core/account-ref.json`: oneOf
-      //   { account_id }                       — explicit accounts
-      //   { brand, operator, sandbox? }        — implicit accounts
-      // Modeled here as a single object with all four fields optional so
-      // either arm passes; resolvers narrow on the shape at dispatch.
-      // `brand` content is `unknown()` because the inner `brand-ref.json`
-      // shape is itself a oneOf and resolvers (not the gate) validate it.
-      // Top-level `.strict()` still blocks unknown keys at the framework
-      // boundary so a buyer can't stuff `__proto__` / arbitrary payloads
-      // into adopters' resolvers.
+      // Preserve the controller's complete account identity through the
+      // platform wrapper's compatibility shape. Sandbox authorization below
+      // still comes from the trusted principal/target resolvers, never from
+      // buyer-supplied account fields.
       const gatedInputSchema = {
         ...controller.toolDefinition.inputSchema,
         account: z
@@ -3869,6 +3884,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             account_id: z.string().min(1).optional(),
             brand: z.unknown().optional(),
             operator: z.string().optional(),
+            operator_unit: z.unknown().optional(),
+            currency: z.string().optional(),
+            timezone: z.string().optional(),
             sandbox: z.boolean().optional(),
           })
           .strict()
@@ -4800,6 +4818,7 @@ function deriveScenariosFromAdapters(
   if (cfg.queryProvenanceAuditObservations) out.push('query_provenance_audit_observations');
   if (cfg.force?.upstream_unavailable) out.push('force_upstream_unavailable');
   if (cfg.reportingSubscriptionProbe) out.push('reporting_subscription_probe');
+  if (cfg.resetState) out.push('reset_state' as (typeof out)[number]);
   return out;
 }
 
@@ -9272,14 +9291,38 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       return projectSync(
         async () => {
           const page = await accounts.list!(filter, resolveCtx);
+          // AdCP 3.3 account.requests: the caller's requests ride on list_accounts when asked for, and
+          // only on releases that define them (capabilities hide account.requests below 3.3 too).
+          const served = ctx.servedAdcpVersion;
+          const requests =
+            accounts.listRequests &&
+            isAdcpVersionAtLeast(served, '3.3.0-beta.0') &&
+            (filter.include_requests === true ||
+              filter.request_ids !== undefined ||
+              filter.requests_pagination !== undefined)
+              ? await accounts.listRequests(filter, resolveCtx)
+              : undefined;
+          const listed = await projectAccountList(accounts, page.items, resolveCtx, logger);
+          // Account.revision is an AdCP 3.2 field: not served to an earlier release.
+          if (served !== undefined && !isAdcpVersionAtLeast(served, '3.2.0-beta.0')) {
+            for (const row of listed) delete row.revision;
+          }
           const response = {
             status: 'completed' as const,
-            accounts: await projectAccountList(accounts, page.items, resolveCtx, logger),
+            accounts: listed,
             pagination: {
               has_more: page.nextCursor != null,
               ...(page.nextCursor != null && { cursor: page.nextCursor }),
               ...(page.totalCount !== undefined && { total_count: page.totalCount }),
             },
+            ...(requests && {
+              account_requests: requests.items,
+              account_requests_pagination: {
+                has_more: requests.nextCursor != null,
+                ...(requests.nextCursor != null && { cursor: requests.nextCursor }),
+                ...(requests.totalCount !== undefined && { total_count: requests.totalCount }),
+              },
+            }),
           };
           return platform.reporting?.projectListAccounts
             ? platform.reporting.projectListAccounts(filter, response, resolveCtx)

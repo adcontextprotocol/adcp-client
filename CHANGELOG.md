@@ -1,5 +1,297 @@
 # Changelog
 
+## 17.0.0-beta.18
+
+### Minor Changes
+
+- cf19067: **Beta-channel break:** this SDK advertises and negotiates only the AdCP `3.3-beta.4` preview and no longer packages or advertises `3.3-beta.3`. A buyer or seller still on beta.3 will not select the 3.3 preview with this release; the pair negotiates a shared stable release (3.2.8, 3.1.31 or 3.0.25) instead. Upgrade both sides together to keep exercising 3.3 preview features. An explicit `adcpVersion: '3.3.0-beta.3'` pin now fails with a configuration error.
+
+  Adopt the signed AdCP 3.3.0-beta.4 bundle (spec commit 763c2d75, sha256 3525423d..., cosign-verified), replacing 3.3.0-beta.3. Public types, Zod schemas, tool metadata and the packaged compliance corpus are regenerated from the beta.4 release.
+  - **Fixed `destination_overrides` type.** `ReportingSubscription.destination_overrides[]` is now one object type with `account_ids`, `operator_domains`, `destination_id` and `path_template` (the item schema is one `if`/`then`/`else`). Beta.3 generated `({} & ({} | {}) & ({} | {}))[]`, which accepted any object and named no field.
+  - **Packages:** `get_media_buys` `packages[].added_at` (see the reporting-subscription changeset for what sellers must emit).
+  - **Schema-enforced durations:** `reporting-schedule` and `reporting-schedule-offering` reject a `period_duration` that mixes date and time components (`P1DT12H`) under `account_timezone`, `source_timezone` or `billing_cycle`; `utc` still accepts it.
+  - **Compliance:** `comply-test-controller` request and response schemas specify `reset_state` and `SetAccountTimezoneResult`; the reporting-subscription storyboards check `reset_state` and the reduced-grant rule.
+  - Other beta.4 schema additions are carried as generated: `BUDGET_TOO_LOW` details gain `budget_field`, `basis`, `constraint` and `related_field`; explicit-package `create_media_buy` requests accept `opportunity`.
+  - The canonical reporting-subscription vectors are pinned to v3.3.0-beta.4.
+
+- cf19067: Compliance tooling for the AdCP 3.3.0-beta.4 `reporting_subscription_probe` contract (adcp#8717).
+  - **`reset_state`.** `TestControllerStore.resetState()` and `ComplyControllerConfig.resetState(ctx)` advertise and serve the `reset_state` scenario (`SeedSuccess`), in `list_scenarios` and `compliance_testing.scenarios`. `RESET_STATE_SCENARIO` is exported. A seller that lists `reporting_subscription_probe` must also list `reset_state`, so `createComplyController` (and `createAdcpServerFromPlatform` with `complyTest`) now throws when `reportingSubscriptionProbe` is set without `resetState`. The reset must unpin the caller's sandbox clock and discard the probe's grant and timezone changes. The reference test kit implements it: its seller clock (`seller.clock.unpin()`) reads the wall clock until the next `advance_time`, and the accounts the probe changed keep their ids with the grant and timezone restored and the engine's account record rolled back to before the probe's first change, so the coverage history the changes recorded is discarded.
+  - **`set_account_timezone` result.** `ReportingSubscriptionProbeSetAccountTimezoneResult` types `SetAccountTimezoneResult`: `simulated_now`, `account_id`, `previous_timezone`, `timezone`, `changed_at` (absent when nothing changed) and `timezone_cutovers[]`, each with `offering_id`, `previous_timezone`, `timezone` and `effective_at`. The test kit returns exactly this shape.
+  - **`owed_periods_match`.** The storyboard runner compares over the spec's window: from the later of the request's `period.start` and `scope.ledger_retained_from`, where the retention bound is capped at `ledger_as_of` minus `status_retention_days`. Periods that start before the window are dropped from both sides, and a failure names the window start and the bound that set it (`expected_start`, `ledger_retained_from` or `retention_cap`). A seller that purged obligations inside `status_retention_days` now fails the check.
+
+- cf19067: Reporting subscriptions (experimental, `media_buy.reporting_subscriptions`) follow the AdCP 3.3.0-beta.4 rules. All 138 canonical coverage vectors and the new `offering-checks.json` vectors pass.
+
+  **Sellers must now emit `packages[].added_at`.** `get_media_buys` must carry `added_at` on every package added to a buy after its `confirmed_at` (adcp#8718). It is that package's own `confirmed_at`: the package is owed the periods that end after it (the period containing `added_at` is owed in full), and it resolves subscription selectors at the later of the version's `accepted_at` and `added_at`. Adding a package is never a cutover. A `package_ids` exception removes a period only when it names every package that resolves the offering and is owed the period. Without `added_at` the package reads as part of the buy at confirmation and is over-owed.
+  - The coverage function (`owedSubscriptionPeriodsV1`), the seller engine and the buyer runtime (`client.reporting.reconcile`, `explain`) apply the per-package rule. `ReportingSubscriptionBuyV1.packages[]` is now `ReportingSubscriptionBuyPackageV1` with optional `added_at`, the type the `subscriptions.buys` and `listAccountBuys` hooks return. The managed path reads `added_at` from the platform's `getMediaBuys`. The engine no longer records a buy revision (a cutover at the observation) for a newly listed package that carries `added_at`.
+  - `CoverageTrace` gains the reason `before_package_added` (rule `confirmation`). Its confirmation step lists `packages_added_at` when a resolving package was added after confirmation, and the `inputs_digest` covers a package's `added_at` only when it is present, so digests of existing buys are unchanged.
+  - The reference test kit serves `added_at`, and `kit.buys.addPackage(mediaBuyId, pkg)` adds a package at the kit's clock.
+
+  **Behavior change: a grant reduced without `get_reporting_status` is a loss of reporting authority** (adcp#8718). The account is listed in `accounts_unauthorized[]` with `unauthorized_at` at the reduction, coverage is withheld as for a revocation, and the service now refuses `get_reporting_status` for that account with `SCOPE_INSUFFICIENT` when the resolved account carries its reduced `authorization`. Adding `get_reporting_status` back is a re-grant (chain rule, `regranted_at`, gaps, `backfill_on_regrant`, admission). A reduction that keeps `get_reporting_status`, such as `windDownGrant`, is not a loss.
+
+  **New error code `SUBSCRIPTIONS_REQUIRE_ACCOUNT_ID_KEY`.** A managed-delivery offering without `account_id` in `reporting_profile.primary_keys` is refused with `PlatformConfigError` code `SUBSCRIPTIONS_REQUIRE_ACCOUNT_ID_KEY` instead of `PLATFORM_CONFIG_INVALID`. `checkReportingSubscriptionOfferingsV1(offerings, rowSchemas)` (`@adcp/sdk/reporting/advanced`) returns every offering-check failure, including the row-schema part of the rule when you supply the fetched row schema.
+
+  Coverage fixes found by the spec's differential harness: a `package_ids` exception is no longer modelled as a resolution change, so a window naming every package of a buy no longer resets a cutover's E; and an `excluded_by_buyer` entry puts only the versions whose span it overlaps under in-place membership.
+
+  The managed service dates an account timezone change at the observation, since `list_accounts` carries no change instant, instead of failing the reconcile with `SUBSCRIPTION_HOST_FACT_INVALID`.
+
+## 17.0.0-beta.17
+
+### Patch Changes
+
+- d3c2ece: fix(testing): keep the resolved account identity on account-subject storyboard requests, and ship the published comply_test_controller schemas
+
+  **Account-subject identity.** `applyBrandInvariant` merged the run's buying brand into every
+  natural-key `request.account`. A natural-key `AccountReference` is a composite identity —
+  `core/account-ref.json`'s natural-key arm is `required: [brand, operator]`,
+  `additionalProperties: false`, in every supported release, and 3.2 widened it further with
+  `operator_unit` / `currency` / `timezone`. Replacing half of it re-addresses the request instead of
+  re-scoping it. A run with `brand: acmeoutdoor.example` that provisioned
+  `{brand: test.example, operator: test.example, sandbox: true}` through `sync_accounts` read it back
+  as `{brand: acmeoutdoor.example, operator: test.example}` — schema-valid, and nobody's account.
+  Correct sellers answered `accounts: []` / `total_count: 0`; account-aware test controllers refused
+  the `force_account_status` transition because the scope did not own `params.account_id`. Under
+  3.3.0-beta.3 it is worse than an empty read: a natural key resolves only when exactly one account
+  matches and returns `ACCOUNT_AMBIGUOUS` otherwise, so a substituted brand can resolve to a
+  different _real_ account.
+
+  On requests whose `account` names the account the request is _about_ — `list_accounts`,
+  `get_account_financials`, `list_account_changes`, and the `force_account_status` /
+  `expire_account_change_cursor` controller scenarios — `account.brand` is now add-only: a brand that
+  is already there survives verbatim (`brand_id` and any other nested brand metadata included), a
+  missing `operator` defaults from that preserved brand rather than the run brand, and a malformed
+  brand is left for the seller to refuse rather than silently substituted. A reference that carries
+  no brand still gets the run brand, because the natural-key arm requires one.
+
+  Everything else behaves exactly as before: the cross-step run-brand invariant for buying and
+  resource tools, synthetic default accounts, unfiltered `list_accounts` enumeration, `omit_account`
+  negative paths, the closed `{account_id}` arm, and the `request_account` brand-subject exemption.
+  `simulate_budget_spend` is deliberately left out — its `params` are
+  `anyOf: [{required: [account_id]}, {required: [media_buy_id]}]` and only the `account_id` arm is
+  account-subject. No new public API: the task and scenario sets stay internal to the policy module.
+
+  **Packaging.** Every supported release publishes
+  `compliance/comply-test-controller-{request,response}.json`, but the build excluded the whole
+  `compliance/` subtree, so on an installed package
+  `getSchemaValidatorByRef('compliance/comply-test-controller-request.json', '3.1.31')` returned
+  `undefined` — no caller could validate either direction of a tool the SDK tells them to drive. The
+  build now carries those two documents plus the sibling `compliance/` documents they `$ref`,
+  transitively, per selected version: 3.0.25 and 3.1.31 ship exactly the two entry points, while
+  3.2.8 and 3.3.0-beta.3 also ship `task-completion-data.json` and
+  `get-creative-features-completion.json`, without which AJV cannot compile the controller validator
+  at all. Files are copied byte-for-byte from the published cache. Nothing outside that closure is
+  packaged — which today means nothing is excluded, because on all four published caches the
+  reachable closure happens to be the whole `compliance/` directory.
+
+  Three intended consequences, none of which change the wire contract — the SDK stops being blind to
+  a schema the release already publishes:
+  1. `getValidator` / `getSchemaValidatorByRef` resolve for `comply_test_controller` on every
+     supported version, so callers can finally validate both directions of a tool the SDK tells them
+     to drive.
+  2. `schemaAllowsTopLevelField` gates the controller's fields from the declared schema instead of
+     failing open. 3.1.31, 3.2.8 and 3.3.0-beta.3 declare `account` but no top-level `brand` (3.0.25
+     declares neither), so the storyboard runner stops adding an undeclared, non-canonical top-level
+     `brand`. That field was a schema-valid extension under `additionalProperties: true`, never an
+     invalid request, and `account` remains the declared identity carrier.
+  3. **Conformance runs now grade controller responses against the selected release.** On an
+     installed package the controller's JSON Schema was unavailable, so that check could not run;
+     the SDK's generated Zod projection is a separate, weaker check and is unchanged. The test
+     client's response validation defaults to strict, so a controller response that was always
+     non-conformant can now fail a step that previously passed, with no change to the agent under
+     test. Validate against the response schema of the release you pin and read the `oneOf` arm
+     matching the request's `scenario`. Two causes worth checking first: a missing top-level `status`
+     — the response composes `core/protocol-envelope.json` (`required: ['status']`) on 3.1.31, 3.2.8
+     and 3.3.0-beta.3, while 3.0.25 composes no envelope and does not require it — and an `error`
+     outside the published enum (3.0.25 omits `JCS_NON_FINITE_NUMBER`).
+     `strictResponseSchemaValidation: false`, or the CLI
+     `--no-strict-response-schema-validation`, restores the informational-only posture while you fix
+     the response; reserve it for temporary legacy harnesses. On the ordinary API client, request and
+     response validation still default to `'warn'` — only a caller that explicitly opted into
+     `validation: { requests: 'strict' }` or `{ responses: 'strict' }` will now reject a payload, and
+     only one that was already invalid. No new field is required of anyone: on every release that
+     composes the protocol envelope, `status` was required before this change and still is.
+
+## 17.0.0-beta.16
+
+### Patch Changes
+
+- 95a61bf: Validate storyboard webhook payloads against the run's selected AdCP release and report the exact resolved schema version. A 3.0 run now grades its webhook result against the 3.0 contract, while incoming webhook version claims cannot change the selected validator. Runs without a version pin keep the SDK default.
+- 768d4dd: Keep runner-local assertions, probes, accountless controller capability discovery and
+  format-only validation requests from inventing a second catalog account through run-brand defaults.
+  Rate-limit trip assertions still contribute the account of their actual nested
+  seller request, and conflicting authored or default buyer accounts continue to fail
+  before catalog seeding. Preserve frozen AdCP 3.0 storyboards without changing
+  their contents or the SDK's protocol/cache pins.
+
+  Use the run's selected AdCP schema for brand/account field presence checks,
+  so legacy format discovery does not acquire the primary version's scoped
+  account. Preserve the controller builder's actual sandbox default when checking
+  mutating-controller account ambiguity on legacy versions.
+
+## 17.0.0-beta.15
+
+This beta also includes the changes listed under the unpublished `17.0.0-beta.14` entry below, including the shared legacy-format library-sync fix (#3609) and complete registry brand entries.
+
+### Major Changes
+
+- a52a31e: Breaking: default MCP controller registration (`registerTestController`,
+  `createComplyController().register`, and wrappers spreading `TOOL_INPUT_SHAPE`)
+  now requires `account: { sandbox: true, ...identity }`, matching AdCP 3.1 and later.
+  The account object preserves complete natural identity or an opaque account ID
+  through MCP parsing, so per-request store factories can resolve the seed scope.
+
+  All callers, including `list_scenarios` probes and AdCP 3.0 callers that previously
+  omitted the account, must add the sandbox assertion. The assertion is caller
+  intent; adopters must still authorize against persisted sandbox account state.
+  The SDK reporting doctor now sends it on its own scenario probe. This change
+  belongs to SDK 17 and must not be backported unchanged to the stable SDK 16 line.
+
+  The platform controller wrapper retains its existing optional-account compatibility
+  shape and trusted principal/target authorization gates, while accepting operator
+  unit, currency, and timezone. Public opaque AccountRefs remain `{ account_id }`;
+  only the controller carrier adds `sandbox: true`.
+
+### Minor Changes
+
+- a52a31e: Add native field_excludes negative membership checks and the intrinsic
+  field_excludes_runner requirement. Inspect every wildcard terminal without the
+  10,000-value collection cap so large catalogs cannot hide a prohibited value.
+  Empty results and additional matching products remain valid. Reject malformed
+  paths and unresolved comparator references instead of silently proving absence.
+
+### Patch Changes
+
+- a52a31e: Scope automatic product and pricing-option fixtures to the account used by the
+  storyboard's effective public requests, retaining complete natural identity or an
+  opaque account reference across ordinary, routed and fixture-resolution seeds.
+  Resolve run-brand overrides, context inputs, provisioning account aliases and
+  later timezone enrichment consistently; refuse ambiguous or unresolved account
+  scope. Independent account provisioning seeds retain their existing targets.
+  Include operator unit, currency and timezone in the server's natural-account seed
+  cache scope so one account cannot reuse another account's fixture cache entries.
+
+  Preserve provenance creative_policy.accepted_verifiers agent URLs when stripping
+  legacy creative-format identity, including URLs shared with a format provider.
+
+  Preserve complete account identity through the platform controller wrapper and
+  refuse catalog auto-seeds without a resolved account instead of reporting a
+  successful fixture write after dropping it.
+
+- 291ea7d: Preserve the authored create_media_buy brand when the storyboard runner has no
+  explicit run-brand override. The fixture-aware buyer enricher previously replaced
+  that brand with test.example even when the account correctly named the fixture's
+  advertiser, causing strict sellers to refuse an otherwise valid auction buy.
+  An explicit run-brand option continues to override the request and account together.
+
+## 17.0.0-beta.14
+
+### Minor Changes
+
+- a1c936e: Expose the registry resolver's optional complete `brand` entry on `ResolvedBrand` and add `selectBrandEntry` for independently fetched or cached brand.json documents. Preserve localized names, taglines, fonts, tone, and other identity fields without flattening them. Selection requires a unique match and never falls back to the first portfolio entry. Export the helper from the package root, brand, and client entrypoints.
+
+### Patch Changes
+
+- 83d47c4: Fix legacy `sync_creatives` projection when packages prefer different format IDs but accept a shared reference. Try shared advertised identities before refusing, so a library upload can use sized `display_html` alongside a package declaring unsized `display_html`. Preserve format ownership, selected options, size and duration constraints, and refusals when several shared identities remain ambiguous.
+
+## 17.0.0-beta.13
+
+### Patch Changes
+
+- d534771: Fix mixed-size creative library syncs by excluding known non-fitting packages from an unassigned creative's shared wire decision. Apply the same fit checks and option selection to library uploads when assignments name other creatives; these uploads now refuse when no supplied package can accept them. Preserve strict assignment checks for both assignments and assignment_operations (assign, replace, and merge), refuse conflicting compatible wire references, and retain all public per-package fit verdicts.
+- 0bf2bcc: Version translation no longer removes protocol envelope fields. When a response was converted down to an older release whose task schema didn't compose the protocol envelope (the 3.2 proposal-flow responses, which AdCP 3.2.x and 3.3 fix as DR-0036 correction (b)), the schema projection treated `status`, `message`, `context` and the other envelope fields as newer-only and removed them, so a 3.2 buyer could receive a 3.3 server's `list_products` response without its `status`. The projection now keeps every property the release's protocol and version envelopes declare at the payload root.
+- 047f45c: Security: `list_accounts` `account_requests[]` and `request_account` responses no longer echo write-only account credentials. A resolved AdCP 3.3 account request embeds a full `Account`, and the SDK served it without the scrub it applies to `list_accounts` account rows. If your seller stored any of these on the account (or spread the inbound request into `requested`), they reached the buyer and the idempotency replay cache: `billing_entity.bank`, `governance_agents[].authentication` (the bearer the seller uses to call the governance agent), `notification_configs[].authentication.credentials` (webhook signing secrets), and `destination_billing_entity`. Affected: `request_account` on `createAdcpServer` and `createAdcpServerFromPlatform` since 17.0.0-beta.10, raw `listAccounts` handlers returning `account_requests` since 17.0.0-beta.10, and `accounts.listRequests` on the platform path since 17.0.0-beta.12. Stable 16.x lines do not serve account requests and are not affected.
+
+  Both paths now run each request's `account` through the same scrubber as account rows, and strip the same credential fields from `requested`, on the completed and failed arms and before the response is cached for replay. Your stored records are not modified. The account scrubber now also drops `governance_agents[].authentication` on every account it handles, which closes the same gap for raw (`createAdcpServer`) `list_accounts`, `sync_accounts` and `get_media_buys` handlers that returned it. No code change is needed. If a credential may have been served, rotate it: webhook signing secrets and governance-agent tokens first.
+
+- dd367d5: Package the signed AdCP 3.2.8 bundle as the maintained 3.2 line, replacing 3.2.7, to match SDK 16.6. A pair that negotiates 3.2 now validates against 3.2.8, which carries the DR-0036 corrections: the reopened 3.2 proposal-flow roots, the envelope composition on every task payload, and the `adcp_version` echo. `3.2.8` is advertised alongside the earlier 3.2 patches. Explicit `--compliance-version 3.2.7` pins advance to `3.2.8`.
+
+## 17.0.0-beta.12
+
+### Minor Changes
+
+- a831111: Sellers registering `request_account` (`accounts.requestAccount`) now advertise AdCP 3.3 `account.requests` on `get_adcp_capabilities`, with `request_task`, `read_task: 'list_accounts'` and the `account.requests` experimental feature id, so `client.accounts.ensure` routes to them. `capabilities.accountRequests` supplies `changeableAttributes`, `pendingActionKinds` and `eventType`. On the platform path, the new `accounts.listRequests(request, ctx)` hook serves the caller's requests as `account_requests[]` and `account_requests_pagination` on `list_accounts` when the buyer sends `include_requests`, `request_ids` or `requests_pagination`. `Account.revision` is now served on `list_accounts`, so buyers can read the revision a change is based on. Fixes #3575.
+
+  **Behavior change for 3.3 beta adopters:** a seller that registers `request_account` must declare who bills, because `account.requests` lives in the account capability block, whose schema requires `supported_billing`. A server that registers it without one is now refused at construction. Fix: add `capabilities: { account: { supportedBilling: ['agent'] } }` to `createAdcpServer`, or `capabilities.supportedBillings` on the platform path, with your actual billing model. The SDK never fills in this claim for you.
+
+- b296a8a: Add `client.accounts.change(accountId, changes, { revision, allowSeparateAccount })`, which changes an account through AdCP 3.3 `request_account` with `account_id`. It resolves to an `AccountChangeOutcome`: `updated` (with `revision` and `effective_at`), `separate_account` (with `not_carried_over` and `subscriptionsNotCovering`), `matched_existing`, `pending`, or `rejected` (with `requiresNewAccount`). A money change (`billing`, `billing_entity`, `payment_terms`) without `revision` is refused before dispatch with `AccountRequestError` code `ACCOUNT_REVISION_REQUIRED`. Other changes read the revision from `list_accounts` and retry once on `CONFLICT`, but only when the changed fields did not move. Unknown attributes (`ACCOUNT_CHANGE_INVALID`) and sellers without `account.requests` (`ACCOUNT_REQUESTS_UNSUPPORTED`) are also refused locally, and the error carries `dispatched: false`. A separate or matched account never re-points the registry: `client.accounts.use(key, accountId)` is the explicit step. `client.accounts.changeStatus(accountId, requestId)` reads a pending change back. `nextStep` accepts change outcomes. The behavior matches the Python SDK's `accounts.change`.
+- d134d82: Reporting subscriptions (experimental, AdCP 3.3): reconcile reports name what kept them from being definitive in the Python SDK's shape.
+  - `ReconcileReport.issues` is a list of `ReconcileIssue` entries (`{ code, message, account_id?, subscription_id? }`). The codes match Python's: `SUBSCRIPTION_ROSTER_UNAVAILABLE`, `SUBSCRIPTION_OFFERINGS_UNAVAILABLE`, `SUBSCRIPTION_ACCOUNT_UNREADABLE`, `SUBSCRIPTION_LEDGER_UNAVAILABLE`, `SUBSCRIPTION_ACCOUNT_NOT_COVERED`, or a coverage input code. As in Python, any issue makes the report `definitive: false`.
+  - Explicitly requested `accounts` that no subscription covers are now reported (`SUBSCRIPTION_ACCOUNT_NOT_COVERED`) instead of being dropped silently.
+  - The fleet report (`multiClient.reporting.reconcile()`) renames `failures` to `issues`: an array of `ReconcileIssue & { agent_id }`, with `SUBSCRIPTION_PRINCIPAL_UNAVAILABLE` for a seller that could not be reconciled at all.
+
+- 8374d8d: Reporting subscriptions (experimental, AdCP 3.3): buyer events.
+  - `client.reporting.poll()` returns the events since the last acknowledgement, derived by comparing what the seller reports now (`reconcile`, the subscription readback, each account's `subscription_coverage[]`) with the snapshot saved by the last `batch.ack()`. Delivery is at least once with deterministic ids (`rse_` + `sha256(agent, type, natural key, version)`, the same ids as the Python SDK). A partial read never fabricates a change, and `poll({ baseline: true })` records the present without emitting it.
+  - `client.reporting.events({ pollEvery, signal })` is the loop: each batch is acknowledged after the loop body has run for all its events.
+  - `client.reporting.handleWebhook(verified)` treats a seller webhook as a doorbell: it wakes a running `events()` loop or polls inline. It takes only a `VerifiedWebhook`, built by `VerifiedWebhook.fromOutcome` from a successful signature verification.
+  - Event types: `revision.available`, `revision.adjusted`, `period.late`, `period.missing_obligation`, `period.withheld`, `coverage.exception_opened`, `coverage.exception_closed`, `account.covered`, `account.unauthorized`, `account.regranted`, `subscription.state_changed`, `timezone.cutover`.
+  - Snapshots live in a `ReportingEventStore` with compare-and-set (`ReportingEventConflictError` when another worker acknowledged first). `memoryStorage().events` and `postgresStorage({ pool }).events` provide one, `createReportingEventStore({ store })` builds one over any `AdcpStateStore` with `putIfMatch`, and the client takes it as `reportingEventStore`.
+  - `@adcp/sdk/reporting/advanced` adds `deriveEvents`, `EVENT_TYPES` and `SNAPSHOT_VERSION`.
+
+- e4b43a3: Reporting subscriptions (experimental, AdCP 3.3): sellers can explain coverage, and the CLI compares traces.
+  - `service.explainCoverage({ principal, accountId, period, subscriptionId?, mediaBuyId?, offeringId? })` on the managed `subscriptions` path returns `CoverageTrace`s (`side: 'seller'`) from the engine's own state: the stored version history, the grant journal, the served `subscription_coverage` and the buys read under the principal. `seller_only` carries `buy_visible` and the planned obligation's `reporting_obligation_id`. Its trace of a period equals the buyer's `client.reporting.explain` trace, `inputs_digest` included.
+  - `@adcp/sdk/reporting/service` re-exports `coverageTraceForBuyer` and `diffCoverageTraces`.
+  - New CLI: `adcp reporting explain` (buyer with `--agent`, seller with `--app module#export --tenant --principal`), `adcp reporting diff left.json right.json` (names the first differing rule; exits 1 on a difference) and `adcp reporting reconcile --agent`.
+
+- 7cfccfd: Reporting subscriptions (experimental, AdCP 3.3): the managed seller path derives more and reconciles less.
+  - The framework `Account` has a `timezone` field (`UTC` or IANA), served on `list_accounts`. The derived roster reads it, so `account_timezone` offerings no longer need an untyped `timezone` on the `accounts.list` items.
+  - `subscriptions.configure` is optional. Without it each subscription generation is derived from its source offering by `defaultSubscriptionConfiguration` (exported from `@adcp/sdk/reporting/service`): every exactly supported metric and dimension, the first attribution model and window, and a contractual cutoff at the offering's `delivery_sla` for `official` feeds. Billing feeds still need `configure`.
+  - `isPeriodDelivered` defaults to the service's own ledger, so `withheld_period_count` counts only periods whose obligation has no revision. It used to count every withheld period.
+  - The `runCycle` boundary sweep reconciles a principal only when it is due: a period of one of its schedules ended since its last reconcile, its last reconcile failed, a grant change was pushed, or `subscriptions.maxSweepIntervalMilliseconds` (one hour by default) elapsed. It used to reconcile every subscribed principal on every cycle.
+
+- 1da37d9: Reporting subscriptions (experimental, AdCP 3.3): the buyer receipts policy.
+  - `client.reporting.reconcile({ receipts: { mode: 'verified', commit, resourceReader | inspect } })` receipts `consumer_receipt` (billing) revisions only after the SDK verified the materialization itself and your `commit` returned `{ commitRef }`. `'defer'` sends nothing, and `{ reject: codes }` sends a rejected receipt. A mismatch the SDK finds is rejected without calling `commit`, and a revision it can't verify is listed in `report.receipts.failed`. Receipt ids are stable per (obligation, revision, materialization), so a materialization is never receipted twice.
+  - The policy is off by default. Delivered billing periods then read `receipt: { status: 'owed_by_buyer' }` with `responsible_party: 'buyer'`, and the client warns once.
+  - Adjustments are offered to `adjustments(adjustment)` and always deferred: billing never auto-accepts.
+  - `client.reporting.submitReceipts(accountId, { receipts, adjustmentReceipts })` is the typed manual wrapper over `sync_reporting_receipts`.
+  - `scripts/package-size-budget.json`: the SDK file ceiling rises from 8,450 to 8,500 for the stacked reporting-subscription slices.
+
+- dc8cad8: Reporting subscriptions (experimental, AdCP 3.3): buyers can see what a seller owes them and why.
+  - `client.reporting.reconcile(options)` reads the principal, capabilities, `list_accounts`, `get_media_buys` and `get_reporting_status` and returns a `ReconcileReport`: one `PeriodLine` per owed obligation with `status` (`delivered`, `pending`, `late`, `missing_obligation`, `withheld`), the spec's coverage `reason`, `responsible_party` and a `message`. The roster is `list_accounts` intersected with the subscription scopes on every run. `grace` (default `PT1H`) keeps fresh periods from reading as missing; `includeNotOwed` adds `not_owed` lines with their reasons; `previous` carries a revoked account's undelivered periods as `withheld`. A failed read makes the report `definitive: false`, never smaller, and each read is bounded by `readTimeoutMilliseconds` (30 seconds by default).
+  - `multiClient.reporting.reconcile()` runs every configured seller with bounded concurrency and returns `{ bySeller, issues, definitive, summary }`.
+  - `client.reporting.explain({ accountId, period, ... })` returns `CoverageTrace`s (`side: 'buyer'`).
+  - `@adcp/sdk/reporting/advanced` adds `explainSubscriptionCoverageV1`, `classifySubscriptionPeriodsV1`, `diffCoverageTraces`, `coverageTraceForBuyer`, `EXPLAIN_TEMPLATES` and the spec's frozen reason-code vocabulary (`COVERAGE_REASONS`, `COVERAGE_RULE_ORDER`). Traces carry the same steps, sentences and `inputs_digest` as the Python SDK's `explain_subscription_coverage`.
+  - New guides: coverage, error reference, and migrating from account-level `reporting_delivery_configs`.
+  - The managed seller path asks `getMediaBuys` for every wire buy status (`pending_creatives`, `pending_start`) as well.
+
+- b7b9ec8: Reporting subscriptions (experimental, AdCP 3.3): conformance tooling.
+  - **Storyboard runner: `check: owed_periods_match`** (runner contract `storyboard-schema.yaml`, "Owed periods").
+    - On a `get_reporting_status` periods-view step, it computes the periods a subscription owes the account from wire state alone (`get_principal` with `prior_versions` paging, `list_accounts`, `get_media_buys`, `get_adcp_capabilities`, and the response's `subscription_coverage` entry) with the SDK coverage function at `ledger_as_of`.
+    - It passes when the seller's obligations are exactly that set from `ledger_retained_from`, within the request's `period`: no missing and no extra periods, the same `media_buy_ids` and `stub` flag. `pagination.has_more` fails as unverifiable.
+  - **Storyboard runner: brand-subject tasks.** Test-kit brand injection no longer overwrites `request_account`'s `brand`, which dropped `brand.countries` (`BRAND_SUBJECT_TASKS`).
+  - **`comply_test_controller` scenario `reporting_subscription_probe`.**
+    - Operations: `revoke_grant`, `regrant`, `reduce_grant`, `set_account_timezone` (returns `timezone_cutovers: [{ offering_id, effective_at }]`) and `advance_time`.
+    - Types: `ReportingSubscriptionProbeParams` and `ReportingSubscriptionProbeSimulated`.
+    - Wiring: schema-checked params (`reportingSubscriptionProbeParamsError`), `TestControllerStore.reportingSubscriptionProbe`, `complyTest.reportingSubscriptionProbe`, and `list_scenarios` / `compliance_testing.scenarios` advertisement.
+  - **Test kit.**
+    - Its seller implements the probe.
+    - Its virtual clock may now run past the real clock: under `NODE_ENV=test` or `development`, the Reliable Reporting service hands each cycle's `now` to the inline source executor (`createInlineReportingSourceExecutor({ now })`, refused in other environments).
+  - **`npx adcp reporting doctor --agent <url>`** and `runReportingDoctor(client)` check a seller's subscription wiring from the wire, and name a fix for each failure.
+
+- 8856bbd: Reporting subscriptions (experimental, AdCP 3.3): a test kit, a managed reference seller, and fewer host inputs.
+  - New subpath `@adcp/sdk/testing/reporting`: `createReportingTestKit({ start, offerings, accounts, buys })` runs a managed reference seller over `memoryStorage()` on a virtual clock. It gives buyers bound to it (`kit.buyer(id).reporting`), `clock.advance`/`advanceTo` (running the seller's cycle at every boundary crossed), `grants.revoke`/`regrant`/`windDown`/`reduce`, `accounts.setTimezone`, `buys.add`/`cancel`/`complete`, and `assertAgreement(buyer)`, which checks the seller's frozen owed set against the buyer's `reconcile()` and names the first differing rule. Also `createReferenceReportingSeller`, `offerings.dailyAnalytics()`, `withReportingTestKit` and `reportingTestStart`.
+  - The reference seller (`examples/reporting-subscriptions-seller/seller.mjs`) is rewritten on the managed path: one `subscriptions` block, `accounts.list` and `getMediaBuys`, with a seeded buy that produces real obligations. `npx adcp reference-seller reporting [--port]` serves it.
+  - With `subscriptions.principal`, the service now pairs `notification_configs` with `sync_principal` and advertises `capability_changes` unless the platform does, and `principal.notifications` is optional with process-local storage (nothing is sent). Durable storage still requires it.
+
+### Patch Changes
+
+- 9cf1b55: Evaluate each package's legacy format references against measured creative dimensions and duration. Recognize resolved legacy shape matches without asserting canonical technical completeness, retain unknown verdicts for unstated constraints, and preserve native canonical contracts and shared wire refusals. Deduplicate fit diagnostics by code and path.
+- 6141030: Trim the published package from 26.86 MB to 24.99 MB packed (8,529 to 8,176 files). Runtime behavior is unchanged.
+  - The compliance bundles no longer ship their `domains/` directories. Each was a byte-identical copy of `protocols/`, which is what the storyboard loader reads. If you read storyboards from `node_modules/@adcp/sdk/compliance/cache/<version>/domains/<id>/`, read `protocols/<id>/` instead. `index.json` keeps listing both arrays because it is the upstream bundle file.
+  - The ESM declarations for the generated protocol and registry types (`types/core.generated.d.mts`, `types/tools.generated.d.mts`, `registry/types.generated.d.mts`) now re-export the CommonJS declarations, as `types/schemas.generated.d.mts` already did, instead of shipping a second copy. ESM and CommonJS consumers get the same types.
+  - The MCP `tools/list` request projections under `dist/lib/schemas-data/<version>/mcp/` are stored as compact JSON. `tools/list` serves the parsed schemas, so the wire output is the same.
+
+- ed8f98d: Reporting subscriptions (experimental, AdCP 3.3): fixes found by the cross-SDK differential harness.
+  - `owedSubscriptionPeriodsV1` owes the billing cutover stub when the incoming schedule's first boundary at or after `authorized_at` falls after the cutover's E (#3572). The authorization start bound now compares the period start with `authorized_at`, which is the same test for calendar periods and also admits a stub that starts at E.
+  - An `account.timezone` that no schedule reads is no longer refused as `invalid_timezone` (#3573). It is validated where an `account_timezone` schedule reads it.
+  - The managed engine's `unauthorized` `gaps[]` entries always name their `offering_id` (#3577). An entry without one applies to every offering on the account, so a later version resolving offerings with other boundaries made buyers drop periods the seller owed.
+  - A `timezone_cutovers` entry without `previous_timezone` is refused (`COVERAGE_INPUT_INCOMPLETE`, `missing_previous_timezone`) whenever an `account_timezone` offering resolves, as `error-codes.json` words it (adcp#8681), not only when a period under the old zone is computed.
+
+- b5f7461: Reliable Reporting (experimental, AdCP 3.3): the managed service now serves local-day offerings that it used to refuse (#3574).
+  - `account_timezone` offerings are served on the subscription path. Each account owes the periods of its own `accounts.list` `timezone`, the same periods the buyer's `reconcile` computes. The source offering must not pin `sourceTimezone.ianaTimezone`, and `resolveSource` must return the account's timezone. Without a `subscriptions` block, creating the service still refuses the offering, and an account-level `installConfiguration` refuses it. Both errors now name the subscription path. The managed path does not yet follow an account timezone change on an `account_timezone` subscription.
+  - `source_timezone` `P1D` offerings are served in zones whose DST change skips local midnight (America/Santiago, America/Havana, Africa/Cairo). Such a day starts at the instant its skipped midnight advances to, per `core/reporting-schedule.json` `period_generation`, and the source is asked for that one local date. The inline executor and source request conformance accept these 23- and 25-hour local days.
+  - `offerings.dailyAnalytics({ alignment: 'account_timezone' })` in `@adcp/sdk/testing/reporting`. The kit's reference seller reports that offering in each account's timezone and routes each offering to its own adapter.
+
+- f31e94f: Reporting subscriptions (experimental, AdCP 3.3): a PostgreSQL production seller configured with `subscriptions.principal` now serves the same principal surface as the `memoryStorage()` seller. `createPostgresReliableReportingProductionService` builds the principal runtime with the `notification_configs` task (`syncAgentNotificationConfigs`) and marks it as service-built, so the service advertises `capability_changes` for it. Before, it served neither.
+
 ## 17.0.0-beta.11
 
 ### Major Changes

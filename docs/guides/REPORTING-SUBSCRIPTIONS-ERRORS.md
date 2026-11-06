@@ -20,6 +20,7 @@ Every SDK error carries `code` and `recovery` (`transient`, `correctable` or `te
 | `REPORTING_STORAGE_NOT_DURABLE` | `PlatformConfigError` | n/a | correctable | `storage: postgresStorage({ pool })`, or `NODE_ENV=development` |
 | `REPORTING_SCHEMA_BEHIND` | `PlatformConfigError` | n/a | correctable | run `npx adcp-reporting-storage migrate` |
 | `SUBSCRIPTIONS_REQUIRE_STANDARD_DIMENSIONS` | `PlatformConfigError` | n/a | correctable | publish `standard_dimensions` on the named offering |
+| `SUBSCRIPTIONS_REQUIRE_ACCOUNT_ID_KEY` | `PlatformConfigError` | n/a | correctable | add `account_id` to the managed offering's `reporting_profile.primary_keys` and as a required string in its row schema (was `PLATFORM_CONFIG_INVALID` before 3.3.0-beta.4) |
 | `SUBSCRIPTION_ROSTER_UNAVAILABLE` | `PlatformConfigError` | n/a | correctable | serve `accounts.list`, or supply `subscriptions.accounts` |
 
 `reconcile()` and `explain()` are reads. A failed read of one account marks it `failed` in `report.accounts` and the report `definitive: false`; it never throws for one account. A failed `get_principal` throws `ReportingSubscriptionError` with `recovery: 'transient'`.

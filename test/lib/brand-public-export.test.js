@@ -18,6 +18,7 @@ describe('brand helpers public exports', () => {
     assert.strictEqual(typeof sdk.extractBrandWebsiteAliasDomains, 'function');
     assert.strictEqual(typeof sdk.updateBrandJsonFromMappings, 'function');
     assert.strictEqual(typeof sdk.validateBrandDomain, 'function');
+    assert.strictEqual(typeof sdk.selectBrandEntry, 'function');
 
     assert.strictEqual(typeof brand.applyBrandAssetMappings, 'function');
     assert.strictEqual(typeof brand.validateBrandAssetMappings, 'function');
@@ -27,6 +28,9 @@ describe('brand helpers public exports', () => {
     assert.strictEqual(typeof brand.extractBrandWebsiteAliasDomains, 'function');
     assert.strictEqual(typeof brand.updateBrandJsonFromMappings, 'function');
     assert.strictEqual(typeof brand.validateBrandDomain, 'function');
+    assert.strictEqual(typeof brand.selectBrandEntry, 'function');
+    assert.strictEqual(sdk.selectBrandEntry, brand.selectBrandEntry);
+    assert.strictEqual(require('@adcp/sdk/client').selectBrandEntry, brand.selectBrandEntry);
 
     assert.strictEqual(sdk.applyBrandAssetMappings, brand.applyBrandAssetMappings);
     assert.strictEqual(sdk.selectLogoForSlot, brand.selectLogoForSlot);
@@ -41,6 +45,8 @@ describe('brand helpers public exports', () => {
     assert.strictEqual(typeof esmSdk.extractBrandWebsiteAliasDomains, 'function');
     assert.strictEqual(typeof esmBrand.extractBrandWebsiteAliases, 'function');
     assert.strictEqual(typeof esmBrand.extractBrandWebsiteAliasDomains, 'function');
+    assert.strictEqual(typeof esmSdk.selectBrandEntry, 'function');
+    assert.strictEqual(typeof esmBrand.selectBrandEntry, 'function');
     assert.strictEqual(esmSdk.extractBrandWebsiteAliases, esmBrand.extractBrandWebsiteAliases);
     assert.strictEqual(esmSdk.extractBrandWebsiteAliasDomains, esmBrand.extractBrandWebsiteAliasDomains);
   });
@@ -67,6 +73,8 @@ describe('brand helpers public exports', () => {
       'ExtractBrandWebsiteAliasesOptions',
       'validateBrandDomain',
       'ValidateBrandDomainOptions',
+      'selectBrandEntry',
+      'BrandEntrySelector',
     ]) {
       assert.ok(rootDeclarations.includes(name), `dist/lib/index.d.ts must declare ${name}`);
       assert.ok(brandDeclarations.includes(name), `dist/lib/brand/index.d.ts must declare ${name}`);

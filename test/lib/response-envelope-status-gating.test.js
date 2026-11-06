@@ -32,7 +32,7 @@ const { prepareResponseForSchemaValidation } = require('../../dist/lib/utils/res
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
 
 const CURRENT = ADCP_VERSION;
-const LEGACY = '3.2.7';
+const LEGACY = '3.2.8';
 
 const composedRoot = process.env.ADCP_COMPOSED_ENVELOPE_SCHEMA_ROOT;
 const useComposedRoot = composedRoot !== undefined && existsSync(composedRoot);
@@ -152,24 +152,27 @@ describe('3.2.x serves the published arms without status: they keep validating',
     });
 
     test(`${tool} is status-free for 3.2.x`, () => {
-      for (const version of ['3.2', '3.2.1', '3.2.7']) {
+      for (const version of ['3.2', '3.2.1', '3.2.7', '3.2.8']) {
         assert.strictEqual(omitsEnvelopeStatusForRelease(tool, version), true, version);
       }
     });
   }
 
-  test('a closed 3.2 root accepts the envelope fields its release defines, but not body typos', () => {
+  test('the 3.2 line validates against the reopened 3.2.8 root', () => {
     const ok = validateResponse(
       'list_products',
-      // 3.2.7 pins `replayed: const true` locally on this arm; a local declaration is
+      // The arm pins `replayed: const true` locally; a local declaration is
       // validated as published, so use the value that release accepts.
       { ...listProductsBody, task_id: 'task-1', replayed: true, adcp_version: '3.2' },
       LEGACY
     );
     assert.strictEqual(ok.valid, true, messages(ok));
 
-    const typo = validateResponse('list_products', { ...listProductsBody, produts_typo: [] }, LEGACY);
-    assert.strictEqual(typo.valid, false, 'a body field the release does not define must still be rejected');
+    // 3.2.8 reopened the proposal-flow roots (DR-0036 correction a), and the
+    // 3.2 line validates every 3.2.x response against 3.2.8, so an older peer
+    // ignores a field it doesn't define. Closed-root widening is covered below.
+    const extra = validateResponse('list_products', { ...listProductsBody, hold_policy_hint: {} }, LEGACY);
+    assert.strictEqual(extra.valid, true, messages(extra));
   });
 
   test('other tools and unknown releases keep status', () => {
@@ -210,7 +213,7 @@ describe('envelope handling in the schema loader', () => {
     );
   });
 
-  test('3.2.7 does not compose the envelope; unknown tools have no answer', () => {
+  test('3.2.8 does not compose the envelope; unknown tools have no answer', () => {
     assert.strictEqual(responseSchemaComposesEnvelope('list_products', LEGACY), false);
     assert.strictEqual(responseSchemaComposesEnvelope('definitely_not_a_tool', LEGACY), undefined);
   });

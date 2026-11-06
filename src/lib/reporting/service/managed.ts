@@ -504,6 +504,7 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
       })
     );
     const accounts: ReportingSubscriptionAccountFactV1[] = [];
+    const observedAt = now().toISOString();
     for (const raw of page?.items ?? []) {
       const account = raw as Record<string, unknown>;
       const accountId = typeof account.id === 'string' ? account.id : (account.account_id as string | undefined);
@@ -515,7 +516,11 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
         authorized_at: grant?.authorized_at ?? authorization?.authorized_at ?? now().toISOString(),
         // adcp#8618: the journal's re-grant instant is the wire's authorization.regranted_at.
         ...(grant?.regranted_at !== undefined ? { regranted_at: grant.regranted_at } : {}),
-        ...(typeof account.timezone === 'string' ? { timezone: account.timezone } : {}),
+        // list_accounts carries no change instant, so a timezone change is dated at the observation
+        // (the engine reads it only when the zone differs from the one it recorded).
+        ...(typeof account.timezone === 'string'
+          ? { timezone: account.timezone, timezone_changed_at: observedAt }
+          : {}),
         ...(typeof account.operator === 'string' ? { operator: account.operator } : {}),
         ...(authorization?.allowed_tasks ? { allowed_tasks: [...authorization.allowed_tasks] } : {}),
       });
@@ -543,6 +548,11 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
                 : every,
             ])
         );
+    const addedAt = new Map(
+      ((raw.packages as Array<{ package_id?: unknown; added_at?: unknown }> | undefined) ?? [])
+        .filter(item => typeof item.package_id === 'string' && typeof item.added_at === 'string')
+        .map(item => [item.package_id as string, item.added_at as string])
+    );
     const history = Array.isArray(raw.flight_history)
       ? (raw.flight_history as Array<Record<string, unknown>>).filter(
           entry =>
@@ -574,7 +584,12 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
         : {}),
       packages: Object.entries(byPackage)
         .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-        .map(([package_id, ids]) => ({ package_id, reporting_delivery_offering_ids: [...ids] })),
+        .map(([package_id, ids]) => ({
+          package_id,
+          reporting_delivery_offering_ids: [...ids],
+          // adcp#8718: a package added after confirmation is owed from its own added_at.
+          ...(addedAt.has(package_id) ? { added_at: addedAt.get(package_id)! } : {}),
+        })),
     };
   }
 

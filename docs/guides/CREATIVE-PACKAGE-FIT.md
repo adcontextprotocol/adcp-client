@@ -6,7 +6,7 @@
 import { fitCreativeToPackages } from '@adcp/sdk';
 
 const decision = fitCreativeToPackages(creative, packages, {
-  adcpVersion: '3.3.0-beta.3',
+  adcpVersion: '3.3.0-beta.4',
   primaryAssetFacts: { width: 600, height: 500, pixel_ratio: 2 },
 });
 
@@ -47,7 +47,7 @@ const creativeFormatProjection = {
 };
 ```
 
-Use that object as the client's existing `creativeFormatProjection` option. This avoids a plan based on measurements that delivery never receives. Library-only creatives remain library upserts when request assignments refer to other creatives. With omitted or empty request assignments, supplied packages form the assignment scope.
+Use that object as the client's existing `creativeFormatProjection` option. This avoids a plan based on measurements that delivery never receives. A creative without explicit assignments is a library upsert, including when request assignments refer only to other creatives. Its sync wire decision excludes packages with a known `does_not_fit` verdict, so a mixed-size buy can sync its library before package IDs exist on the seller. The remaining packages must agree on one wire representation; `insufficient_facts` still requires seller validation. If every supplied package rejects the creative, sync refuses. Explicit assignments require every assigned package to accept the creative. The public `fitCreativeToPackages` decision remains strict across all supplied packages and continues to report every verdict.
 
 For resolved VAST, `vastInlineCreatives` supplies linear creative groups and their `media_files`. Each linear group needs one complete MediaFile satisfying all declared requirements; facts from different files cannot be combined. MIME comparisons trim whitespace and ignore case. Missing facts remain unknown. This is not XML parsing or wrapper resolution. Player/placement dimensions are separate from encoded rendition dimensions; legacy shared-reference dimension reconciliation keeps its existing strict behavior. If a downgrade path cannot preserve a non-default image density or another reference parameter, it refuses instead of silently discarding the parameter. Adaptive bitrate envelope evidence and other unsupported constraints cannot establish full acceptance.
 

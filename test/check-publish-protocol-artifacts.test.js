@@ -8,17 +8,17 @@ const modulePromise = import(
   pathToFileURL(path.resolve(__dirname, '..', 'scripts', 'check-publish-protocol-artifacts.mjs')).href
 );
 
-const currentProtocolVersion = '3.3.0-beta.3';
+const currentProtocolVersion = '3.3.0-beta.4';
 const compatibleVersions = [
   'v3',
   '3.0.1',
   '3.0.25',
   '3.1.24',
   '3.1.31',
-  '3.2.7',
+  '3.2.8',
   '3.2',
   currentProtocolVersion,
-  '3.3-beta.3',
+  '3.3-beta.4',
 ];
 
 function fixture(overrides = {}) {
@@ -31,7 +31,7 @@ function fixture(overrides = {}) {
         { path: `dist/lib/schemas-data/${currentProtocolVersion}/bundled.schemas.br` },
         { path: 'compliance/cache/3.0.25/index.json' },
         { path: 'compliance/cache/3.1.31/index.json' },
-        { path: 'compliance/cache/3.2.7/index.json' },
+        { path: 'compliance/cache/3.2.8/index.json' },
         { path: `compliance/cache/${currentProtocolVersion}/index.json` },
         { path: 'docs/releases/14.0.0-beta.0.md' },
       ],
@@ -116,7 +116,7 @@ test('the 3.3 beta package retains the stable 3.2 schema and compliance bundles'
   const { assertPublishProtocolArtifacts } = await modulePromise;
   for (const [prefix, expected] of [
     ['dist/lib/schemas-data/3.2/', /3\.2 \(required schema bundle is missing\)/],
-    ['compliance/cache/3.2.7/', /3\.2\.7 \(required compliance bundle is missing\)/],
+    ['compliance/cache/3.2.8/', /3\.2\.8 \(required compliance bundle is missing\)/],
   ]) {
     const value = fixture();
     value.packageInfo.files = value.packageInfo.files.filter(file => !file.path.startsWith(prefix));
@@ -160,7 +160,7 @@ test('allows a beta only when it is the exact current primary pin', async () => 
             { path: `dist/lib/schemas-data/${beta}/bundled.schemas.br` },
             { path: 'compliance/cache/3.0.25/index.json' },
             { path: 'compliance/cache/3.1.31/index.json' },
-            { path: 'compliance/cache/3.2.7/index.json' },
+            { path: 'compliance/cache/3.2.8/index.json' },
             { path: `compliance/cache/${beta}/index.json` },
           ],
         },

@@ -20,7 +20,7 @@
     },
     "@adcp/reporting-storage": {
       "ceiling": {
-        "packedBytes": 490000,
+        "packedBytes": 520000,
         "unpackedBytes": 2250000,
         "files": 150
       },

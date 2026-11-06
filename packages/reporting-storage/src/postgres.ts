@@ -90,6 +90,13 @@ import {
   type ReportingRowChunkLocatorV1,
   type ReportingRowStorageOptionsV1,
 } from './row-storage';
+import {
+  decideOrphanFence,
+  type OrphanFenceEntry,
+  type OrphanFenceRecord,
+  type OrphanFenceRow,
+  type ReportingOrphanFenceRefusalV1,
+} from './orphan-fence';
 
 type QueryResultRow = Record<string, unknown>;
 interface ReportingPgResult<Row extends QueryResultRow> {
@@ -2212,9 +2219,10 @@ ${managedDueArm}       )
       { preBeginAdvisoryLock: accountLock(accountId) }
     );
     // Phase 2: external bytes, at their recorded versions. Row sets written under an older
-    // template without {revision_key} can name an object another obligation or account also
-    // references, so each delete is skipped while a live row set outside this period still
-    // references it (see deleteUnreferencedObjects).
+    // template without {revision_key} (readOnly bindings only) can name an object another obligation
+    // or account also references, so each delete is skipped while a live row set outside this period
+    // still references it. No lock orders that: the `pruning` state committed in phase 1 does (see
+    // deleteUnreferencedObjects).
     if (rowStorage) {
       const objects = await this.query<{ row_binding_id: string; object_ref: string; native_version_ref: string }>(
         `SELECT DISTINCT row_set.row_binding_id, chunk.object_ref, chunk.native_version_ref
@@ -2596,29 +2604,14 @@ ${managedDueArm}       )
           async client => {
             // An older writer still running during a rolling upgrade may append the pre-alignment keys
             // (`objectKey`, `nativeVersion`); read both so its objects are still swept.
-            const updated = await client.query<{
-              created_objects: {
-                object_ref?: string;
-                native_version_ref?: string;
-                objectKey?: string;
-                nativeVersion?: string;
-              }[];
-            }>(
+            const updated = await client.query<{ created_objects: RecordedIntentObject[] }>(
               `UPDATE adcp_reporting_row_write_intents SET state = 'sweeping'
                 WHERE row_binding_id = $1 AND row_set_id = $2 AND content_sha256 = $3
                   AND (state = 'sweeping' OR expires_at <= clock_timestamp())
                 RETURNING created_objects`,
               key
             );
-            return updated.rows[0]?.created_objects
-              .map(object => ({
-                objectRef: object.object_ref ?? object.objectKey,
-                nativeVersionRef: object.native_version_ref ?? object.nativeVersion,
-              }))
-              .filter(
-                (object): object is { objectRef: string; nativeVersionRef: string } =>
-                  typeof object.objectRef === 'string' && typeof object.nativeVersionRef === 'string'
-              );
+            return updated.rows[0] ? recordedIntentObjects(updated.rows[0].created_objects) : undefined;
           },
           { preBeginAdvisoryLock: accountLock(intent.account_id) }
         );
@@ -2683,7 +2676,8 @@ ${managedDueArm}       )
    * - no row set that is not already `pruned` has a chunk at its key, and no write intent lists it,
    *   at any version and under any binding (a pre-check that errs towards leaking, because two
    *   bindings can share a bucket and prefix);
-   * - under the per-object advisory lock, no `live` or `unavailable` row set under any binding
+   * - under the per-object advisory lock of every binding (taken only here and by a commit that adopts
+   *   an object its own intent did not record), no `live` or `unavailable` row set under any binding
    *   references that exact version and no open intent created it (the check every other delete makes,
    *   widened to every binding), and the provider deletes that exact version.
    *
@@ -2696,9 +2690,18 @@ ${managedDueArm}       )
    * Deleting needs `acknowledgeExclusiveNamespace: true`: enable it only on the ledger database that
    * owns the namespace. A clone or restore of that database that still points at the same bucket
    * shares its `namespace_key`, and would delete the objects of every row set the original wrote after
-   * the clone was taken. Everything the listing finds under the owned prefix with a row-object key is
-   * treated as written by this SDK, so do not store other `.jsonl` files there. `deleted` counts delete
-   * requests that found nothing referenced; an object another host removed first still counts.
+   * the clone was taken. That flag is copied with the configuration, so it is backed by a fence: a real
+   * pass first claims the namespace (a create-only object under `{prefix}/{namespace_key}/_collector-fence/`
+   * and a row in `adcp_reporting_orphan_collector_fences`) and deletes only while the object store's
+   * highest claim is exactly the one this database recorded. A database copied before the original's last
+   * pass sees a newer claim and refuses: its binding is reported `fenced` with a `cause`, in `fenced`, and
+   * in the maintenance warnings, and nothing more is deleted (a fence that advances mid-pass stops the pass
+   * at the next check, within 25 deletes, and `deleted` keeps what went before). A `dryRun` checks the fence without claiming it
+   * and reports fenced bindings the same way. After a restore, or when the original is gone, take the
+   * namespace over deliberately with `takeOverOrphanCollectorFence`. Everything the listing finds under
+   * the owned prefix with a row-object key is treated as written by this SDK, so do not store other
+   * `.jsonl` files there. `deleted` counts delete requests that found nothing referenced; an object
+   * another host removed first still counts.
    */
   async collectOrphanedRowObjects(
     input: {
@@ -2766,6 +2769,7 @@ ${managedDueArm}       )
       failed: 0,
       unsupported: [],
       skippedReadOnly: [],
+      fenced: [],
       candidates: [],
       cursors: {},
       completed: [],
@@ -2773,6 +2777,25 @@ ${managedDueArm}       )
     };
     const tables = await this.optionalTables();
     if (!tables.has('adcp_reporting_row_sets') || !tables.has('adcp_reporting_row_write_intents')) return result;
+    const hasFenceTable = tables.has('adcp_reporting_orphan_collector_fences');
+    // One fence check or claim per physical fence per pass: bindings that share a bucket and prefix share it.
+    const gates = new Map<string, { ok: true } | { ok: false; refusal: ReportingOrphanFenceRefusalV1 }>();
+    const gate = async (bindingId: string, mode: 'claim' | 'check') => {
+      const { scope } = await this.rowStorage.collectorFenceLocation(bindingId);
+      if (mode === 'claim') {
+        const known = gates.get(scope);
+        if (known) return known;
+      }
+      const outcome = await this.orphanFenceGate(
+        bindingId,
+        scope,
+        mode === 'claim' && dryRun ? 'check' : mode,
+        hasFenceTable,
+        input.signal
+      );
+      if (mode === 'claim') gates.set(scope, outcome);
+      return outcome;
+    };
     const cutoff = clock.getTime() - minAgeSeconds * 1000;
     for (const summary of summaries) {
       if (input.bindings && !input.bindings.includes(summary.id)) continue;
@@ -2801,6 +2824,24 @@ ${managedDueArm}       )
         continue;
       }
       let token = input.cursors?.[summary.id];
+      // The ownership fence comes before any listing: a clone or restore must not even enumerate for deletion.
+      try {
+        const claim = await gate(summary.id, 'claim');
+        if (!claim.ok) {
+          outcome.status = 'fenced';
+          outcome.fence = claim.refusal;
+          result.fenced.push(summary.id);
+          continue;
+        }
+      } catch (error) {
+        input.signal?.throwIfAborted();
+        outcome.status = 'failed';
+        outcome.error = isReportingRowStoreError(error) ? error.code : 'INTERNAL_ERROR';
+        outcome.failed += 1;
+        // The listing never started, so the position it had stays where it was.
+        if (token !== undefined) result.cursors[summary.id] = token;
+        continue;
+      }
       // A failure on the first page of a resumed listing drops the cursor: a stale or invalid token must
       // not wedge the binding, and restarting from the beginning is always safe.
       let resumed = token !== undefined;
@@ -2838,6 +2879,10 @@ ${managedDueArm}       )
             old.push(entry);
           }
           const named = await this.rowObjectKeysNamedByRecords(old.map(entry => entry.objectRef));
+          // Another database may claim the namespace while this pass runs: read the fence again before the
+          // first delete of every page and then every ORPHAN_FENCE_RECHECK_DELETES deletes after it.
+          let sinceFenceCheck = ORPHAN_FENCE_RECHECK_DELETES;
+          let fencedMidPass = false;
           for (const entry of old) {
             input.signal?.throwIfAborted();
             if (named.has(entry.objectRef)) {
@@ -2857,21 +2902,34 @@ ${managedDueArm}       )
               }
               continue;
             }
+            if (sinceFenceCheck >= ORPHAN_FENCE_RECHECK_DELETES) {
+              const again = await gate(summary.id, 'check');
+              if (!again.ok) {
+                outcome.status = 'fenced';
+                outcome.fence = again.refusal;
+                result.fenced.push(summary.id);
+                fencedMidPass = true;
+                break;
+              }
+              sinceFenceCheck = 0;
+            }
+            sinceFenceCheck += 1;
             try {
-              // The per-object lock and exact-version reference check every other delete makes.
-              const removed = await this.deleteUnreferencedObjects(
+              // The only delete that takes the per-object lock: no record names this object, so a commit may be
+              // adopting it unrecorded. The exact-version reference check runs under that lock.
+              const removed = await this.deleteOrphanedObject(
                 summary.id,
-                [{ objectRef: entry.objectRef, nativeVersionRef: entry.nativeVersionRef }],
-                { anyBinding: true },
+                { objectRef: entry.objectRef, nativeVersionRef: entry.nativeVersionRef },
                 input.signal
               );
-              if (removed > 0) outcome.deleted += 1;
+              if (removed) outcome.deleted += 1;
               else outcome.referenced += 1;
             } catch {
               input.signal?.throwIfAborted();
               outcome.failed += 1;
             }
           }
+          if (fencedMidPass) break;
           if (page.nextPageToken !== undefined && page.nextPageToken === token) {
             dropCursor = true;
             throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'provider returned the same page token twice');
@@ -2910,6 +2968,307 @@ ${managedDueArm}       )
   }
 
   /**
+   * Whether this database may collect orphans under a binding's namespace, and for a real pass the claim that
+   * makes it so (see `orphan-fence.ts`). `check` only reads: it is what `dryRun` and the per-page recheck use.
+   * `claim` runs under a per-fence advisory lock: it verifies the object store's highest epoch is exactly the
+   * claim this database recorded, records the next epoch and a fresh token in the database, and only then
+   * writes that epoch's object create-only. The intent is committed before the object is written, so a crash
+   * between the two is finished by the next pass instead of looking like another database's claim.
+   *
+   * Each real pass claims a new epoch (the `gates` cache is per call), so a cycle spread over many partial passes
+   * writes and prunes one tiny object per pass. The claim holds a pool connection and the advisory lock across the
+   * object-store listing and read, so a slow bucket pins one connection for up to the read deadline.
+   */
+  private async orphanFenceGate(
+    bindingId: string,
+    scope: string,
+    mode: 'claim' | 'check',
+    fencesTable: boolean,
+    signal?: AbortSignal
+  ): Promise<{ ok: true } | { ok: false; refusal: ReportingOrphanFenceRefusalV1 }> {
+    if (!fencesTable) {
+      return {
+        ok: false,
+        refusal: {
+          cause: 'migration_required',
+          detail:
+            'the orphan collector fence table does not exist: apply the pending reporting-storage migration ' +
+            '(npx adcp-reporting-storage migrate), then orphan collection can claim its namespace',
+        },
+      };
+    }
+    try {
+      if (mode === 'check') {
+        // The bucket first, then the row. A claim commits its intent to the row before it writes the object, so
+        // a row read after the bucket is never behind a claim of this database that the bucket already shows
+        // (a sibling host claiming between the two reads would otherwise look like another database's claim).
+        const { latest } = await this.latestOrphanFence(bindingId, signal);
+        const row = await this.orphanFenceRow(scope);
+        const decision = decideOrphanFence(row?.row ?? null, latest);
+        return decision.action === 'fenced' ? { ok: false, refusal: decision.refusal } : { ok: true };
+      }
+      const claimed = await this.claimOrphanFence(bindingId, scope, signal, true, async stored => {
+        const { entries, latest } = await this.latestOrphanFence(bindingId, signal);
+        const decision = decideOrphanFence(stored?.row ?? null, latest);
+        if (decision.action === 'fenced') return { refusal: decision.refusal };
+        // An unfinished claim is finished under a fresh token, never the recorded one: a copy of this database
+        // taken while the claim was unfinished carries the same token, and both could then "adopt" the same
+        // object. With distinct tokens, create-only leaves exactly one of them the owner.
+        return {
+          record: {
+            epoch: decision.action === 'complete' ? stored!.row.epoch : decision.epoch,
+            token: randomUUID(),
+            previousToken: decision.action === 'complete' ? stored!.row.previousToken : decision.previousToken,
+            claimedAt: new Date().toISOString(),
+          },
+          entries,
+          previousEpoch: latest?.epoch ?? null,
+        };
+      });
+      if (claimed.kind === 'fenced') return { ok: false, refusal: claimed.refusal };
+      if (claimed.kind === 'lost') {
+        return {
+          ok: false,
+          refusal: {
+            cause: 'claim_lost',
+            detail:
+              `another database claimed epoch ${claimed.record.epoch} first. If this database is the only one that ` +
+              'owns this namespace, call takeOverOrphanCollectorFence({ acknowledgePreviousOwnerGone: true }); ' +
+              'otherwise leave orphan collection off on this copy.',
+            fenceEpoch: claimed.found.epoch,
+            recordedEpoch: claimed.record.epoch,
+          },
+        };
+      }
+      return { ok: true };
+    } catch (error) {
+      // Fence objects that are not exactly what this collector writes fail closed.
+      if (isReportingRowStoreError(error) && error.code === 'ROWS_INTEGRITY_FAILED') {
+        return {
+          ok: false,
+          refusal: {
+            cause: 'fence_unreadable',
+            detail:
+              'the collector fence objects under this namespace are malformed, oversized, duplicated or name ' +
+              'another namespace. Inspect them; once the namespace is known to be owned by this database alone, ' +
+              'call takeOverOrphanCollectorFence({ acknowledgePreviousOwnerGone: true }).',
+          },
+        };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Claim one fence epoch for this database, under a session-level advisory lock held from the decision to the
+   * object write. `plan` runs inside the transaction with the stored row, reads the bucket and returns either a
+   * refusal or the claim to make (and the entries it supersedes). The claim's intent (epoch, token) is committed
+   * before the object is written, so a crash between the two is finished by the next pass instead of looking like
+   * another database's claim; holding the lock through the write keeps a sibling host of this database from
+   * finishing that claim under another token while the first write is still in flight. A clone has its own
+   * database and its own lock, which is exactly why the object store's create-only write decides between them.
+   */
+  private async claimOrphanFence(
+    bindingId: string,
+    scope: string,
+    signal: AbortSignal | undefined,
+    keepPredecessor: boolean,
+    plan: (
+      stored: { row: OrphanFenceRow; claimedAt: string } | null
+    ) => Promise<
+      | { refusal: ReportingOrphanFenceRefusalV1 }
+      | { record: OrphanFenceRecord; entries: OrphanFenceEntry[]; previousEpoch: number | null }
+    >
+  ): Promise<
+    | { kind: 'fenced'; refusal: ReportingOrphanFenceRefusalV1 }
+    | { kind: 'lost'; record: OrphanFenceRecord; found: OrphanFenceRecord }
+    | { kind: 'claimed'; record: OrphanFenceRecord; previousEpoch: number | null }
+  > {
+    let client: ReportingPgClient;
+    try {
+      client = await this.pool.connect();
+    } catch (cause) {
+      throw new Error('PostgresReportingLedgerStore database connection failed', { cause });
+    }
+    let locked = false;
+    let timeoutSet = false;
+    let releaseError: Error | undefined;
+    try {
+      // A sibling holds the lock across its object-store write, which has its own deadline.
+      await client.query("SET lock_timeout = '120s'");
+      timeoutSet = true;
+      await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [`adcp.orphan_fence:${scope}`]);
+      locked = true;
+      await client.query('RESET lock_timeout');
+      timeoutSet = false;
+      await client.query('BEGIN');
+      let planned: Awaited<ReturnType<typeof plan>>;
+      try {
+        planned = await plan(await this.orphanFenceRow(scope, client));
+        if ('record' in planned) {
+          await client.query(
+            `INSERT INTO adcp_reporting_orphan_collector_fences (fence_scope, epoch, token, previous_token, claimed_at)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (fence_scope) DO UPDATE
+               SET epoch = EXCLUDED.epoch, token = EXCLUDED.token,
+                   previous_token = EXCLUDED.previous_token, claimed_at = EXCLUDED.claimed_at`,
+            [scope, planned.record.epoch, planned.record.token, planned.record.previousToken, planned.record.claimedAt]
+          );
+        }
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      }
+      if ('refusal' in planned) return { kind: 'fenced', refusal: planned.refusal };
+      const written = await this.rowStorage.putCollectorFence(bindingId, planned.record, signal);
+      if (written.record.token !== planned.record.token) {
+        return { kind: 'lost', record: planned.record, found: written.record };
+      }
+      // A claim keeps its predecessor (an unfinished claim is recognised by it) and prunes everything older. A
+      // takeover has just written and confirmed its object, so it supersedes every object and version it saw.
+      await this.rowStorage.deleteCollectorFence(
+        bindingId,
+        planned.entries.filter(entry => entry.epoch < planned.record.epoch - (keepPredecessor ? 1 : 0)),
+        signal
+      );
+      return { kind: 'claimed', record: planned.record, previousEpoch: planned.previousEpoch };
+    } finally {
+      try {
+        if (timeoutSet) await client.query('RESET lock_timeout');
+        if (locked)
+          await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [`adcp.orphan_fence:${scope}`]);
+      } catch (cleanupCause) {
+        releaseError = cleanupCause instanceof Error ? cleanupCause : new Error('Orphan fence lock release failed');
+      }
+      client.release(releaseError);
+    }
+  }
+
+  private async orphanFenceRow(
+    scope: string,
+    client?: ReportingPgClient
+  ): Promise<{ row: OrphanFenceRow; claimedAt: string } | null> {
+    const sql = `SELECT epoch::text AS epoch, token, previous_token, claimed_at
+                   FROM adcp_reporting_orphan_collector_fences WHERE fence_scope = $1`;
+    const result = client
+      ? await client.query<{ epoch: string; token: string; previous_token: string | null; claimed_at: Date }>(sql, [
+          scope,
+        ])
+      : await this.query<{ epoch: string; token: string; previous_token: string | null; claimed_at: Date }>(sql, [
+          scope,
+        ]);
+    const found = result.rows[0];
+    if (!found) return null;
+    return {
+      row: { epoch: Number(found.epoch), token: found.token, previousToken: found.previous_token },
+      claimedAt: new Date(found.claimed_at).toISOString(),
+    };
+  }
+
+  /** The object store's current claim: the highest epoch listed, read and verified. */
+  private async latestOrphanFence(
+    bindingId: string,
+    signal?: AbortSignal
+  ): Promise<{ entries: OrphanFenceEntry[]; latest: { epoch: number; token: string } | null }> {
+    const entries = await this.rowStorage.listCollectorFence(bindingId, signal);
+    const newest = entries[entries.length - 1];
+    if (!newest) return { entries, latest: null };
+    const record = await this.rowStorage.readCollectorFence(bindingId, newest, signal);
+    return { entries, latest: { epoch: record.epoch, token: record.token } };
+  }
+
+  /**
+   * Take over the orphan collector's namespace fence: the deliberate step after a restore, or when the database
+   * that held the fence is gone for good. It claims the next epoch for this database, so the previous holder
+   * (and every other copy of its state) is fenced out, and this database's collector can delete again.
+   *
+   * Do this only when this database is the one that should own the namespace. If the original is still running,
+   * taking over from a clone fences the original and lets the clone delete its objects: the acknowledgement
+   * exists because nothing else can tell them apart. `acknowledgePreviousOwnerGone: true` is required.
+   *
+   * A takeover does not stop a collector that is already mid-pass: that pass notices the new epoch at its next
+   * fence check, which is at most 25 deletes later. Stop the previous owner's collector before you take over.
+   *
+   * Takes over every writable (or, with `includeReadOnly`, every) object binding whose provider can list, or
+   * only the `bindings` named; bindings that share a bucket, prefix and installation share one fence and are
+   * reported together. Requires the `0009` migration.
+   */
+  async takeOverOrphanCollectorFence(input: {
+    acknowledgePreviousOwnerGone: boolean;
+    bindings?: readonly string[];
+    includeReadOnly?: boolean;
+    signal?: AbortSignal;
+  }): Promise<ReportingOrphanFenceTakeoverV1[]> {
+    if (input?.acknowledgePreviousOwnerGone !== true) {
+      throw new TypeError(
+        'takeOverOrphanCollectorFence fences out the namespace’s current owner: pass acknowledgePreviousOwnerGone: ' +
+          'true to confirm that database is gone or must never collect again'
+      );
+    }
+    const summaries = this.rowStorage.objectBindingSummaries();
+    for (const id of input.bindings ?? []) {
+      const summary = summaries.find(item => item.id === id);
+      if (!summary) throw new RangeError(`bindings names ${id}, which is not a configured object binding`);
+      if (!summary.listable) throw new RangeError(`bindings names ${id}, whose provider cannot list objects`);
+    }
+    const tables = await this.query<{ present: boolean }>(
+      `SELECT to_regclass('adcp_reporting_orphan_collector_fences') IS NOT NULL AS present`
+    );
+    if (!tables.rows[0]?.present) {
+      throw new Error('the orphan collector fence table does not exist: run npx adcp-reporting-storage migrate');
+    }
+    const selected = summaries.filter(
+      summary =>
+        summary.listable &&
+        (input.bindings ? input.bindings.includes(summary.id) : input.includeReadOnly === true || !summary.readOnly)
+    );
+    const byScope = new Map<string, string[]>();
+    for (const summary of selected) {
+      const { scope } = await this.rowStorage.collectorFenceLocation(summary.id);
+      byScope.set(scope, [...(byScope.get(scope) ?? []), summary.id]);
+    }
+    const taken: ReportingOrphanFenceTakeoverV1[] = [];
+    for (const [scope, bindingIds] of byScope) {
+      input.signal?.throwIfAborted();
+      const bindingId = bindingIds[0]!;
+      const claimed = await this.claimOrphanFence(bindingId, scope, input.signal, false, async stored => {
+        const entries = await this.rowStorage.listCollectorFence(bindingId, input.signal, { tolerant: true });
+        const newest = entries[entries.length - 1];
+        // A malformed newest object is exactly what a takeover is for: its key still gives the epoch to supersede.
+        // Several versions of the newest epoch are ambiguous, so none of them names the previous token.
+        const previous =
+          newest && entries.filter(entry => entry.epoch === newest.epoch).length === 1
+            ? await this.rowStorage.readCollectorFence(bindingId, newest, input.signal).catch(error => {
+                if (isReportingRowStoreError(error) && error.code === 'ROWS_INTEGRITY_FAILED') return null;
+                throw error;
+              })
+            : null;
+        return {
+          record: {
+            epoch: Math.max(newest?.epoch ?? 0, stored?.row.epoch ?? 0) + 1,
+            token: randomUUID(),
+            previousToken: previous?.token ?? null,
+            claimedAt: new Date().toISOString(),
+          },
+          entries,
+          previousEpoch: newest?.epoch ?? null,
+        };
+      });
+      if (claimed.kind !== 'claimed') {
+        throw new ReportingRowStoreError(
+          'STATE_UNAVAILABLE',
+          claimed.kind === 'lost'
+            ? `another database claimed epoch ${claimed.record.epoch} while this takeover ran; run it again`
+            : 'the takeover was refused'
+        );
+      }
+      taken.push({ bindingIds, epoch: claimed.record.epoch, previousEpoch: claimed.previousEpoch });
+    }
+    return taken;
+  }
+
+  /**
    * Of these object keys, the ones a ledger record names at any version, under any binding: a chunk of a row
    * set that is not yet `pruned`, or an object any write intent lists. Version- and binding-blind on purpose:
    * two bindings can share a bucket and prefix (a retired binding kept `readOnly` next to its successor), and
@@ -2931,90 +3290,140 @@ ${managedDueArm}       )
   }
 
   /**
-   * Delete external row objects, skipping any object another row set still references.
+   * Delete external row objects, skipping any object another row set still references. Takes no
+   * advisory lock and holds no transaction (or pooled connection) across the provider delete.
    *
-   * Object keys are unique per row set (every writable template includes `{revision_key}`), but header-only
-   * revisions share chunks within an obligation and rows written under an older template can name one
-   * object from several row sets. An object is therefore deleted only when no
-   * chunk of a live (or unavailable) row set outside this operation references the same binding,
-   * key and native version, and no other open write intent created it. Row sets already `pruning`
-   * or `pruned` do not count: their own operation deletes the object, and counting them would let
-   * two concurrent retirements each skip the object and leak it. `scope` names what this
-   * operation is deleting: an obligation (retirement) or a row set (compaction).
+   * An object is deleted only when no chunk of a live (or unavailable) row set outside this
+   * operation references the same binding, key and native version, and no other open write intent
+   * created it. Row sets already `pruning` or `pruned` do not count: their own operation deletes
+   * the object, and counting them would let two concurrent retirements each skip the object and
+   * leak it. `scope` names what this operation is deleting: an obligation (retirement) or a row set
+   * (compaction); the intent sweep passes neither.
    *
-   * The check and the provider delete run in one transaction under a per-object advisory lock.
-   * A commit that adopts an existing object takes the same lock before it inserts its chunk rows
-   * and re-verifies the object under it (`writePreparedRowSet`), and holds it until commit. So
-   * either the delete wins the lock and the adopting commit then fails cleanly, or the commit wins
-   * and the delete sees its chunk rows and skips. A skipped object stays for the row set that owns
-   * it: that row set's own retirement, compaction or sweep deletes it, because by then nothing
-   * else references it. Locks are taken one object at a time, never while waiting on the account
-   * lock, so commits (account lock, then object locks) cannot deadlock with these deletes.
+   * Why the check needs no lock against a committing writer (the proof, case by case):
+   *
+   * - Every writable template includes `{revision_key}` (a SHA-256 of the row set ID) and
+   *   `{content_sha256}`, so only one row set can ever name a given key through a writable binding.
+   *   Whatever deletes an object named by a committed chunk row or an open intent is deleting an object
+   *   only that row set could commit. A committed row set is replayed: a late writer that passed the
+   *   replay check can still adopt its just-committed object, but its commit inserts nothing (the row set
+   *   exists), so it cannot reference an object a retirement or compaction then deletes. A `readOnly`
+   *   binding's old template can map several row sets to one object, but nothing adopts through it; there
+   *   the reference check and the `pruning` order below are the whole argument (and no lock ever covered
+   *   more). Bindings that share one bucket and prefix must route a row set to one binding across
+   *   attempts: the reference check is per binding outside the orphan collector.
+   * - Header-only revisions share chunks within an obligation. The sharing commit holds the account
+   *   lock and `FOR SHARE`-locks a predecessor that must still be `live`; retirement and compaction
+   *   move a row set to `pruning` under the same account lock before they delete anything. So a
+   *   sharer either commits first (its chunk rows are then visible to the check, which skips the
+   *   delete) or fails with `STATE_UNAVAILABLE`.
+   * - The intent sweep moves an expired `open` intent to `sweeping` under the account lock, and the
+   *   writer closes that intent, still `open`, in the commit transaction that inserts its chunk
+   *   rows. Exactly one wins; a writer past its lease cannot commit objects the sweep deletes.
+   * - Concurrent retirements and compactions are ordered by the state each commits before its check.
+   * - Deletes are pinned to an exact native version, so one cannot remove a re-created object.
+   *
+   * The one delete that still needs a lock is of an object no record names
+   * (`collectOrphanedRowObjects`): `deleteOrphanedObject` takes the per-object lock that a commit
+   * adopting an unrecorded object also takes (`writePreparedRowSet`).
+   *
+   * A skipped object stays for the row set that owns it: that row set's own retirement,
+   * compaction or sweep deletes it, because by then nothing else references it.
    */
   private async deleteUnreferencedObjects(
     bindingId: string,
     objects: readonly { objectRef: string; nativeVersionRef: string }[],
-    scope: { obligationId?: string; rowSetId?: string; anyBinding?: boolean },
+    scope: { obligationId?: string; rowSetId?: string },
     signal?: AbortSignal
   ): Promise<number> {
     let deleted = 0;
+    const pool: RowObjectQueryable = { query: (text, values) => this.query(text, values) };
     for (const object of objects) {
       signal?.throwIfAborted();
-      const removed = await this.transaction(async client => {
-        // A writer adopting an object takes the lock of its own binding only. When bindings can share a
-        // bucket and prefix, take every binding's lock for this object, in a fixed order, so the delete is
-        // serialized with an adoption through any of them. Writers hold one such lock, so no cycle forms.
-        const lockBindings = scope.anyBinding
-          ? [
-              ...new Set([
-                bindingId,
-                ...this.rowStorage.objectBindingIds(),
-                ...(
-                  await client.query<{ row_binding_id: string }>(
-                    `SELECT row_binding_id FROM adcp_reporting_row_bindings`
-                  )
-                ).rows.map(row => row.row_binding_id),
-              ]),
-            ].sort()
-          : [bindingId];
-        for (const lockBinding of lockBindings) {
-          await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-            objectLock(lockBinding, object.objectRef),
-          ]);
-        }
-        const referenced = await client.query(
-          `(SELECT 1 FROM adcp_reporting_row_chunks chunk
-              JOIN adcp_reporting_row_sets row_set ON row_set.row_set_id = chunk.row_set_id
-             WHERE ($8::boolean OR row_set.row_binding_id = $1) AND chunk.object_ref = $2
-               AND chunk.native_version_ref = $3
-               AND row_set.rows_state IN ('live', 'unavailable')
-               AND ($4::text IS NULL OR chunk.obligation_id <> $4)
-               AND ($5::text IS NULL OR chunk.row_set_id <> $5)
-             LIMIT 1)
-           UNION ALL
-           (SELECT 1 FROM adcp_reporting_row_write_intents intent
-             WHERE ($8::boolean OR intent.row_binding_id = $1) AND intent.state = 'open'
-               AND (intent.created_objects @> $6::jsonb OR intent.created_objects @> $7::jsonb)
-             LIMIT 1)`,
-          [
-            bindingId,
-            object.objectRef,
-            object.nativeVersionRef,
-            scope.obligationId ?? null,
-            scope.rowSetId ?? null,
-            JSON.stringify([{ object_ref: object.objectRef, native_version_ref: object.nativeVersionRef }]),
-            // An older writer still running during a rolling upgrade records the pre-alignment keys.
-            JSON.stringify([{ objectKey: object.objectRef, nativeVersion: object.nativeVersionRef }]),
-            scope.anyBinding === true,
-          ]
-        );
-        if (referenced.rows.length > 0) return false;
-        await this.rowStorage.deleteObjects(bindingId, [object], signal);
-        return true;
-      });
-      if (removed) deleted += 1;
+      if (await this.isRowObjectReferenced(pool, bindingId, object, scope)) continue;
+      await this.rowStorage.deleteObjects(bindingId, [object], signal);
+      deleted += 1;
     }
     return deleted;
+  }
+
+  /**
+   * Delete one object that no ledger record named when `collectOrphanedRowObjects` listed it, under the
+   * advisory lock `adcp-reporting-object:{binding}:{objectRef}` of every binding that can name it. This is
+   * the only delete that takes the lock: an object no record names can be adopted, unrecorded, by a
+   * writer's commit (a retry that finds an object an earlier attempt created but never recorded), and that
+   * commit takes the same lock before it proves the object and inserts its chunk rows. So either this
+   * delete wins and the commit's version-pinned `stat` fails it cleanly, or the commit wins and this
+   * check sees its chunk rows and skips.
+   *
+   * A writer takes the lock of its own binding only, so every binding (those this host configures and
+   * those the database has registered, which can share a bucket and prefix) is locked here, in a fixed
+   * order. Writers hold one such lock, so no cycle forms. A commit takes the account lock, then object
+   * locks; this delete never waits on the account lock while holding an object lock.
+   */
+  private async deleteOrphanedObject(
+    bindingId: string,
+    object: { objectRef: string; nativeVersionRef: string },
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    return this.transaction(async client => {
+      const lockBindings = [
+        ...new Set([
+          bindingId,
+          ...this.rowStorage.objectBindingIds(),
+          ...(
+            await client.query<{ row_binding_id: string }>(`SELECT row_binding_id FROM adcp_reporting_row_bindings`)
+          ).rows.map(row => row.row_binding_id),
+        ]),
+      ].sort();
+      for (const lockBinding of lockBindings) {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+          objectLock(lockBinding, object.objectRef),
+        ]);
+      }
+      if (await this.isRowObjectReferenced(client, bindingId, object, { anyBinding: true })) return false;
+      await this.rowStorage.deleteObjects(bindingId, [object], signal);
+      return true;
+    });
+  }
+
+  /**
+   * Whether a live or unavailable row set outside `scope`, or an open write intent, still names this
+   * exact object version. `anyBinding` widens the check to every binding (the orphan collector's).
+   */
+  private async isRowObjectReferenced(
+    queryable: RowObjectQueryable,
+    bindingId: string,
+    object: { objectRef: string; nativeVersionRef: string },
+    scope: { obligationId?: string; rowSetId?: string; anyBinding?: boolean }
+  ): Promise<boolean> {
+    const referenced = await queryable.query(
+      `(SELECT 1 FROM adcp_reporting_row_chunks chunk
+          JOIN adcp_reporting_row_sets row_set ON row_set.row_set_id = chunk.row_set_id
+         WHERE ($8::boolean OR row_set.row_binding_id = $1) AND chunk.object_ref = $2
+           AND chunk.native_version_ref = $3
+           AND row_set.rows_state IN ('live', 'unavailable')
+           AND ($4::text IS NULL OR chunk.obligation_id <> $4)
+           AND ($5::text IS NULL OR chunk.row_set_id <> $5)
+         LIMIT 1)
+       UNION ALL
+       (SELECT 1 FROM adcp_reporting_row_write_intents intent
+         WHERE ($8::boolean OR intent.row_binding_id = $1) AND intent.state = 'open'
+           AND (intent.created_objects @> $6::jsonb OR intent.created_objects @> $7::jsonb)
+         LIMIT 1)`,
+      [
+        bindingId,
+        object.objectRef,
+        object.nativeVersionRef,
+        scope.obligationId ?? null,
+        scope.rowSetId ?? null,
+        JSON.stringify([{ object_ref: object.objectRef, native_version_ref: object.nativeVersionRef }]),
+        // An older writer still running during a rolling upgrade records the pre-alignment keys.
+        JSON.stringify([{ objectKey: object.objectRef, nativeVersion: object.nativeVersionRef }]),
+        scope.anyBinding === true,
+      ]
+    );
+    return referenced.rows.length > 0;
   }
 
   private async optionalTables(): Promise<ReadonlySet<string>> {
@@ -3023,7 +3432,8 @@ ${managedDueArm}       )
         WHERE table_schema = current_schema()
           AND table_name IN ('adcp_reporting_row_sets', 'adcp_reporting_row_write_intents',
                              'adcp_reporting_materializations', 'adcp_reporting_changes',
-                             'adcp_reporting_feed_consumers', 'adcp_reporting_receipts')`
+                             'adcp_reporting_feed_consumers', 'adcp_reporting_receipts',
+                             'adcp_reporting_orphan_collector_fences')`
     );
     return new Set(result.rows.map(row => row.name));
   }
@@ -3136,25 +3546,42 @@ ${managedDueArm}       )
         throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'the shared row set is no longer live');
       }
     } else {
-      const closed = await client.query(
+      // Closing the intent and inserting the chunk rows are one transaction, so a reader of the ledger sees
+      // an object named by this open intent or by committed chunk rows, never neither.
+      const closed = await client.query<{ created_objects: RecordedIntentObject[] }>(
         `DELETE FROM adcp_reporting_row_write_intents
           WHERE row_binding_id = $1 AND row_set_id = $2 AND content_sha256 = $3
-            AND owner_token = $4 AND state = 'open'`,
+            AND owner_token = $4 AND state = 'open'
+        RETURNING created_objects`,
         [prepared.bindingId, prepared.input.rowSetId, prepared.input.binding.sha256, upload.ownerToken]
       );
       if (closed.rowCount !== 1) {
         throw new ReportingRowStoreError('STATE_UNAVAILABLE', 'the row upload intent was taken over or swept');
       }
-    }
-    if (!upload.sharedFrom) {
-      // A create-only write that found an object already there adopted it. Lock each adopted
-      // object (in key order) until this transaction ends, then prove it is still there: a
-      // delete holding the lock finished first and fails this commit, any later delete sees the
-      // chunk rows inserted below and skips (`deleteUnreferencedObjects`).
+      // A create-only write that found an object already there adopted it. Prove each adopted object is
+      // still there at its recorded version (a version-pinned `stat`, no download).
+      //
+      // An object this writer's own intent recorded as created (an earlier attempt at this row set that
+      // was taken over) needs no lock: until this transaction commits the open intent names it, so no
+      // delete skips the reference check, the intent sweep cannot claim an intent this commit just closed
+      // or one a takeover renewed, and the object's key is unique to this row set, so no other row set's
+      // retirement or compaction names it.
+      //
+      // An adopted object the intent does not record (an earlier attempt's PUT that landed before it was
+      // recorded, or one the writer created after a takeover) is named by no record. Only the orphan
+      // collector deletes such an object, and it deletes under the per-object lock: take it, in key
+      // order, until this transaction ends. A delete that held it finished first and the `stat` below
+      // fails this commit, and any later delete sees the chunk rows inserted below and skips.
       const adopted = upload.locators
         .filter(locator => !locator.created)
         .sort((left, right) => (left.objectRef < right.objectRef ? -1 : left.objectRef > right.objectRef ? 1 : 0));
+      const recorded = new Set(
+        recordedIntentObjects(closed.rows[0]?.created_objects).map(
+          object => `${object.objectRef}\u0000${object.nativeVersionRef}`
+        )
+      );
       for (const locator of adopted) {
+        if (recorded.has(`${locator.objectRef}\u0000${locator.nativeVersionRef}`)) continue;
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
           objectLock(prepared.bindingId, locator.objectRef),
         ]);
@@ -6018,7 +6445,10 @@ function accountLock(accountId: string): string {
   return `adcp-reporting-account:${accountId}`;
 }
 
-/** Serializes deleting an external row object against a commit that adopts it. */
+/**
+ * Serializes the orphan collector's delete of an object no record names against a commit that adopts that
+ * object without having recorded it. No other delete or commit takes it.
+ */
 function objectLock(bindingId: string, objectRef: string): string {
   return `adcp-reporting-object:${bindingId}:${objectRef}`;
 }
@@ -6233,8 +6663,22 @@ function feedConsumerBehindChange(consumer: string, change: string): string {
 const DEFAULT_ORPHAN_MIN_AGE_SECONDS = 7 * 24 * 3600;
 const MIN_ORPHAN_MIN_AGE_SECONDS = 24 * 3600;
 const MAX_ORPHAN_CANDIDATES = 1_000;
+/** Deletes between reads of the collector fence within one listing page. */
+const ORPHAN_FENCE_RECHECK_DELETES = 25;
 /** The suffixes `renderReportingRowObjectKeyV1` gives every key: nothing else under the prefix is a row object. */
 const ROW_OBJECT_KEY_SUFFIX = /\.jsonl(\.gz)?$/;
+
+/**
+ * One fence a takeover claimed: the bindings that share it, the epoch now held and the highest epoch it replaced.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export interface ReportingOrphanFenceTakeoverV1 {
+  bindingIds: string[];
+  epoch: number;
+  /** Highest epoch found in the object store before the takeover; `null` when the namespace was never claimed. */
+  previousEpoch: number | null;
+}
 
 /**
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
@@ -6244,9 +6688,11 @@ export interface ReportingOrphanBindingResultV1 {
   /**
    * `complete`: the listing reached its end. `partial`: stopped at `limit`; resume from `cursors`.
    * `failed`: the listing or its provider failed (`error` is the stable code). `unsupported`: the
-   * binding's provider has no `list`. `read_only`: skipped because the binding is `readOnly`.
+   * binding's provider has no `list`. `read_only`: skipped because the binding is `readOnly`. `fenced`:
+   * another database holds the namespace's collector fence (or this database cannot prove it holds it), so
+   * no further object was deleted (`deleted` counts any that went before a mid-pass refusal); `fence` says why.
    */
-  status: 'complete' | 'partial' | 'failed' | 'unsupported' | 'read_only';
+  status: 'complete' | 'partial' | 'failed' | 'unsupported' | 'read_only' | 'fenced';
   /** Objects the provider listed, including ones dropped as foreign. */
   listed: number;
   /** Old enough, but named by a ledger record or open upload; left alone. */
@@ -6260,6 +6706,8 @@ export interface ReportingOrphanBindingResultV1 {
   wouldDelete: number;
   failed: number;
   error?: string;
+  /** Set when `status` is `fenced`. */
+  fence?: ReportingOrphanFenceRefusalV1;
 }
 
 /**
@@ -6278,6 +6726,8 @@ export interface ReportingOrphanCollectionResultV1 {
   unsupported: string[];
   /** `readOnly` bindings skipped. */
   skippedReadOnly: string[];
+  /** Bindings whose collector fence another database holds: no further object was deleted there. See each binding's `fence`. */
+  fenced: string[];
   /** Dry run only: the orphans a real pass would delete, at most 1000. */
   candidates: {
     bindingId: string;
@@ -6305,6 +6755,34 @@ function withoutRows<T extends { rows: unknown }>(value: T): Omit<T, 'rows'> {
 /** Restore rows the caller already holds onto a stored document that omits them. */
 function withRows<T extends { rows: Record<string, unknown>[] }>(value: T, rows: Record<string, unknown>[]): T {
   return Array.isArray(value.rows) ? value : { ...value, rows: clone(rows) };
+}
+
+/** One entry of a write intent's `created_objects`; an older writer records `objectKey` and `nativeVersion`. */
+interface RecordedIntentObject {
+  object_ref?: string;
+  native_version_ref?: string;
+  objectKey?: string;
+  nativeVersion?: string;
+}
+
+/** The objects a write intent recorded, reading both the current keys and an older writer's pre-alignment keys. */
+function recordedIntentObjects(
+  entries: readonly RecordedIntentObject[] | undefined
+): { objectRef: string; nativeVersionRef: string }[] {
+  return (entries ?? [])
+    .map(entry => ({
+      objectRef: entry.object_ref ?? entry.objectKey,
+      nativeVersionRef: entry.native_version_ref ?? entry.nativeVersion,
+    }))
+    .filter(
+      (object): object is { objectRef: string; nativeVersionRef: string } =>
+        typeof object.objectRef === 'string' && typeof object.nativeVersionRef === 'string'
+    );
+}
+
+/** The part of a pool or transaction client the reference check needs. */
+interface RowObjectQueryable {
+  query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[] }>;
 }
 
 /** Locations for an object-kind row set: freshly uploaded under an intent, or shared from identical rows. */

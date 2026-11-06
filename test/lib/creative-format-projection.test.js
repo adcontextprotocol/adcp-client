@@ -1695,3 +1695,41 @@ describe('creative format delivery projection', () => {
     assert.equal(captured.packages[0].creatives[0].format_kind, undefined);
   });
 });
+
+test('canonical discovery preserves accepted verifier agent identity even when it is also a legacy format URL', () => {
+  const verifierUrl = 'https://verifier.example/mcp';
+  const sharedAgent = { agent_url: verifierUrl, id: 'verifier-1' };
+  const policy = { provenance_required: true, accepted_verifiers: [sharedAgent] };
+  const payload = {
+    products: [{ product_id: 'catalog-1', format_ids: [sharedAgent], creative_policy: policy }],
+    diagnostic: `format_id verifier-1 from agent_url ${verifierUrl}`,
+  };
+  const safe = stripLegacyCreativeIdentity(payload);
+  assert.deepEqual(safe.products[0].creative_policy, policy);
+  assert.equal(safe.products[0].format_ids, undefined);
+  assert.doesNotMatch(safe.diagnostic, /verifier\.example|verifier-1/);
+  const client = new SingleAgentClient({ id: 'seller', name: 'Seller', agent_uri: SELLER, protocol: 'a2a' });
+  const result = client.canonicalizeCreativeTaskResult(
+    {
+      success: true,
+      data: {
+        products: [
+          {
+            product_id: 'catalog-1',
+            name: 'Catalog product',
+            description: 'Canonical inventory',
+            format_options: [{ format_kind: 'image', params: { width: 300, height: 250 } }],
+            creative_policy: policy,
+          },
+        ],
+        format_id: sharedAgent,
+      },
+      metadata: { taskName: 'get_products', taskId: 'verifiers-1', agent: {}, timestamp: new Date().toISOString() },
+    },
+    'get_products'
+  );
+  assert.deepEqual(result.data.products[0].creative_policy, policy);
+  assert.deepEqual(payload.products[0].format_ids, [sharedAgent], 'seller payload remains unchanged');
+  const reversed = stripLegacyCreativeIdentity({ creative_policy: policy, format_id: sharedAgent });
+  assert.deepEqual(reversed.creative_policy, policy, 'shared object policy is independent of traversal order');
+});

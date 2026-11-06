@@ -46,13 +46,18 @@ export type {
   ExpectedSubscriptionPeriodV1,
   ExpectedSubscriptionPeriodsInputV1,
   ReportingSubscriptionBuyV1,
+  ReportingSubscriptionBuyPackageV1,
   ReportingSubscriptionCoverageAccountV1,
   ReportingSubscriptionGrantV1,
   ReportingSubscriptionFlightHistoryEntryV1,
   ReportingSubscriptionVersionRecordV1,
 } from './coverage';
-export { reportingConfigurationCapabilitiesV1 } from './capabilities';
-export type { ReportingConfigurationCapabilitiesInputV1, ReportingConfigurationCapabilitiesV1 } from './capabilities';
+export { reportingConfigurationCapabilitiesV1, checkReportingSubscriptionOfferingsV1 } from './capabilities';
+export type {
+  ReportingConfigurationCapabilitiesInputV1,
+  ReportingConfigurationCapabilitiesV1,
+  ReportingSubscriptionOfferingCheckFailureV1,
+} from './capabilities';
 export {
   COVERAGE_TRACE_VERSION,
   EXPLAIN_TEMPLATES,

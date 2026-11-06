@@ -25,7 +25,11 @@ import {
   REPORTING_LEDGER_MIGRATION,
   type ReportingPgPool,
 } from './postgres';
-import { REPORTING_ROW_STORAGE_MIGRATION } from './row-storage-migration';
+import {
+  REPORTING_ORPHAN_FENCE_MIGRATION,
+  REPORTING_ROW_BINDING_ID_BOUND_MIGRATION,
+  REPORTING_ROW_STORAGE_MIGRATION,
+} from './row-storage-migration';
 import { REPORTING_MANAGED_DELIVERY_MIGRATION } from './managed/postgres';
 
 /**
@@ -123,6 +127,18 @@ const MIGRATIONS: readonly Migration[] = Object.freeze([
     'reporting_consumer',
     "The buyer consumer's checkpoints, pending statuses, change cursors, leases and processed notifications. Online-safe.",
     [REPORTING_CONSUMER_POSTGRES_MIGRATION]
+  ),
+  migration(
+    '0009',
+    'reporting_orphan_collector_fence',
+    "The orphan collector's ownership fence: one row per fenced namespace. Additive. Until applied, orphan collection refuses to delete.",
+    [REPORTING_ORPHAN_FENCE_MIGRATION]
+  ),
+  migration(
+    '0010',
+    'reporting_row_binding_id_bounds',
+    "Widens row_binding_id to AdCP's 255-character identifier bound (was 128). Guarded, so a current schema is untouched; no data changes.",
+    [REPORTING_ROW_BINDING_ID_BOUND_MIGRATION]
   ),
 ]);
 

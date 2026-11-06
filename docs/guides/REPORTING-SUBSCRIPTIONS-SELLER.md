@@ -39,7 +39,7 @@ The SDK reads these surfaces under each principal's identity, so a principal see
 | Input | Read from | Must be present | Override |
 |---|---|---|---|
 | Authorized accounts | the platform's `accounts.list` | `account_id`, `timezone` (IANA), `operator`, `authorization.allowed_tasks` | `subscriptions.accounts` |
-| Visible buys | `sales.getMediaBuys` | `confirmed_at`, `start_time`, `end_time`, `cancellation.canceled_at`, `completed_at`, `packages[].package_id` | `subscriptions.buys` |
+| Visible buys | `sales.getMediaBuys` | `confirmed_at`, `start_time`, `end_time`, `cancellation.canceled_at`, `completed_at`, `packages[].package_id`, and `packages[].added_at` on every package added after `confirmed_at` | `subscriptions.buys` |
 | Package offerings | every registered offering | | `subscriptions.buyOfferings` |
 | Offerings | each adapter's `deliveryOffering` | `standard_dimensions` on every offering | none |
 | Report content | the resolved source offering | exact metrics and dimensions, attribution settings | `subscriptions.configure(generation)`; required for billing feeds |
@@ -90,6 +90,7 @@ The SDK is the only source of `authorization.authorized_at` and `authorization.r
 - **Chain rule.** A re-grant before `unauthorized_at + status_retention_days` continues the chain, so `authorized_at` does not move, and the re-grant is the chain's `regranted_at` (AdCP 3.3.0-beta.3). A later re-grant starts a new chain with no `regranted_at`.
 - **Projection.** Served `list_accounts` and `sync_accounts` carry the journal's values, which are the values coverage uses. A host value that moves backwards is refused (`authorized_at_regressed`).
 - **Partial grants.** Coverage depends only on `get_reporting_status`. A grant without `sync_reporting_receipts` or `sync_reporting_status` keeps the account covered, and the SDK refuses the missing task with `SCOPE_INSUFFICIENT` when your resolver returns the account with its `authorization`. Don't refuse it as an unknown account.
+- **Reduced grants (AdCP 3.3.0-beta.4).** A grant reduced to tasks *without* `get_reporting_status` is a loss of reporting authority, exactly like a revocation. The subscription lists the account in `accounts_unauthorized[]` with `unauthorized_at` set to the reduction, nothing is delivered for periods ending after it, owed periods that ended by then are withheld, and `get_reporting_status` for the account is refused with `SCOPE_INSUFFICIENT` (your resolver must return the account with its reduced `authorization`). Adding `get_reporting_status` back is a re-grant: the chain rule, `regranted_at`, gaps, `backfill_on_regrant` and admission all apply. A reduction that keeps `get_reporting_status`, such as the wind-down grant below, is not a loss of authority.
 - **Push.** `await reporting.grants!.changed({ principal, accountId, at, authorized, allowedTasks })` records a change at the moment your entitlement service knows it.
 
 `authorized_at` is when the *current authorization chain* began, not when access was last granted. Never set it to "now" on a re-grant, and never move it earlier.
@@ -103,10 +104,16 @@ import { windDownGrant } from '@adcp/sdk/server';
 account.authorization = windDownGrant(account.authorization);
 ```
 
+## What beta.4 asks of your platform
+
+- **Packages added after confirmation.** `get_media_buys` MUST carry `packages[].added_at` on every package added to a buy after its `confirmed_at`. It is that package's own `confirmed_at`: the package is owed the periods that end after it, so the period containing `added_at` is owed in full, and it resolves subscription selectors at the later of the version's `accepted_at` and `added_at`. Adding a package is never a cutover. The managed path reads `added_at` from your `getMediaBuys`; a `subscriptions.buys` override returns it on each package (`ReportingSubscriptionBuyPackageV1.added_at`). Without it the SDK treats the package as part of the buy at confirmation and over-owes it.
+- **Offering checks.** A managed-delivery offering without `account_id` in `reporting_profile.primary_keys` is refused with `PlatformConfigError` code `SUBSCRIPTIONS_REQUIRE_ACCOUNT_ID_KEY` (was `PLATFORM_CONFIG_INVALID`). `checkReportingSubscriptionOfferingsV1(offerings, rowSchemas)` from `@adcp/sdk/reporting/advanced` runs the same checks, including the row-schema part when you have the schema.
+- **Probe reset.** If you list `reporting_subscription_probe`, list `reset_state` too (see the [testing guide](REPORTING-SUBSCRIPTIONS-TESTING.md)).
+
 ## What beta.3 asks of your platform
 
 - **Buys.** `get_media_buys` should carry each package's `reporting_delivery_offering_ids` (its offering set, fixed at confirmation), `cancellation_effective_at` when a cancellation stops delivery later than it was recorded, and `flight_history` for retroactive flight edits. The managed path reads all three. Resolution is sticky per (buy, version): an offering you add later never re-resolves a package, and withdrawing one (`withdrawn_at`) is a cutover.
-- **Offerings.** Every managed-delivery offering (one with `method`) declares `account_id` in `reporting_profile.primary_keys`, so rows of several accounts can share a destination. Creating the service refuses one that doesn't.
+- **Offerings.** Every managed-delivery offering (one with `method`) declares `account_id` in `reporting_profile.primary_keys`, so rows of several accounts can share a destination. Creating the service refuses one that doesn't (`SUBSCRIPTIONS_REQUIRE_ACCOUNT_ID_KEY`).
 - **Billing.** A cutover onto a billing feed owes the stretch to its first boundary as one stub period (`stub: true` on the obligation).
 
 ## Storage and migrations

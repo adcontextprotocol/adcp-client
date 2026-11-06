@@ -79,8 +79,8 @@ from `@adcp/sdk/v2/projection`. These advisories remain outside the wire JSON.
 
 ```text
 schemas/cache/
-├── 3.3.0-beta.3/ # primary SDK pin
-├── 3.2.7/        # maintained stable release
+├── 3.3.0-beta.4/ # primary SDK pin
+├── 3.2.8/        # maintained stable release
 ├── 3.1.31/      # maintained stable release
 ├── 3.0.25/      # maintained stable release
 └── latest/      # symlink to the primary pin
@@ -88,11 +88,19 @@ schemas/cache/
 
 Run `npm run sync-schemas:all` to refresh the primary and maintained bundles. Run `npm run generate-types:all` to regenerate public types, then `npm run build:lib` to build and copy supported schemas into the package. `copy-schemas-to-dist.ts` excludes retired AdCP 2 caches even when present locally. `check-publish-protocol-artifacts.mjs` checks the published schema inventory and rejects retired type exports.
 
-The v17 beta primary pin is the signed AdCP 3.3.0-beta.3 bundle; it replaces 3.3.0-beta.2, which is no longer packaged or advertised. Stable SDK 16 remains on AdCP 3.2.7. The beta retains stable AdCP 3.2.7, 3.1.31 and 3.0.25 bundles for negotiation, schema projection and compliance runs.
+### `compliance/` in the shipped bundle
 
-Compliance pins select exact fixture bytes, unlike same-minor wire schema aliases. SDK 16.5.0 packages the 3.2.7 corpus; when upgrading from SDK 16.4.0, update explicit `--compliance-version 3.2.5` flags to `3.2.7`. A development pin of `3.2.6` must likewise advance. Retain the matching historical SDK if a run requires that older corpus. The maintained 3.1.31 and 3.0.25 corpora remain packaged.
+`copy-schemas-to-dist.ts` copies a closure-selected subset of each bundle's `compliance/` directory, not the whole thing by rule: the published `comply-test-controller-{request,response}.json` entry points plus the sibling `compliance/` documents they `$ref`, transitively, resolved per selected version against that version's own cache. On all four currently published caches that closure happens to equal the entire directory — 3.0.25 and 3.1.31 publish only the two entry points, 3.2.8 and 3.3.0-beta.3 also publish `task-completion-data.json` and `get-creative-features-completion.json`, which the request schema reaches. The rule is forward-looking; today it trims nothing.
 
-Build tooling also understands exact AdCP 3.3.0 `beta.N` and `rc.N` pins. Such a build retains maintained AdCP 3.0, 3.1, and 3.2 GA aliases through 3.2.7 while advertising only the selected prerelease, without a moving beta/RC-family alias. SDK 17 selects the exact 3.3.0-beta.3 preview. The stable v16 compatibility list continues to advertise only AdCP 3.2 and earlier.
+- Adding a wire version needs no change here. `test/lib/schema-bundle-compliance-controller.test.js` fails if a new release's controller schemas are missing from its cache, or if it grows a `$ref` the closure cannot reach (AJV reports `can't resolve reference …`).
+- If that happens, the two things to edit are `COMPLIANCE_BUNDLE_ENTRY_POINTS` (which documents seed the walk) and the `siblingRef` regex inside `complianceBundleFiles` (which ref forms are followed — currently a same-version, same-directory plain basename, with any host component — or none — accepted and ignored, since the name only ever selects a file already present in that verified cache directory; a bare-relative `"./x.json"` form is not followed and none exists in any published cache).
+- Shipping these schemas puts `comply_test_controller` in the schema-loader's file index. Three consequences, all intended: `getValidator` / `getSchemaValidatorByRef` resolve for it; `schemaAllowsTopLevelField` gates its fields from the declared schema instead of failing open (so the storyboard runner no longer adds an undeclared top-level `brand`, which was a valid `additionalProperties: true` extension, never an invalid request); and conformance runs now actually grade controller responses — see [Validate your agent](../guides/VALIDATE-YOUR-AGENT.md).
+
+The v17 beta primary pin is the signed AdCP 3.3.0-beta.4 bundle; it replaces 3.3.0-beta.3, which is no longer packaged or advertised. Stable SDK 16 remains on AdCP 3.2.8. The beta retains stable AdCP 3.2.8, 3.1.31 and 3.0.25 bundles for negotiation, schema projection and compliance runs.
+
+Compliance pins select exact fixture bytes, unlike same-minor wire schema aliases. SDK 16.5.0 packages the 3.2.7 corpus; when upgrading from SDK 16.4.0, update explicit `--compliance-version 3.2.5` flags to `3.2.7`. A development pin of `3.2.6` must likewise advance. SDK 16.6.0 and SDK 17 beta package the 3.2.8 corpus, so explicit `--compliance-version 3.2.7` flags advance to `3.2.8`. Retain the matching historical SDK if a run requires that older corpus. The maintained 3.1.31 and 3.0.25 corpora remain packaged.
+
+Build tooling also understands exact AdCP 3.3.0 `beta.N` and `rc.N` pins. Such a build retains maintained AdCP 3.0, 3.1, and 3.2 GA aliases through 3.2.8 while advertising only the selected prerelease, without a moving beta/RC-family alias. SDK 17 selects the exact 3.3.0-beta.3 preview. The stable v16 compatibility list continues to advertise only AdCP 3.2 and earlier.
 
 Conformance validates current and unversioned response payloads without synthesizing task status. The existing status-optional compatibility shim applies only to explicitly declared AdCP 3.0 payloads, and never to status-free compact tools. Closed response schemas admit only the canonical version-envelope fields alongside their declared task fields; other root restrictions and nested-body constraints remain enforced.
 

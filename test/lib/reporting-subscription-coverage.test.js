@@ -149,6 +149,18 @@ function runCase(testCase) {
   }
 }
 
+// Minimized scenarios where the SDK disagreed with the spec's reference model in the differential harness.
+const DIFFERENTIAL = require('../fixtures/reporting-subscriptions/differential-regressions.json');
+
+describe('differential regressions against the reference model', () => {
+  for (const testCase of DIFFERENTIAL.cases) {
+    test(testCase.id, () => {
+      const actual = owedSubscriptionPeriodsV1(structuredClone(testCase.input));
+      assert.deepEqual(comparable(actual), comparable(testCase.expected), testCase.rule);
+    });
+  }
+});
+
 describe('owedSubscriptionPeriodsV1 over the vectors', () => {
   test('every subscription in the table is schema-valid', () => {
     // Validate against the bundle the SDK pins (ADCP_VERSION).

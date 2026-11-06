@@ -74,8 +74,8 @@ test('universal metadata is excluded while empty placeholders and malformed cove
   }
 });
 
-test('published 3.2.7 universal support documents do not become untested bundles', () => {
-  const options = { version: '3.2.7', complianceDir: path.resolve(__dirname, '../../compliance/cache/3.2.7') };
+test('published 3.2.8 universal support documents do not become untested bundles', () => {
+  const options = { version: '3.2.8', complianceDir: path.resolve(__dirname, '../../compliance/cache/3.2.8') };
   const resolved = resolveStoryboardsForCapabilities(caps, options);
   const metadata = [
     'buyer-fixture-publisher',

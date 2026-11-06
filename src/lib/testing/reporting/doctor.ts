@@ -222,6 +222,7 @@ export async function runReportingDoctor(client: ReportingDoctorClient): Promise
   try {
     const listed = await read(client.complyTestController?.bind(client), 'comply_test_controller', {
       scenario: 'list_scenarios',
+      account: { sandbox: true },
     });
     const scenarios = (listed.scenarios as string[] | undefined) ?? [];
     add(

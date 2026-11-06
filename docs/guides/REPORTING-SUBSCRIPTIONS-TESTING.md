@@ -60,7 +60,7 @@ npx adcp storyboard run https://seller.example/mcp --storyboards reporting_subsc
 
 - It computes the periods `subscription_id` owes that account from wire state alone. It reads `get_principal` (paging `prior_versions`), `list_accounts`, `get_media_buys` and `get_adcp_capabilities`, plus this response's `subscription_coverage` entry, and evaluates them with the SDK coverage function at `now = ledger_as_of`.
 - It compares that set with the response's obligations for the subscription, one per (version, offering, period), with the same `media_buy_ids` and `stub` flag.
-- Periods that start before `scope.ledger_retained_from`, or fall outside the request's `period`, are left out, so request the window you mean to check.
+- It compares over one window (AdCP 3.3.0-beta.4). The window starts at the later of the request's `period.start` (no lower bound when absent) and `scope.ledger_retained_from`, where `ledger_retained_from` is capped at `ledger_as_of` minus `status_retention_days`: the seller keeps obligations queryable at least that long. Periods that start before the window are dropped from both sides, so an owed one is not required and a returned one is not a mismatch. Inside the window, a missing or extra obligation fails, and the failure names the window start and the bound that set it (`expected_start`, `ledger_retained_from` or `retention_cap`). When the request sets a period, only periods ending inside it are compared.
 - A response with `pagination.has_more` fails as unverifiable.
 
 ```yaml
@@ -76,12 +76,13 @@ npx adcp storyboard run https://seller.example/mcp --storyboards reporting_subsc
 |---|---|
 | `revoke_grant` | Revokes the caller's own grant on a sandbox account. |
 | `regrant` | Restores it, and returns `chain` (`continued` or `new`). |
-| `reduce_grant` | Replaces the grant's `allowed_tasks`. |
-| `set_account_timezone` | Changes the account's timezone, and returns `timezone_cutovers: [{ offering_id, effective_at }]`. |
+| `reduce_grant` | Replaces the grant's `allowed_tasks`. Without `get_reporting_status` it is a loss of authority: the account is listed in `accounts_unauthorized[]` and `get_reporting_status` refuses it with `SCOPE_INSUFFICIENT`. |
+| `set_account_timezone` | Changes the account's timezone, and returns `SetAccountTimezoneResult`: `simulated_now`, `account_id`, `previous_timezone`, `timezone`, `changed_at` (absent when nothing changed) and `timezone_cutovers: [{ offering_id, previous_timezone, timezone, effective_at }]`, one per account-timezone offering. |
 | `advance_time` | Advances the sandbox clock. |
 
-- **Wiring it.** Pass `complyTest.reportingSubscriptionProbe` to `createAdcpServerFromPlatform`. Params arrive validated (`reportingSubscriptionProbeParamsError`), and the scenario is advertised in `list_scenarios` and `compliance_testing.scenarios`.
-- **The test kit's seller implements it.** It runs one clock for the seller (the training agent keeps one per caller and resets it on `reset_state`). Under `NODE_ENV=test` the clock may run past real time.
+- **Wiring it.** Pass `complyTest.reportingSubscriptionProbe` and `complyTest.resetState` to `createAdcpServerFromPlatform`. Params arrive validated (`reportingSubscriptionProbeParamsError`), and both scenarios are advertised in `list_scenarios` and `compliance_testing.scenarios`.
+- **`reset_state` is required with the probe** (AdCP 3.3.0-beta.4). `createComplyController` refuses a `reportingSubscriptionProbe` without `resetState`. The runner calls `reset_state` before each storyboard. It must unpin the caller's sandbox clock, so `simulated_now` reads your wall clock again until the next `advance_time`, and discard every grant and timezone change the probe made for the caller. A plain `TestControllerStore` advertises it through `resetState()`.
+- **The test kit's seller implements both.** Its `reset_state` unpins the sandbox clock, so `simulated_now` reads the wall clock until the next `advance_time` pins it again. The kit has one clock for its seller, so the reset unpins it for every caller. The kit keeps the accounts the caller's probe changed and undoes the changes: it restores their grants and timezones, and puts the engine's account records back to their state before the probe's first change, which discards the coverage history the changes recorded. Under `NODE_ENV=test` the clock may run past real time. `kit.buys.addPackage(mediaBuyId, pkg)` adds a package to a buy with `added_at` at the kit's clock.
 
 **`npx adcp reporting doctor --agent <url>`** checks the wiring a buyer can see:
 - offerings with `standard_dimensions`, the `subscriptions` block and `status_retention_days`;

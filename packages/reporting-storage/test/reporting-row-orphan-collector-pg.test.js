@@ -74,6 +74,7 @@ describe('orphaned row object collector', { skip: !DATABASE_URL && 'PostgreSQL U
     pool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
     await pool.query(ledger.REPORTING_LEDGER_MIGRATION);
     await pool.query(ledger.REPORTING_ROW_STORAGE_MIGRATION);
+    await pool.query(ledger.REPORTING_ORPHAN_FENCE_MIGRATION);
     const filesystem = ledger.createFilesystemReportingRowObjectProviderV1({ roots: { rows: root } });
     provider = new Proxy(filesystem, {
       get(target, property) {
@@ -86,6 +87,9 @@ describe('orphaned row object collector', { skip: !DATABASE_URL && 'PostgreSQL U
         }
         if (property === 'list') {
           return async (input, context) => {
+            // The collector's ownership fence is listed through the same provider; these hooks target the
+            // object listing, so the fence passes through (reporting-orphan-collector-fence-pg covers it).
+            if (input.prefix.endsWith('/_collector-fence/')) return target.list(input, context);
             const failure = listFailures.shift();
             if (failure) throw failure;
             const real = async page => {
@@ -148,6 +152,7 @@ describe('orphaned row object collector', { skip: !DATABASE_URL && 'PostgreSQL U
     listOverride = null;
     ageShiftMs = 0;
     await pool.query('DELETE FROM adcp_reporting_row_write_intents');
+    await pool.query('DELETE FROM adcp_reporting_orphan_collector_fences');
     rmSync(path.join(root, 'orph'), { recursive: true, force: true });
     rmSync(path.join(root, 'legacy'), { recursive: true, force: true });
   });

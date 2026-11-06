@@ -102,7 +102,7 @@ test('commercial-terms verifier accepts a digest-bound exact reviewed snapshot',
   );
 
   assert.equal(result.ok, true);
-  assert.equal(result.schemaVersion, '3.2.7');
+  assert.equal(result.schemaVersion, '3.2.8');
   assert.deepEqual(result.mismatches, []);
   assert.doesNotThrow(() =>
     assertProposalCommercialTerms(proposal('proposal-terms', 'source-1', { commercial_terms: terms }), terms)

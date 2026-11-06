@@ -19,9 +19,27 @@ import {
   ReportingRowStoreError,
   isReportingRowStoreError,
 } from '@adcp/sdk/reporting/ledger';
-import { probeReportingRowStorageSchemaV1 } from './row-storage-migration';
-import { isReportingRowInstant, isReportingRowObjectKeyShape } from './row-storage-provider-io';
 import {
+  ORPHAN_FENCE_MAX_BYTES,
+  encodeOrphanFenceRecord,
+  isOrphanFenceKey,
+  orphanFenceDirectory,
+  orphanFenceEpochOfKey,
+  orphanFenceKey,
+  orphanFenceScope,
+  parseOrphanFenceRecord,
+  type OrphanFenceEntry,
+  type OrphanFenceRecord,
+} from './orphan-fence';
+import { probeReportingRowStorageSchemaV1 } from './row-storage-migration';
+import {
+  isReportingRowIdentifier,
+  isReportingRowInstant,
+  isReportingRowObjectKeyShape,
+} from './row-storage-provider-io';
+import {
+  REPORTING_ROW_BINDING_ID_MAX_LENGTH,
+  REPORTING_ROW_CREDENTIAL_REF_MAX_LENGTH,
   REPORTING_ROW_DEFAULT_KEY_TEMPLATE,
   REPORTING_ROW_NATIVE_VERSION_REF_MAX_LENGTH,
   REPORTING_ROW_OBJECT_REF_MAX_LENGTH,
@@ -79,7 +97,10 @@ export interface ReportingObjectRowBindingV1 {
   readOnly?: boolean;
   /** Stored encoding; digests always cover uncompressed bytes. Default `gzip`. */
   compression?: 'none' | 'gzip';
-  /** Host-mapped client reference passed to the provider; never a secret. */
+  /**
+   * Host-mapped client reference passed to the provider; never a secret. 1 to
+   * `REPORTING_ROW_CREDENTIAL_REF_MAX_LENGTH` (255) characters of `A-Za-z0-9_.:-`.
+   */
   credentialRef?: string;
 }
 
@@ -107,7 +128,8 @@ export interface ReportingRowStorageOptionsV1 {
   /**
    * Logical binding ID → immutable definition. Defaults to a single
    * `postgres` binding. Changing a definition requires a new ID; keep retired
-   * definitions configured while revisions still reference them.
+   * definitions configured while revisions still reference them. An ID is 1 to
+   * `REPORTING_ROW_BINDING_ID_MAX_LENGTH` (255) characters of `A-Za-z0-9_.:-`, the AdCP identifier bound.
    */
   bindings?: Readonly<Record<string, ReportingRowBindingDefinitionV1>>;
   /** Object-storage providers by name. */
@@ -253,8 +275,6 @@ export interface ReportingRowSetHandleV1 {
 }
 
 const DEFAULT_BINDING_ID = 'postgres';
-const BINDING_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
-const CREDENTIAL_REF = /^[A-Za-z0-9_.:-]{1,128}$/;
 /** Upper bound for adopting an existing object whose encoding may differ byte-for-byte. */
 const MAX_ADOPTED_OBJECT_BYTES = 2 * REPORTING_ROW_CHUNK_MAX_BYTES + 1024 * 1024;
 
@@ -284,7 +304,12 @@ export class ReportingRowStorageV1 {
     const ids = Object.keys(bindings);
     if (ids.length === 0) throw new ReportingRowStoreError('INVALID_INPUT', 'at least one row binding is required');
     for (const id of ids) {
-      if (!BINDING_ID.test(id)) throw new ReportingRowStoreError('INVALID_INPUT', `invalid row binding ID ${id}`);
+      if (!isReportingRowIdentifier(id)) {
+        throw new ReportingRowStoreError(
+          'INVALID_INPUT',
+          `invalid row binding ID ${JSON.stringify(id.length > 64 ? `${id.slice(0, 64)}...` : id)}: use 1 to ${REPORTING_ROW_BINDING_ID_MAX_LENGTH} characters of A-Za-z0-9_.:-`
+        );
+      }
       const binding = bindings[id]!;
       if (binding.kind === 'postgres') continue;
       if (binding.kind !== 'object') {
@@ -294,8 +319,11 @@ export class ReportingRowStorageV1 {
       if (!provider) throw new ReportingRowStoreError('INVALID_INPUT', `row binding ${id} names an unknown provider`);
       provider.validateLocation(binding.location);
       assertReportingRowPrefixV1(binding.prefix);
-      if (binding.credentialRef !== undefined && !CREDENTIAL_REF.test(binding.credentialRef)) {
-        throw new ReportingRowStoreError('INVALID_INPUT', `row binding ${id} has an invalid credentialRef`);
+      if (binding.credentialRef !== undefined && !isReportingRowIdentifier(binding.credentialRef)) {
+        throw new ReportingRowStoreError(
+          'INVALID_INPUT',
+          `row binding ${id} has an invalid credentialRef: use 1 to ${REPORTING_ROW_CREDENTIAL_REF_MAX_LENGTH} characters of A-Za-z0-9_.:-`
+        );
       }
     }
     // Copy each binding so a host mutating its own objects later cannot change a validated template.
@@ -346,9 +374,9 @@ export class ReportingRowStorageV1 {
    * skipped: it never takes commits, so nothing can adopt through it, and every delete is
    * reference-checked.
    *
-   * Since the reference-checked, per-object-locked delete this is no longer the only guard: every
-   * delete path now skips an object another row set still references. It is kept as defense in
-   * depth for compaction, the one path that deletes content while the obligation stays live.
+   * Since the reference-checked delete this is no longer the only guard: every delete path now
+   * skips an object another row set still references. It is kept as defense in depth for
+   * compaction, the one path that deletes content while the obligation stays live.
    */
   assertCompactionSafeKeyTemplates(): void {
     const unsafe = Object.entries(this.bindings)
@@ -440,6 +468,8 @@ export class ReportingRowStorageV1 {
     const objects: ReportingRowObjectListEntryV1[] = [];
     let foreign = Number.isSafeInteger(page.skipped) && page.skipped! > 0 ? page.skipped! : 0;
     for (const entry of page.objects) {
+      // The collector's own fence chain lives under the owned prefix; it is not a row object and not foreign.
+      if (entry && typeof entry.objectRef === 'string' && isOrphanFenceKey(ownedPrefix, entry.objectRef)) continue;
       if (
         !entry ||
         typeof entry.objectRef !== 'string' ||
@@ -458,6 +488,240 @@ export class ReportingRowStorageV1 {
       objects.push(entry);
     }
     return { ownedPrefix, objects, foreign, ...(page.nextPageToken ? { nextPageToken: page.nextPageToken } : {}) };
+  }
+
+  /**
+   * The physical location of an object binding's collector fence: the scope its database row is keyed by, and
+   * the object-store directory that holds its chain. Bindings that share provider, location, prefix and
+   * installation share a fence. Throws `STATE_UNAVAILABLE` for a binding that is not an object binding, and
+   * `INVALID_INPUT` when its provider cannot list (the fence is read by listing).
+   *
+   * @internal
+   */
+  async collectorFenceLocation(bindingId: string): Promise<{ scope: string; directory: string; namespaceKey: string }> {
+    await this.ready();
+    const binding = this.bindings[bindingId];
+    if (!binding || binding.kind !== 'object') {
+      throw new ReportingRowStoreError('STATE_UNAVAILABLE', `row binding ${bindingId} is not configured for objects`);
+    }
+    const provider = this.providers[binding.provider]!;
+    if (typeof provider.list !== 'function') {
+      throw new ReportingRowStoreError('INVALID_INPUT', `row binding ${bindingId}'s provider cannot list objects`);
+    }
+    const namespaceKey = this.installation!.namespaceKey;
+    return {
+      scope: orphanFenceScope({
+        // The provider's own name, not this host's registry key: two registry entries of one kind that reach
+        // the same bucket and prefix are one physical fence.
+        provider: provider.name,
+        location: binding.location,
+        prefix: binding.prefix,
+        namespaceKey,
+      }),
+      directory: orphanFenceDirectory(`${binding.prefix}/${namespaceKey}/`),
+      namespaceKey,
+    };
+  }
+
+  /**
+   * Every fence object of a binding's namespace, ordered by epoch. Keys under the fence directory that are
+   * not an epoch name are ignored. Two live versions of one epoch's key (a versioned store after a manual
+   * delete and re-create) are ambiguous and fail closed with `ROWS_INTEGRITY_FAILED`, as does a chain too
+   * long to be one this collector wrote (it prunes to two objects). `tolerant` is for a takeover, which must
+   * be able to supersede a damaged chain: every version of every epoch is returned (so it can all be removed) and
+   * the page bound is wider.
+   *
+   * @internal
+   */
+  async listCollectorFence(
+    bindingId: string,
+    signal?: AbortSignal,
+    options: { tolerant?: boolean } = {}
+  ): Promise<OrphanFenceEntry[]> {
+    const { directory } = await this.collectorFenceLocation(bindingId);
+    const binding = this.bindings[bindingId] as ReportingObjectRowBindingV1;
+    const provider = this.providers[binding.provider]!;
+    const ownedPrefix = `${binding.prefix}/${this.installation!.namespaceKey}/`;
+    const entries = new Map<number, OrphanFenceEntry>();
+    const versions: OrphanFenceEntry[] = [];
+    const pageSize = 50;
+    let token: string | undefined;
+    for (let page = 0; ; page += 1) {
+      if (page >= (options.tolerant ? 200 : 20)) {
+        throw new ReportingRowStoreError(
+          'ROWS_INTEGRITY_FAILED',
+          'the collector fence directory holds too many objects'
+        );
+      }
+      const context = { signal: deadlineSignal(this.readDeadline, signal) };
+      const listed = await this.provider(() =>
+        provider.list!(
+          {
+            ...providerLocation(binding),
+            prefix: directory,
+            pageSize,
+            ...(token !== undefined ? { pageToken: token } : {}),
+          },
+          context
+        )
+      );
+      if (!listed || !Array.isArray(listed.objects) || listed.objects.length > pageSize) {
+        throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'provider returned an invalid listing');
+      }
+      for (const object of listed.objects) {
+        if (!object || typeof object.objectRef !== 'string' || typeof object.nativeVersionRef !== 'string') continue;
+        if (
+          object.nativeVersionRef.length < 1 ||
+          object.nativeVersionRef.length > REPORTING_ROW_NATIVE_VERSION_REF_MAX_LENGTH
+        ) {
+          continue;
+        }
+        const epoch = orphanFenceEpochOfKey(ownedPrefix, object.objectRef);
+        if (epoch === undefined || object.objectRef !== orphanFenceKey(ownedPrefix, epoch)) continue;
+        if (options.tolerant)
+          versions.push({ epoch, objectRef: object.objectRef, nativeVersionRef: object.nativeVersionRef });
+        if (entries.has(epoch)) {
+          if (options.tolerant) continue;
+          throw new ReportingRowStoreError(
+            'ROWS_INTEGRITY_FAILED',
+            'the collector fence holds two versions of one epoch'
+          );
+        }
+        entries.set(epoch, { epoch, objectRef: object.objectRef, nativeVersionRef: object.nativeVersionRef });
+      }
+      if (listed.nextPageToken === undefined) break;
+      if (typeof listed.nextPageToken !== 'string' || listed.nextPageToken === '' || listed.nextPageToken === token) {
+        throw new ReportingRowStoreError('PROVIDER_UNAVAILABLE', 'provider returned an invalid page token');
+      }
+      token = listed.nextPageToken;
+    }
+    return (options.tolerant ? versions : [...entries.values()]).sort((a, b) => a.epoch - b.epoch);
+  }
+
+  /**
+   * Read and verify one fence object. A missing version is `PROVIDER_UNAVAILABLE` (it was listed a moment ago,
+   * so this is a race to retry); content that is not exactly a fence of this namespace and epoch is
+   * `ROWS_INTEGRITY_FAILED`.
+   *
+   * @internal
+   */
+  async readCollectorFence(
+    bindingId: string,
+    entry: OrphanFenceEntry,
+    signal?: AbortSignal
+  ): Promise<OrphanFenceRecord> {
+    await this.ready();
+    const binding = this.bindings[bindingId];
+    if (!binding || binding.kind !== 'object') {
+      throw new ReportingRowStoreError('STATE_UNAVAILABLE', `row binding ${bindingId} is not configured for objects`);
+    }
+    const provider = this.providers[binding.provider]!;
+    let bytes: Uint8Array | null;
+    try {
+      bytes = await this.provider(() =>
+        provider.get(
+          {
+            ...providerLocation(binding),
+            objectRef: entry.objectRef,
+            nativeVersionRef: entry.nativeVersionRef,
+            maxBytes: ORPHAN_FENCE_MAX_BYTES,
+          },
+          { signal: deadlineSignal(this.readDeadline, signal) }
+        )
+      );
+    } catch (error) {
+      // An object over the read cap is the same finding as bad content.
+      if (isReportingRowStoreError(error) && error.code === 'ROWS_INTEGRITY_FAILED') {
+        throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'the collector fence object is malformed');
+      }
+      throw error;
+    }
+    if (bytes === null) {
+      throw new ReportingRowStoreError(
+        'PROVIDER_UNAVAILABLE',
+        'a collector fence object disappeared while it was read'
+      );
+    }
+    const record = parseOrphanFenceRecord(bytes, {
+      namespaceKey: this.installation!.namespaceKey,
+      epoch: entry.epoch,
+    });
+    if (!record) {
+      throw new ReportingRowStoreError('ROWS_INTEGRITY_FAILED', 'the collector fence object is malformed');
+    }
+    return record;
+  }
+
+  /**
+   * Create-only write of one epoch's fence object. When the key is taken, returns the record already there
+   * (verified), so the caller can tell its own earlier write from another database's claim.
+   *
+   * @internal
+   */
+  async putCollectorFence(
+    bindingId: string,
+    record: OrphanFenceRecord,
+    signal?: AbortSignal
+  ): Promise<{ created: boolean; record: OrphanFenceRecord }> {
+    await this.ready();
+    const binding = this.bindings[bindingId];
+    if (!binding || binding.kind !== 'object') {
+      throw new ReportingRowStoreError('STATE_UNAVAILABLE', `row binding ${bindingId} is not configured for objects`);
+    }
+    const provider = this.providers[binding.provider]!;
+    const { namespaceKey, installationId } = this.installation!;
+    const objectRef = orphanFenceKey(`${binding.prefix}/${namespaceKey}/`, record.epoch);
+    const put = await this.provider(() =>
+      provider.putIfAbsent(
+        {
+          ...providerLocation(binding),
+          objectRef,
+          bytes: encodeOrphanFenceRecord(namespaceKey, record),
+          contentType: 'application/x-ndjson',
+          metadata: { 'adcp-installation': installationId, 'adcp-collector-fence': String(record.epoch) },
+        },
+        { signal: deadlineSignal(this.writeDeadline, signal) }
+      )
+    );
+    assertNativeVersionRef(put?.nativeVersionRef);
+    if (put.created) return { created: true, record };
+    return {
+      created: false,
+      record: await this.readCollectorFence(
+        bindingId,
+        { epoch: record.epoch, objectRef, nativeVersionRef: put.nativeVersionRef },
+        signal
+      ),
+    };
+  }
+
+  /**
+   * Delete superseded fence objects. Best effort: a failure leaves a stale object that the next claim prunes.
+   *
+   * @internal
+   */
+  async deleteCollectorFence(
+    bindingId: string,
+    entries: readonly OrphanFenceEntry[],
+    signal?: AbortSignal
+  ): Promise<void> {
+    await this.ready();
+    const binding = this.bindings[bindingId];
+    if (!binding || binding.kind !== 'object') return;
+    const provider = this.providers[binding.provider]!;
+    for (const entry of entries) {
+      signal?.throwIfAborted();
+      try {
+        await this.provider(() =>
+          provider.delete(
+            { ...providerLocation(binding), objectRef: entry.objectRef, nativeVersionRef: entry.nativeVersionRef },
+            { signal: deadlineSignal(this.writeDeadline, signal) }
+          )
+        );
+      } catch {
+        signal?.throwIfAborted();
+      }
+    }
   }
 
   /** Probe the schema and every provider, and register (or verify) every configured binding. Idempotent. */
@@ -926,14 +1190,16 @@ export class ReportingRowStorageV1 {
 
   /**
    * Prove each object is still present at its recorded version with the recorded size.
-   * A commit that adopted an object another row set created calls this under the object's
-   * lock, so a concurrent delete either finished first (this throws, the commit fails and
-   * the writer re-uploads) or sees the commit's chunk reference and skips the delete.
+   * A commit that adopted an existing object calls this inside its ledger transaction. An object
+   * the writer's own intent recorded is named by that open intent until the commit, so no delete
+   * touches it. An object no record names is also locked first (`writePreparedRowSet`), so the one
+   * delete that can reach it, the orphan collector's, either finished first (this throws, the
+   * commit fails and the writer re-uploads) or sees the commit's chunk reference and skips.
    *
    * Native versions are write-unique (S3 VersionId, Azure versionId, GCS generation, filesystem
    * `ino:birthtime:mtime:size`), so a version-pinned metadata check, "this exact version exists at the
    * recorded size", proves the object unchanged without downloading it while the commit holds its
-   * locks. Bytes were verified when the object was uploaded or adopted. A custom provider without
+   * transaction. Bytes were verified when the object was uploaded or adopted. A custom provider without
    * `stat` falls back to reading the whole object and comparing its physical digest.
    */
   async assertObjectsPresent(
@@ -1162,21 +1428,38 @@ export class ReportingRowStorageV1 {
               ...(binding.credentialRef ? { credentialRef: binding.credentialRef } : {}),
             }
           : {};
-      await this.pool.query(
-        `INSERT INTO adcp_reporting_row_bindings
+      try {
+        await this.pool.query(
+          `INSERT INTO adcp_reporting_row_bindings
            (row_binding_id, kind, provider, identity_config, identity_sha256, operational_config, namespace_key)
          VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb, $7)
          ON CONFLICT (row_binding_id) DO NOTHING`,
-        [
-          bindingId,
-          binding.kind,
-          binding.kind === 'object' ? binding.provider : 'postgres',
-          JSON.stringify(identityConfig),
-          identitySha256,
-          JSON.stringify(operationalConfig),
-          namespaceKey,
-        ]
-      );
+          [
+            bindingId,
+            binding.kind,
+            binding.kind === 'object' ? binding.provider : 'postgres',
+            JSON.stringify(identityConfig),
+            identitySha256,
+            JSON.stringify(operationalConfig),
+            namespaceKey,
+          ]
+        );
+      } catch (error) {
+        // A database that still has the original 128-character CHECK refuses a longer ID with a bare constraint
+        // violation; say which migration widens it.
+        if (
+          bindingId.length > 128 &&
+          (error as { code?: unknown }).code === '23514' &&
+          /row_binding_id/.test(String((error as { constraint?: unknown; message?: unknown }).constraint ?? ''))
+        ) {
+          throw new ReportingRowStoreError(
+            'STATE_UNAVAILABLE',
+            'a row binding ID is longer than 128 characters and this ' +
+              'database still has the original 128-character limit: run npx adcp-reporting-storage migrate (version 0010)'
+          );
+        }
+        throw error;
+      }
       const stored = await this.pool.query<{ identity_sha256: string; namespace_key: string; state: string }>(
         'SELECT identity_sha256, namespace_key, state FROM adcp_reporting_row_bindings WHERE row_binding_id = $1',
         [bindingId]

@@ -131,7 +131,11 @@ service runs for you. See
    cannot hold the table indefinitely.
 5. **Warehouse sink.** Apply `REPORTING_WAREHOUSE_SINK_MIGRATION`, create the
    tables, and the `current_rows` view, then schedule `runOnce`. Point analysts
-   at `current_rows`. Set the sink's `location` to the dataset's location: replay
+   at `current_rows`. The sink loads two tables per batch, rows first and then the
+   required revisions table that `current_rows` reads through, so rows can be
+   visible before their revision metadata and `current_rows` shows only revisions
+   whose metadata has loaded (`docs/guides/REPORTING-LEDGER.md`, "The two-table
+   contract"). Set the sink's `location` to the dataset's location: replay
    lookups of load jobs need it outside the US and EU multi-regions, and the sink
    warns once per process when it is unset. When upgrading from 15.9.0, stop
    every 15.9.0 sink worker before starting newer ones, then re-apply
@@ -180,10 +184,13 @@ service runs for you. See
    `minAgeSeconds` ago (default 7 days, never less than 1 day, which must stay
    well above the write deadline plus intent expiry); no row set that is not yet
    `pruned` has a chunk at that key and no write intent lists it, at any version;
-   and, under the per-object advisory lock every other delete takes, no `live` or
-   `unavailable` row set references that exact version and no open intent
-   created it, checked under every binding because two bindings can share a
-   bucket and prefix (a retired binding kept `readOnly` next to its successor).
+   and, under the per-object advisory lock (the only delete that takes it: a
+   commit that adopts an object its own intent did not record takes the same
+   lock, so the two cannot interleave), no `live` or `unavailable` row set
+   references that exact version and no open intent created it, checked under
+   every binding because two bindings can share a bucket and prefix (a retired
+   binding kept `readOnly` next to its successor). Retirement, compaction and the
+   intent sweep take no lock and hold no connection across their provider deletes.
    `readOnly` bindings are skipped unless `includeReadOnly: true`. A binding
    whose provider has no `list` is reported as `unsupported` (and as a
    maintenance warning), never silently skipped. Everything under the owned prefix
@@ -198,12 +205,65 @@ service runs for you. See
    of them. The age threshold does not protect against that, which is why a real
    (not dry) pass needs `acknowledgeExclusiveNamespace: true`: it is your statement
    that this database is the only owner. A clone made by copying the deployment
-   copies the flag too, so the flag does not protect it: remove it, or the whole
-   option, from every copy. Disable the option on clones, and after
-   restoring a database in place expect the collector to delete the objects of the
-   row sets the restore lost, which is its purpose.
+   copies the flag too, so the flag alone does not protect it, and a persisted
+   **ownership fence** backs it. It needs migration `0009`
+   (`npx adcp-reporting-storage migrate`); until then every real pass and dry run
+   reports each binding as fenced with cause `migration_required` and deletes
+   nothing.
+
+   - **Claim.** The first real pass claims the namespace: it records
+     `(epoch, token)` in `adcp_reporting_orphan_collector_fences` and writes a
+     create-only object, `{prefix}/{namespace_key}/_collector-fence/{epoch}.json`,
+     for that epoch. Every later real pass claims the next epoch before it
+     deletes anything, and prunes the claims older than the previous one.
+   - **Check.** A pass deletes only while the highest epoch in the bucket is
+     exactly the claim this database recorded. It re-reads the fence before every
+     page that deletes (and every 25 deletes within one). Anything else refuses, deletes nothing more and reports the
+     binding as `fenced` with a `cause` (`fence_advanced`, `claimed_elsewhere`,
+     `token_mismatch`, `fence_missing`, `fence_regressed`, `fence_unreadable`,
+     `claim_lost`, `migration_required`), in the result's `fenced` list and as a
+     maintenance warning. Bindings that share a bucket, prefix and installation
+     share one fence.
+   - **Clones and restores.** A copy that still holds an older claim sees the
+     live database's newer epoch and refuses. So does a database restored to an
+     earlier state. A `dryRun` reads the fence without claiming it, so it
+     reports a fenced binding too and writes nothing.
+   - **First claim wins.** Nothing in the database distinguishes a copy from the
+     original until one of them claims. When you roll the fence out, claim from the
+     live database first: one real pass, or `takeOverOrphanCollectorFence` (on a
+     namespace nobody has claimed it is a claim and nothing more). If a clone collects before the original
+     has run a pass since the copy was taken, the clone claims first and the
+     original is fenced, and the warning is the signal. The age threshold still
+     holds: the clone cannot delete an object the original wrote after the copy
+     until that object is `minAgeSeconds` old, so turn the clone's collector off
+     within that window. Run orphan collection only on the live database, and
+     never copy the deployment with the option on.
+   - **Takeover.** After restoring a database in place, or when the original is
+     gone, call `store.takeOverOrphanCollectorFence({ acknowledgePreviousOwnerGone: true })`
+     once. It claims the next epoch for this database and fences every other
+     copy out. It refuses without the acknowledgement. Stop the previous owner's
+     collector first: a pass already running notices the new epoch at its next
+     fence check, up to 25 deletes later, and the provider cannot refuse a delete
+     on the fence's behalf. Do not call it from a
+     clone while the original is running: that fences the original and lets the
+     clone delete its objects.
+
+   A fenced binding is checked again within the hour (never a whole `intervalSeconds`
+   later), so applying `0009` or taking the namespace over resumes collection
+   without a restart. A pass writes one small fence object per pass (and prunes
+   the older ones), so the binding's credentials need write access, including a
+   `readOnly` binding collected with `includeReadOnly`. Keep `_collector-fence/` out
+   of bucket lifecycle rules and manual cleanup: deleting the newest fence object
+   makes an older copy look current again. The claim holds a database connection
+   and an advisory lock across the object-store listing and read.
+
+   After a restore in place, expect the collector to delete the objects of the
+   row sets the restore lost once you have taken the namespace over, which is its
+   purpose.
    The cost grows with bucket size: one listing request per page, plus one
-   database query per page and one transaction per deleted object.
+   database query per page and one transaction per deleted object. The fence
+   adds a small listing and a read per pass, and one more before each deleting
+   page.
 
 Alert on these row-storage signals:
 
@@ -216,6 +276,10 @@ Alert on these row-storage signals:
   host does not configure, and `overdue` (expired more than 24 hours ago, still
   unswept) means no host is handling them and their objects are leaking. The
   maintenance helper reports both through `onError`.
+- The `orphan object collection` task reporting `fenced` bindings: another
+  database holds the namespace's collector fence, or this one cannot prove it
+  does. The `fence.cause` says why; see the ownership fence above before you
+  take the namespace over.
 - The `orphan object collection` task reporting `failed` or `unsupported`
   bindings (their provider cannot list, so nothing there is collected). A listing
   that fails is retried from the page that failed (or from the start, if it was
@@ -237,6 +301,12 @@ Alert on these row-storage signals:
   `listCurrentRevisions`. A first read with no cursor can also throw it when a
   prune commits mid-read; retry it. A new warehouse sink stuck on it after such
   a race recovers with `sink.reset()`.
+- The warehouse sink's `runOnce()` keeps rejecting and the anti-join in "The
+  two-table contract" returns the same revision IDs run after run: rows are in the
+  rows table with no row in the revisions table. The revisions load is failing. The plan is retained and the rows are
+  already loaded, so fix the cause (usually a column the revisions table lacks) and
+  keep running: the retry loads only the revisions and `current_rows` catches up.
+  Do not edit the tables by hand and do not `reset()`.
 - A non-empty `missing` from the warehouse sink's `runOnce()`. The sink was down
   longer than `maxFeedHoldDays`, retention stopped waiting for it, and the
   warehouse lacks those revisions. Backfill them or accept the gap, and keep

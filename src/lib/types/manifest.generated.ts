@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.3.0-beta.3/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.3.0-beta.4/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.3.0-beta.3.
+ * Manifest-derived constants for AdCP 3.3.0-beta.4.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.3.0-beta.3/manifest.json` (adcp_version: 3.3.0-beta.3, generated_at:
- * 2026-10-31T05:48:46.071Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.3.0-beta.4/manifest.json` (adcp_version: 3.3.0-beta.4, generated_at:
+ * 2026-11-03T19:55:22.348Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -174,9 +174,9 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "buyer must add funds or increase budget cap"
   },
   "BUDGET_TOO_LOW": {
-    description: "Budget is below the seller's minimum.",
+    description: "Budget is below the seller's minimum. Optional recovery details follow error-details/budget-too-low.json: minimum_budget and currency describe the floor; basis distinguishes daily and lifetime budgets, constraint identifies its cause, budget_field identifies the constrained budget when error.field instead names a contributing bid, and related_field can identify that bid. error.field retains its existing consistency with issues[0].pointer. Without an unambiguous budget locator, the amount is diagnostic; reconcile current state before choosing a change.",
     recovery: "correctable",
-    suggestion: "increase budget or check capabilities.media_buy.limits"
+    suggestion: "inspect the budget floor details; reconcile the constrained budget, then adjust that budget or its contributing bid within existing authorization"
   },
   "CAMPAIGN_SUSPENDED": {
     description: "Campaign governance has been suspended pending human review; the governance agent MUST reject `check_governance` and `report_plan_outcome` calls on the affected plan until the escalation is resolved. Distinct from `ACCOUNT_SUSPENDED` (account-wide) — this is scoped to a single plan/campaign.",

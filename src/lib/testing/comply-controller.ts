@@ -58,6 +58,7 @@ import {
   type TestControllerStore,
   type UpstreamTrafficSuccessResponse,
   REPORTING_SUBSCRIPTION_PROBE_SCENARIO,
+  RESET_STATE_SCENARIO,
   type ReportingSubscriptionProbeParams,
   type ReportingSubscriptionProbeSimulated,
 } from '../server/test-controller';
@@ -470,6 +471,15 @@ export interface ComplyControllerConfig {
     | (SimulationSuccess & { simulated: ReportingSubscriptionProbeSimulated });
 
   /**
+   * `reset_state` (adcp#8717): return the caller's sandbox to a baseline. The storyboard runner calls
+   * it once before each storyboard when it is advertised. Required with `reportingSubscriptionProbe`:
+   * it must unpin the caller's sandbox clock (so `simulated_now` reads the seller's wall clock again
+   * until the next `advance_time`) and discard every grant and timezone change the probe made for
+   * the caller.
+   */
+  resetState?: (ctx: ComplyControllerContext) => Promise<void> | void;
+
+  /**
    * `query_provenance_audit_observations` adapter. When omitted, provenance
    * audit-observation storyboards grade as not applicable after scenario
    * discovery.
@@ -482,24 +492,22 @@ export interface ComplyControllerConfig {
 
   /**
    * Extra Zod fields to merge into the canonical `comply_test_controller`
-   * input schema. Use this when a custom wrapper carries a tenant or account
-   * reference in a top-level field that the spec-canonical
-   * {@link TOOL_INPUT_SHAPE} doesn't include. Treat such fields only as
+   * input schema. Use this when a custom wrapper carries a vendor field
+   * that the spec-canonical {@link TOOL_INPUT_SHAPE} does not include. Treat such fields only as
    * identifiers for trusted server-side resolution; never use their contents
    * directly as sandbox authority.
    * Keys override canonical fields if there's a name collision; the
    * resulting shape is what the framework passes to
    * `mcp.registerTool(..., { inputSchema })` at registration.
    *
-   * Mirrors the documented `{ ...TOOL_INPUT_SHAPE, account: ... }`
+   * Mirrors the `{ ...TOOL_INPUT_SHAPE, vendor_field: ... }`
    * pattern from `test-controller.ts` so adopters routed through
    * `createAdcpServerFromPlatform(platform, { complyTest })` get the same
    * extension seam as adopters wiring `registerTestController` directly.
    *
-   * Storyboard fixtures that send a top-level `account` or `brand`
-   * (rather than `context.account` / `context.brand`) are the canonical
-   * cases for this option — both are stripped by the spec-canonical
-   * shape.
+   * The canonical top-level `account` already preserves all identity fields
+   * and requires the sandbox assertion. Resolve its identity through trusted
+   * account state; the caller assertion cannot grant sandbox authority.
    *
    * @example
    * ```ts
@@ -507,8 +515,7 @@ export interface ComplyControllerConfig {
    *
    * complyTest: {
    *   inputSchema: {
-   *     account: z.object({ account_id: z.string() }).passthrough().optional(),
-   *     brand: z.object({ domain: z.string() }).passthrough().optional(),
+   *     vendor_scope: z.string().optional(),
    *   },
    *   force: { ... },
    * }
@@ -690,6 +697,9 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
   if (config.reportingSubscriptionProbe) {
     store.reportingSubscriptionProbe = params => Promise.resolve(config.reportingSubscriptionProbe!(params, ctx));
   }
+  if (config.resetState) {
+    store.resetState = () => Promise.resolve(config.resetState!(ctx));
+  }
   if (queryProvenanceAuditObservations) {
     store.queryProvenanceAuditObservations = params => Promise.resolve(queryProvenanceAuditObservations(params, ctx));
   }
@@ -725,6 +735,7 @@ function advertisedScenarios(config: ComplyControllerConfig): string[] {
   if (config.force?.catalog_item_status) out.push('force_catalog_item_status');
   if (config.queryUpstreamTraffic) out.push(CONTROLLER_SCENARIOS.QUERY_UPSTREAM_TRAFFIC);
   if (config.reportingSubscriptionProbe) out.push(REPORTING_SUBSCRIPTION_PROBE_SCENARIO);
+  if (config.resetState) out.push(RESET_STATE_SCENARIO);
   if (config.queryProvenanceAuditObservations) {
     out.push(CONTROLLER_SCENARIOS.QUERY_PROVENANCE_AUDIT_OBSERVATIONS);
   }
@@ -756,6 +767,12 @@ export async function _handleComplyControllerWithResolvedAuthority(
 
 /** Create a comply_test_controller scaffold from domain-grouped adapters. */
 export function createComplyController(config: ComplyControllerConfig): ComplyController {
+  // adcp#8717: a seller that lists reporting_subscription_probe MUST also list reset_state.
+  if (config.reportingSubscriptionProbe && !config.resetState) {
+    throw new TypeError(
+      'createComplyController: reportingSubscriptionProbe requires resetState. A seller that lists reporting_subscription_probe must also list reset_state, which unpins the caller’s sandbox clock and discards the probe’s grant and timezone changes (adcp#8717).'
+    );
+  }
   const seedCache = config.seedCache ?? createSeedFixtureCache();
   const scenarios = advertisedScenarios(config);
   // Stable reference so factory answers list_scenarios without invoking

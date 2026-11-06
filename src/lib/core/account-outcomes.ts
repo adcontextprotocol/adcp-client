@@ -18,6 +18,7 @@
  * SDK spells these `AccountOutcome`, `next_step` and `format_pending_action`.
  */
 import type { AccountCandidate, Error as WireError, PendingAction } from '../types/core.generated';
+import type { AccountReference } from '../types/tools.generated';
 
 export type { PendingAction };
 
@@ -96,18 +97,98 @@ export interface AccountRejected {
 export type AccountOutcome = AccountReady | AccountPending | AccountAmbiguous | AccountRejected;
 
 /**
+ * `client.accounts.change`: the named account changed in place. `account_id` is unchanged and
+ * `revision` is the account's new revision, when the seller returned the account. `effective_at` is
+ * when changed money terms (`billing`, `billing_entity`, `payment_terms`) take effect: delivery before
+ * it is invoiced under the previous terms (AdCP 3.3.0-beta.3).
+ */
+export interface AccountUpdated {
+  readonly kind: 'updated';
+  readonly account_id: string;
+  readonly revision?: number;
+  readonly effective_at?: string;
+  /** The wire account after the change, when the seller returned it. */
+  readonly account?: Readonly<Record<string, unknown>>;
+  readonly request_id?: string;
+  readonly via: 'request_account';
+}
+
+/**
+ * `client.accounts.change`: the seller opened a separate account carrying the change, and left the
+ * named account unchanged and usable. Nothing moved: the registry still maps `key` to
+ * `previousAccountId` until you call `client.accounts.use(key, account_id)`.
+ */
+export interface AccountSeparate {
+  readonly kind: 'separate_account';
+  /** The new account. */
+  readonly account_id: string;
+  /** The account the change named; unchanged. */
+  readonly previousAccountId: string;
+  /** The natural key the registry knows for the previous account, if any. Pass it to `use()`. */
+  readonly key?: AccountReference;
+  /** The new account, with its money terms, which can differ from those requested. */
+  readonly account?: Readonly<Record<string, unknown>>;
+  /** The previous account's account-level configurations the new account does not have. */
+  readonly not_carried_over: readonly string[];
+  /**
+   * Best effort: the caller's `account_ids`-scoped reporting subscriptions that name the previous
+   * account but not the new one, so they will not report on it until you add it. Empty when the client
+   * cannot read subscriptions. `all_authorized_accounts` subscriptions cover the new account already.
+   */
+  readonly subscriptionsNotCovering: readonly string[];
+  readonly request_id?: string;
+  readonly via: 'request_account';
+}
+
+/**
+ * `client.accounts.change`: the change matched another existing account. As with
+ * {@link AccountSeparate}, the registry is not re-pointed until `client.accounts.use(key, account_id)`.
+ * Read the matched account's money terms from `account` before spending.
+ */
+export interface AccountMatched {
+  readonly kind: 'matched_existing';
+  readonly account_id: string;
+  readonly previousAccountId: string;
+  readonly key?: AccountReference;
+  readonly account?: Readonly<Record<string, unknown>>;
+  readonly request_id?: string;
+  readonly via: 'request_account';
+}
+
+/** A declined change. `requiresNewAccount`: resend with `allowSeparateAccount: true` to accept a new account. */
+export interface AccountChangeRejected extends AccountRejected {
+  /** `ACCOUNT_CHANGE_REQUIRES_NEW_ACCOUNT`: the seller would accept the change only as a separate account. */
+  readonly requiresNewAccount: boolean;
+}
+
+/**
+ * What `client.accounts.change` and `changeStatus` return. A pending change carries the named account's
+ * `account_id` and its `request_id`; read it back with `changeStatus`. The Python SDK spells these
+ * `AccountUpdated`, `AccountSeparate`, `AccountMatched` and `AccountChangeOutcome`.
+ */
+export type AccountChangeOutcome =
+  | AccountUpdated
+  | AccountSeparate
+  | AccountMatched
+  | AccountPending
+  | AccountChangeRejected;
+
+/**
  * What to do next:
  *
- * - `none`: the account is ready.
+ * - `none`: the account is ready (including a change that resolved: updated, separate or matched).
  * - `wait_for_seller`: the seller is reviewing; call `client.accounts.refresh()` later or wait for the
  *   `account_request.changed` webhook.
  * - `send_human_to_url`: show `action.url` to a person (never fetch it).
  * - `pick_candidate`: choose one of `candidates`.
  * - `contact_seller`: rejected, or a buyer action without a URL.
  */
-export function nextStep(outcome: AccountOutcome): NextStep {
+export function nextStep(outcome: AccountOutcome | AccountChangeOutcome): NextStep {
   switch (outcome.kind) {
     case 'ready':
+    case 'updated':
+    case 'separate_account':
+    case 'matched_existing':
       return 'none';
     case 'ambiguous':
       return 'pick_candidate';
