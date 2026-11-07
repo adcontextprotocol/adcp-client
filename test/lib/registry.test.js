@@ -2034,6 +2034,21 @@ describe('RegistryClient', () => {
       assert.ok(capturedUrl.includes('source=brand_json'));
     });
 
+    test('passes the house_domain filter', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ brands: [], stats: {} }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.listBrands({ house_domain: 'pg.com', limit: 200 });
+
+      const query = new URL(capturedUrl).searchParams;
+      assert.strictEqual(query.get('house_domain'), 'pg.com');
+      assert.strictEqual(query.get('limit'), '200');
+    });
+
     test('throws on server error', async () => {
       restore = mockFetch(async () => {
         return new Response('Internal Server Error', { status: 500 });
