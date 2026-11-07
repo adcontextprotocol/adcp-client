@@ -142,6 +142,30 @@ function rewriteSpecifiers(code: string, fromDir: string): string {
   });
 }
 
+// A facaded declaration is the one ESM consumers see, so every relative module
+// it references must also be facaded. Otherwise ESM consumers reach that module
+// through both the CJS `.d.ts` and a separate `.d.mts` copy, which TypeScript
+// treats as distinct symbols (#3638).
+function assertFacadeClosure(facades: ReadonlyMap<string, boolean>): void {
+  const pattern = /(\/\*[\s\S]*?\*\/|\/\/[^\n]*)|(?:\bfrom\s*|\bimport\s*\(\s*)(['"])(\.[^'"]+)\2/g;
+  for (const file of facades.keys()) {
+    if (!existsSync(file)) continue;
+    const specs = new Set<string>();
+    for (const match of readFileSync(file, 'utf8').matchAll(pattern)) {
+      if (match[1] === undefined) specs.add(match[3]);
+    }
+    for (const spec of specs) {
+      const target = `${path.resolve(path.dirname(file), spec.replace(/\.(mjs|cjs|js)$/, ''))}.d.ts`;
+      if (existsSync(target) && !facades.has(target)) {
+        throw new Error(
+          `${path.relative(DIST_LIB, file)} references ${path.relative(DIST_LIB, target)}, ` +
+            'which needs an ESM facade too; add it to ESM_FACADE_DECLARATIONS'
+        );
+      }
+    }
+  }
+}
+
 function main(): void {
   if (!existsSync(DIST_LIB) || !statSync(DIST_LIB).isDirectory()) {
     throw new Error(`dist/lib not found at ${DIST_LIB}; run the declaration emit (tsc) first`);
@@ -167,6 +191,7 @@ function main(): void {
     writeFileSync(target, rewritten);
     written++;
   }
+  assertFacadeClosure(facades);
   console.log(`✅ Emitted ${written} .d.mts declaration(s) alongside .d.ts`);
 }
 

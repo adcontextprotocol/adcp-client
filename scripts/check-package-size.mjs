@@ -46,14 +46,16 @@ const GROWTH_METRICS = ['packedBytes', 'files'];
 // failing loudly if expanded bundles return.
 const MAX_BUNDLED_SCHEMA_BYTES = 2_200_000;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
-// Generated declarations whose `.d.mts` is a one-line facade over the CJS
-// declaration (see scripts/generate-dmts-declarations.ts). Copying them instead
-// would add about 1.2 MB to the packed tarball.
+// Declarations whose `.d.mts` is a one-line facade over the CJS declaration
+// (see scripts/generate-dmts-declarations.ts). Copying the generated ones would
+// add about 1.2 MB to the packed tarball; nonempty-array is facaded so ESM and
+// CJS share one `NonemptyArraySchema` (#3638).
 const ESM_FACADE_DECLARATIONS = [
   'dist/lib/types/schemas.generated',
   'dist/lib/types/core.generated',
   'dist/lib/types/tools.generated',
   'dist/lib/registry/types.generated',
+  'dist/lib/validation/nonempty-array',
 ];
 const MAX_ESM_FACADE_BYTES = 1024;
 
