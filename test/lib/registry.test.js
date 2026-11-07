@@ -2049,6 +2049,20 @@ describe('RegistryClient', () => {
       assert.strictEqual(query.get('limit'), '200');
     });
 
+    test('sends each value of an array option as its own param', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ brands: [], stats: {} }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.listBrands({ source: ['community', 'brand_json'] });
+
+      const query = new URL(capturedUrl).searchParams;
+      assert.deepStrictEqual(query.getAll('source'), ['community', 'brand_json']);
+    });
+
     test('throws on server error', async () => {
       restore = mockFetch(async () => {
         return new Response('Internal Server Error', { status: 500 });

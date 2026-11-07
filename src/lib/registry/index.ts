@@ -1925,7 +1925,11 @@ export class RegistryClient {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(options)) {
       if (value == null || value === '') continue;
-      params.set(key, String(value));
+      if (Array.isArray(value)) {
+        for (const item of value) params.append(key, String(item));
+      } else {
+        params.set(key, String(value));
+      }
     }
     const qs = params.toString();
     return qs ? '?' + qs : '';
