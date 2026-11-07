@@ -67,9 +67,10 @@ export type {
 
 export { GetProductsRequestSchema, LegacyGetProductsRequestSchema } from '../validation/get-products-request';
 export type { LooseObjectSchemaFor } from '../validation/get-products-request';
-// Exported so adopter declaration emit can name the type of
-// `GetProductsRequestSchema.extend(...)` through this entry.
+// Exported so adopter declaration emit can name these types through this
+// entry: `GetProductsRequestSchema.extend(...)` and schemas with non-empty arrays.
 export type { CanonicalGetProductsRequest } from '../v2/projection/types';
+export type { NonemptyArraySchema } from '../validation/nonempty-array';
 export { BiddingPolicySchema } from '../validation/bidding-policy';
 export { CanonicalBudgetAllocationSchema } from '../validation/budget-allocation';
 export { TOOL_REQUEST_SCHEMAS } from '../utils/tool-request-schemas';

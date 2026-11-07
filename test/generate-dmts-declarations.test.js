@@ -107,6 +107,27 @@ test('uses ESM facades for the type-only generated protocol and registry declara
   }
 });
 
+test('uses an ESM facade for nonempty-array so ESM and CJS share one NonemptyArraySchema', () => {
+  const root = createFixture('export declare const ExampleSchema: { readonly exact: true };\n');
+  try {
+    // Unlike the type-only facades, this declaration has values and a zod
+    // import; the generated schema declaration references it through CJS.
+    addTypeOnlyDeclaration(
+      root,
+      'validation/nonempty-array.d.ts',
+      "import * as z from 'zod';\nexport interface NonemptyArraySchema<E extends z.ZodType> {}\nexport declare function nonemptyArray<E extends z.ZodType>(element: E): NonemptyArraySchema<E>;\n"
+    );
+    const result = runGenerator(root);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      readFileSync(path.join(root, 'dist', 'lib', 'validation', 'nonempty-array.d.mts'), 'utf8'),
+      "export * from './nonempty-array.js';\n"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('rejects a type-only facade declaration that gains values or package imports', () => {
   for (const declaration of [
     'export declare const ProductSchema: unknown;\n',

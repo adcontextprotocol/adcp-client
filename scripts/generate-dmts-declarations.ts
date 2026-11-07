@@ -68,11 +68,18 @@ function wildcardOnlySlices(): Set<string> {
 // about 1.2 MB of the packed tarball. The type-only entries must stay free of
 // value declarations and package imports, so ESM and CJS consumers resolve the
 // exact same structural types through the facade.
+//
+// `validation/nonempty-array` is small but must follow the schema facade: the
+// generated schema declaration names `NonemptyArraySchema` through the CJS
+// `nonempty-array.d.ts`, so an ESM copy would declare a second, distinct
+// interface. Adopters who emit declarations for a schema containing a
+// non-empty array could then not name the type through a public entry (#3638).
 const ESM_FACADE_DECLARATIONS: ReadonlyArray<{ file: string; typeOnly: boolean }> = [
   { file: 'types/schemas.generated.d.ts', typeOnly: false },
   { file: 'types/core.generated.d.ts', typeOnly: true },
   { file: 'types/tools.generated.d.ts', typeOnly: true },
   { file: 'registry/types.generated.d.ts', typeOnly: true },
+  { file: 'validation/nonempty-array.d.ts', typeOnly: false },
 ];
 
 function hasDefaultExport(source: string): boolean {
