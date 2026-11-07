@@ -68,7 +68,7 @@ test('rejects schema exports that export-star would omit', () => {
   }
 });
 
-function addTypeOnlyDeclaration(root, relativePath, declaration) {
+function addDeclaration(root, relativePath, declaration) {
   const file = path.join(root, 'dist', 'lib', relativePath);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, declaration);
@@ -78,17 +78,17 @@ function addTypeOnlyDeclaration(root, relativePath, declaration) {
 test('uses ESM facades for the type-only generated protocol and registry declarations', () => {
   const root = createFixture('export declare const ExampleSchema: { readonly exact: true };\n');
   try {
-    addTypeOnlyDeclaration(
+    addDeclaration(
       root,
       'types/core.generated.d.ts',
       'export interface Product {\n    enum?: string[];\n    /** declare const in prose */\n    module?: string;\n}\n'
     );
-    addTypeOnlyDeclaration(
+    addDeclaration(
       root,
       'types/tools.generated.d.ts',
       "import type { Product } from './core.generated';\nexport type GetProducts = { products: Product[] };\n"
     );
-    addTypeOnlyDeclaration(root, 'registry/types.generated.d.ts', 'export interface paths {\n}\n');
+    addDeclaration(root, 'registry/types.generated.d.ts', 'export interface paths {\n}\n');
     const result = runGenerator(root);
     assert.equal(result.status, 0, result.stderr);
     for (const [relativePath, name] of [
@@ -107,6 +107,43 @@ test('uses ESM facades for the type-only generated protocol and registry declara
   }
 });
 
+test('uses an ESM facade for nonempty-array so ESM and CJS share one NonemptyArraySchema', () => {
+  const root = createFixture('export declare const ExampleSchema: { readonly exact: true };\n');
+  try {
+    // Unlike the type-only facades, this declaration has values and a zod
+    // import; the generated schema declaration references it through CJS.
+    addDeclaration(
+      root,
+      'validation/nonempty-array.d.ts',
+      "import * as z from 'zod';\nexport interface NonemptyArraySchema<E extends z.ZodType> {}\nexport declare function nonemptyArray<E extends z.ZodType>(element: E): NonemptyArraySchema<E>;\n"
+    );
+    const result = runGenerator(root);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      readFileSync(path.join(root, 'dist', 'lib', 'validation', 'nonempty-array.d.mts'), 'utf8'),
+      "export * from './nonempty-array.js';\n"
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects a facade declaration that references a module without a facade', () => {
+  for (const declaration of [
+    "import type { dependency } from './dependency';\nexport declare const ExampleSchema: typeof dependency;\n",
+    'export declare const ExampleSchema: typeof import("./dependency").dependency;\n',
+  ]) {
+    const root = createFixture(declaration);
+    try {
+      const result = runGenerator(root);
+      assert.notEqual(result.status, 0, declaration);
+      assert.match(result.stderr, /schemas\.generated\.d\.ts references types\/dependency\.d\.ts/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test('rejects a type-only facade declaration that gains values or package imports', () => {
   for (const declaration of [
     'export declare const ProductSchema: unknown;\n',
@@ -115,7 +152,7 @@ test('rejects a type-only facade declaration that gains values or package import
   ]) {
     const root = createFixture('export declare const ExampleSchema: { readonly exact: true };\n');
     try {
-      addTypeOnlyDeclaration(root, 'types/core.generated.d.ts', declaration);
+      addDeclaration(root, 'types/core.generated.d.ts', declaration);
       const result = runGenerator(root);
       assert.notEqual(result.status, 0, declaration);
       assert.match(result.stderr, /core\.generated\.d\.ts is no longer type-only/);

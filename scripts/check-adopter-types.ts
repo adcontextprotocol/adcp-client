@@ -61,7 +61,11 @@ const DECLARATION_TSCONFIG = {
 };
 
 const DECLARATION_SOURCE = `
-import { ProductSchema, GetProductsRequestSchema } from '@adcp/sdk/schemas';
+import {
+  ProductSchema,
+  GetProductsRequestSchema,
+  SyncCreativesResponseStrictSchema as NodeSyncCreativesResponseStrictSchema,
+} from '@adcp/sdk/schemas';
 import * as BrowserSchemas from '@adcp/sdk/schemas/browser';
 import { z } from 'zod';
 
@@ -84,6 +88,12 @@ export const BrowserGetProductsSchema = BrowserSchemas.GetProductsRequestSchema.
 export const LocalSyncCreativesItemSchema = BrowserSchemas.SyncCreativesItemSchema.extend({
   local_id: z.string().optional(),
 });
+
+export const LocalSyncCreativesResponseSchema = BrowserSchemas.SyncCreativesResponseStrictSchema;
+
+export const LocalAccountSchema = BrowserSchemas.SyncCreativesItemSchema.shape.account;
+
+export const LocalNodeSyncCreativesResponseSchema = NodeSyncCreativesResponseStrictSchema;
 `;
 
 const ADOPTER_SOURCE = `
