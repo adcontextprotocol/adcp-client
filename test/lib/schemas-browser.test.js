@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { build } = require('esbuild');
 const { runInNewContext } = require('node:vm');
 const { existsSync } = require('node:fs');
-const { resolve } = require('node:path');
+const { relative, resolve, sep } = require('node:path');
 const { gzipSync } = require('node:zlib');
 const pkg = require('../../package.json');
 
@@ -80,24 +80,38 @@ for (const specifier of ['@adcp/sdk/schemas/browser', '@adcp/sdk/media-buy/actio
       host.fileExists = fileName => resolve(fileName) === fixture || fileExists(fileName);
       const program = ts.createProgram([fixture], options, host);
 
-      const files = program
-        .getSourceFiles()
-        .filter(file => !program.isSourceFileDefaultLibrary(file) && resolve(file.fileName) !== fixture)
-        .map(file => resolve(file.fileName));
       const sdkDist = resolve('dist/lib');
+      const sdkPath = file => relative(sdkDist, file).split(sep).join('/');
+      const sourceFiles = program
+        .getSourceFiles()
+        .filter(file => !program.isSourceFileDefaultLibrary(file) && resolve(file.fileName) !== fixture);
+      const files = sourceFiles.map(file => resolve(file.fileName));
       assert.ok(
-        files.some(file => file.startsWith(sdkDist)),
+        files.some(file => !sdkPath(file).startsWith('..')),
         `${specifier} did not resolve to dist declarations`
       );
-      const forbidden = files.filter(file => {
-        if (file.startsWith(sdkDist)) {
-          const path = file.slice(sdkDist.length + 1);
-          return /^index\.d\.[cm]?ts$|^(signing|server|protocols|core|testing)\//.test(path);
+      const outside = files.filter(file => {
+        const path = sdkPath(file);
+        if (!path.startsWith('..')) {
+          return !/^(types\/[^/]+\.generated|types\/media-buy-delivery-report|validation\/[^/]+|schemas\/browser|v2\/projection\/types|media-buy\/[^/]+)\.d\.[cm]?ts$/.test(
+            path
+          );
         }
         // Zod is the only runtime dependency of the browser entries.
         return !/[\\/]node_modules[\\/]zod[\\/]/.test(file);
       });
-      assert.deepEqual(forbidden, [], `declaration graph left browser-safe modules:\n${forbidden.join('\n')}`);
+      assert.deepEqual(outside, [], `declaration graph left browser-safe modules:\n${outside.join('\n')}`);
+
+      // With `types: []`, a Node built-in import (`node:crypto`, `buffer`)
+      // never resolves and so never shows up above; fail on it explicitly.
+      const unresolved = sourceFiles
+        .filter(file => !sdkPath(resolve(file.fileName)).startsWith('..'))
+        .flatMap(file =>
+          file.imports
+            .filter(spec => !program.getResolvedModuleFromModuleSpecifier(spec, file)?.resolvedModule)
+            .map(spec => `${spec.text} in ${sdkPath(resolve(file.fileName))}`)
+        );
+      assert.deepEqual(unresolved, [], `browser declarations import unresolvable modules:\n${unresolved.join('\n')}`);
     });
   }
 }

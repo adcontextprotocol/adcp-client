@@ -8,6 +8,9 @@
 export * from '../types/schemas.generated';
 export { GetProductsRequestSchema, LegacyGetProductsRequestSchema } from '../validation/get-products-request';
 export type { LooseObjectSchemaFor } from '../validation/get-products-request';
+// Exported so adopter declaration emit can name the type of
+// `GetProductsRequestSchema.extend(...)` through this entry.
+export type { CanonicalGetProductsRequest } from '../v2/projection/types';
 export { BiddingPolicySchema } from '../validation/bidding-policy';
 export { CanonicalBudgetAllocationSchema } from '../validation/budget-allocation';
 export {

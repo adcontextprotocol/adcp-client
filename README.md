@@ -79,7 +79,7 @@ import {
 const health = EventSourceHealthSchema.parse(rawHealth);
 ```
 
-The browser entry also exports `GetProductsRequestSchema` and `LegacyGetProductsRequestSchema`, `BiddingPolicySchema`, `CanonicalBudgetAllocationSchema`, and the strict `SyncCreatives*` validators, with the same validation behavior as the Node entry. It has no Node built-ins in its import graph. JSON Schema loading and tool registration helpers remain available from `@adcp/sdk/schemas`. The generated schemas still initialize together, so importing one schema can retain the full generated module in a browser bundle; per-schema tree-shaking is tracked in [#3178](https://github.com/adcontextprotocol/adcp-client/issues/3178).
+The browser entry also exports `GetProductsRequestSchema` and `LegacyGetProductsRequestSchema`, `BiddingPolicySchema`, `CanonicalBudgetAllocationSchema`, and the strict `SyncCreatives*` validators, with the same validation behavior as the Node entry. It has no Node built-ins in its import graph (runtime or type declarations). JSON Schema loading and tool registration helpers remain available from `@adcp/sdk/schemas`. The generated schemas still initialize together, so importing one schema can retain the full generated module in a browser bundle; per-schema tree-shaking is tracked in [#3178](https://github.com/adcontextprotocol/adcp-client/issues/3178).
 
 ### Focused client runtime (`@adcp/sdk/client/core`)
 

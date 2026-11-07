@@ -62,6 +62,7 @@ const DECLARATION_TSCONFIG = {
 
 const DECLARATION_SOURCE = `
 import { ProductSchema, GetProductsRequestSchema } from '@adcp/sdk/schemas';
+import * as BrowserSchemas from '@adcp/sdk/schemas/browser';
 import { z } from 'zod';
 
 export const SavedProductSchema = ProductSchema.safeExtend({
@@ -75,6 +76,14 @@ export const LocalGetProductsSchema = GetProductsRequestSchema.extend({
 export const LocalGetProductsWithoutOptionalExtension: z.output<typeof LocalGetProductsSchema> = {
   buying_mode: 'brief',
 };
+
+export const BrowserGetProductsSchema = BrowserSchemas.GetProductsRequestSchema.extend({
+  ext: z.object({ local: z.string() }).optional(),
+});
+
+export const LocalSyncCreativesItemSchema = BrowserSchemas.SyncCreativesItemSchema.extend({
+  local_id: z.string().optional(),
+});
 `;
 
 const ADOPTER_SOURCE = `
