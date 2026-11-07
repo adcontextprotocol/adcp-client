@@ -118,6 +118,7 @@ describe('SyncCreativesItemSchema', () => {
   test('passes through unknown top-level keys', () => {
     const r = SyncCreativesItemSchema.safeParse({ ...base, vendor_extension: { foo: 'bar' } });
     assert.equal(r.success, true);
+    assert.deepEqual(r.data.vendor_extension, { foo: 'bar' });
   });
 });
 
@@ -125,6 +126,16 @@ describe('SyncCreativesSuccessStrictSchema', () => {
   test('accepts success with empty creatives array', () => {
     const r = SyncCreativesSuccessStrictSchema.safeParse({ creatives: [] });
     assert.equal(r.success, true);
+  });
+
+  test('passes through unknown top-level and per-item keys', () => {
+    const r = SyncCreativesSuccessStrictSchema.safeParse({
+      creatives: [{ creative_id: 'cr_1', action: 'created', vendor_item: 1 }],
+      vendor_extension: { foo: 'bar' },
+    });
+    assert.equal(r.success, true);
+    assert.deepEqual(r.data.vendor_extension, { foo: 'bar' });
+    assert.equal(r.data.creatives[0].vendor_item, 1);
   });
 
   test('rejects when any per-item entry is invalid', () => {

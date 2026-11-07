@@ -3,7 +3,6 @@ import type {
   CreateMediaBuyRequest,
   CreateMediaBuyResponse,
   FormatOptionReference,
-  GetProductsRequest,
   GetProductsResponse,
   GetCreativeDeliveryResponse,
   GetMediaBuyDeliveryResponse,
@@ -143,11 +142,7 @@ export type CanonicalProduct = Omit<
     format_options: NonEmptyCanonicalFormatDeclarations;
     placements?: CanonicalPlacement[];
   };
-type CanonicalGetProductsField = Exclude<NonNullable<GetProductsRequest['fields']>[number], 'format_ids'>;
-/** Primary product discovery request cannot ask the SDK to expose legacy format IDs. */
-export type CanonicalGetProductsRequest = Omit<GetProductsRequest, 'fields'> & {
-  fields?: CanonicalGetProductsField[];
-};
+export type { CanonicalGetProductsRequest } from './types';
 export type CanonicalGetProductsResponse = Omit<CanonicalCreativeResponse<GetProductsResponse>, 'products'> & {
   products: CanonicalProduct[];
   projection: { diagnostics: ProjectionDiagnostic[] };

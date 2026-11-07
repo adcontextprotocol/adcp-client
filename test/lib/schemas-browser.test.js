@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { build } = require('esbuild');
 const { runInNewContext } = require('node:vm');
 const { existsSync } = require('node:fs');
-const { resolve } = require('node:path');
+const { relative, resolve, sep } = require('node:path');
 const { gzipSync } = require('node:zlib');
 const pkg = require('../../package.json');
 
@@ -48,6 +48,73 @@ test('browser schemas publish declaration paths for modern and legacy TypeScript
     assert.ok(existsSync(resolve(entry.default)), entry.default);
   }
 });
+
+// Browser-safe entries must keep their declaration graph browser-safe too:
+// a declaration that names a type through the root barrel loads the signing
+// stack and Node-only packages such as `redis` into adopters' type checks.
+for (const specifier of ['@adcp/sdk/schemas/browser', '@adcp/sdk/media-buy/actions']) {
+  for (const extension of ['mts', 'cts']) {
+    test(`${specifier} ${extension === 'mts' ? 'ESM' : 'CommonJS'} declarations stay inside browser-safe modules`, () => {
+      const ts = require('typescript');
+      const fixture = resolve(`__browser-declarations-fixture__.${extension}`);
+      const source =
+        extension === 'mts'
+          ? `import * as entry from '${specifier}'; export const value = entry;`
+          : `import entry = require('${specifier}'); export const value = entry;`;
+      const options = {
+        module: ts.ModuleKind.NodeNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        target: ts.ScriptTarget.ES2022,
+        lib: ['lib.es2022.d.ts', 'lib.dom.d.ts'],
+        types: [],
+        noEmit: true,
+        skipLibCheck: true,
+      };
+      const host = ts.createCompilerHost(options);
+      const getSourceFile = host.getSourceFile.bind(host);
+      host.getSourceFile = (fileName, languageVersion, ...rest) =>
+        resolve(fileName) === fixture
+          ? ts.createSourceFile(fileName, source, languageVersion, true)
+          : getSourceFile(fileName, languageVersion, ...rest);
+      const fileExists = host.fileExists.bind(host);
+      host.fileExists = fileName => resolve(fileName) === fixture || fileExists(fileName);
+      const program = ts.createProgram([fixture], options, host);
+
+      const sdkDist = resolve('dist/lib');
+      const sdkPath = file => relative(sdkDist, file).split(sep).join('/');
+      const sourceFiles = program
+        .getSourceFiles()
+        .filter(file => !program.isSourceFileDefaultLibrary(file) && resolve(file.fileName) !== fixture);
+      const files = sourceFiles.map(file => resolve(file.fileName));
+      assert.ok(
+        files.some(file => !sdkPath(file).startsWith('..')),
+        `${specifier} did not resolve to dist declarations`
+      );
+      const outside = files.filter(file => {
+        const path = sdkPath(file);
+        if (!path.startsWith('..')) {
+          return !/^(types\/[^/]+\.generated|types\/media-buy-delivery-report|validation\/[^/]+|schemas\/browser|v2\/projection\/types|media-buy\/[^/]+)\.d\.[cm]?ts$/.test(
+            path
+          );
+        }
+        // Zod is the only runtime dependency of the browser entries.
+        return !/[\\/]node_modules[\\/]zod[\\/]/.test(file);
+      });
+      assert.deepEqual(outside, [], `declaration graph left browser-safe modules:\n${outside.join('\n')}`);
+
+      // With `types: []`, a Node built-in import (`node:crypto`, `buffer`)
+      // never resolves and so never shows up above; fail on it explicitly.
+      const unresolved = sourceFiles
+        .filter(file => !sdkPath(resolve(file.fileName)).startsWith('..'))
+        .flatMap(file =>
+          file.imports
+            .filter(spec => !program.getResolvedModuleFromModuleSpecifier(spec, file)?.resolvedModule)
+            .map(spec => `${spec.text} in ${sdkPath(resolve(file.fileName))}`)
+        );
+      assert.deepEqual(unresolved, [], `browser declarations import unresolvable modules:\n${unresolved.join('\n')}`);
+    });
+  }
+}
 
 test('a single browser schema drops unrelated validators and stays within its size budget', async t => {
   const result = await build({

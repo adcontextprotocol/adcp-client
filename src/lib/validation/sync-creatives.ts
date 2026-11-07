@@ -31,7 +31,38 @@ const HttpUrlSchema = /* @__PURE__ */ (() =>
       message: 'URL must use http(s) scheme',
     }))();
 
-export const SyncCreativesItemSchema = /* @__PURE__ */ (() =>
+// Explicit shapes keep declaration emit pointing at the generated schema
+// module. Inferred types make TypeScript re-name nested generated types
+// through the root barrel, whose declarations reach Node-only packages and
+// would leak into `@adcp/sdk/schemas/browser`. `satisfies` on each object
+// literal keeps the shape in sync with the runtime schema.
+type SyncCreativesItemShape = {
+  creative_id: z.ZodString;
+  revision_id: z.ZodOptional<typeof CreativeRevisionIDSchema>;
+  action: typeof SyncCreativesActionSchema;
+  account: z.ZodOptional<typeof AccountSchema>;
+  status: z.ZodOptional<typeof CreativeStatusSchema>;
+  platform_id: z.ZodOptional<z.ZodString>;
+  localization: z.ZodOptional<typeof CreativeLocalizationReadbackSchema>;
+  changes: z.ZodOptional<z.ZodArray<z.ZodString>>;
+  errors: z.ZodOptional<z.ZodArray<typeof ErrorSchema>>;
+  warnings: z.ZodOptional<z.ZodArray<z.ZodString>>;
+  macro_resolution_results: z.ZodOptional<z.ZodArray<typeof MacroResolutionResultSchema>>;
+  preview_url: z.ZodOptional<z.ZodString>;
+  expires_at: z.ZodOptional<z.ZodString>;
+  assigned_to: z.ZodOptional<z.ZodArray<z.ZodString>>;
+  assignment_errors: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+};
+
+type SyncCreativesSuccessStrictShape = {
+  dry_run: z.ZodOptional<z.ZodBoolean>;
+  creatives: z.ZodArray<typeof SyncCreativesItemSchema>;
+  sandbox: z.ZodOptional<z.ZodBoolean>;
+  context: z.ZodOptional<typeof ContextObjectSchema>;
+  ext: z.ZodOptional<typeof ExtensionObjectSchema>;
+};
+
+export const SyncCreativesItemSchema: z.ZodObject<SyncCreativesItemShape, z.core.$loose> = /* @__PURE__ */ (() =>
   z
     .object({
       creative_id: z.string(),
@@ -51,7 +82,7 @@ export const SyncCreativesItemSchema = /* @__PURE__ */ (() =>
       assignment_errors: z
         .record(z.string().regex(ASSIGNMENT_ERROR_KEY, 'assignment_errors key must match ^[a-zA-Z0-9_-]+$'), z.string())
         .optional(),
-    })
+    } satisfies SyncCreativesItemShape)
     .passthrough()
     .superRefine((item, ctx) => {
       // Spec: failed/deleted items have no review, localization, or revision state.
@@ -78,16 +109,17 @@ export const SyncCreativesItemSchema = /* @__PURE__ */ (() =>
 
 export type SyncCreativesItem = z.infer<typeof SyncCreativesItemSchema>;
 
-export const SyncCreativesSuccessStrictSchema = /* @__PURE__ */ (() =>
-  z
-    .object({
-      dry_run: z.boolean().optional(),
-      creatives: z.array(SyncCreativesItemSchema),
-      sandbox: z.boolean().optional(),
-      context: ContextObjectSchema.optional(),
-      ext: ExtensionObjectSchema.optional(),
-    })
-    .passthrough())();
+export const SyncCreativesSuccessStrictSchema: z.ZodObject<SyncCreativesSuccessStrictShape, z.core.$loose> =
+  /* @__PURE__ */ (() =>
+    z
+      .object({
+        dry_run: z.boolean().optional(),
+        creatives: z.array(SyncCreativesItemSchema),
+        sandbox: z.boolean().optional(),
+        context: ContextObjectSchema.optional(),
+        ext: ExtensionObjectSchema.optional(),
+      } satisfies SyncCreativesSuccessStrictShape)
+      .passthrough())();
 
 export type SyncCreativesSuccessStrict = z.infer<typeof SyncCreativesSuccessStrictSchema>;
 
@@ -99,5 +131,11 @@ export type SyncCreativesSuccessStrict = z.infer<typeof SyncCreativesSuccessStri
  * express: failed/deleted rows omit lifecycle state, and localization
  * readback requires an enclosing creative status.
  */
-export const SyncCreativesResponseStrictSchema = /* @__PURE__ */ (() =>
+export const SyncCreativesResponseStrictSchema: z.ZodUnion<
+  readonly [
+    typeof SyncCreativesSuccessStrictSchema,
+    typeof SyncCreativesErrorSchema,
+    typeof SyncCreativesSubmittedSchema,
+  ]
+> = /* @__PURE__ */ (() =>
   z.union([SyncCreativesSuccessStrictSchema, SyncCreativesErrorSchema, SyncCreativesSubmittedSchema]))();

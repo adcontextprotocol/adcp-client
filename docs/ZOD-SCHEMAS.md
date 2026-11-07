@@ -30,7 +30,7 @@ import { EventSourceHealthSchema } from '@adcp/sdk/schemas/browser';
 const health = EventSourceHealthSchema.parse(rawHealth);
 ```
 
-This entry has no Node built-ins in its import graph and shares the Node entry's portable validators, including canonical and legacy get-products selectors. Named ESM imports let bundlers remove unused validators while preserving the selected schema's dependencies. JSON Schema loading and tool registration helpers are available from `@adcp/sdk/schemas`.
+This entry has no Node built-ins in its import graph. Its type declarations reference only browser-safe SDK modules and `zod`, so `tsc` on a browser app does not load the SDK's server or signing declarations, `@types/node`, or `redis`, even when those are installed in the workspace. It shares the Node entry's portable validators, including canonical and legacy get-products selectors. Named ESM imports let bundlers remove unused validators while preserving the selected schema's dependencies. JSON Schema loading and tool registration helpers are available from `@adcp/sdk/schemas`.
 
 `npm run test:schemas-browser` bundles a single `EventSourceHealthSchema` import with esbuild (`platform: 'browser'`, `format: 'iife'`, `target: 'es2022'`, `minify: true`). The standalone bundle includes Zod and ajv-formats, with no external dependencies. Measurements for esbuild 0.28.2 and Zod 4.4.3:
 
@@ -42,7 +42,7 @@ This entry has no Node built-ins in its import graph and shares the Node entry's
 
 The original total-size limits left roughly 11% headroom for dependency changes. With Zod 4.6.7 and a direct namespace import in the generated schemas, the same check measures about 100 KB minified / 29 KB gzip, with 607 B of generated validators retained. The namespace import lets bundlers remove unused Zod exports; the CI limits remain unchanged.
 
-The separate generated-code limit catches unrelated validators being retained even if dependencies become smaller. The check also verifies that product, media-buy, and reporting-obligation validators disappear and that the bundled schema still validates without Node globals. Existing tests exercise all exports through ESM and CommonJS, declaration paths, and portable cross-field validation.
+The separate generated-code limit catches unrelated validators being retained even if dependencies become smaller. The check also verifies that product, media-buy, and reporting-obligation validators disappear and that the bundled schema still validates without Node globals. Existing tests exercise all exports through ESM and CommonJS, declaration paths, and portable cross-field validation. A declaration-graph test resolves the entry through TypeScript's ESM and CommonJS resolution and fails if it reaches a module outside the browser-safe set or any package other than `zod`.
 
 ## Why Zod Schemas?
 

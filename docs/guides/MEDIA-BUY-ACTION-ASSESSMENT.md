@@ -2,7 +2,8 @@
 
 Use `assessMediaBuyAction` to render product possibility, a proposal promise, and
 current execution availability without joining protocol objects yourself. The pure
-`@adcp/sdk/media-buy/actions` entry point supports browsers, ESM, and CommonJS.
+`@adcp/sdk/media-buy/actions` entry point supports browsers, ESM, and CommonJS,
+and its type declarations stay inside browser-safe modules.
 The same buyer helpers are exported from the SDK root.
 
 ```ts
