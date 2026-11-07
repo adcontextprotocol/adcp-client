@@ -1914,13 +1914,19 @@ export class RegistryClient {
     });
   }
 
-  private buildParams(options?: ListOptions & { source?: string }): string {
+  /**
+   * Serialize every option as a query parameter, so a filter the generated
+   * options type gains (such as `listBrands`' `house_domain`) reaches the
+   * registry instead of being dropped. Empty strings and nullish values are
+   * left out.
+   */
+  private buildParams(options?: object): string {
     if (!options) return '';
     const params = new URLSearchParams();
-    if (options.search) params.set('search', options.search);
-    if (options.limit != null) params.set('limit', String(options.limit));
-    if (options.offset != null) params.set('offset', String(options.offset));
-    if ('source' in options && options.source) params.set('source', options.source);
+    for (const [key, value] of Object.entries(options)) {
+      if (value == null || value === '') continue;
+      params.set(key, String(value));
+    }
     const qs = params.toString();
     return qs ? '?' + qs : '';
   }
