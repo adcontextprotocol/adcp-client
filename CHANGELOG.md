@@ -1,5 +1,21 @@
 # Changelog
 
+## 17.0.0-beta.20
+
+### Patch Changes
+
+- d38e8e6: fix(schemas): keep `@adcp/sdk/schemas/browser` type declarations browser-safe
+
+  Type-checking a browser app against `@adcp/sdk/schemas/browser` (or `@adcp/sdk/schemas`) no longer loads the SDK's root barrel, signing stack, `@types/node`, or Node-only packages such as `redis`, `undici` and `ajv`. Previously `LegacyGetProductsRequestSchema`, `GetProductsRequestSchema` and the strict `SyncCreatives*` validators named their types through Node-only modules, which added hundreds of declaration files to `tsc` and, with `skipLibCheck: false`, failed with `Cannot find module '@opentelemetry/api'` or missing `express` types. The browser entry's declarations now depend only on browser-safe SDK modules and `zod`, and a test guards that for `@adcp/sdk/schemas/browser` and `@adcp/sdk/media-buy/actions`.
+
+  Declaration emit for `SyncCreativesItemSchema.extend(...)` and `SyncCreativesSuccessStrictSchema.extend(...)` no longer fails with TS7056. `CanonicalGetProductsRequest` is now exported as a type from both schema entries, so adopters can emit declarations for schemas built from `GetProductsRequestSchema.extend(...)`. Runtime JavaScript and existing import paths are unchanged. Fixes #3635.
+
+- 751e592: fix(schemas): make schemas with non-empty arrays portable in adopter declaration emit
+
+  Emitting declarations for a schema that contains a non-empty array, such as `export const X = SyncCreativesResponseStrictSchema` or `SyncCreativesItemSchema.shape.account`, failed with TS2883 ("cannot be named without a reference to 'NonemptyArraySchema'") for ESM consumers. The generated schema declaration names `NonemptyArraySchema` through the CommonJS declaration, while ESM consumers saw a separate copy. The ESM declaration for `validation/nonempty-array` is now a re-export of the CommonJS one, so both module formats share one `NonemptyArraySchema`. It is also exported as a type from `@adcp/sdk/schemas` and `@adcp/sdk/schemas/browser`. Runtime JavaScript is unchanged. Fixes #3638.
+
+- 12cbc02: fix(registry): `RegistryClient.listBrands` sends the `house_domain` filter. Its options type has accepted `house_domain` since the registry types were refreshed, but the query builder sent only `search`, `limit`, `offset` and `source`, so the filter was dropped and the call listed the whole registry. The builder now sends every option it is given, so a filter the generated types gain is not dropped the same way.
+
 ## 17.0.0-beta.19
 
 ### Patch Changes
