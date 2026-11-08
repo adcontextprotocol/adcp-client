@@ -160,6 +160,7 @@ export const MacroValueContextValues = ["url_query_value", "url_path_segment", "
 export const MakegoodRemedyValues = ["additional_delivery", "credit", "invoice_adjustment"] as const;
 export const MarkdownFlavorValues = ["commonmark", "gfm"] as const;
 export const MatchIDTypeValues = ["hashed_email", "hashed_phone", "rampid", "id5", "uid2", "euid", "pairid", "maid", "other"] as const;
+export const MatchKeyUseValues = ["audience_include", "audience_exclude", "frequency_cap", "identity_match", "conversion_attribution"] as const;
 export const MatchTypeValues = ["broad", "phrase", "exact"] as const;
 export const MediaBuyActionModeValues = ["self_serve", "conditional_self_serve", "seller_managed", "requires_approval"] as const;
 export const MediaBuyFrequencyCapControlModeValues = ["max_impressions"] as const;

@@ -189,6 +189,7 @@ import type {
   MarkdownAssetRequirements,
   MarkdownFlavor,
   MatchIDType,
+  MatchKeyUse,
   MatchType,
   MeasurementTerms,
   MediaBuyActionMode,
@@ -320,7 +321,7 @@ import type {
   WebhookSigningProfile,
 } from './core.generated';
 
-export type { AccountCurrencyMode, AccountReference, AccountRequestResolution, AccountRequestState, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AgentOnboardingMode, AgentOnboardingRequirementKind, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceEvidenceRelationship, AudienceMatchRateBasis, AudienceResolutionMethod, AudienceSizePrecision, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailabilityStatus, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BudgetChangeConstraints, BusinessEntity, C2PAWatermarkAction, CTVAdExperience, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatCoordinatedPlacements, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatOption, CanonicalFormatResponsiveCreative, CanonicalFormatSellerRenderedStatefulDisplay, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTAudio, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CanonicalOptimizationGoal, CanonicalProposal, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionMechanism, CollectionRelationship, CollectionStatus, CommittedMediaBuy, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeActivationMethod, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeChangeKind, CreativeEventReasonCode, CreativeIdentifierType, CreativeMergeRejectionReason, CreativeMotionLevel, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DOOHMotionType, DayOfWeek, DaypartTarget, DaypartTimeGranularity, DaypartTimezoneMode, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryProjectionBasis, DeliveryProjectionEndState, DeliveryRecipientCloud, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EffectiveTimingConstraints, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExecutionReadinessStatus, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, FlightChangeConstraints, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, Format, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapControlMode, FrequencyCapMutableField, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, InvoiceKind, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LaterProposalReason, LiftDimension, LiveUpdateServingMode, LogoSlot, MacroDialectFamily, MacroMappingStatus, MacroProcessingActor, MacroProcessingOperation, MacroResolutionReason, MacroValueContext, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyAvailableAction, MediaBuyChangeTermConstraints, MediaBuyDeliveryWebhookResult, MediaBuyFrequencyCapControlMode, MediaBuyHealth, MediaBuyLineageReason, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferReason, OfferingAvailabilityStatus, OptimizationGoal, OutcomeTargetCostStrength, OutcomeType, Pacing, PackageCountConstraints, PackageUpdate, PaymentTerms, PendingActionKind, PendingActionParty, PerformanceBaseline, PerformanceStandardMetric, PixelTrackingEvent, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, PrincipalKind, PrincipalRelationshipStatus, ProductAllowedAction, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalDisposition, ProposalInitiator, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachAggregation, ReachUnit, ReportingCustody, ReportingDeliveryMethod, ReportingDestinationSetupState, ReportingDimension, ReportingFinality, ReportingFrequency, ReportingHealth, RepresentationSelectionStrategy, RequestProposalsResponse, RequestSigningErrorCode, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SellerPolicyDeclineReason, SignalAvailabilityType, SignalDefinitionEnrichment, SignalDeliveryStatus, SignalSource, SignalStatus, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, SpotStatus, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TrackerExecutionActor, TrackerFiringPath, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTMediaDeliveryMethod, VASTTrackingEvent, VASTVersion, ValidationMode, VendorRelationship, VideoPlacementType, ViewThresholdBasis, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod, WebhookSigningProfile } from './core.generated';
+export type { AccountCurrencyMode, AccountReference, AccountRequestResolution, AccountRequestState, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AgentOnboardingMode, AgentOnboardingRequirementKind, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceEvidenceRelationship, AudienceMatchRateBasis, AudienceResolutionMethod, AudienceSizePrecision, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailabilityStatus, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BudgetChangeConstraints, BusinessEntity, C2PAWatermarkAction, CTVAdExperience, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatCoordinatedPlacements, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatOption, CanonicalFormatResponsiveCreative, CanonicalFormatSellerRenderedStatefulDisplay, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTAudio, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CanonicalOptimizationGoal, CanonicalProposal, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionMechanism, CollectionRelationship, CollectionStatus, CommittedMediaBuy, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeActivationMethod, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeChangeKind, CreativeEventReasonCode, CreativeIdentifierType, CreativeMergeRejectionReason, CreativeMotionLevel, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DOOHMotionType, DayOfWeek, DaypartTarget, DaypartTimeGranularity, DaypartTimezoneMode, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryProjectionBasis, DeliveryProjectionEndState, DeliveryRecipientCloud, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EffectiveTimingConstraints, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExecutionReadinessStatus, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, FlightChangeConstraints, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, Format, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapControlMode, FrequencyCapMutableField, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, InvoiceKind, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LaterProposalReason, LiftDimension, LiveUpdateServingMode, LogoSlot, MacroDialectFamily, MacroMappingStatus, MacroProcessingActor, MacroProcessingOperation, MacroResolutionReason, MacroValueContext, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchKeyUse, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyAvailableAction, MediaBuyChangeTermConstraints, MediaBuyDeliveryWebhookResult, MediaBuyFrequencyCapControlMode, MediaBuyHealth, MediaBuyLineageReason, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferReason, OfferingAvailabilityStatus, OptimizationGoal, OutcomeTargetCostStrength, OutcomeType, Pacing, PackageCountConstraints, PackageUpdate, PaymentTerms, PendingActionKind, PendingActionParty, PerformanceBaseline, PerformanceStandardMetric, PixelTrackingEvent, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, PrincipalKind, PrincipalRelationshipStatus, ProductAllowedAction, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalDisposition, ProposalInitiator, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachAggregation, ReachUnit, ReportingCustody, ReportingDeliveryMethod, ReportingDestinationSetupState, ReportingDimension, ReportingFinality, ReportingFrequency, ReportingHealth, RepresentationSelectionStrategy, RequestProposalsResponse, RequestSigningErrorCode, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SellerPolicyDeclineReason, SignalAvailabilityType, SignalDefinitionEnrichment, SignalDeliveryStatus, SignalSource, SignalStatus, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, SpotStatus, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TrackerExecutionActor, TrackerFiringPath, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTMediaDeliveryMethod, VASTTrackingEvent, VASTVersion, ValidationMode, VendorRelationship, VideoPlacementType, ViewThresholdBasis, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod, WebhookSigningProfile } from './core.generated';
 
 // Tool Parameter and Response Types
 // Generated from official AdCP schemas
@@ -7366,6 +7367,64 @@ export type MediaBuyFrequencyCapSupport = FrequencyCapConstraints & {
   supported_control_modes?: [MediaBuyFrequencyCapControlMode, ...MediaBuyFrequencyCapControlMode[]];
 };
 /**
+ * Experimental product-scoped identity and reach-measurement facts. Absence is undeclared, not a claim that the product has persistent identifiers. Sellers implementing this surface MUST list media_buy.product_identity in experimental_features on get_adcp_capabilities. When persistent_identifier is false, the product MUST NOT declare overlay_support.frequency_cap, overlay_support.frequency_cap_support, or media_buy_support.frequency_cap; create and update reject those caps under the ordinary exact-apply-or-reject rule. Delivery for the product MUST NOT report devices, accounts, or cookies as reach_unit. Individuals and households remain valid for panel-based or place-based modeled measurement. When delivery reports reach or frequency with reach_unit custom, reach_methodology is required and explains that unit.
+ */
+export type ProductIdentity = {
+} & {
+  /**
+   * Whether delivery on this product has a persistent per-entity identifier suitable for identifier-backed reach, frequency, and frequency-cap enforcement. false does not prohibit modeled individuals or households measurement.
+   */
+  persistent_identifier: boolean;
+  /**
+   * Human-readable methodology for this product's custom reach unit. Required when the product reports reach or frequency with reach_unit custom, including frequency-only reporting.
+   */
+  reach_methodology?: string;
+  /**
+   * Identifiers this product resolves, with scopes and uses. When present, authoritative for this product over media_buy.supported_match_keys, and each entry MUST be covered by a seller-wide entry with the same uid_type and vendor. Keys inherit the product's channels and property types; a seller whose resolution differs across them MUST split the product or omit the key. Requires media_buy.match_keys in experimental_features. When persistent_identifier is false, no entry may list frequency_cap or identity_match; an identity_match entry requires trusted_match.identity_match: true.
+   *
+   * @minItems 1
+   */
+  match_keys?: [
+    MatchKey & {
+    },
+    ...(MatchKey & {
+    })[]
+  ];
+};
+/**
+ * One identifier a party can resolve, the entity scopes it resolves at, and the uses it supports. Capability only: MUST NOT carry match rates, audience sizes, coverage, or per-user or per-graph data. Two keys are compatible at scope S when they share uid_type, both list S in scopes, and their vendor domains are equal when both declare vendor. Sellers using this shape list media_buy.match_keys in experimental_features.
+ */
+export type MatchKey = {
+} & {
+} & {
+} & {
+} & {
+  uid_type: UIDType;
+  vendor?: BrandReference;
+  /**
+   * Entity granularities this key resolves at; list each when there are several. custom is not comparable across parties and is excluded.
+   *
+   * @minItems 1
+   * @maxItems 5
+   */
+  scopes:
+    (ReachUnit & {
+        })[];
+  /**
+   * Purposes this key supports at the declared scopes.
+   *
+   * @minItems 1
+   */
+  uses: [MatchKeyUse, ...MatchKeyUse[]];
+  /**
+   * Seller-wide declarations only: property types on which this key resolves. Omit to mean every property type the seller sells. Product-level keys inherit the product's property types.
+   *
+   * @minItems 1
+   */
+  property_types?: [PropertyType, ...PropertyType[]];
+  ext?: ExtensionObject;
+};
+/**
  * Experimental. One account resource a package on the product needs before it can be created. `kind` determines the binding: `event_source` via `packages[].optimization_goals[].event_sources[]`, `catalog` via `packages[].catalogs[]`, `downstream_connection` by completing the connection. Account-independent: MUST NOT carry account-specific resource IDs or names. Alternatives inside one requirement are any-of.
  */
 export type ProductExecutionRequirement =
@@ -9730,19 +9789,6 @@ export interface ProductMediaBuySupport {
   frequency_cap?: true;
   frequency_cap_constraints?: MediaBuyFrequencyCapSupport;
   ext?: ExtensionObject;
-}
-/**
- * Experimental product-scoped identity and reach-measurement facts. Absence is undeclared, not a claim that the product has persistent identifiers. Sellers implementing this surface MUST list media_buy.product_identity in experimental_features on get_adcp_capabilities. When persistent_identifier is false, the product MUST NOT declare overlay_support.frequency_cap, overlay_support.frequency_cap_support, or media_buy_support.frequency_cap; create and update reject those caps under the ordinary exact-apply-or-reject rule. Delivery for the product MUST NOT report devices, accounts, or cookies as reach_unit. Individuals and households remain valid for panel-based or place-based modeled measurement. When delivery reports reach or frequency with reach_unit custom, reach_methodology is required and explains that unit.
- */
-export interface ProductIdentity {
-  /**
-   * Whether delivery on this product has a persistent per-entity identifier suitable for identifier-backed reach, frequency, and frequency-cap enforcement. false does not prohibit modeled individuals or households measurement.
-   */
-  persistent_identifier: boolean;
-  /**
-   * Human-readable methodology for this product's custom reach unit. Required when the product reports reach or frequency with reach_unit custom, including frequency-only reporting.
-   */
-  reach_methodology?: string;
 }
 /**
  * Each package needs event optimization fed by a conversion event source; declare it only when the product requires event optimization. Satisfied when an `optimization_goals[]` entry of `kind: "event"` that the seller will use has a used `event_sources[]` entry referencing an event source available to the account (registered via `sync_event_sources`, or the seller-managed source it returns under `conversion_tracking.platform_managed: true`) with an `event_type` accepted here.
@@ -37049,6 +37095,11 @@ export interface GetAdCPCapabilitiesResponse {
        */
       supported_targets?: ('cost_per' | 'threshold_rate')[];
     };
+    /**
+     * Seller-wide identifiers the seller resolves, with the scopes and uses each supports. Product.identity.match_keys overrides this for its product and MUST be covered here. A uid_type listed for audience_include or audience_exclude also appears in audience_targeting.supported_uid_types, one listed for conversion_attribution in conversion_tracking.supported_uid_types, and every scope of a frequency_cap key in frequency_capping.supported_per_units, when those lists are present. A change is a material capability change: it advances adcp.capability_changes.capabilities_version and fires capabilities.changed with /media_buy/supported_match_keys in changed_paths. Requires media_buy.match_keys in experimental_features.
+     * @maxItems 64
+     */
+    supported_match_keys?: MatchKey[];
     /**
      * Whether this seller supports the per-source `archived` field on `sync_event_sources` request items. When true, `archived: true` archives an event source and `archived: false` undoes it. When false or absent, the seller MUST reject a request that sends `archived` with `UNSUPPORTED_FEATURE`, so a buyer never mistakes an ignored field for an archive.
      */

@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.3.0-beta.4
-// Generated at: 2026-11-05T09:45:53.995Z
+// Generated AdCP core types from official schemas v3.3.0-beta.5
+// Generated at: 2026-11-08T02:38:33.008Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -1540,6 +1540,17 @@ export type MatchIDType =
   | 'pairid'
   | 'maid'
   | 'other';
+
+// MATCHKEYUSE CANONICAL ENUM
+/**
+ * Purpose for which a declared match key resolves. Values name the existing protocol surfaces that consume the key. Retargeting is audience_include with a crm audience; it has no separate value.
+ */
+export type MatchKeyUse =
+  | 'audience_include'
+  | 'audience_exclude'
+  | 'frequency_cap'
+  | 'identity_match'
+  | 'conversion_attribution';
 
 // MATCHTYPE CANONICAL ENUM
 /**
@@ -20292,6 +20303,64 @@ export type MediaBuyFrequencyCapSupport = FrequencyCapConstraints & {
   supported_control_modes?: [MediaBuyFrequencyCapControlMode, ...MediaBuyFrequencyCapControlMode[]];
 };
 /**
+ * Experimental product-scoped identity and reach-measurement facts. Absence is undeclared, not a claim that the product has persistent identifiers. Sellers implementing this surface MUST list media_buy.product_identity in experimental_features on get_adcp_capabilities. When persistent_identifier is false, the product MUST NOT declare overlay_support.frequency_cap, overlay_support.frequency_cap_support, or media_buy_support.frequency_cap; create and update reject those caps under the ordinary exact-apply-or-reject rule. Delivery for the product MUST NOT report devices, accounts, or cookies as reach_unit. Individuals and households remain valid for panel-based or place-based modeled measurement. When delivery reports reach or frequency with reach_unit custom, reach_methodology is required and explains that unit.
+ */
+export type ProductIdentity = {
+} & {
+  /**
+   * Whether delivery on this product has a persistent per-entity identifier suitable for identifier-backed reach, frequency, and frequency-cap enforcement. false does not prohibit modeled individuals or households measurement.
+   */
+  persistent_identifier: boolean;
+  /**
+   * Human-readable methodology for this product's custom reach unit. Required when the product reports reach or frequency with reach_unit custom, including frequency-only reporting.
+   */
+  reach_methodology?: string;
+  /**
+   * Identifiers this product resolves, with scopes and uses. When present, authoritative for this product over media_buy.supported_match_keys, and each entry MUST be covered by a seller-wide entry with the same uid_type and vendor. Keys inherit the product's channels and property types; a seller whose resolution differs across them MUST split the product or omit the key. Requires media_buy.match_keys in experimental_features. When persistent_identifier is false, no entry may list frequency_cap or identity_match; an identity_match entry requires trusted_match.identity_match: true.
+   *
+   * @minItems 1
+   */
+  match_keys?: [
+    MatchKey & {
+    },
+    ...(MatchKey & {
+    })[]
+  ];
+};
+/**
+ * One identifier a party can resolve, the entity scopes it resolves at, and the uses it supports. Capability only: MUST NOT carry match rates, audience sizes, coverage, or per-user or per-graph data. Two keys are compatible at scope S when they share uid_type, both list S in scopes, and their vendor domains are equal when both declare vendor. Sellers using this shape list media_buy.match_keys in experimental_features.
+ */
+export type MatchKey = {
+} & {
+} & {
+} & {
+} & {
+  uid_type: UIDType;
+  vendor?: BrandReference;
+  /**
+   * Entity granularities this key resolves at; list each when there are several. custom is not comparable across parties and is excluded.
+   *
+   * @minItems 1
+   * @maxItems 5
+   */
+  scopes:
+    (ReachUnit & {
+        })[];
+  /**
+   * Purposes this key supports at the declared scopes.
+   *
+   * @minItems 1
+   */
+  uses: [MatchKeyUse, ...MatchKeyUse[]];
+  /**
+   * Seller-wide declarations only: property types on which this key resolves. Omit to mean every property type the seller sells. Product-level keys inherit the product's property types.
+   *
+   * @minItems 1
+   */
+  property_types?: [PropertyType, ...PropertyType[]];
+  ext?: ExtensionObject;
+};
+/**
  * Experimental. One account resource a package on the product needs before it can be created. `kind` determines the binding: `event_source` via `packages[].optimization_goals[].event_sources[]`, `catalog` via `packages[].catalogs[]`, `downstream_connection` by completing the connection. Account-independent: MUST NOT carry account-specific resource IDs or names. Alternatives inside one requirement are any-of.
  */
 export type ProductExecutionRequirement =
@@ -21353,19 +21422,6 @@ export interface ProductMediaBuySupport {
   frequency_cap?: true;
   frequency_cap_constraints?: MediaBuyFrequencyCapSupport;
   ext?: ExtensionObject;
-}
-/**
- * Experimental product-scoped identity and reach-measurement facts. Absence is undeclared, not a claim that the product has persistent identifiers. Sellers implementing this surface MUST list media_buy.product_identity in experimental_features on get_adcp_capabilities. When persistent_identifier is false, the product MUST NOT declare overlay_support.frequency_cap, overlay_support.frequency_cap_support, or media_buy_support.frequency_cap; create and update reject those caps under the ordinary exact-apply-or-reject rule. Delivery for the product MUST NOT report devices, accounts, or cookies as reach_unit. Individuals and households remain valid for panel-based or place-based modeled measurement. When delivery reports reach or frequency with reach_unit custom, reach_methodology is required and explains that unit.
- */
-export interface ProductIdentity {
-  /**
-   * Whether delivery on this product has a persistent per-entity identifier suitable for identifier-backed reach, frequency, and frequency-cap enforcement. false does not prohibit modeled individuals or households measurement.
-   */
-  persistent_identifier: boolean;
-  /**
-   * Human-readable methodology for this product's custom reach unit. Required when the product reports reach or frequency with reach_unit custom, including frequency-only reporting.
-   */
-  reach_methodology?: string;
 }
 /**
  * Each package needs event optimization fed by a conversion event source; declare it only when the product requires event optimization. Satisfied when an `optimization_goals[]` entry of `kind: "event"` that the seller will use has a used `event_sources[]` entry referencing an event source available to the account (registered via `sync_event_sources`, or the seller-managed source it returns under `conversion_tracking.platform_managed: true`) with an `event_type` accepted here.
@@ -45475,7 +45531,7 @@ export interface Agent {
  */
 export interface Grant {
   /**
-   * Registrable domain (eTLD+1) of the organization receiving the grant, under the pinned Public Suffix List snapshot, ICANN and private sections (spec R3a step 1). Its agents resolve to this domain through its own trust.json. A host below a registrable domain (t1.vendor.example) is not one, and neither is a public suffix itself (github.io); alice.github.io is one, because github.io is in the private section. A grant whose grantee is not a registrable domain covers no claim, as L2 §Grants in trust records describes (docs/building/by-layer/L2/accounts-and-agents.mdx). A pattern can't evaluate the Public Suffix List, so verifiers apply the rule. To limit a grant to some of the grantee's agents, list them in agents[].
+   * Registrable domain (eTLD+1) of the organization receiving the grant, under the verifier's bundled Public Suffix List, ICANN and private sections (spec R3a step 1). Its agents resolve to this domain through its own trust.json. A host below a registrable domain (t1.vendor.example) is not one, and neither is a public suffix itself (github.io); alice.github.io is one, because github.io is in the private section. A grant whose grantee is not a registrable domain covers no claim, as L2 §Grants in trust records describes (docs/building/by-layer/L2/accounts-and-agents.mdx). A pattern can't evaluate the Public Suffix List, so verifiers apply the rule. To limit a grant to some of the grantee's agents, list them in agents[].
    */
   grantee: string;
   /**
@@ -46296,6 +46352,12 @@ export type TMPProviderRegistration = (
    * Identity types this provider can resolve. The router selects Identity Match providers whose uid_types overlaps with any uid_type in the request's identities array. MUST be present and non-empty when identity_match is true.
    */
   uid_types?: UIDType[];
+  /**
+   * The same keys as uid_types in the match-key shape, adding the scopes and vendor each resolves at. Uses the shape of Product.identity.match_keys so the serve-time declaration and the buy-time declaration are compared with one rule. Every uid_type here MUST appear in uid_types, which remains the routing and filtering input. uses is always ["identity_match"].
+   */
+  match_keys?: (MatchKey & {
+    uses?: 'identity_match'[];
+  })[];
   /**
    * Property RIDs (UUID v7) this provider serves. When present, the router only sends requests from these properties to this provider. When absent, the provider serves all properties.
    */

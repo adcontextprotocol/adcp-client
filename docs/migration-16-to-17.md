@@ -1,6 +1,6 @@
 # Migrating from SDK 16 to 17
 
-SDK 17 beta pins the signed AdCP `3.3.0-beta.4` release. Use the beta in
+SDK 17 beta pins the signed AdCP `3.3.0-beta.5` release. Use the beta in
 development and staging; production remains on SDK 16 and AdCP 3.2.
 
 ## Companion packages
@@ -106,7 +106,7 @@ request release. Existing cursor, account identity, and acknowledgement checks
 still apply.
 
 A `3.3.0` or `3.3` configuration pin does not select a beta. Use the exact
-`3.3.0-beta.4` bundle (wire alias `3.3-beta.4`); unavailable pins now produce a
+`3.3.0-beta.5` bundle (wire alias `3.3-beta.5`); unavailable pins now produce a
 short list of bundled release lines instead of every compatible patch.
 
 ## pnpm peer resolution
@@ -140,7 +140,7 @@ and [peer-dependency settings](https://pnpm.io/settings#dedupepeerdependents).
 
 The SDK packages the exact 3.3 beta schema and compliance bundle alongside
 maintained AdCP 3.2.8, 3.1.31 and 3.0.25 bundles. A seller must advertise
-`3.3-beta.4` (or its full bundle version, `3.3.0-beta.4`) before the buyer
+`3.3-beta.5` (or its full bundle version, `3.3.0-beta.5`) before the buyer
 selects that preview. A different beta, a moving `3.3-beta` alias, or a
 served-version echo alone does not establish support. The buyer can negotiate
 an older stable release the seller advertises. Missing or synthetic capability
@@ -152,9 +152,49 @@ server handlers are `mediaBuy.listCollections` and `mediaBuy.listProposals`,
 or optional methods on `MediaBuyLifecyclePlatform`. Their synchronous results
 use `outcome` and do not acquire a synthetic task `status` field.
 
+## AdCP 3.3.0-beta.5
+
+SDK 17 now pins AdCP `3.3.0-beta.5` and no longer packages or advertises
+`3.3.0-beta.4`. **This breaks beta.4 pins.** Preview negotiation is exact, so a
+beta.4 peer and a beta.5 peer settle on a stable release they share, usually
+AdCP 3.2, and an explicit `adcpVersion: '3.3.0-beta.4'` (or `'3.3-beta.4'`) pin
+fails with a configuration error. The SDK keeps one 3.3 preview at a time
+because betas are not additive over each other: a later beta can withdraw
+fields an earlier one accepted. Upgrade buyers and sellers together when you
+test preview-only features.
+
+- **Experimental match keys (adcp#8375).** `core/match-key.json` (generated
+  `MatchKey`) declares one identifier a party resolves: its `uid_type`, an
+  optional `vendor`, the reach-unit `scopes` it resolves at and its `uses`
+  (`MatchKeyUse`: `audience_include`, `audience_exclude`, `frequency_cap`,
+  `identity_match`, `conversion_attribution`). Sellers declare seller-wide keys
+  in `get_adcp_capabilities` `media_buy.supported_match_keys` and per-product
+  keys in `Product.identity.match_keys`; TMP provider registrations gain
+  `match_keys` alongside `uid_types`. Sellers using any of them list
+  `media_buy.match_keys` in `experimental_features`. All fields are optional.
+  When an SDK-hosted seller serves an AdCP 3.2 buyer, `get_products` removes
+  `Product.identity.match_keys` and reports the drift. `get_adcp_capabilities`
+  passes `supported_match_keys` through, as it does other 3.3 capability
+  additions, because the 3.2 capability schema is open.
+- **`ProductIdentity` type.** The schema now carries a conditional rule, so the
+  generated `ProductIdentity` is a type alias instead of an interface.
+  `extends` and `implements` keep working; declaration merging does not.
+- **`sales-fixed-rate` is stable.** Its storyboard is unchanged and fully
+  graded; a passing claim now counts toward AAO Verified media-buy badges.
+- **Compliance fixtures.** `deterministic_testing`,
+  `canonical_format_validate_input`, `product_filter_behavior`,
+  `vendor_metric_catalog_precondition` and `sales-non-guaranteed` bind their
+  seeded products and pricing options to the complete sandbox account that
+  consumes them (`brand.domain`, `operator`, `sandbox`). The storyboard schema
+  also defines the offline legacy-format catalog form of
+  `$build_assets_from_format` (`catalog: test_kit`, gated on
+  `test_kit_format_catalog_runner`), which the runner already supports.
+- **No reporting-subscription changes.** The canonical reporting vectors are
+  byte-identical to beta.4.
+
 ## AdCP 3.3.0-beta.4
 
-SDK 17 now pins AdCP `3.3.0-beta.4` and no longer packages or advertises
+SDK 17 pinned AdCP `3.3.0-beta.4` and no longer packages or advertises
 `3.3.0-beta.3`. Preview negotiation is exact, so a beta.3 peer and a beta.4
 peer settle on a stable release they share, and an explicit
 `adcpVersion: '3.3.0-beta.3'` pin fails with a configuration error.

@@ -441,7 +441,7 @@ test('library sync: fitting packages must still agree on a shared legacy VAST re
 });
 
 test('library sync: the public fit API keeps every package verdict and its strict shared-wire decision', () => {
-  for (const adcpVersion of ['3.1.0', '3.3.0-beta.4']) {
+  for (const adcpVersion of ['3.1.0', '3.3.0-beta.5']) {
     const result = fitCreativeToPackages(creative(250), packages, { adcpVersion });
     assert.deepEqual(
       result.perPackage.map(entry => entry.verdict),

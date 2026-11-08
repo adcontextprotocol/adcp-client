@@ -1,7 +1,7 @@
 /**
  * Reviewed non-JSON-Schema semantics from the 3.2 beta.8 / rc.2 / rc.3 / rc.4 / rc.6 / rc.7 / 3.2.1 / 3.2.3 /
  * 3.2.4 / 3.2.5 / 3.2.6 / 3.2.7 / 3.2.8 / 3.3.0-beta.0 / 3.3.0-beta.1 / 3.3.0-beta.2 / 3.3.0-beta.3 /
- * 3.3.0-beta.4 bundles.
+ * 3.3.0-beta.4 / 3.3.0-beta.5 bundles.
  * These are semantic contracts, NOT a binding-field allowlist: properties and
  * comparison always come from the selected runtime schema. Additions to these
  * annotations require a deliberate implementation/review instead of AJV silently
@@ -11,6 +11,7 @@
 // from 3.3 after beta.1, so beta.2 carries none of their verifier contracts.
 // The pin and installment fail-closed checks therefore never fire for it.
 // beta.3 carries the same commercial-term contracts as beta.2 (checked against the bundle).
+// beta.5 leaves every commercial-term schema of beta.4 byte-identical (checked against the bundle).
 const SEMANTICS_3_3_BETA_2: Readonly<Record<string, unknown>> = {
   'core/sla-window.json': {
     verifier_constraints: {
@@ -371,6 +372,7 @@ export const COMMERCIAL_SEMANTIC_OVERRIDES_BY_RELEASE: Readonly<Record<string, R
   '3.3.0-beta.2': SEMANTICS_3_3_BETA_2,
   '3.3.0-beta.3': SEMANTICS_3_3_BETA_2,
   '3.3.0-beta.4': SEMANTICS_3_3_BETA_2,
+  '3.3.0-beta.5': SEMANTICS_3_3_BETA_2,
 };
 
 /** Binding snapshots keep JSON Schema enum membership even for extensible taxonomies. */
