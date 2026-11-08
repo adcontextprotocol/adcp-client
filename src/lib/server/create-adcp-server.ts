@@ -1485,6 +1485,16 @@ export interface AdcpCapabilitiesOverrides {
       })
     | null;
   identity?: GetAdCPCapabilitiesResponse['identity'] | null;
+  /**
+   * Conditional-fetch (`if_wholesale_feed_version`) support for `get_products` and `get_signals`.
+   * The SDK does not derive it: a seller that serves versioned feeds declares it here.
+   */
+  wholesale_feed_versioning?: GetAdCPCapabilitiesResponse['wholesale_feed_versioning'] | null;
+  /**
+   * Wholesale feed change webhooks (`product.*`, `signal.*`, `wholesale_feed.bulk_change`). The SDK
+   * does not derive it: a seller that emits those events declares it here.
+   */
+  wholesale_feed_webhooks?: GetAdCPCapabilitiesResponse['wholesale_feed_webhooks'] | null;
   request_signing?:
     | (NonNullable<GetAdCPCapabilitiesResponse['request_signing']> & {
         profiles?: ('adcp/request-signing/v1' | 'web-bot-auth')[];
@@ -2565,6 +2575,8 @@ function applyCapabilityOverrides(target: GetAdCPCapabilitiesResponse, overrides
     'compliance_testing',
     'webhook_signing',
     'identity',
+    'wholesale_feed_versioning',
+    'wholesale_feed_webhooks',
     'request_signing',
   ]);
   for (const [key, value] of Object.entries(overrides)) {
