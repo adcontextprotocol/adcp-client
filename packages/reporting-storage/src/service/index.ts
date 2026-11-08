@@ -49,6 +49,7 @@ import {
 } from '@adcp/sdk/server';
 import type { ReportingDeliveryCapabilities } from '@adcp/sdk/types';
 import {
+  REPORTING_ISSUE_EVENTS_MIGRATION,
   REPORTING_LEDGER_CHANGES_MIGRATION,
   REPORTING_LEDGER_MIGRATION,
   REPORTING_ROW_STORAGE_MIGRATION,
@@ -456,6 +457,8 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
     REPORTING_LEDGER_MIGRATION,
     ...(options.rowStorage ? [REPORTING_ROW_STORAGE_MIGRATION] : []),
     ...(options.changeFeed ? [REPORTING_LEDGER_CHANGES_MIGRATION] : []),
+    // The outbox the issue observer reads; without it the core service refuses the observer at its first cycle.
+    ...(options.issueObserver ? [REPORTING_ISSUE_EVENTS_MIGRATION] : []),
     REPORTING_MANAGED_DELIVERY_MIGRATION,
     ...notifications.migrations.all,
     ...notificationActivity.migrations.all,

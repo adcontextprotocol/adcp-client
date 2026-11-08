@@ -15,6 +15,8 @@ Reporting storage (experimental): `PostgresReportingLedgerStore` records issue-l
   - `claimIssueEvents` hands out `SKIP LOCKED` leases, at most one per occurrence, in recording order.
   - `completeIssueEvent`, `releaseIssueEvent` and `pruneIssueEvents` settle and clean up, and `issueEventsReady()` reports whether the table exists.
 
+- **Production service.** `createPostgresReliableReportingProductionService` accepts `issueObserver` (passed to the core service it drives) and adds `REPORTING_ISSUE_EVENTS_MIGRATION` to `setup.migrations` when it is set.
+
 Why minor: this ships a new versioned migration that `postgresStorage().checkSchema()` requires (`REPORTING_SCHEMA_BEHIND` until applied), and per the stability policy a schema change goes in a minor of `@adcp/reporting-storage`.
 
 Migration note:

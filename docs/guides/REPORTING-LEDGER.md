@@ -2568,6 +2568,11 @@ their own writes). Until it is applied, writes record nothing, `postgresStorage(
 service refuses `issueObserver` at construction against a store that does not record issue events.
 Delivered events are pruned after seven days.
 
+**Production service.** `createPostgresReliableReportingProductionService` (`@adcp/reporting-storage/service`)
+takes `issueObserver` too: it passes it to the core service whose `runCycle` and `start()` it drives, and
+adds `REPORTING_ISSUE_EVENTS_MIGRATION` to `service.setup.migrations` when it is set. The Python SDK adds the
+same in adcp-client-python#1873.
+
 Composing the ledger without the service? Run
 `createReportingIssueEventDispatcherV1({ store, observer, escalation }).runOnce({ accountId })` on your
 own schedule.
