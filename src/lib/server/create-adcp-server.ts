@@ -12,6 +12,7 @@ import {
   withIdentity33SchemaScope,
   bindIdentity33SchemaScope,
 } from '../validation/schema-loader';
+import { projectCapabilitiesForRelease } from './capabilities-release-projection';
 import { validateAgentOnboarding } from '../identity-3.3/lifecycle';
 import { isIdentity33UnboundContext } from '../identity-3.3/server';
 import {
@@ -9983,6 +9984,27 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       }
       if (selected?.major === 3 && selected.minor === 0) {
         data = projectCapabilitiesToVersion(data, release.validationVersion);
+      } else if (!config.identity33 && translationSteps(adcpVersion, release.validationVersion).length > 0) {
+        // Remove what the served release does not define (DR-0024), the same
+        // schema diff every other task response gets, plus newer experimental ids.
+        const projected = projectCapabilitiesForRelease(data, {
+          fromVersion: adcpVersion,
+          toVersion: release.validationVersion,
+        });
+        data = projected.data;
+        if (projected.drifts.length > 0) {
+          logger.info(`Converted get_adcp_capabilities response down to AdCP ${release.validationVersion}`, {
+            tool: 'get_adcp_capabilities',
+            drifts: projected.drifts,
+          });
+          reportVersionTranslation({
+            tool: 'get_adcp_capabilities',
+            direction: 'response',
+            fromVersion: adcpVersion,
+            toVersion: release.validationVersion,
+            drifts: projected.drifts,
+          });
+        }
       }
       if (selected !== undefined && (selected.major < 3 || (selected.major === 3 && selected.minor === 1))) {
         if (data.webhook_signing) {
