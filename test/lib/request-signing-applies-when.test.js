@@ -11,6 +11,7 @@ const {
   probeRequestSigningVector,
 } = require('../../dist/lib/testing/storyboard/request-signing/index.js');
 const { appliesWhenExclusion } = require('../../dist/lib/testing/storyboard/request-signing/grader.js');
+const { ADCP_VERSION } = require('../../dist/lib/version.js');
 
 // A vector that is not skipped fails on the probe instead, which separates
 // skipped from graded without a network.
@@ -35,9 +36,12 @@ const dispatchOptions = (capabilities, extra = {}) => ({
   ...extra,
 });
 
+// The 3.2 profile vectors ship in the packaged 3.3 bundle. Pin the SDK's own
+// release: the SDK packages one 3.3 beta at a time, so a literal beta pin stops
+// loading any vectors once the next beta replaces it.
 const probes = [
   { label: 'root', stepId: `negative-${VECTOR_ID}`, extra: {} },
-  { label: '3.2 profile', stepId: `negative-${PROFILE_32_VECTOR_ID}`, extra: { adcpVersion: '3.3.0-beta.3' } },
+  { label: '3.2 profile', stepId: `negative-${PROFILE_32_VECTOR_ID}`, extra: { adcpVersion: ADCP_VERSION } },
 ];
 
 test('the loader keeps applies_when on both copies of vector 027', () => {
