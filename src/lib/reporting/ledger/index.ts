@@ -27,6 +27,7 @@ export * from './row-encoding';
 export * from './row-storage-errors';
 export * from './receipts';
 export * from './offering-validation';
+export * from './issue-events';
 
 // Building blocks a ledger store implementation shares with the protocol layer. They are exported so a
 // store can live outside the SDK without importing internals.

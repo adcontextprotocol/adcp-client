@@ -20,6 +20,16 @@ import {
   reportingLedgerSubscriptionVisibleV1,
 } from '../reporting/ledger/coverage';
 import { projectReportingObligationHealthV1 } from '../reporting/ledger/health';
+import { compareReportingInstants, compareReportingInstantToOffset } from '../reporting/ledger/instant';
+import {
+  planReportingIssueEventsV1,
+  reportingConsumerMismatchOccurrenceV1,
+  reportingIssueEscalationV1,
+  type ReportingConsumerMismatchOccurrenceV1,
+  type ReportingIssueEventLeaseV1,
+  type ReportingIssueEventRecordV1,
+  type ReportingIssueEventStoreV1,
+} from '../reporting/ledger/issue-events';
 import { reportingPeriodSchedule } from '../reporting/ledger/schedule';
 import {
   ReportingConsumerStatusConflictError,
@@ -30,6 +40,17 @@ import { canonicalJsonV1 } from '../reporting/source/manifest';
 
 type Row = any;
 
+/** One recorded issue event and its delivery state. */
+interface MemoryIssueEvent extends ReportingIssueEventRecordV1 {
+  seq: number;
+  recordedAt: string;
+  dueAt: string;
+  attempts: number;
+  leaseToken?: string;
+  leaseExpiresAt?: string;
+  deliveredAt?: string;
+}
+
 function sha(value: unknown): string {
   return createHash('sha256').update(canonicalJsonV1(value)).digest('hex');
 }
@@ -39,7 +60,12 @@ function clone<T>(value: T): T {
 }
 
 /** @internal */
-export class MemoryReportingLedgerStore implements ReportingLedgerStore {
+export class MemoryReportingLedgerStore implements ReportingLedgerStore, ReportingIssueEventStoreV1 {
+  /** Records issue-lifecycle events for the issue observer (see `issue-events.ts`). */
+  readonly issueEventsSupported = true as const;
+  /** The issue-event outbox, by event id. */
+  readonly issueEvents = new Map<string, MemoryIssueEvent>();
+  private issueEventSeq = 0;
   readonly configurations = new Map<string, Row>();
   readonly obligations = new Map<string, Row>();
   readonly revisions = new Map<string, Row>();
@@ -256,7 +282,11 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore {
         item.reporting_obligation_id === value.reporting_obligation_id && item.revisionNumber === value.revisionNumber
     );
     if (existing && existing.binding.sha256 !== value.binding.sha256) throw new Error('immutable conflict');
-    if (!existing) this.revisions.set(value.reporting_revision_id, clone(value));
+    if (!existing) {
+      this.revisions.set(value.reporting_revision_id, clone(value));
+      // A restatement can make a leaf conflict (or anchor one filed before any revision), or clear one.
+      this.settleIssueObligation(value.reporting_obligation_id, this.instant());
+    }
     return { inserted: !existing, value: clone(existing ?? value) };
   }
 
@@ -636,9 +666,263 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore {
         continue;
       }
       this.consumerStatements.push(clone(candidate));
+      this.settleIssueChain(candidate);
       results.push({ inserted: true, value: clone(candidate) });
     }
     this.consumerStatusBatches.set(batchKey, { requestFingerprint: input.requestFingerprint, results });
     return clone(results);
+  }
+
+  // --- issue-lifecycle events (the issue observer) ----------------------------
+
+  private obligationMatchesStatement(obligation: Row, status: Row): boolean {
+    return (
+      obligation.account.account_id === status.account_id &&
+      status.delivery_config_id === obligation.delivery_config_id &&
+      status.delivery_config_version === obligation.delivery_config_version &&
+      status.report_definition_id === obligation.report_definition_id &&
+      compareReportingInstants(status.period.start, obligation.period.start) === 0 &&
+      compareReportingInstants(status.period.end, obligation.period.end) === 0 &&
+      status.period.source_timezone === obligation.period.sourceTimezone
+    );
+  }
+
+  private revisionMetadata(obligationId: string): Row[] {
+    return [...this.revisions.values()]
+      .filter(value => value.reporting_obligation_id === obligationId)
+      .sort((a, b) => a.revisionNumber - b.revisionNumber)
+      .map(({ rows: _rows, ...metadata }) => metadata);
+  }
+
+  /** Occurrences whose `opened` is recorded and that have not resolved. */
+  private openIssueOccurrences(): MemoryIssueEvent[] {
+    const resolved = new Set(
+      [...this.issueEvents.values()].filter(value => value.kind === 'resolved').map(value => value.issueId)
+    );
+    return [...this.issueEvents.values()].filter(value => value.kind === 'opened' && !resolved.has(value.issueId));
+  }
+
+  private conflictsOn(obligation: Row): ReportingConsumerMismatchOccurrenceV1[] {
+    const revisions = this.revisionMetadata(obligation.reporting_obligation_id);
+    const chains = new Map<string, Row[]>();
+    for (const status of this.consumerStatements) {
+      if (!this.obligationMatchesStatement(obligation, status)) continue;
+      chains.set(status.consumerId, [...(chains.get(status.consumerId) ?? []), status]);
+    }
+    return [...chains.values()].flatMap(statements => {
+      const superseded = new Set(statements.map(value => value.supersedes_reporting_status_id).filter(Boolean));
+      const leaf = statements.find(value => !superseded.has(value.reporting_status_id));
+      const occurrence = reportingConsumerMismatchOccurrenceV1(obligation, leaf, revisions);
+      return occurrence ? [occurrence] : [];
+    });
+  }
+
+  private recordIssueEvents(records: readonly ReportingIssueEventRecordV1[]): number {
+    let recorded = 0;
+    for (const record of records) {
+      if (this.issueEvents.has(record.eventId)) continue; // exactly once per (issueId, kind)
+      const now = this.instant();
+      this.issueEventSeq += 1;
+      this.issueEvents.set(record.eventId, {
+        ...clone(record),
+        seq: this.issueEventSeq,
+        recordedAt: now,
+        dueAt: now,
+        attempts: 0,
+      });
+      recorded += 1;
+    }
+    return recorded;
+  }
+
+  /** Re-derive one obligation's occurrences after a write: open what conflicts, resolve what cleared. */
+  private settleIssueObligation(obligationId: string, at: string): void {
+    const obligation = this.obligations.get(obligationId);
+    this.recordIssueEvents(
+      planReportingIssueEventsV1({
+        open: this.openIssueOccurrences().filter(value => value.reportingObligationId === obligationId),
+        conflicts: obligation ? this.conflictsOn(obligation) : [],
+        at,
+      })
+    );
+  }
+
+  /**
+   * After a statement lands: resolve the occurrence of the leaf it superseded, open one for it if it
+   * conflicts. Scoped to the statement's own chain, so it works before the obligation exists.
+   */
+  private settleIssueChain(statement: Row): void {
+    const chain = new Set(
+      this.consumerStatements
+        .filter(
+          value =>
+            value.account_id === statement.account_id &&
+            value.consumerId === statement.consumerId &&
+            this.consumerChainKey(value) === this.consumerChainKey(statement)
+        )
+        .map(value => value.reporting_status_id)
+    );
+    const obligation = [...this.obligations.values()].find(value => this.obligationMatchesStatement(value, statement));
+    const occurrence = obligation
+      ? reportingConsumerMismatchOccurrenceV1(
+          obligation,
+          statement,
+          this.revisionMetadata(obligation.reporting_obligation_id)
+        )
+      : undefined;
+    this.recordIssueEvents(
+      planReportingIssueEventsV1({
+        open: this.openIssueOccurrences().filter(
+          value =>
+            value.accountId === statement.account_id &&
+            value.consumerId === statement.consumerId &&
+            chain.has(value.reportingStatusId)
+        ),
+        conflicts: occurrence ? [occurrence] : [],
+        at: statement.recorded_at,
+      })
+    );
+  }
+
+  async issueEventsReady(): Promise<boolean> {
+    return true;
+  }
+
+  async sweepIssueEscalations({
+    escalationSeconds,
+    accountId,
+    limit = 100,
+  }: {
+    escalationSeconds: number;
+    accountId?: string;
+    limit?: number;
+  }): Promise<number> {
+    if (!Number.isSafeInteger(escalationSeconds) || escalationSeconds < 0) {
+      throw new RangeError('escalationSeconds must be a non-negative integer');
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError('limit must be a positive integer');
+    const now = this.instant();
+    const escalated = new Set(
+      [...this.issueEvents.values()].filter(value => value.kind === 'escalated').map(value => value.issueId)
+    );
+    const due = (value: MemoryIssueEvent) =>
+      (accountId === undefined || value.accountId === accountId) &&
+      !escalated.has(value.issueId) &&
+      compareReportingInstantToOffset(now, value.occurredAt, escalationSeconds * 1_000) >= 0;
+    const obligationIds = [
+      ...new Set(
+        this.openIssueOccurrences()
+          .filter(due)
+          .sort((a, b) => compareReportingInstants(a.occurredAt, b.occurredAt) || a.seq - b.seq)
+          .map(value => value.reportingObligationId)
+      ),
+    ].slice(0, limit);
+    let recorded = 0;
+    for (const obligationId of obligationIds) {
+      // Settle first, as a write would: a cleared condition resolves instead of escalating.
+      this.settleIssueObligation(obligationId, now);
+      for (const opened of this.openIssueOccurrences().filter(
+        value => value.reportingObligationId === obligationId && due(value)
+      )) {
+        const escalation = reportingIssueEscalationV1(opened, escalationSeconds, now);
+        if (escalation) recorded += this.recordIssueEvents([escalation]);
+      }
+    }
+    return recorded;
+  }
+
+  async claimIssueEvents({
+    leaseMilliseconds,
+    limit,
+    accountId,
+  }: {
+    leaseMilliseconds: number;
+    limit: number;
+    accountId?: string;
+  }): Promise<ReportingIssueEventLeaseV1[]> {
+    if (!Number.isSafeInteger(leaseMilliseconds) || leaseMilliseconds < 1) {
+      throw new RangeError('leaseMilliseconds must be a positive integer');
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError('limit must be a positive integer');
+    const now = this.instant();
+    const pending = [...this.issueEvents.values()]
+      .filter(value => value.deliveredAt === undefined)
+      .sort((a, b) => a.seq - b.seq);
+    // An occurrence's events go out in recording order: only its earliest undelivered one is claimable.
+    const head = new Map<string, number>();
+    for (const value of pending) if (!head.has(value.issueId)) head.set(value.issueId, value.seq);
+    const due = pending
+      .filter(
+        value =>
+          head.get(value.issueId) === value.seq &&
+          (accountId === undefined || value.accountId === accountId) &&
+          Date.parse(value.dueAt) <= Date.parse(now) &&
+          (value.leaseExpiresAt === undefined || Date.parse(value.leaseExpiresAt) <= Date.parse(now))
+      )
+      .sort((a, b) => Date.parse(a.dueAt) - Date.parse(b.dueAt) || a.seq - b.seq)
+      .slice(0, limit);
+    const leaseToken = createHash('sha256').update(`${now}:${this.issueEventSeq}:${Math.random()}`).digest('hex');
+    const leaseExpiresAt = new Date(Date.parse(now) + leaseMilliseconds).toISOString();
+    return due.map(value => {
+      value.attempts += 1;
+      value.leaseToken = leaseToken;
+      value.leaseExpiresAt = leaseExpiresAt;
+      const statement = this.consumerStatements.find(
+        item =>
+          item.account_id === value.accountId &&
+          item.consumerId === value.consumerId &&
+          item.reporting_status_id === value.reportingStatusId
+      );
+      const { seq: _seq, dueAt: _dueAt, deliveredAt: _deliveredAt, ...lease } = value;
+      return clone({
+        ...lease,
+        leaseToken,
+        leaseExpiresAt,
+        ...(statement ? { statement } : {}),
+      }) as ReportingIssueEventLeaseV1;
+    });
+  }
+
+  private leasedIssueEvent(lease: ReportingIssueEventLeaseV1): MemoryIssueEvent | undefined {
+    const value = this.issueEvents.get(lease.eventId);
+    return value && value.deliveredAt === undefined && value.leaseToken === lease.leaseToken ? value : undefined;
+  }
+
+  async completeIssueEvent(lease: ReportingIssueEventLeaseV1): Promise<boolean> {
+    const value = this.leasedIssueEvent(lease);
+    if (!value) return false;
+    value.deliveredAt = this.instant();
+    delete value.leaseToken;
+    delete value.leaseExpiresAt;
+    return true;
+  }
+
+  async releaseIssueEvent(
+    lease: ReportingIssueEventLeaseV1,
+    { retryAfterMilliseconds }: { retryAfterMilliseconds: number }
+  ): Promise<boolean> {
+    const value = this.leasedIssueEvent(lease);
+    if (!value) return false;
+    value.dueAt = new Date(Date.parse(this.instant()) + Math.max(0, retryAfterMilliseconds)).toISOString();
+    delete value.leaseToken;
+    delete value.leaseExpiresAt;
+    return true;
+  }
+
+  async pruneIssueEvents({
+    olderThanMilliseconds,
+    limit = 1_000,
+  }: {
+    olderThanMilliseconds: number;
+    limit?: number;
+  }): Promise<number> {
+    if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError('limit must be a positive integer');
+    const horizon = Date.parse(this.instant()) - olderThanMilliseconds;
+    const expired = [...this.issueEvents.values()]
+      .filter(value => value.deliveredAt !== undefined && Date.parse(value.deliveredAt) < horizon)
+      .sort((a, b) => Date.parse(a.deliveredAt!) - Date.parse(b.deliveredAt!))
+      .slice(0, limit);
+    for (const value of expired) this.issueEvents.delete(value.eventId);
+    return expired.length;
   }
 }

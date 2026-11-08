@@ -19,6 +19,7 @@
 import { ADCP_STATE_MIGRATION } from '@adcp/sdk/server';
 import { REPORTING_CONSUMER_POSTGRES_MIGRATION } from '@adcp/sdk/reporting/consumer';
 import { REPORTING_LEDGER_CHANGES_MIGRATION } from './change-feed';
+import { REPORTING_ISSUE_EVENTS_MIGRATION } from './issue-events';
 import { REPORTING_OBJECT_WRITE_AUTHORITY_MIGRATION, REPORTING_OBJECT_WRITE_MIGRATION } from './object-writes';
 import {
   REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION,
@@ -145,6 +146,12 @@ const MIGRATIONS: readonly Migration[] = Object.freeze([
     'reporting_row_sets_drop_obligation_fk',
     'Remove the JavaScript core-ledger foreign key from shared row sets so other SDKs can write them.',
     ['ALTER TABLE adcp_reporting_row_sets DROP CONSTRAINT IF EXISTS adcp_reporting_row_sets_obligation_id_fkey']
+  ),
+  migration(
+    '0012',
+    'reporting_issue_events',
+    'The issue-lifecycle event outbox the issue observer reads: one new table and its indexes. Additive; earlier-release workers run beside it and record no events. Until applied, writes record none and an issueObserver refuses to start.',
+    [REPORTING_ISSUE_EVENTS_MIGRATION]
   ),
 ]);
 

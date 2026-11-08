@@ -30,8 +30,13 @@ import {
   createReportingProducer,
   createReportingStatusHandler,
   createSyncReportingStatusHandler,
+  createReportingIssueEventDispatcherV1,
+  supportsReportingIssueEventsV1,
   type CreateReportingProducerOptionsV1,
   type ReportingConsumerMismatchEscalationV1,
+  type ReportingIssueEventDeliveryV1,
+  type ReportingIssueEventDispatcherV1,
+  type ReportingIssueObserverV1,
   type ReportingConsumerStatusLedgerStore,
   type ReportingLedgerConfigurationV1,
   type ReportingLedgerStore,
@@ -285,6 +290,31 @@ export interface CreateReliableReportingServiceOptionsV1<TCtxMeta = Record<strin
   statusRetentionDays: number;
   subscribers?: CreateReportingProducerOptionsV1['subscribers'];
   /**
+   * Called once per lifecycle transition of a `CONSUMER_STATUS_MISMATCH` occurrence (`opened`, `escalated`,
+   * `resolved`), so the seller hears about a caller-scoped issue without waiting for the buyer to poll.
+   *
+   * - **When.** The ledger records `opened` and `resolved` in the same transaction as the write that caused
+   *   them (a `sync_reporting_status` statement, a revision commit). Each `runCycle` sweeps escalations
+   *   (`escalated` once `openedAt` passes `consumerMismatchEscalation.escalationSeconds`) and then delivers
+   *   committed events, each occurrence's in recording order. Without `runCycle` (`start()` or your own
+   *   scheduler) events are recorded but the observer is never called, and `escalated` is never recorded.
+   * - **At least once.** A cycle that stops after the observer returned but before the event was marked
+   *   delivered delivers it again with the same `eventId`. Deduplicate on it.
+   * - **Never in the buyer's call.** An observer that throws, or an async one past 10 seconds, is retried on a
+   *   later cycle after a backoff of 30 seconds doubling to one hour, with no limit. The failure goes to the
+   *   scheduler's `onError` as a `ReportingIssueObserverError`, and to `runCycle`'s `issueEvents.errors`.
+   * - **Kinds.** TypeScript stores never emit `acknowledged` or `waived` yet: the ledger has no operator
+   *   issue-state API. The kinds are in the type for parity with the Python SDK.
+   *
+   * Needs a store that records issue events: `memoryStorage()`, or `postgresStorage({ pool })` from
+   * `@adcp/reporting-storage` with migration `0012 reporting_issue_events` applied. Refused at construction
+   * against any other store, and at the first cycle before the table exists. Delivered events are pruned
+   * after seven days.
+   *
+   * @experimental Reliable Reporting issue observer: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+   */
+  issueObserver?: ReportingIssueObserverV1;
+  /**
    * Opt in to scheduled ledger maintenance (retention, compaction, change-feed pruning, abandoned-upload
    * sweeps) for a Core-only deployment. `start()` runs it at most once per `intervalMilliseconds`;
    * `runMaintenance()` runs it on demand for a host with its own scheduler.
@@ -475,6 +505,13 @@ export interface ReliableReportingServiceV1<TCtxMeta = Record<string, unknown>> 
      * one per principal or subscription. A failure never rejects the cycle.
      */
     subscriptionPlanningFailures?: SubscriptionPlanningFailure[];
+    /**
+     * With `issueObserver`: what this cycle's issue-event delivery did. Observer and store failures are in
+     * `errors` (and go to the scheduler's `onError`); they never reject the cycle.
+     *
+     * @experimental Reliable Reporting issue observer.
+     */
+    issueEvents?: ReportingIssueEventDeliveryV1;
   }>;
   /**
    * Run one ledger-maintenance pass now and return each task's outcome. For
@@ -641,6 +678,47 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   );
   const advertisedConsumerMismatchEscalation = hasConsumerStatus ? effectiveConsumerMismatchEscalation : undefined;
   if (hasConsumerStatus) assertConsumerStatusStore(options.store);
+  let issueEvents: ReportingIssueEventDispatcherV1 | undefined;
+  if (options.issueObserver !== undefined) {
+    if (typeof options.issueObserver !== 'function') {
+      throw new PlatformConfigError('issueObserver must be a function.', { configField: 'issueObserver' });
+    }
+    const issueStore = options.store;
+    if (!supportsReportingIssueEventsV1(issueStore)) {
+      throw new PlatformConfigError(
+        'issueObserver needs a ledger store that records issue events. Use storage: memoryStorage() (@adcp/sdk/storage), ' +
+          'or postgresStorage({ pool }) from @adcp/reporting-storage with migration 0012 applied (npx adcp-reporting-storage migrate).',
+        { configField: 'issueObserver' }
+      );
+    }
+    issueEvents = createReportingIssueEventDispatcherV1({
+      store: issueStore,
+      observer: options.issueObserver,
+      // The same window the reads enforce and the capability document advertises.
+      ...(effectiveConsumerMismatchEscalation ? { escalation: effectiveConsumerMismatchEscalation } : {}),
+    });
+  }
+  // Startup refuses an issue observer before its table exists; checked once, retried after a failure.
+  let issueEventsChecked: Promise<void> | undefined;
+  const checkIssueEvents = (): Promise<void> => {
+    if (!issueEvents || !supportsReportingIssueEventsV1(options.store)) return Promise.resolve();
+    const store = options.store;
+    issueEventsChecked ??= store
+      .issueEventsReady()
+      .then(ready => {
+        if (!ready) {
+          throw new PlatformConfigError(
+            'issueObserver needs the issue-event table (migration 0012 reporting_issue_events). Run "npx adcp-reporting-storage migrate" against this database.',
+            { code: 'REPORTING_SCHEMA_BEHIND', configField: 'issueObserver' }
+          );
+        }
+      })
+      .catch(error => {
+        issueEventsChecked = undefined;
+        throw error;
+      });
+    return issueEventsChecked;
+  };
   const retentionDays = options.statusRetentionDays;
   positiveInteger(retentionDays, 'statusRetentionDays');
   // Built here, not on the first scheduled pass: a factory that cannot serve this store or these
@@ -1283,6 +1361,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       simulatedNow = cycle.now;
       cycle.signal?.throwIfAborted();
       await checkSchema();
+      await checkIssueEvents();
       // The boundary sweep: reconcile every subscribed principal before planning, so each elapsed
       // period is frozen by the cycle that follows its end.
       const sweepFailures = managed ? await managed.sweep(cycle.signal) : [];
@@ -1314,6 +1393,15 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
           ? { settlementGraceMilliseconds: cycle.settlementGraceMilliseconds }
           : {}),
       });
+      // After the worker, so a revision it committed has already recorded its events. Observer and store
+      // failures come back in `errors`; they never reject the cycle.
+      const issueDelivery =
+        issueEvents && !cycle.signal?.aborted
+          ? await issueEvents.runOnce({
+              ...(accountId !== undefined ? { accountId } : {}),
+              ...(cycle.signal ? { signal: cycle.signal } : {}),
+            })
+          : undefined;
       if (subscriptionPlanning?.failures.length) {
         if (subscriptionOptions!.onPlanningError) {
           for (const failure of subscriptionPlanning.failures) {
@@ -1329,6 +1417,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       return {
         planned: planned.length + (subscriptionPlanning?.planned ?? 0),
         ...result,
+        ...(issueDelivery ? { issueEvents: issueDelivery } : {}),
         ...(managed
           ? {
               subscriptionPlanningFailures: [
@@ -1448,7 +1537,7 @@ async function schedulerLoop<TCtxMeta>(
     for (const accountId of accountIds) {
       if (signal.aborted) break;
       try {
-        await service.runCycle({
+        const cycle = await service.runCycle({
           ...(accountId === undefined ? { deploymentWide: true as const } : { accountId }),
           signal,
           ...(options.maxHistoryObligationsPerSource !== undefined
@@ -1473,6 +1562,10 @@ async function schedulerLoop<TCtxMeta>(
             ? { settlementGraceMilliseconds: options.settlementGraceMilliseconds }
             : {}),
         });
+        // The issue observer's failures never fail the cycle; each still reaches onError.
+        for (const error of cycle.issueEvents?.errors ?? []) {
+          await reportReportingSchedulerError(options, signal, error, { phase: 'issue_observer', accountId });
+        }
       } catch (error) {
         // One tenant's cycle failure must not starve the tenants queued behind
         // it: a persistently failing account would otherwise skip every later
@@ -2210,6 +2303,15 @@ function deepFreeze<T>(value: T): T {
 }
 
 export { ReportingConfigurationImmutableError, isReportingConfigurationImmutableError } from '../ledger';
+export { ReportingIssueObserverError, createReportingIssueEventDispatcherV1 } from '../ledger';
+export type {
+  ReportingIssueEventDeliveryV1,
+  ReportingIssueEventDispatcherOptionsV1,
+  ReportingIssueEventDispatcherV1,
+  ReportingIssueEventKindV1,
+  ReportingIssueEventV1,
+  ReportingIssueObserverV1,
+} from '../ledger';
 export { defaultSubscriptionConfiguration } from './managed';
 export { coverageTraceForBuyer, diffCoverageTraces } from '../subscriptions/explain';
 export type { CoverageTrace, CoverageTraceDifference, CoverageTraceStep } from '../subscriptions/explain';
