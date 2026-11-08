@@ -171,9 +171,11 @@ test preview-only features.
   in `get_adcp_capabilities` `media_buy.supported_match_keys` and per-product
   keys in `Product.identity.match_keys`; TMP provider registrations gain
   `match_keys` alongside `uid_types`. Sellers using any of them list
-  `media_buy.match_keys` in `experimental_features`. All fields are optional;
-  when an SDK-hosted seller serves an AdCP 3.2 buyer, the response projection
-  removes them and reports the drift.
+  `media_buy.match_keys` in `experimental_features`. All fields are optional.
+  When an SDK-hosted seller serves an AdCP 3.2 buyer, `get_products` removes
+  `Product.identity.match_keys` and reports the drift. `get_adcp_capabilities`
+  passes `supported_match_keys` through, as it does other 3.3 capability
+  additions, because the 3.2 capability schema is open.
 - **`ProductIdentity` type.** The schema now carries a conditional rule, so the
   generated `ProductIdentity` is a type alias instead of an interface.
   `extends` and `implements` keep working; declaration merging does not.

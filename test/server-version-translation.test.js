@@ -213,3 +213,37 @@ describe('envelope fields survive response down-conversion', () => {
     assert.ok(!reported.includes('status'));
   });
 });
+
+describe('experimental 3.3 match keys', () => {
+  const { downgradeResponse } = require('../dist/lib/adapters/version/index');
+  const MATCH_KEY = { uid_type: 'uid2', scopes: ['individuals'], uses: ['frequency_cap'] };
+  const products = () => ({
+    status: 'completed',
+    products: [
+      {
+        product_id: 'prod_1',
+        name: 'Premium video',
+        identity: { persistent_identifier: true, match_keys: [MATCH_KEY] },
+      },
+    ],
+  });
+
+  it('removes Product.identity.match_keys for a 3.2 buyer and reports it', () => {
+    const { data, drifts } = downgradeResponse('get_products', products(), {
+      fromVersion: '3.3.0-beta.5',
+      toVersion: '3.2',
+    });
+    assert.deepStrictEqual(data.products[0].identity, { persistent_identifier: true });
+    const dropped = drifts.find(drift => drift.type === 'version_downgrade_fields_dropped');
+    assert.deepStrictEqual(dropped.strippedFields, ['products[0].identity.match_keys']);
+  });
+
+  it('keeps Product.identity.match_keys for a 3.3 beta.5 buyer', () => {
+    const { data, drifts } = downgradeResponse('get_products', products(), {
+      fromVersion: '3.3.0-beta.5',
+      toVersion: '3.3.0-beta.5',
+    });
+    assert.deepStrictEqual(data.products[0].identity.match_keys, [MATCH_KEY]);
+    assert.deepStrictEqual(drifts, []);
+  });
+});
