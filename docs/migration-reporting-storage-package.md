@@ -188,6 +188,16 @@ See [Orphaned object collection](guides/REPORTING-OPERATIONS.md#adopting-row-sto
 2. The `adcp_reporting_row_sets` and `adcp_reporting_row_write_intents` columns reference the ID by foreign key and carry no bound of their own, so nothing else changes.
 3. The bound is exported as `REPORTING_ROW_BINDING_ID_MAX_LENGTH` and `REPORTING_ROW_CREDENTIAL_REF_MAX_LENGTH`. A provider's `clients` map accepts the same 255-character references.
 
+### Issue-lifecycle events (storage `0.3`, migration `0012`)
+
+`createReliableReportingService({ issueObserver })` (adcp-client#3648) reads an outbox of `CONSUMER_STATUS_MISMATCH` transitions that `PostgresReportingLedgerStore` records beside its writes. Every deployment upgrading the storage package must apply the migration, because `postgresStorage().checkSchema()` requires every shipped version.
+
+1. Run `npx adcp-reporting-storage migrate` (version `0012`, `reporting_issue_events`, additive; the SQL is exported as `REPORTING_ISSUE_EVENTS_MIGRATION`). It creates `adcp_reporting_issue_events` and its indexes and changes no existing table, key, function or trigger, so it is safe while workers of the previous release still run. Those workers neither read nor write the table and record no events for the transitions they make.
+2. Until it is applied, `sync_reporting_status` writes and revision commits record nothing and `store.issueEventsReady()` is `false`; nothing else changes. `checkSchema()` names `0012` as pending.
+3. Without an `issueObserver`, nothing reads the table. Rows accumulate only for consumer-mismatch transitions, and the dispatcher prunes delivered rows after seven days.
+
+The Python SDK ships the same outbox as its migration `0008` (adcp-client-python#1874). The version numbers differ because the two packages' migration lists already differ, and neither moves a storage contract: the Python storage contract stays `2`, and this package has no contract version.
+
 ### `service.setup.migrations` comes from the store
 
 `createReliableReportingService` no longer names the PostgreSQL migration. `service.setup.migrations` is the store's own `migrations` list (`ReportingLedgerStore.migrations`, optional). `PostgresReportingLedgerStore` lists `[REPORTING_LEDGER_MIGRATION]`. A store with nothing to install (an in-memory test double), or a decorator over the PostgreSQL store that does not forward `migrations`, gives an empty list.
