@@ -4,6 +4,7 @@ import type { NegativeVector, PositiveVector, VerifierCapabilityFixture } from '
 import {
   advertisedContentDigestPolicyExclusion,
   advertisedRequiredForExclusion,
+  appliesWhenExclusion,
   gradeOneVector,
   semanticVectorExclusion,
 } from './grader';
@@ -206,6 +207,7 @@ export async function probeRequestSigningVector(
       ? advertisedContentDigestPolicyExclusion(vector, parsed.kind, agentContentDigestPolicy)
       : undefined) ??
     (agentRequiredFor ? advertisedRequiredForExclusion(vector, parsed.kind, agentRequiredFor) : undefined) ??
+    appliesWhenExclusion(vector, options._profile?.raw_capabilities) ??
     semanticVectorExclusion(vector, declaredProtocolMethodCoverage(options, loaded.sourceDir));
   if (semantic) {
     // Carry the grader's diagnostic. It names the vector's unmet demand (the

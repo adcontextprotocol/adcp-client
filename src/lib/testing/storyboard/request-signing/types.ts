@@ -53,6 +53,12 @@ export interface PositiveVector {
   jwks_override?: JwksOverride;
   expected_signature_base?: string;
   spec_reference?: string;
+  /**
+   * Capability condition from the authored fixture (adcp#8064), e.g.
+   * `webhook_signing.legacy_hmac_fallback == true`. The vector grades only for
+   * agents whose `get_adcp_capabilities` response satisfies it.
+   */
+  applies_when?: string;
 }
 
 export interface NegativeVector {
@@ -70,6 +76,12 @@ export interface NegativeVector {
   expected_failed_step: number | string;
   requires_contract?: ContractId;
   spec_reference?: string;
+  /**
+   * Capability condition from the authored fixture (adcp#8064), e.g.
+   * `webhook_signing.legacy_hmac_fallback == true`. The vector grades only for
+   * agents whose `get_adcp_capabilities` response satisfies it.
+   */
+  applies_when?: string;
 }
 
 export type Vector = PositiveVector | NegativeVector;

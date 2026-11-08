@@ -89,10 +89,14 @@ test('storyboard dispatch: request_signature_required vectors with required_for 
   const vector = vectorById('negative', '027-webhook-registration-authentication-unsigned');
   assert.ok(vector, 'vector 027 should exist');
   assert.deepStrictEqual(vector.verifier_capability.required_for, []);
+  // 027 applies only while legacy HMAC is on (adcp#8064), so the profile has
+  // to advertise it for this test to reach the required_for gate.
+  const options = dispatchOptions({ supported: true, covers_content_digest: 'either', required_for: [] });
+  options._profile.raw_capabilities.webhook_signing = { legacy_hmac_fallback: true };
   const result = await probeRequestSigningVector(
     'negative-027-webhook-registration-authentication-unsigned',
     UNREACHABLE,
-    dispatchOptions({ supported: true, covers_content_digest: 'either', required_for: [] })
+    options
   );
   assert.notStrictEqual(result.skip_reason, 'capability_profile_mismatch', '027 must still be graded');
 });
