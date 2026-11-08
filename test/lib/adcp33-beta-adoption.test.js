@@ -5,7 +5,7 @@ const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
 const { AgentClient, ADCP_VERSION } = require('../../dist/lib/index.js');
 const { toReleasePrecisionVersion } = require('../../dist/lib/version.js');
 
-// The 3.3 preview the SDK advertises, at release precision ('3.3-beta.4').
+// The 3.3 preview the SDK advertises, at release precision ('3.3-beta.5').
 const WIRE = toReleasePrecisionVersion(ADCP_VERSION);
 const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server.js');
 const { InMemoryStateStore } = require('../../dist/lib/server/state-store.js');
@@ -220,7 +220,7 @@ test('a preview buyer discovers a stable seller without sending an unsupported p
 test('a buyer pinned to the 3.3 beta bundle negotiates its preview and sends typed request_account changes', async t => {
   const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
   const { z } = require('zod');
-  assert.equal(ADCP_VERSION, '3.3.0-beta.4');
+  assert.equal(ADCP_VERSION, '3.3.0-beta.5');
   const requests = [];
   const seller = new McpServer({ name: 'AdCP 3.3 beta seller', version: '1.0.0' });
   seller.registerTool('get_adcp_capabilities', { inputSchema: { adcp_version: z.string().optional() } }, async () => ({

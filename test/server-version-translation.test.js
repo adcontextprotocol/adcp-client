@@ -202,7 +202,7 @@ describe('envelope fields survive response down-conversion', () => {
       products: [{ product_id: 'prod_1', name: 'Premium video', hold_policy: { available: false } }],
     };
     const { data, drifts } = downgradeResponse('list_products', response, {
-      fromVersion: '3.3.0-beta.4',
+      fromVersion: '3.3.0-beta.5',
       toVersion: '3.2',
     });
     assert.strictEqual(data.status, 'completed');

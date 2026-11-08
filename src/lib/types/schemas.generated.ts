@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-11-05T09:47:22.658Z
+// Generated at: 2026-11-08T02:40:16.282Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -316,6 +316,8 @@ export const MakegoodRemedySchema = /* @__PURE__ */ (() => (z.union([z.literal("
 export const MarkdownFlavorSchema = /* @__PURE__ */ (() => (z.union([z.literal("commonmark"), z.literal("gfm")])))();
 
 export const MatchIDTypeSchema = /* @__PURE__ */ (() => (z.union([z.literal("hashed_email"), z.literal("hashed_phone"), z.literal("rampid"), z.literal("id5"), z.literal("uid2"), z.literal("euid"), z.literal("pairid"), z.literal("maid"), z.literal("other")])))();
+
+export const MatchKeyUseSchema = /* @__PURE__ */ (() => (z.union([z.literal("audience_include"), z.literal("audience_exclude"), z.literal("frequency_cap"), z.literal("identity_match"), z.literal("conversion_attribution")])))();
 
 export const MatchTypeSchema = /* @__PURE__ */ (() => (z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")])))();
 
@@ -4007,11 +4009,6 @@ export const DemographicTargetingCapabilitySchema = /* @__PURE__ */ (() => (z.ob
     }).passthrough().optional()
 }).passthrough())))();
 
-export const ProductIdentitySchema = /* @__PURE__ */ (() => (z.object({
-    persistent_identifier: z.boolean(),
-    reach_methodology: z.string().min(1).optional()
-}).passthrough()))();
-
 export const ProductCardReferenceAssetSchema = /* @__PURE__ */ (() => (z.object({}).passthrough().merge(z.object({
     role: z.union([z.literal("coverage_map"), z.literal("sample_render"), z.literal("environment_photo"), z.literal("media_kit"), z.literal("logo"), z.literal("sample_content"), z.literal("other")]),
     role_label: z.string().optional(),
@@ -4160,6 +4157,15 @@ export const CustomPricingSchema = /* @__PURE__ */ (() => (z.object({
     currency: z.string().regex(new RegExp("^[A-Z]{3}$")).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough()))();
+
+export const MatchKeySchema = /* @__PURE__ */ (() => (z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
+    uid_type: UIDTypeSchema,
+    vendor: BrandReferenceSchema.optional(),
+    scopes: nonemptyArray(ReachUnitSchema).max(5),
+    uses: nonemptyArray(MatchKeyUseSchema),
+    property_types: nonemptyArray(PropertyTypeSchema).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough())))();
 
 export const EventSourceExecutionRequirementSchema = /* @__PURE__ */ (() => (z.object({
     kind: z.literal("event_source"),
@@ -4672,6 +4678,12 @@ export const SignalTargetingRulesSchema = /* @__PURE__ */ (() => (z.object({
     selection_group_rules: nonemptyArray(SignalSelectionGroupRuleSchema).optional(),
     signal_pricing_group_rules: nonemptyArray(SignalPricingGroupRuleSchema).optional()
 }).passthrough()))();
+
+export const ProductIdentitySchema = /* @__PURE__ */ (() => (z.object({}).passthrough().merge(z.object({
+    persistent_identifier: z.boolean(),
+    reach_methodology: z.string().min(1).optional(),
+    match_keys: nonemptyArray(MatchKeySchema.merge(z.object({}).passthrough())).optional()
+}).passthrough())))();
 
 export const CanonicalAudienceEvidenceSchema = /* @__PURE__ */ (() => (z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
     evidence_id: z.string().min(1),
@@ -21138,6 +21150,7 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
             supported_metrics: z.array(VendorMetricOptimizationSupportedMetricSchema).max(128).optional(),
             supported_targets: z.array(z.union([z.literal("cost_per"), z.literal("threshold_rate")])).optional()
         }).passthrough().optional(),
+        supported_match_keys: z.array(MatchKeySchema).max(64).optional(),
         event_source_archive: z.boolean().optional(),
         conversion_tracking: z.object({
             multi_source_event_dedup: z.boolean().optional(),

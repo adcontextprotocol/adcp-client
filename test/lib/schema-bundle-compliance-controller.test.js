@@ -12,7 +12,7 @@
  *
  * The copy now carries those two documents plus the sibling `compliance/` documents they `$ref`,
  * transitively, per selected version. 3.0.25 and 3.1.31 need only the two entry points; 3.2.8 and
- * 3.3.0-beta.4 publish a request schema that `$ref`s `compliance/task-completion-data.json`,
+ * 3.3.0-beta.5 publish a request schema that `$ref`s `compliance/task-completion-data.json`,
  * which `$ref`s `compliance/get-creative-features-completion.json` — omit either and AJV cannot
  * compile the validator. Nothing outside that closure is packaged.
  *
@@ -130,10 +130,10 @@ describe('shipped schema bundle: comply_test_controller', () => {
     });
   }
 
-  test('3.2.8 and 3.3.0-beta.4 carry the transitive dependency the entry points need', () => {
+  test('3.2.8 and 3.3.0-beta.5 carry the transitive dependency the entry points need', () => {
     // Pins the reason the closure exists rather than a literal two-file allowlist. If a future
     // release drops the dependency this fails loudly instead of silently over-shipping.
-    for (const version of ['3.2.8', '3.3.0-beta.4']) {
+    for (const version of ['3.2.8', '3.3.0-beta.5']) {
       const closure = expectedClosure(version);
       assert.ok(
         closure.has('task-completion-data.json'),
@@ -146,7 +146,7 @@ describe('shipped schema bundle: comply_test_controller', () => {
   });
 
   test('the shipped request schema is usable for real controller payloads', () => {
-    for (const version of ['3.1.31', '3.3.0-beta.4']) {
+    for (const version of ['3.1.31', '3.3.0-beta.5']) {
       const request = getSchemaValidatorByRef('compliance/comply-test-controller-request.json', version, undefined, {
         allErrors: true,
       });
@@ -203,7 +203,7 @@ describe('shipped schema bundle: comply_test_controller', () => {
     // still allowed. Nothing in the controller-touching suites depended on the injection.
     assert.equal(schemaAllowsTopLevelField('comply_test_controller', 'brand', '3.1.31'), false);
     assert.equal(schemaAllowsTopLevelField('comply_test_controller', 'account', '3.1.31'), true);
-    for (const version of ['3.0.25', '3.1.31', '3.2.8', '3.3.0-beta.4']) {
+    for (const version of ['3.0.25', '3.1.31', '3.2.8', '3.3.0-beta.5']) {
       const keys = listValidatorKeys(version);
       assert.ok(keys.includes('comply_test_controller::request'), `${version} request validator not indexed`);
       assert.ok(keys.includes('comply_test_controller::sync'), `${version} response validator not indexed`);

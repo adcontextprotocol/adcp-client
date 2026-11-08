@@ -1,17 +1,17 @@
 # SDK 17 beta adoption
 
-SDK 17 beta adopts the published AdCP `3.3.0-beta.4` protocol bundle and publishes under `beta`. SDK 16 remains the stable AdCP 3.2 line on npm `latest`.
+SDK 17 beta adopts the published AdCP `3.3.0-beta.5` protocol bundle and publishes under `beta`. SDK 16 remains the stable AdCP 3.2 line on npm `latest`.
 
 ## Selected protocol bundle
 
-- Release: [AdCP v3.3.0-beta.4](https://github.com/adcontextprotocol/adcp/releases/tag/v3.3.0-beta.4), published November 5, 2026. It replaces [v3.3.0-beta.3](https://github.com/adcontextprotocol/adcp/releases/tag/v3.3.0-beta.3) (commit `a6106149a2b5c929eec0caa0042adbae4ccf3a9c`), which SDK 17 no longer packages or advertises.
-- Protocol commit: `763c2d759b71ff5b01e68732489ed64762a7590f`.
-- Bundle SHA-256: `3525423d25bce536ccdd1992dbce7fee5bb7642961cda9e68fa03db02a42aabd`.
+- Release: [AdCP v3.3.0-beta.5](https://github.com/adcontextprotocol/adcp/releases/tag/v3.3.0-beta.5), published November 7, 2026. It replaces [v3.3.0-beta.4](https://github.com/adcontextprotocol/adcp/releases/tag/v3.3.0-beta.4) (commit `763c2d759b71ff5b01e68732489ed64762a7590f`), which SDK 17 no longer packages or advertises.
+- Protocol commit: `e096e60c14572b9fee0ba95201642721b06fd8de` (tag `v3.3.0-beta.5`; the release workflow signed the bundle built from its parent, `5ae065826eaeda7a3d7bc72e228833d9ceea1e32`).
+- Bundle SHA-256: `6c716e67b127cde3c85421e0fe798259187937677ea078ce2b27613d929957e2`.
 - Source: the versioned protocol release tarball, verified by SHA-256 and the AdCP release workflow's cosign certificate. No moving branch or PR snapshot is used.
 
 ## SDK changes
 
-The primary pin is `3.3.0-beta.4`, with generated public types, runtime validators, tool metadata and documentation from that bundle. The package retains stable 3.2.8, 3.1.31 and 3.0.25 schemas and compliance corpora. Preview compatibility is exact: `3.3.0-beta.4` and `3.3-beta.4`, without a moving family alias. Moving from beta.3 to beta.4 is a beta-channel break: a beta.3 peer no longer negotiates the preview with this SDK and falls back to a shared stable release. Buyer negotiation requires an exact advertised preview and otherwise uses an available stable release.
+The primary pin is `3.3.0-beta.5`, with generated public types, runtime validators, tool metadata and documentation from that bundle. The package retains stable 3.2.8, 3.1.31 and 3.0.25 schemas and compliance corpora. Preview compatibility is exact: `3.3.0-beta.5` and `3.3-beta.5`, without a moving family alias. Moving from beta.4 to beta.5 is a beta-channel break: a beta.4 peer no longer negotiates the preview with this SDK and falls back to a shared stable release. Buyer negotiation requires an exact advertised preview and otherwise uses an available stable release. The SDK packages one 3.3 preview at a time because betas are not additive over each other.
 
 The HTML-markup `display_tag` mapping from [#3361](https://github.com/adcontextprotocol/adcp-client/pull/3361) is included as a major changeset. `display_html` and `display_WxH_html` project to inline-markup `display_tag`; actual `html5` zip creatives no longer match HTML-markup-only products. Delivery retains seller format identity, filters by delivery type and emits markup through the legacy HTML asset contract. SDK 16 keeps its previous mapping. See the [16 → 17 migration guide](../migration-16-to-17.md).
 
