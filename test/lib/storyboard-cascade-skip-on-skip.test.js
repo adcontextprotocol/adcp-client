@@ -1467,6 +1467,183 @@ describe('runStoryboard cascade-skip controls (no skip occurs)', () => {
   }
 });
 
+describe('runStoryboard cascade-skip: explicit tool prerequisites (adcp#8506)', () => {
+  let agent;
+
+  afterEach(async () => {
+    if (agent) await stopAgent(agent);
+    agent = undefined;
+    await closeMCPConnections().catch(() => {});
+  });
+
+  const dependent = id => step(id, '__test_assert', { requires_tool: '__test_setup' });
+
+  test('an unavailable explicit prerequisite skips same-phase controller peers', async () => {
+    agent = await startFakeAgent();
+    const result = await runWith(
+      agent,
+      storyboardWith([
+        step('discovery', '__test_assert', { stateful: false }),
+        step('setup', '__test_setup'),
+        dependent('audit_directed'),
+        dependent('audit_edited'),
+      ]),
+      ['__test_assert', 'get_adcp_capabilities']
+    );
+
+    assert.strictEqual(result.overall_passed, true);
+    for (const row of result.phases[0].steps.slice(1)) {
+      assert.strictEqual(row.skipped, true);
+      assert.strictEqual(row.passed, true);
+      assert.strictEqual(row.skip_reason, 'missing_tool');
+      assert.match(row.skip.detail, /__test_setup/);
+    }
+  });
+
+  test('an unavailable explicit prerequisite also skips downstream consumers', async () => {
+    agent = await startFakeAgent();
+    const result = await runWith(
+      agent,
+      storyboardWithPhases([
+        {
+          id: 'setup',
+          title: 'setup',
+          steps: [
+            step('discovery', '__test_assert', { stateful: false }),
+            step('seed', '__test_setup'),
+            dependent('peer'),
+          ],
+        },
+        { id: 'observe', title: 'observe', steps: [dependent('audit')] },
+      ]),
+      ['__test_assert', 'get_adcp_capabilities']
+    );
+
+    assert.strictEqual(result.overall_passed, true);
+    const audit = result.phases[1].steps[0];
+    assert.strictEqual(audit.skipped, true);
+    assert.strictEqual(audit.passed, true);
+    assert.strictEqual(audit.skip_reason, 'missing_tool');
+  });
+
+  test('advertised prerequisites keep the setup and both controller peers executable', async () => {
+    agent = await startFakeAgent();
+    const result = await runWith(
+      agent,
+      storyboardWith([step('setup', '__test_setup'), dependent('audit_directed'), dependent('audit_edited')]),
+      ['__test_setup', '__test_assert', 'get_adcp_capabilities']
+    );
+
+    assert.strictEqual(result.overall_passed, true);
+    for (const row of result.phases[0].steps) {
+      assert.strictEqual(row.passed, true);
+      assert.notStrictEqual(row.skipped, true);
+    }
+  });
+
+  test('a real setup failure still blocks a consumer whose prerequisite is advertised', async () => {
+    agent = await startFakeAgent();
+    const result = await runWith(
+      agent,
+      storyboardWith([step('setup', '__test_fail'), step('audit', '__test_assert', { requires_tool: '__test_fail' })]),
+      ['__test_fail', '__test_assert', 'get_adcp_capabilities']
+    );
+
+    assert.strictEqual(result.overall_passed, false);
+    assert.strictEqual(result.phases[0].steps[0].passed, false);
+    const audit = result.phases[0].steps[1];
+    assert.strictEqual(audit.skipped, true);
+    assert.strictEqual(audit.passed, false);
+    assert.strictEqual(audit.skip_reason, 'prerequisite_failed');
+  });
+
+  test('skipping an unavailable prerequisite never clears an earlier real failure', async () => {
+    agent = await startFakeAgent();
+    const result = await runWith(
+      agent,
+      storyboardWith([step('failed', '__test_fail'), step('setup', '__test_setup'), dependent('audit')]),
+      ['__test_fail', '__test_assert', 'get_adcp_capabilities']
+    );
+
+    assert.strictEqual(result.overall_passed, false);
+    assert.strictEqual(result.phases[0].steps[0].passed, false);
+    const audit = result.phases[0].steps[2];
+    assert.strictEqual(audit.skipped, true);
+    assert.strictEqual(audit.passed, true);
+    assert.strictEqual(audit.skip_reason, 'missing_tool');
+  });
+
+  test('non-stateful explicit tool gates keep their existing behavior', async () => {
+    agent = await startFakeAgent();
+    const result = await runWith(
+      agent,
+      storyboardWith([
+        step('setup', '__test_setup'),
+        step('audit', '__test_assert', { requires_tool: '__test_setup', stateful: false }),
+      ]),
+      ['__test_assert', 'get_adcp_capabilities']
+    );
+
+    const audit = result.phases[0].steps[1];
+    assert.strictEqual(audit.skipped, true);
+    assert.strictEqual(audit.passed, true);
+    assert.strictEqual(audit.skip_reason, 'missing_tool');
+  });
+
+  test('an explicit missing controller retains the controller-specific skip reason', async () => {
+    agent = await startFakeAgent();
+    const result = await runWith(
+      agent,
+      storyboardWith([
+        step('discovery', '__test_assert', { stateful: false }),
+        step('setup', '__test_setup'),
+        step('audit', '__test_assert', { requires_tool: 'comply_test_controller' }),
+      ]),
+      ['__test_assert', 'get_adcp_capabilities']
+    );
+
+    assert.strictEqual(result.overall_passed, true);
+    const audit = result.phases[0].steps[2];
+    assert.strictEqual(audit.skipped, true);
+    assert.strictEqual(audit.passed, true);
+    assert.strictEqual(audit.skip_reason, 'missing_test_controller');
+  });
+
+  test('an entirely tool-gated run still cannot pass without executed coverage', async () => {
+    agent = await startFakeAgent();
+    const result = await runWith(agent, storyboardWith([step('setup', '__test_setup'), dependent('audit')]), [
+      '__test_assert',
+      'get_adcp_capabilities',
+    ]);
+
+    assert.strictEqual(result.overall_passed, false);
+    for (const row of result.phases[0].steps) {
+      assert.strictEqual(row.skipped, true);
+      assert.strictEqual(row.passed, true);
+      assert.strictEqual(row.skip_reason, 'missing_tool');
+    }
+  });
+
+  test('an advertised prerequisite does not bypass the called tool advertisement check', async () => {
+    agent = await startFakeAgent();
+    const result = await runWith(
+      agent,
+      storyboardWith([
+        step('setup', '__test_setup'),
+        step('audit', 'comply_test_controller', { requires_tool: '__test_setup' }),
+      ]),
+      ['__test_setup', 'get_adcp_capabilities']
+    );
+
+    assert.strictEqual(result.overall_passed, true);
+    const audit = result.phases[0].steps[1];
+    assert.strictEqual(audit.skipped, true);
+    assert.strictEqual(audit.passed, true);
+    assert.strictEqual(audit.skip_reason, 'missing_tool');
+    assert.match(audit.skip.detail, /comply_test_controller/);
+  });
+});
+
 describe('runStoryboard cascade-skip: parse-time validation', () => {
   let agent;
 
