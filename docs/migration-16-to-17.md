@@ -197,6 +197,21 @@ Under `createTenantRegistry` each tenant's own capabilities decide.
 `create_media_buy` and `update_media_buy` are not checked, because 3.3 withdraws
 the field from their packages.
 
+`mediaBuyActionResolver.resolve()` follows the same rule: it offers
+`update_creative_start_policy` only when you pass `creativeStartPolicy: true`
+with `metadata.update_creative_start_policy`. Without it the action is reported
+unavailable (`not_supported_on_buy`), because the dispatcher would refuse the
+opt-in it advertises. A seller that already offers the action adds the option:
+
+```ts
+mediaBuyActionResolver.resolve({
+  buy,
+  decide,
+  creativeStartPolicy: true,
+  metadata: { update_creative_start_policy: decision },
+});
+```
+
 On the buyer side, `control_media_buy` throws `ProtocolFeatureUnsupportedError`
 before sending when the call targets 3.3 or later and the seller's discovered
 capabilities lack the feature. The error has `code: 'UNSUPPORTED_FEATURE'`, the

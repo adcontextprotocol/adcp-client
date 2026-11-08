@@ -249,6 +249,7 @@ test('seller projection requires its own gates and exact scope, independently fr
   const options = {
     buy: buy({ available_actions: undefined }),
     adcpVersion: VERSION,
+    creativeStartPolicy: true,
     decide() {
       throw new Error('Startup authority must not be fabricated as a change term');
     },
@@ -277,6 +278,42 @@ test('seller projection requires its own gates and exact scope, independently fr
   assert.equal(badRequest.request_assessments[0].status, 'currently_unavailable');
   const stale = api.mediaBuyActionResolver.resolve({ ...options, request: { ...request(), revision: 2 } });
   assert.equal(stale.request_assessments[0].code, 'CONFLICT');
+});
+
+test('seller projection withholds the action unless the seller declares creative_start_policy', () => {
+  const denial = {
+    status: 'currently_unavailable',
+    action: ACTION,
+    reason: 'not_supported_on_buy',
+    certainty: 'blocked',
+    message:
+      'update_creative_start_policy requires media_buy.features.creative_start_policy, which this seller does not declare.',
+  };
+  const options = {
+    buy: buy({ available_actions: undefined }),
+    adcpVersion: VERSION,
+    metadata: { [ACTION]: { ...accept(), applicable_package_ids: ['p1'] } },
+  };
+  const declared = api.mediaBuyActionResolver.resolve({ ...options, creativeStartPolicy: true });
+  assert.deepEqual(declared.available_actions, [entry()]);
+
+  for (const declaration of [{}, { creativeStartPolicy: false }, { creativeStartPolicy: 'true' }]) {
+    const result = api.mediaBuyActionResolver.resolve({ ...options, ...declaration });
+    assert.ok(!result.available_actions?.length, JSON.stringify(declaration));
+    assert.deepEqual(result.unavailable, [denial], JSON.stringify(declaration));
+  }
+
+  const assessed = api.mediaBuyActionResolver.resolve({ ...options, request: request('p1') });
+  assert.ok(!assessed.available_actions?.length);
+  assert.deepEqual(assessed.request_assessments[0], denial);
+  assert.equal(assessed.request_assessments[0].reason, 'not_supported_on_buy');
+
+  const assessedDeclared = api.mediaBuyActionResolver.resolve({
+    ...options,
+    creativeStartPolicy: true,
+    request: request('p1'),
+  });
+  assert.deepEqual(assessedDeclared.available_actions, [entry()]);
 });
 
 test('naming remains operational and creative assignment changes keep sync_creatives routing', () => {
