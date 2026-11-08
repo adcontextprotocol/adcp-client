@@ -153,7 +153,7 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_row_sets (
   row_set_id TEXT COLLATE "C" PRIMARY KEY,
   row_set_kind TEXT NOT NULL CHECK (row_set_kind IN ('revision', 'adjustment')),
   account_id TEXT COLLATE "C" NOT NULL,
-  obligation_id TEXT COLLATE "C" NOT NULL REFERENCES adcp_reporting_obligations(obligation_id),
+  obligation_id TEXT COLLATE "C" NOT NULL,
   format TEXT NOT NULL CHECK (format = 'jsonl'),
   algorithm TEXT NOT NULL CHECK (algorithm = 'adcp_jcs_rows_v1'),
   digest_profile TEXT NOT NULL CHECK (digest_profile IN ('revision_envelope_v1', 'rows_v1')),
@@ -176,6 +176,8 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_row_sets (
   FOREIGN KEY (rows_shared_from_row_set_id, account_id, obligation_id)
     REFERENCES adcp_reporting_row_sets (row_set_id, account_id, obligation_id)
 );
+-- The shared row tables may be written by another SDK with its own core ledger.
+ALTER TABLE adcp_reporting_row_sets DROP CONSTRAINT IF EXISTS adcp_reporting_row_sets_obligation_id_fkey;
 CREATE INDEX IF NOT EXISTS adcp_reporting_row_sets_obligation
   ON adcp_reporting_row_sets (obligation_id, recorded_at, row_set_id);
 CREATE INDEX IF NOT EXISTS adcp_reporting_row_sets_state

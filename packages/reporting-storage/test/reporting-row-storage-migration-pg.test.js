@@ -65,6 +65,34 @@ describe('REPORTING_ROW_STORAGE_MIGRATION', { skip: !DATABASE_URL && 'PostgreSQL
     assert.equal(second.installationId, first.installationId, 'reapplying preserves the installation identity');
   });
 
+  test('fresh and upgraded schemas allow row sets from another SDK', async () => {
+    const foreignKeys = () =>
+      pool.query(
+        `SELECT conname FROM pg_constraint WHERE conrelid = 'adcp_reporting_row_sets'::regclass
+         AND confrelid = 'adcp_reporting_obligations'::regclass AND contype = 'f'`
+      );
+    assert.equal((await foreignKeys()).rowCount, 0, 'fresh DDL does not create the core foreign key');
+    await pool.query(`ALTER TABLE adcp_reporting_row_sets
+      ADD CONSTRAINT adcp_reporting_row_sets_obligation_id_fkey FOREIGN KEY (obligation_id)
+      REFERENCES adcp_reporting_obligations (obligation_id)`);
+    const upgrade = ledger.migrations().find(item => item.version === '0011');
+    assert.ok(upgrade);
+    for (const sql of upgrade.statements()) {
+      await pool.query(sql);
+      await pool.query(sql);
+    }
+    assert.equal((await foreignKeys()).rowCount, 0, 'the forward migration removes the legacy key');
+    await insertBinding(pool, 'other-sdk');
+    await pool.query(
+      `INSERT INTO adcp_reporting_row_sets
+      (row_set_id, row_set_kind, account_id, obligation_id, format, algorithm, digest_profile,
+       content_sha256, content_size_bytes, row_count, row_manifest_sha256, chunk_count, row_binding_id)
+      VALUES ('other-sdk-row', 'revision', 'other-account', 'other-obligation', 'jsonl',
+       'adcp_jcs_rows_v1', 'rows_v1', $1, 1, 0, $1, 0, 'other-sdk')`,
+      ['a'.repeat(64)]
+    );
+  });
+
   test('enforces immutability and digest checks', async () => {
     await pool.query(
       `INSERT INTO adcp_reporting_configurations

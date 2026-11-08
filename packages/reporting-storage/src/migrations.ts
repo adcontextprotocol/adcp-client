@@ -140,6 +140,12 @@ const MIGRATIONS: readonly Migration[] = Object.freeze([
     "Widens row_binding_id to AdCP's 255-character identifier bound (was 128). Guarded, so a current schema is untouched; no data changes.",
     [REPORTING_ROW_BINDING_ID_BOUND_MIGRATION]
   ),
+  migration(
+    '0011',
+    'reporting_row_sets_drop_obligation_fk',
+    'Remove the JavaScript core-ledger foreign key from shared row sets so other SDKs can write them.',
+    ['ALTER TABLE adcp_reporting_row_sets DROP CONSTRAINT IF EXISTS adcp_reporting_row_sets_obligation_id_fkey']
+  ),
 ]);
 
 const TABLE = `CREATE TABLE IF NOT EXISTS adcp_schema_migrations (
