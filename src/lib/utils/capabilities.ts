@@ -80,6 +80,12 @@ export interface MediaBuyFeatures {
   conversionTracking?: boolean;
   /** Agent supports first-party CRM audience management (sync_audiences) */
   audienceTargeting?: boolean;
+  /**
+   * AdCP 3.3: seller honors `packages[].start_requires_all_creatives_approved:
+   * true` on `control_media_buy`. Without it, sellers refuse `true` with
+   * `UNSUPPORTED_FEATURE` and buyers must not send it. Absent means undeclared.
+   */
+  creativeStartPolicy?: boolean;
 }
 
 /**
@@ -681,6 +687,9 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     contentStandards: response.media_buy?.features?.content_standards === true || declaresContentStandardsSpecialism,
     conversionTracking: response.media_buy?.features?.conversion_tracking ?? false,
     audienceTargeting: response.media_buy?.features?.audience_targeting ?? false,
+    ...(typeof response.media_buy?.features?.creative_start_policy === 'boolean' && {
+      creativeStartPolicy: response.media_buy.features.creative_start_policy,
+    }),
   };
 
   let account: AccountCapabilities | undefined;
@@ -975,6 +984,7 @@ const FEATURE_KEY_MAP: Record<string, keyof MediaBuyFeatures> = {
   conversion_tracking: 'conversionTracking',
   audience_targeting: 'audienceTargeting',
   audience_management: 'audienceTargeting', // legacy alias
+  creative_start_policy: 'creativeStartPolicy',
 };
 
 /**

@@ -1,0 +1,7 @@
+---
+'@adcp/sdk': minor
+---
+
+Enforce the AdCP 3.3 creative start policy on `control_media_buy` (#3649). A seller whose capabilities do not declare `media_buy.features.creative_start_policy: true` now refuses `packages[].start_requires_all_creatives_approved: true` before the handler runs and before the idempotency lookup: `UNSUPPORTED_FEATURE`, `recovery: 'correctable'`, `field` naming the first opted-in package, `details: { feature, fields }` listing every one, and `mutation_outcome: 'not_applied'`. The gate applies when the server's release is 3.3 or later; `false` and omission always reach the handler. **This breaks sellers that honored `true` without declaring the feature:** declare it with `capabilities.features.creativeStartPolicy: true` (new, also on `createAdcpServerFromPlatform`) or `capabilities.overrides.media_buy.features.creative_start_policy`.
+
+The client refuses the same request locally (`ProtocolFeatureUnsupportedError`, `code: 'UNSUPPORTED_FEATURE'`, same `field` and `details`, nothing sent) when its discovered capabilities for a 3.3 call lack the feature, and sends it when capabilities are synthetic or unknown. `MediaBuyFeatures.creativeStartPolicy` and `client.supports('creative_start_policy')` read the declaration; `adcpError()` accepts `mutation_outcome`. `create_media_buy` and `update_media_buy` are not gated: AdCP 3.3 withdraws the field from their packages. Matches adcp-client-python#1872 and #1878.

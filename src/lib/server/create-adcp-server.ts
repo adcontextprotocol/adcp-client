@@ -94,6 +94,11 @@ import {
   resolveAdcpVersion,
 } from '../utils/adcp-version-config';
 import { reportingSubscriptionReleaseFieldsV1 } from './reporting-subscription-release';
+import {
+  creativeStartPolicyOptInFields,
+  declaresCreativeStartPolicy,
+  undeclaredCreativeStartPolicyRefusal,
+} from '../media-buy/creative-start-policy';
 import { ConfigurationError } from '../errors';
 import {
   getValidator,
@@ -5608,6 +5613,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   const adcpVersion = resolveAdcpVersion(
     configuredAdcpVersion ?? (config.identity33 ? '3.3' : config.proposalNegotiation ? ADCP_VERSION : undefined)
   );
+  // Handlers see requests in this release, so 3.3 seller rules key off it.
+  const handlerRunsAdcp33 = isAdcpVersionAtLeast(adcpVersion, '3.3.0-beta.0');
   const toolVersionRanges = parseToolVersionRanges(config.toolVersions);
   const toolAvailableForRelease = (toolName: string, release: string): boolean =>
     toolIsAvailableInRelease(toolVersionRanges, toolName, release);
@@ -7736,6 +7743,25 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         }
 
+        // AdCP 3.3: a seller without media_buy.features.creative_start_policy
+        // MUST refuse an opted-in package before mutation (#3649). Runs
+        // whatever the validation mode, and before the replay lookup so a
+        // cached response never answers it. Handlers see the server's release,
+        // so the gate applies when that release is 3.3 or later. `false` and
+        // omission pass without reading capabilities. The declaration is this
+        // server's own capabilities (per tenant under createTenantRegistry).
+        if (toolName === 'control_media_buy' && handlerRunsAdcp33) {
+          const optedIn = creativeStartPolicyOptInFields(params);
+          if (optedIn.length > 0 && !declaresCreativeStartPolicy(capabilitiesData)) {
+            return finalize(
+              adcpError('UNSUPPORTED_FEATURE', {
+                ...undeclaredCreativeStartPolicyRefusal(optedIn),
+                mutation_outcome: 'not_applied',
+              })
+            );
+          }
+        }
+
         // --- idempotency_key shape gate (runs even in disabled mode) ---
         // Defense-in-depth against buyers that bypass MCP schema
         // validation (different transport, bespoke client) AND against
@@ -9584,6 +9610,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         content_standards: capConfig?.features?.contentStandards ?? false,
         conversion_tracking: capConfig?.features?.conversionTracking ?? false,
         audience_targeting: capConfig?.features?.audienceTargeting ?? false,
+        ...(capConfig?.features?.creativeStartPolicy !== undefined && {
+          creative_start_policy: capConfig.features.creativeStartPolicy,
+        }),
       },
       ...(capConfig?.portfolio && { portfolio: capConfig.portfolio }),
     };
