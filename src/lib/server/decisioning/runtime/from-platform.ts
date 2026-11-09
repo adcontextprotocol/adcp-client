@@ -4001,17 +4001,19 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           rawInput: Record<string, unknown>,
           extra: { authInfo?: ResolvedAuthInfo; readonly servedAdcpVersion?: string } | undefined
         ) => {
-          // Hidden-controller gate before parsing, on the raw arguments the
-          // tools/call visibility gate also sees, so a principal that cannot
-          // see the controller learns nothing about its schema. It can only
-          // deny: visibility is decided again below on the parsed value.
-          if (!(await resolveComplyControllerVisible(extra, 'comply_test_controller', rawInput))) {
-            throw new McpError(ErrorCode.MethodNotFound, 'Method not found');
-          }
           // Parse exactly once. Every decision below, and the controller,
           // reads the parsed value; none reads `rawInput` again.
           const parsed = await parseDeclaredToolInput(mcp, controller.toolDefinition.name, rawInput);
-          if (!parsed.success) return parsed.response;
+          if (!parsed.success) {
+            // A principal that cannot see the controller learns nothing about
+            // its schema: the rejection is MethodNotFound, as for a valid
+            // call. There is no parsed value, so this deny-only check reads
+            // the raw arguments, as the tools/call visibility gate does.
+            if (!(await resolveComplyControllerVisible(extra, 'comply_test_controller', rawInput))) {
+              throw new McpError(ErrorCode.MethodNotFound, 'Method not found');
+            }
+            return parsed.response;
+          }
           const input = parsed.data as Record<string, unknown>;
           const callerContext = isPlainObject(rawInput) ? rawInput.context : undefined;
           const reject = (response: McpToolResponse): McpToolResponse =>
