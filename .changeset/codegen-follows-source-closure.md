@@ -9,6 +9,7 @@ Before, the generator required `additionalProperties: false` on the `get_reporti
 - the reporting evidence schemas, such as `ReportingCoverage`, `ReportingReceipt` and `ReportingVerification`
 - `ReportingConsumerStatus` and its `period`, and the `sync_reporting_status` request
 - the Trusted Match `TMPXChunk`, `TMPProviderRegistration` and `PublisherTMPXMacroMapping` schemas, and the router `tmpx_providers` entries
+- `TargetingKvs`, which was closed only because the context-match request pass also rewrote the export that follows it
 - `CompatibilityPurchaseCoordinatorInput`
 
 Each of these is now strict only while its source closes it, and passes unknown keys through once the source opens it. Objects the source still closes keep their strict behaviour, including the Trusted Match request privacy boundaries, the placement presentation document and the canonical metric qualifier. Generated output for the current 3.3.0-beta.5 bundle is unchanged.
