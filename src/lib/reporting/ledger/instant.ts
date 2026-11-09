@@ -57,6 +57,19 @@ export function compareReportingInstantToOffset(value: string, base: string, off
   return delta.units < offset ? -1 : delta.units > offset ? 1 : 0;
 }
 
+/**
+ * `base` plus `offsetMilliseconds`, keeping every fractional digit of `base`. Going through `Date` would floor a
+ * sub-millisecond instant and land the result before the exact boundary.
+ */
+export function addReportingInstantOffset(base: string, offsetMilliseconds: number): string {
+  const parsed = parseReportingInstant(base);
+  const scale = Math.max(3, parsed.fraction.length);
+  const units = scaledValue(parsed, scale) + durationUnits(offsetMilliseconds, scale);
+  const unit = 10n ** BigInt(scale);
+  const wholeSecond = new Date(Number(units / unit) * 1_000).toISOString().replace('.000Z', '');
+  return `${wholeSecond}.${(units % unit).toString().padStart(scale, '0')}Z`;
+}
+
 export function reportingInstantHasDuration(start: string, end: string, durationMilliseconds: number): boolean {
   const delta = difference(end, start);
   return delta.units === durationUnits(durationMilliseconds, delta.scale);

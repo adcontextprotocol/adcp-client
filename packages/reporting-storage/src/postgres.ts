@@ -73,6 +73,8 @@ import type {
   ReportingManagedLifecycleProjectionV1,
   ReportingLedgerAuthorityV1,
   ReportingConsumerMismatchEscalationV1,
+  ReportingIssueEventLeaseV1,
+  ReportingIssueEventStoreV1,
 } from '@adcp/sdk/reporting/ledger';
 import {
   ReportingChangeCursorExpiredError,
@@ -82,6 +84,18 @@ import {
   type ReportingChangeKindV1,
   type ReportingChangesPageV1,
 } from './change-feed';
+import {
+  claimOn,
+  completeOn,
+  databaseInstantOn,
+  escalateObligationOn,
+  escalationCandidatesOn,
+  issueEventStorageOn,
+  pruneOn,
+  releaseOn,
+  settleIssueChainOn,
+  settleIssueObligationOn,
+} from './issue-events';
 import type { ReportingRowObjectListEntryV1 } from './row-storage-object';
 import {
   ReportingRowStorageV1,
@@ -659,12 +673,19 @@ export async function sweepExpiredReportingLedgerState(
 /**
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
-export class PostgresReportingLedgerStore implements ReportingLedgerStore {
+export class PostgresReportingLedgerStore implements ReportingLedgerStore, ReportingIssueEventStoreV1 {
   /**
    * The ledger migration, which `createReliableReportingService` surfaces as `service.setup.migrations`.
    * The row-storage and change-feed migrations are separate exports, applied when those options are on.
    */
   readonly migrations: readonly string[] = Object.freeze([REPORTING_LEDGER_MIGRATION]);
+  /**
+   * This store records issue-lifecycle events and serves them to the issue observer (adcp-client#3648).
+   * `issueEventsReady()` says whether migration `0012` installed their table; until it has, writes record none.
+   */
+  readonly issueEventsSupported = true as const;
+  /** Set once the outbox table is seen; a table is never uninstalled under a running store. */
+  private issueEventsInstalled = false;
   /**
    * Exposed so `createReportingStatusHandler` can inherit it and refuse a
    * disagreement. The store applies `health` while building the snapshot and
@@ -1375,22 +1396,25 @@ ${managedDueArm}       )
         generation: lease.generation,
       },
       revisionLegacyCanonicalDigestReplay,
-      prepared || port || this.changeFeed
-        ? async (client, committed) => {
-            if (prepared) await this.writePreparedRowSet(client, prepared, upload);
-            await this.appendChange(
-              client,
-              'revision',
-              lease.obligation.account.account_id,
-              revision.reporting_revision_id,
-              revision.reporting_obligation_id
-            );
-            await port?.recordLedgerChanged!(
-              { obligation: lease.obligation, revision: withRows(committed, revision.rows) },
-              client
-            );
-          }
-        : undefined
+      async (client, committed) => {
+        if (prepared) await this.writePreparedRowSet(client, prepared, upload);
+        await this.appendChange(
+          client,
+          'revision',
+          lease.obligation.account.account_id,
+          revision.reporting_revision_id,
+          revision.reporting_obligation_id
+        );
+        await port?.recordLedgerChanged!(
+          { obligation: lease.obligation, revision: withRows(committed, revision.rows) },
+          client
+        );
+        // A restatement can make a consumer's leaf conflict (or anchor one filed before any revision), or
+        // clear one. Recorded under the account lock this commit holds.
+        if (await this.issueEventsOn(client)) {
+          await settleIssueObligationOn(client, revision.reporting_obligation_id, await databaseInstantOn(client));
+        }
+      }
     );
     return { inserted: result.inserted, value: withRows(result.value, revision.rows) };
   }
@@ -3950,6 +3974,8 @@ ${managedDueArm}       )
               value.recorded_at,
             ]
           );
+          // The new leaf may open a mismatch, and the leaf it superseded resolves.
+          if (await this.issueEventsOn(client)) await settleIssueChainOn(client, value, chainKey);
           results.push({ inserted: true, value: clone(value) });
           storedResults.push({ kind: 'recorded', id: status.reporting_status_id });
           remainingStatements -= 1;
@@ -4041,6 +4067,92 @@ ${managedDueArm}       )
       [obligationId]
     );
     return result.rows.map(row => clone(row.data));
+  }
+
+  // -- issue events (adcp-client#3648) -----------------------------------------
+  //
+  // A transactional outbox of issue-lifecycle transitions for the seller's issue observer: see
+  // `./issue-events` and `@adcp/sdk/reporting/ledger`'s `ReportingIssueEventStoreV1`.
+
+  private async issueEventsOn(client: ReportingLedgerTransactionV1): Promise<boolean> {
+    if (!this.issueEventsInstalled) this.issueEventsInstalled = await issueEventStorageOn(client);
+    return this.issueEventsInstalled;
+  }
+
+  /** Whether migration `0012` installed the issue-event outbox. Install it with `npx adcp-reporting-storage migrate`. */
+  async issueEventsReady(): Promise<boolean> {
+    if (!this.issueEventsInstalled) this.issueEventsInstalled = await issueEventStorageOn(this.pool);
+    return this.issueEventsInstalled;
+  }
+
+  async sweepIssueEscalations(input: {
+    escalationSeconds: number;
+    accountId?: string;
+    limit?: number;
+  }): Promise<number> {
+    const limit = input.limit ?? 100;
+    if (!Number.isSafeInteger(input.escalationSeconds) || input.escalationSeconds < 0) {
+      throw new RangeError('escalationSeconds must be a non-negative integer');
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError('limit must be a positive integer');
+    if (!(await this.issueEventsReady())) return 0;
+    const candidates = await escalationCandidatesOn(this.pool, {
+      escalationSeconds: input.escalationSeconds,
+      ...(input.accountId !== undefined ? { accountId: input.accountId } : {}),
+      limit,
+    });
+    let recorded = 0;
+    for (const candidate of candidates) {
+      // Each candidate in its own transaction under its account lock, like the writes that record events.
+      recorded += await this.transaction(
+        client => escalateObligationOn(client, candidate.obligationId, input.escalationSeconds),
+        { preBeginAdvisoryLock: accountLock(candidate.accountId) }
+      );
+    }
+    return recorded;
+  }
+
+  async claimIssueEvents(input: {
+    leaseMilliseconds: number;
+    limit: number;
+    accountId?: string;
+  }): Promise<ReportingIssueEventLeaseV1[]> {
+    if (!Number.isSafeInteger(input.leaseMilliseconds) || input.leaseMilliseconds < 1) {
+      throw new RangeError('leaseMilliseconds must be a positive integer');
+    }
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1) throw new RangeError('limit must be a positive integer');
+    if (!(await this.issueEventsReady())) return [];
+    return this.transaction(client =>
+      claimOn(client, {
+        leaseMilliseconds: input.leaseMilliseconds,
+        limit: input.limit,
+        leaseToken: randomUUID(),
+        ...(input.accountId !== undefined ? { accountId: input.accountId } : {}),
+      })
+    );
+  }
+
+  async completeIssueEvent(lease: ReportingIssueEventLeaseV1): Promise<boolean> {
+    return completeOn(this.queryable(), lease);
+  }
+
+  async releaseIssueEvent(
+    lease: ReportingIssueEventLeaseV1,
+    input: { retryAfterMilliseconds: number }
+  ): Promise<boolean> {
+    return releaseOn(this.queryable(), lease, input.retryAfterMilliseconds);
+  }
+
+  async pruneIssueEvents(input: { olderThanMilliseconds: number; limit?: number }): Promise<number> {
+    const limit = input.limit ?? 1_000;
+    if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError('limit must be a positive integer');
+    if (!(await this.issueEventsReady())) return 0;
+    return pruneOn(this.queryable(), { olderThanMilliseconds: input.olderThanMilliseconds, limit });
+  }
+
+  /** The pool, with database failures wrapped the way every other store read wraps them. */
+  private queryable(): Pick<ReportingLedgerTransactionV1, 'query'> {
+    return { query: (sql, params) => this.query(sql, params) };
   }
 
   /**

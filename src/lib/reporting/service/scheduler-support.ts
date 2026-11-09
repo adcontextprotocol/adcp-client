@@ -112,7 +112,7 @@ export interface ReportingSchedulerReportingOptionsV1 {
 
 /** Where in the scheduler loop a failure happened. */
 export interface ReportingSchedulerFailureSiteV1 {
-  readonly phase: 'roster' | 'cycle' | 'maintenance';
+  readonly phase: 'roster' | 'cycle' | 'maintenance' | 'issue_observer';
   readonly accountId?: string | undefined;
 }
 
@@ -148,9 +148,11 @@ export function warnReportingSchedulerFailure(
       ? 'could not resolve its account roster, so this pass ran no tenants'
       : site.phase === 'maintenance'
         ? 'ledger maintenance failed; the scheduler continues'
-        : site.accountId === undefined
-          ? 'deployment-wide cycle failed; the scheduler continues'
-          : `cycle failed for account ${site.accountId}; later tenants continue`;
+        : site.phase === 'issue_observer'
+          ? `issue event delivery failed${site.accountId === undefined ? '' : ` for account ${site.accountId}`}; the event is retried`
+          : site.accountId === undefined
+            ? 'deployment-wide cycle failed; the scheduler continues'
+            : `cycle failed for account ${site.accountId}; later tenants continue`;
   const observed =
     observerError === undefined
       ? ''

@@ -20,4 +20,5 @@ export * from './object-writes';
 export * from './change-feed';
 export * from './maintenance';
 export * from './migrations';
+export { REPORTING_ISSUE_EVENTS_MIGRATION } from './issue-events';
 export * from './storage';

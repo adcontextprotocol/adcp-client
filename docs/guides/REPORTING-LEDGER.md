@@ -2479,3 +2479,119 @@ The repository-only fixture at
 23/25-hour cases,
 a calendar-month boundary, and the obligation-missing path with no invented
 obligation ID.
+
+### Observe consumer-status mismatches: `issueObserver`
+
+A `CONSUMER_STATUS_MISMATCH` is caller-scoped: only the buyer whose
+`sync_reporting_status` statement caused it sees it in `get_reporting_status`.
+To hear about one without waiting for that buyer to poll, pass an
+`issueObserver` (adcp-client#3648, the Python SDK's `issue_observer`):
+
+```ts
+import { createReliableReportingService, type ReportingIssueEventV1 } from '@adcp/sdk/reporting/service';
+
+async function onIssue(event: ReportingIssueEventV1) {
+  // Delivery is at least once: deduplicate on event.eventId.
+  if (event.kind === 'resolved') return alerts.close(event.issueId, { dedupeKey: event.eventId });
+  if (event.issue && event.issue.responsibleParty !== 'buyer') {
+    await alerts.open(event.issueId, {
+      dedupeKey: event.eventId,
+      escalated: event.kind === 'escalated',
+      action: event.issue.recommendedAction,
+    });
+  }
+}
+
+const reporting = createReliableReportingService({
+  storage, // memoryStorage(), or postgresStorage({ pool }) with migration 0012 applied
+  resolveConsumerId,
+  consumerMismatchEscalation: {
+    escalationSeconds: 4 * 3_600,
+    operationsContact: { email: 'reporting-ops@seller.example' },
+  },
+  issueObserver: onIssue,
+  // ...adapters, contact, resolveSource, resolveCurrency, resolveCoverage, windows
+});
+reporting.start({ intervalMilliseconds: 60_000, deploymentWide: true, onError: reportToSentry });
+```
+
+**When it is called.** Once per lifecycle transition of a mismatch occurrence:
+
+| `event.kind` | The transition | Recorded |
+| --- | --- | --- |
+| `opened` | A consumer's current statement started to conflict with the seller's record: a negative statement landed, or a restatement made a `received` statement stale. | In the same transaction as that `sync_reporting_status` write or revision commit. |
+| `escalated` | An open occurrence passed `openedAt` plus `consumerMismatchEscalation.escalationSeconds`, where the issue turns `action_required` with a `contact_*` action. | By `runCycle`'s sweep, which settles the obligation first so a cleared condition resolves instead. |
+| `resolved` | The statement that caused it is no longer the consumer's current leaf (the buyer superseded it), or it no longer conflicts. | In the same transaction as the write that cleared it. |
+
+An occurrence follows the read path's own projection, with one difference: while the seller's own
+projection is degraded, `get_reporting_status` publishes the seller's issue instead of the mismatch,
+but the disagreement still stands, so the occurrence stays open (and can escalate). An occurrence
+needs at least one revision; a statement filed before the first one opens when it commits.
+
+The kind union also has `acknowledged` and `waived`, the Python SDK's operator transitions
+(`set_issue_state`). **No TypeScript store emits them yet**: the TypeScript ledger has no operator
+issue-state API.
+
+**Delivery needs `runCycle`.** The ledger records `opened` and `resolved` with the writes, but the
+observer runs only on `runCycle` (`start()`, or your own scheduler), after the worker: it sweeps
+escalations, then delivers committed events, each occurrence's in recording order with at most one
+leased at a time. Without `runCycle` events are recorded but the observer is never called, and
+`escalated` is never recorded. The Python SDK is the same: its worker turn does both.
+
+**At least once.** An occurrence is `(issueId, consumerId)`: the `issueId` that `get_reporting_status`
+publishes names the obligation and the causing `reporting_status_id` but not the consumer, and two
+consumers may reuse one status id. Each transition is recorded exactly once, even when replicas make it
+together (`(issueId, consumerId, kind)` is unique). A cycle that stops after the observer returned but
+before the event was marked delivered delivers it again. Every delivery carries the same `eventId`,
+`"rpie_" + sha256(canonical_json_utf8_v1(["reporting-issue-event-v1", issueId, consumerId, kind])).hex()[:40]`
+(`reportingIssueEventIdV1`). That is the Python SDK's scheme with the consumer added: Python's `issue_id` is
+already consumer-scoped, so it hashes `[tag, issue_id, kind]`. An exact retry of `sync_reporting_status`
+(`unchanged`) and status reads record nothing.
+
+**Failures never reach the buyer.** An observer that throws, or an async one past 10 seconds, is
+retried on a later cycle after a backoff of 30 seconds doubling to one hour, with no limit;
+`event.attempt` counts deliveries. The failure is handed to the scheduler's `onError` as a
+`ReportingIssueObserverError` (`component: 'issue_observer'`, with `eventId`; `issue_events` when the
+sweep or claim failed; `issue_events:snapshot` when the evidence could not be read, which is retried
+rather than delivered unrendered) and returned in `runCycle(...).issueEvents.errors`.
+
+**The event.** `eventId`, `kind`, `occurredAt` (the issue's `openedAt`, the escalation boundary, or when
+it resolved), `accountId`, `consumerId`, `principal` (for a subscription obligation, on every kind including `resolved`, while the obligation is retained; omitted once retention removed it), `issueId`,
+`reportingObligationId`, `reportingStatusId`, `attempt`, and `issue`: the `ReportingLedgerIssueV1`
+`get_reporting_status` showed `consumerId` at `occurredAt` (`responsibleParty`, `recommendedAction`,
+`severity`, `openedAt`). It is `null` for `resolved`, while the seller's own projection suppressed the
+mismatch at that instant, and when the evidence is no longer retained. Rendering is best effort and
+leaves Managed Delivery out.
+
+**Storage.** `memoryStorage()` records issue events. On PostgreSQL, `@adcp/reporting-storage` needs
+migration `0012 reporting_issue_events` (`npx adcp-reporting-storage migrate`): one new table and its
+indexes, additive, so workers of an earlier release keep running beside it (they record no events for
+their own writes). Until it is applied, writes record nothing, `postgresStorage().checkSchema()` names
+`0012` as pending, and a store constructed directly refuses `issueObserver` at its first cycle. The
+service refuses `issueObserver` at construction against a store that does not record issue events.
+Retention prunes only closed occurrences: resolved, every event delivered more than seven days ago, and
+unable to be derived again because the causing statement is no longer the consumer's current leaf or the
+obligation is gone. An open occurrence is never pruned, however long ago its events were delivered: the
+outbox is also the record of which occurrences are open, which a later supersession resolves and the sweep
+escalates. A resolved occurrence whose statement is still current is kept too, as the anchor that stops a
+later write recording its delivered events again under the same `eventId`.
+
+**Production service.** `createPostgresReliableReportingProductionService` (`@adcp/reporting-storage/service`)
+takes `issueObserver` too: it passes it to the core service whose `runCycle` and `start()` it drives, and
+adds `REPORTING_ISSUE_EVENTS_MIGRATION` to `service.setup.migrations` when it is set. The Python SDK adds the
+same in adcp-client-python#1873.
+
+Composing the ledger without the service? Run
+`createReportingIssueEventDispatcherV1({ store, observer, escalation }).runOnce({ accountId })` on your
+own schedule.
+
+**Known gaps against the Python SDK.**
+- `acknowledged` and `waived` are never emitted (no operator issue-state API).
+- A seller-side change never clears a TypeScript mismatch: the read projection only stops conflicting
+  when the buyer supersedes its statement, while Python's `consumer_statement_conflicts` also clears
+  `content_mismatch`, `revision_missing` and `unreadable` on the seller's own record change
+  ([#3653](https://github.com/adcontextprotocol/adcp-client/issues/3653)). `commitRevision` already
+  records `resolved` when the projection stops conflicting, so events follow once that is fixed.
+- The issue id is per causing statement, not per chain occurrence, so a TypeScript and a Python seller
+  publish different `issueId`s (and therefore `eventId`s) for the same disagreement, and the TypeScript
+  `eventId` also hashes the consumer. Observers should not compare ids across SDKs.
