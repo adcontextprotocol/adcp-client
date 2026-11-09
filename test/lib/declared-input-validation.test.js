@@ -601,7 +601,7 @@ async function establishedPrincipal() {
 }
 
 /** Call `get_products` (a custom tool here) as the established principal over a real MCP client. */
-async function callAsEstablishedPrincipal(actionSchema, args) {
+async function callAsEstablishedPrincipal(actionSchema, args, via = 'mcp') {
   const { authInfo, authorize, state } = await establishedPrincipal();
   assert.equal(state, 'identity-established');
   let finalized = 0;
@@ -624,6 +624,10 @@ async function callAsEstablishedPrincipal(actionSchema, args) {
   });
   const sdk = getSdkServer(server);
   wrapSdkRequestHandler(sdk, 'tools/call', (orig, req, extra) => orig(req, { ...extra, authInfo }));
+  if (via === 'invoke') {
+    const result = await server.invoke({ toolName: 'get_products', args, authInfo });
+    return { result, finalized: () => finalized };
+  }
   const client = await connect(server);
   const result = await client.callTool({ name: 'get_products', arguments: args });
   return { result, finalized: () => finalized };
@@ -649,6 +653,31 @@ describe('identity authorization runs on the PARSED value', () => {
     assert.equal(result.isError, true, JSON.stringify(result));
     assert.equal(result.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
     assert.deepEqual(result.structuredContent.context, { trace: 'auth-trim' });
+    assert.equal(finalized(), 0, 'handler must not run');
+  });
+});
+
+describe('identity authorization runs on the PARSED value (invoke())', () => {
+  it('a schema default cannot change what authorization approved (.default("finalize"))', async () => {
+    const { result, finalized } = await callAsEstablishedPrincipal(
+      z.literal('finalize').default('finalize'),
+      { refine: {}, context: { trace: 'inv-auth-default' } },
+      'invoke'
+    );
+    assert.equal(result.isError, true, JSON.stringify(result));
+    assert.equal(result.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
+    assert.deepEqual(result.structuredContent.context, { trace: 'inv-auth-default' });
+    assert.equal(finalized(), 0, 'handler must not run');
+  });
+
+  it('a schema transform cannot change what authorization approved (trim + pipe)', async () => {
+    const { result, finalized } = await callAsEstablishedPrincipal(
+      z.string().trim().pipe(z.literal('finalize')),
+      { refine: { action: 'finalize ' } },
+      'invoke'
+    );
+    assert.equal(result.isError, true, JSON.stringify(result));
+    assert.equal(result.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
     assert.equal(finalized(), 0, 'handler must not run');
   });
 });
@@ -898,6 +927,71 @@ describe('platform tools: rejection context and visibility', () => {
     } finally {
       if (saved === undefined) delete process.env.ADCP_SANDBOX;
       else process.env.ADCP_SANDBOX = saved;
+    }
+  });
+
+  it('comply_test_controller over invoke(): a principal that cannot see it gets MethodNotFound, not a schema error', async () => {
+    const saved = process.env.ADCP_SANDBOX;
+    delete process.env.ADCP_SANDBOX;
+    try {
+      // Same fixture as the MCP case (no principal account, no sandbox bridge).
+      // invoke() calls the registered handler directly, so the outer tools/call
+      // visibility wrapper never runs: only the parse-failure branch decides.
+      const server = build(async () => null);
+      let outcome;
+      try {
+        outcome = {
+          value: await server.invoke({
+            toolName: 'comply_test_controller',
+            args: { context: { trace: 'hidden' } },
+            authInfo: { token: 't', clientId: 'c', scopes: [] },
+          }),
+        };
+      } catch (err) {
+        outcome = { err };
+      }
+      assert.ok(outcome.err, `expected a throw, got ${JSON.stringify(outcome.value)}`);
+      assert.equal(
+        outcome.err.code,
+        -32601,
+        `expected MethodNotFound, got ${outcome.err.code}: ${outcome.err.message}`
+      );
+    } finally {
+      if (saved === undefined) delete process.env.ADCP_SANDBOX;
+      else process.env.ADCP_SANDBOX = saved;
+    }
+  });
+
+  describe('comply echo is capped at 8 KiB (custom tools are not)', () => {
+    const small = { trace: 'small' };
+    const big = { blob: 'x'.repeat(9000) };
+    const parseFailure = context => ({ context }); // scenario/account missing
+    const rejectPath = context => ({
+      scenario: 'force_creative_status',
+      params: { creative_id: 'cr_1', status: 'approved' },
+      account: { account_id: 'x', brand: { domain: 'b.example' } },
+      context,
+    });
+    for (const [label, makeArgs, message] of [
+      ['parse failure (INVALID_REQUEST)', parseFailure, undefined],
+      ['reject() path ("Invalid account_id reference")', rejectPath, /Invalid account_id reference/],
+    ]) {
+      it(`${label}: a small context is echoed`, async () => {
+        const client = await connect(build(resolveAny));
+        const result = await client.callTool({ name: 'comply_test_controller', arguments: makeArgs(small) });
+        assert.equal(result.isError, true, JSON.stringify(result));
+        assert.equal(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+        if (message) assert.match(result.structuredContent.adcp_error.message, message);
+        assert.deepEqual(result.structuredContent.context, small);
+      });
+      it(`${label}: a context over 8 KiB is NOT echoed`, async () => {
+        const client = await connect(build(resolveAny));
+        const result = await client.callTool({ name: 'comply_test_controller', arguments: makeArgs(big) });
+        assert.equal(result.isError, true, JSON.stringify(result).slice(0, 300));
+        assert.equal(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+        if (message) assert.match(result.structuredContent.adcp_error.message, message);
+        assert.equal(result.structuredContent.context, undefined);
+      });
     }
   });
 

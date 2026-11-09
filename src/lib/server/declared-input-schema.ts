@@ -167,11 +167,16 @@ export type DeclaredInputParseResult = { success: true; data: unknown } | { succ
  * authorized. Failure carries an `INVALID_REQUEST` response with `field`
  * naming the first failing path, the field-level `issues`, and the caller's
  * `context` echoed. A tool without a declared schema passes `args` through.
+ *
+ * `options.echoContext` maps the caller's `context` before it is echoed, so
+ * a tool that bounds its echoes (the platform `comply_test_controller` caps
+ * them at 8 KiB) bounds this one too.
  */
 export async function parseDeclaredToolInput(
   server: McpServer,
   name: string,
-  args: unknown
+  args: unknown,
+  options: { echoContext?: (context: unknown) => unknown } = {}
 ): Promise<DeclaredInputParseResult> {
   const state = states.get(server);
   const declared = state?.schemas.get(name);
@@ -187,7 +192,8 @@ export async function parseDeclaredToolInput(
   });
   // No parsed value exists, so the release that labels this error is read
   // from the caller's arguments. Nothing runs on it.
-  const context = isPlainObject(input) ? input.context : undefined;
+  const callerContext = isPlainObject(input) ? input.context : undefined;
+  const context = options.echoContext ? options.echoContext(callerContext) : callerContext;
   return {
     success: false,
     response: finishDeclaredInputRejection(server, name, adcpError('INVALID_REQUEST', payload), {

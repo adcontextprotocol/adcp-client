@@ -1838,6 +1838,10 @@ export interface AdcpCustomToolConfig<
    * `context` echoed, and never reaches the handler. A call that passes
    * reaches the handler with the parsed value, so coercion, defaults and
    * transforms apply on every transport.
+   *
+   * Runs before identity authorization. Keep it free of side effects (no
+   * async refinements that hit data stores) and do access checks in the
+   * handler.
    */
   inputSchema?: InputArgs;
   /**

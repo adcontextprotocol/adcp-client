@@ -425,6 +425,23 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
+// `comply_test_controller` echoes `context` and `ext` on its rejections. Both
+// are open objects on the request schema, so a hostile caller could stuff
+// arbitrarily large payloads. Self-reflection only (no cross-tenant
+// amplifier), but the echo is capped at 8 KiB serialized to bound the
+// response body: anything larger is dropped, mirroring a missing field rather
+// than echoing garbage.
+const COMPLY_ECHO_BYTE_CAP = 8 * 1024;
+function cappedComplyEcho(value: unknown): Record<string, unknown> | undefined {
+  if (value == null || typeof value !== 'object') return undefined;
+  try {
+    if (JSON.stringify(value).length > COMPLY_ECHO_BYTE_CAP) return undefined;
+    return value as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
 function deepMergePlainObjects(target: unknown, source: unknown): unknown {
   if (source === undefined) return target;
   if (source === null) return null;
@@ -4003,7 +4020,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         ) => {
           // Parse exactly once. Every decision below, and the controller,
           // reads the parsed value; none reads `rawInput` again.
-          const parsed = await parseDeclaredToolInput(mcp, controller.toolDefinition.name, rawInput);
+          const parsed = await parseDeclaredToolInput(mcp, controller.toolDefinition.name, rawInput, {
+            echoContext: cappedComplyEcho,
+          });
           if (!parsed.success) {
             // A principal that cannot see the controller learns nothing about
             // its schema: the rejection is MethodNotFound, as for a valid
@@ -4015,7 +4034,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             return parsed.response;
           }
           const input = parsed.data as Record<string, unknown>;
-          const callerContext = isPlainObject(rawInput) ? rawInput.context : undefined;
+          const callerContext = cappedComplyEcho(isPlainObject(rawInput) ? rawInput.context : undefined);
           const reject = (response: McpToolResponse): McpToolResponse =>
             finishDeclaredInputRejection(mcp, controller.toolDefinition.name, response, {
               context: callerContext,
@@ -4145,25 +4164,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             // sandbox/mock principal can see the controller but the target
             // account is live or unresolved. Live principals never reach
             // this branch: they get MCP method-not-found above.
-            //
-            // `context` and `ext` are open-object on the request schema, so a
-            // hostile caller could stuff arbitrarily large payloads. Self-
-            // reflection only (no cross-tenant amplifier), but we cap at
-            // 8 KiB serialized to bound the response body — anything larger
-            // gets dropped, mirroring a missing field rather than echoing
-            // garbage.
-            const ECHO_BYTE_CAP = 8 * 1024;
-            const safeEcho = (value: unknown): Record<string, unknown> | undefined => {
-              if (value == null || typeof value !== 'object') return undefined;
-              try {
-                if (JSON.stringify(value).length > ECHO_BYTE_CAP) return undefined;
-                return value as Record<string, unknown>;
-              } catch {
-                return undefined;
-              }
-            };
-            const requestContext = safeEcho((input as { context?: unknown }).context);
-            const requestExt = safeEcho((input as { ext?: unknown }).ext);
+            const requestContext = cappedComplyEcho((input as { context?: unknown }).context);
+            const requestExt = cappedComplyEcho((input as { ext?: unknown }).ext);
             const response = adcpError('PERMISSION_DENIED', {
               message:
                 'comply_test_controller requires a sandbox or mock target account; ' +
