@@ -1,5 +1,5 @@
 import type { PropertyListReference } from '../types/tools.generated';
-import { resolvePropertyList, type ResolveListOptions } from '../server/targeting-helpers';
+import { resolvePropertyList, type ResolveListOptions } from '../core/targeting-helpers';
 
 export interface PropertyListConformanceReport {
   totalRuns: number;

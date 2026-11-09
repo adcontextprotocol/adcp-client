@@ -14,7 +14,7 @@ after(() => {
 
 // Permit loopback in the URL pre-check and network-policy seam. The resolver's
 // default callTool and official MCP client still perform real initialization and calls.
-const pinModulePath = require.resolve('../../dist/lib/server/pin-and-bind-fetch.js');
+const pinModulePath = require.resolve('../../dist/lib/net/pin-and-bind-fetch.js');
 const pinModule = require(pinModulePath);
 const originalExports = require.cache[pinModulePath].exports;
 let helpers;
@@ -24,7 +24,7 @@ try {
     createPinAndBindFetch: options =>
       pinModule.createPinAndBindFetch({ ...options, policy: pinModule.LOOPBACK_OK_WEBHOOK_SSRF_POLICY }),
   };
-  helpers = require('../../dist/lib/server/targeting-helpers.js');
+  helpers = require('../../dist/lib/core/targeting-helpers.js');
 } finally {
   require.cache[pinModulePath].exports = originalExports;
 }

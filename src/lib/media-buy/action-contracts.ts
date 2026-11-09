@@ -5,7 +5,7 @@ import {
   LEGACY_AVAILABLE_ACTIONS,
 } from './action-metadata.generated';
 import { V3_1_ACTION_IDS } from './legacy-action-ids';
-import { validActionsForStatus } from '../server/media-buy-helpers';
+import { validActionsForStatus } from './valid-actions';
 import { getRollupParent } from './available-actions';
 import type {
   ActionBuy,

@@ -41,6 +41,86 @@
         "default": "./dist/lib/client/core.js"
       }
     },
+    "./client/account-changes": {
+      "import": {
+        "types": "./dist/lib/entrypoints/client-account-changes.d.mts",
+        "default": "./dist/lib/entrypoints/client-account-changes.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/entrypoints/client-account-changes.d.ts",
+        "default": "./dist/lib/entrypoints/client-account-changes.js"
+      }
+    },
+    "./client/webhook-stores": {
+      "import": {
+        "types": "./dist/lib/entrypoints/client-webhook-stores.d.mts",
+        "default": "./dist/lib/entrypoints/client-webhook-stores.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/entrypoints/client-webhook-stores.d.ts",
+        "default": "./dist/lib/entrypoints/client-webhook-stores.js"
+      }
+    },
+    "./errors": {
+      "import": {
+        "types": "./dist/lib/entrypoints/errors.d.mts",
+        "default": "./dist/lib/entrypoints/errors.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/entrypoints/errors.d.ts",
+        "default": "./dist/lib/entrypoints/errors.js"
+      }
+    },
+    "./version": {
+      "import": {
+        "types": "./dist/lib/entrypoints/version.d.mts",
+        "default": "./dist/lib/entrypoints/version.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/entrypoints/version.d.ts",
+        "default": "./dist/lib/entrypoints/version.js"
+      }
+    },
+    "./registry": {
+      "import": {
+        "types": "./dist/lib/entrypoints/registry.d.mts",
+        "default": "./dist/lib/entrypoints/registry.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/entrypoints/registry.d.ts",
+        "default": "./dist/lib/entrypoints/registry.js"
+      }
+    },
+    "./utils": {
+      "import": {
+        "types": "./dist/lib/entrypoints/utils.d.mts",
+        "default": "./dist/lib/entrypoints/utils.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/entrypoints/utils.d.ts",
+        "default": "./dist/lib/entrypoints/utils.js"
+      }
+    },
+    "./discovery": {
+      "import": {
+        "types": "./dist/lib/entrypoints/discovery.d.mts",
+        "default": "./dist/lib/entrypoints/discovery.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/entrypoints/discovery.d.ts",
+        "default": "./dist/lib/entrypoints/discovery.js"
+      }
+    },
+    "./media-buy": {
+      "import": {
+        "types": "./dist/lib/entrypoints/media-buy.d.mts",
+        "default": "./dist/lib/entrypoints/media-buy.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/entrypoints/media-buy.d.ts",
+        "default": "./dist/lib/entrypoints/media-buy.js"
+      }
+    },
     "./compliance": {
       "import": {
         "types": "./dist/lib/compliance/index.d.mts",
@@ -469,6 +549,30 @@
       "client/core": [
         "dist/lib/client/core.d.ts"
       ],
+      "client/account-changes": [
+        "dist/lib/entrypoints/client-account-changes.d.ts"
+      ],
+      "client/webhook-stores": [
+        "dist/lib/entrypoints/client-webhook-stores.d.ts"
+      ],
+      "errors": [
+        "dist/lib/entrypoints/errors.d.ts"
+      ],
+      "version": [
+        "dist/lib/entrypoints/version.d.ts"
+      ],
+      "registry": [
+        "dist/lib/entrypoints/registry.d.ts"
+      ],
+      "utils": [
+        "dist/lib/entrypoints/utils.d.ts"
+      ],
+      "discovery": [
+        "dist/lib/entrypoints/discovery.d.ts"
+      ],
+      "media-buy": [
+        "dist/lib/entrypoints/media-buy.d.ts"
+      ],
       "compliance": [
         "dist/lib/compliance/index.d.ts"
       ],
@@ -722,6 +826,7 @@
     "check:runtime-compat": "node scripts/check-runtime-compat.mjs",
     "check:package-size": "node scripts/check-package-size.mjs",
     "check:publish-protocol-artifacts": "node scripts/check-publish-protocol-artifacts.mjs",
+    "check:client-entry-graph": "node scripts/check-client-entry-graph.mjs",
     "verify:package": "node scripts/verify-package.mjs",
     "validate:reporting-gcp": "node packages/reporting-storage/scripts/validate-reporting-gcp.mjs",
     "check:adopter-types": "tsx scripts/check-adopter-types.ts",

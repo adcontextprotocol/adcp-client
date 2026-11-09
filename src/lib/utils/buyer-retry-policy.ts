@@ -19,7 +19,7 @@
  */
 
 import type { AdcpStructuredError, ErrorCode } from '../server/decisioning/async-outcome';
-import { applyAdcpErrorAllowlist } from '../server/errors';
+import { applyAdcpErrorAllowlist } from './adcp-error-response';
 import { STANDARD_ERROR_CODES } from '../types/error-codes';
 
 // ---------------------------------------------------------------------------
