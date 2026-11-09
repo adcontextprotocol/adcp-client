@@ -2556,7 +2556,7 @@ sweep or claim failed; `issue_events:snapshot` when the evidence could not be re
 rather than delivered unrendered) and returned in `runCycle(...).issueEvents.errors`.
 
 **The event.** `eventId`, `kind`, `occurredAt` (the issue's `openedAt`, the escalation boundary, or when
-it resolved), `accountId`, `consumerId`, `principal` (for a subscription obligation), `issueId`,
+it resolved), `accountId`, `consumerId`, `principal` (for a subscription obligation, on every kind including `resolved`, while the obligation is retained; omitted once retention removed it), `issueId`,
 `reportingObligationId`, `reportingStatusId`, `attempt`, and `issue`: the `ReportingLedgerIssueV1`
 `get_reporting_status` showed `consumerId` at `occurredAt` (`responsibleParty`, `recommendedAction`,
 `severity`, `openedAt`). It is `null` for `resolved`, while the seller's own projection suppressed the

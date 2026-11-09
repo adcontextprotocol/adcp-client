@@ -341,7 +341,10 @@ export interface ReportingIssueEventV1 {
   accountId: string;
   /** The buyer whose statement caused the caller-scoped issue. */
   consumerId: string;
-  /** The owning principal, when the obligation belongs to a reporting subscription. */
+  /**
+   * The owning principal, when the obligation belongs to a reporting subscription. Present on every kind,
+   * `resolved` included, while the obligation is retained; omitted once retention has removed it.
+   */
   principal?: ReportingLedgerSubscriptionPrincipalV1;
   issueId: string;
   reportingObligationId: string;
@@ -367,16 +370,18 @@ export interface ReportingIssueEventV1 {
 export type ReportingIssueObserverV1 = (event: Readonly<ReportingIssueEventV1>) => void | Promise<void>;
 
 /**
- * Evidence the dispatcher reads to render one event's issue.
+ * Evidence the dispatcher reads for one event. `obligation` alone gives the event its `principal`, which
+ * is all a `resolved` event needs; rendering the issue also needs `revisions`, `issues` and the causing
+ * `statement`, and renders `null` without them.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReportingIssueEventRenderContextV1 {
   obligation: ReportingLedgerObligationV1;
-  revisions: readonly ReportingLedgerRevisionSnapshotV1[];
+  revisions?: readonly ReportingLedgerRevisionSnapshotV1[];
   /** The obligation's persisted issues; an open `REVISION_UNREADABLE` degrades the seller's projection. */
-  issues: readonly ReportingLedgerIssueV1[];
-  statement: ReportingLedgerConsumerStatementV1;
+  issues?: readonly ReportingLedgerIssueV1[];
+  statement?: ReportingLedgerConsumerStatementV1;
 }
 
 /**
@@ -414,8 +419,10 @@ function renderIssueOrNull(
   context: ReportingIssueEventRenderContextV1,
   escalation: ReportingConsumerMismatchEscalationV1 | undefined
 ): ReportingLedgerIssueV1 | null {
+  const { obligation, revisions, issues, statement } = context;
+  if (!revisions || !issues || !statement) return null;
   try {
-    return renderIssue(lease, context, escalation);
+    return renderIssue(lease, { obligation, revisions, issues, statement }, escalation);
   } catch {
     return null;
   }
@@ -423,7 +430,7 @@ function renderIssueOrNull(
 
 function renderIssue(
   lease: ReportingIssueEventLeaseV1,
-  context: ReportingIssueEventRenderContextV1,
+  context: Required<ReportingIssueEventRenderContextV1>,
   escalation: ReportingConsumerMismatchEscalationV1 | undefined
 ): ReportingLedgerIssueV1 | null {
   const at = lease.occurredAt;
@@ -587,25 +594,34 @@ export function createReportingIssueEventDispatcherV1(
           break;
         }
         if (leases.length === 0) break;
-        const contexts = new Map<string, Promise<RenderEvidence | undefined>>();
+        // One read per obligation per batch: the obligation for every kind (it carries `principal`), and the
+        // rest of the evidence only for the kinds that render an issue.
+        const obligations = new Map<string, Promise<ReportingLedgerObligationV1 | undefined>>();
+        const evidence = new Map<string, Promise<ReportingIssueEventRenderContextV1 | undefined>>();
+        const obligationOf = (lease: ReportingIssueEventLeaseV1) =>
+          cached(obligations, lease.reportingObligationId, () => readObligation(store, lease));
+        const evidenceOf = (lease: ReportingIssueEventLeaseV1) =>
+          cached(evidence, lease.reportingObligationId, async () => {
+            const obligation = await obligationOf(lease);
+            return obligation ? readEvidence(store, lease, obligation) : undefined;
+          });
         for (const lease of leases) {
           let context: ReportingIssueEventRenderContextV1 | undefined;
-          if (lease.kind !== 'resolved') {
-            try {
-              let evidence = contexts.get(lease.reportingObligationId);
-              if (!evidence) {
-                evidence = readEvidence(store, lease);
-                contexts.set(lease.reportingObligationId, evidence);
-              }
-              const read = await evidence;
-              context = read && lease.statement ? { ...read, statement: lease.statement } : undefined;
-            } catch (error) {
-              // Retried rather than delivered unrendered: a transient read must not cost the seller the issue.
-              result.failed += 1;
-              result.errors.push(new ReportingIssueObserverError('issue_events:snapshot', error, lease.eventId));
-              await settle(() => store.releaseIssueEvent(lease, { retryAfterMilliseconds: backoff(lease.attempts) }));
-              continue;
+          try {
+            if (lease.kind === 'resolved') {
+              const obligation = await obligationOf(lease);
+              context = obligation ? { obligation } : undefined;
+            } else {
+              const read = await evidenceOf(lease);
+              context = read && lease.statement ? { ...read, statement: lease.statement } : read;
             }
+          } catch (error) {
+            // Retried rather than delivered incomplete: a transient read must not cost the seller the issue or
+            // the principal it routes on.
+            result.failed += 1;
+            result.errors.push(new ReportingIssueObserverError('issue_events:snapshot', error, lease.eventId));
+            await settle(() => store.releaseIssueEvent(lease, { retryAfterMilliseconds: backoff(lease.attempts) }));
+            continue;
           }
           const event = renderReportingIssueEventV1(lease, context, escalation);
           try {
@@ -639,14 +655,29 @@ export function createReportingIssueEventDispatcherV1(
   };
 }
 
-type RenderEvidence = Omit<ReportingIssueEventRenderContextV1, 'statement'>;
+function cached<T>(cache: Map<string, Promise<T>>, key: string, read: () => Promise<T>): Promise<T> {
+  let value = cache.get(key);
+  if (!value) {
+    value = read();
+    cache.set(key, value);
+  }
+  return value;
+}
+
+/** The event's obligation, scoped to its account; `undefined` once retention has removed it. */
+async function readObligation(
+  store: ReportingLedgerStore,
+  lease: ReportingIssueEventLeaseV1
+): Promise<ReportingLedgerObligationV1 | undefined> {
+  const obligation = await store.getObligation(lease.reportingObligationId, lease.accountId);
+  return obligation && obligation.account.account_id === lease.accountId ? obligation : undefined;
+}
 
 async function readEvidence(
   store: ReportingLedgerStore,
-  lease: ReportingIssueEventLeaseV1
-): Promise<RenderEvidence | undefined> {
-  const obligation = await store.getObligation(lease.reportingObligationId, lease.accountId);
-  if (!obligation || obligation.account.account_id !== lease.accountId) return undefined;
+  lease: ReportingIssueEventLeaseV1,
+  obligation: ReportingLedgerObligationV1
+): Promise<ReportingIssueEventRenderContextV1> {
   const revisions =
     typeof store.listRevisionMetadata === 'function'
       ? await store.listRevisionMetadata(lease.reportingObligationId, lease.accountId)
