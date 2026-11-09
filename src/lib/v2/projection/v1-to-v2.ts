@@ -16,7 +16,9 @@
  *      authoritative pairing. Seller-asserted, normative.
  *   2. **Registry glob match**. Look up `format_id.id` against the
  *      registry's `format_id_glob` entries (including wildcards). First
- *      match wins per the spec's ordering.
+ *      match wins per the spec's ordering. At an agent URL other than the
+ *      AAO's this is a guess, so an adopter's `legacyFormatConverter` runs
+ *      first there.
  *   3. **Structural match**. Match against the v1 format's declared
  *      assets + version constraints. Family-level identification
  *      yields a canonical (e.g., "vast 4.x → video_vast"). Less
@@ -132,6 +134,11 @@ export interface LegacyFormatConversionContext {
  * The SDK adds the source `formatId` as `v1_format_ref`; converters must not
  * set `canonical_formats_only: true` because a legacy source is, by
  * definition, round-trippable to that ref.
+ *
+ * For a ref at any agent URL other than the AAO reference creative agent, the
+ * converter runs before the SDK guesses the id's meaning from its name, so
+ * its declaration wins over the guess. Return `undefined` to accept the guess.
+ * For a ref at the AAO agent, it runs only after the AAO's own mappings fail.
  */
 export type LegacyFormatConverter = (
   context: LegacyFormatConversionContext
@@ -453,10 +460,13 @@ function projectFormatId(
     exactCatalogEntry === undefined && mayUseUniqueAlias && aaoGuessesApply
       ? lookupUniqueV1FormatById(fid.id, options?._catalogPath)
       : undefined;
-  if (uniqueAliasEntry) {
-    // A caller-authored converter is more specific than this compatibility
-    // heuristic. Returning undefined opts into the AAO bare-ID fallback;
-    // invalid/throwing converter output fails closed and is never bypassed.
+  // A caller-authored converter is more specific than any guess from the id's
+  // name: the AAO bare-ID alias, or the registry id glob at an agent URL that
+  // is not the AAO's. That agent owns its ids, and the converter speaks for
+  // it. Returning undefined opts into the guess; invalid/throwing converter
+  // output fails closed and is never bypassed.
+  const converterBeforeGuesses = uniqueAliasEntry !== undefined || (exactCatalogEntry === undefined && !atAaoAgent);
+  if (converterBeforeGuesses) {
     const explicit = projectWithLegacyConverter(fid, productId, field, options?.legacyFormatConverter);
     if (explicit) return explicit;
   }
@@ -517,7 +527,9 @@ function projectFormatId(
   // a semantically wrong projection. Symmetric counterpart to
   // CANONICAL_NOT_V1_TRANSLATABLE on the v2→v1 side.
   if (catalogEntry && !catalogEntry.canonical) {
-    const custom = projectWithLegacyConverter(fid, productId, field, options?.legacyFormatConverter);
+    const custom = converterBeforeGuesses
+      ? undefined
+      : projectWithLegacyConverter(fid, productId, field, options?.legacyFormatConverter);
     if (custom) return custom;
     return {
       diagnostic: {
@@ -570,10 +582,13 @@ function projectFormatId(
   }
 
   // Step 4: give the adopter one explicit, typed escape hatch for a
-  // seller/creative-agent-owned legacy format. This runs only after all
-  // protocol-owned mappings fail, so a callback cannot override a canonical
-  // AAO mapping accidentally.
-  const custom = projectWithLegacyConverter(fid, productId, field, options?.legacyFormatConverter);
+  // seller/creative-agent-owned legacy format. At the AAO agent this runs
+  // only after all protocol-owned mappings fail, so a callback cannot
+  // override a canonical AAO mapping accidentally. Elsewhere it already ran
+  // ahead of the guesses above.
+  const custom = converterBeforeGuesses
+    ? undefined
+    : projectWithLegacyConverter(fid, productId, field, options?.legacyFormatConverter);
   if (custom) return custom;
 
   // Step 5: fail-closed. v1 product is invisible on the canonical side.
