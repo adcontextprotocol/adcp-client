@@ -256,6 +256,98 @@ describe('issue-lifecycle events over PostgreSQL', { skip: !DATABASE_URL && 'Pos
     });
   });
 
+  describe('period retirement', () => {
+    test('retiring a period resolves its open occurrences, deletes no outbox rows, and the occurrence is then pruned whole', async () => {
+      const w = await world('retire', { issueEvents: true });
+      const obligationId = w.obligation.reporting_obligation_id;
+      // A: opened, escalated, both delivered. B: opened, still undelivered.
+      await w.file('retire-a', 'revision_missing');
+      assert.equal(await w.store.sweepIssueEscalations({ escalationSeconds: 0 }), 1);
+      await w.drain();
+      assert.deepEqual(await w.kinds('retire-a'), ['opened', 'escalated']);
+      await w.file('retire-b', 'revision_missing');
+
+      // Make the period retirable: ended long ago, no worker, publications older than the retention.
+      await w.pool.query(
+        `UPDATE adcp_reporting_obligations
+            SET period_start = period_start - INTERVAL '40 days', period_end = period_end - INTERVAL '40 days',
+                created_at = created_at - INTERVAL '40 days', state = 'terminal',
+                lease_expires_at = clock_timestamp() - INTERVAL '1 second'
+          WHERE obligation_id = $1`,
+        [obligationId]
+      );
+      await w.pool.query(
+        `UPDATE adcp_reporting_revisions SET recorded_at = recorded_at - INTERVAL '40 days' WHERE obligation_id = $1`,
+        [obligationId]
+      );
+      let retired = 0;
+      for (let pass = 0; pass < 5 && retired === 0; pass += 1) {
+        retired = (await w.store.retireExpiredPeriods({ statusRetentionDays: 30 })).retired;
+      }
+      assert.equal(retired, 1);
+      const gone = await w.pool.query('SELECT 1 FROM adcp_reporting_obligations WHERE obligation_id = $1', [
+        obligationId,
+      ]);
+      assert.equal(gone.rowCount, 0);
+      const tombstone = await w.pool.query(
+        'SELECT state FROM adcp_reporting_obligation_tombstones WHERE obligation_id = $1',
+        [obligationId]
+      );
+      assert.equal(tombstone.rows[0].state, 'retired');
+
+      // The retirement transaction resolved every open occurrence of the obligation.
+      const a = await w.events('retire-a');
+      assert.deepEqual(
+        a.map(row => row.kind),
+        ['opened', 'escalated', 'resolved']
+      );
+      assert.equal(a[2].delivered_at, null, 'resolved is undelivered');
+      assert.ok(a[2].occurred_at);
+      assert.equal(a[2].issue_id, a[0].issue_id);
+      // Control: retirement deletes no outbox rows. B's undelivered `opened` is intact, then its `resolved`.
+      const b = await w.events('retire-b');
+      assert.deepEqual(
+        b.map(row => row.kind),
+        ['opened', 'resolved']
+      );
+      assert.ok(b.every(row => row.delivered_at === null));
+      const claimed = await w.store.claimIssueEvents({ leaseMilliseconds: 60_000, limit: 100 });
+      const claimedB = claimed.filter(lease => lease.consumerId === 'retire-b');
+      assert.deepEqual(
+        claimedB.map(lease => lease.kind),
+        ['opened'],
+        'resolved waits for opened'
+      );
+      for (const lease of claimed)
+        assert.equal(await w.store.releaseIssueEvent(lease, { retryAfterMilliseconds: 0 }), true);
+
+      // The dispatcher delivers the resolved event with no issue and no principal, B in recording order.
+      const seen = [];
+      const dispatcher = sdk.createReportingIssueEventDispatcherV1({
+        store: w.store,
+        observer: event => void seen.push(event),
+      });
+      await dispatcher.runOnce({ accountId: w.request.account.account_id });
+      const resolvedA = seen.find(event => event.consumerId === 'retire-a' && event.kind === 'resolved');
+      assert.ok(resolvedA, 'resolved was delivered');
+      assert.equal(resolvedA.issue, null);
+      assert.equal('principal' in resolvedA, false);
+      assert.deepEqual(
+        seen.filter(event => event.consumerId === 'retire-b').map(event => event.kind),
+        ['opened', 'resolved']
+      );
+      assert.ok((await w.events('retire-a')).every(row => row.delivered_at !== null));
+
+      // Delivered past the retention, the closed occurrence is pruned whole.
+      await w.pool.query(
+        `UPDATE adcp_reporting_issue_events SET delivered_at = clock_timestamp() - INTERVAL '8 days' WHERE consumer_id = 'retire-a'`
+      );
+      assert.equal(await w.store.pruneIssueEvents({ olderThanMilliseconds: 7 * 86_400_000 }), 3);
+      assert.deepEqual(await w.events('retire-a'), []);
+      assert.equal((await w.events('retire-b')).length, 2, 'the other occurrence is inside the retention');
+    });
+  });
+
   describe('lifecycle', () => {
     let w;
     let keptEventIds = [];
