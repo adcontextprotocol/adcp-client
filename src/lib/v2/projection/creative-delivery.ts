@@ -1675,7 +1675,8 @@ function projectPackageSelectors(
   wireMode: CreativeFormatWireMode,
   operation: string,
   legacyFormatConverter?: LegacyFormatConverter,
-  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
+  formatOptionRefsOnWire = false
 ): Record<string | symbol, unknown> {
   const next = { ...pkg };
   const optionRefs = Array.isArray(pkg.format_option_refs)
@@ -1763,6 +1764,15 @@ function projectPackageSelectors(
           );
         }
         if (!resolved) {
+          if (formatOptionRefsOnWire) {
+            // AdCP 3.1 package requests define format_option_refs, so the
+            // seller resolves the selection itself. Omitting it instead would
+            // activate every product format (adcp-client#3665).
+            next.format_option_refs = optionRefs.map(ref => ({ ...ref }));
+            delete next.format_kind;
+            delete next.params;
+            return next;
+          }
           throw new CreativeFormatProjectionError(
             operation,
             '(package selector)',
@@ -2142,13 +2152,22 @@ function describeUnmatchedLegacyCandidates(
   return generic;
 }
 
+/**
+ * Project a create/update media-buy request's packages and creatives to the
+ * seller's creative wire. On the legacy wire, pass `formatOptionRefsOnWire`
+ * when the seller's release defines package `format_option_refs` (AdCP 3.1;
+ * see {@link releaseCarriesPackageFormatOptionRefs}): selections with no
+ * legacy `format_ids` are then sent as `format_option_refs` instead of
+ * throwing. Selections that do map are still rewritten to `format_ids`.
+ */
 export function projectMediaBuyCreativesForDelivery<T>(
   request: T,
   wireMode: 'canonical',
   operation?: 'create_media_buy' | 'update_media_buy',
   legacyFormatConverter?: LegacyFormatConverter,
   canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
-  legacyFormatDefinitions?: readonly V1FormatDefinition[]
+  legacyFormatDefinitions?: readonly V1FormatDefinition[],
+  formatOptionRefsOnWire?: boolean
 ): ProjectedMediaBuyCreativeRequest<T, 'canonical'>;
 export function projectMediaBuyCreativesForDelivery<T>(
   request: T,
@@ -2156,7 +2175,8 @@ export function projectMediaBuyCreativesForDelivery<T>(
   operation?: 'create_media_buy' | 'update_media_buy',
   legacyFormatConverter?: LegacyFormatConverter,
   canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
-  legacyFormatDefinitions?: readonly V1FormatDefinition[]
+  legacyFormatDefinitions?: readonly V1FormatDefinition[],
+  formatOptionRefsOnWire?: boolean
 ): ProjectedMediaBuyCreativeRequest<T, 'legacy'>;
 export function projectMediaBuyCreativesForDelivery<T>(
   request: T,
@@ -2164,7 +2184,8 @@ export function projectMediaBuyCreativesForDelivery<T>(
   operation?: 'create_media_buy' | 'update_media_buy',
   legacyFormatConverter?: LegacyFormatConverter,
   canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
-  legacyFormatDefinitions?: readonly V1FormatDefinition[]
+  legacyFormatDefinitions?: readonly V1FormatDefinition[],
+  formatOptionRefsOnWire?: boolean
 ): ProjectedMediaBuyCreativeRequest<T, 'canonical'> | ProjectedMediaBuyCreativeRequest<T, 'legacy'>;
 export function projectMediaBuyCreativesForDelivery<T>(
   request: T,
@@ -2172,7 +2193,8 @@ export function projectMediaBuyCreativesForDelivery<T>(
   operation: 'create_media_buy' | 'update_media_buy' = 'create_media_buy',
   legacyFormatConverter?: LegacyFormatConverter,
   canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver,
-  legacyFormatDefinitions?: readonly V1FormatDefinition[]
+  legacyFormatDefinitions?: readonly V1FormatDefinition[],
+  formatOptionRefsOnWire = false
 ): ProjectedMediaBuyCreativeRequest<T, 'canonical'> | ProjectedMediaBuyCreativeRequest<T, 'legacy'> {
   const requestRecord = record(request);
   if (!requestRecord) return request as ProjectedMediaBuyCreativeRequest<T, 'canonical'>;
@@ -2206,7 +2228,10 @@ export function projectMediaBuyCreativesForDelivery<T>(
         wireMode,
         operation,
         legacyFormatConverter,
-        canonicalFormatLegacyResolver
+        canonicalFormatLegacyResolver,
+        // update_media_buy `packages` are package updates, which never carry
+        // a format selector; `new_packages` are package requests.
+        formatOptionRefsOnWire && (operation === 'create_media_buy' || key === 'new_packages')
       );
       if (projectedPackage !== packageValue) changed = true;
       return creatives ? { ...projectedPackage, creatives } : projectedPackage;
@@ -4182,4 +4207,18 @@ export function canUseProductOptionsForCreativeWire(capabilities: unknown, reque
   const caps = record(capabilities);
   const negotiated = mutuallyServedRelease(caps, record(caps?._raw), requestedVersion);
   return negotiated?.major === 3 && negotiated.minor === 1;
+}
+
+/**
+ * Whether the seller's advertised `supported_versions` prove a mutually served
+ * release whose package request defines `format_option_refs` (AdCP 3.1 and
+ * later). AdCP 3.0 does not define the field, and a release that cannot be
+ * proven is treated as 3.0, so a selection is never silently dropped. Throws
+ * `CreativeFormatCapabilityError` for the same release contradictions as
+ * {@link resolveCreativeFormatWireMode}.
+ */
+export function releaseCarriesPackageFormatOptionRefs(capabilities: unknown, requestedVersion: string): boolean {
+  const caps = record(capabilities);
+  const negotiated = mutuallyServedRelease(caps, record(caps?._raw), requestedVersion);
+  return negotiated !== undefined && (negotiated.major > 3 || (negotiated.major === 3 && negotiated.minor >= 1));
 }
