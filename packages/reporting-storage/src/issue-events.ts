@@ -9,8 +9,11 @@
  * passes `openedAt` plus the seller's `consumer_mismatch_escalation_seconds`. A worker claims pending
  * events under a lease, hands each to the issue observer, and stamps it delivered.
  *
- * `UNIQUE (issue_id, kind)` makes the record exactly once across replicas, and `event_id` is derived
- * from that pair, so a redelivery carries the same `event_id`.
+ * An occurrence is `(issue_id, consumer_id)`: the read path's `issue_id` names the obligation and the causing
+ * statement but not the consumer, and two consumers may reuse one `reporting_status_id`.
+ * `UNIQUE (issue_id, consumer_id, kind)` makes the record exactly once across replicas, and `event_id` is
+ * derived from that triple, so a redelivery carries the same `event_id`. The table is also the occurrence
+ * ledger, so pruning removes whole resolved, fully delivered occurrences and never an open one.
  *
  * The table is installed by migration `0012` (`npx adcp-reporting-storage migrate`). Until it exists the
  * writes record nothing and `issueEventsReady()` is `false`; nothing else changes.
@@ -67,7 +70,9 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_issue_events (
   lease_token TEXT,
   lease_expires_at TIMESTAMPTZ,
   delivered_at TIMESTAMPTZ,
-  UNIQUE (issue_id, kind),
+  -- One occurrence is (issue_id, consumer_id): issue_id does not name the consumer, and two consumers may
+  -- reuse one reporting_status_id. Each occurrence makes each transition at most once.
+  UNIQUE (issue_id, consumer_id, kind),
   CHECK ((lease_token IS NULL) = (lease_expires_at IS NULL))
 );
 CREATE INDEX IF NOT EXISTS adcp_reporting_issue_events_pending
@@ -75,7 +80,7 @@ CREATE INDEX IF NOT EXISTS adcp_reporting_issue_events_pending
 CREATE INDEX IF NOT EXISTS adcp_reporting_issue_events_account_pending
   ON adcp_reporting_issue_events (account_id, due_at, seq) WHERE delivered_at IS NULL;
 CREATE INDEX IF NOT EXISTS adcp_reporting_issue_events_issue_pending
-  ON adcp_reporting_issue_events (issue_id, seq) WHERE delivered_at IS NULL;
+  ON adcp_reporting_issue_events (issue_id, consumer_id, seq) WHERE delivered_at IS NULL;
 CREATE INDEX IF NOT EXISTS adcp_reporting_issue_events_delivered
   ON adcp_reporting_issue_events (delivered_at) WHERE delivered_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS adcp_reporting_issue_events_obligation_opened
@@ -130,7 +135,7 @@ export async function databaseInstantOn(client: Client): Promise<string> {
   return result.rows[0]!.instant;
 }
 
-/** Insert each record unless its `(issue_id, kind)` is already recorded. Returns the rows inserted. */
+/** Insert each record unless its `(issue_id, consumer_id, kind)` is already recorded. Returns the rows inserted. */
 async function recordOn(client: Client, records: readonly ReportingIssueEventRecordV1[]): Promise<number> {
   let recorded = 0;
   for (const record of records) {
@@ -157,7 +162,8 @@ async function recordOn(client: Client, records: readonly ReportingIssueEventRec
 
 const OPEN = `e.kind = 'opened' AND NOT EXISTS (
   SELECT 1 FROM adcp_reporting_issue_events resolved
-   WHERE resolved.issue_id = e.issue_id AND resolved.kind = 'resolved')`;
+   WHERE resolved.issue_id = e.issue_id AND resolved.consumer_id = e.consumer_id
+     AND resolved.kind = 'resolved')`;
 
 function statusMatchesObligation(
   status: ReportingLedgerConsumerStatementV1,
@@ -284,7 +290,8 @@ export async function escalationCandidatesOn(
         AND ${OPEN}
         AND NOT EXISTS (
           SELECT 1 FROM adcp_reporting_issue_events escalated
-           WHERE escalated.issue_id = e.issue_id AND escalated.kind = 'escalated')
+           WHERE escalated.issue_id = e.issue_id AND escalated.consumer_id = e.consumer_id
+             AND escalated.kind = 'escalated')
       GROUP BY e.account_id, e.obligation_id
       ORDER BY MIN(e.seq)
       LIMIT $3`,
@@ -309,7 +316,8 @@ export async function escalateObligationOn(
       WHERE e.obligation_id = $1 AND ${OPEN}
         AND NOT EXISTS (
           SELECT 1 FROM adcp_reporting_issue_events escalated
-           WHERE escalated.issue_id = e.issue_id AND escalated.kind = 'escalated')
+           WHERE escalated.issue_id = e.issue_id AND escalated.consumer_id = e.consumer_id
+             AND escalated.kind = 'escalated')
       ORDER BY e.seq`,
     [obligationId]
   );
@@ -345,7 +353,8 @@ export async function claimOn(
           AND (e.lease_expires_at IS NULL OR e.lease_expires_at <= clock_timestamp())
           AND NOT EXISTS (
             SELECT 1 FROM adcp_reporting_issue_events earlier
-             WHERE earlier.issue_id = e.issue_id AND earlier.delivered_at IS NULL AND earlier.seq < e.seq)
+             WHERE earlier.issue_id = e.issue_id AND earlier.consumer_id = e.consumer_id
+               AND earlier.delivered_at IS NULL AND earlier.seq < e.seq)
         ORDER BY e.due_at, e.seq
         LIMIT $1
         FOR UPDATE SKIP LOCKED
@@ -417,18 +426,31 @@ export async function releaseOn(
   return result.rowCount === 1;
 }
 
-/** Delete up to `limit` events delivered more than `olderThanMilliseconds` ago. */
+/**
+ * Delete up to `limit` whole occurrences that are resolved and whose every event was delivered more than
+ * `olderThanMilliseconds` ago. Returns the events deleted. An open occurrence is never pruned: its `opened`
+ * row is what a later write resolves and what the sweep escalates.
+ */
 export async function pruneOn(
   client: Pick<Client, 'query'>,
   input: { olderThanMilliseconds: number; limit: number }
 ): Promise<number> {
   const result = await client.query(
-    `DELETE FROM adcp_reporting_issue_events WHERE event_id IN (
-       SELECT event_id FROM adcp_reporting_issue_events
-        WHERE delivered_at IS NOT NULL
-          AND delivered_at < clock_timestamp() - make_interval(secs => $1::double precision / 1000)
-        ORDER BY delivered_at
-        LIMIT $2)`,
+    `WITH horizon AS (
+       SELECT clock_timestamp() - make_interval(secs => $1::double precision / 1000) AS before
+     ), expired AS (
+       SELECT r.issue_id, r.consumer_id
+         FROM adcp_reporting_issue_events r, horizon
+        WHERE r.kind = 'resolved' AND r.delivered_at IS NOT NULL AND r.delivered_at < horizon.before
+          AND NOT EXISTS (
+            SELECT 1 FROM adcp_reporting_issue_events other
+             WHERE other.issue_id = r.issue_id AND other.consumer_id = r.consumer_id
+               AND (other.delivered_at IS NULL OR other.delivered_at >= horizon.before))
+        ORDER BY r.delivered_at
+        LIMIT $2
+     )
+     DELETE FROM adcp_reporting_issue_events e USING expired
+      WHERE e.issue_id = expired.issue_id AND e.consumer_id = expired.consumer_id`,
     [input.olderThanMilliseconds, input.limit]
   );
   return result.rowCount ?? 0;

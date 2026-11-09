@@ -40,6 +40,11 @@ import { canonicalJsonV1 } from '../reporting/source/manifest';
 
 type Row = any;
 
+/** An occurrence's key: the read path's `issueId` does not name the consumer, and two may share it. */
+function issueOccurrenceKey(value: { issueId: string; consumerId: string }): string {
+  return `${value.issueId}\u0000${value.consumerId}`;
+}
+
 /** One recorded issue event and its delivery state. */
 interface MemoryIssueEvent extends ReportingIssueEventRecordV1 {
   seq: number;
@@ -697,9 +702,11 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
   /** Occurrences whose `opened` is recorded and that have not resolved. */
   private openIssueOccurrences(): MemoryIssueEvent[] {
     const resolved = new Set(
-      [...this.issueEvents.values()].filter(value => value.kind === 'resolved').map(value => value.issueId)
+      [...this.issueEvents.values()].filter(value => value.kind === 'resolved').map(issueOccurrenceKey)
     );
-    return [...this.issueEvents.values()].filter(value => value.kind === 'opened' && !resolved.has(value.issueId));
+    return [...this.issueEvents.values()].filter(
+      value => value.kind === 'opened' && !resolved.has(issueOccurrenceKey(value))
+    );
   }
 
   private conflictsOn(obligation: Row): ReportingConsumerMismatchOccurrenceV1[] {
@@ -720,7 +727,7 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
   private recordIssueEvents(records: readonly ReportingIssueEventRecordV1[]): number {
     let recorded = 0;
     for (const record of records) {
-      if (this.issueEvents.has(record.eventId)) continue; // exactly once per (issueId, kind)
+      if (this.issueEvents.has(record.eventId)) continue; // exactly once per (issueId, consumerId, kind)
       const now = this.instant();
       this.issueEventSeq += 1;
       this.issueEvents.set(record.eventId, {
@@ -803,11 +810,11 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
     if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError('limit must be a positive integer');
     const now = this.instant();
     const escalated = new Set(
-      [...this.issueEvents.values()].filter(value => value.kind === 'escalated').map(value => value.issueId)
+      [...this.issueEvents.values()].filter(value => value.kind === 'escalated').map(issueOccurrenceKey)
     );
     const due = (value: MemoryIssueEvent) =>
       (accountId === undefined || value.accountId === accountId) &&
-      !escalated.has(value.issueId) &&
+      !escalated.has(issueOccurrenceKey(value)) &&
       compareReportingInstantToOffset(now, value.occurredAt, escalationSeconds * 1_000) >= 0;
     const obligationIds = [
       ...new Set(
@@ -850,11 +857,13 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
       .sort((a, b) => a.seq - b.seq);
     // An occurrence's events go out in recording order: only its earliest undelivered one is claimable.
     const head = new Map<string, number>();
-    for (const value of pending) if (!head.has(value.issueId)) head.set(value.issueId, value.seq);
+    for (const value of pending) {
+      if (!head.has(issueOccurrenceKey(value))) head.set(issueOccurrenceKey(value), value.seq);
+    }
     const due = pending
       .filter(
         value =>
-          head.get(value.issueId) === value.seq &&
+          head.get(issueOccurrenceKey(value)) === value.seq &&
           (accountId === undefined || value.accountId === accountId) &&
           Date.parse(value.dueAt) <= Date.parse(now) &&
           (value.leaseExpiresAt === undefined || Date.parse(value.leaseExpiresAt) <= Date.parse(now))
@@ -918,11 +927,28 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
   }): Promise<number> {
     if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError('limit must be a positive integer');
     const horizon = Date.parse(this.instant()) - olderThanMilliseconds;
-    const expired = [...this.issueEvents.values()]
-      .filter(value => value.deliveredAt !== undefined && Date.parse(value.deliveredAt) < horizon)
-      .sort((a, b) => Date.parse(a.deliveredAt!) - Date.parse(b.deliveredAt!))
+    // The outbox is the occurrence ledger: prune whole occurrences, only resolved ones whose every event was
+    // delivered before the horizon. An open occurrence's `opened` record is what a later write resolves and
+    // what the sweep escalates, however long ago it was delivered.
+    const occurrences = new Map<string, MemoryIssueEvent[]>();
+    for (const value of this.issueEvents.values()) {
+      const key = issueOccurrenceKey(value);
+      occurrences.set(key, [...(occurrences.get(key) ?? []), value]);
+    }
+    const expired = [...occurrences.values()]
+      .filter(
+        events =>
+          events.some(value => value.kind === 'resolved') &&
+          events.every(value => value.deliveredAt !== undefined && Date.parse(value.deliveredAt) < horizon)
+      )
+      .map(events => ({ events, lastDelivered: Math.max(...events.map(value => Date.parse(value.deliveredAt!))) }))
+      .sort((a, b) => a.lastDelivered - b.lastDelivered)
       .slice(0, limit);
-    for (const value of expired) this.issueEvents.delete(value.eventId);
-    return expired.length;
+    let deleted = 0;
+    for (const { events } of expired) {
+      for (const value of events) this.issueEvents.delete(value.eventId);
+      deleted += events.length;
+    }
+    return deleted;
   }
 }

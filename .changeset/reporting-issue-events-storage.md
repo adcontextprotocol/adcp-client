@@ -9,11 +9,11 @@ Reporting storage (experimental): `PostgresReportingLedgerStore` records issue-l
   - `commitRevision` records `opened` when a restatement makes a leaf conflict or anchors one filed before any revision. It also records `resolved` when the read projection stops conflicting.
   - Both run under the account lock the write already holds. An event exists exactly when its transition committed.
 - **Exactly-once records.**
-  - `UNIQUE (issue_id, kind)` keeps every record exactly once across replicas, and the `event_id` is derived from that pair.
+  - An occurrence is `(issue_id, consumer_id)`, since two consumers may reuse one `reporting_status_id`. `UNIQUE (issue_id, consumer_id, kind)` keeps every record exactly once across replicas, and the `event_id` is derived from that triple.
   - `sweepIssueEscalations` settles each candidate obligation first, then records `escalated` once.
 - **Delivery.**
   - `claimIssueEvents` hands out `SKIP LOCKED` leases, at most one per occurrence, in recording order.
-  - `completeIssueEvent`, `releaseIssueEvent` and `pruneIssueEvents` settle and clean up, and `issueEventsReady()` reports whether the table exists.
+  - `completeIssueEvent`, `releaseIssueEvent` and `pruneIssueEvents` settle and clean up, and `issueEventsReady()` reports whether the table exists. Pruning removes whole occurrences that are resolved and fully delivered, never an open one, because the table is also the occurrence ledger.
 
 - **Production service.** `createPostgresReliableReportingProductionService` accepts `issueObserver` (passed to the core service it drives) and adds `REPORTING_ISSUE_EVENTS_MIGRATION` to `setup.migrations` when it is set.
 

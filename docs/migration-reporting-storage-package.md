@@ -194,7 +194,7 @@ See [Orphaned object collection](guides/REPORTING-OPERATIONS.md#adopting-row-sto
 
 1. Run `npx adcp-reporting-storage migrate` (version `0012`, `reporting_issue_events`, additive; the SQL is exported as `REPORTING_ISSUE_EVENTS_MIGRATION`). It creates `adcp_reporting_issue_events` and its indexes and changes no existing table, key, function or trigger, so it is safe while workers of the previous release still run. Those workers neither read nor write the table and record no events for the transitions they make.
 2. Until it is applied, `sync_reporting_status` writes and revision commits record nothing and `store.issueEventsReady()` is `false`; nothing else changes. `checkSchema()` names `0012` as pending.
-3. Without an `issueObserver`, nothing reads the table. Rows accumulate only for consumer-mismatch transitions, and the dispatcher prunes delivered rows after seven days.
+3. Without an `issueObserver`, nothing reads the table. Rows accumulate only for consumer-mismatch transitions. The dispatcher prunes a resolved occurrence seven days after its last event was delivered and never prunes an open one, because the table also records which occurrences are open.
 
 The Python SDK ships the same outbox as its migration `0008` (adcp-client-python#1874). The version numbers differ because the two packages' migration lists already differ, and neither moves a storage contract: the Python storage contract stays `2`, and this package has no contract version.
 

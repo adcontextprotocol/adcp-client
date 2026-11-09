@@ -2538,11 +2538,14 @@ escalations, then delivers committed events, each occurrence's in recording orde
 leased at a time. Without `runCycle` events are recorded but the observer is never called, and
 `escalated` is never recorded. The Python SDK is the same: its worker turn does both.
 
-**At least once.** Each transition is recorded exactly once, even when replicas make it together
-(`(issueId, kind)` is unique). A cycle that stops after the observer returned but before the event was
-marked delivered delivers it again. Every delivery carries the same `eventId`,
-`"rpie_" + sha256(canonical_json_utf8_v1(["reporting-issue-event-v1", issueId, kind])).hex()[:40]`,
-the Python SDK's derivation (`reportingIssueEventIdV1`). An exact retry of `sync_reporting_status`
+**At least once.** An occurrence is `(issueId, consumerId)`: the `issueId` that `get_reporting_status`
+publishes names the obligation and the causing `reporting_status_id` but not the consumer, and two
+consumers may reuse one status id. Each transition is recorded exactly once, even when replicas make it
+together (`(issueId, consumerId, kind)` is unique). A cycle that stops after the observer returned but
+before the event was marked delivered delivers it again. Every delivery carries the same `eventId`,
+`"rpie_" + sha256(canonical_json_utf8_v1(["reporting-issue-event-v1", issueId, consumerId, kind])).hex()[:40]`
+(`reportingIssueEventIdV1`). That is the Python SDK's scheme with the consumer added: Python's `issue_id` is
+already consumer-scoped, so it hashes `[tag, issue_id, kind]`. An exact retry of `sync_reporting_status`
 (`unchanged`) and status reads record nothing.
 
 **Failures never reach the buyer.** An observer that throws, or an async one past 10 seconds, is
@@ -2566,7 +2569,9 @@ indexes, additive, so workers of an earlier release keep running beside it (they
 their own writes). Until it is applied, writes record nothing, `postgresStorage().checkSchema()` names
 `0012` as pending, and a store constructed directly refuses `issueObserver` at its first cycle. The
 service refuses `issueObserver` at construction against a store that does not record issue events.
-Delivered events are pruned after seven days.
+A resolved occurrence is pruned once all its events were delivered more than seven days ago. An open
+occurrence is never pruned, however long ago its events were delivered: the outbox is also the record of
+which occurrences are open, which a later supersession resolves and the sweep escalates.
 
 **Production service.** `createPostgresReliableReportingProductionService` (`@adcp/reporting-storage/service`)
 takes `issueObserver` too: it passes it to the core service whose `runCycle` and `start()` it drives, and
@@ -2585,5 +2590,5 @@ own schedule.
   ([#3653](https://github.com/adcontextprotocol/adcp-client/issues/3653)). `commitRevision` already
   records `resolved` when the projection stops conflicting, so events follow once that is fixed.
 - The issue id is per causing statement, not per chain occurrence, so a TypeScript and a Python seller
-  publish different `issueId`s (and therefore `eventId`s) for the same disagreement. The `eventId`
-  derivation is shared; observers should not compare ids across SDKs.
+  publish different `issueId`s (and therefore `eventId`s) for the same disagreement, and the TypeScript
+  `eventId` also hashes the consumer. Observers should not compare ids across SDKs.

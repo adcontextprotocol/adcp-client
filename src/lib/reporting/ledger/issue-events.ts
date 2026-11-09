@@ -23,10 +23,16 @@
  *   API. The TypeScript ledger has no such API yet, so **no TypeScript store emits them**; they are in
  *   the union only so an observer shared across SDKs type-checks.
  *
- * Each transition is recorded exactly once, even when replicas make it together: `(issueId, kind)` is
- * unique and {@link reportingIssueEventIdV1} derives the event's id from that pair, the same way the
- * Python SDK does. Delivery ({@link createReportingIssueEventDispatcherV1}) is **at least once**:
- * deduplicate on `eventId`.
+ * An occurrence is identified by `(issueId, consumerId)`: the read path's `issueId` names the obligation
+ * and the causing `reporting_status_id` but not the consumer, and two consumers may legally reuse one
+ * status id, so the consumer is part of every key here. Each transition is recorded exactly once, even
+ * when replicas make it together: `(issueId, consumerId, kind)` is unique and
+ * {@link reportingIssueEventIdV1} derives the event's id from that triple. Delivery
+ * ({@link createReportingIssueEventDispatcherV1}) is **at least once**: deduplicate on `eventId`.
+ *
+ * The outbox is also the occurrence ledger: an occurrence is open while its `opened` record exists and it
+ * has no `resolved` one. Pruning therefore removes whole occurrences, and only resolved ones whose every
+ * event was delivered.
  *
  * @experimental Reliable Reporting issue observer: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  * @packageDocumentation
@@ -77,18 +83,27 @@ export const REPORTING_ISSUE_EVENT_KINDS_V1: readonly ReportingIssueEventKindV1[
 
 /**
  * The stable id of one transition of one issue occurrence:
- * `"rpie_" + sha256(canonical_json_utf8_v1(["reporting-issue-event-v1", issueId, kind])).hex()[:40]`.
+ * `"rpie_" + sha256(canonical_json_utf8_v1(["reporting-issue-event-v1", issueId, consumerId, kind])).hex()[:40]`.
+ * Every redelivery of one transition carries the same id.
  *
- * The Python SDK derives it the same way, so an observer deduplicates on it whichever store recorded the
- * event, and every redelivery of one transition carries the same id.
+ * The Python SDK derives its id from `["reporting-issue-event-v1", issue_id, kind]`. Its `issue_id` is
+ * already consumer-scoped (the occurrence key includes the consumer), so the pair is unique there. The
+ * TypeScript `issueId` is the one `get_reporting_status` publishes, `hash(obligation, reporting_status_id)`,
+ * and two consumers may reuse one `reporting_status_id`, so the consumer is added here. The two SDKs
+ * never produce equal ids for one disagreement anyway, since their `issueId`s differ.
  *
  * @experimental Reliable Reporting issue observer: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
-export function reportingIssueEventIdV1(issueId: string, kind: ReportingIssueEventKindV1): string {
+export function reportingIssueEventIdV1(issueId: string, consumerId: string, kind: ReportingIssueEventKindV1): string {
   const digest = createHash('sha256')
-    .update(canonicalJsonV1(['reporting-issue-event-v1', issueId, kind]))
+    .update(canonicalJsonV1(['reporting-issue-event-v1', issueId, consumerId, kind]))
     .digest('hex');
   return `rpie_${digest.slice(0, 40)}`;
+}
+
+/** One occurrence's key: the issue and the consumer whose statement caused it. */
+function occurrenceKey(value: Pick<ReportingIssueEventRecordV1, 'issueId' | 'consumerId'>): string {
+  return canonicalJsonV1([value.issueId, value.consumerId]);
 }
 
 /**
@@ -167,7 +182,7 @@ function eventRecord(
   occurredAt: string
 ): ReportingIssueEventRecordV1 {
   return {
-    eventId: reportingIssueEventIdV1(occurrence.issueId, kind),
+    eventId: reportingIssueEventIdV1(occurrence.issueId, occurrence.consumerId, kind),
     kind,
     issueId: occurrence.issueId,
     accountId: occurrence.accountId,
@@ -186,7 +201,8 @@ function eventRecord(
  * is every occurrence that conflicts after the write, over the same scope. `at` is the write's instant:
  * a cleared occurrence resolves then, never before it opened. Resolutions come first, so a statement
  * that supersedes a conflicting one records the old occurrence's `resolved` before the new one's
- * `opened`. A store inserts each record with "on conflict do nothing" on `(issueId, kind)`.
+ * `opened`. Occurrences are matched on `(issueId, consumerId)`. A store inserts each record with "on conflict
+ * do nothing" on `(issueId, consumerId, kind)`.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
@@ -195,10 +211,10 @@ export function planReportingIssueEventsV1(input: {
   conflicts: readonly ReportingConsumerMismatchOccurrenceV1[];
   at: string;
 }): ReportingIssueEventRecordV1[] {
-  const conflicting = new Set(input.conflicts.map(value => value.issueId));
-  const open = new Set(input.open.map(value => value.issueId));
+  const conflicting = new Set(input.conflicts.map(occurrenceKey));
+  const open = new Set(input.open.map(occurrenceKey));
   const resolved = input.open
-    .filter(value => !conflicting.has(value.issueId))
+    .filter(value => !conflicting.has(occurrenceKey(value)))
     .map(value =>
       eventRecord(
         value,
@@ -207,7 +223,7 @@ export function planReportingIssueEventsV1(input: {
       )
     );
   const opened = input.conflicts
-    .filter(value => !open.has(value.issueId))
+    .filter(value => !open.has(occurrenceKey(value)))
     .map(value => eventRecord(value, 'opened', value.openedAt));
   return [...resolved, ...opened];
 }
@@ -265,7 +281,7 @@ export interface ReportingIssueEventStoreV1 {
    */
   sweepIssueEscalations(input: { escalationSeconds: number; accountId?: string; limit?: number }): Promise<number>;
   /**
-   * Lease up to `limit` due events, at most one per occurrence, each occurrence's in recording order: an
+   * Lease up to `limit` due events, at most one per occurrence (`(issueId, consumerId)`), each occurrence's in recording order: an
    * event is claimable only once every earlier event of its occurrence was delivered. An unsettled lease
    * expires after `leaseMilliseconds` and is claimable again.
    */
@@ -278,7 +294,13 @@ export interface ReportingIssueEventStoreV1 {
   completeIssueEvent(lease: ReportingIssueEventLeaseV1): Promise<boolean>;
   /** Give back a failed delivery, due again `retryAfterMilliseconds` from now; `false` when the lease was lost. */
   releaseIssueEvent(lease: ReportingIssueEventLeaseV1, input: { retryAfterMilliseconds: number }): Promise<boolean>;
-  /** Delete up to `limit` events delivered more than `olderThanMilliseconds` ago. */
+  /**
+   * Delete up to `limit` whole occurrences that are resolved and whose every event was delivered more than
+   * `olderThanMilliseconds` ago. Returns the events deleted.
+   *
+   * Never an open occurrence, however old its delivered events: the `opened` record is what a later write
+   * resolves and what the escalation sweep escalates, so deleting it would lose both.
+   */
   pruneIssueEvents(input: { olderThanMilliseconds: number; limit?: number }): Promise<number>;
 }
 
@@ -488,7 +510,10 @@ export interface ReportingIssueEventDispatcherOptionsV1 {
   retryBaseMilliseconds?: number;
   /** Retry delay ceiling. Default 1 h. Retries never stop. */
   retryCapMilliseconds?: number;
-  /** Delivered events older than this are pruned. Default 7 days; `null` keeps them. */
+  /**
+   * A resolved occurrence whose events were all delivered longer ago than this is pruned. Open occurrences
+   * are never pruned. Default 7 days; `null` keeps everything.
+   */
   retentionMilliseconds?: number | null;
 }
 
