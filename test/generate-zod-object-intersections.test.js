@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { runHarness, EVIDENCE_SOURCES, evidenceSources } = require('./helpers/codegen-source-closure');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 
@@ -182,8 +183,14 @@ writeFileSync(${JSON.stringify(outPath)}, __test__.postProcessGetReportingStatus
   }
 }
 
-function postProcessReportingEvidenceStrictness(input) {
-  return runPostProcess('postProcessReportingEvidenceStrictness', input, '.zod-reporting-strictness-');
+// The source closure is injected so the result never depends on schemas/cache/latest.
+function postProcessReportingEvidenceStrictness(input, sources) {
+  return runHarness(
+    `
+    return __test__.postProcessReportingEvidenceStrictness(data.input, reader(data.sources));
+  `,
+    { input, sources }
+  );
 }
 
 function reportingFileManifestClosedStructures(manifest, documentsById) {
@@ -323,7 +330,7 @@ export const RevisionViewSchema = z.object({ status: z.literal("completed"), vie
   assert.equal(postProcessGetReportingStatusViewRequiredFields(output, requiredByView), output);
 });
 
-test('reporting-status closed structures are source-derived and fail closed', () => {
+test('reporting-status closed structures are source-derived and open structures drop only the key set', () => {
   const source = {
     properties: {
       scope: {
@@ -378,9 +385,16 @@ test('reporting-status closed structures are source-derived and fail closed', ()
     },
   });
 
-  const unclosedScope = structuredClone(source);
-  unclosedScope.properties.scope.additionalProperties = true;
-  assert.throws(() => reportingStatusClosedStructures(unclosedScope), /source schema must close scope/);
+  // An open structure keeps its required fields and has no closed key set.
+  const openScope = structuredClone(source);
+  openScope.properties.scope.additionalProperties = true;
+  const openStructures = reportingStatusClosedStructures(openScope);
+  assert.deepEqual(openStructures.scope, { requiredFields: ['delivery_config_generations'] });
+  assert.equal('allowedFields' in openStructures.scope, false);
+  assert.deepEqual(openStructures.obligationCounts, {
+    allowedFields: ['total', 'waiting'],
+    requiredFields: ['total', 'waiting'],
+  });
 });
 
 test('reporting evidence post-processor makes only closed reporting schemas strict', () => {
@@ -404,7 +418,11 @@ test('reporting evidence post-processor makes only closed reporting schemas stri
 
 export const ExtensionFriendlySchema = z.object({}).passthrough();
 `;
-  const output = postProcessReportingEvidenceStrictness(input);
+  const output = postProcessReportingEvidenceStrictness(input, evidenceSources(true));
+  assert.deepEqual(
+    names,
+    EVIDENCE_SOURCES.map(([name]) => name)
+  );
 
   for (const name of names) {
     assert.match(
@@ -413,6 +431,9 @@ export const ExtensionFriendlySchema = z.object({}).passthrough();
     );
   }
   assert.match(output, /ExtensionFriendlySchema = z\.object\(\{\}\)\.passthrough\(\)/);
+
+  // An open source keeps passthrough instead of being closed.
+  assert.equal(postProcessReportingEvidenceStrictness(input, evidenceSources(false)), input);
 });
 
 test('reporting file manifest strictness follows exact source boundaries and fails safely for new closed references', () => {

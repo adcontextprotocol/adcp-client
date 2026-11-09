@@ -8,6 +8,16 @@ const addFormats = require('ajv-formats').default;
 
 const ROOT = path.resolve(__dirname, '..');
 const source = require('./fixtures/reporting-consumer-status/canonical-rc3.json');
+// Injected so the test never reads schemas/cache/latest.
+const requestSource = {
+  additionalProperties: false,
+  properties: Object.fromEntries(
+    ['account', 'idempotency_key', 'statuses', 'adcp_version', 'adcp_major_version', 'context', 'ext'].map(key => [
+      key,
+      {},
+    ])
+  ),
+};
 const digest = 'a'.repeat(64);
 const base = {
   reporting_status_id: 'reporting-status-0001',
@@ -87,6 +97,7 @@ test('canonical content_mismatch constraints survive TypeScript -> Zod generatio
   try {
     fs.writeFileSync(path.join(directory, 'cases.json'), JSON.stringify(cases));
     fs.writeFileSync(path.join(directory, 'source.json'), JSON.stringify(source));
+    fs.writeFileSync(path.join(directory, 'request-source.json'), JSON.stringify(requestSource));
     fs.writeFileSync(
       path.join(directory, 'harness.ts'),
       `
@@ -99,6 +110,7 @@ import { __test__ } from '../../scripts/generate-zod-from-ts';
 import { injectJsdocConstraints } from '../../scripts/schema-utils';
 async function main() {
   const source = JSON.parse(readFileSync(new URL('./source.json', import.meta.url), 'utf8'));
+  const requestSource = JSON.parse(readFileSync(new URL('./request-source.json', import.meta.url), 'utf8'));
   // The production TypeScript projection flattens the conditional allOf arms.
   const { allOf, ...flat } = source;
   const types = await compile(injectJsdocConstraints(flat), 'ReportingConsumerStatus', { bannerComment: '' });
@@ -114,9 +126,9 @@ async function main() {
   ]) {
     const changed = structuredClone(source);
     mutate(changed);
-    assert.throws(() => __test__.postProcessReportingConsumerStatusConstraints(passthrough, changed), /consumer-status|Consumer-status/);
+    assert.throws(() => __test__.postProcessReportingConsumerStatusConstraints(passthrough, changed, requestSource), /consumer-status|Consumer-status/);
   }
-  const refined = __test__.postProcessReportingConsumerStatusConstraints(passthrough, source);
+  const refined = __test__.postProcessReportingConsumerStatusConstraints(passthrough, source, requestSource);
   writeFileSync(new URL('./generated.ts', import.meta.url), refined);
   const { ReportingConsumerStatusSchema: schema, SyncReportingStatusRequestSchema: request, SyncReportingStatusResponseSchema: response } = await import('./generated');
   const cases = JSON.parse(readFileSync(new URL('./cases.json', import.meta.url), 'utf8'));

@@ -21,6 +21,66 @@ import { relaxArrayCardinalityTypes } from './typescript-array-cardinality';
 const CORE_SOURCE_FILE = path.join(__dirname, '../src/lib/types/core.generated.ts');
 const TOOLS_SOURCE_FILE = path.join(__dirname, '../src/lib/types/tools.generated.ts');
 const OUTPUT_FILE = path.join(__dirname, '../src/lib/types/schemas.generated.ts');
+const SOURCE_SCHEMA_CACHE_ROOT = path.join(__dirname, '../schemas/cache/latest');
+
+type SourceSchemaReader = (file: string, pointer?: string) => Record<string, unknown>;
+
+/**
+ * Read one object schema from the synced source cache by file and JSON
+ * Pointer. AdCP 3.x schemas are open unless the source closes them with
+ * `additionalProperties: false` (adcontextprotocol/adcp#8866), so the
+ * post-processors that restore strictness lost in the TypeScript projection
+ * read closure from here instead of asserting it. A missing file or pointer
+ * fails generation: the source moved and its mapping needs review.
+ */
+function sourceSchemaAt(file: string, pointer = ''): Record<string, unknown> {
+  let node: unknown = JSON.parse(readFileSync(path.join(SOURCE_SCHEMA_CACHE_ROOT, file), 'utf8'));
+  for (const token of pointer.split('/').slice(1)) {
+    const key = token.replaceAll('~1', '/').replaceAll('~0', '~');
+    node = node && typeof node === 'object' ? (node as Record<string, unknown>)[key] : undefined;
+  }
+  if (!node || typeof node !== 'object' || Array.isArray(node)) {
+    throw new Error(`Source schema ${file}#${pointer} is missing or is not an object schema.`);
+  }
+  return node as Record<string, unknown>;
+}
+
+/** The Zod unknown-key policy a source object schema declares: strict only when it is closed. */
+function sourceUnknownKeyPolicy(schema: Record<string, unknown>): '.strict()' | '.passthrough()' {
+  return schema.additionalProperties === false ? '.strict()' : '.passthrough()';
+}
+
+/**
+ * JSON Pointers of the open inline object schemas below a source object.
+ * A post-processor that closes a whole generated expression must not close
+ * these by accident, so it fails generation when one appears outside its
+ * reviewed exceptions. `$ref` targets are separate exports and are skipped.
+ */
+function openInlineObjectPointers(schema: Record<string, unknown>, pointer = ''): string[] {
+  const open: string[] = [];
+  const visit = (node: unknown, at: string): void => {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return;
+    const child = node as Record<string, unknown>;
+    if (typeof child.$ref === 'string') return;
+    if ((child.type === 'object' || child.properties) && child.additionalProperties !== false) open.push(at);
+    descend(child, at);
+  };
+  const descend = (node: Record<string, unknown>, at: string): void => {
+    if (node.properties && typeof node.properties === 'object') {
+      for (const [name, child] of Object.entries(node.properties as Record<string, unknown>)) {
+        visit(child, `${at}/properties/${name.replaceAll('~', '~0').replaceAll('/', '~1')}`);
+      }
+    }
+    visit(node.items, `${at}/items`);
+    visit(node.additionalProperties, `${at}/additionalProperties`);
+    for (const keyword of ['oneOf', 'anyOf', 'allOf'] as const) {
+      const members = node[keyword];
+      if (Array.isArray(members)) members.forEach((member, index) => visit(member, `${at}/${keyword}/${index}`));
+    }
+  };
+  descend(schema, pointer);
+  return open;
+}
 
 /**
  * Schema construction only creates local validators and captures their dependencies.
@@ -1696,8 +1756,14 @@ function postProcessPostalCountrySystemSchema(content: string): string {
   return content.slice(0, schemaStart) + correctedBlock + content.slice(schemaEnd);
 }
 
-/** Restore the closed beta.4 SDK-local continuation schema exactly. */
-function postProcessCompatibilityPurchaseCoordinatorInput(content: string): string {
+/**
+ * Restore the beta.4 compatibility continuation input exactly. It is strict
+ * only while media-buy/legacy-purchase-continuation-input.json is closed.
+ */
+function postProcessCompatibilityPurchaseCoordinatorInput(
+  content: string,
+  readSource: SourceSchemaReader = sourceSchemaAt
+): string {
   const startMarker = 'export const CompatibilityPurchaseCoordinatorInputSchema = ';
   const start = content.indexOf(startMarker);
   if (start < 0) throw new Error('CompatibilityPurchaseCoordinatorInputSchema was not generated.');
@@ -1707,6 +1773,7 @@ function postProcessCompatibilityPurchaseCoordinatorInput(content: string): stri
   if ((block.match(/export const /g) ?? []).length !== 1) {
     throw new Error('CompatibilityPurchaseCoordinatorInputSchema post-processing would remove other exports.');
   }
+  const policy = sourceUnknownKeyPolicy(readSource('media-buy/legacy-purchase-continuation-input.json'));
   const replacement = `export const CompatibilityPurchaseCoordinatorInputSchema = z.object({
     idempotency_key: z.uuid(),
     continuation_token: z.string().min(16),
@@ -1721,7 +1788,7 @@ function postProcessCompatibilityPurchaseCoordinatorInput(content: string): stri
         }
     }),
     legacy_create_request: z.object({}).passthrough().refine(value => Object.keys(value).length > 0, "legacy_create_request must not be empty")
-}).strict();`;
+})${policy};`;
   return `${content.slice(0, start)}${replacement}${content.slice(end)}`;
 }
 
@@ -2269,13 +2336,32 @@ function postProcessForPassthrough(content: string): string {
  * platform extensions. Trusted Match request schemas are different: their
  * JSON Schemas explicitly set `additionalProperties: false` because context
  * and identity travel on separate privacy-boundary paths. Keep that contract
- * in the generated Zod exports.
+ * in the generated Zod exports for as long as the source keeps it closed.
  */
-function postProcessTrustedMatchPrivacyBoundaryStrictness(content: string): string {
-  const strictSchemaExport = (source: string, schemaName: string, nextSchemaName: string): string => {
+function postProcessTrustedMatchPrivacyBoundaryStrictness(
+  content: string,
+  readSource: SourceSchemaReader = sourceSchemaAt
+): string {
+  const strictSchemaExport = (
+    source: string,
+    schemaName: string,
+    sourceFile: string,
+    openExceptions: string[] = []
+  ): string => {
+    const sourceSchema = readSource(sourceFile);
+    if (sourceSchema.additionalProperties !== false) return source;
+    const unexpectedOpen = openInlineObjectPointers(sourceSchema).filter(pointer => !openExceptions.includes(pointer));
+    if (unexpectedOpen.length > 0) {
+      throw new Error(
+        `postProcessTrustedMatchPrivacyBoundaryStrictness: ${sourceFile} is closed but keeps ${unexpectedOpen.join(', ')} open.`
+      );
+    }
     const start = source.indexOf(`export const ${schemaName} = z.object({`);
     if (start === -1) return source;
-    const end = source.indexOf(`\n\nexport const ${nextSchemaName} = `, start);
+    // Close only this export. Generated exports between the request and a
+    // named neighbour (TargetingKvsSchema follows the context request) are
+    // response shapes with their own source closure.
+    const end = source.indexOf('\n\nexport const ', start + 1);
     if (end === -1) {
       throw new Error(
         `postProcessTrustedMatchPrivacyBoundaryStrictness: unable to locate schema boundary after ${schemaName}.`
@@ -2293,15 +2379,18 @@ function postProcessTrustedMatchPrivacyBoundaryStrictness(content: string): stri
     return before + block + after;
   };
 
-  let result = strictSchemaExport(content, 'ContextMatchRequestSchema', 'OfferPriceSchema');
-  result = strictSchemaExport(result, 'IdentityMatchRequestSchema', 'TMPXChunkSchema');
+  let result = strictSchemaExport(content, 'ContextMatchRequestSchema', 'trusted-match/context-match-request.json');
+  result = strictSchemaExport(result, 'IdentityMatchRequestSchema', 'trusted-match/identity-match-request.json', [
+    '/properties/identities/items/properties/attestation/properties/proof',
+  ]);
   return result;
 }
 
 type ReportingStatusView = 'summary' | 'periods' | 'revision';
 
 type ReportingStatusClosedObject = {
-  allowedFields: string[];
+  /** The closed key set. Absent when the source leaves the object open. */
+  allowedFields?: string[];
   requiredFields: string[];
 };
 
@@ -2380,8 +2469,9 @@ function reportingStatusViewRequiredFields(source: unknown): Record<ReportingSta
 }
 
 /**
- * Read source-closed anonymous response structures that lose strictness when
- * the generated response's root object is intersected with its view union.
+ * Read the anonymous response structures that lose their nested checks when
+ * the generated response's root object is intersected with its view union,
+ * with the closed key set of each one the source closes.
  */
 function reportingStatusClosedStructures(source: unknown): ReportingStatusClosedStructures {
   if (!source || typeof source !== 'object' || Array.isArray(source)) {
@@ -2396,14 +2486,15 @@ function reportingStatusClosedStructures(source: unknown): ReportingStatusClosed
   };
   const closedObject = (value: unknown, name: string): ReportingStatusClosedObject => {
     const schema = objectAt(value, name);
-    if (schema.additionalProperties !== false) {
-      throw new Error(`get_reporting_status source schema must close ${name}.`);
-    }
     const properties = objectAt(schema.properties, `${name}.properties`);
     const requiredFields = Array.isArray(schema.required)
       ? schema.required.filter((field): field is string => typeof field === 'string')
       : [];
-    return { allowedFields: Object.keys(properties), requiredFields };
+    // Required fields apply either way; the key set is enforced only where
+    // the source closes the object.
+    return schema.additionalProperties === false
+      ? { allowedFields: Object.keys(properties), requiredFields }
+      : { requiredFields };
   };
 
   const properties = objectAt(root.properties, 'root.properties');
@@ -2497,32 +2588,57 @@ function postProcessGetReportingStatusViewRequiredFields(
 }
 
 /**
- * Reporting evidence is a closed, audit-relevant contract. These schemas are
- * explicitly `additionalProperties: false` in the signed source, unlike the
- * ordinary extension-friendly AdCP payload objects handled by the global
- * passthrough post-processor.
+ * Reporting evidence is an audit-relevant contract. Where the signed source
+ * closes one of these schemas with `additionalProperties: false`, restore that
+ * strictness, which the global passthrough post-processor removes. AdCP 3.3
+ * opens them (adcontextprotocol/adcp#8866); an open source keeps passthrough.
  */
-function postProcessReportingEvidenceStrictness(content: string): string {
-  // Audited exhaustive named closed-evidence set for the current
-  // get_reporting_status bundle; review this list on schema-version bumps.
-  const schemaNames = [
-    'ReportingCoverageSchema',
-    'ReportingStatusIssueSchema',
-    'ReportingCanonicalContentDigestSchema',
-    'IntegerReportingControlTotalSchema',
-    'DecimalReportingControlTotalSchema',
-    'SHA256PhysicalChecksumSchema',
-    'SHA512PhysicalChecksumSchema',
-    'ReportingResourceSchema',
-    'ReportingVerificationSchema',
-    'ReportingScheduleSchema',
-    'ReportingReceiptSchema',
-    'ReportingRevisionSchema',
-    'ReportingObligationSchema',
-    'ReportingMaterializationSchema',
+function postProcessReportingEvidenceStrictness(
+  content: string,
+  readSource: SourceSchemaReader = sourceSchemaAt
+): string {
+  // Audited exhaustive named evidence set for the current get_reporting_status
+  // bundle, with each schema's source; review this list on schema-version bumps.
+  const sources: Array<[schemaName: string, file: string, pointer?: string]> = [
+    ['ReportingCoverageSchema', 'core/reporting-coverage.json'],
+    ['ReportingStatusIssueSchema', 'core/reporting-status-issue.json'],
+    ['ReportingCanonicalContentDigestSchema', 'core/reporting-canonical-content-digest.json'],
+    ['IntegerReportingControlTotalSchema', 'core/reporting-control-total.json', '/oneOf/0'],
+    ['DecimalReportingControlTotalSchema', 'core/reporting-control-total.json', '/oneOf/1'],
+    [
+      'SHA256PhysicalChecksumSchema',
+      'core/reporting-verification.json',
+      '/properties/physical_checksums/items/oneOf/0',
+    ],
+    [
+      'SHA512PhysicalChecksumSchema',
+      'core/reporting-verification.json',
+      '/properties/physical_checksums/items/oneOf/1',
+    ],
+    ['ReportingResourceSchema', 'core/reporting-resource.json'],
+    ['ReportingVerificationSchema', 'core/reporting-verification.json'],
+    ['ReportingScheduleSchema', 'core/reporting-schedule.json'],
+    ['ReportingReceiptSchema', 'core/reporting-receipt.json'],
+    ['ReportingRevisionSchema', 'core/reporting-revision.json'],
+    ['ReportingObligationSchema', 'core/reporting-obligation.json'],
+    ['ReportingMaterializationSchema', 'core/reporting-materialization.json'],
   ];
   let result = content;
-  for (const schemaName of schemaNames) {
+  for (const [schemaName, file, pointer = ''] of sources) {
+    const source = readSource(file, pointer);
+    const sourceName = typeof source.title === 'string' ? source.title.replace(/[^A-Za-z0-9]/g, '') : '';
+    if (`${sourceName}Schema`.toLowerCase() !== schemaName.toLowerCase()) {
+      throw new Error(`postProcessReportingEvidenceStrictness: ${file}#${pointer} is no longer ${schemaName}.`);
+    }
+    if (source.additionalProperties !== false) continue;
+    // A closed root closes the whole generated expression, so every inline
+    // object under it must be closed in the source too.
+    const openInline = openInlineObjectPointers(source, pointer);
+    if (openInline.length > 0) {
+      throw new Error(
+        `postProcessReportingEvidenceStrictness: ${schemaName} is closed but keeps ${openInline.join(', ')} open.`
+      );
+    }
     const target = findSchemaExportExpressions(result).find(entry => entry.name === schemaName);
     if (!target) throw new Error(`postProcessReportingEvidenceStrictness: ${schemaName} was not generated.`);
     const expression = result.slice(target.expressionStart, target.expressionEnd);
@@ -2643,10 +2759,11 @@ function postProcessReportingConsumerStatusConstraints(
   content: string,
   source = JSON.parse(
     readFileSync(path.join(__dirname, '../schemas/cache/latest/core/reporting-consumer-status.json'), 'utf8')
-  )
+  ),
+  requestSource: Record<string, unknown> = sourceSchemaAt('media-buy/sync-reporting-status-request.json')
 ): string {
-  // Read the closed status arms from the pinned bundle. TypeScript flattens
-  // these if/then rules, so ts-to-zod alone cannot preserve their constraints.
+  // Read the status arms from the pinned bundle. TypeScript flattens these
+  // if/then rules, so ts-to-zod alone cannot preserve their constraints.
   const rules: Record<string, { required: string[]; forbidden: string[] }> = {};
   const snapshotPairing = {
     if: { required: ['seller_ledger_snapshot_id'] },
@@ -2692,12 +2809,56 @@ function postProcessReportingConsumerStatusConstraints(
     rules[status] = { required, forbidden };
   }
   if (
-    source.additionalProperties !== false ||
     !sawSnapshotPairing ||
     !isDeepStrictEqual(Object.keys(rules).sort(), [...source.properties.consumer_status.enum].sort())
   ) {
     throw new Error('Consumer-status constraints must cover every canonical status');
   }
+  // Unknown keys are rejected only on the objects the source closes. The
+  // emitted key lists below must match a closed source exactly.
+  const closedKeySet = (schema: Record<string, any> | undefined, keys: string[], label: string): boolean => {
+    if (schema?.additionalProperties !== false) return false;
+    if (!isDeepStrictEqual(Object.keys(schema.properties ?? {}).sort(), [...keys].sort())) {
+      throw new Error(`Consumer-status constraints: the closed ${label} key set changed`);
+    }
+    return true;
+  };
+  const periodKeys = ['start', 'end', 'source_timezone'];
+  const requestKeys = [
+    'account',
+    'idempotency_key',
+    'statuses',
+    'adcp_version',
+    'adcp_major_version',
+    'context',
+    'ext',
+  ];
+  const itemUnknownKeyChecks =
+    (source.additionalProperties === false
+      ? `      const allowed = new Set(${JSON.stringify(Object.keys(source.properties))});
+      for (const field of Object.keys(value as Record<string, unknown>)) {
+          if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
+      }
+`
+      : '') +
+    (closedKeySet(source.properties.period, periodKeys, 'consumer-status period')
+      ? `      const period = (value as Record<string, unknown>).period;
+      if (period && typeof period === "object" && !Array.isArray(period)) {
+          for (const field of Object.keys(period)) {
+              if (!${JSON.stringify(periodKeys).replaceAll(',', ', ')}.includes(field)) {
+                  ctx.addIssue({ code: "custom", path: ["period", field], message: "Unrecognized key" });
+              }
+          }
+      }
+`
+      : '');
+  const requestUnknownKeyChecks = closedKeySet(requestSource, requestKeys, 'sync_reporting_status request')
+    ? `      const allowed = new Set(${JSON.stringify(requestKeys).replaceAll(',', ', ')});
+      for (const field of Object.keys(value as Record<string, unknown>)) {
+          if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
+      }
+`
+    : '';
   const refine = (source: string, schemaName: string, refinement: string, preserveObjectMethods = false): string => {
     const target = findSchemaExportExpressions(source).find(entry => entry.name === schemaName);
     if (!target) throw new Error(`postProcessReportingConsumerStatusConstraints: ${schemaName} was not generated.`);
@@ -2732,19 +2893,7 @@ function postProcessReportingConsumerStatusConstraints(
               ctx.addIssue({ code: "custom", path: [field], message: field + " is forbidden" });
           }
       };
-      const allowed = new Set(${JSON.stringify(Object.keys(source.properties))});
-      for (const field of Object.keys(value as Record<string, unknown>)) {
-          if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
-      }
-      const period = (value as Record<string, unknown>).period;
-      if (period && typeof period === "object" && !Array.isArray(period)) {
-          for (const field of Object.keys(period)) {
-              if (!["start", "end", "source_timezone"].includes(field)) {
-                  ctx.addIssue({ code: "custom", path: ["period", field], message: "Unrecognized key" });
-              }
-          }
-      }
-      const rules: Record<string, { required: string[]; forbidden: string[] }> = ${JSON.stringify(rules)};
+${itemUnknownKeyChecks}      const rules: Record<string, { required: string[]; forbidden: string[] }> = ${JSON.stringify(rules)};
       const rule = Object.hasOwn(rules, value.consumer_status) ? rules[value.consumer_status] : undefined;
       if (!rule) {
           ctx.addIssue({ code: "custom", path: ["consumer_status"], message: "Unsupported consumer status" });
@@ -2763,11 +2912,7 @@ function postProcessReportingConsumerStatusConstraints(
     'SyncReportingStatusRequestSchema',
     `(value, ctx) => {
       // reporting consumer status canonical parity
-      const allowed = new Set(["account", "idempotency_key", "statuses", "adcp_version", "adcp_major_version", "context", "ext"]);
-      for (const field of Object.keys(value as Record<string, unknown>)) {
-          if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
-      }
-      if (value.statuses.length < 1) ctx.addIssue({ code: "custom", path: ["statuses"], message: "Array must contain at least 1 element(s)" });
+${requestUnknownKeyChecks}      if (value.statuses.length < 1) ctx.addIssue({ code: "custom", path: ["statuses"], message: "Array must contain at least 1 element(s)" });
       value.statuses.forEach((status, index) => {
           if ((status as Record<string, unknown>).recorded_at !== undefined) {
               ctx.addIssue({ code: "custom", path: ["statuses", index, "recorded_at"], message: "recorded_at is response-only" });
@@ -3060,6 +3205,24 @@ function postProcessGetReportingStatusEvidenceStrictness(
   const expression = content.slice(target.expressionStart, target.expressionEnd);
   if (expression.includes('// reporting evidence strictness')) return content;
 
+  // Unknown keys are rejected only on the structures the source closes. While
+  // every one is closed the emitted check is the original closed-only form.
+  const everyStructureClosed = [
+    closedStructures.scope,
+    closedStructures.deliveryConfigGeneration,
+    closedStructures.obligationCounts,
+    closedStructures.pagination,
+  ].every(structure => structure.allowedFields !== undefined);
+  const objectLabel = everyStructureClosed
+    ? 'source-closed get_reporting_status object'
+    : 'get_reporting_status object';
+  const allowedFieldsType = everyStructureClosed
+    ? 'allowedFields: readonly string[]'
+    : 'allowedFields?: readonly string[]';
+  const unexpectedFieldGuard = everyStructureClosed
+    ? '!structure.allowedFields.includes(field)'
+    : 'structure.allowedFields !== undefined && !structure.allowedFields.includes(field)';
+
   const refinement = `.superRefine((value, ctx) => {
         // reporting evidence strictness
         const closedStructures = ${JSON.stringify(closedStructures)} as const;
@@ -3073,21 +3236,21 @@ function postProcessGetReportingStatusEvidenceStrictness(
         const addClosedObjectIssues = (
             candidate: unknown,
             path: Array<string | number>,
-            structure: { allowedFields: readonly string[]; requiredFields: readonly string[] }
+            structure: { ${allowedFieldsType}; requiredFields: readonly string[] }
         ) => {
             if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
-                ctx.addIssue({ code: "custom", path, message: "Expected source-closed get_reporting_status object" });
+                ctx.addIssue({ code: "custom", path, message: "Expected ${objectLabel}" });
                 return;
             }
             const object = candidate as Record<string, unknown>;
             for (const field of Object.keys(object)) {
-                if (!structure.allowedFields.includes(field)) {
-                    ctx.addIssue({ code: "custom", path: [...path, field], message: "Unexpected field in source-closed get_reporting_status object" });
+                if (${unexpectedFieldGuard}) {
+                    ctx.addIssue({ code: "custom", path: [...path, field], message: "Unexpected field in ${objectLabel}" });
                 }
             }
             for (const field of structure.requiredFields) {
                 if (object[field] === undefined) {
-                    ctx.addIssue({ code: "custom", path: [...path, field], message: "Required by source-closed get_reporting_status object" });
+                    ctx.addIssue({ code: "custom", path: [...path, field], message: "Required by ${objectLabel}" });
                 }
             }
         };
@@ -3265,9 +3428,14 @@ const CreativeAssetsRuntimeSchema: z.ZodType<Record<string, unknown>> = z.record
  * survive the JSON Schema -> TypeScript -> Zod projection. Unlike ordinary
  * protocol payloads, placement-presentation documents deliberately forbid
  * extensions because HTML, scripts, CSS, and arbitrary style properties are
- * outside the non-executable rendering contract.
+ * outside the non-executable rendering contract. Each object is strict while
+ * core/placement-presentation.json closes it.
  */
-function postProcessPlacementPresentationRuntimeConstraints(content: string): string {
+function postProcessPlacementPresentationRuntimeConstraints(
+  content: string,
+  readSource: SourceSchemaReader = sourceSchemaAt
+): string {
+  const policy = (pointer: string) => sourceUnknownKeyPolicy(readSource('core/placement-presentation.json', pointer));
   const replaceSchema = (schemaName: string, replacement: string): void => {
     const start = content.indexOf(`export const ${schemaName} = `);
     const end = content.indexOf('\n\nexport const ', start + 1);
@@ -3284,7 +3452,7 @@ function postProcessPlacementPresentationRuntimeConstraints(content: string): st
     y: z.number().int().min(0).max(8192),
     width: z.number().int().min(1).max(8192),
     height: z.number().int().min(1).max(8192)
-}).strict();`
+})${policy('/definitions/rectangle')};`
   );
 
   replaceSchema(
@@ -3296,7 +3464,7 @@ function postProcessPlacementPresentationRuntimeConstraints(content: string): st
     text: z.string().max(4096),
     text_color: ColorSchema,
     font_size: z.number().int().min(6).max(256)
-}).strict();`
+})${policy('/definitions/text_decoration')};`
   );
 
   replaceSchema(
@@ -3308,9 +3476,9 @@ function postProcessPlacementPresentationRuntimeConstraints(content: string): st
     image_ref: z.object({
         uri: z.string().regex(/^https:\\/\\//).url(),
         digest: z.string().regex(/^sha256:[a-f0-9]{64}$/)
-    }).strict(),
+    })${policy('/definitions/image_decoration/properties/image_ref')},
     fit: z.union([z.literal("contain"), z.literal("cover"), z.literal("stretch")])
-}).strict();`
+})${policy('/definitions/image_decoration')};`
   );
 
   replaceSchema(
@@ -3320,7 +3488,7 @@ function postProcessPlacementPresentationRuntimeConstraints(content: string): st
     layer: LayerSchema,
     bounds: RectangleSchema,
     fill_color: ColorSchema
-}).strict();`
+})${policy('/definitions/box_decoration')};`
   );
 
   replaceSchema(
@@ -3331,7 +3499,7 @@ function postProcessPlacementPresentationRuntimeConstraints(content: string): st
         width: z.number().int().min(1).max(8192),
         height: z.number().int().min(1).max(8192),
         background_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional()
-    }).strict(),
+    })${policy('/properties/canvas')},
     creative_slot: z.object({
         x: z.number().int().min(0).max(8192),
         y: z.number().int().min(0).max(8192),
@@ -3339,9 +3507,9 @@ function postProcessPlacementPresentationRuntimeConstraints(content: string): st
         height: z.number().int().min(1).max(8192),
         fit: z.union([z.literal("contain"), z.literal("cover"), z.literal("stretch")]),
         clip: z.literal(true)
-    }).strict(),
+    })${policy('/properties/creative_slot')},
     decorations: z.array(z.union([BoxDecorationSchema, TextDecorationSchema, ImageDecorationSchema])).max(100).optional()
-}).strict().superRefine((value, ctx) => {
+})${policy('')}.superRefine((value, ctx) => {
     const fitsCanvas = (rectangle: { x: number; y: number; width: number; height: number }): boolean =>
         rectangle.x + rectangle.width <= value.canvas.width && rectangle.y + rectangle.height <= value.canvas.height;
     if (!fitsCanvas(value.creative_slot)) {
@@ -4151,7 +4319,11 @@ function postProcessJsonSchemaDateTimeFormats(content: string): string {
     .replaceAll('z.iso.datetime()', 'z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")');
 }
 
-function postProcessTrustedMatchResponseSchemas(content: string): string {
+function postProcessTrustedMatchResponseSchemas(
+  content: string,
+  readSource: SourceSchemaReader = sourceSchemaAt
+): string {
+  const policy = (file: string, pointer = '') => sourceUnknownKeyPolicy(readSource(`trusted-match/${file}`, pointer));
   const replaceSchema = (schemaName: string, _nextSchemaName: string, replacement: string): void => {
     const start = content.indexOf(`export const ${schemaName} = `);
     if (start === -1) {
@@ -4174,7 +4346,7 @@ function postProcessTrustedMatchResponseSchemas(content: string): string {
     `export const TMPXChunkSchema = z.object({
     slot_id: z.string().min(1).max(64).regex(/^[a-zA-Z][a-zA-Z0-9_]*$/),
     value: z.string().min(1).max(1024)
-}).strict();`
+})${policy('tmpx-chunk.json')};`
   );
 
   replaceSchema(
@@ -4221,7 +4393,7 @@ function postProcessTrustedMatchResponseSchemas(content: string): string {
     priority: z.number().int().min(0).optional(),
     tmpx_slots: z.array(z.string().min(1).max(64).regex(/^[a-zA-Z][a-zA-Z0-9_]*$/)).min(1).max(2).optional(),
     status: z.union([z.literal("active"), z.literal("inactive"), z.literal("draining")]).optional()
-}).strict().superRefine((value, ctx) => {
+})${policy('provider-registration.json')}.superRefine((value, ctx) => {
     if (value.context_match !== true && value.identity_match !== true) {
         ctx.addIssue({ code: "custom", path: [], message: "at least one provider capability must be true" });
     }
@@ -4248,7 +4420,7 @@ function postProcessTrustedMatchResponseSchemas(content: string): string {
             message: "each provider mapping must contain one or two TMPX slots"
         })
     )
-}).strict();`
+})${policy('publisher-tmpx-config.json')};`
   );
 
   const routerPublisherSchema = `export const IdentityMatchResponseRouterPublisherSchema = z.object({
@@ -4271,7 +4443,7 @@ function postProcessTrustedMatchResponseSchemas(content: string): string {
     tmpx: z.string().optional(),
     tmpx_providers: z.record(
         z.string().min(1).max(64).regex(/^[A-Za-z0-9_]+$/),
-        z.object({ chunks: z.array(TMPXChunkSchema).min(1).max(2) }).strict()
+        z.object({ chunks: z.array(TMPXChunkSchema).min(1).max(2) })${policy('identity-match-response.json', '/properties/tmpx_providers/additionalProperties')}
     ).optional()
 }).passthrough().superRefine((value, ctx) => {
     for (const field of ["tmpx_chunks", "tmpx_values", "tmpx_macros", "context", "ext"]) {
@@ -4294,6 +4466,27 @@ export const IdentityMatchResponseSchema = IdentityMatchResponseRouterPublisherS
   } else {
     replaceSchema('IdentityMatchResponseSchema', 'GetProductsResponseSchema', routerPublisherSchema);
   }
+
+  // Both context-match responses define the targeting key-value item; it is
+  // closed while their sources close it.
+  const targetingKvsPolicies = new Set(
+    ['context-match-response.json', 'provider-context-match-response.json'].map(file =>
+      policy(file, '/definitions/targeting_kvs/items')
+    )
+  );
+  if (targetingKvsPolicies.size !== 1) {
+    throw new Error('postProcessTrustedMatchResponseSchemas: the context-match responses disagree on targeting_kvs.');
+  }
+  const targetingKvs = findSchemaExportExpressions(content).find(entry => entry.name === 'TargetingKvsSchema');
+  if (!targetingKvs) throw new Error('postProcessTrustedMatchResponseSchemas: TargetingKvsSchema was not generated.');
+  const targetingKvsExpression = content.slice(targetingKvs.expressionStart, targetingKvs.expressionEnd);
+  if (!/\.passthrough\(\)\)$/.test(targetingKvsExpression)) {
+    throw new Error('postProcessTrustedMatchResponseSchemas: TargetingKvsSchema is no longer an array of objects.');
+  }
+  content =
+    content.slice(0, targetingKvs.expressionStart) +
+    targetingKvsExpression.replace(/\.passthrough\(\)\)$/, `${[...targetingKvsPolicies][0]})`) +
+    content.slice(targetingKvs.expressionEnd);
 
   return content;
 }
@@ -5682,7 +5875,10 @@ function postProcessCanonicalImageMotionNarrowing(content: string): string {
 }
 
 /** Restore beta.6 reporting constraints that the general compatibility loosening intentionally drops. */
-function postProcessBeta6ReportingConstraints(content: string): string {
+function postProcessBeta6ReportingConstraints(
+  content: string,
+  readSource: SourceSchemaReader = sourceSchemaAt
+): string {
   let result = content;
 
   const requestedMetrics = 'requested_metrics: z.array(AvailableMetricSchema).optional(),';
@@ -5715,9 +5911,13 @@ function postProcessBeta6ReportingConstraints(content: string): string {
   if (!qualifierExpression.endsWith('.passthrough()')) {
     throw new Error('postProcessBeta6ReportingConstraints: qualifier is no longer a passthrough object.');
   }
+  // The qualifier is a closed join key while its source keeps it closed.
   result =
     result.slice(0, qualifier.expressionStart) +
-    qualifierExpression.replace(/\.passthrough\(\)$/, '.strict()') +
+    qualifierExpression.replace(
+      /\.passthrough\(\)$/,
+      sourceUnknownKeyPolicy(readSource('core/canonical-metric-qualifier.json'))
+    ) +
     result.slice(qualifier.expressionEnd);
 
   const canonicalQualifierBody = `z.object({
@@ -6622,8 +6822,8 @@ async function generateZodSchemas() {
 
     // The reporting-status response composes a shared result object with a
     // view-specific allOf arm. Recover the arm required fields from the signed
-    // bundle, then restore the closed audit-evidence boundaries that the
-    // global extension passthrough policy intentionally does not cover.
+    // bundle, then restore the audit-evidence boundaries the source closes,
+    // which the global extension passthrough policy intentionally does not cover.
     zodSchemas = postProcessGetReportingStatusViewRequiredFields(zodSchemas, reportingStatusRequiredByView);
     zodSchemas = postProcessReportingEvidenceStrictness(zodSchemas);
     zodSchemas = postProcessReportingStatusIssueConstraints(zodSchemas);
@@ -6636,7 +6836,7 @@ async function generateZodSchemas() {
     zodSchemas = postProcessCanonicalImageMotionNarrowing(zodSchemas);
 
     // Preserve the non-empty/unique requested metric set, positive view
-    // threshold, and closed canonical qualifier from the beta.6 wire schema.
+    // threshold, and canonical qualifier closure from the beta.6 wire schema.
     zodSchemas = postProcessBeta6ReportingConstraints(zodSchemas);
 
     // The beta.6 compact option source missed the two promoted canonical
@@ -6775,6 +6975,12 @@ export const __test__ = {
   postProcessObjectIntersections,
   postProcessRecordSizeConstraints,
   postProcessForecastRangeConstraint,
+  sourceUnknownKeyPolicy,
+  openInlineObjectPointers,
+  postProcessTrustedMatchPrivacyBoundaryStrictness,
+  postProcessTrustedMatchResponseSchemas,
+  postProcessPlacementPresentationRuntimeConstraints,
+  postProcessBeta6ReportingConstraints,
 };
 
 export { generateZodSchemas };
