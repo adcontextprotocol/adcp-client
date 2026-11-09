@@ -96,7 +96,7 @@ describe('storyboard skip counting', () => {
       assert.strictEqual(trackResult.status, 'pass', 'track with some passed steps should have pass status');
     });
 
-    test('fixture_unavailable keeps a mixed track coverage-incomplete', () => {
+    test('fixture_unavailable is neutral in a mixed track (#3596)', () => {
       const result = storyboardResult({
         passed_count: 1,
         failed_count: 0,
@@ -126,10 +126,10 @@ describe('storyboard skip counting', () => {
       });
 
       const trackResult = mapStoryboardResultsToTrackResult('creative', [result], dummyProfile);
-      assert.strictEqual(trackResult.status, 'partial');
+      assert.strictEqual(trackResult.status, 'pass');
     });
 
-    test('fixture_unavailable in a later multi-pass result keeps the track coverage-incomplete', () => {
+    test('fixture_unavailable in a later multi-pass result is neutral (#3596)', () => {
       const passingPhase = {
         phase_id: 'flow',
         phase_title: 'Flow',
@@ -186,7 +186,174 @@ describe('storyboard skip counting', () => {
       });
 
       const trackResult = mapStoryboardResultsToTrackResult('creative', [result], dummyProfile);
-      assert.strictEqual(trackResult.status, 'partial');
+      assert.strictEqual(trackResult.status, 'pass');
+    });
+
+    describe('runner-owned fixture gaps are neutral (#3596)', () => {
+      const NEUTRAL_SKIPS = [
+        {
+          name: 'fixture_unavailable',
+          skip_reason: 'fixture_unavailable',
+          skip: {
+            reason: 'fixture_unavailable',
+            detail: 'creative_asset_fixture_unavailable: slot "alt_text", no exact runner mapping',
+          },
+        },
+        {
+          name: 'fixture_unsatisfied',
+          skip_reason: 'fixture_unsatisfied',
+          skip: { reason: 'fixture_unsatisfied', detail: 'fixture resolution ladder exhausted' },
+        },
+        {
+          name: 'fixture_seed_unsupported',
+          skip_reason: 'fixture_seed_unsupported',
+          skip: { reason: 'not_applicable', detail: 'seller does not implement the seed_* scenario' },
+        },
+      ];
+
+      const phaseOf = steps => [{ phase_id: 'flow', phase_title: 'Flow', passed: true, steps, duration_ms: 50 }];
+
+      for (const neutral of NEUTRAL_SKIPS) {
+        test(`${neutral.name} next to a passed step grades pass`, () => {
+          const result = storyboardResult({
+            passed_count: 1,
+            skipped_count: 1,
+            phases: phaseOf([
+              stepResult(),
+              stepResult({
+                step_id: 'gap',
+                skipped: true,
+                skip_reason: neutral.skip_reason,
+                skip: neutral.skip,
+                duration_ms: 0,
+              }),
+            ]),
+          });
+          const trackResult = mapStoryboardResultsToTrackResult('media_buy', [result], dummyProfile);
+          assert.strictEqual(trackResult.status, 'pass');
+        });
+      }
+
+      test('fixture_unavailable beside a passing sibling storyboard grades pass', () => {
+        const gap = storyboardResult({
+          storyboard_id: 'gap',
+          passed_count: 1,
+          skipped_count: 1,
+          phases: phaseOf([
+            stepResult(),
+            stepResult({
+              step_id: 'gap',
+              skipped: true,
+              skip_reason: 'fixture_unavailable',
+              skip: { reason: 'fixture_unavailable', detail: 'creative_asset_fixture_unavailable: x' },
+              duration_ms: 0,
+            }),
+          ]),
+        });
+        const plain = storyboardResult({ storyboard_id: 'plain', passed_count: 1, phases: phaseOf([stepResult()]) });
+        assert.strictEqual(mapStoryboardResultsToTrackResult('media_buy', [gap, plain], dummyProfile).status, 'pass');
+      });
+
+      test('an all-skipped track whose only skips are fixture_unavailable grades skip', () => {
+        const result = storyboardResult({
+          skipped_count: 1,
+          phases: phaseOf([
+            stepResult({
+              skipped: true,
+              skip_reason: 'fixture_unavailable',
+              skip: { reason: 'fixture_unavailable', detail: 'creative_asset_fixture_unavailable: x' },
+              duration_ms: 0,
+            }),
+          ]),
+        });
+        assert.strictEqual(mapStoryboardResultsToTrackResult('media_buy', [result], dummyProfile).status, 'skip');
+      });
+
+      test('fixture_unavailable next to a genuine failed step still grades partial', () => {
+        const result = storyboardResult({
+          overall_passed: false,
+          passed_count: 1,
+          failed_count: 1,
+          skipped_count: 1,
+          phases: phaseOf([
+            stepResult(),
+            stepResult({ step_id: 'bad', passed: false, error: 'boom' }),
+            stepResult({
+              step_id: 'gap',
+              skipped: true,
+              skip_reason: 'fixture_unavailable',
+              skip: { reason: 'fixture_unavailable', detail: 'creative_asset_fixture_unavailable: x' },
+              duration_ms: 0,
+            }),
+          ]),
+        });
+        assert.strictEqual(mapStoryboardResultsToTrackResult('media_buy', [result], dummyProfile).status, 'partial');
+      });
+
+      test('fixture_unavailable next to a failed step with nothing passed grades fail', () => {
+        const result = storyboardResult({
+          overall_passed: false,
+          failed_count: 1,
+          skipped_count: 1,
+          phases: phaseOf([
+            stepResult({ passed: false, error: 'boom' }),
+            stepResult({
+              step_id: 'gap',
+              skipped: true,
+              skip_reason: 'fixture_unavailable',
+              skip: { reason: 'fixture_unavailable', detail: 'creative_asset_fixture_unavailable: x' },
+              duration_ms: 0,
+            }),
+          ]),
+        });
+        assert.strictEqual(mapStoryboardResultsToTrackResult('media_buy', [result], dummyProfile).status, 'fail');
+      });
+
+      for (const reason of ['prerequisite_failed', 'missing_tool']) {
+        test(`agent-caused ${reason} gap in a non-passing storyboard stays partial`, () => {
+          const result = storyboardResult({
+            overall_passed: false,
+            passed_count: 1,
+            skipped_count: 1,
+            phases: phaseOf([
+              stepResult(),
+              stepResult({
+                step_id: 'required',
+                skipped: true,
+                skip_reason: reason,
+                skip: { reason, detail: 'required step could not run' },
+                duration_ms: 0,
+              }),
+            ]),
+          });
+          assert.strictEqual(mapStoryboardResultsToTrackResult('media_buy', [result], dummyProfile).status, 'partial');
+        });
+      }
+
+      test('unverified signing coverage stays partial next to a passing sibling storyboard', () => {
+        const probe = storyboardResult({
+          storyboard_id: 'signing',
+          skipped_count: 1,
+          phases: phaseOf([
+            stepResult({
+              task: 'request_signing_probe',
+              skipped: true,
+              skip_reason: 'signing_transport_unavailable',
+              skip: { reason: 'not_applicable', detail: 'signing_transport_unavailable' },
+              duration_ms: 0,
+            }),
+          ]),
+        });
+        const plain = storyboardResult({ storyboard_id: 'plain', passed_count: 1, phases: phaseOf([stepResult()]) });
+        assert.strictEqual(
+          mapStoryboardResultsToTrackResult('security_transport', [probe, plain], dummyProfile).status,
+          'partial'
+        );
+        assert.strictEqual(
+          mapStoryboardResultsToTrackResult('security_transport', [probe], dummyProfile).status,
+          'partial'
+        );
+      });
     });
 
     test('track with no storyboards reports skip status', () => {
