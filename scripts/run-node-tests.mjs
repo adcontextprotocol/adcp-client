@@ -24,6 +24,8 @@ export const SLOW_NODE_TESTS = new Set([
   'test/canonical-creatives-a2a-e2e.test.js',
   'test/generate-zod-object-intersections.test.js',
   'test/generate-zod-reporting-status.test.js',
+  // Spawns a tsx harness per post-processor, several compiling emitted Zod.
+  'test/generate-zod-source-closure.test.js',
   // Runs Changesets versioning, npm lockfile resolution, and docs generation
   // in an isolated worktree. A cold CI shard exceeded the fast 60s file limit.
   'test/release-version-docs.test.js',
