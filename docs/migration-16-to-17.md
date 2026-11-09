@@ -194,8 +194,12 @@ createAdcpServer({
 `createAdcpServerFromPlatform` takes the same `capabilities.features.creativeStartPolicy`.
 `capabilities.overrides.media_buy.features.creative_start_policy` also counts.
 Under `createTenantRegistry` each tenant's own capabilities decide.
-`create_media_buy` and `update_media_buy` are not checked, because 3.3 withdraws
-the field from their packages.
+`create_media_buy` and `update_media_buy` are not checked. Withdrawing the field
+from their packages is pending adcontextprotocol/adcp#8767. The pinned
+`3.3.0-beta.5` `package-request` and `package-update` schemas still declare it
+with the same must-refuse rule, so until that lands a create or update that
+sets `true` reaches your handler unenforced. Refuse it yourself if you don't
+honor it. The Python SDK has the same known gap.
 
 `mediaBuyActionResolver.resolve()` follows the same rule: it offers
 `update_creative_start_policy` only when you pass `creativeStartPolicy: true`

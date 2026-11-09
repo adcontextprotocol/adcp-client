@@ -12,9 +12,12 @@
 // serving before its creatives are approved, the opposite of what the buyer
 // asked for.
 //
-// `create_media_buy` and `update_media_buy` are not gated: AdCP 3.3 withdraws
-// the field from their packages (adcontextprotocol/adcp#8767), and their open
-// schemas ignore it. The error vocabulary matches adcp-client-python.
+// `create_media_buy` and `update_media_buy` are not gated. Withdrawing the
+// field from their packages is pending adcontextprotocol/adcp#8767; the pinned
+// 3.3.0-beta.5 `package-request` and `package-update` still declare it with the
+// same must-refuse contract, so until that lands an opted-in create or update
+// reaches the handler unenforced. adcp-client-python has the same known gap.
+// The error vocabulary matches adcp-client-python.
 
 /** The package field that opts a package into the initial-start gate. */
 export const CREATIVE_START_POLICY_FIELD = 'start_requires_all_creatives_approved';
