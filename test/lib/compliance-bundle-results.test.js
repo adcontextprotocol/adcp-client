@@ -99,6 +99,21 @@ describe('buildComplianceBundleResults', () => {
     }
   });
 
+  test('keeps a fixture_unavailable skip visible as partial bundle coverage (#3596)', () => {
+    const withFixtureGap = result('root', {
+      skipped_count: 1,
+      phases: [
+        {
+          steps: [
+            { skip: { reason: 'fixture_unavailable', detail: 'creative_asset_fixture_unavailable: slot "alt_text"' } },
+          ],
+        },
+      ],
+    });
+
+    assert.strictEqual(buildComplianceBundleResults([bundle('root')], [withFixtureGap])[0].status, 'partial');
+  });
+
   test('only treats not-applicable skips as neutral inside a successful authored branch set', () => {
     const branchBundle = bundle('root');
     branchBundle.storyboards[0].phases = [{ id: 'auth-choice', branch_set: { id: 'auth', semantics: 'any_of' } }];

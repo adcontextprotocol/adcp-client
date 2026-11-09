@@ -8,6 +8,8 @@ const {
 const { expandCreativeAssetDirectives, findUnresolvedCreativeAssetDirectives } = require('../../dist/lib/testing');
 const { injectContext } = require('../../dist/lib/testing/storyboard/context');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner');
+const { mapStoryboardResultsToTrackResult } = require('../../dist/lib/testing/compliance/storyboard-tracks.js');
+const { computeOverallStatus } = require('../../dist/lib/testing/compliance/comply.js');
 
 const TEST_KIT = {
   assets: {
@@ -995,6 +997,139 @@ describe('$build_assets_from_format', () => {
     assert.strictEqual(result.failed_count, 0);
     assert.strictEqual(result.skipped_count, 1);
     assert.strictEqual(result.overall_passed, true);
+  });
+
+  test('a runner mapping gap for a required slot does not degrade the track or overall grade (#3596)', async () => {
+    const calls = [];
+    const storyboard = {
+      id: 'creative_asset_alt_text_gap',
+      version: '1.0.0',
+      title: 'Creative asset alt_text gap',
+      category: 'compliance',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'setup',
+          title: 'Setup',
+          steps: [
+            {
+              id: 'formats',
+              title: 'Discover a format',
+              task: 'get_products',
+              sample_request: {},
+              context_outputs: [{ key: 'format_params', path: 'products[0].format_options[0].params' }],
+              validations: [],
+            },
+            {
+              id: 'sync',
+              title: 'Sync creative',
+              task: 'sync_creatives',
+              stateful: true,
+              sample_request: {
+                creatives: [
+                  {
+                    creative_id: 'creative-1',
+                    format_kind: 'native',
+                    assets: { [BUILD_ASSETS_FROM_FORMAT_DIRECTIVE]: '$context.format_params' },
+                  },
+                ],
+              },
+              validations: [],
+            },
+          ],
+        },
+      ],
+    };
+    const options = runnerOptions(calls);
+    options.agentTools = ['get_products', 'sync_creatives'];
+    options._profile.tools = options.agentTools;
+    options._client.executeTask = async (name, params) => {
+      calls.push({ name, params });
+      if (name === 'get_products') {
+        return {
+          success: true,
+          data: {
+            products: [
+              {
+                format_options: [
+                  { params: { slots: [{ asset_group_id: 'alt_text', asset_type: 'text', required: true }] } },
+                ],
+              },
+            ],
+          },
+        };
+      }
+      return { success: true, data: {} };
+    };
+
+    const result = await runStoryboard('https://seller.example/mcp', storyboard, options);
+
+    const gapStep = result.phases[0].steps.find(step => step.step_id === 'sync');
+    assert.strictEqual(gapStep.skip.reason, 'fixture_unavailable');
+    assert.match(gapStep.skip.detail, /^creative_asset_fixture_unavailable:/);
+    assert.match(gapStep.skip.detail, /no exact runner mapping/);
+    assert.strictEqual(result.failed_count, 0);
+    assert.strictEqual(result.overall_passed, true);
+
+    const plain = {
+      storyboard_id: 'plain',
+      storyboard_title: 'Plain',
+      agent_url: 'https://seller.example/mcp',
+      overall_passed: true,
+      phases: [
+        {
+          phase_id: 'p',
+          phase_title: 'P',
+          passed: true,
+          steps: [
+            {
+              step_id: 's',
+              phase_id: 'p',
+              title: 'S',
+              task: 'get_products',
+              passed: true,
+              duration_ms: 1,
+              validations: [],
+              context: {},
+            },
+          ],
+          duration_ms: 1,
+        },
+      ],
+      context: {},
+      total_duration_ms: 1,
+      passed_count: 1,
+      failed_count: 0,
+      skipped_count: 0,
+      tested_at: '2026-01-01T00:00:00.000Z',
+    };
+
+    const track = mapStoryboardResultsToTrackResult('media_buy', [result, plain], { name: 'Test', tools: [] });
+    assert.strictEqual(track.status, 'pass');
+
+    // The gap stays visible on the step even though it no longer grades the track.
+    const mappedGap = track.scenarios
+      .flatMap(scenario => scenario.steps)
+      .find(step => step.skip_reason === 'fixture_unavailable');
+    assert.ok(mappedGap, 'mapped track keeps the fixture_unavailable step');
+    assert.ok(
+      mappedGap.warnings?.some(warning => warning.includes('creative_asset_fixture_unavailable:')),
+      'mapped step warns with the creative_asset_fixture_unavailable detail'
+    );
+
+    // Mirror the issue: several passing tracks plus this one.
+    const statuses = ['pass', 'pass', 'pass', track.status, 'skip', 'skip'];
+    const summary = {
+      tracks_passed: statuses.filter(status => status === 'pass').length,
+      tracks_failed: statuses.filter(status => status === 'fail').length,
+      tracks_partial: statuses.filter(status => status === 'partial').length,
+      tracks_skipped: statuses.filter(status => status === 'skip').length,
+      headline: '',
+    };
+    assert.strictEqual(computeOverallStatus(summary), 'passing');
   });
 
   test('does not preflight directives in skip_if phases or steps gated by requires_tool', async () => {

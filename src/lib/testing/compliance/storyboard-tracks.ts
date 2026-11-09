@@ -262,17 +262,12 @@ function computeTrackStatus(results: StoryboardResult[]): TrackStatus {
 
   const stepsOf = (result: StoryboardResult): StoryboardStepResult[] =>
     (result.passes?.flatMap(pass => pass.phases) ?? result.phases).flatMap(phase => phase.steps);
-  const hasFixtureUnavailable = results.some(result =>
-    stepsOf(result).some(step => step.skip?.reason === 'fixture_unavailable')
-  );
   // Scoped to request-signing probe steps, and decided by the runner's own
-  // rule so the track and the storyboard verdict can't disagree. Narrower
-  // than `hasFixtureUnavailable` in what it looks at: the legacy producers of
-  // that canonical reason (seeding unsupported, fixture ladder exhausted,
-  // creative-asset gap) keep their long-standing position below the
-  // all-skipped check, because an all-skipped track of that kind has always
-  // graded `skip` and reclassifying it here would move verdicts for tracks
-  // that have nothing to do with signing.
+  // rule so the track and the storyboard verdict can't disagree. This is the
+  // one runner-side coverage gap that holds a track open: the storyboard
+  // exists to verify a claimed signing posture, and a run that never reached
+  // the agent verified nothing. Runner-owned fixture gaps do not hold a track
+  // open — see the note above the final `pass` below.
   const hasUnverifiedSigningCoverage = results.some(result => signingCoverageUnverified(stepsOf(result)));
 
   if (totalSteps === 0) return 'skip';
@@ -290,11 +285,17 @@ function computeTrackStatus(results: StoryboardResult[]): TrackStatus {
   // leave failed_count at zero. The runner's overall verdict is authoritative:
   // some steps passed, but the cross-step invariant did not.
   if (results.some(result => !result.overall_passed)) return 'partial';
-  // Legacy canonical gaps keep their long-standing position and meaning: a
-  // mixed track carrying one is coverage-incomplete (`partial`), an
-  // all-skipped one already returned `skip` above. Only the signing reason
-  // is promoted ahead of that all-skipped check.
-  if (hasFixtureUnavailable) return 'partial';
+  // Runner-owned fixture gaps are neutral here (adcp-client#3596). A
+  // `fixture_unavailable` skip means the runner's test kit could not build an
+  // input for the seller's declared contract; the output contract grades that
+  // storyboard `not_applicable` and says it is not a grading signal about the
+  // agent. It therefore joins `fixture_unsatisfied` and
+  // `fixture_seed_unsupported`, which the runner already treats the same way
+  // (`storyboardWideFixtureUnavailable`): the track grades from the steps
+  // that ran. A real failure next to the gap was already graded above. The
+  // gap stays visible on the step (`skip_reason`, `warnings`), in the
+  // summary's `skipped_by_reason`, and as a coverage gap in the specialism
+  // bundle result.
 
   // No failures. Demote to `silent` when every observation-bearing
   // invariant record reports zero observations. Step-level passes alone
