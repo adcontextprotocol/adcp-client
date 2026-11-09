@@ -225,6 +225,82 @@ With synthetic or missing capabilities the client sends and the seller decides.
 Check `client.supports('creative_start_policy')`, or
 `capabilities.features.creativeStartPolicy`, before opting in.
 
+## Custom tool input validation
+
+Tools registered with a zod `inputSchema` now validate it in the AdCP layer
+instead of the MCP SDK (#3666). This covers:
+
+- `customTools` on `createAdcpServer`, and so `tasks_get` on `createAdcpServerFromPlatform`
+- `comply_test_controller` from `registerTestController`, `createComplyController().register()` and `createAdcpServerFromPlatform({ complyTest })`
+
+MCP `tools/list` still advertises the declared schema.
+
+**Buyers: the error shape changed.** A call that fails the schema used to get
+the MCP SDK's bare `-32602` text result, with no `structuredContent` and no
+`context`. It now gets an AdCP error that echoes `context`, like framework tools:
+
+```jsonc
+{
+  "adcp_error": {
+    "code": "INVALID_REQUEST",
+    "message": "search_brands request failed schema validation at /query: must have required property 'query'",
+    "recovery": "correctable",
+    "field": "query",
+    "issues": [{ "pointer": "/query", "message": "must have required property 'query'", "keyword": "required" }],
+    "details": { "tool": "search_brands", "side": "request", "issues": [/* the same issues */] }
+  },
+  "context": { "trace": "tr-1" },
+  "status": "failed",
+  "adcp_version": "3.3-beta.5"
+}
+```
+
+Read `adcp_error` instead of matching the `-32602` text or its `Input
+validation error:` prefix. Framework tools still use `VALIDATION_ERROR` for
+request-schema failures. #3674 tracks moving them to `INVALID_REQUEST`, the
+spec's code for schema violations.
+
+**Sellers: handlers receive the parsed value on every path.** On MCP, nothing
+changes for a valid call: the handler gets the value the schema parsed, with
+coercion, defaults and transforms applied and undeclared keys stripped.
+`AdcpServer.invoke()`, `dispatchTestRequest()` and A2A used to skip the schema
+and pass the caller's raw arguments to the handler. **They now validate too, and
+pass the same parsed, stripped value.** A handler on those paths no longer sees
+keys its schema does not declare, and an invalid call no longer reaches it.
+
+If a handler reads keys its schema does not declare, declare them. To keep every
+key, use a loose object:
+
+```ts
+customTools: {
+  vendor_lookup: {
+    // Keeps undeclared keys instead of stripping them.
+    inputSchema: z.looseObject({ query: z.string() }), // zod 3: z.object({...}).passthrough()
+    handler: async args => {
+      /* … */
+    },
+  },
+},
+```
+
+The arguments are parsed once, and everything that reads them uses the parsed
+value: `identity33` authorization, release selection and the handler. On
+`invoke()`, `dispatchTestRequest()` and A2A, authorization and release selection
+used to read the raw arguments. They now see the parsed value.
+
+**Behavior change on A2A, `invoke()` and `dispatchTestRequest()`:** a custom tool
+whose schema does not declare `adcp_version` used to let the caller's raw
+`adcp_version` select the release on those paths. Now the schema strips that
+field, so the server's default release applies, as it always has on MCP. A2A
+has no AdCP version negotiation at the envelope level: `A2A-Version` selects
+only the A2A wire. Framework tools are unchanged. To let a buyer pick the
+release, declare `adcp_version` (and `adcp_major_version`) in the schema. A
+declared default or coercion then selects the release.
+
+Rejections on these tools echo the caller's `context` even when the schema
+strips it: validation, version, authorization, and errors your handler returns
+or throws.
+
 ## AdCP 3.3.0-beta.5
 
 SDK 17 now pins AdCP `3.3.0-beta.5` and no longer packages or advertises

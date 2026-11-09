@@ -162,7 +162,7 @@ import {
   type TaskHandoff,
 } from '../async-outcome';
 import { _extractResponseSummaryEntry } from '../response-summary';
-import { productsResponse } from '../../responses';
+import { productsResponse, type McpToolResponse } from '../../responses';
 import { TOOL_ENTITY_FIELDS } from './entity-hydration.generated';
 import { z } from 'zod';
 import {
@@ -221,6 +221,11 @@ import {
   wrapRegisteredToolHandler,
   wrapSdkRequestHandler,
 } from '../../adcp-server';
+import {
+  finishDeclaredInputRejection,
+  parseDeclaredToolInput,
+  validateToolInputAtAdcpLayer,
+} from '../../declared-input-schema';
 import { isSandboxOrMockAccount } from '../../account-mode';
 import { recordResolvedAccountMode, hasObservedLiveMode } from './observed-modes';
 import type { Product } from '../../../types/tools.generated';
@@ -418,6 +423,23 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   if (Array.isArray(v)) return false;
   const proto = Object.getPrototypeOf(v);
   return proto === Object.prototype || proto === null;
+}
+
+// `comply_test_controller` echoes `context` and `ext` on its rejections. Both
+// are open objects on the request schema, so a hostile caller could stuff
+// arbitrarily large payloads. Self-reflection only (no cross-tenant
+// amplifier), but the echo is capped at 8 KiB serialized to bound the
+// response body: anything larger is dropped, mirroring a missing field rather
+// than echoing garbage.
+const COMPLY_ECHO_BYTE_CAP = 8 * 1024;
+function cappedComplyEcho(value: unknown): Record<string, unknown> | undefined {
+  if (value == null || typeof value !== 'object') return undefined;
+  try {
+    if (JSON.stringify(value).length > COMPLY_ECHO_BYTE_CAP) return undefined;
+    return value as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
 }
 
 function deepMergePlainObjects(target: unknown, source: unknown): unknown {
@@ -3986,16 +4008,38 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           .optional(),
       };
 
-      mcp.registerTool(
+      const registeredController = mcp.registerTool(
         controller.toolDefinition.name,
         {
           description: controller.toolDefinition.description,
           inputSchema: gatedInputSchema,
         },
         (async (
-          input: Record<string, unknown>,
+          rawInput: Record<string, unknown>,
           extra: { authInfo?: ResolvedAuthInfo; readonly servedAdcpVersion?: string } | undefined
         ) => {
+          // Parse exactly once. Every decision below, and the controller,
+          // reads the parsed value; none reads `rawInput` again.
+          const parsed = await parseDeclaredToolInput(mcp, controller.toolDefinition.name, rawInput, {
+            echoContext: cappedComplyEcho,
+          });
+          if (!parsed.success) {
+            // A principal that cannot see the controller learns nothing about
+            // its schema: the rejection is MethodNotFound, as for a valid
+            // call. There is no parsed value, so this deny-only check reads
+            // the raw arguments, as the tools/call visibility gate does.
+            if (!(await resolveComplyControllerVisible(extra, 'comply_test_controller', rawInput))) {
+              throw new McpError(ErrorCode.MethodNotFound, 'Method not found');
+            }
+            return parsed.response;
+          }
+          const input = parsed.data as Record<string, unknown>;
+          const callerContext = cappedComplyEcho(isPlainObject(rawInput) ? rawInput.context : undefined);
+          const reject = (response: McpToolResponse): McpToolResponse =>
+            finishDeclaredInputRejection(mcp, controller.toolDefinition.name, response, {
+              context: callerContext,
+              releaseArgs: input,
+            });
           const principalAuthority = await resolveComplyPrincipalAuthority(extra, 'comply_test_controller', input);
           if (!isComplyControllerVisible(principalAuthority.principalAccount)) {
             throw new McpError(ErrorCode.MethodNotFound, 'Method not found');
@@ -4013,7 +4057,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           const accountRef = refFromTop ?? refFromContext;
 
           if (accountRef !== undefined && (typeof accountRef !== 'object' || Array.isArray(accountRef))) {
-            return adcpError('INVALID_REQUEST', { message: 'account must be an object' });
+            return reject(adcpError('INVALID_REQUEST', { message: 'account must be an object' }));
           }
 
           // Enforce the same per-mode reference shape as buyer dispatch. The
@@ -4029,7 +4073,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
               requestedAccountId.length === 0 ||
               (accountRef !== undefined && ('brand' in accountRef || 'operator' in accountRef)))
           ) {
-            return adcpError('INVALID_REQUEST', { message: 'Invalid account_id reference' });
+            return reject(adcpError('INVALID_REQUEST', { message: 'Invalid account_id reference' }));
           }
           const resolverRef = requestedAccountId === undefined ? accountRef : { account_id: requestedAccountId };
           let resolvedAccount: Account | null = null;
@@ -4054,12 +4098,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             if (err instanceof AccountNotFoundError || (err instanceof AdcpError && err.code === 'ACCOUNT_NOT_FOUND')) {
               resolvedAccount = null;
             } else if (err instanceof AdcpError) {
-              return adcpError(err.code, err.toStructuredError());
+              return reject(adcpError(err.code, err.toStructuredError()));
             } else {
               fwLogger.error?.('Account resolution failed during comply controller dispatch', {
                 error_type: err instanceof Error ? err.name : typeof err,
               });
-              return adcpError('SERVICE_UNAVAILABLE', { message: 'Account resolution failed' });
+              return reject(adcpError('SERVICE_UNAVAILABLE', { message: 'Account resolution failed' }));
             }
           }
           resolvedAccount = assertResolvedAccountMatchesRef(
@@ -4120,25 +4164,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             // sandbox/mock principal can see the controller but the target
             // account is live or unresolved. Live principals never reach
             // this branch: they get MCP method-not-found above.
-            //
-            // `context` and `ext` are open-object on the request schema, so a
-            // hostile caller could stuff arbitrarily large payloads. Self-
-            // reflection only (no cross-tenant amplifier), but we cap at
-            // 8 KiB serialized to bound the response body — anything larger
-            // gets dropped, mirroring a missing field rather than echoing
-            // garbage.
-            const ECHO_BYTE_CAP = 8 * 1024;
-            const safeEcho = (value: unknown): Record<string, unknown> | undefined => {
-              if (value == null || typeof value !== 'object') return undefined;
-              try {
-                if (JSON.stringify(value).length > ECHO_BYTE_CAP) return undefined;
-                return value as Record<string, unknown>;
-              } catch {
-                return undefined;
-              }
-            };
-            const requestContext = safeEcho((input as { context?: unknown }).context);
-            const requestExt = safeEcho((input as { ext?: unknown }).ext);
+            const requestContext = cappedComplyEcho((input as { context?: unknown }).context);
+            const requestExt = cappedComplyEcho((input as { ext?: unknown }).ext);
             const response = adcpError('PERMISSION_DENIED', {
               message:
                 'comply_test_controller requires a sandbox or mock target account; ' +
@@ -4191,10 +4218,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
               fwLogger.warn?.('Session key resolution failed during comply controller dispatch', {
                 error: redactCredentialPatterns(err instanceof Error ? err.message : String(err)),
               });
-              return adcpError('SERVICE_UNAVAILABLE', {
-                message: 'Session key resolution failed',
-                recovery: 'transient',
-              });
+              return reject(
+                adcpError('SERVICE_UNAVAILABLE', {
+                  message: 'Session key resolution failed',
+                  recovery: 'transient',
+                })
+              );
             }
           }
 
@@ -4225,6 +4254,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           });
         }) as Parameters<typeof mcp.registerTool>[2]
       );
+      validateToolInputAtAdcpLayer(mcp, controller.toolDefinition.name, registeredController);
 
       const wrappedToolsCall = wrapSdkRequestHandler(mcp, 'tools/call', async (orig, req, extra) => {
         const params = (req.params ?? {}) as { name?: unknown; arguments?: unknown };

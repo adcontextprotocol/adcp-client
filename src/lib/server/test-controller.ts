@@ -97,6 +97,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AdcpServer } from './adcp-server';
 import { ADCP_CAPABILITIES, getSdkServer } from './adcp-server';
+import { parseDeclaredToolInput, validateToolInputAtAdcpLayer } from './declared-input-schema';
 import type { GetAdCPCapabilitiesResponse } from '../types/tools.generated';
 import type {
   ListScenariosSuccess,
@@ -1839,18 +1840,21 @@ export function registerTestController(
       capsBag.compliance_testing = { scenarios: merged } as GetAdCPCapabilitiesResponse['compliance_testing'];
     }
   }
-  mcp.registerTool(
+  const registered = mcp.registerTool(
     'comply_test_controller',
     {
       description: 'Triggers seller-side state transitions for compliance testing. Sandbox only.',
       inputSchema: TOOL_INPUT_SHAPE,
     },
-    (async (input: Record<string, unknown>) => {
-      const response = await handleTestControllerRequest(storeOrFactory, input, {
+    (async (rawInput: unknown) => {
+      const parsed = await parseDeclaredToolInput(mcp, 'comply_test_controller', rawInput);
+      if (!parsed.success) return parsed.response;
+      const response = await handleTestControllerRequest(storeOrFactory, parsed.data as Record<string, unknown>, {
         seedCache,
         ...(options?.seedScopePrefix !== undefined && { seedScopePrefix: options.seedScopePrefix }),
       });
       return toMcpResponse(response);
     }) as Parameters<typeof mcp.registerTool>[2]
   );
+  validateToolInputAtAdcpLayer(mcp, 'comply_test_controller', registered);
 }
