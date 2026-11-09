@@ -150,6 +150,12 @@ import {
   type AdcpMcpResourceDefinition,
   type McpAppToolMeta,
 } from './mcp-app';
+import {
+  PASSTHROUGH_INPUT_SCHEMA,
+  configureDeclaredInputErrors,
+  parseDeclaredToolInput,
+  validateToolInputAtAdcpLayer,
+} from './declared-input-schema';
 import { ADCP_TASK_MESSAGE_QUEUE, createTaskCapableServer, InMemoryTaskStore } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError, applyAdcpErrorAllowlist, sanitizeStructuredAdcpError } from './errors';
@@ -1807,7 +1813,7 @@ export type AdcpCustomToolHandler<InputArgs extends undefined | ZodRawShapeCompa
  * These tools **bypass the framework's spec-tool pipeline**:
  * idempotency middleware, governance pre-checks, account resolution,
  * and response wrapping are all skipped. The handler receives the
- * SDK-validated arguments and must return a `CallToolResult` directly.
+ * arguments parsed by `inputSchema` and must return a `CallToolResult` directly.
  * If you need any of those behaviors, call the framework helpers from
  * inside the handler (e.g., `checkGovernance(...)`, `adcpError(...)`).
  *
@@ -1822,7 +1828,16 @@ export interface AdcpCustomToolConfig<
   description?: string;
   /** Optional title hint for the MCP inspector. */
   title?: string;
-  /** Zod raw shape or schema for argument validation. */
+  /**
+   * Zod raw shape or schema for argument validation.
+   *
+   * `tools/list` advertises it unchanged, but the framework validates it
+   * rather than the MCP SDK: a call that fails it returns an AdCP
+   * `INVALID_REQUEST` with `field`, field-level `issues` and the caller's
+   * `context` echoed, and never reaches the handler. A call that passes
+   * reaches the handler with the parsed value, so coercion, defaults and
+   * transforms apply on every transport.
+   */
   inputSchema?: InputArgs;
   /**
    * Zod raw shape or schema for the declared response payload.
@@ -1847,7 +1862,7 @@ export interface AdcpCustomToolConfig<
   /** Portable MCP App metadata surfaced unchanged in `tools/list`. */
   _meta?: McpAppMeta;
   /**
-   * Tool handler. Gets SDK-validated `args` based on `inputSchema` and
+   * Tool handler. Gets `args` parsed by `inputSchema` and
    * must return a `CallToolResult`. Use `capabilitiesResponse`,
    * `mediaBuyResponse`, `adcpError`, or a hand-built `{ content, structuredContent? }`.
    */
@@ -2438,8 +2453,9 @@ export interface AdcpServerConfig<TAccount = unknown> {
    *
    * **Custom tools bypass the framework's spec-tool pipeline.** No
    * idempotency middleware, no governance pre-check, no account
-   * resolution, no response wrapping. The handler receives SDK-validated
-   * args and must return a `CallToolResult`. Call framework helpers
+   * resolution, no response wrapping. The handler receives args parsed by
+   * its `inputSchema`; a call that fails it gets an `INVALID_REQUEST` that
+   * echoes `context`. The handler must return a `CallToolResult`. Call framework helpers
    * (`checkGovernance`, `adcpError`, `capabilitiesResponse`, …) from
    * inside the handler if you need those behaviors.
    *
@@ -3295,14 +3311,14 @@ const MUT: ToolAnnotation = { readOnlyHint: false, destructiveHint: false };
 const DEST: ToolAnnotation = { readOnlyHint: false, destructiveHint: true };
 const IDEMP: ToolAnnotation = { readOnlyHint: false, idempotentHint: true };
 
-// Passthrough schema for framework-registered tools by default (#909). See
-// the comment at the registerTool call sites for rationale — short version:
-// makes our AJV validator authoritative on both transports without destroying
-// args on MCP when the SDK's tool dispatcher would otherwise coerce
-// `undefined` into the handler for schemaless tools. Servers can opt into
-// shallow MCP discovery hints derived from `TOOL_INPUT_SHAPES` with
-// config.exposeToolSchemas.
-const PASSTHROUGH_INPUT_SCHEMA = z.object({}).passthrough();
+// `PASSTHROUGH_INPUT_SCHEMA` is the registered schema for framework tools by
+// default (#909). See the comment at the registerTool call sites for
+// rationale — short version: makes our AJV validator authoritative on both
+// transports without destroying args on MCP when the SDK's tool dispatcher
+// would otherwise coerce `undefined` into the handler for schemaless tools.
+// Servers can opt into shallow MCP discovery hints derived from
+// `TOOL_INPUT_SHAPES` with config.exposeToolSchemas. Custom tools register it
+// too and validate their declared zod schema at the AdCP layer (#3666).
 type ToolInputShapeMap = Readonly<Record<string, ZodRawShapeCompat | undefined>>;
 let cachedToolInputShapes: ToolInputShapeMap | undefined;
 const SHALLOW_HINT_FIELD_SCHEMA = z.unknown().optional();
@@ -6133,6 +6149,23 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     taskStore: mcpTaskStore,
     taskMessageQueue,
     instructions: resolvedInstructions,
+  });
+
+  // Tools that declare a zod input schema (customTools, tasks_get, and the
+  // comply_test_controller helpers registered after this returns) validate it
+  // at the AdCP layer. Their INVALID_REQUEST gets the envelope fields
+  // framework errors get: status, the caller's context, the served release.
+  configureDeclaredInputErrors(server, {
+    exposeSchemaPath: exposeErrorDetails,
+    finalize: (toolName, response, args) => {
+      const params = isPlainObject(args) ? args : {};
+      const selected = selectServedAdcpRelease(params, capConfig, adcpVersion, defaultAdcpVersion);
+      const release = isMcpToolResponse(selected) ? selectedDefault : selected;
+      injectEnvelopeStatusIntoResponse(response, toolName, release.validationVersion);
+      injectContextIntoResponse(response, params.context);
+      injectVersionIntoResponse(response, release.wireVersion);
+      return response;
+    },
   });
 
   // The v1 SDK server remains the canonical legacy path. The modern adapter
@@ -9472,6 +9505,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           );
           const versionedArgs = [...args];
           versionedArgs[extraIndex] = versionedExtra;
+          // The SDK validates against a passthrough schema; the declared one
+          // runs here so a rejection is an AdCP error that echoes context.
+          if (inputSchema != null) {
+            const parsed = await parseDeclaredToolInput(server, customName, args[0]);
+            if (!parsed.success) return finalizeCustomResponse(parsed.response, selectedRelease);
+            versionedArgs[0] = parsed.data;
+          }
           const response = await rawHandler(...versionedArgs);
           return finalizeCustomResponse(response, selectedRelease);
         } catch (err) {
@@ -9488,16 +9528,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         ...(annotations != null && { annotations }),
         ...(_meta != null && { _meta }),
       } as Parameters<typeof server.registerTool>[1];
-      if (isMcpAppToolMeta(_meta as Record<string, unknown> | undefined)) {
-        registerMcpAppTool(
-          server as unknown as Parameters<typeof registerMcpAppTool>[0],
-          customName,
-          customToolConfig as Parameters<typeof registerMcpAppTool>[2],
-          wrappedHandler as Parameters<typeof registerMcpAppTool>[3]
-        );
-      } else {
-        server.registerTool(customName, customToolConfig, wrappedHandler);
-      }
+      const registered = isMcpAppToolMeta(_meta as Record<string, unknown> | undefined)
+        ? registerMcpAppTool(
+            server as unknown as Parameters<typeof registerMcpAppTool>[0],
+            customName,
+            customToolConfig as Parameters<typeof registerMcpAppTool>[2],
+            wrappedHandler as Parameters<typeof registerMcpAppTool>[3]
+          )
+        : server.registerTool(customName, customToolConfig, wrappedHandler);
+      validateToolInputAtAdcpLayer(server, customName, registered);
       registeredToolNames.add(customName);
     }
   }

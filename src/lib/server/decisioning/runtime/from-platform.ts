@@ -221,6 +221,7 @@ import {
   wrapRegisteredToolHandler,
   wrapSdkRequestHandler,
 } from '../../adcp-server';
+import { parseDeclaredToolInput, validateToolInputAtAdcpLayer } from '../../declared-input-schema';
 import { isSandboxOrMockAccount } from '../../account-mode';
 import { recordResolvedAccountMode, hasObservedLiveMode } from './observed-modes';
 import type { Product } from '../../../types/tools.generated';
@@ -3986,20 +3987,26 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           .optional(),
       };
 
-      mcp.registerTool(
+      const registeredController = mcp.registerTool(
         controller.toolDefinition.name,
         {
           description: controller.toolDefinition.description,
           inputSchema: gatedInputSchema,
         },
         (async (
-          input: Record<string, unknown>,
+          rawInput: Record<string, unknown>,
           extra: { authInfo?: ResolvedAuthInfo; readonly servedAdcpVersion?: string } | undefined
         ) => {
-          const principalAuthority = await resolveComplyPrincipalAuthority(extra, 'comply_test_controller', input);
+          // Visibility first, against the raw arguments the tools/call
+          // visibility gate also sees: a hidden controller must not reveal
+          // its schema through a validation error.
+          const principalAuthority = await resolveComplyPrincipalAuthority(extra, 'comply_test_controller', rawInput);
           if (!isComplyControllerVisible(principalAuthority.principalAccount)) {
             throw new McpError(ErrorCode.MethodNotFound, 'Method not found');
           }
+          const parsed = await parseDeclaredToolInput(mcp, controller.toolDefinition.name, rawInput);
+          if (!parsed.success) return parsed.response;
+          const input = parsed.data as Record<string, unknown>;
 
           // Probe exempt — capability discovery, no state mutation.
           if (input.scenario === 'list_scenarios') {
@@ -4225,6 +4232,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           });
         }) as Parameters<typeof mcp.registerTool>[2]
       );
+      validateToolInputAtAdcpLayer(mcp, controller.toolDefinition.name, registeredController);
 
       const wrappedToolsCall = wrapSdkRequestHandler(mcp, 'tools/call', async (orig, req, extra) => {
         const params = (req.params ?? {}) as { name?: unknown; arguments?: unknown };

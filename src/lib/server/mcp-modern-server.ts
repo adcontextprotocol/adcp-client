@@ -37,6 +37,7 @@ import {
   type RegisteredToolDefinition,
 } from './adcp-server';
 import { ADCP_INSTRUCTIONS_RESOLVER, MEDIA_BUY_MCP_TOOL_PROFILE } from './create-adcp-server';
+import { getDeclaredInputSchema } from './declared-input-schema';
 import {
   isMcpAppToolMeta,
   mcpAppResourceUri,
@@ -141,8 +142,32 @@ function officialAdcpToolSummary(
   );
 }
 
-function schemaForModernMcp(schema: unknown, hasOfficialSchema: boolean): StandardSchemaWithJSON {
-  if (!hasOfficialSchema && !hasJsonConversionForSchemaOrRawShape(schema) && !warnedAboutCustomSchemaJsonConversion) {
+/**
+ * The JSON Schema the v2 SDK's `tools/list` emits for `schema`. Tools that
+ * validate at the AdCP layer register a passthrough schema, so their declared
+ * schema is converted here, the way the v2 SDK converted it when tools
+ * registered it directly.
+ */
+function modernInputJsonSchema(toolName: string, schema: unknown): Readonly<Record<string, unknown>> | undefined {
+  try {
+    const probe = new ModernMcpServer({ name: 'adcp-input-schema-probe', version: '0.0.0' });
+    probe.registerTool(toolName, { inputSchema: schema as StandardSchemaWithJSON }, async () => ({ content: [] }));
+    return probe.toolInputSchemaJson(toolName);
+  } catch {
+    return undefined;
+  }
+}
+
+function schemaForModernMcp(
+  schema: unknown,
+  hasOfficialSchema: boolean,
+  advertisedSchema: unknown = schema
+): StandardSchemaWithJSON {
+  if (
+    !hasOfficialSchema &&
+    !hasJsonConversionForSchemaOrRawShape(advertisedSchema) &&
+    !warnedAboutCustomSchemaJsonConversion
+  ) {
     warnedAboutCustomSchemaJsonConversion = true;
     console.warn(
       '[adcp/serve] A custom MCP tool schema does not expose ~standard.jsonSchema. ' +
@@ -172,6 +197,7 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
     Omit<RegisteredToolDefinition, 'inputSchema' | 'outputSchema'> & {
       inputSchema?: StandardSchemaWithJSON;
       advertisedInputSchema?: Readonly<Record<string, unknown>>;
+      declaredInputJsonSchema?: Readonly<Record<string, unknown>>;
       outputSchema?: StandardSchemaWithJSON;
     }
   > = toolDefinitions.map(tool => {
@@ -185,6 +211,11 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
     const advertisedInputSchema = frameworkAdcpTool
       ? officialAdcpInputSchema(tool.name, adcpVersion, pinnedMcpToolProfile)
       : undefined;
+    // Custom tools, tasks_get and comply_test_controller register a
+    // passthrough schema and validate their declared one in the handler.
+    const declaredInputSchema = getDeclaredInputSchema(sdkServer, tool.name);
+    const declaredInputJsonSchema =
+      declaredInputSchema !== undefined ? modernInputJsonSchema(tool.name, declaredInputSchema) : undefined;
     return {
       ...definition,
       ...(description !== undefined && { description }),
@@ -193,9 +224,14 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
         // framework's AdCP validator must see domain-invalid objects so it can
         // return a structured `adcp_error` + context echo; the official strict
         // projection remains discovery-only below.
-        inputSchema: schemaForModernMcp(inputSchema, advertisedInputSchema !== undefined),
+        inputSchema: schemaForModernMcp(
+          inputSchema,
+          advertisedInputSchema !== undefined,
+          declaredInputSchema ?? inputSchema
+        ),
       }),
       ...(advertisedInputSchema !== undefined && { advertisedInputSchema }),
+      ...(declaredInputJsonSchema !== undefined && { declaredInputJsonSchema }),
       // Output schemas can dwarf the input discovery surface and are not
       // required for clients to form tool calls. Preserve an adopter's
       // explicitly registered schema, but do not replace it with a bundled
@@ -316,7 +352,7 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
                 const frameworkAdcpTool = tool._meta?.adcp_version === adcpVersion;
                 const discoveryInputSchema = frameworkAdcpTool
                   ? officialAdcpInputSchema(tool.name, discoveryVersion, discoveryProfile)
-                  : tool.advertisedInputSchema;
+                  : tool.declaredInputJsonSchema;
                 return {
                   name: tool.name,
                   ...(tool.title !== undefined && { title: tool.title }),
