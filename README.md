@@ -81,17 +81,41 @@ const health = EventSourceHealthSchema.parse(rawHealth);
 
 The browser entry also exports `GetProductsRequestSchema` and `LegacyGetProductsRequestSchema`, `BiddingPolicySchema`, `CanonicalBudgetAllocationSchema`, and the strict `SyncCreatives*` validators, with the same validation behavior as the Node entry. It has no Node built-ins in its import graph (runtime or type declarations). JSON Schema loading and tool registration helpers remain available from `@adcp/sdk/schemas`. The generated schemas still initialize together, so importing one schema can retain the full generated module in a browser bundle; per-schema tree-shaking is tracked in [#3178](https://github.com/adcontextprotocol/adcp-client/issues/3178).
 
-### Focused client runtime (`@adcp/sdk/client/core`)
+### Focused client runtime (`@adcp/sdk/client/core` and friends)
 
 Applications that only call AdCP agents can avoid evaluating the SDK's server,
 compliance, testing, and unrelated protocol surfaces:
 
 ```ts
 import { ADCPMultiAgentClient, InMemoryWebhookRegistrationStore } from '@adcp/sdk/client/core';
+import { AuthenticationRequiredError, decideRetry } from '@adcp/sdk/errors';
+import { ADCP_VERSION } from '@adcp/sdk/version';
 ```
 
+The package root still loads the server and testing helpers, because it
+re-exports them. These subpaths don't:
+
+| Subpath                            | What it carries                                                                                                                                                                                                     |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@adcp/sdk/client/core`            | The clients (`ADCPMultiAgentClient`, `AgentClient`, `SingleAgentClient`, `CreativeAgentClient`), the in-memory webhook-registration store, `createInMemoryAgentDiscoveryCache`, `ADCP_STATUS`, `InputRequiredError` |
+| `@adcp/sdk/client/account-changes` | The account change feed: `streamAccountChanges`, `restoreAccountChangeCursor`, `buildAccountChangeSubscriptionRequest`, change-recorded wake-up parsing                                                             |
+| `@adcp/sdk/client/webhook-stores`  | Durable webhook-registration stores: `pgWebhookRegistrationStore`, `cleanupExpiredWebhookRegistrations`, `redisWebhookRegistrationStore`                                                                            |
+| `@adcp/sdk/errors`                 | Typed errors (`AuthenticationRequiredError`, `IdempotencyConflictError`, `ADCPValidationError`, ...), `adcpErrorToTypedError`, `isErrorOfType`, `STANDARD_ERROR_CODES`, `extractAdcpErrorInfo`, `decideRetry`       |
+| `@adcp/sdk/version`                | `ADCP_VERSION`, `LIBRARY_VERSION`, `COMPATIBLE_ADCP_VERSIONS`, `parseAdcpMajorVersion`, `resolveAdcpVersion`                                                                                                        |
+| `@adcp/sdk/registry`               | `RegistryClient`, `RegistrySync`, `PropertyRegistry`, the feed-stream reader and `sanitizeStreamText`                                                                                                               |
+| `@adcp/sdk/utils`                  | `canonicalize`, `canonicalJsonSha256`, `unwrapProtocolResponse`, media-buy status helpers, `parseCapabilitiesResponse` and the `*_TOOLS` lists, `brandManifestToBrandReference`                                     |
+| `@adcp/sdk/discovery`              | `validateAdAgents`, `resolveAgentProperties`, `canonicalizeAgentUrl`, the publisher property selector helpers, `PropertyIndex`                                                                                      |
+| `@adcp/sdk/media-buy`              | `preflightUpdateMediaBuy`, the `can*` checks, `getAvailableActions`, `MediaBuyLifecycleCoordinator`                                                                                                                 |
+
+Every name on these subpaths is the same export as on the package root: the
+same class (so `instanceof` agrees across entry points) and the same type. Some
+root type names are aliases: the root's `CreateMediaBuyRequest`, `Product` and
+`PackageRequest` are the canonical types from `@adcp/sdk/v2/projection`, while
+`@adcp/sdk/types` exports different shapes under those names. The subpaths
+above never re-export a root name with a different meaning.
+
 The existing `@adcp/sdk/client` path remains an alias of the package root for
-compatibility. Use `/client/core` when cold import and test-worker startup time
+compatibility. Use the subpaths when cold import and test-worker startup time
 matter.
 
 For application monorepos, keep `skipLibCheck: true` unless you are intentionally auditing SDK declarations. If a package only needs request/response types for a few tools, prefer the per-tool slices over importing generated types through the root package or the broad `@adcp/sdk/types` barrel.

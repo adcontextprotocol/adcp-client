@@ -10,12 +10,16 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'CapabilityPreflightError',
   'ConfigurationManager',
   'CreativeAgentClient',
+  'DeferredSettlementOwnershipError',
+  'DirectContinuationRecoveryError',
   'InMemoryWebhookRegistrationStore',
+  'InputRequiredError',
   'SingleAgentClient',
   'UnsupportedFeatureError',
   'WebhookDispatchError',
   'createADCPMultiAgentClient',
   'createCreativeAgentClient',
+  'createInMemoryAgentDiscoveryCache',
   'createSingleAgentClient',
 ];
 
@@ -25,6 +29,7 @@ test('@adcp/sdk/client/core exposes the focused client runtime through CommonJS'
   for (const name of EXPECTED_RUNTIME_EXPORTS) {
     assert.equal(typeof clientCore[name], 'function', name);
   }
+  assert.equal(clientCore.ADCP_STATUS.COMPLETED, 'completed');
   assert.equal(clientCore.createAdcpServer, undefined);
   assert.equal(clientCore.comply, undefined);
 });
@@ -131,6 +136,7 @@ test('@adcp/sdk/client/core exposes the focused client runtime through ESM', asy
   for (const name of EXPECTED_RUNTIME_EXPORTS) {
     assert.equal(typeof clientCore[name], 'function', name);
   }
+  assert.equal(clientCore.ADCP_STATUS.COMPLETED, 'completed');
   assert.equal(clientCore.createAdcpServer, undefined);
   assert.equal(clientCore.comply, undefined);
 });

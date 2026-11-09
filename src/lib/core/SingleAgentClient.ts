@@ -364,7 +364,7 @@ import {
   type ProductPropertyPolicyMode,
   type ProductPropertyPolicyValidationResult,
 } from '../media-buy/property-policy';
-import { resolvePropertyList, type ResolveListOptions } from '../server/targeting-helpers';
+import { resolvePropertyList, type ResolveListOptions } from './targeting-helpers';
 import {
   CreativeFormatCapabilityError,
   CreativeFormatProjectionError,

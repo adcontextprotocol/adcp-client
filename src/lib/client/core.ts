@@ -4,6 +4,8 @@
 // the package root. Keep runtime exports limited to the modules required to
 // construct and operate AdCP clients so cold consumers do not also evaluate
 // server, compliance, testing, and unrelated protocol surfaces.
+// `scripts/check-client-entry-graph.mjs` (run by the unit suite) fails if this
+// entry point's module graph reaches `server/` or `testing/`.
 
 export {
   SingleAgentClient,
@@ -62,6 +64,24 @@ export {
   type WebhookRegistration,
   type WebhookRegistrationStore,
 } from '../core/webhook-registration';
+export { createInMemoryAgentDiscoveryCache } from '../core/agent-discovery-cache';
+export type {
+  AgentDiscoveryCache,
+  AgentDiscoveryCacheConfig,
+  AgentDiscoveryEntry,
+  InMemoryAgentDiscoveryCache,
+  InMemoryAgentDiscoveryCacheOptions,
+} from '../core/agent-discovery-cache';
+// Task status vocabulary and the task-executor errors a caller can catch. These
+// modules are already part of the client graph, so exporting them adds nothing
+// to what this entry point loads.
+export { ADCP_STATUS, type ADCPStatus } from '../core/ProtocolResponseParser';
+export {
+  InputRequiredError,
+  DeferredSettlementOwnershipError,
+  DirectContinuationRecoveryError,
+  type DirectContinuationRecoveryFailure,
+} from '../core/TaskExecutor';
 export type {
   ConversationConfig,
   ConversationContext,
