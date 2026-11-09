@@ -1,5 +1,121 @@
 # Changelog
 
+## 17.0.0-beta.22
+
+### Minor Changes
+
+- 7a812a1: Enforce the AdCP 3.3 creative start policy on `control_media_buy` (#3649). A seller whose capabilities do not declare `media_buy.features.creative_start_policy: true` now refuses `packages[].start_requires_all_creatives_approved: true` before the handler runs and before the idempotency lookup: `UNSUPPORTED_FEATURE`, `recovery: 'correctable'`, `field` naming the first opted-in package, `details: { feature, fields }` listing every one, and `mutation_outcome: 'not_applied'`. The gate applies when the server's release is 3.3 or later; `false` and omission always reach the handler. **This breaks sellers that honored `true` without declaring the feature:** declare it with `capabilities.features.creativeStartPolicy: true` (new, also on `createAdcpServerFromPlatform`) or `capabilities.overrides.media_buy.features.creative_start_policy`.
+
+  The client refuses the same request locally (`ProtocolFeatureUnsupportedError`, `code: 'UNSUPPORTED_FEATURE'`, same `field` and `details`, nothing sent) when its discovered capabilities for a 3.3 call lack the feature, and sends it when capabilities are synthetic or unknown. `MediaBuyFeatures.creativeStartPolicy` and `client.supports('creative_start_policy')` read the declaration; `adcpError()` accepts `mutation_outcome`. `create_media_buy` and `update_media_buy` are not gated. Withdrawing the field from their packages is pending adcontextprotocol/adcp#8767; the pinned 3.3.0-beta.5 package schemas still declare it, so until that lands an opted-in create or update reaches the handler unenforced (a known gap the Python SDK shares). Matches adcp-client-python#1872 and #1878.
+
+  `mediaBuyActionResolver.resolve()` offers `update_creative_start_policy` only when the new `creativeStartPolicy: true` option says the seller declares the feature; otherwise it reports the action unavailable (`not_supported_on_buy`), so the SDK never advertises an action its own gate refuses. **Pass `creativeStartPolicy: true` alongside `metadata.update_creative_start_policy`** to keep offering it.
+
+- 57ffd9f: Tools with a zod input schema now validate it at the AdCP layer, so a rejected call returns an AdCP error that echoes `context` (#3666). This covers:
+  - `customTools` on `createAdcpServer`, and so `tasks_get` on `createAdcpServerFromPlatform`
+  - `comply_test_controller` from `registerTestController`, `createComplyController().register()` and `createAdcpServerFromPlatform({ complyTest })`
+
+  Before, the MCP SDK checked the arguments before any AdCP code ran and answered a failure with a bare `-32602` text result. That result had no `structuredContent`, no `adcp_error` and no `context`, which breaks the context-sessions rule that failures echo `context`. See [Custom tool input validation](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/migration-16-to-17.md#custom-tool-input-validation) in the 16 → 17 migration guide.
+  - **Error shape (breaking for buyers that matched the old text).** A call that fails the declared schema now gets `adcp_error` with:
+    - code `INVALID_REQUEST`
+    - `field`, naming the first failing path; a missing property is reported at its own path (`field: 'query'`)
+    - field-level `issues`, also at `details.issues`
+    - the caller's `context`, `status: 'failed'` and the served `adcp_version`
+
+    This is the envelope framework tools return. **Buyers that matched the `-32602` text, the `Input validation error:` prefix, or `isError` without `structuredContent` must read `adcp_error` instead.** Framework tools still emit `VALIDATION_ERROR` for request-schema failures; #3674 tracks converging them on `INVALID_REQUEST`.
+
+  - **Handlers get the parsed value on every path (breaking for handlers that read undeclared keys outside MCP).** On MCP a valid call reaches the handler with the same parsed value as before: zod coercion, defaults and transforms applied, undeclared keys stripped. `AdcpServer.invoke()`, `dispatchTestRequest()` and A2A used to skip the schema and hand custom-tool handlers the caller's raw arguments. **They now validate too, and pass the same parsed, stripped value.** On those paths an invalid call no longer reaches the handler, and the handler no longer sees keys its schema does not declare. A handler that reads such keys must declare them, or use a loose object (`z.looseObject({...})`, or `z.object({...}).passthrough()` on zod 3).
+  - **One parsed value decides everything.** The arguments are parsed once. `identity33` authorization, release selection (`adcp_version`, `adcp_major_version`) and the handler all read that parsed value, on every transport. A declared default, coercion or transform therefore applies before anything is authorized, exactly as when the MCP SDK validated. On `invoke()`, `dispatchTestRequest()` and A2A, authorization and release selection used to read the raw arguments. **Behavior change on those paths:** a custom tool whose schema does not declare `adcp_version` used to let the caller's raw `adcp_version` select the release. The schema now strips it, so the default release applies, the same as on MCP. A2A negotiates no AdCP version at the envelope level (`A2A-Version` selects only the A2A wire), and framework tools are unchanged. Declare `adcp_version` to let buyers pick the release. The one pre-parse gate is the `comply_test_controller` visibility check from `createAdcpServerFromPlatform`. It can only hide the controller, and is checked again on the parsed value.
+  - **Every rejection echoes `context`.** Version, authorization and validation rejections, `comply_test_controller`'s account rejections, and failures a custom handler returns or throws all echo the caller's `context`, even when the declared schema strips it.
+  - **Discovery.** MCP `tools/list` still advertises the declared schema, on the legacy SDK and on the 2026-07-28 adapter. Internally the SDK now registers a passthrough schema for these tools.
+
+- c3790c8: Legacy format projection now says when it guessed a seller id's meaning, lets a caller turn the guessing off, and no longer lets a guess contradict a seller's own `format_options[]` (#3634).
+
+  `projectV1ProductToV2`, `toAdditiveCanonicalProduct` and the other v1 → v2 helpers read a legacy id under any agent URL by the AAO naming conventions, so a seller's own `display_300x250` came back as `image` even when the seller sells it as a third-party tag. Sellers whose legacy ids look like `display_WxH` or `video_WxH` were reported as contradicting themselves by consumers that compared that projection with the seller's declared options.
+  - **Marked guesses.** A route for an option guessed from the id's name (an AAO id alias or registry id glob at an agent URL other than the AAO reference creative agent) carries `inferred_from_id: true`. The routes are JSON-safe, so the marker persists. Declarations and default results are otherwise unchanged.
+  - **Opt-out.** `V1ToV2ProjectionOptions.authoritativeOnly: true` resolves refs only from catalog snapshots, exact AAO catalog entries and `legacyFormatConverter`. A ref only a guess could resolve gets a `FORMAT_PROJECTION_FAILED` diagnostic instead of a declaration. `isAaoAgentUrl` is exported from `@adcp/sdk/v2/projection`.
+  - **Fix.** When a seller dual-emits `format_ids[]` and `format_options[]`, a guess from an id's name no longer vetoes the index pairing of that id with the seller's own option. Only the AAO's own mapping of an id at the AAO reference creative agent can; `legacyFormatConverter` is not consulted for this check. A `display_tag` option paired with a seller's `display_300x250` id now gets its route instead of a `LEGACY_FORMAT_ID_DROPPED_UNMAPPED` diagnostic.
+
+- 36f34f6: Reliable Reporting: `issueObserver` tells the seller when a reporting issue opens, escalates or resolves (#3648). This is the TypeScript side of the Python SDK's `issue_observer` (adcp-client-python#1874, #1875).
+
+  A `CONSUMER_STATUS_MISMATCH` is caller-scoped, so only the buyer whose `sync_reporting_status` statement caused it sees it. A seller had no supported way to learn that one opened, escalated past `consumer_mismatch_escalation_seconds`, or resolved.
+  - **`createReliableReportingService({ issueObserver })`.** The observer is called once per transition with a `ReportingIssueEventV1`: `eventId`, `kind`, `occurredAt`, `accountId`, `consumerId`, `principal` (subscription obligations), `issueId`, `reportingObligationId`, `reportingStatusId`, `attempt`, and `issue`, rendered as `get_reporting_status` showed it at `occurredAt` (`null` for `resolved`).
+  - **When it fires.**
+    - The ledger records `opened` and `resolved` in the same transaction as the `sync_reporting_status` write or revision commit that caused them.
+    - Each `runCycle` sweeps `escalated` and then delivers committed events.
+    - Without `runCycle`, events are recorded but the observer is never called and `escalated` is never recorded.
+  - **At least once.** Deduplicate on `eventId`: `"rpie_" + sha256(canonical_json_utf8_v1(["reporting-issue-event-v1", issueId, consumerId, kind]))[:40]`. That is Python's scheme with the consumer added, because the published `issueId` does not name the consumer and two consumers may reuse one `reporting_status_id`. An open occurrence's events are never pruned; a closed one's (resolved, with its statement superseded or its obligation gone) are, seven days after its last delivery.
+  - **Failures.**
+    - A throwing or timed-out observer (10 s) is retried after a backoff of 30 s doubling to 1 h, with no limit.
+    - The failure reaches the scheduler's `onError` as a `ReportingIssueObserverError`, and `runCycle(...).issueEvents.errors`.
+    - It never fails the buyer's call or the cycle.
+  - **Store interface (experimental).** A store opts in through `ReportingIssueEventStoreV1` (`issueEventsSupported`, `issueEventsReady`, `sweepIssueEscalations`, `claimIssueEvents`, `completeIssueEvent`, `releaseIssueEvent`, `pruneIssueEvents`). The same experimental surface adds the pure helpers stores share: `reportingIssueEventIdV1`, `reportingConsumerMismatchOccurrenceV1`, `planReportingIssueEventsV1`, `reportingIssueEscalationV1` and `renderReportingIssueEventV1`. `memoryStorage()` implements it, and `createReportingIssueEventDispatcherV1` runs delivery without the service. The service refuses `issueObserver` against a store without the capability.
+  - **Not emitted yet.** `acknowledged` and `waived` are in the kind union for parity, but no TypeScript store emits them, because the TypeScript ledger has no operator issue-state API.
+  - **Parity gap.** A seller-side change never clears a TypeScript mismatch (#3653).
+
+  Pair with `@adcp/reporting-storage` from this release, which records the events on PostgreSQL after migration `0012`.
+
+- 8e7fdd8: Add runtime subpaths so client-only code can stop importing `@adcp/sdk`, whose root also loads the server and testing modules (#3664, step 1). The new entry points are `@adcp/sdk/errors` (typed errors, `adcpErrorToTypedError`, `isErrorOfType`, `STANDARD_ERROR_CODES`, `getErrorRecovery`, `extractAdcpErrorInfo`, `isTerminalAdcpError`, `decideRetry`), `@adcp/sdk/version` (`ADCP_VERSION`, `LIBRARY_VERSION`, `COMPATIBLE_ADCP_VERSIONS`, `parseAdcpMajorVersion`, `resolveAdcpVersion`), `@adcp/sdk/registry` (`RegistryClient`, `sanitizeStreamText` and the rest of the registry exports), `@adcp/sdk/utils` (`canonicalize`, `canonicalJsonSha256`, media-buy status helpers, `unwrapProtocolResponse`, `parseCapabilitiesResponse`, the `*_TOOLS` lists, `brandManifestToBrandReference`), `@adcp/sdk/discovery` (`validateAdAgents`, `resolveAgentProperties`, `canonicalizeAgentUrl`, the publisher property selector helpers), `@adcp/sdk/media-buy` (`preflightUpdateMediaBuy`, the `can*` checks, `getAvailableActions`, `MediaBuyLifecycleCoordinator`), `@adcp/sdk/client/account-changes` (`streamAccountChanges`, `restoreAccountChangeCursor`, `buildAccountChangeSubscriptionRequest`) and `@adcp/sdk/client/webhook-stores` (`pgWebhookRegistrationStore`, `cleanupExpiredWebhookRegistrations`, the Redis store). `@adcp/sdk/client/core` also exports `createInMemoryAgentDiscoveryCache`, `ADCP_STATUS`, `InputRequiredError`, `DeferredSettlementOwnershipError` and `DirectContinuationRecoveryError`.
+
+  Each name is the same export as on the root, so `instanceof` agrees whichever path a caller imports, and no subpath reuses a root type name for a different shape (the root's `CreateMediaBuyRequest`, `Product` and `PackageRequest` stay the canonical aliases from `@adcp/sdk/v2/projection`). Nothing is removed from the root, and `@adcp/sdk/client` is unchanged.
+
+  `@adcp/sdk/client/core` no longer loads any module under `dist/lib/server/` (it used to load the property-list resolver and the pinned-DNS fetch from there), and `@adcp/sdk/media-buy/actions` no longer loads `server/media-buy-helpers`. The shared helpers moved out of `src/lib/server/` (`targeting-helpers` to `core/`, `pin-and-bind-fetch` to `net/`, `media-buy-helpers` to `media-buy/valid-actions`, and `errors`, `envelope-allowlist` and `pick-safe-details` to `utils/`); the old `dist/lib/server/*` files re-export them, so deep imports keep working. A new check, `npm run check:client-entry-graph` (also run as a unit test), bundles each client entry point with esbuild and fails if its module graph reaches `dist/lib/server/` or `dist/lib/testing/`.
+
+- 307c004: A seller built with `createAdcpServerFromPlatform` can now say it sells a wholesale catalogue in `get_adcp_capabilities.media_buy.buying_modes` (#3629). Before, the framework wrote `['brief']` or `['brief', 'refine']` from proposal support alone and overwrote anything the seller put in `capabilities.overrides.media_buy.buying_modes`, so a wholesale-only seller was unrepresentable and the SDK's own buyer client refused to send it a wholesale request (`UnsupportedBuyingModeError`).
+  - **Derived from handlers.** Registering `mediaBuyLifecycle.listProducts` adds `wholesale`. A platform that registers it and has no brief path (no `sales.getProducts`, `proposalManager`, `requestProposals` or `refineProposals`) advertises `['wholesale']` alone. A platform without a catalogue handler advertises exactly what it did before.
+  - **Declared by the seller.** `capabilities.buyingModes` states the list explicitly, for a `sales.getProducts` handler that answers `buying_mode: 'wholesale'` (the handlers cannot say so) or to leave out a mode they imply. It is checked against the registered handlers, and `createAdcpServerFromPlatform` throws a `PlatformConfigError` (`configField: 'capabilities.buyingModes'`) for an empty list, a value that is not a buying mode, or a mode with no handler to serve it: `brief` and `refine` need `sales.getProducts` or a proposal path, `wholesale` needs `sales.getProducts` or `mediaBuyLifecycle.listProducts`. `overrides.media_buy.buying_modes` is unchanged: the framework value still overwrites it.
+  - **Wholesale feed blocks.** `capabilities.overrides` (and `createAdcpServer`'s `capabilities.overrides`) now accept `wholesale_feed_versioning` and `wholesale_feed_webhooks`. The SDK does not derive them.
+
+  **Who is affected.** A platform that registers `mediaBuyLifecycle.listProducts` now gains `wholesale`; if it has no brief path it also stops advertising `brief`, which AdCP treats as implicit and the SDK buyer client treats as always supported. Declare `capabilities.buyingModes` to keep a different list.
+
+### Patch Changes
+
+- f52e1ae: `createAdcpServer` and `createAdcpServerFromPlatform` now project `get_adcp_capabilities` down to the release they serve an older caller, as DR-0024 requires (#3646). Before, those callers received 3.3-only capability fields because the older capabilities schemas are open, and the server removed only fields where an older schema is closed.
+  - **Fields.** The response gets the same schema diff that every other task response gets on the way down: properties, enum values and union variants that the server's release declares and the served release does not are removed at every depth. This covers `business_calendars`, `media_buy.issue_reporting`, `media_buy.open_opportunities`, `media_buy.supported_match_keys` and `account.requests`. Keys that no release declares are kept, for example `library_version` or a seller's own extension key.
+  - **Experimental feature ids.** `experimental_features` drops an id that the server's capabilities schema names and the served release's schema never mentions, such as `media_buy.match_keys` for a 3.2 caller. AdCP has no structured registry of experimental feature ids yet (adcontextprotocol/adcp#8812), so ids that neither schema mentions are kept.
+  - **Reporting.** Every removal, including each dropped feature id, is reported to `onVersionTranslation` as `version_downgrade_fields_dropped` drift.
+
+  Responses to 3.3 callers are unchanged. 3.0 callers keep the existing allow-list projection of properties to the 3.0 schema, and now also lose experimental feature ids that 3.0 does not define, such as `media_buy.match_keys`.
+
+- 29c9af4: The Zod schema generator now follows each source schema's `additionalProperties` instead of assuming the schema is closed. This prepares the SDK for the AdCP 3.3.0-rc.0 bundle, which opens the schemas that were closed by accident (adcontextprotocol/adcp#8866).
+
+  Before, the generator required `additionalProperties: false` on the `get_reporting_status` `scope`, `scope.delivery_config_generations[]`, `obligation_counts` and `pagination` objects, and failed generation when the source opened them. Several other post-processors closed objects without reading the source:
+  - the reporting evidence schemas, such as `ReportingCoverage`, `ReportingReceipt` and `ReportingVerification`
+  - `ReportingConsumerStatus` and its `period`, and the `sync_reporting_status` request
+  - the Trusted Match `TMPXChunk`, `TMPProviderRegistration` and `PublisherTMPXMacroMapping` schemas, and the router `tmpx_providers` entries
+  - `TargetingKvs`, which was closed only because the context-match request pass also rewrote the export that follows it
+  - `CompatibilityPurchaseCoordinatorInput`
+
+  Each of these is now strict only while its source closes it, and passes unknown keys through once the source opens it. Objects the source still closes keep their strict behaviour, including the Trusted Match request privacy boundaries, the placement presentation document and the canonical metric qualifier. Generated output for the current 3.3.0-beta.5 bundle is unchanged.
+
+- cae11b7: A `legacyFormatConverter` now outranks the SDK's guess about a seller's own legacy format id.
+
+  For a ref at an agent URL other than the AAO reference creative agent, the v1 → v2 projector consults `legacyFormatConverter` before it guesses the id's meaning from its name. Before, a registry id glob guess ran first, so a converter could not say that the seller's `display_300x250` is a third-party tag rather than an image. A converter that returns `undefined` still accepts the guess, which its route marks with `inferred_from_id: true`. A converter that throws or returns an invalid declaration still fails closed. Refs at the AAO agent are unchanged: the AAO's own mappings run first and the converter runs only after they fail.
+
+- 727c947: Honor explicit storyboard `requires_tool` gates before stateful failure cascades in single-agent runs, matching routed execution. Missing prerequisites remain benign skips, including the controller-specific skip reason, while genuine failures continue to fail the storyboard.
+- daa32d9: fix(compliance): a `fixture_unavailable` skip no longer makes its track `partial` (#3596). The skip means the runner's test kit could not build a creative asset the seller's format requires, for example a required `alt_text` slot. The runner-output contract grades that storyboard `not_applicable` and says it is not a grading signal about the agent. `comply()` still graded the track `partial`, which made `overall_status` `partial` and showed agents as degraded with zero failing steps. The track now grades from the steps that ran, the same way `fixture_unsatisfied` and `fixture_seed_unsupported` already did. A real failure next to the gap still grades `partial` or `fail`. Unverified request-signing coverage still holds its track `partial`. The gap stays visible in the step's `skip_reason` and detail, in `summary.skipped_by_reason`, and as a coverage gap in the specialism bundle result.
+- 8947543: `createMediaBuy` and `updateMediaBuy` now send a package's `format_option_refs` to an AdCP 3.1 seller when the selected options have no legacy `format_ids` representation (#3665). Before, the client threw `CreativeFormatProjectionError` ("canonical format_option_refs have no complete legacy representation") and never sent the buy, so a buyer could not select a canonical-only format option from a 3.1 seller. Leaving the selector off was no workaround: AdCP 3.1 activates every product format when a package has no selector, and the seller held the buy for creatives it would never get.
+
+  AdCP 3.1 defines `format_option_refs` on the package request (`media-buy/package-request.json`), so the seller resolves the selection itself. The client sends the refs when the seller's `supported_versions` prove a mutually served 3.1 release. Selections with a complete legacy mapping are still rewritten to `format_ids`, as before. AdCP 3.0 sellers, and sellers whose release cannot be proven, still get the error: 3.0 does not define the field, and dropping it would activate every format. AdCP 3.2+ sellers are unchanged.
+
+  `projectMediaBuyCreativesForDelivery` takes an optional trailing `formatOptionRefsOnWire` argument for the same behavior in pure projection, and `releaseCarriesPackageFormatOptionRefs(capabilities, version)` from `@adcp/sdk/v2/projection` computes it.
+
+- 3971edf: Refresh the registry OpenAPI snapshot and generated types for the published compliance coverage fields:
+  - `coverage_incomplete` on the agent compliance summary and on compliance runs. It is true when any track had a coverage-gap skip, and it is reported beside `status`, not folded into it.
+  - `track_details[].skipped_by_reason`, which counts a track's skipped steps by skip reason.
+  - `not_applicable_universal_bundle_ids`, listing universal bundles that are partial only because the agent advertises no tools for a surface it does not declare.
+
+  All the new fields are optional.
+
+- 28694b0: Reporting storage (experimental): period retirement resolves the period's open issue occurrences (#3648 follow-up).
+
+  `retireExpiredPeriods` deleted a period's obligation and consumer statements but left its `CONSUMER_STATUS_MISMATCH` occurrences open in the issue-event outbox. Nothing could resolve or escalate them afterwards. An occurrence that had already escalated stayed open forever: the issue observer never received its `resolved` event, and retention never pruned it.
+
+  Retirement now records `resolved` for each of the obligation's open occurrences in the same transaction that deletes the obligation. Pending events stay deliverable: the `resolved` event carries `issue: null` and no `principal`. The whole-occurrence prune collects the occurrence once it is delivered. Outbox rows are never deleted at retirement, so no undelivered event is lost.
+
+  No migration and no API change. `ReportingIssueEventStoreV1` (experimental) now states the contract for custom stores: a store that deletes an obligation resolves the obligation's open occurrences in the same transaction.
+
+- 8e0ec72: Request-signing grading now honors a vector's `applies_when` condition (adcp#8064). The storyboard probe evaluates it against the agent's discovered `get_adcp_capabilities`, so vector 027 skips as `capability_profile_mismatch` when `webhook_signing.legacy_hmac_fallback` is false or absent instead of failing (#3410). `gradeOneVector` and `gradeRequestSigning` accept `agentCapabilities` for the same check. Supported form: a dotted capability path compared with `==` or `!=` to a JSON scalar; any other expression, or a run without capabilities, still grades the vector.
+
 ## 17.0.0-beta.21
 
 ### Minor Changes

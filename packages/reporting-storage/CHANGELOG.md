@@ -1,5 +1,62 @@
 # @adcp/reporting-storage
 
+## 0.3.0-beta.6
+
+### Minor Changes
+
+- f6a6a76: Allow shared row-storage tables to hold rows written by another SDK without requiring its obligations in the JavaScript core ledger. The row-set obligation foreign key is removed; row-set ownership is maintained by each SDK's ledger transactions and retirement process.
+
+  Migration: run `npx adcp-reporting-storage migrate` to apply migration 0011 to existing databases. Deployments applying the deprecated `REPORTING_ROW_STORAGE_MIGRATION` directly should reapply it. The migration drops the default `adcp_reporting_row_sets_obligation_id_fkey` constraint; remove any custom-named foreign key to the JavaScript obligations table separately. Row-set and chunk foreign keys within the shared tables remain in place.
+
+- 36f34f6: Reporting storage (experimental): `PostgresReportingLedgerStore` records issue-lifecycle events for the SDK's `issueObserver` (#3648). This mirrors the Python storage outbox (adcp-client-python#1874).
+  - **Same-transaction writes.**
+    - `syncConsumerStatusBatch` records `opened` when the new leaf conflicts with the seller's record, and `resolved` for the occurrence of the leaf it superseded.
+    - `commitRevision` records `opened` when a restatement makes a leaf conflict or anchors one filed before any revision. It also records `resolved` when the read projection stops conflicting.
+    - Both run under the account lock the write already holds. An event exists exactly when its transition committed.
+  - **Exactly-once records.**
+    - An occurrence is `(issue_id, consumer_id)`, since two consumers may reuse one `reporting_status_id`. `UNIQUE (issue_id, consumer_id, kind)` keeps every record exactly once across replicas, and the `event_id` is derived from that triple.
+    - `sweepIssueEscalations` settles each candidate obligation first, then records `escalated` once.
+  - **Delivery.**
+    - `claimIssueEvents` hands out `SKIP LOCKED` leases, at most one per occurrence, in recording order.
+    - `completeIssueEvent`, `releaseIssueEvent` and `pruneIssueEvents` settle and clean up, and `issueEventsReady()` reports whether the table exists. Pruning removes only whole closed occurrences (resolved, fully delivered past the retention, and with the causing statement superseded or the obligation gone), never an open one, because the table is also the occurrence ledger and no later write may record a delivered `event_id` again.
+  - **Production service.** `createPostgresReliableReportingProductionService` accepts `issueObserver` (passed to the core service it drives) and adds `REPORTING_ISSUE_EVENTS_MIGRATION` to `setup.migrations` when it is set.
+
+  Why minor: this ships a new versioned migration that `postgresStorage().checkSchema()` requires (`REPORTING_SCHEMA_BEHIND` until applied), and per the stability policy a schema change goes in a minor of `@adcp/reporting-storage`.
+
+  Migration note:
+  1. Run `npx adcp-reporting-storage migrate`. This adds version `0012`, `reporting_issue_events`; the SQL is exported as `REPORTING_ISSUE_EVENTS_MIGRATION`. It is additive: one new table (`adcp_reporting_issue_events`) and its indexes, with no change to any existing table, key, function or trigger. It is safe to apply while workers of the previous release still run; they record no events for their own writes.
+  2. Until it is applied, writes record nothing and `issueEventsReady()` is `false`, and `issueObserver` refuses to start. Nothing else changes.
+  3. No storage contract moves. The Python SDK ships the same outbox as its migration `0008`, keeps its storage contract at `2`, and uses the same `event_id` derivation.
+
+  See `docs/migration-reporting-storage-package.md` and `docs/guides/REPORTING-LEDGER.md`.
+
+### Patch Changes
+
+- 28694b0: Reporting storage (experimental): period retirement resolves the period's open issue occurrences (#3648 follow-up).
+
+  `retireExpiredPeriods` deleted a period's obligation and consumer statements but left its `CONSUMER_STATUS_MISMATCH` occurrences open in the issue-event outbox. Nothing could resolve or escalate them afterwards. An occurrence that had already escalated stayed open forever: the issue observer never received its `resolved` event, and retention never pruned it.
+
+  Retirement now records `resolved` for each of the obligation's open occurrences in the same transaction that deletes the obligation. Pending events stay deliverable: the `resolved` event carries `issue: null` and no `principal`. The whole-occurrence prune collects the occurrence once it is delivered. Outbox rows are never deleted at retirement, so no undelivered event is lost.
+
+  No migration and no API change. `ReportingIssueEventStoreV1` (experimental) now states the contract for custom stores: a store that deletes an obligation resolves the obligation's open occurrences in the same transaction.
+
+- Updated dependencies [f52e1ae]
+- Updated dependencies [29c9af4]
+- Updated dependencies [cae11b7]
+- Updated dependencies [7a812a1]
+- Updated dependencies [57ffd9f]
+- Updated dependencies [727c947]
+- Updated dependencies [daa32d9]
+- Updated dependencies [c3790c8]
+- Updated dependencies [8947543]
+- Updated dependencies [3971edf]
+- Updated dependencies [36f34f6]
+- Updated dependencies [28694b0]
+- Updated dependencies [8e0ec72]
+- Updated dependencies [8e7fdd8]
+- Updated dependencies [307c004]
+  - @adcp/sdk@17.0.0-beta.22
+
 ## 0.3.0-beta.5
 
 This release accompanies SDK `17.0.0-beta.15`; its `^17.0.0-beta.14` peer range accepts that version. SDK beta.14 was not published.
