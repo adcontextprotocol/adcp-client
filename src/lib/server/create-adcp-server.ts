@@ -12,7 +12,10 @@ import {
   withIdentity33SchemaScope,
   bindIdentity33SchemaScope,
 } from '../validation/schema-loader';
-import { projectCapabilitiesForRelease } from './capabilities-release-projection';
+import {
+  projectCapabilitiesForRelease,
+  projectExperimentalFeaturesForRelease,
+} from './capabilities-release-projection';
 import { validateAgentOnboarding } from '../identity-3.3/lifecycle';
 import { isIdentity33UnboundContext } from '../identity-3.3/server';
 import {
@@ -9982,15 +9985,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // temporarily accepts the legacy serialization during a rolling deploy.
         data.request_signing = { ...data.request_signing, covers_content_digest: 'required' };
       }
-      if (selected?.major === 3 && selected.minor === 0) {
+      const servesAdcp30 = selected?.major === 3 && selected.minor === 0;
+      if (servesAdcp30) {
         data = projectCapabilitiesToVersion(data, release.validationVersion);
-      } else if (!config.identity33 && translationSteps(adcpVersion, release.validationVersion).length > 0) {
-        // Remove what the served release does not define (DR-0024), the same
-        // schema diff every other task response gets, plus newer experimental ids.
-        const projected = projectCapabilitiesForRelease(data, {
-          fromVersion: adcpVersion,
-          toVersion: release.validationVersion,
-        });
+      }
+      if (!config.identity33 && translationSteps(adcpVersion, release.validationVersion).length > 0) {
+        // Remove what the served release does not define (DR-0024): the schema
+        // diff every other task response gets, plus newer experimental ids. The
+        // 3.0 allow-list above already projected properties but cannot filter ids.
+        const options = { fromVersion: adcpVersion, toVersion: release.validationVersion };
+        const projected = servesAdcp30
+          ? projectExperimentalFeaturesForRelease(data, options)
+          : projectCapabilitiesForRelease(data, options);
         data = projected.data;
         if (projected.drifts.length > 0) {
           logger.info(`Converted get_adcp_capabilities response down to AdCP ${release.validationVersion}`, {

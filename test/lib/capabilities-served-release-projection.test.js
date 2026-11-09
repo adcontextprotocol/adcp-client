@@ -3,7 +3,10 @@ const assert = require('node:assert/strict');
 const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server.js');
 const { createIdempotencyStore, memoryBackend } = require('../../dist/lib/server/idempotency/index.js');
 const { InMemoryStateStore } = require('../../dist/lib/server/state-store.js');
-const { projectCapabilitiesForRelease } = require('../../dist/lib/server/capabilities-release-projection.js');
+const {
+  projectCapabilitiesForRelease,
+  projectExperimentalFeaturesForRelease,
+} = require('../../dist/lib/server/capabilities-release-projection.js');
 const { ADCP_VERSION } = require('../../dist/lib/index.js');
 const { toReleasePrecisionVersion } = require('../../dist/lib/version.js');
 
@@ -94,11 +97,25 @@ test('a caller at the served release gets everything and no translation event', 
   assert.equal(events.length, 0);
 });
 
-test('a 3.0 caller stays on the legacy path: no projection event, response still valid', async () => {
+test('a 3.0 caller gets the experimental-id filter and no 3.3-only properties', async () => {
   const events = [];
-  const body = await capabilitiesAt(buildSeller(events), '3.0');
-  assert.ok(body.adcp);
-  assert.equal(events.length, 0);
+  const seller = buildSeller(events);
+  const res = await seller.dispatchTestRequest({
+    method: 'tools/call',
+    params: { name: 'get_adcp_capabilities', arguments: { adcp_version: '3.0' } },
+  });
+  assert.notEqual(res.isError, true);
+  const body = res.structuredContent ?? res;
+
+  assert.ok(!body.experimental_features.includes('media_buy.match_keys'));
+  assert.ok(body.experimental_features.includes('trusted_match.core'));
+  for (const key of NEWER_FIELDS) assert.equal(body.media_buy[key], undefined, key);
+  assert.equal(body.account?.requests, undefined);
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].toVersion, '3.0');
+  assert.ok(events[0].drifts.every(d => d.type === 'version_downgrade_fields_dropped'));
+  assert.ok(events[0].drifts.some(d => d.message.includes('media_buy.match_keys')));
 });
 
 function build33Payload() {
@@ -182,5 +199,25 @@ test('projectCapabilitiesForRelease is a no-op within one release', () => {
   const input = build33Payload();
   const result = projectCapabilitiesForRelease(input, { fromVersion: ADCP_VERSION, toVersion: ADCP_VERSION });
   assert.equal(result.data, input);
+  assert.deepEqual(result.drifts, []);
+});
+
+test('projectExperimentalFeaturesForRelease filters ids only and leaves properties alone', () => {
+  const input = build33Payload();
+  const { data, drifts } = projectExperimentalFeaturesForRelease(input, {
+    fromVersion: ADCP_VERSION,
+    toVersion: '3.0',
+  });
+  assert.deepEqual(data.experimental_features, ['trusted_match.core']);
+  assert.deepEqual({ ...data, experimental_features: undefined }, { ...input, experimental_features: undefined });
+  assert.notEqual(data.business_calendars, undefined);
+  assert.notEqual(data.media_buy.issue_reporting, undefined);
+  assert.notEqual(data.account.requests, undefined);
+  assert.ok(drifts.length > 0);
+  assert.ok(drifts.every(d => d.type === 'version_downgrade_fields_dropped'));
+
+  const { experimental_features: _omit, ...bare } = input;
+  const result = projectExperimentalFeaturesForRelease(bare, { fromVersion: ADCP_VERSION, toVersion: '3.0' });
+  assert.equal(result.data, bare);
   assert.deepEqual(result.drifts, []);
 });

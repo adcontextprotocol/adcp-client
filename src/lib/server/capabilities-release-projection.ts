@@ -13,8 +13,16 @@
  * cannot see a newer release's ids. Each step also removes the ids the newer
  * release's capabilities schema names and the older one never mentions.
  * Every removal is reported as `version_downgrade_fields_dropped` drift.
+ * A 3.0 caller's properties go through the stricter 3.0 allow-list in
+ * `create-adcp-server.ts` instead, followed by the experimental-id removal alone.
  */
-import { adcpMinorLine, downgradeResponse, translationSteps, type VersionDrift } from '../adapters/version';
+import {
+  adcpMinorLine,
+  downgradeResponse,
+  translationSteps,
+  type TranslationStep,
+  type VersionDrift,
+} from '../adapters/version';
 import {
   getSchemaLoaderGeneration,
   getToolSchemaDocument,
@@ -92,6 +100,37 @@ function newerFeatureIds(features: readonly unknown[], upper: string, lower: str
   return newer;
 }
 
+/** One step's experimental-id removal. Returns the input reference when nothing is removed. */
+function dropNewerFeatureIds(current: unknown, step: TranslationStep, drifts: VersionDrift[]): unknown {
+  if (current === null || typeof current !== 'object' || Array.isArray(current)) return current;
+  const body = current as Record<string, unknown>;
+  const features = body.experimental_features;
+  if (!Array.isArray(features)) return current;
+  const newer = newerFeatureIds(features, step.upper, step.lower);
+  if (newer.size === 0) return current;
+  const paths: string[] = [];
+  const kept = features.filter((feature, index) => {
+    if (typeof feature !== 'string' || !newer.has(feature)) return true;
+    paths.push(`experimental_features[${index}]`);
+    return false;
+  });
+  const next: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (key !== 'experimental_features') next[key] = value;
+    else if (kept.length > 0) next[key] = kept;
+  }
+  drifts.push({
+    type: 'version_downgrade_fields_dropped',
+    message:
+      `${TOOL}: removed ${newer.size} experimental feature id(s) AdCP ` +
+      `${adcpMinorLine(step.lower) ?? step.lower} does not define: ${[...newer].join(', ')}.`,
+    strippedFields: paths,
+    fromVersion: step.upper,
+    toVersion: step.lower,
+  });
+  return next;
+}
+
 /**
  * Convert a capabilities response from the server's release `fromVersion`
  * down to the served release `toVersion`. Returns the original reference and
@@ -107,34 +146,24 @@ export function projectCapabilitiesForRelease<T>(
     const downgraded = downgradeResponse(TOOL, current, { fromVersion: step.upper, toVersion: step.lower });
     current = downgraded.data;
     drifts.push(...downgraded.drifts);
+    current = dropNewerFeatureIds(current, step, drifts);
+  }
+  return { data: current as T, drifts };
+}
 
-    if (current === null || typeof current !== 'object' || Array.isArray(current)) continue;
-    const body = current as Record<string, unknown>;
-    const features = body.experimental_features;
-    if (!Array.isArray(features)) continue;
-    const newer = newerFeatureIds(features, step.upper, step.lower);
-    if (newer.size === 0) continue;
-    const paths: string[] = [];
-    const kept = features.filter((feature, index) => {
-      if (typeof feature !== 'string' || !newer.has(feature)) return true;
-      paths.push(`experimental_features[${index}]`);
-      return false;
-    });
-    const next: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(body)) {
-      if (key !== 'experimental_features') next[key] = value;
-      else if (kept.length > 0) next[key] = kept;
-    }
-    current = next;
-    drifts.push({
-      type: 'version_downgrade_fields_dropped',
-      message:
-        `${TOOL}: removed ${newer.size} experimental feature id(s) AdCP ` +
-        `${adcpMinorLine(step.lower) ?? step.lower} does not define: ${[...newer].join(', ')}.`,
-      strippedFields: paths,
-      fromVersion: step.upper,
-      toVersion: step.lower,
-    });
+/**
+ * Only the experimental-id removal of {@link projectCapabilitiesForRelease},
+ * for a response whose properties another projection already handled (the
+ * 3.0 allow-list, which cannot filter the free-form ids).
+ */
+export function projectExperimentalFeaturesForRelease<T>(
+  data: T,
+  options: { fromVersion: string; toVersion: string }
+): { data: T; drifts: VersionDrift[] } {
+  const drifts: VersionDrift[] = [];
+  let current: unknown = data;
+  for (const step of translationSteps(options.fromVersion, options.toVersion)) {
+    current = dropNewerFeatureIds(current, step, drifts);
   }
   return { data: current as T, drifts };
 }
