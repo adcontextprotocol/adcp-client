@@ -22,6 +22,7 @@ import {
 } from '../media-buy/action-contracts';
 import { assessActionAvailability, type ActionAvailability } from '../media-buy/action-assessment';
 import { decomposeUpdateMediaBuy } from '../media-buy/mutations';
+import { CREATIVE_START_POLICY_FEATURE } from '../media-buy/creative-start-policy';
 import type { SLAWindow, UpdateMediaBuyRequestLike } from '../media-buy/types';
 
 export interface SellerActionDecision {
@@ -59,6 +60,13 @@ export interface SellerActionResolutionOptions {
      * for serving. Aggregate buy status cannot establish that fact. */
     update_creative_start_policy?: SellerActionDecision;
   };
+  /**
+   * Whether this seller declares `media_buy.features.creative_start_policy:
+   * true`. `update_creative_start_policy` is offered only when this is `true`:
+   * without the declaration the framework refuses the opt-in the action
+   * advertises. Unknown is a denial.
+   */
+  creativeStartPolicy?: boolean;
   now?: number;
 }
 export interface SellerActionResolution {
@@ -352,7 +360,15 @@ export const mediaBuyActionResolver = {
         );
     }
     const startup = input.metadata?.update_creative_start_policy;
-    if (startup) {
+    if (startup && input.creativeStartPolicy !== true) {
+      unavailable.push({
+        status: 'currently_unavailable',
+        action: 'update_creative_start_policy',
+        reason: 'not_supported_on_buy',
+        certainty: 'blocked',
+        message: `update_creative_start_policy requires ${CREATIVE_START_POLICY_FEATURE}, which this seller does not declare.`,
+      });
+    } else if (startup) {
       const scope = Array.isArray(startup.applicable_package_ids) ? startup.applicable_package_ids : undefined;
       const entry: LiveMediaBuyAction = {
         action: 'update_creative_start_policy',

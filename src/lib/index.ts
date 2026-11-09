@@ -1385,6 +1385,7 @@ export {
 export type {
   AdcpErrorOptions,
   AdcpErrorResponse,
+  AdcpMutationOutcome,
   McpToolResponse,
   ValidAction,
   CancelMediaBuyInput,

@@ -78,7 +78,17 @@ export interface AdcpErrorOptions {
    * a buyer-actionable classification.
    */
   buyer_reason?: { code: string; message: string };
+  /**
+   * Whether the failed state-changing request changed seller state (AdCP 3.3
+   * `error.mutation_outcome`). Set `'not_applied'` only with pre-commit
+   * evidence: a typed rejection raised before the idempotency claim and
+   * before any write. Leave it unset to make no claim.
+   */
+  mutation_outcome?: AdcpMutationOutcome;
 }
+
+/** AdCP 3.3 `error.mutation_outcome` values. */
+export type AdcpMutationOutcome = 'not_applied' | 'unknown' | 'applied';
 
 export interface AdcpErrorPayload {
   code: string;
@@ -107,6 +117,7 @@ export interface AdcpErrorPayload {
    * {@link AdcpErrorOptions.buyer_reason} for the buyer-safety contract.
    */
   buyer_reason?: { code: string; message: string };
+  mutation_outcome?: AdcpMutationOutcome;
 }
 
 export interface AdcpErrorResponse {
@@ -204,6 +215,7 @@ export function adcpError(code: StandardErrorCode | (string & {}), options: Adcp
     ...(options.issues != null && { issues: options.issues }),
     ...(options.details != null && { details: options.details }),
     ...(options.buyer_reason != null && { buyer_reason: options.buyer_reason }),
+    ...(options.mutation_outcome != null && { mutation_outcome: options.mutation_outcome }),
   };
 
   const filtered = applyAdcpErrorAllowlist(code, adcp_error as unknown as Record<string, unknown>);

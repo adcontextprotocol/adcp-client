@@ -152,6 +152,79 @@ server handlers are `mediaBuy.listCollections` and `mediaBuy.listProposals`,
 or optional methods on `MediaBuyLifecyclePlatform`. Their synchronous results
 use `outcome` and do not acquire a synthetic task `status` field.
 
+## Creative start policy on `control_media_buy`
+
+AdCP 3.3 lets a buyer hold a package's first enablement for serving until every
+assigned creative is approved: `packages[].start_requires_all_creatives_approved`
+on `control_media_buy`. A seller that does not declare
+`media_buy.features.creative_start_policy: true` must reject `true` with
+`UNSUPPORTED_FEATURE` before mutation, and buyers must not send it.
+
+**This breaks sellers that honored `true` without declaring the feature.** When
+the server's `adcpVersion` is 3.3 or later, the dispatcher now refuses such a
+request itself, before the idempotency lookup, and the handler never sees it:
+
+```json
+{
+  "code": "UNSUPPORTED_FEATURE",
+  "message": "start_requires_all_creatives_approved: true requires media_buy.features.creative_start_policy, which this seller does not declare",
+  "recovery": "correctable",
+  "field": "packages[0].start_requires_all_creatives_approved",
+  "suggestion": "Omit start_requires_all_creatives_approved or send false; check media_buy.features.creative_start_policy in get_adcp_capabilities before opting in",
+  "details": {
+    "feature": "media_buy.features.creative_start_policy",
+    "fields": ["packages[0].start_requires_all_creatives_approved"]
+  },
+  "mutation_outcome": "not_applied"
+}
+```
+
+`field` names the first opted-in package and `details.fields` lists every one.
+`false` and omission always reach the handler. To accept `true`, hold the
+package's first enablement until every current assignment is approved, echo the
+policy on `get_media_buys`, and declare the feature:
+
+```ts
+createAdcpServer({
+  capabilities: { features: { creativeStartPolicy: true } },
+  // ...
+});
+```
+
+`createAdcpServerFromPlatform` takes the same `capabilities.features.creativeStartPolicy`.
+`capabilities.overrides.media_buy.features.creative_start_policy` also counts.
+Under `createTenantRegistry` each tenant's own capabilities decide.
+`create_media_buy` and `update_media_buy` are not checked. Withdrawing the field
+from their packages is pending adcontextprotocol/adcp#8767. The pinned
+`3.3.0-beta.5` `package-request` and `package-update` schemas still declare it
+with the same must-refuse rule, so until that lands a create or update that
+sets `true` reaches your handler unenforced. Refuse it yourself if you don't
+honor it. The Python SDK has the same known gap.
+
+`mediaBuyActionResolver.resolve()` follows the same rule: it offers
+`update_creative_start_policy` only when you pass `creativeStartPolicy: true`
+with `metadata.update_creative_start_policy`. Without it the action is reported
+unavailable (`not_supported_on_buy`), because the dispatcher would refuse the
+opt-in it advertises. A seller that already offers the action adds the option:
+
+```ts
+mediaBuyActionResolver.resolve({
+  buy,
+  decide,
+  creativeStartPolicy: true,
+  metadata: { update_creative_start_policy: decision },
+});
+```
+
+On the buyer side, `control_media_buy` throws `ProtocolFeatureUnsupportedError`
+before sending when the call targets 3.3 or later and the seller's discovered
+capabilities lack the feature. The error has `code: 'UNSUPPORTED_FEATURE'`, the
+same `field`, `details.feature` and `details.fields` as the seller's refusal, and
+`dispatched: false`; `getClientPreflightAdcpError(error)` returns the AdCP error.
+With synthetic or missing capabilities the client sends and the seller decides.
+Check `client.supports('creative_start_policy')`, or
+`capabilities.features.creativeStartPolicy`, before opting in.
+
 ## AdCP 3.3.0-beta.5
 
 SDK 17 now pins AdCP `3.3.0-beta.5` and no longer packages or advertises

@@ -1,5 +1,5 @@
 export { adcpError } from './errors';
-export type { AdcpErrorOptions, AdcpErrorPayload, AdcpErrorResponse } from './errors';
+export type { AdcpErrorOptions, AdcpErrorPayload, AdcpErrorResponse, AdcpMutationOutcome } from './errors';
 
 export { normalizeError, normalizeErrors } from './normalize-errors';
 export type { NormalizedError } from './normalize-errors';

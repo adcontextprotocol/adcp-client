@@ -65,6 +65,11 @@ import {
 } from '../utils/adcp-version-config';
 import { beta6ReportingRequestIssue, type Beta6DeliveryRequestIssue } from '../media-buy/reporting-version';
 import {
+  CREATIVE_START_POLICY_FEATURE,
+  CREATIVE_START_POLICY_FIELD,
+  creativeStartPolicyOptInFields,
+} from '../media-buy/creative-start-policy';
+import {
   convertRequest,
   convertResponse,
   getVersionAdapter,
@@ -5970,6 +5975,12 @@ export class SingleAgentClient {
       serverVersion,
       negotiatedRelease
     );
+    this.assertCreativeStartPolicyDeclared(
+      taskType,
+      normalizedParams,
+      capabilityDiscoveryContext.capabilities,
+      negotiatedRelease?.version ?? options?.wireAdcpVersion ?? this.getWireAdcpVersion()
+    );
     const { options: webhookOptions, driftLog: webhookDriftLog } = this.suppressPre31DiscoveryWebhook(
       taskType,
       options,
@@ -10949,6 +10960,12 @@ export class SingleAgentClient {
         serverVersion,
         negotiatedRelease
       );
+      this.assertCreativeStartPolicyDeclared(
+        taskName,
+        normalizedParams,
+        capabilityDiscoveryContext.capabilities,
+        negotiatedRelease?.version ?? options?.wireAdcpVersion ?? this.getWireAdcpVersion()
+      );
       const { options: webhookOptions, driftLog: webhookDriftLog } = this.suppressPre31DiscoveryWebhook(
         taskName,
         options,
@@ -13221,6 +13238,43 @@ export class SingleAgentClient {
         ...(targetVersions.length > 0 ? { targetVersions } : {}),
       },
     };
+  }
+
+  /**
+   * AdCP 3.3: buyers MUST NOT send `packages[].start_requires_all_creatives_approved:
+   * true` on `control_media_buy` to a seller that does not declare
+   * `media_buy.features.creative_start_policy: true` (#3649). Refuses only when
+   * discovery is authoritative; with synthetic or missing capabilities the
+   * request is sent and the seller decides. `false`, omission and calls below
+   * 3.3 are unaffected. The vocabulary matches the seller's own refusal.
+   */
+  private assertCreativeStartPolicyDeclared(
+    taskName: string,
+    params: unknown,
+    capabilities: AdcpCapabilities | undefined,
+    targetVersion: string
+  ): void {
+    if (taskName !== 'control_media_buy') return;
+    const fields = creativeStartPolicyOptInFields(params);
+    if (fields.length === 0 || capabilities?._synthetic !== false) return;
+    if (!isAdcpVersionAtLeast(targetVersion, '3.3.0-beta.0')) return;
+    if (resolveFeature(capabilities, 'creative_start_policy')) return;
+    const suggestion =
+      `Omit ${CREATIVE_START_POLICY_FIELD} or send false; check ${CREATIVE_START_POLICY_FEATURE} in ` +
+      'get_adcp_capabilities before opting in.';
+    throw new ProtocolFeatureUnsupportedError(
+      ['creative_start_policy'],
+      listDeclaredFeatures(capabilities),
+      this.agent.agent_uri,
+      {
+        message:
+          `${taskName} ${fields.join(', ')}: true ${fields.length === 1 ? 'requires' : 'require'} ` +
+          `${CREATIVE_START_POLICY_FEATURE}, which this seller does not declare. No request was sent. ${suggestion}`,
+        field: fields[0],
+        suggestion,
+        details: { feature: CREATIVE_START_POLICY_FEATURE, fields },
+      }
+    );
   }
 
   /**
