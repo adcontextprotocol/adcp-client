@@ -221,3 +221,73 @@ test('projectExperimentalFeaturesForRelease filters ids only and leaves properti
   assert.equal(result.data, bare);
   assert.deepEqual(result.drifts, []);
 });
+
+function buildIdentity33Seller(events) {
+  return createAdcpServer({
+    stateStore: new InMemoryStateStore(),
+    name: 'identity33 capability projection',
+    version: '1.0.0',
+    identity33: { authorize: async () => {} },
+    idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }), ttlSeconds: 86400 }),
+    validation: { requests: 'off', responses: 'strict' },
+    onVersionTranslation: e => events.push(e),
+    resolveAccount: async ref => ({ id: ref.account_id ?? 'a' }),
+    mediaBuy: {
+      getProducts: async () => ({ products: [] }),
+      reportMediaBuyIssue: async () => ({}),
+      listProposals: async () => ({ outcome: 'listed', proposals: [], opportunities: [] }),
+    },
+    capabilities: {
+      account: { supportedBilling: ['operator'] },
+      request_signing: {
+        supported: true,
+        profiles: ['adcp/request-signing/v1', 'web-bot-auth'],
+        covers_content_digest: 'required',
+        required_for: [],
+      },
+      overrides: {
+        media_buy: {
+          issue_reporting: true,
+          open_opportunities: { list_proposals: true },
+          supported_match_keys: [{ uid_type: 'hashed_email', scopes: ['individuals'], uses: ['audience_include'] }],
+          vendor_ext_key: 'adopter-extension',
+        },
+        experimental_features: ['media_buy.match_keys', 'trusted_match.core'],
+      },
+    },
+  });
+}
+
+test('an identity33 server projects capabilities for a 3.2 caller', async () => {
+  const events = [];
+  const seller = buildIdentity33Seller(events);
+  const body = await capabilitiesAt(seller, '3.2');
+
+  for (const key of NEWER_FIELDS) assert.equal(body.media_buy[key], undefined, key);
+  assert.equal(body.account?.requests, undefined);
+  assert.ok(!body.experimental_features.includes('media_buy.match_keys'));
+  assert.ok(body.experimental_features.includes('trusted_match.core'));
+  assert.equal(body.request_signing.supported, true);
+  assert.equal(body.request_signing.profiles, undefined);
+  assert.ok(body.library_version);
+  assert.equal(body.media_buy.vendor_ext_key, 'adopter-extension');
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].toVersion, '3.2');
+  const stripped = events[0].drifts.flatMap(d => d.strippedFields);
+  for (const path of [
+    'request_signing.profiles',
+    'media_buy.issue_reporting',
+    'media_buy.open_opportunities',
+    'media_buy.supported_match_keys',
+  ]) {
+    assert.ok(stripped.includes(path), path);
+  }
+  assert.ok(events[0].drifts.some(d => d.message.includes('media_buy.match_keys')));
+
+  events.length = 0;
+  const full = await capabilitiesAt(seller, SERVED);
+  assert.ok(full.request_signing.profiles);
+  assert.notEqual(full.media_buy.issue_reporting, undefined);
+  assert.equal(events.length, 0);
+});

@@ -9989,10 +9989,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       if (servesAdcp30) {
         data = projectCapabilitiesToVersion(data, release.validationVersion);
       }
-      if (!config.identity33 && translationSteps(adcpVersion, release.validationVersion).length > 0) {
+      if (translationSteps(adcpVersion, release.validationVersion).length > 0) {
         // Remove what the served release does not define (DR-0024): the schema
         // diff every other task response gets, plus newer experimental ids. The
         // 3.0 allow-list above already projected properties but cannot filter ids.
+        // identity33 does not exempt older callers: they cannot use 3.3 identity.
         const options = { fromVersion: adcpVersion, toVersion: release.validationVersion };
         const projected = servesAdcp30
           ? projectExperimentalFeaturesForRelease(data, options)
