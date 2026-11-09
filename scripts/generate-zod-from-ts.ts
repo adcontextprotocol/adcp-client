@@ -2345,7 +2345,6 @@ function postProcessTrustedMatchPrivacyBoundaryStrictness(
   const strictSchemaExport = (
     source: string,
     schemaName: string,
-    nextSchemaName: string,
     sourceFile: string,
     openExceptions: string[] = []
   ): string => {
@@ -2359,7 +2358,10 @@ function postProcessTrustedMatchPrivacyBoundaryStrictness(
     }
     const start = source.indexOf(`export const ${schemaName} = z.object({`);
     if (start === -1) return source;
-    const end = source.indexOf(`\n\nexport const ${nextSchemaName} = `, start);
+    // Close only this export. Generated exports between the request and a
+    // named neighbour (TargetingKvsSchema follows the context request) are
+    // response shapes with their own source closure.
+    const end = source.indexOf('\n\nexport const ', start + 1);
     if (end === -1) {
       throw new Error(
         `postProcessTrustedMatchPrivacyBoundaryStrictness: unable to locate schema boundary after ${schemaName}.`
@@ -2377,19 +2379,10 @@ function postProcessTrustedMatchPrivacyBoundaryStrictness(
     return before + block + after;
   };
 
-  let result = strictSchemaExport(
-    content,
-    'ContextMatchRequestSchema',
-    'OfferPriceSchema',
-    'trusted-match/context-match-request.json'
-  );
-  result = strictSchemaExport(
-    result,
-    'IdentityMatchRequestSchema',
-    'TMPXChunkSchema',
-    'trusted-match/identity-match-request.json',
-    ['/properties/identities/items/properties/attestation/properties/proof']
-  );
+  let result = strictSchemaExport(content, 'ContextMatchRequestSchema', 'trusted-match/context-match-request.json');
+  result = strictSchemaExport(result, 'IdentityMatchRequestSchema', 'trusted-match/identity-match-request.json', [
+    '/properties/identities/items/properties/attestation/properties/proof',
+  ]);
   return result;
 }
 
@@ -4473,6 +4466,27 @@ export const IdentityMatchResponseSchema = IdentityMatchResponseRouterPublisherS
   } else {
     replaceSchema('IdentityMatchResponseSchema', 'GetProductsResponseSchema', routerPublisherSchema);
   }
+
+  // Both context-match responses define the targeting key-value item; it is
+  // closed while their sources close it.
+  const targetingKvsPolicies = new Set(
+    ['context-match-response.json', 'provider-context-match-response.json'].map(file =>
+      policy(file, '/definitions/targeting_kvs/items')
+    )
+  );
+  if (targetingKvsPolicies.size !== 1) {
+    throw new Error('postProcessTrustedMatchResponseSchemas: the context-match responses disagree on targeting_kvs.');
+  }
+  const targetingKvs = findSchemaExportExpressions(content).find(entry => entry.name === 'TargetingKvsSchema');
+  if (!targetingKvs) throw new Error('postProcessTrustedMatchResponseSchemas: TargetingKvsSchema was not generated.');
+  const targetingKvsExpression = content.slice(targetingKvs.expressionStart, targetingKvs.expressionEnd);
+  if (!/\.passthrough\(\)\)$/.test(targetingKvsExpression)) {
+    throw new Error('postProcessTrustedMatchResponseSchemas: TargetingKvsSchema is no longer an array of objects.');
+  }
+  content =
+    content.slice(0, targetingKvs.expressionStart) +
+    targetingKvsExpression.replace(/\.passthrough\(\)\)$/, `${[...targetingKvsPolicies][0]})`) +
+    content.slice(targetingKvs.expressionEnd);
 
   return content;
 }
