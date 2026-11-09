@@ -16,24 +16,27 @@ test('compatibility purchase input post-processing preserves following schema ex
 import assert from 'node:assert/strict';
 import { __test__ } from ${JSON.stringify(path.join(REPO_ROOT, 'scripts/generate-zod-from-ts.ts'))};
 
+// Injected so the test never reads schemas/cache/latest.
+const readSource = () => ({ type: 'object', additionalProperties: false });
 const input = [
   'export const CompatibilityPurchaseCoordinatorInputSchema = z.any();',
   'export const OutcomeTargetCostPerSchema = z.number();',
   'export const OutcomeTargetSchema = OutcomeTargetCostPerSchema;',
 ].join('\\n\\n');
-const output = __test__.postProcessCompatibilityPurchaseCoordinatorInput(input);
+const output = __test__.postProcessCompatibilityPurchaseCoordinatorInput(input, readSource);
 assert.match(output, /CompatibilityPurchaseCoordinatorInputSchema = z\\.object\\(/);
 assert.match(output, /export const OutcomeTargetCostPerSchema = z\\.number\\(\\);/);
 assert.match(output, /export const OutcomeTargetSchema = OutcomeTargetCostPerSchema;/);
 assert.equal((output.match(/export const /g) ?? []).length, 3);
 
 assert.throws(
-  () => __test__.postProcessCompatibilityPurchaseCoordinatorInput('export const CompatibilityPurchaseCoordinatorInputSchema = z.any();'),
+  () => __test__.postProcessCompatibilityPurchaseCoordinatorInput('export const CompatibilityPurchaseCoordinatorInputSchema = z.any();', readSource),
   /Could not locate the end/
 );
 assert.throws(
   () => __test__.postProcessCompatibilityPurchaseCoordinatorInput(
-    'export const CompatibilityPurchaseCoordinatorInputSchema = z.any();\\nexport const UnexpectedSchema = z.any();\\n\\nexport const OutcomeTargetSchema = z.any();'
+    'export const CompatibilityPurchaseCoordinatorInputSchema = z.any();\\nexport const UnexpectedSchema = z.any();\\n\\nexport const OutcomeTargetSchema = z.any();',
+    readSource
   ),
   /would remove other exports/
 );
