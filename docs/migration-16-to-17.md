@@ -286,10 +286,16 @@ customTools: {
 The arguments are parsed once, and everything that reads them uses the parsed
 value: `identity33` authorization, release selection and the handler. On
 `invoke()`, `dispatchTestRequest()` and A2A, authorization and release selection
-used to read the raw arguments. They now see the parsed value. A release field
-your schema does not declare is stripped there, as it already was on MCP. To let
-a buyer pick the release, declare `adcp_version` (and `adcp_major_version`) in
-the schema. A declared default or coercion then selects the release.
+used to read the raw arguments. They now see the parsed value.
+
+**Behavior change on A2A, `invoke()` and `dispatchTestRequest()`:** a custom tool
+whose schema does not declare `adcp_version` used to let the caller's raw
+`adcp_version` select the release on those paths. Now the schema strips that
+field, so the server's default release applies, as it always has on MCP. A2A
+has no AdCP version negotiation at the envelope level: `A2A-Version` selects
+only the A2A wire. Framework tools are unchanged. To let a buyer pick the
+release, declare `adcp_version` (and `adcp_major_version`) in the schema. A
+declared default or coercion then selects the release.
 
 Rejections on these tools echo the caller's `context` even when the schema
 strips it: validation, version, authorization, and errors your handler returns
