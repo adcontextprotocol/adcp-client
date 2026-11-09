@@ -11,7 +11,7 @@ A `CONSUMER_STATUS_MISMATCH` is caller-scoped, so only the buyer whose `sync_rep
   - The ledger records `opened` and `resolved` in the same transaction as the `sync_reporting_status` write or revision commit that caused them.
   - Each `runCycle` sweeps `escalated` and then delivers committed events.
   - Without `runCycle`, events are recorded but the observer is never called and `escalated` is never recorded.
-- **At least once.** Deduplicate on `eventId`: `"rpie_" + sha256(canonical_json_utf8_v1(["reporting-issue-event-v1", issueId, consumerId, kind]))[:40]`. That is Python's scheme with the consumer added, because the published `issueId` does not name the consumer and two consumers may reuse one `reporting_status_id`. An open occurrence's events are never pruned; a resolved one's are, seven days after its last delivery.
+- **At least once.** Deduplicate on `eventId`: `"rpie_" + sha256(canonical_json_utf8_v1(["reporting-issue-event-v1", issueId, consumerId, kind]))[:40]`. That is Python's scheme with the consumer added, because the published `issueId` does not name the consumer and two consumers may reuse one `reporting_status_id`. An open occurrence's events are never pruned; a closed one's (resolved, with its statement superseded or its obligation gone) are, seven days after its last delivery.
 - **Failures.**
   - A throwing or timed-out observer (10 s) is retried after a backoff of 30 s doubling to 1 h, with no limit.
   - The failure reaches the scheduler's `onError` as a `ReportingIssueObserverError`, and `runCycle(...).issueEvents.errors`.

@@ -2569,9 +2569,12 @@ indexes, additive, so workers of an earlier release keep running beside it (they
 their own writes). Until it is applied, writes record nothing, `postgresStorage().checkSchema()` names
 `0012` as pending, and a store constructed directly refuses `issueObserver` at its first cycle. The
 service refuses `issueObserver` at construction against a store that does not record issue events.
-A resolved occurrence is pruned once all its events were delivered more than seven days ago. An open
-occurrence is never pruned, however long ago its events were delivered: the outbox is also the record of
-which occurrences are open, which a later supersession resolves and the sweep escalates.
+Retention prunes only closed occurrences: resolved, every event delivered more than seven days ago, and
+unable to be derived again because the causing statement is no longer the consumer's current leaf or the
+obligation is gone. An open occurrence is never pruned, however long ago its events were delivered: the
+outbox is also the record of which occurrences are open, which a later supersession resolves and the sweep
+escalates. A resolved occurrence whose statement is still current is kept too, as the anchor that stops a
+later write recording its delivered events again under the same `eventId`.
 
 **Production service.** `createPostgresReliableReportingProductionService` (`@adcp/reporting-storage/service`)
 takes `issueObserver` too: it passes it to the core service whose `runCycle` and `start()` it drives, and

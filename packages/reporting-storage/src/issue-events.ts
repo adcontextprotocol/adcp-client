@@ -13,7 +13,8 @@
  * statement but not the consumer, and two consumers may reuse one `reporting_status_id`.
  * `UNIQUE (issue_id, consumer_id, kind)` makes the record exactly once across replicas, and `event_id` is
  * derived from that triple, so a redelivery carries the same `event_id`. The table is also the occurrence
- * ledger, so pruning removes whole resolved, fully delivered occurrences and never an open one.
+ * ledger, so pruning removes only whole closed occurrences (resolved, fully delivered, and unable to be derived
+ * again) and never an open one.
  *
  * The table is installed by migration `0012` (`npx adcp-reporting-storage migrate`). Until it exists the
  * writes record nothing and `issueEventsReady()` is `false`; nothing else changes.
@@ -427,9 +428,11 @@ export async function releaseOn(
 }
 
 /**
- * Delete up to `limit` whole occurrences that are resolved and whose every event was delivered more than
- * `olderThanMilliseconds` ago. Returns the events deleted. An open occurrence is never pruned: its `opened`
- * row is what a later write resolves and what the sweep escalates.
+ * Delete up to `limit` whole closed occurrences: resolved, every event delivered more than
+ * `olderThanMilliseconds` ago, and unable to be derived again (the causing statement is no longer the
+ * consumer's current leaf, or the obligation is gone). Returns the events deleted. An open occurrence is never
+ * pruned: its `opened` row is what a later write resolves and what the sweep escalates. A resolved one whose
+ * statement is still current is kept as the anchor that stops a later write recording its delivered events again.
  */
 export async function pruneOn(
   client: Pick<Client, 'query'>,
@@ -446,6 +449,13 @@ export async function pruneOn(
             SELECT 1 FROM adcp_reporting_issue_events other
              WHERE other.issue_id = r.issue_id AND other.consumer_id = r.consumer_id
                AND (other.delivered_at IS NULL OR other.delivered_at >= horizon.before))
+          AND (
+            NOT EXISTS (
+              SELECT 1 FROM adcp_reporting_consumer_statuses statement
+               WHERE statement.account_id = r.account_id AND statement.consumer_id = r.consumer_id
+                 AND statement.consumer_status_id = r.reporting_status_id AND statement.is_current)
+            OR NOT EXISTS (
+              SELECT 1 FROM adcp_reporting_obligations obligation WHERE obligation.obligation_id = r.obligation_id))
         ORDER BY r.delivered_at
         LIMIT $2
      )

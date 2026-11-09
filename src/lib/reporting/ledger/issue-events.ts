@@ -31,8 +31,10 @@
  * ({@link createReportingIssueEventDispatcherV1}) is **at least once**: deduplicate on `eventId`.
  *
  * The outbox is also the occurrence ledger: an occurrence is open while its `opened` record exists and it
- * has no `resolved` one. Pruning therefore removes whole occurrences, and only resolved ones whose every
- * event was delivered.
+ * has no `resolved` one. Pruning therefore removes only whole closed occurrences: resolved, every event
+ * delivered past the retention, and unable to be derived again (the causing statement is no longer the
+ * consumer's current leaf, or the obligation is gone). Nothing a later write records can then reuse a
+ * delivered `eventId`.
  *
  * @experimental Reliable Reporting issue observer: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  * @packageDocumentation
@@ -295,11 +297,14 @@ export interface ReportingIssueEventStoreV1 {
   /** Give back a failed delivery, due again `retryAfterMilliseconds` from now; `false` when the lease was lost. */
   releaseIssueEvent(lease: ReportingIssueEventLeaseV1, input: { retryAfterMilliseconds: number }): Promise<boolean>;
   /**
-   * Delete up to `limit` whole occurrences that are resolved and whose every event was delivered more than
-   * `olderThanMilliseconds` ago. Returns the events deleted.
+   * Delete up to `limit` whole closed occurrences and return the events deleted. Closed means resolved, every
+   * event delivered more than `olderThanMilliseconds` ago, and unable to be derived again: the causing
+   * statement is no longer the consumer's current leaf, or the obligation is gone.
    *
    * Never an open occurrence, however old its delivered events: the `opened` record is what a later write
-   * resolves and what the escalation sweep escalates, so deleting it would lose both.
+   * resolves and what the escalation sweep escalates, so deleting it would lose both. Never a resolved one
+   * whose statement is still current either: it is the anchor that stops a later write recording its delivered
+   * events again under the same `eventId`.
    */
   pruneIssueEvents(input: { olderThanMilliseconds: number; limit?: number }): Promise<number>;
 }
@@ -518,8 +523,9 @@ export interface ReportingIssueEventDispatcherOptionsV1 {
   /** Retry delay ceiling. Default 1 h. Retries never stop. */
   retryCapMilliseconds?: number;
   /**
-   * A resolved occurrence whose events were all delivered longer ago than this is pruned. Open occurrences
-   * are never pruned. Default 7 days; `null` keeps everything.
+   * A closed occurrence (resolved, and its statement superseded or its obligation gone) whose events were all
+   * delivered longer ago than this is pruned. Open occurrences are never pruned. Default 7 days; `null` keeps
+   * everything.
    */
   retentionMilliseconds?: number | null;
 }
@@ -605,7 +611,14 @@ export function createReportingIssueEventDispatcherV1(
             const obligation = await obligationOf(lease);
             return obligation ? readEvidence(store, lease, obligation) : undefined;
           });
-        for (const lease of leases) {
+        for (const [index, lease] of leases.entries()) {
+          if (input.signal?.aborted) {
+            // Shutdown: hand the rest of the batch back now rather than calling the observer for each of them.
+            for (const pending of leases.slice(index)) {
+              await settle(() => store.releaseIssueEvent(pending, { retryAfterMilliseconds: 0 }));
+            }
+            break;
+          }
           let context: ReportingIssueEventRenderContextV1 | undefined;
           try {
             if (lease.kind === 'resolved') {

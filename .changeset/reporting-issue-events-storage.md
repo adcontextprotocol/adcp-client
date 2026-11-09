@@ -13,7 +13,7 @@ Reporting storage (experimental): `PostgresReportingLedgerStore` records issue-l
   - `sweepIssueEscalations` settles each candidate obligation first, then records `escalated` once.
 - **Delivery.**
   - `claimIssueEvents` hands out `SKIP LOCKED` leases, at most one per occurrence, in recording order.
-  - `completeIssueEvent`, `releaseIssueEvent` and `pruneIssueEvents` settle and clean up, and `issueEventsReady()` reports whether the table exists. Pruning removes whole occurrences that are resolved and fully delivered, never an open one, because the table is also the occurrence ledger.
+  - `completeIssueEvent`, `releaseIssueEvent` and `pruneIssueEvents` settle and clean up, and `issueEventsReady()` reports whether the table exists. Pruning removes only whole closed occurrences (resolved, fully delivered past the retention, and with the causing statement superseded or the obligation gone), never an open one, because the table is also the occurrence ledger and no later write may record a delivered `event_id` again.
 
 - **Production service.** `createPostgresReliableReportingProductionService` accepts `issueObserver` (passed to the core service it drives) and adds `REPORTING_ISSUE_EVENTS_MIGRATION` to `setup.migrations` when it is set.
 

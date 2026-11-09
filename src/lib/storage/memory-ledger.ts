@@ -918,6 +918,22 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
     return true;
   }
 
+  /** Whether an occurrence can never be derived again: its statement is no longer current, or its obligation is gone. */
+  private issueOccurrenceClosed(event: MemoryIssueEvent): boolean {
+    if (!this.obligations.has(event.reportingObligationId)) return true;
+    const statement = this.consumerStatements.find(
+      value =>
+        value.account_id === event.accountId &&
+        value.consumerId === event.consumerId &&
+        value.reporting_status_id === event.reportingStatusId
+    );
+    if (!statement) return true;
+    return (
+      this.currentConsumerLeaf(statement, event.accountId, event.consumerId)?.reporting_status_id !==
+      statement.reporting_status_id
+    );
+  }
+
   async pruneIssueEvents({
     olderThanMilliseconds,
     limit = 1_000,
@@ -927,9 +943,11 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
   }): Promise<number> {
     if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError('limit must be a positive integer');
     const horizon = Date.parse(this.instant()) - olderThanMilliseconds;
-    // The outbox is the occurrence ledger: prune whole occurrences, only resolved ones whose every event was
-    // delivered before the horizon. An open occurrence's `opened` record is what a later write resolves and
-    // what the sweep escalates, however long ago it was delivered.
+    // The outbox is the occurrence ledger: prune whole occurrences, and only closed ones. Closed means resolved,
+    // every event delivered before the horizon, and unable to be derived again: its causing statement is no
+    // longer the consumer's current leaf, or its obligation is gone. An open occurrence's `opened` record is
+    // what a later write resolves and what the sweep escalates; a resolved one whose statement is still
+    // current is the anchor that stops a later write recording its delivered events again.
     const occurrences = new Map<string, MemoryIssueEvent[]>();
     for (const value of this.issueEvents.values()) {
       const key = issueOccurrenceKey(value);
@@ -939,7 +957,8 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
       .filter(
         events =>
           events.some(value => value.kind === 'resolved') &&
-          events.every(value => value.deliveredAt !== undefined && Date.parse(value.deliveredAt) < horizon)
+          events.every(value => value.deliveredAt !== undefined && Date.parse(value.deliveredAt) < horizon) &&
+          this.issueOccurrenceClosed(events[0]!)
       )
       .map(events => ({ events, lastDelivered: Math.max(...events.map(value => Date.parse(value.deliveredAt!))) }))
       .sort((a, b) => a.lastDelivered - b.lastDelivered)

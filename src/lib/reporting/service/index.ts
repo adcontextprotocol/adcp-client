@@ -308,8 +308,9 @@ export interface CreateReliableReportingServiceOptionsV1<TCtxMeta = Record<strin
    *
    * Needs a store that records issue events: `memoryStorage()`, or `postgresStorage({ pool })` from
    * `@adcp/reporting-storage` with migration `0012 reporting_issue_events` applied. Refused at construction
-   * against any other store, and at the first cycle before the table exists. A resolved occurrence is pruned
-   * seven days after its last event was delivered; an open one is never pruned.
+   * against any other store, and at the first cycle before the table exists. A closed occurrence (resolved,
+   * statement superseded or obligation gone) is pruned seven days after its last event was delivered; an open
+   * one is never pruned.
    *
    * @experimental Reliable Reporting issue observer: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
    */
