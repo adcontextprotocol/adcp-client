@@ -267,6 +267,18 @@ it. Authorization changes and discovery invalidation invalidate the evidence.
 Request-scoped custom transports require explicit capability or tool-schema
 support and do not reuse this inferred product evidence.
 
+Package selectors follow the seller's release even when creatives stay on the
+legacy wire. AdCP 3.1 defines `format_option_refs` on the package request, so
+when `supported_versions` proves a mutually served 3.1 release, a
+`createMediaBuy` package or `updateMediaBuy` new package whose selected options
+have no legacy `format_ids` is sent with its `format_option_refs`, and the
+seller resolves them. Selections with a complete legacy mapping are still sent
+as `format_ids`. AdCP 3.0 does not define the field, so a 3.0 seller, or one
+whose release cannot be proven, gets `CreativeFormatProjectionError` instead:
+dropping the selector would activate every format the product offers.
+Configure `canonicalFormatLegacyResolver` to supply the legacy mapping for
+those sellers.
+
 Assignment-only sync and updates containing only an existing `package_id` keep
 their existing wire behavior. Pass the matching selectors for this request to
 use the product-based fallback; package IDs alone do not establish support.

@@ -192,6 +192,7 @@ export {
   projectSyncCreativesForDelivery,
   stripLegacyCreativeIdentity,
   resolveCreativeFormatWireMode,
+  releaseCarriesPackageFormatOptionRefs,
   type CreativeFormatSelectorContainer,
   type CanonicalCreativeFormatSelectorContainer,
   type CreativeFormatWireMode,

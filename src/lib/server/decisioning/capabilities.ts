@@ -193,6 +193,34 @@ export interface DecisioningCapabilities<TConfig = unknown> {
   supportsProposals?: boolean;
 
   /**
+   * The `get_products` buying modes this seller serves. Projected onto
+   * `get_adcp_capabilities.media_buy.buying_modes`.
+   *
+   * Omit it and the framework derives the list from the handlers the platform
+   * registers: `brief`, plus `refine` when proposals are supported (as before),
+   * plus `wholesale` when `mediaBuyLifecycle.listProducts` is registered. A
+   * platform that registers that catalogue handler but has no brief path (no
+   * `sales.getProducts`, `proposalManager`, `requestProposals` or
+   * `refineProposals`) is advertised as `['wholesale']` alone.
+   *
+   * Declare the list when the handlers cannot say it: a `sales.getProducts`
+   * handler that answers `buying_mode: 'wholesale'` (one handler serves every
+   * mode, so registering it does not reveal which), or a seller that must not
+   * advertise a mode its handlers would imply. The list needs at least one
+   * mode, and every mode needs a handler that serves it: `brief` and `refine`
+   * need `sales.getProducts` or a proposal path, `wholesale` needs
+   * `sales.getProducts` or `mediaBuyLifecycle.listProducts`. A declaration that
+   * breaks this is refused when the server is built, with a `PlatformConfigError`
+   * naming the mode.
+   *
+   * This is the only way to change the list: `overrides.media_buy.buying_modes`
+   * is still overwritten by the framework's value. AdCP treats `brief` as
+   * universally supported and implicit, so declaring `['wholesale']` does not
+   * say the seller refuses briefs.
+   */
+  buyingModes?: ReadonlyArray<NonNullable<_MediaBuyCapabilities['buying_modes']>[number]>;
+
+  /**
    * Brand-protocol capabilities. Projected onto the wire `brand` block of
    * `get_adcp_capabilities` (`brand: { rights, right_types, available_uses,
    * generation_providers, description }`). The framework auto-derives

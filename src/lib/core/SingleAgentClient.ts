@@ -376,6 +376,7 @@ import {
   syncCreativeAssignmentTargets,
   projectUndeclaredFormatOptionSelectors,
   resolveCreativeFormatWireMode,
+  releaseCarriesPackageFormatOptionRefs,
   stripLegacyCreativeIdentity,
   type CanonicalCreateMediaBuyInput,
   type CanonicalCreateMediaBuyRequest,
@@ -435,6 +436,11 @@ type CapabilityDiscoveryContext = {
   capabilities?: AdcpCapabilities;
 };
 const CAPABILITY_DISCOVERY_CONTEXT = Symbol('capabilityDiscoveryContext');
+/** Release evidence `resolveCreativeWireMode` records for the projection that follows it. */
+type CreativeWireReleaseContext = {
+  /** The proven seller release defines package `format_option_refs` (AdCP 3.1+). */
+  formatOptionRefs?: boolean;
+};
 type InternalReadRequestOptions = ReadRequestOptions & {
   [CAPABILITY_DISCOVERY_CONTEXT]?: CapabilityDiscoveryContext;
 };
@@ -8419,9 +8425,14 @@ export class SingleAgentClient {
     if (hasCreativeFormatData) {
       this.validateBeforeCreativeCapabilityProbe('create_media_buy', params, taskOptions);
     }
+    const wireRelease: CreativeWireReleaseContext = {};
     const wireMode = hasCreativeFormatData
-      ? await this.resolveCreativeWireMode('create_media_buy', taskOptions, true, () =>
-          this.productOptionsSupportCanonicalWire('create_media_buy', params, [], options)
+      ? await this.resolveCreativeWireMode(
+          'create_media_buy',
+          taskOptions,
+          true,
+          () => this.productOptionsSupportCanonicalWire('create_media_buy', params, [], options),
+          wireRelease
         )
       : 'canonical';
     const wireParams = params as MutatingRequestInput<CanonicalCreateMediaBuyRequest>;
@@ -8436,7 +8447,8 @@ export class SingleAgentClient {
           'create_media_buy',
           effectiveLegacyFormatConverter,
           effectiveCanonicalFormatLegacyResolver,
-          creativeFormatProjection?.legacyFormatDefinitions
+          creativeFormatProjection?.legacyFormatDefinitions,
+          wireRelease.formatOptionRefs === true
         ),
         'create_media_buy',
         wireMode,
@@ -8545,9 +8557,14 @@ export class SingleAgentClient {
     if (hasCreativeFormatData) {
       this.validateBeforeCreativeCapabilityProbe('update_media_buy', params, taskOptions);
     }
+    const wireRelease: CreativeWireReleaseContext = {};
     const wireMode = hasCreativeFormatData
-      ? await this.resolveCreativeWireMode('update_media_buy', taskOptions, true, () =>
-          this.productOptionsSupportCanonicalWire('update_media_buy', params, [], options)
+      ? await this.resolveCreativeWireMode(
+          'update_media_buy',
+          taskOptions,
+          true,
+          () => this.productOptionsSupportCanonicalWire('update_media_buy', params, [], options),
+          wireRelease
         )
       : 'canonical';
     const result = await this.executeAndHandle<UpdateMediaBuyResponse>(
@@ -8560,7 +8577,8 @@ export class SingleAgentClient {
           'update_media_buy',
           effectiveLegacyFormatConverter,
           effectiveCanonicalFormatLegacyResolver,
-          creativeFormatProjection?.legacyFormatDefinitions
+          creativeFormatProjection?.legacyFormatDefinitions,
+          wireRelease.formatOptionRefs === true
         ),
         'update_media_buy',
         wireMode,
@@ -8743,7 +8761,8 @@ export class SingleAgentClient {
     taskType: 'sync_creatives' | 'create_media_buy' | 'update_media_buy',
     options: ReadRequestOptions | undefined,
     canRediscover: boolean,
-    matchingProductOptions?: () => boolean
+    matchingProductOptions?: () => boolean,
+    releaseContext?: CreativeWireReleaseContext
   ): Promise<CreativeFormatWireMode> {
     const discoveryContext: CapabilityDiscoveryContext = {};
     const capabilities = await this.getCapabilities({
@@ -8757,6 +8776,9 @@ export class SingleAgentClient {
     // guarantees follow the release pin this client actually emits.
     const wireRelease = this.config.wireAdcpVersion ?? this.resolvedAdcpVersion;
     const declared = resolveCreativeFormatWireMode(capabilities, wireRelease);
+    if (releaseContext) {
+      releaseContext.formatOptionRefs = releaseCarriesPackageFormatOptionRefs(capabilities, wireRelease);
+    }
     const document = toolSchemas && toolInputSchemasByProperties.get(toolSchemas)?.get(taskType);
     const { creativeSchemaSupport } = await import('./creative-schema-support');
     throwIfAborted(options?.signal);
@@ -8789,7 +8811,7 @@ export class SingleAgentClient {
         !toolInputSchemasByProperties.has(toolSchemas)
       ) {
         await this.invalidateDiscoveryCache(options);
-        return this.resolveCreativeWireMode(taskType, options, false, matchingProductOptions);
+        return this.resolveCreativeWireMode(taskType, options, false, matchingProductOptions, releaseContext);
       }
       throw new CreativeFormatCapabilityError(
         `Cannot prove which AdCP release the seller serves for ${taskType}; a 3.2+ client will not guess a legacy creative wire shape`

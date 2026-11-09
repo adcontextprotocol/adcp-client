@@ -76,6 +76,7 @@ import {
   type HandlerContext,
   type AdcpServerToolName,
 } from '../../create-adcp-server';
+import { GetProductsRequest_BuyingModeValues } from '../../../types/inline-enums.generated';
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from '../platform';
 import type { ComplianceTestingCapabilities } from '../capabilities';
 import { normalizeTargetingCapabilities } from '../capabilities';
@@ -438,6 +439,82 @@ function deepMergePlainObjects(target: unknown, source: unknown): unknown {
 
 function mergeCapabilityOverride<T extends object>(adopter: T | null | undefined, framework: Partial<T>): T {
   return deepMergePlainObjects(adopter ?? {}, framework) as T;
+}
+
+type BuyingMode = NonNullable<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>['buying_modes']>[number];
+
+/** The product-discovery handlers a platform registers, as far as `media_buy.buying_modes` is concerned. */
+interface BuyingModeHandlers {
+  /** `getProducts`: one handler serves every `buying_mode`, so registering it does not say which. */
+  getProducts: boolean;
+  /** `listProducts`: the catalogue read. */
+  listProducts: boolean;
+  /** A proposal path: a proposal manager, `requestProposals` or `refineProposals`. */
+  proposals: boolean;
+}
+
+/**
+ * The `buying_modes` the platform's handlers imply when the seller declares none. `brief` and `refine`
+ * keep their long-standing derivation (`brief` always, `refine` with proposal support). A registered
+ * catalogue handler adds `wholesale`, and replaces `brief` when the platform has no brief path at all.
+ */
+function deriveBuyingModes(
+  briefPath: boolean,
+  catalogue: boolean,
+  supportsProposals: boolean | undefined
+): BuyingMode[] {
+  return [
+    ...(briefPath || supportsProposals === true || !catalogue ? (['brief'] as const) : []),
+    ...(supportsProposals === true ? (['refine'] as const) : []),
+    ...(catalogue ? (['wholesale'] as const) : []),
+  ];
+}
+
+/**
+ * Check a seller-declared `capabilities.buyingModes` against the handlers the platform registers, and
+ * return it without duplicates. A mode the platform has no handler to serve would make the capabilities
+ * response untrue, so it is refused at construction.
+ */
+function validateDeclaredBuyingModes(declared: unknown, handlers: BuyingModeHandlers): BuyingMode[] {
+  const field = 'capabilities.buyingModes';
+  const known: readonly string[] = GetProductsRequest_BuyingModeValues;
+  if (!Array.isArray(declared) || declared.length === 0) {
+    throw new PlatformConfigError(
+      `${field} must list at least one of ${known.map(m => `'${m}'`).join(', ')}; omit it to derive the modes from the registered handlers`,
+      { configField: field }
+    );
+  }
+  const modes = [...new Set<unknown>(declared)];
+  const unknown = modes.filter(mode => typeof mode !== 'string' || !known.includes(mode));
+  if (unknown.length > 0) {
+    throw new PlatformConfigError(
+      `${field} contains ${unknown.map(mode => JSON.stringify(mode)).join(', ')}, which ${unknown.length === 1 ? 'is' : 'are'} not a buying mode; ` +
+        `use ${known.map(m => `'${m}'`).join(', ')}`,
+      { configField: field }
+    );
+  }
+  const declaredModes = modes as BuyingMode[];
+  const unserved = declaredModes.flatMap(mode => {
+    if (mode === 'wholesale') {
+      return handlers.getProducts || handlers.listProducts
+        ? []
+        : [`'wholesale' needs sales.getProducts (answering buying_mode 'wholesale') or mediaBuyLifecycle.listProducts`];
+    }
+    return handlers.getProducts || handlers.proposals
+      ? []
+      : [
+          `'${mode}' needs sales.getProducts or a proposal path ` +
+            '(proposalManager, mediaBuyLifecycle.requestProposals or mediaBuyLifecycle.refineProposals)',
+        ];
+  });
+  if (unserved.length > 0) {
+    throw new PlatformConfigError(
+      `${field} declares ${declaredModes.map(m => `'${m}'`).join(', ')}, but the platform registers no handler for: ` +
+        `${unserved.join('; ')}. Register the handler or remove the mode.`,
+      { configField: field }
+    );
+  }
+  return declaredModes;
 }
 
 /**
@@ -2911,15 +2988,24 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     : undefined;
   const hasSalesPlatform =
     platform.sales != null || platform.mediaBuyLifecycle != null || platform.proposalManager != null;
-  const supportsProposals =
-    platform.capabilities.supportsProposals ??
-    (platform.proposalManager != null ||
+  const hasProposalPath =
+    platform.proposalManager != null ||
     platform.mediaBuyLifecycle?.requestProposals != null ||
-    platform.mediaBuyLifecycle?.refineProposals != null
-      ? true
-      : hasSalesPlatform
-        ? false
-        : undefined);
+    platform.mediaBuyLifecycle?.refineProposals != null;
+  const supportsProposals =
+    platform.capabilities.supportsProposals ?? (hasProposalPath ? true : hasSalesPlatform ? false : undefined);
+  const hasCatalogueHandler = platform.mediaBuyLifecycle?.listProducts != null;
+  // A seller-declared list is checked against every handler the server will register, including the raw
+  // `legacyHandlers.mediaBuy` / `proposalNegotiation` seams. Derivation stays on the platform's own handlers.
+  const declaredBuyingModes =
+    platform.capabilities.buyingModes === undefined
+      ? undefined
+      : validateDeclaredBuyingModes(platform.capabilities.buyingModes, {
+          getProducts: platform.sales?.getProducts != null || legacyHandlers.mediaBuy?.getProducts != null,
+          listProducts: hasCatalogueHandler || legacyHandlers.mediaBuy?.listProducts != null,
+          proposals:
+            hasProposalPath || legacyHandlers.mediaBuy?.requestProposals != null || opts.proposalNegotiation != null,
+        });
   const hasMediaBuyProjection =
     hasSalesPlatform ||
     at != null ||
@@ -2929,7 +3015,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     fc != null ||
     reportingDelivery != null ||
     targeting != null ||
-    supportsProposals !== undefined;
+    supportsProposals !== undefined ||
+    declaredBuyingModes !== undefined;
   // App `version` / capability `build_version` are deployment metadata and
   // never negotiate protocol behavior. Only the configured AdCP schema pin
   // determines whether this server may advertise the 3.1 feature bit (3.2+
@@ -2989,9 +3076,15 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // an otherwise ambiguous read follows the capability the server advertises.
   const defaultCreativeWireMode = canonicalCreativeCapability ? 'canonical' : 'legacy';
   const mediaBuyOverrides: Partial<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>> = {
-    ...(hasSalesPlatform && {
-      buying_modes: supportsProposals ? (['brief', 'refine'] as const) : (['brief'] as const),
-    }),
+    ...(declaredBuyingModes !== undefined
+      ? { buying_modes: declaredBuyingModes }
+      : hasSalesPlatform && {
+          buying_modes: deriveBuyingModes(
+            platform.sales?.getProducts != null || hasProposalPath,
+            hasCatalogueHandler,
+            supportsProposals
+          ),
+        }),
     ...(at != null && { audience_targeting: at }),
     ...(ct != null && { conversion_tracking: ct }),
     ...(cs != null && { content_standards: cs }),
