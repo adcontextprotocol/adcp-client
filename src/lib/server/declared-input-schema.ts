@@ -37,14 +37,25 @@ import type { ValidationIssue } from '../validation/schema-validator';
  */
 export const PASSTHROUGH_INPUT_SCHEMA = z.object({}).passthrough();
 
+/** What a framework-built rejection on a declared-input tool is finished from. */
+export interface DeclaredInputRejection {
+  /** The caller's `context`, echoed verbatim. It never feeds a decision. */
+  context: unknown;
+  /**
+   * Arguments the served release is read from: the parsed value once parsing
+   * succeeded, the caller's arguments when parsing itself failed.
+   */
+  releaseArgs: unknown;
+}
+
 /**
- * Finishes a declared-input `INVALID_REQUEST` the way the hosting server
- * finishes its own errors (envelope `status`, served `adcp_version`).
+ * Finishes a framework-built rejection the way the hosting server finishes its
+ * own errors: the caller's `context`, envelope `status`, served `adcp_version`.
  */
 export type DeclaredInputErrorFinalizer = (
   toolName: string,
   response: McpToolResponse,
-  args: unknown
+  rejection: DeclaredInputRejection
 ) => McpToolResponse;
 
 interface DeclaredInputState {
@@ -149,10 +160,13 @@ export type DeclaredInputParseResult = { success: true; data: unknown } | { succ
  * Validate `args` against the schema `name` declared at registration.
  *
  * Success carries the parsed value — the same value the MCP SDK used to hand
- * the handler, with zod coercion, defaults and transforms applied. Failure
- * carries an `INVALID_REQUEST` response with `field` naming the first failing
- * path, the field-level `issues`, and the caller's `context` echoed. A tool
- * without a declared schema passes `args` through.
+ * the handler, with zod coercion, defaults and transforms applied. Every
+ * decision the caller makes afterwards (authorization, release selection,
+ * gating) must read this value and hand the handler this same value; reading
+ * the raw arguments again would let a default or coercion change what was
+ * authorized. Failure carries an `INVALID_REQUEST` response with `field`
+ * naming the first failing path, the field-level `issues`, and the caller's
+ * `context` echoed. A tool without a declared schema passes `args` through.
  */
 export async function parseDeclaredToolInput(
   server: McpServer,
@@ -171,11 +185,38 @@ export async function parseDeclaredToolInput(
   const payload = buildAdcpValidationErrorPayload(name, 'request', zodIssuesToValidationIssues(result.error, input), {
     exposeSchemaPath: state.exposeSchemaPath === true,
   });
-  const response = adcpError('INVALID_REQUEST', {
-    ...payload,
-    context: isPlainObject(input) ? input.context : undefined,
-  });
-  return { success: false, response: state.finalizeError?.(name, response, input) ?? response };
+  // No parsed value exists, so the release that labels this error is read
+  // from the caller's arguments. Nothing runs on it.
+  const context = isPlainObject(input) ? input.context : undefined;
+  return {
+    success: false,
+    response: finishDeclaredInputRejection(server, name, adcpError('INVALID_REQUEST', payload), {
+      context,
+      releaseArgs: input,
+    }),
+  };
+}
+
+/**
+ * Finish a framework-built rejection of `name` the way its `INVALID_REQUEST`
+ * is finished: with the hosting server's finalizer, or on a server without
+ * one, by echoing the caller's `context`.
+ */
+export function finishDeclaredInputRejection(
+  server: McpServer,
+  name: string,
+  response: McpToolResponse,
+  rejection: DeclaredInputRejection
+): McpToolResponse {
+  const finalize = states.get(server)?.finalizeError;
+  if (finalize !== undefined) return finalize(name, response, rejection);
+  const structured = response.structuredContent;
+  if (!isPlainObject(rejection.context) || !isPlainObject(structured) || 'context' in structured) return response;
+  const text = response.content?.[0];
+  const mirrors = text?.type === 'text' && text.text === JSON.stringify(structured);
+  structured.context = rejection.context;
+  if (mirrors) text.text = JSON.stringify(structured);
+  return response;
 }
 
 type PathSegment = string | number;

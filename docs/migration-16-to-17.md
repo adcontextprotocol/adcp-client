@@ -283,11 +283,17 @@ customTools: {
 },
 ```
 
-Release selection for these tools now reads the caller's arguments before the
-schema strips undeclared keys. So `adcp_version` and `adcp_major_version` select
-the served release on MCP even when the schema does not declare them, as A2A
-already did. An unsupported version now gets `VERSION_UNSUPPORTED` before the
-handler runs.
+The arguments are parsed once, and everything that reads them uses the parsed
+value: `identity33` authorization, release selection and the handler. On
+`invoke()`, `dispatchTestRequest()` and A2A, authorization and release selection
+used to read the raw arguments. They now see the parsed value. A release field
+your schema does not declare is stripped there, as it already was on MCP. To let
+a buyer pick the release, declare `adcp_version` (and `adcp_major_version`) in
+the schema. A declared default or coercion then selects the release.
+
+Rejections on these tools echo the caller's `context` even when the schema
+strips it: validation, version, authorization, and errors your handler returns
+or throws.
 
 ## AdCP 3.3.0-beta.5
 

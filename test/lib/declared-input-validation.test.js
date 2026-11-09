@@ -537,3 +537,418 @@ describe('modern 2026-07-28 adapter', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round two: authorization and release selection read the PARSED value, and
+// every rejection on the custom-tool path echoes the caller's context.
+// ---------------------------------------------------------------------------
+
+const { createRequire } = require('node:module');
+const path = require('node:path');
+const { wrapSdkRequestHandler } = require('../../dist/lib/server/adcp-server');
+const { AdcpError } = require('../../dist/lib/server/decisioning/async-outcome');
+const { adcpError } = require('../../dist/lib/server/errors');
+const wba = require('../../dist/lib/signing/web-bot-auth');
+const identity = require('../../dist/lib/identity-3.3/index');
+const { InMemoryReplayStore } = require('../../dist/lib/signing/replay');
+const { IdentityAuthorizationError } = require('../../dist/lib/identity-3.3/trust');
+const wbaVector = require('../fixtures/wba-profile/positive/001-single-signer-request.json');
+const wbaKeys = require('../fixtures/wba-profile/keys.json').keys;
+
+/** An identity-established, not-onboarded principal built from a real Web Bot Auth signature. */
+async function establishedPrincipal() {
+  const v = wbaVector;
+  const directory = new wba.SignatureDirectoryResolver({
+    now: () => v.reference_now,
+    allowTestKeys: true,
+    fetchOptions: {
+      trustedFetchFn: async url => {
+        const origin = new URL(url).origin;
+        const refs = v.directories?.[origin]?.keys_ref;
+        if (!refs) return new Response('', { status: 404 });
+        const d = await wba.createSignedSignatureDirectory(
+          origin,
+          wbaKeys
+            .filter(k => refs.includes(k.kid))
+            .map(k => ({
+              privateKey: { kty: k.kty, crv: k.crv, x: k.x, kid: k.kid, d: k._private_d_for_test_only },
+            })),
+          { now: () => v.reference_now }
+        );
+        return new Response(d.body, { status: 200, headers: d.headers });
+      },
+    },
+  });
+  const signers = await wba.verifyWebBotAuth(v.request, {
+    now: () => v.reference_now,
+    replayStore: new InMemoryReplayStore(),
+    allowTestKeys: true,
+    isRevoked: async () => false,
+    directory,
+  });
+  const lifecycle = new identity.OriginIdentityLifecycle({
+    store: new identity.InMemoryOriginIdentityStore(),
+    trust: new identity.TrustEvaluator({
+      fetchOptions: { trustedFetchFn: async () => new Response(JSON.stringify({ agents: [] })) },
+    }),
+  });
+  const principal = await identity.createIdentity33PrincipalResolver({ lifecycle })(signers, 'get_products');
+  return {
+    state: principal.extra.identity33.state,
+    authInfo: { token: '', clientId: principal.principal, scopes: [], extra: principal.extra },
+    authorize: identity.createIdentity33Authorization({ lifecycle, grants: {}, resolveClaims: async () => [] }),
+  };
+}
+
+/** Call `get_products` (a custom tool here) as the established principal over a real MCP client. */
+async function callAsEstablishedPrincipal(actionSchema, args) {
+  const { authInfo, authorize, state } = await establishedPrincipal();
+  assert.equal(state, 'identity-established');
+  let finalized = 0;
+  const server = createAdcpServer({
+    name: 'auth-order',
+    version: '1.0.0',
+    adcpVersion: '3.3.0-beta.5',
+    mcpToolProfile: 'all',
+    identity33: { authorize },
+    validation: { requests: 'off', responses: 'off' },
+    customTools: {
+      get_products: {
+        inputSchema: { refine: z.object({ action: actionSchema }) },
+        handler: input => {
+          if (input.refine.action === 'finalize') finalized++;
+          return toolResult({ finalized: true });
+        },
+      },
+    },
+  });
+  const sdk = getSdkServer(server);
+  wrapSdkRequestHandler(sdk, 'tools/call', (orig, req, extra) => orig(req, { ...extra, authInfo }));
+  const client = await connect(server);
+  const result = await client.callTool({ name: 'get_products', arguments: args });
+  return { result, finalized: () => finalized };
+}
+
+describe('identity authorization runs on the PARSED value', () => {
+  it('a schema default cannot change what authorization approved (.default("finalize"))', async () => {
+    const { result, finalized } = await callAsEstablishedPrincipal(z.literal('finalize').default('finalize'), {
+      refine: {},
+      context: { trace: 'auth-default' },
+    });
+    assert.equal(result.isError, true, JSON.stringify(result));
+    assert.equal(result.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
+    assert.deepEqual(result.structuredContent.context, { trace: 'auth-default' });
+    assert.equal(finalized(), 0, 'handler must not run');
+  });
+
+  it('a schema transform cannot change what authorization approved (trim + pipe)', async () => {
+    const { result, finalized } = await callAsEstablishedPrincipal(z.string().trim().pipe(z.literal('finalize')), {
+      refine: { action: 'finalize ' },
+      context: { trace: 'auth-trim' },
+    });
+    assert.equal(result.isError, true, JSON.stringify(result));
+    assert.equal(result.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
+    assert.deepEqual(result.structuredContent.context, { trace: 'auth-trim' });
+    assert.equal(finalized(), 0, 'handler must not run');
+  });
+});
+
+describe('release selection reads the PARSED value', () => {
+  function versionServer(schema, handlerSeen) {
+    return createAdcpServer({
+      name: 'versions',
+      version: '1.0.0',
+      adcpVersion: '3.3.0-beta.5',
+      capabilities: { supported_versions: ['3.1.31', '3.3.0-beta.5'] },
+      toolVersions: { probe: { max: '3.1' } },
+      customTools: {
+        probe: {
+          inputSchema: schema,
+          handler: (args, extra) => {
+            handlerSeen.push({ args, served: extra.servedAdcpVersion });
+            return toolResult();
+          },
+        },
+      },
+    });
+  }
+
+  it('a defaulted adcp_version selects the release and is what the handler sees', async () => {
+    const seen = [];
+    const client = await connect(
+      versionServer({ adcp_version: z.string().default('3.1.31'), value: z.string() }, seen)
+    );
+    const result = await client.callTool({ name: 'probe', arguments: { value: 'ok', context: { trace: 'd' } } });
+    assert.notEqual(result.isError, true, JSON.stringify(result));
+    assert.equal(seen[0].args.adcp_version, '3.1.31');
+    assert.equal(seen[0].served, '3.1');
+  });
+
+  it('a coerced adcp_version (3.1 -> "3.1") selects the release', async () => {
+    const seen = [];
+    const client = await connect(versionServer({ adcp_version: z.coerce.string(), value: z.string() }, seen));
+    const result = await client.callTool({
+      name: 'probe',
+      arguments: { adcp_version: 3.1, value: 'ok', context: { trace: 'c' } },
+    });
+    assert.notEqual(result.isError, true, JSON.stringify(result));
+    assert.equal(seen[0].args.adcp_version, '3.1');
+    assert.equal(seen[0].served, '3.1');
+  });
+
+  it('a declared adcp_version the tool does not support -> VERSION_UNSUPPORTED echoing context', async () => {
+    const seen = [];
+    const client = await connect(versionServer({ adcp_version: z.string().optional(), value: z.string() }, seen));
+    const result = await client.callTool({
+      name: 'probe',
+      arguments: { adcp_version: '3.3-beta.5', value: 'ok', context: { trace: 'u' } },
+    });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.adcp_error.code, 'VERSION_UNSUPPORTED');
+    assert.deepEqual(result.structuredContent.adcp_error.details.supported_versions, ['3.1.31']);
+    assert.deepEqual(result.structuredContent.context, { trace: 'u' });
+    assert.equal(seen.length, 0);
+  });
+
+  it('an undeclared adcp_version is stripped, so the default release applies (also VERSION_UNSUPPORTED here)', async () => {
+    const seen = [];
+    const client = await connect(versionServer({ value: z.string() }, seen));
+    const result = await client.callTool({
+      name: 'probe',
+      arguments: { adcp_version: '3.1', value: 'ok', context: { trace: 'x' } },
+    });
+    // Documented behavior: the stripped field never selects a release, so the
+    // server default (3.3.0-beta.5, outside probe's max 3.1) applies.
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.adcp_error.code, 'VERSION_UNSUPPORTED');
+    assert.deepEqual(result.structuredContent.context, { trace: 'x' });
+    assert.equal(seen.length, 0);
+  });
+
+  it('a garbage adcp_version -> VERSION_UNSUPPORTED from release selection, context echoed', async () => {
+    const seen = [];
+    const client = await connect(versionServer({ adcp_version: z.string().optional(), value: z.string() }, seen));
+    const result = await client.callTool({
+      name: 'probe',
+      arguments: { adcp_version: 'nope', value: 'ok', context: { trace: 'g' } },
+    });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.adcp_error.code, 'VERSION_UNSUPPORTED');
+    assert.deepEqual(result.structuredContent.context, { trace: 'g' });
+    assert.equal(seen.length, 0);
+  });
+});
+
+describe('every custom-tool rejection echoes context, even when the schema strips it', () => {
+  // `context` is deliberately NOT declared, so it is absent from the parsed args.
+  const schema = { value: z.string().optional(), adcp_version: z.string().optional() };
+  let mode = 'ok';
+  const server = createAdcpServer({
+    name: 'rejections',
+    version: '1.0.0',
+    adcpVersion: '3.3.0-beta.5',
+    capabilities: { supported_versions: ['3.1.31', '3.3.0-beta.5'] },
+    toolVersions: { restricted: { max: '3.1' } },
+    validation: { requests: 'off', responses: 'off' },
+    customTools: {
+      restricted: { inputSchema: schema, handler: async () => toolResult() },
+      open: {
+        inputSchema: schema,
+        handler: async args => {
+          assert.ok(!('context' in args), 'schema strips context from the parsed args');
+          if (mode === 'throw-adcp-error') throw new AdcpError('INVALID_REQUEST', { message: 'thrown AdcpError' });
+          if (mode === 'throw-response') throw adcpError('NOT_FOUND', { message: 'thrown response' });
+          if (mode === 'return-error') {
+            return {
+              isError: true,
+              content: [{ type: 'text', text: '{}' }],
+              structuredContent: { adcp_error: { code: 'NOT_FOUND', message: 'returned error' } },
+            };
+          }
+          return toolResult();
+        },
+      },
+    },
+  });
+  const ctx = { trace: 'echo-me' };
+  let sharedClient;
+  const cases = [
+    ['validation', 'open', { value: 5 }, 'ok', 'INVALID_REQUEST'],
+    ['VERSION_UNSUPPORTED (bad version)', 'open', { adcp_version: 'nope' }, 'ok', 'VERSION_UNSUPPORTED'],
+    ['VERSION_UNSUPPORTED (tool not in release)', 'restricted', {}, 'ok', 'VERSION_UNSUPPORTED'],
+    ['thrown AdcpError', 'open', {}, 'throw-adcp-error', 'INVALID_REQUEST'],
+    ['thrown adcpError() response', 'open', {}, 'throw-response', 'NOT_FOUND'],
+    ['isError response returned by the handler', 'open', {}, 'return-error', 'NOT_FOUND'],
+  ];
+  for (const [label, tool, args, handlerMode, code] of cases) {
+    it(label, async () => {
+      mode = handlerMode;
+      sharedClient ??= await connect(server);
+      const client = sharedClient;
+      const result = await client.callTool({ name: tool, arguments: { ...args, context: ctx } });
+      assert.equal(result.isError, true, JSON.stringify(result));
+      assert.equal(result.structuredContent.adcp_error.code, code);
+      assert.deepEqual(result.structuredContent.context, ctx);
+    });
+  }
+
+  it('identity authorization rejection (authorize throws IdentityAuthorizationError)', async () => {
+    const identityServer = createAdcpServer({
+      name: 'identity-reject',
+      version: '1.0.0',
+      adcpVersion: '3.3.0-beta.5',
+      identity33: {
+        authorize: async () => {
+          throw new IdentityAuthorizationError();
+        },
+      },
+      validation: { requests: 'off', responses: 'off' },
+      customTools: { open: { inputSchema: schema, handler: async () => toolResult() } },
+    });
+    const client = await connect(identityServer);
+    const result = await client.callTool({ name: 'open', arguments: { context: ctx } });
+    assert.equal(result.isError, true, JSON.stringify(result));
+    assert.equal(result.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
+    assert.deepEqual(result.structuredContent.context, ctx);
+  });
+});
+
+describe('platform tools: rejection context and visibility', () => {
+  function platform(resolve) {
+    return {
+      capabilities: {
+        specialisms: ['sales-non-guaranteed'],
+        creative_agents: [{ agent_url: 'https://example.com/creative-agent/mcp' }],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+        compliance_testing: {},
+      },
+      statusMappers: {},
+      accounts: { resolve },
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1', status: 'pending_creatives', packages: [] }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1', status: 'active' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({
+          currency: 'USD',
+          reporting_period: { start: '2026-04-01', end: '2026-04-30' },
+          media_buy_deliveries: [],
+        }),
+      },
+    };
+  }
+  const resolveAny = async ref => ({
+    id: ref?.account_id ?? 'acc_1',
+    operator: 'comply.example.com',
+    ctx_metadata: {},
+    authInfo: { kind: 'api_key' },
+  });
+  const complyTest = {
+    force: {
+      creative_status: async params => ({
+        success: true,
+        transition: 'forced',
+        resource_type: 'creative',
+        resource_id: params.creative_id,
+        previous_state: 'pending_review',
+        current_state: params.status,
+      }),
+    },
+  };
+  const build = resolve =>
+    createAdcpServerFromPlatform(platform(resolve), {
+      name: 'comply-host',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      complyTest,
+    });
+
+  it('comply_test_controller: "Invalid account_id reference" echoes context', async () => {
+    const client = await connect(build(resolveAny));
+    const result = await client.callTool({
+      name: 'comply_test_controller',
+      arguments: {
+        scenario: 'force_creative_status',
+        params: { creative_id: 'cr_1', status: 'approved' },
+        account: { account_id: 'x', brand: { domain: 'b.example' } },
+        context: { trace: 'bad-ref' },
+      },
+    });
+    assert.equal(result.isError, true, JSON.stringify(result));
+    assert.equal(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.match(result.structuredContent.adcp_error.message, /Invalid account_id reference/);
+    assert.deepEqual(result.structuredContent.context, { trace: 'bad-ref' });
+  });
+
+  it('comply_test_controller: a principal that cannot see it gets MethodNotFound even with invalid args', async () => {
+    const saved = process.env.ADCP_SANDBOX;
+    delete process.env.ADCP_SANDBOX;
+    try {
+      // No principal account and no sandbox bridge: the controller is hidden.
+      const client = await connect(build(async () => null));
+      await assert.rejects(
+        client.callTool({ name: 'comply_test_controller', arguments: { context: { trace: 'hidden' } } }),
+        err => {
+          assert.equal(err.code, -32601, `expected MethodNotFound, got ${err.code}: ${err.message}`);
+          return true;
+        }
+      );
+    } finally {
+      if (saved === undefined) delete process.env.ADCP_SANDBOX;
+      else process.env.ADCP_SANDBOX = saved;
+    }
+  });
+
+  it('tasks_get returns its own error for an unknown task id, with context echoed', async () => {
+    const client = await connect(build(resolveAny));
+    const result = await client.callTool({
+      name: 'tasks_get',
+      arguments: { task_id: 'no-such-task', context: { trace: 'unknown-task' } },
+    });
+    assert.equal(result.isError, true, JSON.stringify(result));
+    assert.ok(result.structuredContent.adcp_error, JSON.stringify(result.structuredContent));
+    assert.notEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.deepEqual(result.structuredContent.context, { trace: 'unknown-task' });
+  });
+});
+
+describe('modern adapter: declared schema Zod cannot convert', () => {
+  it('a Zod v3 custom tool is advertised as exactly an empty object schema', async () => {
+    const z3 = require('zod/v3');
+    const { serve } = require('../../dist/lib/index.js');
+    const { Client: ModernClient, StreamableHTTPClientTransport } = require('@modelcontextprotocol/client');
+    const httpServer = serve(
+      () =>
+        makeServer({
+          legacy_zod: {
+            description: 'zod v3 tool',
+            inputSchema: { query: z3.string() },
+            handler: async () => toolResult(),
+          },
+        }),
+      { port: 0, onListening: () => {} }
+    );
+    await new Promise((resolve, reject) => {
+      httpServer.once('error', reject);
+      if (httpServer.listening) resolve();
+      else httpServer.once('listening', resolve);
+    });
+    const client = new ModernClient(
+      { name: 'modern-zod-v3', version: '1.0.0' },
+      { versionNegotiation: { mode: { pin: '2026-07-28' } } }
+    );
+    try {
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${httpServer.address().port}/mcp`))
+      );
+      assert.equal(client.getProtocolEra(), 'modern');
+      const tool = (await client.listTools()).tools.find(t => t.name === 'legacy_zod');
+      assert.deepEqual(tool.inputSchema, { type: 'object', properties: {} });
+    } finally {
+      await client.close().catch(() => {});
+      await new Promise(resolve => httpServer.close(() => resolve()));
+    }
+  });
+});

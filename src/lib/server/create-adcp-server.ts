@@ -155,6 +155,7 @@ import {
   configureDeclaredInputErrors,
   parseDeclaredToolInput,
   validateToolInputAtAdcpLayer,
+  type DeclaredInputRejection,
 } from './declared-input-schema';
 import { ADCP_TASK_MESSAGE_QUEUE, createTaskCapableServer, InMemoryTaskStore } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
@@ -6151,21 +6152,38 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     instructions: resolvedInstructions,
   });
 
+  // The release a framework error is stamped with when the request selected
+  // none, matching the spec-tool dispatcher.
+  const defaultErrorRelease: ServedAdcpRelease = {
+    validationVersion: selectedDefault.validationVersion,
+    ...(servedAdcpVersion !== undefined && { wireVersion: servedAdcpVersion }),
+  };
+  // Give a framework-built rejection on an auxiliary path the envelope fields
+  // spec-tool errors get: status, the caller's context, the served release.
+  // Without `release`, the release is selected from `rejection.releaseArgs`.
+  const finishFrameworkRejection = (
+    toolName: string,
+    response: McpToolResponse,
+    rejection: DeclaredInputRejection,
+    release?: ServedAdcpRelease
+  ): McpToolResponse => {
+    let served = release;
+    if (served === undefined) {
+      const releaseArgs = isPlainObject(rejection.releaseArgs) ? rejection.releaseArgs : {};
+      const selected = selectServedAdcpRelease(releaseArgs, capConfig, adcpVersion, defaultAdcpVersion);
+      served = isMcpToolResponse(selected) ? defaultErrorRelease : selected;
+    }
+    injectEnvelopeStatusIntoResponse(response, toolName, served.validationVersion);
+    injectContextIntoResponse(response, rejection.context);
+    injectVersionIntoResponse(response, served.wireVersion);
+    return response;
+  };
   // Tools that declare a zod input schema (customTools, tasks_get, and the
   // comply_test_controller helpers registered after this returns) validate it
-  // at the AdCP layer. Their INVALID_REQUEST gets the envelope fields
-  // framework errors get: status, the caller's context, the served release.
+  // at the AdCP layer, and their rejections are finished the same way.
   configureDeclaredInputErrors(server, {
     exposeSchemaPath: exposeErrorDetails,
-    finalize: (toolName, response, args) => {
-      const params = isPlainObject(args) ? args : {};
-      const selected = selectServedAdcpRelease(params, capConfig, adcpVersion, defaultAdcpVersion);
-      const release = isMcpToolResponse(selected) ? selectedDefault : selected;
-      injectEnvelopeStatusIntoResponse(response, toolName, release.validationVersion);
-      injectContextIntoResponse(response, params.context);
-      injectVersionIntoResponse(response, release.wireVersion);
-      return response;
-    },
+    finalize: (toolName, response, rejection) => finishFrameworkRejection(toolName, response, rejection),
   });
 
   // The v1 SDK server remains the canonical legacy path. The modern adapter
@@ -9476,17 +9494,44 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         );
       };
       const wrappedHandler = (async (...args: unknown[]) => {
-        const identityError = await authorizeAuxiliaryIdentityTool(customName, args[0], args[args.length - 1]);
-        if (identityError) return finalizeCustomResponse(identityError);
-        // Preserve the MCP SDK's runtime callback shape exactly. In
-        // particular, legacy dispatch may still pass a request arguments
-        // object to schema-less custom tools; version selection must inspect
-        // it even though the public callback type exposes only `extra`.
-        const params = isPlainObject(args[0]) ? args[0] : {};
+        const extraIndex = Math.max(0, args.length - 1);
+        // The caller's context, captured only to echo it on a rejection. The
+        // declared schema may strip it, and it never feeds a decision.
+        const callerContext = isPlainObject(args[0]) ? args[0].context : undefined;
+        // 1. Parse exactly once. The SDK validated against a passthrough
+        // schema, so the declared one runs here, and a rejection is an AdCP
+        // error that echoes context. Like the SDK's own validation, it runs
+        // before anything reads the arguments.
+        let input = args[0];
+        if (inputSchema != null) {
+          const parsed = await parseDeclaredToolInput(server, customName, args[0]);
+          if (!parsed.success) return finalizeCustomResponse(parsed.response);
+          input = parsed.data;
+        }
+        // 2. Every decision below reads the parsed value, and the handler
+        // receives that same value. Reading the raw arguments again would let
+        // a default or coercion change what identity authorization or release
+        // selection approved. Schema-less tools keep the MCP SDK's runtime
+        // callback shape exactly: legacy dispatch may still pass a request
+        // arguments object, which version selection must inspect even though
+        // the public callback type exposes only `extra`.
+        const params = isPlainObject(input) ? input : {};
+        const reject = (response: McpToolResponse, release?: ServedAdcpRelease): McpToolResponse =>
+          finalizeCustomResponse(
+            finishFrameworkRejection(
+              customName,
+              response,
+              { context: callerContext, releaseArgs: params },
+              release ?? defaultErrorRelease
+            ),
+            release
+          );
+        const identityError = await authorizeAuxiliaryIdentityTool(customName, input, args[extraIndex]);
+        if (identityError) return reject(identityError);
         const selectedRelease = selectServedAdcpRelease(params, capConfig, adcpVersion, defaultAdcpVersion);
-        if (isMcpToolResponse(selectedRelease)) return finalizeCustomResponse(selectedRelease);
+        if (isMcpToolResponse(selectedRelease)) return reject(selectedRelease);
         if (!toolAvailableForRelease(customName, selectedRelease.validationVersion)) {
-          return finalizeCustomResponse(
+          return reject(
             adcpError('VERSION_UNSUPPORTED', {
               message: `${customName} is not available in the selected AdCP release ${selectedRelease.validationVersion}.`,
               details: {
@@ -9497,7 +9542,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           );
         }
         try {
-          const extraIndex = Math.max(0, args.length - 1);
           const rawExtra = args[extraIndex] as Record<string, unknown> | undefined;
           const versionedExtra = withImmutableServedAdcpVersion(
             { ...(rawExtra ?? {}) },
@@ -9505,18 +9549,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           );
           const versionedArgs = [...args];
           versionedArgs[extraIndex] = versionedExtra;
-          // The SDK validates against a passthrough schema; the declared one
-          // runs here so a rejection is an AdCP error that echoes context.
-          if (inputSchema != null) {
-            const parsed = await parseDeclaredToolInput(server, customName, args[0]);
-            if (!parsed.success) return finalizeCustomResponse(parsed.response, selectedRelease);
-            versionedArgs[0] = parsed.data;
-          }
+          if (inputSchema != null) versionedArgs[0] = input;
           const response = await rawHandler(...versionedArgs);
+          // A failure the handler returns still echoes the caller's context,
+          // which its declared schema may have stripped from its arguments.
+          if (response?.isError === true) injectContextIntoResponse(response, callerContext);
           return finalizeCustomResponse(response, selectedRelease);
         } catch (err) {
-          if (isThrownAdcpError(err)) return finalizeCustomResponse(err, selectedRelease);
-          if (err instanceof AdcpError) return finalizeCustomResponse(projectThrownAdcpError(err), selectedRelease);
+          if (isThrownAdcpError(err)) return reject(err, selectedRelease);
+          if (err instanceof AdcpError) return reject(projectThrownAdcpError(err), selectedRelease);
           throw err;
         }
       }) as Parameters<typeof server.registerTool>[2];

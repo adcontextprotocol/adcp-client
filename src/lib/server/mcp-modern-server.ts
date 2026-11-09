@@ -212,10 +212,14 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
       ? officialAdcpInputSchema(tool.name, adcpVersion, pinnedMcpToolProfile)
       : undefined;
     // Custom tools, tasks_get and comply_test_controller register a
-    // passthrough schema and validate their declared one in the handler.
+    // passthrough schema and validate their declared one in the handler. A
+    // declared schema the v2 SDK cannot convert (Zod v3) keeps the empty
+    // object it was advertised with before, not the passthrough schema.
     const declaredInputSchema = getDeclaredInputSchema(sdkServer, tool.name);
     const declaredInputJsonSchema =
-      declaredInputSchema !== undefined ? modernInputJsonSchema(tool.name, declaredInputSchema) : undefined;
+      declaredInputSchema !== undefined
+        ? (modernInputJsonSchema(tool.name, declaredInputSchema) ?? { type: 'object', properties: {} })
+        : undefined;
     return {
       ...definition,
       ...(description !== undefined && { description }),

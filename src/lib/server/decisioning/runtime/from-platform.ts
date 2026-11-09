@@ -162,7 +162,7 @@ import {
   type TaskHandoff,
 } from '../async-outcome';
 import { _extractResponseSummaryEntry } from '../response-summary';
-import { productsResponse } from '../../responses';
+import { productsResponse, type McpToolResponse } from '../../responses';
 import { TOOL_ENTITY_FIELDS } from './entity-hydration.generated';
 import { z } from 'zod';
 import {
@@ -221,7 +221,11 @@ import {
   wrapRegisteredToolHandler,
   wrapSdkRequestHandler,
 } from '../../adcp-server';
-import { parseDeclaredToolInput, validateToolInputAtAdcpLayer } from '../../declared-input-schema';
+import {
+  finishDeclaredInputRejection,
+  parseDeclaredToolInput,
+  validateToolInputAtAdcpLayer,
+} from '../../declared-input-schema';
 import { isSandboxOrMockAccount } from '../../account-mode';
 import { recordResolvedAccountMode, hasObservedLiveMode } from './observed-modes';
 import type { Product } from '../../../types/tools.generated';
@@ -3997,16 +4001,28 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           rawInput: Record<string, unknown>,
           extra: { authInfo?: ResolvedAuthInfo; readonly servedAdcpVersion?: string } | undefined
         ) => {
-          // Visibility first, against the raw arguments the tools/call
-          // visibility gate also sees: a hidden controller must not reveal
-          // its schema through a validation error.
-          const principalAuthority = await resolveComplyPrincipalAuthority(extra, 'comply_test_controller', rawInput);
-          if (!isComplyControllerVisible(principalAuthority.principalAccount)) {
+          // Hidden-controller gate before parsing, on the raw arguments the
+          // tools/call visibility gate also sees, so a principal that cannot
+          // see the controller learns nothing about its schema. It can only
+          // deny: visibility is decided again below on the parsed value.
+          if (!(await resolveComplyControllerVisible(extra, 'comply_test_controller', rawInput))) {
             throw new McpError(ErrorCode.MethodNotFound, 'Method not found');
           }
+          // Parse exactly once. Every decision below, and the controller,
+          // reads the parsed value; none reads `rawInput` again.
           const parsed = await parseDeclaredToolInput(mcp, controller.toolDefinition.name, rawInput);
           if (!parsed.success) return parsed.response;
           const input = parsed.data as Record<string, unknown>;
+          const callerContext = isPlainObject(rawInput) ? rawInput.context : undefined;
+          const reject = (response: McpToolResponse): McpToolResponse =>
+            finishDeclaredInputRejection(mcp, controller.toolDefinition.name, response, {
+              context: callerContext,
+              releaseArgs: input,
+            });
+          const principalAuthority = await resolveComplyPrincipalAuthority(extra, 'comply_test_controller', input);
+          if (!isComplyControllerVisible(principalAuthority.principalAccount)) {
+            throw new McpError(ErrorCode.MethodNotFound, 'Method not found');
+          }
 
           // Probe exempt — capability discovery, no state mutation.
           if (input.scenario === 'list_scenarios') {
@@ -4020,7 +4036,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           const accountRef = refFromTop ?? refFromContext;
 
           if (accountRef !== undefined && (typeof accountRef !== 'object' || Array.isArray(accountRef))) {
-            return adcpError('INVALID_REQUEST', { message: 'account must be an object' });
+            return reject(adcpError('INVALID_REQUEST', { message: 'account must be an object' }));
           }
 
           // Enforce the same per-mode reference shape as buyer dispatch. The
@@ -4036,7 +4052,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
               requestedAccountId.length === 0 ||
               (accountRef !== undefined && ('brand' in accountRef || 'operator' in accountRef)))
           ) {
-            return adcpError('INVALID_REQUEST', { message: 'Invalid account_id reference' });
+            return reject(adcpError('INVALID_REQUEST', { message: 'Invalid account_id reference' }));
           }
           const resolverRef = requestedAccountId === undefined ? accountRef : { account_id: requestedAccountId };
           let resolvedAccount: Account | null = null;
@@ -4061,12 +4077,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             if (err instanceof AccountNotFoundError || (err instanceof AdcpError && err.code === 'ACCOUNT_NOT_FOUND')) {
               resolvedAccount = null;
             } else if (err instanceof AdcpError) {
-              return adcpError(err.code, err.toStructuredError());
+              return reject(adcpError(err.code, err.toStructuredError()));
             } else {
               fwLogger.error?.('Account resolution failed during comply controller dispatch', {
                 error_type: err instanceof Error ? err.name : typeof err,
               });
-              return adcpError('SERVICE_UNAVAILABLE', { message: 'Account resolution failed' });
+              return reject(adcpError('SERVICE_UNAVAILABLE', { message: 'Account resolution failed' }));
             }
           }
           resolvedAccount = assertResolvedAccountMatchesRef(
@@ -4198,10 +4214,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
               fwLogger.warn?.('Session key resolution failed during comply controller dispatch', {
                 error: redactCredentialPatterns(err instanceof Error ? err.message : String(err)),
               });
-              return adcpError('SERVICE_UNAVAILABLE', {
-                message: 'Session key resolution failed',
-                recovery: 'transient',
-              });
+              return reject(
+                adcpError('SERVICE_UNAVAILABLE', {
+                  message: 'Session key resolution failed',
+                  recovery: 'transient',
+                })
+              );
             }
           }
 
