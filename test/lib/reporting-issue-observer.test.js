@@ -99,10 +99,13 @@ const sid = n => `status-${String(n).padStart(16, '0')}`;
 
 describe('issue event ids and instants', () => {
   test('event id matches the golden vector shared with the Python SDK', () => {
-    assert.equal(reportingIssueEventIdV1('rpti_example', 'opened'), 'rpie_6a4f704efe6de710f96c83143d8ac8637c9f86a6');
+    assert.equal(
+      reportingIssueEventIdV1('rpti_example', 'buyer-1', 'opened'),
+      'rpie_3838185b0fe2e44fb50b8155e113491031c92e3d'
+    );
     assert.notEqual(
-      reportingIssueEventIdV1('rpti_example', 'resolved'),
-      reportingIssueEventIdV1('rpti_example', 'opened')
+      reportingIssueEventIdV1('rpti_example', 'buyer-1', 'resolved'),
+      reportingIssueEventIdV1('rpti_example', 'buyer-1', 'opened')
     );
   });
 
@@ -122,7 +125,7 @@ describe('planReportingIssueEventsV1', () => {
     openedAt,
   });
   const openedRecord = (issueId, occurredAt = '2026-09-02T02:00:00.000Z') => ({
-    eventId: reportingIssueEventIdV1(issueId, 'opened'),
+    eventId: reportingIssueEventIdV1(issueId, 'buyer-1', 'opened'),
     kind: 'opened',
     issueId,
     accountId: 'acct-1',
@@ -143,7 +146,7 @@ describe('planReportingIssueEventsV1', () => {
       [['opened', 'rpti_b']]
     );
     assert.equal(plan[0].occurredAt, '2026-09-02T02:30:00.000Z');
-    assert.equal(plan[0].eventId, reportingIssueEventIdV1('rpti_b', 'opened'));
+    assert.equal(plan[0].eventId, reportingIssueEventIdV1('rpti_b', 'buyer-1', 'opened'));
   });
 
   test('resolves open occurrences that no longer conflict, at the write instant', () => {
@@ -189,7 +192,7 @@ describe('planReportingIssueEventsV1', () => {
     const escalated = reportingIssueEscalationV1(opened, 3_600, '2026-09-02T03:00:00.1234567Z');
     assert.equal(escalated.kind, 'escalated');
     assert.equal(escalated.occurredAt, '2026-09-02T03:00:00.1234567Z');
-    assert.equal(escalated.eventId, reportingIssueEventIdV1('rpti_a', 'escalated'));
+    assert.equal(escalated.eventId, reportingIssueEventIdV1('rpti_a', 'buyer-1', 'escalated'));
   });
 });
 
@@ -217,7 +220,7 @@ describe('memory store records issue events with the write', () => {
     assert.equal(event.accountId, 'acct-1');
     assert.equal(event.consumerId, 'buyer-1');
     assert.equal(event.reportingStatusId, sid(1));
-    assert.equal(event.eventId, reportingIssueEventIdV1(event.issueId, 'opened'));
+    assert.equal(event.eventId, reportingIssueEventIdV1(event.issueId, event.consumerId, 'opened'));
   });
 
   // Under today's TypeScript projection a real restatement cannot clear a mismatch (adcp-client#3653), so
@@ -234,8 +237,8 @@ describe('memory store records issue events with the write', () => {
     };
     w.store.consumerStatements.push(statement);
     const issueId = 'rpti_seeded';
-    w.store.issueEvents.set(reportingIssueEventIdV1(issueId, 'opened'), {
-      eventId: reportingIssueEventIdV1(issueId, 'opened'),
+    w.store.issueEvents.set(reportingIssueEventIdV1(issueId, 'buyer-1', 'opened'), {
+      eventId: reportingIssueEventIdV1(issueId, 'buyer-1', 'opened'),
       kind: 'opened',
       issueId,
       accountId: 'acct-1',
@@ -458,17 +461,22 @@ describe('claim, complete, release and prune', () => {
     assert.equal(again.attempts, 2);
   });
 
-  test('prune deletes only delivered events older than the retention', async () => {
+  test('prune deletes only whole closed occurrences, delivered past the retention', async () => {
     const w = await twoEventsOnOneOccurrence();
-    const [lease] = await w.store.claimIssueEvents({ leaseMilliseconds: 60_000, limit: 1 });
-    assert.equal(await w.store.completeIssueEvent(lease), true);
+    const [opened] = await w.store.claimIssueEvents({ leaseMilliseconds: 60_000, limit: 1 });
+    assert.equal(await w.store.completeIssueEvent(opened), true);
+    w.at('2030-01-01T00:00:00.000Z');
+    assert.equal(await w.store.pruneIssueEvents({ olderThanMilliseconds: 1_000 }), 0, 'resolved is still undelivered');
+    w.at('2026-09-02T01:30:00.000Z');
+    const [resolved] = await w.store.claimIssueEvents({ leaseMilliseconds: 60_000, limit: 1 });
+    assert.equal(resolved.kind, 'resolved');
+    assert.equal(await w.store.completeIssueEvent(resolved), true);
+    // The causing statement was superseded, so the occurrence is closed and goes whole once past retention.
     w.at('2026-09-02T01:30:00.500Z');
     assert.equal(await w.store.pruneIssueEvents({ olderThanMilliseconds: 1_000 }), 0);
     w.at('2026-09-02T01:30:01.001Z');
-    assert.equal(await w.store.pruneIssueEvents({ olderThanMilliseconds: 1_000 }), 1);
-    assert.deepEqual(w.kinds(), ['resolved'], 'the undelivered event is kept');
-    w.at('2030-01-01T00:00:00.000Z');
-    assert.equal(await w.store.pruneIssueEvents({ olderThanMilliseconds: 1_000 }), 0);
+    assert.equal(await w.store.pruneIssueEvents({ olderThanMilliseconds: 1_000 }), 2);
+    assert.deepEqual(w.kinds(), []);
   });
 
   test('accountId scopes claims and sweeps', async () => {
@@ -645,7 +653,7 @@ describe('issue event dispatcher', () => {
 
   test('unrenderable evidence gives issue: null rather than a throw', () => {
     const lease = {
-      eventId: reportingIssueEventIdV1('rpti_x', 'opened'),
+      eventId: reportingIssueEventIdV1('rpti_x', 'buyer-1', 'opened'),
       kind: 'opened',
       issueId: 'rpti_x',
       accountId: 'acct-1',
@@ -674,6 +682,255 @@ describe('issue event dispatcher', () => {
     assert.throws(
       () => createReportingIssueEventDispatcherV1({ store: memoryStorage().ledger, observer: 'nope' }),
       TypeError
+    );
+  });
+});
+
+describe('occurrences are keyed by consumer, and retention prunes only closed ones', () => {
+  const openUnreadable = async (w, consumerId = 'buyer-1', statusId = sid(1)) => {
+    w.at('2026-09-02T00:30:00.000Z');
+    if (w.store.revisions.size === 0) await w.commit(1);
+    w.at('2026-09-02T01:00:00.000Z');
+    await w.sync(
+      `open-${consumerId}-${statusId}`,
+      w.status(statusId, 'unreadable', { consumerId, reporting_revision_id: 'ob-1-rev-1' })
+    );
+  };
+  const deliverAll = async w => {
+    for (;;) {
+      const leases = await w.store.claimIssueEvents({ leaseMilliseconds: 60_000, limit: 100 });
+      if (leases.length === 0) return;
+      for (const lease of leases) await w.store.completeIssueEvent(lease);
+    }
+  };
+
+  test('an open occurrence survives prune; once superseded it is pruned whole', async () => {
+    const w = fixture();
+    await openUnreadable(w);
+    await deliverAll(w);
+    w.at('2030-01-01T00:00:00.000Z');
+    assert.equal(await w.store.pruneIssueEvents({ olderThanMilliseconds: 1_000 }), 0);
+    assert.deepEqual(w.kinds(), ['opened'], 'the open occurrence is untouched');
+    await w.sync(
+      'k2',
+      w.status(sid(2), 'received', { reporting_revision_id: 'ob-1-rev-1', supersedes_reporting_status_id: sid(1) })
+    );
+    assert.deepEqual(w.kinds(), ['opened', 'resolved']);
+    await deliverAll(w);
+    w.at('2030-01-01T00:01:00.000Z');
+    assert.equal(await w.store.pruneIssueEvents({ olderThanMilliseconds: 1_000 }), 2);
+    assert.deepEqual(w.kinds(), []);
+  });
+
+  test('an escalation window longer than the retention still escalates', async () => {
+    const w = fixture();
+    const seen = [];
+    const dispatcher = createReportingIssueEventDispatcherV1({
+      store: w.store,
+      observer: event => void seen.push(event.kind),
+      escalation: { escalationSeconds: 10 * 86_400, operationsContact: { email: 'ops@seller.example' } },
+    }); // default retention: 7 days
+    await openUnreadable(w);
+    await dispatcher.runOnce();
+    w.at('2026-09-10T01:00:00.000Z'); // 8 days: past the retention, inside the window
+    await dispatcher.runOnce();
+    assert.deepEqual(w.kinds(), ['opened'], 'opened was not pruned');
+    w.at('2026-09-12T02:00:00.000Z');
+    const turn = await dispatcher.runOnce();
+    assert.equal(turn.escalationsRecorded, 1);
+    assert.deepEqual(seen, ['opened', 'escalated']);
+    assert.equal(w.events().find(value => value.kind === 'escalated').occurredAt, '2026-09-12T01:00:00.000Z');
+  });
+
+  test('a resolved occurrence whose statement is still current is kept; a superseded one is pruned and not recreated', async () => {
+    const w = fixture();
+    w.at('2026-09-02T00:30:00.000Z');
+    await w.commit(1);
+    // Anchor: seed an open occurrence for a leaf that agrees once rev-2 exists (see the resolve-on-restatement test).
+    w.store.consumerStatements.push({
+      ...w.status(sid(1), 'received', { reporting_revision_id: 'ob-1-rev-2' }),
+      recorded_at: '2026-09-02T01:00:00.000Z',
+    });
+    const seeded = reportingIssueEventIdV1('rpti_seeded', 'buyer-1', 'opened');
+    w.store.issueEvents.set(seeded, {
+      eventId: seeded,
+      kind: 'opened',
+      issueId: 'rpti_seeded',
+      accountId: 'acct-1',
+      consumerId: 'buyer-1',
+      reportingObligationId: 'ob-1',
+      reportingStatusId: sid(1),
+      occurredAt: '2026-09-02T01:00:00.000Z',
+      seq: 1,
+      recordedAt: '2026-09-02T01:00:00.000Z',
+      dueAt: '2026-09-02T01:00:00.000Z',
+      attempts: 0,
+    });
+    w.at('2026-09-02T02:00:00.000Z');
+    await w.commit(2);
+    // A second consumer's occurrence, opened and then superseded: closed.
+    await openUnreadable(w, 'buyer-2', sid(7));
+    w.at('2026-09-02T03:00:00.000Z');
+    await w.sync(
+      'k-two',
+      w.status(sid(8), 'received', {
+        consumerId: 'buyer-2',
+        reporting_revision_id: 'ob-1-rev-2',
+        supersedes_reporting_status_id: sid(7),
+      })
+    );
+    assert.deepEqual(
+      w
+        .events()
+        .filter(value => value.consumerId === 'buyer-2')
+        .map(value => value.kind),
+      ['opened', 'resolved']
+    );
+    await deliverAll(w);
+    const prunedIds = w
+      .events()
+      .filter(value => value.consumerId === 'buyer-2')
+      .map(value => value.eventId);
+    w.at('2030-01-01T00:00:00.000Z');
+    assert.equal(await w.store.pruneIssueEvents({ olderThanMilliseconds: 1_000 }), 2, 'only the closed occurrence');
+    const anchor = w.events().filter(value => value.consumerId === 'buyer-1');
+    assert.deepEqual(
+      anchor.map(value => value.kind),
+      ['opened', 'resolved'],
+      'the anchor stays'
+    );
+    // A later commit re-derives occurrences but cannot record the pruned event ids again.
+    w.at('2030-01-02T00:00:00.000Z');
+    await w.commit(3);
+    for (const eventId of prunedIds) assert.equal(w.store.issueEvents.has(eventId), false, eventId);
+    assert.equal(w.events().filter(value => value.issueId === 'rpti_seeded').length, 2, 'the anchor stays single');
+  });
+
+  test('two consumers filing the same status id get independent occurrences', async () => {
+    const w = fixture();
+    await openUnreadable(w, 'buyer-1', sid(1));
+    await openUnreadable(w, 'buyer-2', sid(1));
+    const [one, two] = w.events();
+    assert.equal(one.kind, 'opened');
+    assert.equal(two.kind, 'opened');
+    assert.equal(one.issueId, two.issueId, 'same issue id');
+    assert.deepEqual([one.consumerId, two.consumerId], ['buyer-1', 'buyer-2']);
+    assert.notEqual(one.eventId, two.eventId);
+    assert.equal(one.eventId, reportingIssueEventIdV1(one.issueId, 'buyer-1', 'opened'));
+    assert.equal(two.eventId, reportingIssueEventIdV1(two.issueId, 'buyer-2', 'opened'));
+    // One event per consumer occurrence, leased independently.
+    const claimed = await w.store.claimIssueEvents({ leaseMilliseconds: 60_000, limit: 10 });
+    assert.deepEqual(claimed.map(lease => lease.consumerId).sort(), ['buyer-1', 'buyer-2']);
+    for (const lease of claimed) await w.store.completeIssueEvent(lease);
+    // buyer-1 supersedes and resolves; buyer-2 stays open and escalates.
+    w.at('2026-09-02T01:30:00.000Z');
+    await w.sync(
+      'k-one',
+      w.status(sid(2), 'received', { reporting_revision_id: 'ob-1-rev-1', supersedes_reporting_status_id: sid(1) })
+    );
+    const byConsumer = consumer =>
+      w
+        .events()
+        .filter(value => value.consumerId === consumer)
+        .map(value => value.kind);
+    assert.deepEqual(byConsumer('buyer-1'), ['opened', 'resolved']);
+    assert.deepEqual(byConsumer('buyer-2'), ['opened']);
+    w.at('2026-09-02T09:00:00.000Z');
+    assert.equal(await w.store.sweepIssueEscalations({ escalationSeconds: 3_600 }), 1);
+    assert.deepEqual(byConsumer('buyer-1'), ['opened', 'resolved']);
+    assert.deepEqual(byConsumer('buyer-2'), ['opened', 'escalated']);
+  });
+});
+
+describe('principal on issue events', () => {
+  const subscription = {
+    tenantId: 'tenant-1',
+    principalId: 'principal-1',
+    subscriptionId: 'sub-1',
+    offeringId: 'offering-1',
+    ownership: 'owed_set',
+  };
+
+  async function openAndResolve(w) {
+    w.at('2026-09-02T00:30:00.000Z');
+    await w.commit(1);
+    w.at('2026-09-02T01:00:00.000Z');
+    await w.sync('k1', w.status(sid(1), 'unreadable', { reporting_revision_id: 'ob-1-rev-1' }));
+    w.at('2026-09-02T01:30:00.000Z');
+    await w.sync(
+      'k2',
+      w.status(sid(2), 'received', { reporting_revision_id: 'ob-1-rev-1', supersedes_reporting_status_id: sid(1) })
+    );
+  }
+
+  test('opened and resolved both carry the obligation principal', async () => {
+    const w = fixture();
+    w.store.obligations.get('ob-1').subscription = subscription;
+    await openAndResolve(w);
+    const seen = [];
+    const dispatcher = createReportingIssueEventDispatcherV1({
+      store: w.store,
+      observer: event => void seen.push(event),
+    });
+    await dispatcher.runOnce();
+    assert.deepEqual(
+      seen.map(event => event.kind),
+      ['opened', 'resolved']
+    );
+    for (const event of seen) assert.deepEqual(event.principal, { tenantId: 'tenant-1', principalId: 'principal-1' });
+  });
+
+  test('a resolved event is still delivered, without a principal, when the obligation is gone', async () => {
+    const w = fixture();
+    w.store.obligations.get('ob-1').subscription = subscription;
+    await openAndResolve(w);
+    w.store.obligations.delete('ob-1');
+    const seen = [];
+    const dispatcher = createReportingIssueEventDispatcherV1({
+      store: w.store,
+      observer: event => void seen.push(event),
+    });
+    const turn = await dispatcher.runOnce();
+    assert.equal(turn.delivered, 2);
+    const resolved = seen.find(event => event.kind === 'resolved');
+    assert.ok(resolved);
+    assert.equal('principal' in resolved, false);
+    assert.equal(resolved.issue, null);
+  });
+});
+
+describe('abort', () => {
+  test('aborting inside the observer stops the batch and releases the rest immediately', async () => {
+    const w = fixture();
+    w.at('2026-09-02T00:30:00.000Z');
+    await w.commit(1);
+    w.at('2026-09-02T01:00:00.000Z');
+    for (const consumer of ['buyer-1', 'buyer-2', 'buyer-3']) {
+      await w.sync(
+        `k-${consumer}`,
+        w.status(sid(1), 'unreadable', { consumerId: consumer, reporting_revision_id: 'ob-1-rev-1' })
+      );
+    }
+    assert.equal(w.store.issueEvents.size, 3);
+    const controller = new AbortController();
+    const seen = [];
+    const dispatcher = createReportingIssueEventDispatcherV1({
+      store: w.store,
+      observer: event => {
+        seen.push(event.eventId);
+        controller.abort();
+      },
+    });
+    const turn = await dispatcher.runOnce({ signal: controller.signal });
+    assert.equal(seen.length, 1, 'the observer is not called again');
+    assert.equal(turn.delivered, 1);
+    // No wait for lease expiry: the other two are claimable at the same instant.
+    const again = await w.store.claimIssueEvents({ leaseMilliseconds: 60_000, limit: 10 });
+    assert.equal(again.length, 2);
+    assert.ok(!again.some(lease => lease.eventId === seen[0]));
+    assert.deepEqual(
+      again.map(lease => lease.attempts),
+      [2, 2]
     );
   });
 });
@@ -778,7 +1035,7 @@ describe('createReliableReportingService issueObserver', () => {
     const empty = await service.runCycle({ accountId: 'account-a', maxObligations: 1, maxWorkerIterations: 1 });
     assert.deepEqual(empty.issueEvents, { escalationsRecorded: 0, delivered: 0, failed: 0, errors: [] });
 
-    const eventId = reportingIssueEventIdV1('rpti_seeded', 'opened');
+    const eventId = reportingIssueEventIdV1('rpti_seeded', 'buyer-1', 'opened');
     storage.ledger.issueEvents.set(eventId, {
       eventId,
       kind: 'opened',

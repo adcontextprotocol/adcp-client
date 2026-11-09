@@ -101,9 +101,9 @@ describe('issue-lifecycle events over PostgreSQL', { skip: !DATABASE_URL && 'Pos
       day,
       store: reference.store,
       /** File one statement as `consumer`; `supersedes` names the consumer's current leaf. */
-      async file(consumer, consumerStatus, { supersedes, revisionRow = w.revision } = {}) {
+      async file(consumer, consumerStatus, { supersedes, revisionRow = w.revision, statusId } = {}) {
         counter += 1;
-        const id = `issue-status-${name}-${consumer}-${counter}`;
+        const id = statusId ?? `issue-status-${name}-${consumer}-${counter}`;
         const evidence = {
           received: {
             reporting_obligation_id: obligation.reporting_obligation_id,
@@ -258,6 +258,7 @@ describe('issue-lifecycle events over PostgreSQL', { skip: !DATABASE_URL && 'Pos
 
   describe('lifecycle', () => {
     let w;
+    let keptEventIds = [];
     before(async () => {
       w = await world('main', { issueEvents: true });
     });
@@ -278,7 +279,7 @@ describe('issue-lifecycle events over PostgreSQL', { skip: !DATABASE_URL && 'Pos
         assert.equal(rest.length, 0);
         assert.equal(opened.kind, 'opened');
         assert.equal(opened.reporting_status_id, id);
-        assert.equal(opened.event_id, sdk.reportingIssueEventIdV1(opened.issue_id, 'opened'));
+        assert.equal(opened.event_id, sdk.reportingIssueEventIdV1(opened.issue_id, opened.consumer_id, 'opened'));
         // An exact batch replay and an unchanged status in a new batch record nothing more.
         assert.equal(await w.resend(consumer), 'recorded');
         assert.equal(await w.resend(consumer, { newKey: true }), 'unchanged');
@@ -366,7 +367,7 @@ describe('issue-lifecycle events over PostgreSQL', { skip: !DATABASE_URL && 'Pos
            (event_id, account_id, consumer_id, issue_id, obligation_id, reporting_status_id, kind, occurred_at)
          VALUES ($1, $2, 'sweep-clears', $3, $4, $5, 'opened', $6)`,
         [
-          sdk.reportingIssueEventIdV1(issueId, 'opened'),
+          sdk.reportingIssueEventIdV1(issueId, 'sweep-clears', 'opened'),
           w.request.account.account_id,
           issueId,
           w.obligation.reporting_obligation_id,
@@ -462,22 +463,171 @@ describe('issue-lifecycle events over PostgreSQL', { skip: !DATABASE_URL && 'Pos
       await w.store.completeIssueEvent(again);
     });
 
-    test('prune deletes delivered events past the retention and keeps pending ones', async () => {
-      await w.drain();
-      await w.file('prune-consumer', 'revision_missing');
-      await w.file('prune-pending', 'revision_missing');
-      const [lease] = await w.store.claimIssueEvents({ leaseMilliseconds: 60_000, limit: 1 });
-      assert.equal(await w.store.completeIssueEvent(lease), true);
-      assert.equal(await w.store.pruneIssueEvents({ olderThanMilliseconds: 3_600_000 }), 0);
-      await sleep(30);
-      assert.ok((await w.store.pruneIssueEvents({ olderThanMilliseconds: 10 })) >= 1);
-      const gone = await w.pool.query('SELECT 1 FROM adcp_reporting_issue_events WHERE event_id = $1', [lease.eventId]);
-      assert.equal(gone.rowCount, 0);
-      const pending = await w.pool.query(
-        "SELECT 1 FROM adcp_reporting_issue_events WHERE delivered_at IS NULL AND consumer_id IN ('prune-consumer','prune-pending')"
+    const eventIds = async consumer => (await w.events(consumer)).map(row => row.event_id);
+    const backdate = (consumer, { occurredDays, deliveredDays }) =>
+      w.pool.query(
+        `UPDATE adcp_reporting_issue_events
+            SET occurred_at = to_char((clock_timestamp() - make_interval(days => $2)) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+                delivered_at = CASE WHEN delivered_at IS NULL THEN NULL ELSE clock_timestamp() - make_interval(days => $3) END
+          WHERE consumer_id = $1 AND kind = 'opened'`,
+        [consumer, occurredDays, deliveredDays]
       );
-      assert.equal(pending.rowCount, 1);
+
+    test('prune never deletes an open occurrence; once superseded it goes whole, and pending events are kept', async () => {
       await w.drain();
+      await sleep(30);
+      await w.store.pruneIssueEvents({ olderThanMilliseconds: 10 }); // earlier tests' closed occurrences
+      await w.file('prune-open', 'revision_missing');
+      const pendingFirst = await w.file('prune-pending', 'revision_missing');
+      const leases = await w.store.claimIssueEvents({ leaseMilliseconds: 60_000, limit: 100 });
+      const mine = leases.find(lease => lease.consumerId === 'prune-open');
+      assert.equal(await w.store.completeIssueEvent(mine), true);
+      // `prune-pending`'s lease lapses undelivered below; it is not claimed again here.
+      await sleep(30);
+      assert.equal(await w.store.pruneIssueEvents({ olderThanMilliseconds: 0 }), 0, 'an open occurrence stays');
+      assert.deepEqual(await w.kinds('prune-open'), ['opened']);
+      // The buyer supersedes it with an agreeing statement: `resolved` is recorded.
+      const [openedRow] = await w.events('prune-open');
+      await w.file('prune-open', 'received', { supersedes: openedRow.reporting_status_id });
+      assert.deepEqual(await w.kinds('prune-open'), ['opened', 'resolved']);
+      const before = await eventIds('prune-open');
+      await sleep(30);
+      assert.equal(await w.store.pruneIssueEvents({ olderThanMilliseconds: 0 }), 0, 'resolved but not yet delivered');
+      for (const lease of await w.store.claimIssueEvents({ leaseMilliseconds: 60_000, limit: 100 })) {
+        if (lease.consumerId === 'prune-open') assert.equal(await w.store.completeIssueEvent(lease), true);
+        else await w.store.releaseIssueEvent(lease, { retryAfterMilliseconds: 0 });
+      }
+      await sleep(30);
+      assert.equal(await w.store.pruneIssueEvents({ olderThanMilliseconds: 3_600_000 }), 0, 'inside the retention');
+      assert.ok((await w.store.pruneIssueEvents({ olderThanMilliseconds: 10 })) >= 2);
+      assert.deepEqual(await w.events('prune-open'), [], 'the whole occurrence went');
+      assert.equal(before.length, 2);
+      assert.ok((await w.kinds('prune-pending')).length >= 1, 'an undelivered open occurrence is kept');
+      void pendingFirst;
+      await w.drain();
+    });
+
+    test('an escalation window longer than the retention still escalates after the opened event was pruned-eligible', async () => {
+      await w.drain();
+      await w.file('long-window', 'revision_missing');
+      await w.drain(); // `opened` delivered
+      await backdate('long-window', { occurredDays: 15, deliveredDays: 8 });
+      // Delivered 8 days ago against a 7-day retention, but the occurrence is open: nothing goes.
+      assert.equal(await w.store.pruneIssueEvents({ olderThanMilliseconds: 7 * 86_400_000 }), 0);
+      assert.deepEqual(await w.kinds('long-window'), ['opened']);
+      // The 10-day window passed (opened 15 days ago): the sweep still finds it and records `escalated` once.
+      const tenDays = 10 * 86_400;
+      assert.ok((await w.store.sweepIssueEscalations({ escalationSeconds: tenDays })) >= 1);
+      assert.equal(await w.store.sweepIssueEscalations({ escalationSeconds: tenDays }), 0);
+      assert.deepEqual(await w.kinds('long-window'), ['opened', 'escalated']);
+      const [opened, escalated] = await w.events('long-window');
+      assert.equal(
+        escalated.occurred_at,
+        require('../../../dist/lib/reporting/ledger/instant.js').addReportingInstantOffset(
+          opened.occurred_at,
+          tenDays * 1_000
+        )
+      );
+      await w.drain();
+    });
+
+    test('a resolved occurrence whose statement is still current is kept, so its event ids are never recreated', async () => {
+      await w.drain();
+      const id = await w.file('keep-anchor', 'received'); // agrees with the ledger: no event
+      assert.deepEqual(await w.events('keep-anchor'), []);
+      const issueId = 'rpti_seeded_keep';
+      await w.pool.query(
+        `INSERT INTO adcp_reporting_issue_events
+           (event_id, account_id, consumer_id, issue_id, obligation_id, reporting_status_id, kind, occurred_at)
+         VALUES ($1, $2, 'keep-anchor', $3, $4, $5, 'opened', $6)`,
+        [
+          sdk.reportingIssueEventIdV1(issueId, 'keep-anchor', 'opened'),
+          w.request.account.account_id,
+          issueId,
+          w.obligation.reporting_obligation_id,
+          id,
+          new Date(Date.now() - 10_000).toISOString(),
+        ]
+      );
+      await w.store.sweepIssueEscalations({ escalationSeconds: 0 }); // settles first: resolves it
+      assert.deepEqual(await w.kinds('keep-anchor'), ['opened', 'resolved']);
+      await w.drain();
+      await sleep(30);
+      await w.store.pruneIssueEvents({ olderThanMilliseconds: 10 });
+      assert.deepEqual(await w.kinds('keep-anchor'), ['opened', 'resolved'], 'the anchor stays');
+      keptEventIds = await eventIds('keep-anchor');
+    });
+
+    test('two consumers filing the same status id get independent occurrences', async () => {
+      await w.drain();
+      const shared = 'issue-status-shared-between-consumers';
+      await w.file('twin-1', 'revision_missing', { statusId: shared });
+      await w.file('twin-2', 'revision_missing', { statusId: shared });
+      const [one] = await w.events('twin-1');
+      const [two] = await w.events('twin-2');
+      assert.equal(one.kind, 'opened');
+      assert.equal(two.kind, 'opened');
+      assert.equal(one.issue_id, two.issue_id, 'same issue id');
+      assert.notEqual(one.event_id, two.event_id);
+      assert.equal(one.event_id, sdk.reportingIssueEventIdV1(one.issue_id, 'twin-1', 'opened'));
+      assert.equal(two.event_id, sdk.reportingIssueEventIdV1(two.issue_id, 'twin-2', 'opened'));
+      // Both are claimable together: one event per consumer occurrence.
+      const claimed = await w.store.claimIssueEvents({ leaseMilliseconds: 60_000, limit: 100 });
+      assert.deepEqual(
+        claimed
+          .filter(lease => lease.issueId === one.issue_id)
+          .map(lease => lease.consumerId)
+          .sort(),
+        ['twin-1', 'twin-2']
+      );
+      for (const lease of claimed) await w.store.completeIssueEvent(lease);
+      // twin-1 resolves; twin-2 stays open and escalates.
+      await w.file('twin-1', 'received', { supersedes: shared });
+      assert.deepEqual(await w.kinds('twin-1'), ['opened', 'resolved']);
+      assert.deepEqual(await w.kinds('twin-2'), ['opened']);
+      await w.store.sweepIssueEscalations({ escalationSeconds: 0 });
+      assert.deepEqual(await w.kinds('twin-1'), ['opened', 'resolved'], 'a resolved occurrence is not escalated');
+      assert.deepEqual(await w.kinds('twin-2'), ['opened', 'escalated']);
+      await w.drain();
+    });
+
+    test('opened and resolved events carry the obligation principal', async () => {
+      await w.drain();
+      const obligationId = w.obligation.reporting_obligation_id;
+      const subscription = {
+        tenantId: 'tenant-1',
+        principalId: 'principal-1',
+        subscriptionId: w.obligation.delivery_config_id,
+        offeringId: w.configuration.offeringId,
+        ownership: 'owed_set',
+      };
+      // File first: a subscription-owned obligation changes how statements are matched on ingest.
+      const first = await w.file('principal-consumer', 'revision_missing');
+      await w.file('principal-consumer', 'received', { supersedes: first });
+      await w.pool.query(
+        `UPDATE adcp_reporting_obligations SET data = jsonb_set(data, '{subscription}', $2::jsonb) WHERE obligation_id = $1`,
+        [obligationId, JSON.stringify(subscription)]
+      );
+      try {
+        const seen = [];
+        const dispatcher = sdk.createReportingIssueEventDispatcherV1({
+          store: w.store,
+          observer: event => void seen.push(event),
+        });
+        await dispatcher.runOnce({ accountId: w.request.account.account_id });
+        const all = seen.filter(event => event.consumerId === 'principal-consumer');
+        assert.deepEqual(
+          all.map(event => event.kind),
+          ['opened', 'resolved']
+        );
+        for (const event of all)
+          assert.deepEqual(event.principal, { tenantId: 'tenant-1', principalId: 'principal-1' });
+      } finally {
+        await w.pool.query(
+          `UPDATE adcp_reporting_obligations SET data = data - 'subscription' WHERE obligation_id = $1`,
+          [obligationId]
+        );
+      }
     });
 
     test('accountId scopes claims and sweeps', async () => {
@@ -536,7 +686,7 @@ describe('issue-lifecycle events over PostgreSQL', { skip: !DATABASE_URL && 'Pos
            (event_id, account_id, consumer_id, issue_id, obligation_id, reporting_status_id, kind, occurred_at)
          VALUES ($1, $2, 'commit-resolves', $3, $4, 'status-that-does-not-exist', 'opened', $5)`,
         [
-          sdk.reportingIssueEventIdV1(issueId, 'opened'),
+          sdk.reportingIssueEventIdV1(issueId, 'commit-resolves', 'opened'),
           w.request.account.account_id,
           issueId,
           w.obligation.reporting_obligation_id,
@@ -549,6 +699,14 @@ describe('issue-lifecycle events over PostgreSQL', { skip: !DATABASE_URL && 'Pos
       assert.deepEqual(await w.kinds('commit-resolves'), ['opened', 'resolved'], 'resolved by the commit');
       const [, resolved] = await w.events('commit-resolves');
       assert.ok(sdk.compareReportingInstants(resolved.occurred_at, new Date(Date.now() - 10_000).toISOString()) >= 0);
+    });
+
+    test('no event id the prune left behind was recreated by the commit', async () => {
+      for (const eventId of keptEventIds) {
+        const rows = await w.pool.query('SELECT 1 FROM adcp_reporting_issue_events WHERE event_id = $1', [eventId]);
+        assert.equal(rows.rowCount, 1, eventId);
+      }
+      assert.equal(keptEventIds.length, 2);
     });
 
     // Last: the restatement changed every `received` leaf filed against the first revision.
