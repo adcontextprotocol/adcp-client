@@ -2288,6 +2288,12 @@ ${managedDueArm}       )
         await client.query(`DELETE FROM adcp_reporting_transitions WHERE obligation_id = $1`, [obligationId]);
         await client.query(`DELETE FROM adcp_reporting_lifecycle_state WHERE obligation_id = $1`, [obligationId]);
         await client.query(`DELETE FROM adcp_reporting_obligations WHERE obligation_id = $1`, [obligationId]);
+        // The period's consumer-mismatch occurrences can never resolve or escalate again once their obligation
+        // and statements are gone, so resolve them here. Their pending events stay deliverable (`issue: null`,
+        // no `principal`), and the whole-occurrence prune collects them once delivered.
+        if (await this.issueEventsOn(client)) {
+          await settleIssueObligationOn(client, obligationId, await databaseInstantOn(client));
+        }
         const retiredNow = await client.query(
           `UPDATE adcp_reporting_obligation_tombstones SET state = 'retired', retired_at = clock_timestamp()
             WHERE obligation_id = $1 AND state = 'retiring'`,

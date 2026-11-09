@@ -2576,6 +2576,11 @@ outbox is also the record of which occurrences are open, which a later supersess
 escalates. A resolved occurrence whose statement is still current is kept too, as the anchor that stops a
 later write recording its delivered events again under the same `eventId`.
 
+When ledger retention retires a period (`retireExpiredPeriods`), its open occurrences resolve in the same
+transaction, because nothing can resolve or escalate them once the obligation and statements are gone. The
+`resolved` event is delivered like any other, with `issue: null` and no `principal`, and the occurrence is
+then pruned.
+
 **Production service.** `createPostgresReliableReportingProductionService` (`@adcp/reporting-storage/service`)
 takes `issueObserver` too: it passes it to the core service whose `runCycle` and `start()` it drives, and
 adds `REPORTING_ISSUE_EVENTS_MIGRATION` to `service.setup.migrations` when it is set. The Python SDK adds the
