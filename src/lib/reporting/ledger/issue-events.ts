@@ -270,6 +270,10 @@ export interface ReportingIssueEventLeaseV1 extends ReportingIssueEventRecordV1 
  * `PostgresReportingLedgerStore` from `@adcp/reporting-storage` once migration `0012
  * reporting_issue_events` is applied.
  *
+ * A store that deletes an obligation (period retirement) must resolve the obligation's open occurrences in the
+ * same transaction: nothing can resolve or escalate them afterwards, so they would otherwise stay open forever
+ * and never become prunable. Their pending events stay deliverable.
+ *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReportingIssueEventStoreV1 {
