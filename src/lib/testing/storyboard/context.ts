@@ -54,6 +54,24 @@ function readMediaBuyStatus(record: Record<string, unknown> | undefined): unknow
   return getAuthoritativeMediaBuyStatus(record);
 }
 
+/**
+ * Non-terminal task statuses, the same set as `POLL_ELIGIBLE_STATUSES` in
+ * runner.ts (which imports this module, so it cannot be shared from there).
+ * None of them is a media-buy lifecycle value in any AdCP release, so a
+ * top-level match always means a task envelope.
+ */
+const INTERIM_TASK_STATUSES: ReadonlySet<unknown> = new Set(['submitted', 'working', 'input-required']);
+
+/**
+ * True when the response is an interim task envelope rather than a terminal
+ * result. Any media-buy fields it carries are provisional, and recording them
+ * would make an asynchronous create look synchronous to storyboards that gate
+ * on `context.media_buy_id` (adcp-client#3682).
+ */
+function isInterimTaskEnvelope(data: unknown): boolean {
+  return INTERIM_TASK_STATUSES.has(asRecord(data)?.status);
+}
+
 function readMediaBuyFields(data: unknown, adcpVersion?: string): { mediaBuyId?: unknown; status?: unknown } {
   const outer = asRecord(data);
   const nested = asRecord(outer?.media_buy);
@@ -219,6 +237,7 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
   },
 
   create_media_buy(data, adcpVersion) {
+    if (isInterimTaskEnvelope(data)) return {};
     const { mediaBuyId, status } = readMediaBuyFields(data, adcpVersion);
     const extracted: Record<string, unknown> = {};
     if (mediaBuyId) extracted.media_buy_id = mediaBuyId;

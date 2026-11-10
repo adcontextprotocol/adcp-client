@@ -246,6 +246,44 @@ describe('context extractors', () => {
       });
     });
 
+    // An interim task envelope is not the terminal create result: a
+    // storyboard reading `context.media_buy_id` must not mistake it for a
+    // synchronous completion (adcp-client#3682).
+    for (const status of ['working', 'submitted', 'input-required']) {
+      it(`does not extract media-buy fields from a create_media_buy envelope with status ${status}`, () => {
+        const result = extractContext('create_media_buy', {
+          status,
+          task_id: 'task_1',
+          media_buy_id: 'mb_interim',
+          media_buy_status: 'pending_creatives',
+        });
+
+        assert.deepStrictEqual(result, {});
+      });
+    }
+
+    it('does not extract a nested media_buy from an interim create_media_buy envelope', () => {
+      const result = extractContext(
+        'create_media_buy',
+        { status: 'working', task_id: 'task_1', media_buy: { media_buy_id: 'mb_interim', status: 'active' } },
+        '3.0.0'
+      );
+
+      assert.deepStrictEqual(result, {});
+    });
+
+    it('still reads a legacy top-level lifecycle status on create_media_buy', () => {
+      const result = extractContext('create_media_buy', { media_buy_id: 'mb_1', status: 'pending_creatives' });
+
+      assert.deepStrictEqual(result, { media_buy_id: 'mb_1', media_buy_status: 'pending_creatives' });
+    });
+
+    it('extracts media_buy_id from a create_media_buy response without a status', () => {
+      const result = extractContext('create_media_buy', { media_buy_id: 'mb_1' });
+
+      assert.deepStrictEqual(result, { media_buy_id: 'mb_1' });
+    });
+
     it('prefers media_buy_status on get_media_buys items', () => {
       const result = extractContext('get_media_buys', {
         media_buys: [
