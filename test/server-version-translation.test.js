@@ -274,6 +274,53 @@ describe('experimental 3.3 match keys', () => {
     assert.deepStrictEqual(data.products[0].identity.match_keys, [MATCH_KEY]);
     assert.deepStrictEqual(drifts, []);
   });
+
+  it('projects match keys through identity-enabled dispatch for the requested release', async () => {
+    const events = [];
+    const adcpServer = createAdcpServer({
+      ...identityConfig(true),
+      name: 'Identity product translation',
+      version: '1.0.0',
+      capabilities: { supported_versions: ['3.2', '3.3-beta.5'] },
+      validation: { requests: 'strict', responses: 'strict' },
+      onVersionTranslation: event => events.push(event),
+      mediaBuy: {
+        getProducts: async () => ({
+          cache_scope: 'public',
+          products: [
+            {
+              ...products().products[0],
+              description: 'Premium video inventory',
+              format_ids: [{ id: 'video', agent_url: 'https://creative.example/mcp' }],
+              delivery_type: 'non_guaranteed',
+              publisher_properties: [{ publisher_domain: 'publisher.example', selection_type: 'all' }],
+              pricing_options: [{ pricing_option_id: 'cpm', pricing_model: 'cpm', currency: 'USD' }],
+              reporting_capabilities: {
+                available_reporting_frequencies: ['daily'],
+                expected_delay_minutes: 60,
+                timezone: 'UTC',
+                supports_webhooks: false,
+                available_metrics: ['impressions'],
+                date_range_support: 'date_range',
+              },
+            },
+          ],
+        }),
+      },
+    });
+    for (const release of ['3.2', '3.3-beta.5']) {
+      const response = await adcpServer.dispatchTestRequest({
+        method: 'tools/call',
+        params: { name: 'get_products', arguments: { adcp_version: release, buying_mode: 'brief', brief: 'Video' } },
+      });
+      assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      const identity = response.structuredContent.products[0].identity;
+      assert.strictEqual(identity.persistent_identifier, true);
+      assert.deepStrictEqual(identity.match_keys, release === '3.2' ? undefined : [MATCH_KEY]);
+    }
+    const dropped = events.flatMap(event => event.drifts ?? []).flatMap(drift => drift.strippedFields ?? []);
+    assert.ok(dropped.includes('products[0].identity.match_keys'));
+  });
 });
 
 it('keeps identity authorization ahead of dispatch for an older buyer', async () => {
