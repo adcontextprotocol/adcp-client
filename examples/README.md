@@ -58,6 +58,11 @@ Reliable Reporting service for principal-level `reporting_subscriptions`
 (experimental). It passes
 [`storyboards/reporting-subscriptions.yaml`](./storyboards/reporting-subscriptions.yaml).
 
+The [wholesale catalogue reference seller](./wholesale-catalog-seller/seller.mjs) serves a
+versioned, paged wholesale catalogue with account overlays from one `readCatalog` function
+(`@adcp/sdk/wholesale-catalog`, see [the guide](../docs/guides/WHOLESALE-CATALOG.md)). It passes
+[`storyboards/wholesale-catalog.yaml`](./storyboards/wholesale-catalog.yaml).
+
 ## Building an AdCP agent — fork-target reference adapters
 
 Pick the example whose AdCP role and specialism most closely matches what you're building, fork it, replace the `// SWAP:` markers, and follow the `FORK CHECKLIST` block for the unmarked but load-bearing constants. The `hello_*_adapter_*` examples are paired with the three-gate CI test (strict tsc / storyboard / upstream-traffic) where a matching mock server exists; examples without one are called out below with the narrower runtime coverage they currently have. `proxy-seller-snap/` is a lighter bridge-pattern fork target: it proves seed-bridge wiring and must be paired with your live-OAuth sandbox runner for upstream health.

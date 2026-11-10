@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-11-08
+> Generated at: 2026-11-10
 > @adcp/sdk v17.0.0-beta.21
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -3210,6 +3210,31 @@ Source offering `applicability` keeps required `productIds: string[]`; opt into 
 For complete seller production assembly, use async `createPostgresReliableReportingProductionService` from `@adcp/reporting-storage/service`. It owns the PostgreSQL Core/Managed stores, receipts, all three reporting notifications, webhook activity, migrations, probes, recovery, and capability publication. Supply `activity.tenantScopeForAccount`; Reconciled Billing offerings also require a trusted `obligatedConsumers` roster. Its scheduler and `recoverOnce` require explicit `deploymentWide: true` because recovery scans the whole namespace. See `docs/guides/REPORTING-LEDGER.md` and `docs/guides/REPORTING-OPERATIONS.md`.
 
 Buyer production processes use `createPostgresReportingConsumerRuntimeV1` with `createReliableReportingConsumerV1` from the package root. Verify webhook signatures before passing authenticated hints, preserve seller/principal scope, and configure `evaluateAdjustment` to authorize integrity-valid post-official corrections; the default defers them. See `docs/guides/REPORTING-RECONCILIATION.md`.
+
+## Wholesale Catalogue Service
+
+Import from `@adcp/sdk/wholesale-catalog`. A seller writes `readCatalog(scope)`; the service answers `list_products` and wholesale `get_products` from one stored snapshot per scope, pages it, versions it, answers conditional reads with `unchanged`, and sends `product.*` and `wholesale_feed.bulk_change` events through the persistent notification runtime. Shaped like `createReliableReportingService`: adapter, replaceable snapshot store, `install`, `start`/`stop`.
+
+```typescript
+import { createWholesaleCatalogService } from '@adcp/sdk/wholesale-catalog';
+
+const catalog = createWholesaleCatalogService({
+  adapter: {
+    // scope: { cacheScope: 'public' } | { cacheScope: 'account', accountId }
+    // For an account scope, return null when the account prices off the public catalogue.
+    readCatalog: scope => productsFor(scope), // canonical products (buildProduct)
+  },
+  accountOverlays: true,
+  snapshots: durableSnapshotStore, // memoryCatalogSnapshotStore() is for tests and development
+  notifications: { runtime: notificationRuntime, tenantId: 'seller' },
+});
+const platform = catalog.install(mySalesPlatform); // listProducts + wholesale getProducts + capabilities
+catalog.start({ reconcileEvery: '15m' });
+await catalog.update({ cacheScope: 'public' }); // after a known change
+await catalog.assertCurrent(scope, request.feed_version); // in buyProducts: CONFLICT when stale
+```
+
+One feed version per scope (`sha256:` over the scope, the account and the products as served), so a token never matches another scope. Events are stored with the change in one compare-and-set and retried with stable ids until the runtime accepts them. See `docs/guides/WHOLESALE-CATALOG.md` and `examples/wholesale-catalog-seller/seller.mjs`.
 
 ## Key Enums
 

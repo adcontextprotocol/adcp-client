@@ -354,7 +354,7 @@ export function createWholesaleCatalogService<TCtxMeta = Record<string, unknown>
     const selectionKey =
       productIds === undefined && Object.keys(selection).length === 0
         ? catalogScopeKey(scope)
-        : `${catalogScopeKey(scope)}|${canonicalJsonSha256({ productIds: productIds ?? null, selection }).slice(0, 16)}`;
+        : `${catalogScopeKey(scope)}|${canonicalJsonSha256({ productIds: productIds ? [...productIds].sort() : null, selection }).slice(0, 16)}`;
 
     const cursorInput = task === 'list_products' ? request.cursor : (request.pagination as Loose | undefined)?.cursor;
     const cursorField = task === 'list_products' ? 'cursor' : 'pagination.cursor';

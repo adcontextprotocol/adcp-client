@@ -34,6 +34,8 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 
 **Serving or subscribing to AdCP 3.3 reporting subscriptions?** Read and follow `skills/reporting-subscriptions/SKILL.md`, then `docs/guides/REPORTING-SUBSCRIPTIONS-SELLER.md` or `docs/guides/REPORTING-SUBSCRIPTIONS-BUYER.md`. Storage is one decision: `memoryStorage()` (`@adcp/sdk/storage`) or `postgresStorage({ pool })` (`@adcp/reporting-storage`), migrated with `npx adcp-reporting-storage migrate`. Buyers use `client.reporting.subscribe`, never a raw `syncPrincipal` that drops other subscriptions.
 
+**Selling a wholesale catalogue (versions, paging, `unchanged`, `product.*` change events)?** Read `docs/guides/WHOLESALE-CATALOG.md`. Write `readCatalog(scope)`; `createWholesaleCatalogService` from `@adcp/sdk/wholesale-catalog` serves `list_products` and wholesale `get_products`, versions each scope and sends the change events. The buyer half is `@adcp/sdk/wholesale-feed-sync`.
+
 **Building a retail media network?** Read and follow `skills/build-retail-media-agent/SKILL.md` — covers catalog sync, conversion tracking, performance feedback, dynamic ads.
 
 **Building a creative agent?** Read and follow `skills/build-creative-agent/SKILL.md` — covers ad servers, creative management platforms, format discovery, preview, and build.

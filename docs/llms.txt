@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-11-08
+> Generated at: 2026-11-10
 > Library: @adcp/sdk v17.0.0-beta.21
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -2313,6 +2313,7 @@ These docs are available locally in the repo and hosted at https://adcontextprot
 | Seller reporting ledger | docs/guides/REPORTING-LEDGER.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-LEDGER.md) |
 | Reporting ledger cutover from custom tables | docs/guides/REPORTING-LEDGER-CUTOVER.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-LEDGER-CUTOVER.md) |
 | Buyer reporting reconciliation | docs/guides/REPORTING-RECONCILIATION.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-RECONCILIATION.md) |
+| Seller wholesale catalogue service (versions, paging, change events) | docs/guides/WHOLESALE-CATALOG.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/WHOLESALE-CATALOG.md) |
 | Reliable Reporting production operations | docs/guides/REPORTING-OPERATIONS.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-OPERATIONS.md) |
 | Reliable Reporting stability policy (experimental storage package) | docs/guides/REPORTING-STABILITY.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-STABILITY.md) |
 | Validate your agent (5-command checklist) | docs/guides/VALIDATE-YOUR-AGENT.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/VALIDATE-YOUR-AGENT.md) |

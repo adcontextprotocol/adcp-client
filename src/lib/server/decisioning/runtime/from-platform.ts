@@ -995,6 +995,8 @@ function asCanonicalProductResponse<T extends { products?: unknown[] }>(
   legacyFormatConverter: LegacyFormatConverter | undefined
 ): T {
   assertSafeGetProductsResponse(response);
+  // A wholesale `unchanged: true` answer carries no product rows by contract, and the schema forbids `products`.
+  if ((response as { unchanged?: unknown }).unchanged === true && response.products === undefined) return response;
   validateDualProductFormatDeclarations(response, legacyFormatConverter);
   const projected = toCanonicalOnlyResponse(response as T & { products?: V1Product[] }, {
     legacyFormatConverter,

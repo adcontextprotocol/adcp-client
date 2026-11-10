@@ -1350,6 +1350,7 @@ function generateLlmsTxt(
     ['Seller reporting ledger', 'guides/REPORTING-LEDGER.md'],
     ['Reporting ledger cutover from custom tables', 'guides/REPORTING-LEDGER-CUTOVER.md'],
     ['Buyer reporting reconciliation', 'guides/REPORTING-RECONCILIATION.md'],
+    ['Seller wholesale catalogue service (versions, paging, change events)', 'guides/WHOLESALE-CATALOG.md'],
     ['Reliable Reporting production operations', 'guides/REPORTING-OPERATIONS.md'],
     ['Reliable Reporting stability policy (experimental storage package)', 'guides/REPORTING-STABILITY.md'],
     ['Validate your agent (5-command checklist)', 'guides/VALIDATE-YOUR-AGENT.md'],
@@ -2389,6 +2390,37 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln();
   ln(
     `Buyer production processes use \`createPostgresReportingConsumerRuntimeV1\` with \`createReliableReportingConsumerV1\` from the package root. Verify webhook signatures before passing authenticated hints, preserve seller/principal scope, and configure \`evaluateAdjustment\` to authorize integrity-valid post-official corrections; the default defers them. See \`docs/guides/REPORTING-RECONCILIATION.md\`.`
+  );
+  ln();
+
+  // --- Wholesale catalogue service ---
+  ln(`## Wholesale Catalogue Service`);
+  ln();
+  ln(
+    `Import from \`@adcp/sdk/wholesale-catalog\`. A seller writes \`readCatalog(scope)\`; the service answers \`list_products\` and wholesale \`get_products\` from one stored snapshot per scope, pages it, versions it, answers conditional reads with \`unchanged\`, and sends \`product.*\` and \`wholesale_feed.bulk_change\` events through the persistent notification runtime. Shaped like \`createReliableReportingService\`: adapter, replaceable snapshot store, \`install\`, \`start\`/\`stop\`.`
+  );
+  ln();
+  ln('```typescript');
+  ln(`import { createWholesaleCatalogService } from '@adcp/sdk/wholesale-catalog';`);
+  ln();
+  ln(`const catalog = createWholesaleCatalogService({`);
+  ln(`  adapter: {`);
+  ln(`    // scope: { cacheScope: 'public' } | { cacheScope: 'account', accountId }`);
+  ln(`    // For an account scope, return null when the account prices off the public catalogue.`);
+  ln(`    readCatalog: scope => productsFor(scope), // canonical products (buildProduct)`);
+  ln(`  },`);
+  ln(`  accountOverlays: true,`);
+  ln(`  snapshots: durableSnapshotStore, // memoryCatalogSnapshotStore() is for tests and development`);
+  ln(`  notifications: { runtime: notificationRuntime, tenantId: 'seller' },`);
+  ln(`});`);
+  ln(`const platform = catalog.install(mySalesPlatform); // listProducts + wholesale getProducts + capabilities`);
+  ln(`catalog.start({ reconcileEvery: '15m' });`);
+  ln(`await catalog.update({ cacheScope: 'public' }); // after a known change`);
+  ln(`await catalog.assertCurrent(scope, request.feed_version); // in buyProducts: CONFLICT when stale`);
+  ln('```');
+  ln();
+  ln(
+    `One feed version per scope (\`sha256:\` over the scope, the account and the products as served), so a token never matches another scope. Events are stored with the change in one compare-and-set and retried with stable ids until the runtime accepts them. See \`docs/guides/WHOLESALE-CATALOG.md\` and \`examples/wholesale-catalog-seller/seller.mjs\`.`
   );
   ln();
 

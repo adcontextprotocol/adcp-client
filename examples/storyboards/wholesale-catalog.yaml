@@ -1,0 +1,239 @@
+id: wholesale_catalog
+version: '1.0.0'
+title: 'Wholesale catalogue paging, versions and scope isolation'
+category: schema_validation
+summary: 'Validates a seller that serves list_products as a versioned wholesale catalogue: paging with one feed_version on every page, unchanged for a matching version, and no match across stale tokens or between accounts.'
+track: media_buy
+required_tools:
+  - get_adcp_capabilities
+  - list_products
+
+narrative: |
+  A seller that sells a wholesale catalogue versions each scope (the public
+  catalogue, or one account's overlay) and answers a conditional read with
+  `unchanged`. This storyboard reads the catalogue a page at a time, checks the
+  version on every page, probes with the current version, and then presents the
+  token of one scope to another. A token from the public catalogue, or from
+  another account, must never make a read `unchanged`.
+
+  The seller under test serves the catalogue `p1`..`p5` publicly, gives account
+  `acct-a` prices of its own and serves account `acct-b` the public catalogue
+  (the SDK reference seller in `examples/wholesale-catalog-seller/seller.mjs`
+  does).
+
+  Not covered, because the runner cannot express it:
+  - Change delivery. It needs a webhook receiver and a way to change the seller's
+    catalogue; `test/lib/wholesale-catalog.test.js` covers it against the SDK
+    service.
+  - A price change moving the version. The runner cannot change the catalogue.
+
+agent:
+  interaction_model: media_buy_seller
+  capabilities:
+    - wholesale_feed_versioning
+  examples:
+    - 'The SDK reference seller in examples/wholesale-catalog-seller'
+
+caller:
+  role: buyer_agent
+  example: 'Compliance test harness'
+
+prerequisites:
+  description: |
+    The agent advertises `wholesale_feed_versioning.supported: true` and serves
+    `list_products`, with the catalogue and accounts described in the narrative.
+
+phases:
+  - id: capabilities
+    title: 'The seller declares versioning'
+    steps:
+      - id: discover
+        title: 'Read capabilities'
+        task: get_adcp_capabilities
+        sample_request: {}
+        validations:
+          - check: field_value
+            path: 'wholesale_feed_versioning.supported'
+            value: true
+            description: 'The seller declares versioned feeds'
+          - check: field_value
+            path: 'wholesale_feed_versioning.cache_scope_account'
+            value: true
+            description: 'The seller declares account overlays'
+
+  - id: paging
+    title: 'Page the public catalogue'
+    steps:
+      - id: first_page
+        title: 'First page'
+        task: list_products
+        sample_request:
+          max_results: 2
+        context_outputs:
+          - name: public_feed_version
+            path: 'feed_version'
+          - name: public_cursor
+            path: 'next_cursor'
+        validations:
+          - check: field_value
+            path: 'outcome'
+            value: 'listed'
+            description: 'A first read lists products'
+          - check: field_present
+            path: 'products[1].product_id'
+            description: 'The page holds two products'
+          - check: field_absent
+            path: 'products[2].product_id'
+            description: 'The page stops at max_results'
+          - check: field_present
+            path: 'feed_version'
+            description: 'Every page carries the feed version'
+          - check: field_value
+            path: 'cache_scope'
+            value: 'public'
+            description: 'A request with no account reads the public catalogue'
+          - check: field_present
+            path: 'next_cursor'
+            description: 'More products follow'
+      - id: second_page
+        title: 'Second page at the same version'
+        task: list_products
+        sample_request:
+          max_results: 2
+          cursor: '$context.public_cursor'
+        context_outputs:
+          - name: public_last_cursor
+            path: 'next_cursor'
+        validations:
+          - check: field_equals_context
+            path: 'feed_version'
+            context_key: 'public_feed_version'
+            description: 'The version does not move between pages'
+          - check: field_present
+            path: 'products[1].product_id'
+            description: 'The second page holds two more products'
+          - check: field_present
+            path: 'next_cursor'
+            description: 'One product remains'
+      - id: last_page
+        title: 'Last page'
+        task: list_products
+        sample_request:
+          max_results: 2
+          cursor: '$context.public_last_cursor'
+        validations:
+          - check: field_equals_context
+            path: 'feed_version'
+            context_key: 'public_feed_version'
+            description: 'The version does not move between pages'
+          - check: field_present
+            path: 'products[0].product_id'
+            description: 'The last page holds the final product'
+          - check: field_absent
+            path: 'products[1].product_id'
+            description: 'Only one product remains'
+          - check: field_absent
+            path: 'next_cursor'
+            description: 'The last page has no next cursor'
+
+  - id: conditional
+    title: 'Conditional reads'
+    steps:
+      - id: unchanged_probe
+        title: 'A matching version is unchanged'
+        task: list_products
+        sample_request:
+          if_feed_version: '$context.public_feed_version'
+        validations:
+          - check: field_value
+            path: 'outcome'
+            value: 'unchanged'
+            description: 'A matching token produces unchanged'
+          - check: field_equals_context
+            path: 'feed_version'
+            context_key: 'public_feed_version'
+            description: 'The response echoes the current version'
+          - check: field_value
+            path: 'cache_scope'
+            value: 'public'
+            description: 'The response carries its scope'
+          - check: field_absent
+            path: 'products[0].product_id'
+            description: 'An unchanged response omits products'
+      - id: stale_token
+        title: 'A stale version lists the catalogue'
+        task: list_products
+        sample_request:
+          if_feed_version: 'sha256:not-the-current-version'
+        validations:
+          - check: field_value
+            path: 'outcome'
+            value: 'listed'
+            description: 'A token that does not match gets the products'
+          - check: field_present
+            path: 'products[0].product_id'
+            description: 'Products come back'
+
+  - id: isolation
+    title: 'A token never matches another scope'
+    steps:
+      - id: account_a
+        title: 'Account A reads its own catalogue'
+        task: list_products
+        sample_request:
+          account:
+            account_id: 'acct-a'
+        context_outputs:
+          - name: account_a_feed_version
+            path: 'feed_version'
+        validations:
+          - check: field_value
+            path: 'cache_scope'
+            value: 'account'
+            description: 'Account A has a catalogue of its own'
+      - id: account_a_probe
+        title: 'Account A probes with its own token'
+        task: list_products
+        sample_request:
+          account:
+            account_id: 'acct-a'
+          if_feed_version: '$context.account_a_feed_version'
+        validations:
+          - check: field_value
+            path: 'outcome'
+            value: 'unchanged'
+            description: 'Its own token matches'
+      - id: public_token_on_account_a
+        title: 'The public token does not match account A'
+        task: list_products
+        sample_request:
+          account:
+            account_id: 'acct-a'
+          if_feed_version: '$context.public_feed_version'
+        validations:
+          - check: field_value
+            path: 'outcome'
+            value: 'listed'
+            description: 'A token minted for the public scope cannot match an account scope'
+      - id: account_a_token_on_public
+        title: 'Account A token does not match the public catalogue'
+        task: list_products
+        sample_request:
+          if_feed_version: '$context.account_a_feed_version'
+        validations:
+          - check: field_value
+            path: 'outcome'
+            value: 'listed'
+            description: 'A token minted for an account cannot match the public scope'
+      - id: account_a_token_on_account_b
+        title: 'Account A token does not match account B'
+        task: list_products
+        sample_request:
+          account:
+            account_id: 'acct-b'
+          if_feed_version: '$context.account_a_feed_version'
+        validations:
+          - check: field_value
+            path: 'outcome'
+            value: 'listed'
+            description: 'Another account never matches'
