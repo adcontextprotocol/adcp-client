@@ -1816,6 +1816,9 @@ function projectPackageSelectors(
         }
         if (resolved) {
           next.format_ids = resolved;
+        } else if (formatOptionRefsOnWire && legacyRefs.length === 0) {
+          // Proven 3.1 package requests support format_kind and params directly.
+          return next;
         } else {
           throw new CreativeFormatProjectionError(
             operation,
