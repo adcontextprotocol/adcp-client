@@ -15,7 +15,7 @@ const compatibleVersions = [
   '3.0.25',
   '3.1.24',
   '3.1.30',
-  '3.1.32',
+  '3.1.33',
   '3.2.4',
   currentProtocolVersion,
   '3.2',
@@ -30,7 +30,7 @@ function fixture(overrides = {}) {
         { path: 'dist/lib/schemas-data/3.2/bundled.schemas.br' },
         { path: 'compliance/cache/3.0.25/index.json' },
         { path: 'compliance/cache/3.1.30/index.json' },
-        { path: 'compliance/cache/3.1.32/index.json' },
+        { path: 'compliance/cache/3.1.33/index.json' },
         { path: `compliance/cache/${currentProtocolVersion}/index.json` },
         { path: 'docs/releases/14.0.0-beta.0.md' },
       ],
@@ -92,18 +92,21 @@ test('requires the exact current and maintained stable compliance inventory', as
     /3\.1\.30 \(required compliance bundle is missing\)/
   );
 
-  // 3.1.32 is maintained alongside 3.1.30, not instead of it: each is
-  // independently required, so dropping either one must fail closed.
+  // The maintained 3.1 slot (now 3.1.33) sits alongside the retained 3.1.30
+  // corpus, not instead of it: each is independently required, so dropping
+  // either one must fail closed.
   const missingMaintained = fixture();
   missingMaintained.packageInfo.files = missingMaintained.packageInfo.files.filter(
-    file => !file.path.startsWith('compliance/cache/3.1.32/')
+    file => !file.path.startsWith('compliance/cache/3.1.33/')
   );
   assert.throws(
     () => assertPublishProtocolArtifacts(missingMaintained),
-    /3\.1\.32 \(required compliance bundle is missing\)/
+    /3\.1\.33 \(required compliance bundle is missing\)/
   );
 
-  for (const staleVersion of ['3.0.1', '3.1.24', '3.2.4']) {
+  // 3.1.32 and 3.2.8 were advanced in place by 3.1.33 and 3.2.10: shipping a
+  // superseded corpus beside its replacement must fail closed, too.
+  for (const staleVersion of ['3.0.1', '3.1.24', '3.1.32', '3.2.4', '3.2.8']) {
     const staleStable = fixture();
     staleStable.packageInfo.files.push({ path: `compliance/cache/${staleVersion}/index.json` });
     assert.throws(
@@ -157,7 +160,7 @@ test('allows a beta only when it is the exact current primary pin', async () => 
             { path: `dist/lib/schemas-data/${beta}/bundled.schemas.br` },
             { path: 'compliance/cache/3.0.25/index.json' },
             { path: 'compliance/cache/3.1.30/index.json' },
-            { path: 'compliance/cache/3.1.32/index.json' },
+            { path: 'compliance/cache/3.1.33/index.json' },
             { path: `compliance/cache/${beta}/index.json` },
           ],
         },
@@ -169,14 +172,22 @@ test('allows a beta only when it is the exact current primary pin', async () => 
 test('release scripts do not sync or export the retired 3.1 beta bundle', () => {
   const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf8'));
   assert.doesNotMatch(manifest.scripts['sync-schemas:all'], /beta/);
-  // The maintained 3.1.32 side sync is wired, and neither older corpus was displaced.
-  assert.match(manifest.scripts['sync-schemas:all'], /sync-schemas -- 3\.1\.32/);
+  // The maintained 3.1.33 side sync is wired, and the retained 3.1.30 and 3.0.25
+  // corpora were not displaced. 3.1.32 was advanced in place to 3.1.33.
+  assert.match(manifest.scripts['sync-schemas:all'], /sync-schemas -- 3\.1\.33/);
+  assert.doesNotMatch(manifest.scripts['sync-schemas:all'], /sync-schemas -- 3\.1\.32/);
   assert.match(manifest.scripts['sync-schemas:all'], /sync-schemas -- 3\.1\.30/);
   assert.match(manifest.scripts['sync-schemas:all'], /sync-schemas -- 3\.0\.25/);
-  for (const root of ['3.0.25', '3.1.30', '3.1.32', '3.2.8']) {
+  for (const root of ['3.0.25', '3.1.30', '3.1.33', '3.2.10']) {
     assert.ok(
       manifest.files.includes(`compliance/cache/${root}/**/*`),
       `compliance/cache/${root} must stay in package files`
+    );
+  }
+  for (const superseded of ['3.1.32', '3.2.8']) {
+    assert.ok(
+      !manifest.files.includes(`compliance/cache/${superseded}/**/*`),
+      `compliance/cache/${superseded} was replaced in place and must not be packaged`
     );
   }
   assert.doesNotMatch(manifest.scripts['generate-types:all'], /beta/);

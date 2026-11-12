@@ -558,8 +558,8 @@
     ".claude-plugin/**/*",
     "compliance/cache/3.0.25/**/*",
     "compliance/cache/3.1.30/**/*",
-    "compliance/cache/3.1.32/**/*",
-    "compliance/cache/3.2.8/**/*",
+    "compliance/cache/3.1.33/**/*",
+    "compliance/cache/3.2.10/**/*",
     "ADCP_VERSION",
     "docs/README.md",
     "docs/TYPE-SUMMARY.md",
@@ -642,7 +642,7 @@
     "test:protocol-comparison": "node test/utils/comprehensive-protocol-comparison.js",
     "test:status-report": "node test/utils/final-status-report.js",
     "sync-schemas": "tsx scripts/sync-schemas.ts",
-    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.1.32 && npm run sync-schemas -- 3.1.30 && npm run sync-schemas -- 3.0.25",
+    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.1.33 && npm run sync-schemas -- 3.1.30 && npm run sync-schemas -- 3.0.25",
     "sync:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --update",
     "check:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --check",
     "sync-registry-schemas": "tsx scripts/generate-registry-types.ts --sync",
@@ -821,7 +821,7 @@
     "launch-editor": "^2.14.2",
     "markdown-it": "^14.3.3"
   },
-  "adcp_version": "3.2.8",
+  "adcp_version": "3.2.10",
   "sideEffects": [
     "**/default-invariants.*"
   ]

@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-11-05
+> Generated at: 2026-11-12
 > Library: @adcp/sdk v16.7.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -1636,8 +1636,8 @@ Flow: `get_products`
 
 ### Reporting
 
-**Seller narrows metrics and reports delivery by canonical format** — Verifies requested-metric narrowing, time-threshold video views, negotiated format breakdowns, truncation disclosure, and applied-sort echoes.
-Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
+**Seller reports negotiated format breakdowns on a catalog product** — Exercises independent format-breakdown support, required arrays and companions,
+Flow: `create_media_buy → comply_test_controller → get_media_buy_delivery`
 
 **Billing finality delivery and usage reporting** — Verifies that 3.1 billing-grade delivery rows distinguish provisional from final numbers and that report_usage accepts final usage records with finality metadata.
 Flow: `sync_accounts → create_media_buy → comply_test_controller → get_media_buy_delivery → comply_test_controller → get_media_buy_delivery → report_usage`
@@ -1842,11 +1842,14 @@ Flow: `get_adcp_capabilities → list_transformers → build_creative`
 
 ### Error Handling
 
+**Marketplace signal activation errors** — Checks activation rejection codes and context echo for signal marketplaces.
+Flow: `activate_signal`
+
 **Billing contract and gate dispatch — sync_accounts capability vs per-buyer-agent gate** — Validates that account.supported_billing is declared and honored by sync_accounts, including out-of-set BILLING_NOT_SUPPORTED rejection, recovery-value consistency, and the distinct per-buyer-agent BILLING_NOT_PERMITTED_FOR_AGENT gate.
 Flow: `get_adcp_capabilities → sync_accounts`
 
-**Error handling — signals protocol** — Validates that signals agents return properly structured AdCP errors with correct codes, recovery hints, and transport bindings.
-Flow: `get_adcp_capabilities → activate_signal → get_signals → activate_signal`
+**Error handling — signals protocol** — Checks discovery error codes, context echo, and protocol versions for owned and marketplace signals agents.
+Flow: `get_adcp_capabilities → get_signals`
 
 **Error handling and compliance** — Validates that agents return properly structured AdCP errors with correct codes, recovery hints, and transport bindings.
 Flow: `get_adcp_capabilities → create_media_buy → get_products → create_media_buy → get_products → create_media_buy`
