@@ -19,14 +19,25 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
     assert.strictEqual(v30.schema.properties.paused, undefined);
 
     assert.strictEqual(v31.bundleKey, '3.1');
-    assert.strictEqual(v31.resolvedVersion, '3.1.32');
+    assert.strictEqual(v31.resolvedVersion, '3.1.33');
     assert.strictEqual(v31.schema.properties.adcp_major_version, undefined);
     assert.ok(v31.schema.properties.paused);
 
-    for (const adcpVersion of ['3.2.1', '3.2.2', '3.2.3', '3.2.4', '3.2.5', '3.2.6', '3.2.7', '3.2.8']) {
+    for (const adcpVersion of [
+      '3.2.1',
+      '3.2.2',
+      '3.2.3',
+      '3.2.4',
+      '3.2.5',
+      '3.2.6',
+      '3.2.7',
+      '3.2.8',
+      '3.2.9',
+      '3.2.10',
+    ]) {
       const v32 = getToolInputSchema('create_media_buy', { adcpVersion });
       assert.strictEqual(v32.bundleKey, '3.2');
-      assert.strictEqual(v32.resolvedVersion, '3.2.8');
+      assert.strictEqual(v32.resolvedVersion, '3.2.10');
       assert.strictEqual(v32.schema.deprecated, true);
       assert.deepStrictEqual(v32.schema['x-superseded-by'], ['buy_products', 'accept_proposal']);
     }
@@ -42,7 +53,7 @@ describe('version-aware tool JSON Schemas (#2678)', () => {
 
     const submitted = getToolResponseSchema('get_products', { adcpVersion: '3.1', variant: 'submitted' });
     assert.strictEqual(submitted.direction, 'submitted');
-    assert.strictEqual(submitted.resolvedVersion, '3.1.32');
+    assert.strictEqual(submitted.resolvedVersion, '3.1.33');
   });
 
   it('fails clearly for unavailable bundles, tools, and response variants', () => {

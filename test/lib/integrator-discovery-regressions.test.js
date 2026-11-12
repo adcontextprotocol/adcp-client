@@ -590,7 +590,7 @@ test('published frequency cap flow seeds its known natural key before capturing 
   const source = loadStoryboardFile(
     path.join(
       __dirname,
-      '../../compliance/cache/3.2.8/protocols/media-buy/scenarios/media_buy_frequency_cap_readback.yaml'
+      '../../compliance/cache/3.2.10/protocols/media-buy/scenarios/media_buy_frequency_cap_readback.yaml'
     )
   );
   const calls = [];

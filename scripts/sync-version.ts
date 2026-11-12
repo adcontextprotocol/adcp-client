@@ -163,9 +163,9 @@ const MAX_PATCH_ENUMERATION = 500;
  * enumeration entirely.
  */
 const LAST_3_0_GA_PATCH = 25;
-const LAST_3_1_GA_PATCH = 32;
+const LAST_3_1_GA_PATCH = 33;
 /** Update alongside the stable 3.2 pin before building a 3.3 prerelease. */
-const LAST_3_2_GA_PATCH = 8;
+const LAST_3_2_GA_PATCH = 10;
 /** First published AdCP 3.2 GA patch; 3.2.0 was withdrawn before GA. */
 const FIRST_3_2_GA_PATCH = 1;
 

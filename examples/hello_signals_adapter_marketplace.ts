@@ -191,7 +191,7 @@ const upstream = {
   ): Promise<UpstreamActivation> {
     const r = await http.post<UpstreamActivation>('/v2/activations', body, tenantHeader(operatorId));
     if (r.body === null) {
-      throw new AdcpError('SIGNAL_NOT_FOUND', { message: 'cohort or destination not found' });
+      throw new AdcpError('REFERENCE_NOT_FOUND', { message: 'cohort or destination not found' });
     }
     return r.body;
   },
@@ -641,7 +641,9 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
         const cohortId = req.signal_agent_segment_id;
         const cohort = await upstream.getCohort(operatorId, cohortId);
         if (!cohort) {
-          throw new AdcpError('SIGNAL_NOT_FOUND', {
+          // An agent-internal segment ID has no dedicated code; SIGNAL_NOT_FOUND is
+          // reserved for unresolvable data-provider signal_id references.
+          throw new AdcpError('REFERENCE_NOT_FOUND', {
             message: `Unknown signal: ${cohortId}`,
             field: 'signal_agent_segment_id',
           });

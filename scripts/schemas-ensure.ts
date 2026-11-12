@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Idempotent guard for the schema cache. Tests load schemas from
- * `schemas/cache/{current,3.1.32,3.1.30,3.0.25,v2.5}/` (gitignored, populated by
+ * `schemas/cache/{current,3.1.33,3.1.30,3.0.25,v2.5}/` (gitignored, populated by
  * `npm run sync-schemas:all`). Fresh clones, branch switches that wipe
  * the cache, and `git clean -fdx` all leave a dev environment that
  * silently fails ~9 test suites with "AdCP schema data for version 'v2.5'
@@ -28,8 +28,11 @@ const COMPLIANCE_CACHE_ROOT = path.join(REPO_ROOT, 'compliance/cache');
 const STABLE_3_0_SCHEMA_VERSION = '3.0.25';
 const STABLE_3_1_SCHEMA_VERSION = '3.1.30';
 // Maintained alongside — not replacing — 3.1.30. The older corpus is a promised
-// historical pin; dropping it would lose exact compliance bytes adopters pin to.
-const MAINTAINED_3_1_SCHEMA_VERSION = '3.1.32';
+// historical pin; dropping it would lose exact compliance bytes adopters pin to
+// (3.1.30 still runs storyboards that later 3.1 corpora gate behind an
+// unimplemented runner requirement). This maintained slot itself advances in
+// place, like the primary pin: 3.1.33 replaces 3.1.32.
+const MAINTAINED_3_1_SCHEMA_VERSION = '3.1.33';
 
 function currentAdcpVersion(): string {
   return readFileSync(path.join(REPO_ROOT, 'ADCP_VERSION'), 'utf8').trim();

@@ -14,7 +14,7 @@
  * A natural-key AccountReference is a composite identity: `core/account-ref.json`'s natural-key
  * arm is `required: [brand, operator]`, `additionalProperties: false`, in every supported release.
  * `list_accounts.account` is a filter over the account's own parties ("exact account filter" in
- * 3.1.30 / 3.2.8). Replacing half of a composite identity re-addresses the request,
+ * 3.1.30 / 3.2.10). Replacing half of a composite identity re-addresses the request,
  * it does not re-scope it. This maintained repair covers listing and account status
  * controls only; other account-subject operations remain outside its bounded scope.
  */
@@ -290,11 +290,11 @@ describe('applyBrandInvariant: ordinary run-brand behavior is untouched', () => 
 //
 // SELECTED_NATIVE_VERSION is the release the packaged bundle actually SERVES
 // for that request. Schema bundles collapse by minor and ship the highest
-// patch, so a 3.1 request resolves to 3.1.32 once that release is adopted.
+// patch, so a 3.1 request resolves to 3.1.33 once that release is adopted.
 // Keeping the lookup on the requested release while asserting the served one
 // is what proves the collapse instead of assuming it.
 const ADCP_WIRE_VERSION = '3.1.30';
-const SELECTED_NATIVE_VERSION = '3.1.32';
+const SELECTED_NATIVE_VERSION = '3.1.33';
 
 /** The release's own controller schemas, from the shipped bundle. Not a local copy. */
 function controllerValidators() {

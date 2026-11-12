@@ -472,7 +472,7 @@ The `deterministic_testing` universal storyboard — plus rejection-branch and d
 
 **Use `createComplyController`** — adapter-based scaffold that handles dispatch, param validation, typed error envelopes, and re-seed idempotency for you:
 
-On AdCP 3.1+ the runner validates every controller response against the selected release's schema, and the protocol envelope requires `status`; 3.0.25 composes no such envelope and has no `status` requirement. The request schema is enforced too — 3.1.30 and 3.2.8 require the sandbox `account` assertion, 3.0.25 declares no `account` at all.
+On AdCP 3.1+ the runner validates every controller response against the selected release's schema, and the protocol envelope requires `status`; 3.0.25 composes no such envelope and has no `status` requirement. The request schema is enforced too — 3.1.30, 3.1.33 and 3.2.10 require the sandbox `account` assertion, 3.0.25 declares no `account` at all.
 
 ```typescript
 import { createComplyController, TestControllerError } from '@adcp/sdk/testing';

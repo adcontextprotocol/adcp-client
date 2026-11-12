@@ -2,14 +2,14 @@
  * Native controller-schema packaging on maintained SDK16.
  *
  * Adapted from the reviewed a3c4 main regression, using only actual retained
- * 3.0.25 / 3.1.32 / primary 3.2.8 schemas. The older controller declares neither
+ * 3.0.25 / 3.1.33 / primary 3.2.10 schemas. The older controller declares neither
  * account nor brand and composes no protocol envelope; later releases declare
  * the sandbox account carrier and require task status on responses. Keep these
  * contracts distinct rather than imposing newer fields on the frozen release.
  *
  * `SELECTED` names the release each shipped bundle actually resolves to, not
  * every corpus the package carries. Schema bundles collapse by minor and ship
- * the highest patch, so the `3.1` bundle selects 3.1.32 once that release is
+ * the highest patch, so the `3.1` bundle selects 3.1.33 once that release is
  * adopted.
  *
  * `CACHE_ROOT` below is `schemas/cache` — JSON schema inputs. It is NOT the
@@ -44,10 +44,10 @@ const ENTRY_POINTS = ['comply-test-controller-request.json', 'comply-test-contro
 const SELECTED = [
   { key: '3.0', version: '3.0.25', declaresAccount: false, protocolEnvelope: false, closureSize: 2 },
   // closureSize here is the expectation to re-confirm against the real published
-  // 3.1.32 corpus at adoption time; a wrong value fails this suite loudly rather
+  // 3.1.33 corpus at adoption time; a wrong value fails this suite loudly rather
   // than passing silently, which is the intended behaviour.
-  { key: '3.1', version: '3.1.32', declaresAccount: true, protocolEnvelope: true, closureSize: 2 },
-  { key: '3.2', version: '3.2.8', declaresAccount: true, protocolEnvelope: true, closureSize: 4 },
+  { key: '3.1', version: '3.1.33', declaresAccount: true, protocolEnvelope: true, closureSize: 2 },
+  { key: '3.2', version: '3.2.10', declaresAccount: true, protocolEnvelope: true, closureSize: 4 },
 ];
 const readJson = file => JSON.parse(readFileSync(file, 'utf8'));
 const sha256 = file => createHash('sha256').update(readFileSync(file)).digest('hex');
@@ -186,11 +186,11 @@ describe('SDK16 native controller schemas', () => {
     });
   }
 
-  test('primary 3.2.8 retains both transitive completion dependencies', () => {
+  test('primary 3.2.10 retains both transitive completion dependencies', () => {
     assert.deepEqual([...expectedClosure('3.0.25')].sort(), [...ENTRY_POINTS].sort());
-    assert.deepEqual([...expectedClosure('3.1.32')].sort(), [...ENTRY_POINTS].sort());
+    assert.deepEqual([...expectedClosure('3.1.33')].sort(), [...ENTRY_POINTS].sort());
     assert.deepEqual(
-      [...expectedClosure('3.2.8')].sort(),
+      [...expectedClosure('3.2.10')].sort(),
       [...ENTRY_POINTS, 'task-completion-data.json', 'get-creative-features-completion.json'].sort()
     );
   });
