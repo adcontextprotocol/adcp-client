@@ -23,6 +23,7 @@ import { parseCapabilitiesResponse, looksLikeV3Capabilities } from '../utils/cap
 import { classifyProbeUrl } from '../utils/probe-policy';
 import { SsrfRefusedError } from '../net/ssrf-fetch';
 import { ADCP_VERSION, toReleasePrecisionVersion } from '../version';
+import { capabilityDiscoveryEnvelope } from '../adapters/version/negotiate';
 import type { VersionEnvelopeMode } from '../protocols';
 import { normalizeTransportOptions } from '../protocols';
 import type { AgentRequestSigningConfig } from '../types/adcp';
@@ -97,7 +98,8 @@ interface TestClientVersionOptions {
   protocol: 'mcp' | 'a2a';
   adcpVersion: string;
   wireAdcpVersion?: string;
-  versionEnvelope: VersionEnvelopeMode;
+  /** Absent for the SDK default, which discovers a preview pin unpinned. */
+  versionEnvelope?: VersionEnvelopeMode;
   strictResponseSchemaValidation: boolean;
   authMode?: string;
   requestScopeMode?: string;
@@ -311,7 +313,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
       protocol,
       adcpVersion: multiClient.getAdcpVersion(),
       ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
-      versionEnvelope: options.versionEnvelope ?? 'auto',
+      ...(options.versionEnvelope !== undefined && { versionEnvelope: options.versionEnvelope }),
       strictResponseSchemaValidation: options.strictResponseSchemaValidation !== false,
       ...(authMode !== undefined && { authMode }),
       ...(requestScopeMode !== undefined && { requestScopeMode }),
@@ -392,13 +394,15 @@ function testClientMatchesVersionOptions(client: TestClient, agentUrl: string, o
   }
   const expectedAdcpVersion = effectiveOptions.adcpVersion ?? ADCP_VERSION;
   const expectedWireAdcpVersion = effectiveOptions.wireAdcpVersion;
-  const expectedVersionEnvelope = effectiveOptions.versionEnvelope ?? 'auto';
   return (
     meta.agentUrl === agentUrl &&
     meta.protocol === (effectiveOptions.protocol ?? 'mcp') &&
     meta.adcpVersion === expectedAdcpVersion &&
     meta.wireAdcpVersion === expectedWireAdcpVersion &&
-    meta.versionEnvelope === expectedVersionEnvelope &&
+    // Unset and `auto` put the same envelope on ordinary calls and authored
+    // storyboard steps; they differ only in the reused client's own preview
+    // discovery probe, which follows that client's config.
+    (meta.versionEnvelope ?? 'auto') === (effectiveOptions.versionEnvelope ?? 'auto') &&
     meta.strictResponseSchemaValidation === (effectiveOptions.strictResponseSchemaValidation !== false) &&
     meta.authMode === expectedAuthMode &&
     meta.requestScopeMode === expectedRequestScopeMode &&
@@ -764,7 +768,7 @@ export function testClientWireAdcpVersion(client: unknown, fallbackVersion?: str
   const meta = (client as { [TEST_CLIENT_VERSION_OPTIONS]?: TestClientVersionOptions } | undefined)?.[
     TEST_CLIENT_VERSION_OPTIONS
   ];
-  if (meta && meta.versionEnvelope !== 'auto') return undefined;
+  if (meta && (meta.versionEnvelope ?? 'auto') !== 'auto') return undefined;
   const getAdcpVersion = (client as { getAdcpVersion?: () => string } | undefined)?.getAdcpVersion;
   const pinned =
     meta?.wireAdcpVersion ??
@@ -772,6 +776,39 @@ export function testClientWireAdcpVersion(client: unknown, fallbackVersion?: str
     (typeof getAdcpVersion === 'function' ? getAdcpVersion.call(client) : undefined) ??
     fallbackVersion;
   return pinned === undefined ? undefined : toReleasePrecisionVersion(pinned);
+}
+
+/**
+ * Envelope for a storyboard's own `get_adcp_capabilities` step: `auto` when the
+ * test client kept the SDK default, otherwise the client's envelope applies.
+ * Authored steps send the configured pin on purpose (the version-negotiation
+ * storyboard grades the seller's answer to it); only the SDK's own profile
+ * discovery goes out unpinned for a preview.
+ *
+ * @internal
+ */
+export function storyboardCapabilityStepEnvelope(client: unknown): VersionEnvelopeMode | undefined {
+  const meta = (client as { [TEST_CLIENT_VERSION_OPTIONS]?: TestClientVersionOptions } | undefined)?.[
+    TEST_CLIENT_VERSION_OPTIONS
+  ];
+  return meta && meta.versionEnvelope === undefined ? 'auto' : undefined;
+}
+
+/**
+ * The `adcp_version` a test client's `get_adcp_capabilities` request carries:
+ * {@link testClientWireAdcpVersion}, except that a preview pin is discovered
+ * unpinned unless the test chose an envelope (see `capabilityDiscoveryEnvelope`).
+ *
+ * @internal Exported for unit tests.
+ */
+export function testClientDiscoveryWireAdcpVersion(client: unknown, fallbackVersion?: string): string | undefined {
+  const meta = (client as { [TEST_CLIENT_VERSION_OPTIONS]?: TestClientVersionOptions } | undefined)?.[
+    TEST_CLIENT_VERSION_OPTIONS
+  ];
+  if (meta && capabilityDiscoveryEnvelope(meta.versionEnvelope, meta.wireAdcpVersion ?? meta.adcpVersion) === 'none') {
+    return undefined;
+  }
+  return testClientWireAdcpVersion(client, fallbackVersion);
 }
 
 /** @internal Exported for unit tests. */
@@ -945,7 +982,10 @@ export async function discoverAgentProfile(
         };
       const adcpError = caps.adcpError ?? caps.adcp_error;
       if (adcpError) step.adcp_error = redactDiscoveryEvidence(adcpError) as NonNullable<TestStepResult['adcp_error']>;
-      const versionUnsupported = describeVersionUnsupported(caps, testClientWireAdcpVersion(client, schemaAdcpVersion));
+      const versionUnsupported = describeVersionUnsupported(
+        caps,
+        testClientDiscoveryWireAdcpVersion(client, schemaAdcpVersion)
+      );
       if (versionUnsupported) {
         // Some transports return AdCP error envelopes as successful tool data.
         // Detect the protocol error before validating/parsing it as a

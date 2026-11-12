@@ -152,22 +152,24 @@ function writeComplyControllerAsyncRefSchemas(schemaRoot, idVersion) {
 }
 
 describe('storyboard runner AdCP version negotiation', () => {
-  test('derives legacy-major-only version envelope for 3.0 storyboards', () => {
+  // AdCP 3 storyboards keep the SDK default envelope (`auto` on ordinary calls)
+  // instead of setting it explicitly, which would also pin capability discovery.
+  test('keeps the default version envelope for 3.0 storyboards', () => {
     const { applyStoryboardVersionOptions } = require('../../dist/lib/testing/storyboard/index.js');
 
     const options = applyStoryboardVersionOptions({ adcp_version: '3.0.12' }, {});
 
     assert.strictEqual(options.adcpVersion, '3.0.12');
-    assert.strictEqual(options.versionEnvelope, 'auto');
+    assert.strictEqual(options.versionEnvelope, undefined);
   });
 
-  test('derives explicit opt-in envelope for 3.1 storyboards', () => {
+  test('keeps the default version envelope for current storyboards', () => {
     const { applyStoryboardVersionOptions } = require('../../dist/lib/testing/storyboard/index.js');
 
     const options = applyStoryboardVersionOptions({ adcp_version: CURRENT_PRERELEASE_VERSION }, {});
 
     assert.strictEqual(options.adcpVersion, CURRENT_PRERELEASE_VERSION);
-    assert.strictEqual(options.versionEnvelope, 'auto');
+    assert.strictEqual(options.versionEnvelope, undefined);
   });
 
   test('explicit version override does not inherit a mismatched storyboard cache root', () => {
@@ -272,7 +274,7 @@ describe('storyboard runner AdCP version negotiation', () => {
     const options = applyAdcpVersionRunOptions(undefined, { adcpVersion: 'v3' });
 
     assert.strictEqual(options.adcpVersion, 'v3');
-    assert.strictEqual(options.versionEnvelope, 'auto');
+    assert.strictEqual(options.versionEnvelope, undefined);
   });
 
   test('shared test client is reused only when version options match', () => {
@@ -939,7 +941,7 @@ describe('storyboard runner AdCP version negotiation', () => {
 
       const options = applyAdcpVersionRunOptions(index.adcp_version, { schemaRoot });
       assert.strictEqual(options.adcpVersion, CURRENT_PRERELEASE_VERSION);
-      assert.strictEqual(options.versionEnvelope, 'auto');
+      assert.strictEqual(options.versionEnvelope, undefined);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

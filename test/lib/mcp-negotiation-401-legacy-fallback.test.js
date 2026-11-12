@@ -37,11 +37,15 @@
  *     These pin that it cannot launder a genuinely bad credential into a
  *     success. They pass either way by design; they exist to fail if someone
  *     later widens the retry into swallowing auth errors.
- *   - `uncredentialed client still gets the auth challenge` — the boundary the
- *     fix keys on. A probe 401 with no credential is a real challenge and must
- *     reach the caller; only a static credential refused on the probe alone
- *     earns the legacy retry. An OAuth provider is excluded for the same
- *     reason: there a 401 is the provider's cue to refresh.
+ *   - `uncredentialed client … discovered anonymously` — AdCP capability
+ *     discovery is meant to work without a credential, so a seller that 401s
+ *     only `server/discover` must still be readable by a client holding none.
+ *     A probe refusal says nothing about the caller; the legacy retry runs
+ *     with or without a static credential.
+ *   - `uncredentialed client still gets the auth challenge` — when the legacy
+ *     `initialize` is refused too, that 401 and its challenge reach the caller,
+ *     after exactly one legacy attempt. An OAuth provider never takes the
+ *     retry: there a 401 is the provider's cue to refresh.
  *   - `attempted at most once` — `skipProbe` is what stops a probe loop. This
  *     asserts the bound on the wire rather than trusting the flag.
  */
@@ -117,12 +121,15 @@ function credentialRejectionBody() {
  *   `rejectDiscoverWith` while every other method fails with this status. Lets a
  *   test drive the legacy retry to a NON-auth failure, which `rejectEverythingWith`
  *   cannot express.
+ * @param options.anonymous when true, requests without a credential are served
+ *   like credentialed ones: AdCP capability discovery is meant to be anonymous.
  */
 async function startV3Seller({
   era = 'modern',
   rejectDiscoverWith = 0,
   rejectEverythingWith = 0,
   failNonDiscoverWith = 0,
+  anonymous = false,
 } = {}) {
   const requests = [];
   const tools = {
@@ -206,12 +213,15 @@ async function startV3Seller({
     // does mean every request.
     if (rejectEverythingWith !== 0) {
       res
-        .writeHead(rejectEverythingWith, { 'Content-Type': 'application/json' })
+        .writeHead(rejectEverythingWith, {
+          'Content-Type': 'application/json',
+          ...(rejectEverythingWith === 401 && { 'WWW-Authenticate': 'Basic realm="seller"' }),
+        })
         .end(JSON.stringify({ error: 'invalid_token' }));
       return;
     }
 
-    if (!entry.authorization && !entry.adcpAuth) {
+    if (!entry.authorization && !entry.adcpAuth && !anonymous) {
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(credentialRejectionBody());
       return;
     }
@@ -221,7 +231,10 @@ async function startV3Seller({
     // `initialize`, and `tools/list` succeeds with the very same credential.
     if (rejectDiscoverWith !== 0 && entry.method === 'server/discover') {
       res
-        .writeHead(rejectDiscoverWith, { 'Content-Type': 'application/json' })
+        .writeHead(rejectDiscoverWith, {
+          'Content-Type': 'application/json',
+          'WWW-Authenticate': 'Bearer error="invalid_token"',
+        })
         .end(JSON.stringify({ error: 'invalid_token' }));
       return;
     }
@@ -442,27 +455,117 @@ for (const status of [401, 403]) {
   });
 }
 
-// The boundary the fix keys on. With no credential, a probe 401 IS the server's
-// challenge: the caller needs it surfaced (WWW-Authenticate / RFC 9728) rather
-// than swapped for a legacy retry that cannot succeed either. Only a static
-// credential the server rejected on the probe alone earns the fallback.
-test('v3 MCP seller: an uncredentialed client still gets the auth challenge, not a legacy retry', async t => {
+function uncredentialedAgent(url) {
+  return new ADCPMultiAgentClient([{ id: AGENT_ID, name: 'V3 Seller', agent_uri: url, protocol: 'mcp' }], {
+    workingTimeout: 5000,
+    adcpVersion: '3.1',
+    requireV3ForMutations: false,
+    allowV2: true,
+  }).agent(AGENT_ID);
+}
+
+function countByPath(requests) {
+  const byPath = new Map();
+  for (const entry of agentEndpointRequests(requests)) {
+    const counts = byPath.get(entry.path) ?? { discover: 0, initialize: 0 };
+    if (entry.method === 'server/discover') counts.discover++;
+    if (entry.method === 'initialize') counts.initialize++;
+    byPath.set(entry.path, counts);
+  }
+  return byPath;
+}
+
+// AdCP capability discovery is anonymous. A seller that 401s only the modern
+// `server/discover` probe has refused the method, not the caller, so a client
+// holding no credential falls back to legacy `initialize` like one holding a
+// static credential does.
+test('v3 MCP seller: an uncredentialed client that 401s only server/discover is discovered anonymously', async t => {
+  withCleanup(t);
+  const seller = await startV3Seller({ era: 'legacy', anonymous: true, rejectDiscoverWith: 401 });
+  t.after(() => seller.stop());
+
+  const agent = uncredentialedAgent(seller.url);
+  const result = await agent.getAdcpCapabilities({}).catch(error => ({ error }));
+
+  assert.equal(
+    result.success,
+    true,
+    `anonymous discovery should succeed over legacy initialize: ${String(result.error?.name ?? '')} ${String(result.error?.message ?? result.error ?? '')}`
+  );
+  assert.deepEqual(result.data.supported_protocols, ['media_buy']);
+
+  const capabilities = await agent.getCapabilities();
+  assert.equal(capabilities._synthetic, false);
+
+  const hops = agentEndpointRequests(seller.requests);
+  assert.ok(
+    hops.some(entry => entry.method === 'server/discover'),
+    'the modern probe should have been tried first'
+  );
+  assert.ok(
+    hops.some(entry => entry.method === 'initialize'),
+    'the legacy initialize should have followed the refused probe'
+  );
+  assert.equal(
+    hops.some(entry => entry.authorization || entry.adcpAuth),
+    false,
+    'an uncredentialed client must not send a credential on the legacy retry'
+  );
+  assert.equal(
+    seller.requests.some(entry => entry.path.startsWith('/.well-known/oauth')),
+    false,
+    'a probe-only refusal must not start an authorization walk'
+  );
+});
+
+// With no credential and a seller that refuses everything, the legacy retry is
+// refused too, and that 401 IS the server's challenge: it reaches the caller
+// (WWW-Authenticate / RFC 9728) once, after exactly one legacy attempt per URL.
+test('v3 MCP seller: an uncredentialed client still gets the auth challenge after one legacy attempt', async t => {
   withCleanup(t);
   const seller = await startV3Seller({ era: 'legacy', rejectEverythingWith: 401 });
   t.after(() => seller.stop());
 
-  const noCredential = new ADCPMultiAgentClient(
-    [{ id: AGENT_ID, name: 'V3 Seller', agent_uri: seller.url, protocol: 'mcp' }],
-    { workingTimeout: 5000, adcpVersion: '3.1', requireV3ForMutations: false, allowV2: true }
-  ).agent(AGENT_ID);
-
-  const result = await readDelivery(noCredential);
+  const result = await readDelivery(uncredentialedAgent(seller.url));
 
   assert.notEqual(result.success, true, 'an uncredentialed read must not succeed');
   assert.equal(
     result.error?.name,
     'AuthenticationRequiredError',
     `expected the auth challenge to reach the caller, got ${String(result.error?.name)}: ${String(result.error?.message ?? '')}`
+  );
+  assert.equal(result.error.challenge?.scheme?.toLowerCase(), 'basic', 'the seller challenge scheme should survive');
+  for (const [path, counts] of countByPath(seller.requests)) {
+    assert.ok(counts.discover <= 1, `${path}: expected one server/discover probe, saw ${counts.discover}`);
+    assert.ok(counts.initialize <= 1, `${path}: expected at most one legacy initialize, saw ${counts.initialize}`);
+  }
+  assert.ok(
+    [...countByPath(seller.requests).values()].some(counts => counts.initialize === 1),
+    'the uncredentialed client should have tried legacy initialize before reporting the challenge'
+  );
+});
+
+// The legacy attempt can fail for a reason that says nothing about auth (a 5xx
+// here). Without a credential the probe's 401 was the seller's challenge, and it
+// must still reach the caller rather than an "endpoint not found" diagnosis.
+test('v3 MCP seller: an uncredentialed probe challenge survives a non-auth legacy failure', async t => {
+  withCleanup(t);
+  const seller = await startV3Seller({
+    era: 'legacy',
+    anonymous: true,
+    rejectDiscoverWith: 401,
+    failNonDiscoverWith: 503,
+  });
+  t.after(() => seller.stop());
+
+  const result = await uncredentialedAgent(seller.url)
+    .getAdcpCapabilities({})
+    .catch(error => ({ error }));
+
+  assert.notEqual(result.success, true, 'a seller failing every non-discover method must not read successfully');
+  assert.ok(
+    ['AuthenticationRequiredError', 'NeedsAuthorizationError'].includes(result.error?.name),
+    `expected the probe challenge to reach the caller, got ${String(result.error?.name)}: ${String(result.error?.message ?? '')}`
   );
 });
 

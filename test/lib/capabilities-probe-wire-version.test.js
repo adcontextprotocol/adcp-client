@@ -148,21 +148,38 @@ describe('capabilities probe over MCP sends the wire pin', () => {
 
   const e2eCases = [
     { label: 'bundle 3.2.1', options: { adcpVersion: '3.2.1' }, wire: '3.2' },
-    { label: 'rc.7 wire bundle', options: { adcpVersion: '3.2.1', wireAdcpVersion: '3.2.0-rc.7' }, wire: '3.2-rc.7' },
     { label: 'bundle 3.1.24', options: { adcpVersion: '3.1.24' }, wire: '3.1' },
+    {
+      label: 'rc.7 bundle with an explicit envelope',
+      options: { adcpVersion: '3.2.1', wireAdcpVersion: '3.2.0-rc.7', versionEnvelope: 'auto' },
+      wire: '3.2-rc.7',
+      pinnedOnly: true,
+    },
   ];
 
-  for (const { label, options, wire } of e2eCases) {
+  for (const { label, options, wire, pinnedOnly } of e2eCases) {
     test(`${label}: sends and reports "${wire}"`, async () => {
       seen.length = 0;
       const client = createTestClient(baseUrl, 'mcp', options);
       const { profile } = await discoverAgentProfile(client, undefined, options.adcpVersion);
-      assert.ok(seen.length >= 1, 'probe should call get_adcp_capabilities');
-      for (const sent of seen) assert.strictEqual(sent, wire);
+      // A refused stable pin is retried once unpinned; an explicit envelope is not.
+      assert.deepStrictEqual(seen, pinnedOnly ? [wire] : [wire, undefined]);
+      // Both refused: the report names the pin, which is what the seller refused.
       assert.strictEqual(
         profile.capabilities_probe_error,
         `VERSION_UNSUPPORTED: requested "${wire}"; seller supports "3.0"`
       );
     });
   }
+
+  test('a preview wire bundle discovers unpinned and names no requested release', async () => {
+    seen.length = 0;
+    const client = createTestClient(baseUrl, 'mcp', { adcpVersion: '3.2.1', wireAdcpVersion: '3.2.0-rc.7' });
+    const { profile } = await discoverAgentProfile(client, undefined, '3.2.1');
+    assert.deepStrictEqual(seen, [undefined]);
+    assert.strictEqual(
+      profile.capabilities_probe_error,
+      'VERSION_UNSUPPORTED: requested version is unsupported; seller supports "3.0"'
+    );
+  });
 });

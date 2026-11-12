@@ -8,6 +8,7 @@
  * release and responses converted back up (see `translate.ts`).
  */
 
+import type { VersionEnvelopeMode } from '../../protocols';
 import type { AdcpCapabilities } from '../../utils/capabilities';
 import { hasSchemaBundle } from '../../validation/schema-loader';
 
@@ -158,6 +159,25 @@ export function negotiateAdcpRelease(
     return { version: '3.0', source: 'legacy_v3', downgraded: true };
   }
   return client.prerelease ? { reason: 'no_common_version', advertised: [] } : undefined;
+}
+
+/**
+ * Version envelope for a `get_adcp_capabilities` call, or `undefined` for the
+ * default envelope.
+ *
+ * A preview pin is sent only to a seller that advertises that exact release,
+ * and discovery is how the buyer learns what a seller advertises. So when the
+ * release the envelope would carry (`wirePin`: the wire override, else the
+ * client release) is a preview, discovery goes out unpinned. An `explicit`
+ * envelope, from the caller or the client config, always wins: conformance
+ * harnesses pin discovery on purpose.
+ */
+export function capabilityDiscoveryEnvelope(
+  explicit: VersionEnvelopeMode | undefined,
+  wirePin: string | undefined
+): VersionEnvelopeMode | undefined {
+  if (explicit !== undefined) return explicit;
+  return wirePin !== undefined && parseAdcpRelease(wirePin)?.prerelease !== undefined ? 'none' : undefined;
 }
 
 export function isNegotiationFailure(
