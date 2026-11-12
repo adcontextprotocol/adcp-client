@@ -29,7 +29,7 @@ import {
   storyboardCapabilityPredicates,
 } from '../storyboard/runner';
 import { applyNativeA2AComplianceTransportOptions } from '../storyboard/native-a2a-compliance';
-import { validateTestKit } from '../storyboard/test-kit';
+import { validateTestKit, validateTestKitAuthOverlay } from '../storyboard/test-kit';
 import { isProtectedContextKey } from '../storyboard/protected-context';
 import { assertNoPreparationAuthorizer } from '../storyboard/prepared-fixtures';
 import { checkAccountDiscoveryGate, isAccountBearingSpecialism } from './spec-conformance';
@@ -2335,6 +2335,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
   }
 
   // Fail fast on malformed test kits before we spin up any agent connection.
+  validateTestKitAuthOverlay(testOptions);
   validateTestKit(testOptions.test_kit);
 
   // `signal` is hard external cancellation. `timeout_ms` is a soft comply()

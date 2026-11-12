@@ -75,6 +75,29 @@ export type TestScenario =
   | 'brand_rights_flow' // Brand rights: get_rights -> acquire_rights lifecycle
   | 'creative_approval'; // Creative approval workflow for brand compliance
 
+/** Credential block of a test kit (`test_kit.auth`), also the shape of `TestOptions.test_kit_auth`. */
+export interface TestKitAuth {
+  /** API key the runner presents on API-key probes. */
+  api_key?: string;
+  /** HTTP Basic credential the runner presents on Basic-auth probes. */
+  basic?: {
+    /** Username portion of the Basic credential. */
+    username?: string;
+    /** Password portion of the Basic credential. */
+    password?: string;
+    /** Unencoded `username:password` pair. */
+    credentials?: string;
+  };
+  /**
+   * Auth-required, read-only tool the runner uses for unauth + invalid-key probes.
+   * Required whenever `auth` is declared — no default is substituted. Must be one of
+   * the values in `PROBE_TASK_ALLOWLIST`. Kits that miss this or pick a task outside
+   * the allowlist fail at `comply()` / `runStoryboard()` entry with
+   * `TestKitValidationError`.
+   */
+  probe_task: string;
+}
+
 export interface TestOptions {
   // Protocol to use for testing (default: 'mcp')
   protocol?: 'mcp' | 'a2a';
@@ -321,29 +344,29 @@ export interface TestOptions {
    * at each phase boundary.
    */
   test_kit?: {
-    auth?: {
-      /** API key the runner presents on API-key probes. */
-      api_key?: string;
-      /** HTTP Basic credential the runner presents on Basic-auth probes. */
-      basic?: {
-        /** Username portion of the Basic credential. */
-        username?: string;
-        /** Password portion of the Basic credential. */
-        password?: string;
-        /** Unencoded `username:password` pair. */
-        credentials?: string;
-      };
-      /**
-       * Auth-required, read-only tool the runner uses for unauth + invalid-key probes.
-       * Required whenever `auth` is declared — no default is substituted. Must be one of
-       * the values in `PROBE_TASK_ALLOWLIST`. Kits that miss this or pick a task outside
-       * the allowlist fail at `comply()` / `runStoryboard()` entry with
-       * `TestKitValidationError`.
-       */
-      probe_task: string;
-    };
+    auth?: TestKitAuth;
     [key: string]: unknown;
   };
+  /**
+   * Credential laid over each storyboard's declared test kit
+   * (`prerequisites.test_kit`), for callers that grade with their own
+   * credential but still need every storyboard's own kit fixtures. A
+   * run-level `test_kit` replaces all declared kits instead.
+   *
+   * Per storyboard, the runner loads the declared kit and replaces its whole
+   * `auth` block with this value. A kit with `sandbox: false` (a live-mode
+   * principal) keeps its own `auth`. A storyboard that declares no kit gets
+   * `{ auth: test_kit_auth }`. A declared kit that cannot be loaded (no
+   * compliance root, or no such file) gets no overlay, so its `from_test_kit`
+   * steps fail as a configuration error instead of sending this credential
+   * where the kit may name a different principal.
+   *
+   * Same shape and rules as `test_kit.auth`: `probe_task` is required and
+   * must be in `PROBE_TASK_ALLOWLIST`. Cannot be combined with `test_kit`;
+   * `comply()` and `runStoryboard()` throw `TestKitValidationError` when both
+   * are set.
+   */
+  test_kit_auth?: TestKitAuth;
   /** @internal Pre-created client from comply() — avoids per-scenario MCP reconnection */
   _client?: unknown;
   /** @internal Bound failed discovery retries to one attempt per storyboard. */
