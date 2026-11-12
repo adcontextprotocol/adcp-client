@@ -1851,10 +1851,10 @@ async function runStoryboardBody(
   // alone and answers in place, which is what keeps a topology gate from being
   // reported as a discovery failure.
   //
-  // With a root capability predicate, AdCP 3.2's applicability order puts the
-  // capability verdict first ("predicates MUST be evaluated before the runner
-  // evaluates `requires`"), so the whole list defers until discovery has
-  // resolved it (adcp-client#2945).
+  // With a root capability predicate, AdCP 3.2's applicability order
+  // (backported to 3.1.24) puts the capability verdict first ("predicates MUST
+  // be evaluated before the runner evaluates `requires`"), so the whole list
+  // defers until discovery has resolved it (adcp-client#2945).
   const preflightDefersRequirement = (requirement: string): boolean => {
     switch (requirement) {
       case 'controller':

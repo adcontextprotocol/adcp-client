@@ -1078,6 +1078,28 @@ const NEUTRAL_BUNDLE_SKIP_REASONS = new Set<string>([
 /** AdCP release that introduced the normative "Applicability order" rule. */
 const CAPABILITY_ROLLUP_MIN_ADCP_VERSION = '3.2';
 
+/**
+ * First 3.1 patch carrying the same rule. adcp#7625 (adcp#7584) backported the
+ * "Applicability order" rule to the 3.1.x line (and gated the governance
+ * scenarios on `media_buy.governance_aware`), so this rollup "can apply to 3.1
+ * bundles as well". 3.1.0–3.1.23 and every 3.0 release lack the rule.
+ */
+const CAPABILITY_ROLLUP_MIN_3_1_PATCH = 24;
+
+/** A stable 3.1 release. The 3.1 line had no prerelease after 3.1.0. */
+const STABLE_3_1_RELEASE_PATTERN = /^3\.1\.(\d+)$/;
+
+/**
+ * Whether a bundle release carries the "Applicability order" rule.
+ * `compareAdcpVersionStrings` orders by major.minor and ignores the patch, so
+ * the 3.1 line is matched on its exact patch.
+ */
+function carriesApplicabilityOrderRule(adcpVersion: string): boolean {
+  if (compareAdcpVersionStrings(adcpVersion, CAPABILITY_ROLLUP_MIN_ADCP_VERSION) >= 0) return true;
+  const patch = STABLE_3_1_RELEASE_PATTERN.exec(adcpVersion)?.[1];
+  return patch !== undefined && Number.parseInt(patch, 10) >= CAPABILITY_ROLLUP_MIN_3_1_PATCH;
+}
+
 /** Phase id, step id and detailed skip reason of the root applicability row. */
 const CAPABILITY_UNSUPPORTED_ROW_ID = 'capability_unsupported';
 
@@ -1156,10 +1178,11 @@ function isCapabilityUnsupportedSkip(storyboard: Storyboard, result: StoryboardR
   // makes this grade normative — capability predicates evaluated before
   // `requires`, an unsatisfied predicate keeping the storyboard "out of the
   // coverage totals of agents that never claimed the capability" — arrived in
-  // AdCP 3.2. `adcp_version` is stamped onto every cache-loaded storyboard by
-  // `annotateStoryboardVersion`; a storyboard without it is hand-built or
-  // caller-supplied, and a pre-3.2 bundle predates the rule. Both keep capping
-  // the bundle exactly as before (adcp-client#2945 review).
+  // AdCP 3.2 and was backported to 3.1.24 (adcp#7625). `adcp_version` is
+  // stamped onto every cache-loaded storyboard by `annotateStoryboardVersion`;
+  // a storyboard without it is hand-built or caller-supplied, and a 3.0 or
+  // pre-3.1.24 bundle predates the rule. Both keep capping the bundle exactly
+  // as before (adcp-client#2945 review).
   //
   // Typed `string | undefined`, but this is an exported grading boundary a
   // JavaScript caller can reach with anything at all. `null`, a number, or a
@@ -1168,7 +1191,7 @@ function isCapabilityUnsupportedSkip(storyboard: Storyboard, result: StoryboardR
   // version this rule can read, so it fails closed like an absent one
   // (adcp-client#2945 review).
   if (typeof storyboard.adcp_version !== 'string') return false;
-  if (compareAdcpVersionStrings(storyboard.adcp_version, CAPABILITY_ROLLUP_MIN_ADCP_VERSION) < 0) return false;
+  if (!carriesApplicabilityOrderRule(storyboard.adcp_version)) return false;
   // A `compliance_testing.*` gate declares which deterministic-test scenarios
   // the agent's own controller implements — test-harness scope, not product
   // surface. Neutralizing it would let an agent drop one scenario string from
