@@ -1,5 +1,24 @@
 # Changelog
 
+## 17.0.0-beta.23
+
+### Patch Changes
+
+- 992716d: Capability discovery reaches sellers that do not advertise the client's preview release, or that gate the MCP `server/discover` probe.
+  - `getAdcpCapabilities()` no longer sends a preview pin such as `3.3-beta.5`. A preview pin is sent only to a seller that advertises that exact release, so preview discovery goes out unpinned, as the internal capability probe already did. A stable pin the seller refuses with `VERSION_UNSUPPORTED` is retried once unpinned. That covers a stable `wireAdcpVersion` on a preview client too. A pin you choose yourself is sent as-is: `adcp_version` or `adcp_major_version` in params, or an explicit `versionEnvelope`. The seller's refusal then comes back with its `supported_versions` in `adcpError.details`. A call with its own `operationId` is not retried either.
+  - Testing and storyboard profile discovery follow the same rule. A 3.0-only seller tested on a preview pin is now profiled. `comply()` then fails with `CapabilityResolutionError` (`code: 'unsupported_adcp_version'`) naming the seller's `supported_versions`, instead of reporting "Agent unreachable — VERSION_UNSUPPORTED".
+  - `applyAdcpVersionRunOptions()` and `applyStoryboardVersionOptions()` now leave `versionEnvelope` unset for AdCP 3 runs, which is the SDK default. Ordinary calls still send the full envelope, and authored `get_adcp_capabilities` storyboard steps still send the configured pin. Tests that set `versionEnvelope` keep their pinned discovery probe.
+  - A client with no credential now falls back to legacy MCP `initialize` when a seller answers `401`/`403` on `server/discover` alone, as a client with a static credential already did. AdCP capability discovery is anonymous, so the seller is discovered. If `initialize` is refused too, or fails for an unrelated reason, the seller's `401` and `WWW-Authenticate` challenge reach the caller as before. OAuth-provider clients are unchanged.
+
+- 992716d: Refresh the registry OpenAPI snapshot and generated types for the published brand logo endpoints:
+  - `GET /assets/brands/{domain}/{logoId}.{ext}` (`getBrandLogoAsset`) downloads an AgenticAdvertising.org-hosted brand logo, with optional `format=png` and `w` rendition parameters.
+  - `GET /logos/brands/{domain}/{logoId}` (`getBrandLogoLegacy`) is the legacy extension-less form.
+  - Brand manifest and brand entry logos document their `background` field.
+
+  All changes are additive.
+
+- ccfc06c: Translate requests and responses for older served releases when identity33 is enabled, including stored task results.
+
 ## 17.0.0-beta.22
 
 ### Minor Changes
