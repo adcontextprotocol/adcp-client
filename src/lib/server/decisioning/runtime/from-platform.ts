@@ -1915,14 +1915,30 @@ function asProductResponseForWire<T extends { products?: unknown[] }>(
   if (!Array.isArray(canonicalResponse.products)) return canonicalResponse;
   const products: V1Product[] = [];
   const diagnostics: ProjectionDiagnostic[] = [];
-  for (const product of canonicalResponse.products) {
+  const originalToOutputIndex = new Map<number, number>();
+  for (const [index, product] of canonicalResponse.products.entries()) {
     const projected = projectV2ProductToV1(product as V2Product, { canonicalFormatLegacyResolver });
     diagnostics.push(...projected.diagnostics);
-    if (projected.v1.format_ids.length > 0) products.push(projected.v1);
+    if (projected.v1.format_ids.length > 0) {
+      originalToOutputIndex.set(index, products.length);
+      products.push(projected.v1);
+    }
   }
   const responseErrors = (canonicalResponse as T & { errors?: unknown }).errors;
+  const remapDivergenceAdvisory = (error: unknown): unknown => {
+    if (error === null || typeof error !== 'object' || Array.isArray(error)) return error;
+    const advisory = error as Record<string, unknown>;
+    if (advisory.code !== 'FORMAT_DECLARATION_DIVERGENT' || typeof advisory.field !== 'string') return error;
+    const match = /^products\[(\d+)\](.*)$/.exec(advisory.field);
+    if (!match) return error;
+    const outputIndex = originalToOutputIndex.get(Number(match[1]));
+    return {
+      ...advisory,
+      field: outputIndex === undefined ? 'products' : `products[${outputIndex}]${match[2]}`,
+    };
+  };
   const errors = Array.isArray(responseErrors)
-    ? [...responseErrors, ...diagnostics.map(projectionDiagnosticToError)]
+    ? [...responseErrors.map(remapDivergenceAdvisory), ...diagnostics.map(projectionDiagnosticToError)]
     : responseErrors === undefined
       ? diagnostics.map(projectionDiagnosticToError)
       : responseErrors;

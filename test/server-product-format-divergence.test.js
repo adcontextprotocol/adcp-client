@@ -170,4 +170,42 @@ describe('get_products format divergence is non-fatal (#3685)', () => {
     assert.equal(advisory(result)[0].details.product_id, 'outer');
     assert.equal(advisory(result)[0].details.placement_id, 'placement-1');
   });
+  it('remaps the advisory after an earlier canonical-only product is omitted from a 3.0 response', async () => {
+    const result = await dispatch(
+      {
+        products: [
+          product('omitted', { format_options: [{ format_kind: 'responsive_creative', params: {} }] }),
+          product('divergent', { format_ids: [leaderboard] }),
+        ],
+      },
+      '3.0.25'
+    );
+    assert.deepEqual(
+      result.products.map(p => p.product_id),
+      ['divergent']
+    );
+    assert.equal(advisory(result)[0].field, 'products[0]');
+    assert.equal(advisory(result)[0].details.product_id, 'divergent');
+    assert.deepEqual(advisory(result)[0].details.format_ids, [leaderboard]);
+  });
+  it('points at the collection when the divergent product itself is omitted from a 3.0 response', async () => {
+    const result = await dispatch(
+      {
+        products: [
+          product('good'),
+          product('omitted', {
+            format_ids: [mrec],
+            format_options: [{ format_kind: 'responsive_creative', params: {} }],
+          }),
+        ],
+      },
+      '3.0.25'
+    );
+    assert.deepEqual(
+      result.products.map(p => p.product_id),
+      ['good']
+    );
+    assert.equal(advisory(result)[0].field, 'products');
+    assert.equal(advisory(result)[0].details.product_id, 'omitted');
+  });
 });
