@@ -361,13 +361,13 @@ function presentedStaticCredential(authHeaders: Record<string, string>): boolean
 }
 
 /**
- * Does a failed legacy attempt answer for itself? An auth refusal carries its
- * own challenge, a throttle must reach the caller as a rate limit, and a
- * cancellation belongs to the caller. Anything else (a 5xx, a 404) says nothing
- * about authentication.
+ * Does a failed legacy attempt answer for itself? A throttle must reach the
+ * caller as a rate limit, and a cancellation belongs to the caller. Anything
+ * else, including a second auth refusal, says no more than the probe's own
+ * challenge, which is what an uncredentialed caller has always received.
  */
 function legacyFailureSupersedesProbe(error: unknown): boolean {
-  if (isNegotiationAuthFailure(error) || isAbortOrTimeoutError(error)) return true;
+  if (isAbortOrTimeoutError(error)) return true;
   const status = httpStatusOf(error);
   return status === 429 || (status === 503 && retryAfterOf(error) !== undefined);
 }
@@ -499,9 +499,9 @@ async function createNegotiatedClient(
     // the method, not on the credential (or on its absence), and the automatic
     // fallback should have run. Do it here: skip the probe and `initialize`
     // directly, the escape hatch the SDK documents for a server known to be
-    // legacy. If the seller really does require a credential the caller lacks
-    // or rejects the one it sent, that connect fails on its own and surfaces
-    // the server's 401 and its challenge.
+    // legacy. If the seller rejects the credential the caller sent, that
+    // connect fails on its own and surfaces the server's 401. Without a
+    // credential, a failed legacy attempt surfaces the probe's original 401.
     if (isNegotiationAuthFailure(error) && !skipProbe && mayRetryProbeRefusalOnLegacy(options.authProvider)) {
       options.debugLogs.push({
         type: 'info',
@@ -510,8 +510,8 @@ async function createNegotiatedClient(
       });
       const legacy = createNegotiatedClient(cacheKey, options, authHeaders, useCachedDiscovery, true);
       if (presentedStaticCredential(authHeaders)) return legacy;
-      // With no credential the probe's refusal was the seller's challenge. A
-      // legacy attempt that fails for an unrelated reason must not replace it.
+      // With no credential the probe's refusal was the seller's challenge. Only
+      // a throttle or a cancellation on the legacy attempt replaces it.
       return legacy.catch(legacyError => {
         throw legacyFailureSupersedesProbe(legacyError) ? legacyError : withRetryAfter(error, throttleRetryAfter);
       });
