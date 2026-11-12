@@ -21,13 +21,13 @@ const http = require('node:http');
 
 const { ADCPMultiAgentClient } = require('../../dist/lib/core/ADCPMultiAgentClient.js');
 const { closeMCPConnections } = require('../../dist/lib/protocols/mcp.js');
-const { ADCP_VERSION } = require('../../dist/lib/version.js');
 const { capabilityDiscoveryEnvelope } = require('../../dist/lib/adapters/version/negotiate.js');
 const {
   createTestClient,
   discoverAgentProfile,
   testClientDiscoveryWireAdcpVersion,
 } = require('../../dist/lib/testing/client.js');
+const { executeStoryboardTask } = require('../../dist/lib/testing/storyboard/task-map.js');
 const { comply } = require('../../dist/lib/testing/compliance/comply.js');
 
 const PREVIEW_PIN = '3.3.0-beta.5';
@@ -46,8 +46,11 @@ const CAPABILITIES = {
  * A seller that implements AdCP 3.0 only. Any `adcp_version` it does not
  * support is refused with the spec's VERSION_UNSUPPORTED error. Records the
  * arguments of every `get_adcp_capabilities` call.
+ *
+ * @param options.failUnpinnedDiscovery when true, an unpinned
+ *   `get_adcp_capabilities` fails with INVALID_REQUEST.
  */
-async function startSeller30() {
+async function startSeller30({ failUnpinnedDiscovery = false } = {}) {
   const discoveryCalls = [];
   const server = http.createServer(async (req, res) => {
     let body = '';
@@ -105,6 +108,11 @@ async function startSeller30() {
           )
         );
       }
+      if (rpc.params?.name === 'get_adcp_capabilities' && failUnpinnedDiscovery && version === undefined) {
+        return reply(
+          toolResult({ adcp_error: { code: 'INVALID_REQUEST', message: 'unavailable', recovery: 'terminal' } }, true)
+        );
+      }
       if (rpc.params?.name === 'get_adcp_capabilities') return reply(toolResult(CAPABILITIES));
       return reply(toolResult({ products: [] }));
     }
@@ -127,19 +135,19 @@ function agentFor(url, config = {}) {
 }
 
 describe('capabilityDiscoveryEnvelope', () => {
-  test('a preview pin discovers unpinned', () => {
-    assert.equal(capabilityDiscoveryEnvelope(undefined, undefined, PREVIEW_PIN), 'none');
-    assert.equal(capabilityDiscoveryEnvelope(undefined, '3.2.0-rc.7', '3.2.1'), 'none');
+  test('a preview wire release discovers unpinned', () => {
+    assert.equal(capabilityDiscoveryEnvelope(undefined, PREVIEW_PIN), 'none');
+    assert.equal(capabilityDiscoveryEnvelope(undefined, '3.2.0-rc.7'), 'none');
   });
 
-  test('a stable pin keeps the default envelope', () => {
-    assert.equal(capabilityDiscoveryEnvelope(undefined, undefined, '3.1'), undefined);
-    assert.equal(capabilityDiscoveryEnvelope(undefined, '3.2', '3.2.1'), undefined);
+  test('a stable wire release keeps the default envelope', () => {
+    assert.equal(capabilityDiscoveryEnvelope(undefined, '3.1'), undefined);
+    assert.equal(capabilityDiscoveryEnvelope(undefined, '3.2.1'), undefined);
   });
 
   test('an explicit envelope always wins', () => {
-    assert.equal(capabilityDiscoveryEnvelope('auto', undefined, PREVIEW_PIN), 'auto');
-    assert.equal(capabilityDiscoveryEnvelope('major-only', undefined, PREVIEW_PIN), 'major-only');
+    assert.equal(capabilityDiscoveryEnvelope('auto', PREVIEW_PIN), 'auto');
+    assert.equal(capabilityDiscoveryEnvelope('major-only', PREVIEW_PIN), 'major-only');
   });
 });
 
@@ -155,10 +163,6 @@ describe('preview-pinned client against a 3.0-only seller', () => {
   });
   beforeEach(() => {
     seller.discoveryCalls.length = 0;
-  });
-
-  test('the SDK default is the preview this file exercises', () => {
-    assert.equal(ADCP_VERSION, PREVIEW_PIN, 'update PREVIEW_PIN when the SDK default release moves');
   });
 
   test('getAdcpCapabilities() discovers unpinned and succeeds', async () => {
@@ -220,6 +224,61 @@ describe('preview-pinned client against a 3.0-only seller', () => {
       ['3.1', undefined]
     );
   });
+
+  test('the internal probe retries a refused stable pin unpinned', async () => {
+    const capabilities = await agentFor(seller.url, { adcpVersion: '3.1' }).getCapabilities();
+
+    assert.equal(capabilities._synthetic, false);
+    assert.deepEqual(capabilities.supportedVersions, ['3.0']);
+    assert.deepEqual(
+      seller.discoveryCalls.map(args => args.adcp_version),
+      ['3.1', undefined]
+    );
+  });
+
+  test('a stable wire override on a preview client is sent, then retried unpinned', async () => {
+    const result = await agentFor(seller.url, { adcpVersion: PREVIEW_PIN, wireAdcpVersion: '3.2' }).getAdcpCapabilities(
+      {}
+    );
+
+    assert.equal(result.success, true, String(result.error));
+    assert.deepEqual(
+      seller.discoveryCalls.map(args => args.adcp_version),
+      ['3.2', undefined]
+    );
+  });
+
+  test('a caller operationId keeps its dispatch and skips the retry', async () => {
+    const result = await agentFor(seller.url, { adcpVersion: '3.1' }).getAdcpCapabilities({}, undefined, {
+      operationId: 'discovery-op-1',
+    });
+
+    assert.equal(result.adcpError?.code, 'VERSION_UNSUPPORTED');
+    assert.equal(result.metadata?.taskId, 'discovery-op-1');
+    assert.deepEqual(
+      seller.discoveryCalls.map(args => args.adcp_version),
+      ['3.1']
+    );
+  });
+});
+
+describe('a failed unpinned retry keeps the pinned refusal', () => {
+  test('the caller sees VERSION_UNSUPPORTED with supported_versions, not the retry error', async t => {
+    const seller = await startSeller30({ failUnpinnedDiscovery: true });
+    t.after(async () => {
+      await closeMCPConnections();
+      await seller.stop();
+    });
+
+    const result = await agentFor(seller.url, { adcpVersion: '3.1' }).getAdcpCapabilities({});
+
+    assert.equal(result.adcpError?.code, 'VERSION_UNSUPPORTED');
+    assert.deepEqual(result.adcpError?.details?.supported_versions, ['3.0']);
+    assert.deepEqual(
+      seller.discoveryCalls.map(args => args.adcp_version),
+      ['3.1', undefined]
+    );
+  });
 });
 
 describe('testing discovery with a preview pin against a 3.0-only seller', () => {
@@ -258,6 +317,25 @@ describe('testing discovery with a preview pin against a 3.0-only seller', () =>
       seller.discoveryCalls.map(args => args.adcp_version),
       [PREVIEW_WIRE]
     );
+  });
+
+  // universal/version-negotiation grades the seller's answer to the runner's
+  // configured pin, so an authored get_adcp_capabilities step stays pinned.
+  test('a storyboard get_adcp_capabilities step still sends the configured pin', async () => {
+    const client = createTestClient(seller.url, 'mcp', { adcpVersion: PREVIEW_PIN });
+    await executeStoryboardTask(client, 'get_adcp_capabilities', {});
+
+    assert.deepEqual(
+      seller.discoveryCalls.map(args => args.adcp_version),
+      [PREVIEW_WIRE]
+    );
+  });
+
+  test('a storyboard step follows an envelope the run chose', async () => {
+    const client = createTestClient(seller.url, 'mcp', { adcpVersion: PREVIEW_PIN, versionEnvelope: 'major-only' });
+    await executeStoryboardTask(client, 'get_adcp_capabilities', {});
+
+    assert.deepEqual(seller.discoveryCalls, [{ adcp_major_version: 3 }]);
   });
 
   test('diagnostics name a requested release only when discovery sent one', () => {

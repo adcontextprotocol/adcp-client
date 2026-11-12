@@ -166,17 +166,18 @@ export function negotiateAdcpRelease(
  * default envelope.
  *
  * A preview pin is sent only to a seller that advertises that exact release,
- * and discovery is how the buyer learns what a seller advertises. So when any
- * of `pins` (the client release and its wire override) is a preview, discovery
- * goes out unpinned. An `explicit` envelope, from the caller or the client
- * config, always wins: conformance harnesses pin discovery on purpose.
+ * and discovery is how the buyer learns what a seller advertises. So when the
+ * release the envelope would carry (`wirePin`: the wire override, else the
+ * client release) is a preview, discovery goes out unpinned. An `explicit`
+ * envelope, from the caller or the client config, always wins: conformance
+ * harnesses pin discovery on purpose.
  */
 export function capabilityDiscoveryEnvelope(
   explicit: VersionEnvelopeMode | undefined,
-  ...pins: ReadonlyArray<string | undefined>
+  wirePin: string | undefined
 ): VersionEnvelopeMode | undefined {
   if (explicit !== undefined) return explicit;
-  return pins.some(pin => pin !== undefined && parseAdcpRelease(pin)?.prerelease !== undefined) ? 'none' : undefined;
+  return wirePin !== undefined && parseAdcpRelease(wirePin)?.prerelease !== undefined ? 'none' : undefined;
 }
 
 export function isNegotiationFailure(

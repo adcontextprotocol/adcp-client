@@ -26,11 +26,13 @@ function seller(mode, failOnce = false) {
   const io = transport([], { capabilities: () => (mode === 'absent' ? CAPS : healthy) });
   const original = io.options.transport.trustedFetchFn;
   let probes = 0;
+  const versions = [];
   delete io.options.profile;
   io.options.transport.trustedFetchFn = async (input, init = {}) => {
     const rpc = init.body ? JSON.parse(init.body) : undefined;
     if (rpc?.method === 'tools/call' && rpc.params.name === 'get_adcp_capabilities') {
       probes++;
+      versions.push(rpc.params.arguments?.adcp_version);
       if ((!failOnce || probes === 1) && ['protocol', 'schema', 'version'].includes(mode)) {
         const data =
           mode === 'schema'
@@ -62,7 +64,7 @@ function seller(mode, failOnce = false) {
     }
     return original(input, init);
   };
-  return { ...io, probes: () => probes };
+  return { ...io, probes: () => probes, versions: () => versions };
 }
 for (const mode of ['protocol', 'schema', 'version']) {
   for (const standalone of [false, true]) {
@@ -84,7 +86,14 @@ for (const mode of ['protocol', 'schema', 'version']) {
         assert.equal(result.failed_count, 1);
         assert.equal(result.skipped_count, 0);
       }
-      assert.equal(io.probes(), 1, 'the authored probe must not run after failed preflight');
+      if (mode === 'version') {
+        // Preflight retries a refused pin once unpinned; the authored probe still never runs.
+        assert.equal(io.versions().length, 2, 'the authored probe must not run after failed preflight');
+        assert.equal(typeof io.versions()[0], 'string', 'preflight first sends the configured pin');
+        assert.equal(io.versions()[1], undefined, 'the retry goes out unpinned');
+      } else {
+        assert.equal(io.probes(), 1, 'the authored probe must not run after failed preflight');
+      }
     });
   }
 }

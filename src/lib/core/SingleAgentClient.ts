@@ -10113,8 +10113,9 @@ export class SingleAgentClient {
    * retried once unpinned. Neither applies when the caller chose the pin, with
    * version fields in `params` or an `explicitEnvelope`: the seller's refusal,
    * carrying its `supported_versions` in `adcpError.details`, is the answer.
-   * When the unpinned retry is refused for the version too, the pinned refusal
-   * is returned, since its diagnostics name the release actually sent.
+   * A caller `operationId` also skips the retry, which would need an id of its
+   * own. Only a successful retry replaces the pinned refusal, whose diagnostics
+   * name the release actually sent.
    */
   private async executeCapabilityDiscovery<T>(
     agent: AgentConfig,
@@ -10130,8 +10131,7 @@ export class SingleAgentClient {
       requested.adcp_major_version !== undefined;
     const envelope = capabilityDiscoveryEnvelope(
       explicitEnvelope,
-      options.wireAdcpVersion ?? this.config.wireAdcpVersion,
-      this.resolvedAdcpVersion
+      options.wireAdcpVersion ?? this.config.wireAdcpVersion ?? this.resolvedAdcpVersion
     );
     const result = await this.executor.executeTask<T>(
       agent,
@@ -10140,7 +10140,13 @@ export class SingleAgentClient {
       inputHandler,
       envelope === undefined ? options : { ...options, versionEnvelope: envelope }
     );
-    if (callerPinned || envelope === 'none' || result.success || result.adcpError?.code !== 'VERSION_UNSUPPORTED') {
+    if (
+      callerPinned ||
+      envelope === 'none' ||
+      options.operationId !== undefined ||
+      result.success ||
+      result.adcpError?.code !== 'VERSION_UNSUPPORTED'
+    ) {
       return result;
     }
     throwIfAborted(options.signal);
@@ -10149,7 +10155,7 @@ export class SingleAgentClient {
       ...childTaskOptions(options),
       versionEnvelope: 'none',
     });
-    return !unpinned.success && unpinned.adcpError?.code === 'VERSION_UNSUPPORTED' ? result : unpinned;
+    return unpinned.success ? unpinned : result;
   }
 
   // ====== CREATIVE BUILD TASKS ======
@@ -12223,7 +12229,7 @@ export class SingleAgentClient {
         // context remains in the async chain, correlating both physical tasks.
         const callerOptions = options as CapabilityProbeRequestOptions | undefined;
         const isPreview =
-          capabilityDiscoveryEnvelope(undefined, this.config.wireAdcpVersion, this.resolvedAdcpVersion) === 'none';
+          capabilityDiscoveryEnvelope(undefined, this.config.wireAdcpVersion ?? this.resolvedAdcpVersion) === 'none';
         const probeOptions: CapabilityProbeRequestOptions = {
           // Discover the seller's release window before claiming a preview
           // older sellers may reject. Ordinary calls still negotiate exact

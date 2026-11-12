@@ -399,6 +399,9 @@ function testClientMatchesVersionOptions(client: TestClient, agentUrl: string, o
     meta.protocol === (effectiveOptions.protocol ?? 'mcp') &&
     meta.adcpVersion === expectedAdcpVersion &&
     meta.wireAdcpVersion === expectedWireAdcpVersion &&
+    // Unset and `auto` put the same envelope on ordinary calls and authored
+    // storyboard steps; they differ only in the reused client's own preview
+    // discovery probe, which follows that client's config.
     (meta.versionEnvelope ?? 'auto') === (effectiveOptions.versionEnvelope ?? 'auto') &&
     meta.strictResponseSchemaValidation === (effectiveOptions.strictResponseSchemaValidation !== false) &&
     meta.authMode === expectedAuthMode &&
@@ -776,6 +779,22 @@ export function testClientWireAdcpVersion(client: unknown, fallbackVersion?: str
 }
 
 /**
+ * Envelope for a storyboard's own `get_adcp_capabilities` step: `auto` when the
+ * test client kept the SDK default, otherwise the client's envelope applies.
+ * Authored steps send the configured pin on purpose (the version-negotiation
+ * storyboard grades the seller's answer to it); only the SDK's own profile
+ * discovery goes out unpinned for a preview.
+ *
+ * @internal
+ */
+export function storyboardCapabilityStepEnvelope(client: unknown): VersionEnvelopeMode | undefined {
+  const meta = (client as { [TEST_CLIENT_VERSION_OPTIONS]?: TestClientVersionOptions } | undefined)?.[
+    TEST_CLIENT_VERSION_OPTIONS
+  ];
+  return meta && meta.versionEnvelope === undefined ? 'auto' : undefined;
+}
+
+/**
  * The `adcp_version` a test client's `get_adcp_capabilities` request carries:
  * {@link testClientWireAdcpVersion}, except that a preview pin is discovered
  * unpinned unless the test chose an envelope (see `capabilityDiscoveryEnvelope`).
@@ -786,7 +805,7 @@ export function testClientDiscoveryWireAdcpVersion(client: unknown, fallbackVers
   const meta = (client as { [TEST_CLIENT_VERSION_OPTIONS]?: TestClientVersionOptions } | undefined)?.[
     TEST_CLIENT_VERSION_OPTIONS
   ];
-  if (meta && capabilityDiscoveryEnvelope(meta.versionEnvelope, meta.wireAdcpVersion, meta.adcpVersion) === 'none') {
+  if (meta && capabilityDiscoveryEnvelope(meta.versionEnvelope, meta.wireAdcpVersion ?? meta.adcpVersion) === 'none') {
     return undefined;
   }
   return testClientWireAdcpVersion(client, fallbackVersion);

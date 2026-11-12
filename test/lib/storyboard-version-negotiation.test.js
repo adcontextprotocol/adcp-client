@@ -941,7 +941,7 @@ describe('storyboard runner AdCP version negotiation', () => {
 
       const options = applyAdcpVersionRunOptions(index.adcp_version, { schemaRoot });
       assert.strictEqual(options.adcpVersion, CURRENT_PRERELEASE_VERSION);
-      assert.strictEqual(options.versionEnvelope, 'auto');
+      assert.strictEqual(options.versionEnvelope, undefined);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
