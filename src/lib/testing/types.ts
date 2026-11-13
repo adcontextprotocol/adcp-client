@@ -354,12 +354,14 @@ export interface TestOptions {
    * run-level `test_kit` replaces all declared kits instead.
    *
    * Per storyboard, the runner loads the declared kit and replaces its whole
-   * `auth` block with this value. A kit with `sandbox: false` (a live-mode
-   * principal) keeps its own `auth`. A storyboard that declares no kit gets
-   * `{ auth: test_kit_auth }`. A declared kit that cannot be loaded (no
-   * compliance root, or no such file) gets no overlay, so its `from_test_kit`
-   * steps fail as a configuration error instead of sending this credential
-   * where the kit may name a different principal.
+   * `auth` block with this value when the kit declares `sandbox: true` or
+   * carries no credential of its own. A kit with `sandbox: false`, or one
+   * that carries a credential without declaring `sandbox: true`, keeps its
+   * own `auth`: it may be a live-mode principal. A storyboard that declares
+   * no kit gets `{ auth: test_kit_auth }`. A declared kit that cannot be
+   * loaded (no compliance root, or no such file) gets no overlay, so its
+   * `from_test_kit` steps fail as a configuration error instead of sending
+   * this credential where the kit may name a different principal.
    *
    * Same shape and rules as `test_kit.auth`: `probe_task` is required and
    * must be in `PROBE_TASK_ALLOWLIST`. Cannot be combined with `test_kit`;

@@ -38,12 +38,17 @@ const SANDBOX_A_AUTH = Object.freeze({
 const SANDBOX_B_AUTH = Object.freeze({ api_key: 'demo-sandbox-b-key', probe_task: 'list_creatives' });
 const LIVE_AUTH = Object.freeze({ api_key: 'live-principal-key', probe_task: 'list_creatives' });
 const STALE_PROBE_AUTH = Object.freeze({ api_key: 'demo-stale-key', probe_task: 'not_an_allowlisted_probe' });
+const UNDECLARED_MODE_AUTH = Object.freeze({ api_key: 'undeclared-mode-principal-key', probe_task: 'list_creatives' });
+const BUNDLED_CACHE_ROOT = path.resolve(__dirname, '../../compliance/cache');
+const BUNDLED_CACHE_ALIAS = 'latest';
 
 const KITS = {
   'sandbox-a.yaml': { id: 'sandbox_a', sandbox: true, fixture_marker: 'a', auth: SANDBOX_A_AUTH },
   'sandbox-b.yaml': { id: 'sandbox_b', sandbox: true, fixture_marker: 'b', auth: SANDBOX_B_AUTH },
   'live.yaml': { id: 'live', sandbox: false, fixture_marker: 'live', auth: LIVE_AUTH },
   'runner.yaml': { id: 'runner', applies_to: ['runner'], fixture_marker: 'runner' },
+  'probe-only.yaml': { id: 'probe_only', applies_to: ['runner'], auth: { probe_task: 'get_signals' } },
+  'undeclared-mode.yaml': { id: 'undeclared_mode', fixture_marker: 'undeclared', auth: UNDECLARED_MODE_AUTH },
   'stale-probe.yaml': { id: 'stale_probe', sandbox: true, fixture_marker: 'stale', auth: STALE_PROBE_AUTH },
 };
 
@@ -272,9 +277,17 @@ describe('resolveDeclaredTestKit with test_kit_auth', () => {
     assert.equal('test_kit_auth' in resolved, false);
   });
 
-  test('a kit without auth gets the overlay', () => {
-    const resolved = resolveFor('test-kits/runner.yaml');
-    assert.deepEqual(resolved.test_kit, { ...KITS['runner.yaml'], auth: OVERLAY });
+  test('a kit without a credential of its own gets the overlay', () => {
+    assert.deepEqual(resolveFor('test-kits/runner.yaml').test_kit, { ...KITS['runner.yaml'], auth: OVERLAY });
+    assert.deepEqual(resolveFor('test-kits/probe-only.yaml').test_kit, { ...KITS['probe-only.yaml'], auth: OVERLAY });
+  });
+
+  test('a kit that carries a credential without declaring sandbox: true keeps it', () => {
+    // An absent `sandbox` is not read as sandbox (same polarity as
+    // getSandboxEntities), so a live principal that omits the field is kept.
+    const resolved = resolveFor('test-kits/undeclared-mode.yaml');
+    assert.deepEqual(resolved.test_kit, KITS['undeclared-mode.yaml']);
+    assert.equal('test_kit_auth' in resolved, false);
   });
 
   test('a storyboard that declares no kit gets the overlay alone', () => {
@@ -335,6 +348,50 @@ describe('resolveDeclaredTestKit with test_kit_auth', () => {
         resolveDeclaredTestKit(storyboard, { test_kit_auth: { api_key: 'line\nbreak', probe_task: 'list_creatives' } }),
       err => err.field === 'test_kit_auth.api_key'
     );
+  });
+});
+
+describe('test_kit_auth over the bundled compliance kits', () => {
+  // Every published live-mode kit declares `sandbox: false` and every brand
+  // kit `sandbox: true`; runner-contract kits omit `sandbox`, and only
+  // billing-gate-runner among them carries a credential of its own.
+  function bundledVersions() {
+    if (!fs.existsSync(BUNDLED_CACHE_ROOT)) return [];
+    return fs
+      .readdirSync(BUNDLED_CACHE_ROOT)
+      .filter(version => version !== BUNDLED_CACHE_ALIAS)
+      .filter(version => fs.existsSync(path.join(BUNDLED_CACHE_ROOT, version, 'test-kits')));
+  }
+
+  test('live-mode and credential-bearing kits keep their own auth; sandbox and runner kits take the overlay', t => {
+    const versions = bundledVersions();
+    if (versions.length === 0) return t.skip('compliance cache not synced');
+    const seen = { live: 0, sandbox: 0, runner: 0 };
+    for (const version of versions) {
+      const complianceDir = path.join(BUNDLED_CACHE_ROOT, version);
+      const kitFiles = fs.readdirSync(path.join(complianceDir, 'test-kits')).filter(file => file.endsWith('.yaml'));
+      for (const file of kitFiles) {
+        const storyboard = { id: `bundled_${file}`, prerequisites: { test_kit: `test-kits/${file}` } };
+        const own = resolveDeclaredTestKit(storyboard, { complianceDir }).test_kit;
+        const overlaid = resolveDeclaredTestKit(storyboard, { complianceDir, test_kit_auth: OVERLAY }).test_kit;
+        const where = `${version}/test-kits/${file}`;
+        const hasCredential = own.auth?.api_key !== undefined || own.auth?.basic !== undefined;
+        if (file.includes('live')) {
+          seen.live += 1;
+          assert.equal(own.sandbox, false, `${where} is a live-mode kit and declares sandbox: false`);
+          assert.deepEqual(overlaid.auth, own.auth, `${where} keeps its live principal`);
+        } else if (own.sandbox === true) {
+          seen.sandbox += 1;
+          assert.deepEqual(overlaid.auth, OVERLAY, `${where} takes the overlay`);
+        } else if (!hasCredential) {
+          seen.runner += 1;
+          assert.deepEqual(overlaid.auth, OVERLAY, `${where} has no principal to protect`);
+        } else {
+          assert.deepEqual(overlaid.auth, own.auth, `${where} keeps a credential it did not declare as sandbox`);
+        }
+      }
+    }
+    assert.ok(seen.live > 0 && seen.sandbox > 0 && seen.runner > 0, JSON.stringify(seen));
   });
 });
 

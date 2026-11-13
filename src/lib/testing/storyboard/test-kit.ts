@@ -259,13 +259,17 @@ function safeLabel(value: unknown): string {
  * fixtures. A run-level `test_kit` cannot do both: it replaces every
  * declared kit for the whole run.
  *
- *   - The declared kit keeps every field except `auth`, which the overlay
- *     replaces whole, so none of the kit's own `api_key`, `basic` or
- *     `probe_task` sits next to the caller's credential.
- *   - A kit with `sandbox: false` keeps its own `auth` (or none). It names a
- *     live-mode principal the storyboard is written around; sending the
- *     caller's sandbox credential in its place grades a conformant seller
- *     FAIL (adcp#6735).
+ *   - A kit that declares `sandbox: true` keeps every field except `auth`,
+ *     which the overlay replaces whole, so none of the kit's own `api_key`,
+ *     `basic` or `probe_task` sits next to the caller's credential.
+ *   - A kit that carries no credential of its own (no `auth.api_key` or
+ *     `auth.basic`, as in runner-contract kits) gets the overlay as its
+ *     `auth`, whatever its `sandbox` field says, except `sandbox: false`.
+ *   - Any other kit keeps its own `auth` (or none): one that declares
+ *     `sandbox: false`, and one that carries a credential without declaring
+ *     `sandbox: true`. Such a credential may name a live-mode principal the
+ *     storyboard is written around, and sending the caller's credential in
+ *     its place grades a conformant seller FAIL (adcp#6735).
  *   - A storyboard that declares no kit gets `{ auth: test_kit_auth }` alone.
  *   - A declared kit that cannot be loaded (no trusted cache root, or no such
  *     file) gets no overlay: nothing says it is not a live-mode principal, so
@@ -304,8 +308,18 @@ export function resolveDeclaredTestKit<
 function withAuthOverlay(kit: TestOptions['test_kit'], auth: TestKitAuth): TestOptions['test_kit'] {
   if (kit === undefined) return { auth };
   // A malformed kit stays as it is, so validateTestKit reports it.
-  if (!isPlainMapping(kit) || kit.sandbox === false) return kit;
-  return { ...kit, auth };
+  if (!isPlainMapping(kit)) return kit;
+  // Same polarity as getSandboxEntities: an absent `sandbox` does not mean
+  // sandbox. Only a kit that declares `sandbox: true` gives up its own
+  // credential. Runner-contract kits omit the field by design and carry no
+  // credential, so there is no principal to protect and the overlay simply
+  // supplies one, as a run-level kit did.
+  const replacesOwnCredential = kit.sandbox === true || (kit.sandbox !== false && !carriesCredential(kit.auth));
+  return replacesOwnCredential ? { ...kit, auth } : kit;
+}
+
+function carriesCredential(auth: unknown): boolean {
+  return isPlainMapping(auth) && (auth.api_key !== undefined || auth.basic !== undefined);
 }
 
 /**

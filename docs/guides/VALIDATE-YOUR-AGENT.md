@@ -284,12 +284,15 @@ await comply(agentUrl, {
 ```
 
 Each storyboard loads its declared kit and gets `test_kit_auth` as that kit's
-whole `auth` block. A kit with `sandbox: false` keeps its own credential: it
-is the live-mode principal the storyboard tests. A storyboard with no declared
-kit gets `{ auth: test_kit_auth }`. A declared kit that is not in the compliance
-cache gets no overlay, so its `from_test_kit` steps fail as a configuration
-error, as they would without `test_kit_auth`. `probe_task` is required, as for `test_kit.auth`, and passing `test_kit` and
-`test_kit_auth` together throws `TestKitValidationError`.
+whole `auth` block when the kit declares `sandbox: true` or carries no
+credential of its own (runner-contract kits). A kit that declares
+`sandbox: false`, or carries a credential without declaring `sandbox: true`,
+keeps its own credential: it may be the live-mode principal the storyboard
+tests. A storyboard with no declared kit gets `{ auth: test_kit_auth }`. A
+declared kit that is not in the compliance cache gets no overlay, so its
+`from_test_kit` steps fail as a configuration error, as they would without
+`test_kit_auth`. `probe_task` is required, as for `test_kit.auth`, and passing
+`test_kit` and `test_kit_auth` together throws `TestKitValidationError`.
 
 **OAuth-protected agents.** Storyboard runs reuse tokens saved under an alias. Two supported flows:
 
