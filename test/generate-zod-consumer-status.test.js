@@ -82,18 +82,20 @@ const cases = [
     }),
     expected: false,
   },
-  { id: 'closed-status', schema: 'status', value: status('obligation_missing', { unexpected: true }), expected: false },
+  // AdCP 3.3.0-beta.6 opened the published status and period (adcp#8866). The
+  // SDK's ingest schema (ReportingConsumerStatusV1Schema) still refuses these.
+  { id: 'open-status', schema: 'status', value: status('obligation_missing', { unexpected: true }), expected: true },
   {
-    id: 'closed-status-extension',
+    id: 'open-status-extension',
     schema: 'status',
     value: status('obligation_missing', { ext: { 'example.invalid': { value: true } } }),
-    expected: false,
+    expected: true,
   },
   {
-    id: 'closed-period',
+    id: 'open-period',
     schema: 'status',
     value: status('obligation_missing', { period: { ...period, unexpected: true } }),
-    expected: false,
+    expected: true,
   },
   { id: 'valid-request', schema: 'request', value: request(validStatuses[0]), expected: true },
   {

@@ -75,7 +75,10 @@ describe('Inline-union value arrays (inline-enums.generated)', () => {
 
   it('user-flagged values match the AdCP spec (video-asset-requirements.json containers enum)', async () => {
     if (!inlineEnums) inlineEnums = await import('../../dist/lib/types/inline-enums.generated.js');
-    assert.deepEqual([...inlineEnums.VideoAssetRequirements_ContainersValues], ['mp4', 'webm', 'mov', 'avi', 'mkv']);
+    assert.deepEqual(
+      [...inlineEnums.VideoAssetRequirements_ContainersValues],
+      ['mp4', 'webm', 'mov', 'avi', 'mkv', '3gp', 'mpeg', 'm4v']
+    );
   });
 
   it('flattens nested string unions without dropping canonical get_products fields', async () => {

@@ -570,5 +570,18 @@ describe('selector resolution and scope', () => {
       ),
       true
     );
+    // The open 3.3.0-beta.6 scope: an unknown selector selects nothing, and a
+    // second key never widens a scope to every authorized account.
+    assert.equal(
+      reportingSubscriptionScopeIncludesV1({ scope: { brand_domains: ['x.example'] } }, { account_id: 'a' }),
+      false
+    );
+    assert.equal(
+      reportingSubscriptionScopeIncludesV1(
+        { scope: { all_authorized_accounts: true, brand_domains: ['x.example'] } },
+        { account_id: 'a' }
+      ),
+      false
+    );
   });
 });

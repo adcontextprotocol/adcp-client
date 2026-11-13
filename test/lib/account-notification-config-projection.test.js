@@ -52,6 +52,36 @@ describe('account notification_configs projection', () => {
     assert.ok(!JSON.stringify(wire).includes('credentials'));
   });
 
+  // AdCP 3.3.0-beta.6 opened the state (adcp#8866): an extension member passes,
+  // while SDK-internal members are refused explicitly instead of by closure.
+  test('list_accounts projection keeps extension members and refuses retained internal members', () => {
+    const account = state => ({
+      id: 'acc_acme',
+      name: 'Acme',
+      status: 'active',
+      ctx_metadata: {},
+      reporting_delivery_configs: [state],
+    });
+    const extended = { ...reportingDeliveryState, seller_extension: { region: 'us' } };
+    assert.deepStrictEqual(toWireAccount(account(extended)).reporting_delivery_configs, [extended]);
+    for (const retained of [
+      { ...reportingDeliveryState, ctx_metadata: { upstream_id: 'must-not-echo' } },
+      { ...reportingDeliveryState, configuration: { ...reportingDeliveryState.configuration, authInfo: {} } },
+      {
+        ...reportingDeliveryState,
+        configuration: {
+          ...reportingDeliveryState.configuration,
+          destination: { bucket: 'reports', accessKeyId: 'AKIA-must-not-echo', secretAccessKey: 'must-not-echo' },
+        },
+      },
+    ]) {
+      assert.throws(
+        () => toWireAccount(account(retained)),
+        error => /reporting_delivery_configs/.test(error.message) && !error.message.includes('must-not-echo')
+      );
+    }
+  });
+
   test('list_accounts projection rejects reporting delivery state with retained credentials', () => {
     assert.throws(
       () =>

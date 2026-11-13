@@ -41,7 +41,7 @@ function server(seen = [], identity33 = false) {
     name: 'Translating seller',
     ...identityConfig(identity33),
     version: '1.0.0',
-    capabilities: { supported_versions: ['3.0', '3.1', '3.2', '3.3-beta.5'] },
+    capabilities: { supported_versions: ['3.0', '3.1', '3.2', '3.3-beta.6'] },
     validation: { requests: 'strict', responses: 'strict' },
     mediaBuy: {
       getMediaBuyDelivery: async (params, ctx) => {
@@ -79,7 +79,7 @@ for (const identity33 of [false, true]) {
         assert.strictEqual(seen[0].servedAdcpVersion, release);
       });
     }
-    for (const release of ['3.2', '3.3-beta.5']) {
+    for (const release of ['3.2', '3.3-beta.6']) {
       it(`preserves the delivery fields for ${release}`, async () => {
         const response = await call(server([], identity33), { adcp_version: release, media_buy_ids: ['mb_1'] });
         assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
@@ -143,7 +143,7 @@ for (const identity33 of [false, true]) {
         name: 'Translating seller',
         ...identityConfig(identity33),
         version: '1.0.0',
-        capabilities: { supported_versions: ['3.0', '3.1', '3.2', '3.3-beta.5'] },
+        capabilities: { supported_versions: ['3.0', '3.1', '3.2', '3.3-beta.6'] },
         onVersionTranslation: event => events.push(event),
         mediaBuy: { getMediaBuyDelivery: async () => structuredClone(DELIVERY_32) },
       });
@@ -162,7 +162,7 @@ for (const identity33 of [false, true]) {
         name: 'Translating seller',
         ...identityConfig(identity33),
         version: '1.0.0',
-        capabilities: { supported_versions: ['3.0', '3.1', '3.2', '3.3-beta.5'] },
+        capabilities: { supported_versions: ['3.0', '3.1', '3.2', '3.3-beta.6'] },
         onVersionTranslation: () => {
           throw new Error('observer failed');
         },
@@ -188,7 +188,7 @@ for (const identity33 of [false, true]) {
         name: 'Translating seller',
         ...identityConfig(identity33),
         version: '1.0.0',
-        capabilities: { supported_versions: ['3.0', '3.1', '3.2', '3.3-beta.5'] },
+        capabilities: { supported_versions: ['3.0', '3.1', '3.2', '3.3-beta.6'] },
         taskRegistry,
         onVersionTranslation: event => events.push(event),
         resolveAccountFromAuth: async () => ({ id: 'acct_1' }),
@@ -230,7 +230,7 @@ describe('envelope fields survive response down-conversion', () => {
       products: [{ product_id: 'prod_1', name: 'Premium video', hold_policy: { available: false } }],
     };
     const { data, drifts } = downgradeResponse('list_products', response, {
-      fromVersion: '3.3.0-beta.5',
+      fromVersion: '3.3.0-beta.6',
       toVersion: '3.2',
     });
     assert.strictEqual(data.status, 'completed');
@@ -258,7 +258,7 @@ describe('experimental 3.3 match keys', () => {
 
   it('removes Product.identity.match_keys for a 3.2 buyer and reports it', () => {
     const { data, drifts } = downgradeResponse('get_products', products(), {
-      fromVersion: '3.3.0-beta.5',
+      fromVersion: '3.3.0-beta.6',
       toVersion: '3.2',
     });
     assert.deepStrictEqual(data.products[0].identity, { persistent_identifier: true });
@@ -268,8 +268,8 @@ describe('experimental 3.3 match keys', () => {
 
   it('keeps Product.identity.match_keys for a 3.3 beta.5 buyer', () => {
     const { data, drifts } = downgradeResponse('get_products', products(), {
-      fromVersion: '3.3.0-beta.5',
-      toVersion: '3.3.0-beta.5',
+      fromVersion: '3.3.0-beta.6',
+      toVersion: '3.3.0-beta.6',
     });
     assert.deepStrictEqual(data.products[0].identity.match_keys, [MATCH_KEY]);
     assert.deepStrictEqual(drifts, []);
@@ -281,7 +281,7 @@ describe('experimental 3.3 match keys', () => {
       ...identityConfig(true),
       name: 'Identity product translation',
       version: '1.0.0',
-      capabilities: { supported_versions: ['3.2', '3.3-beta.5'] },
+      capabilities: { supported_versions: ['3.2', '3.3-beta.6'] },
       validation: { requests: 'strict', responses: 'strict' },
       onVersionTranslation: event => events.push(event),
       mediaBuy: {
@@ -308,7 +308,7 @@ describe('experimental 3.3 match keys', () => {
         }),
       },
     });
-    for (const release of ['3.2', '3.3-beta.5']) {
+    for (const release of ['3.2', '3.3-beta.6']) {
       const response = await adcpServer.dispatchTestRequest({
         method: 'tools/call',
         params: { name: 'get_products', arguments: { adcp_version: release, buying_mode: 'brief', brief: 'Video' } },
@@ -331,7 +331,7 @@ it('keeps identity authorization ahead of dispatch for an older buyer', async ()
     ...identityConfig(true),
     name: 'Denied legacy buyer',
     version: '1.0.0',
-    capabilities: { supported_versions: ['3.1', '3.3-beta.5'] },
+    capabilities: { supported_versions: ['3.1', '3.3-beta.6'] },
     validation: { requests: 'strict', responses: 'strict' },
     identity33: {
       authorize: async (_ctx, tool, params) => {
@@ -372,7 +372,7 @@ it('upgrades an older identity request after authorization and before handler di
       ...identityConfig(true),
       name: 'Request translation',
       version: '1.0.0',
-      capabilities: { supported_versions: ['3.1', '3.3-beta.5'] },
+      capabilities: { supported_versions: ['3.1', '3.3-beta.6'] },
       validation: { requests: 'strict', responses: 'strict' },
       identity33: { authorize: async (_ctx, _tool, params) => authorized.push(structuredClone(params)) },
       onVersionTranslation: event => events.push(event),
@@ -383,7 +383,7 @@ it('upgrades an older identity request after authorization and before handler di
         },
       },
     });
-    for (const release of ['3.1', '3.3-beta.5']) {
+    for (const release of ['3.1', '3.3-beta.6']) {
       const args = { adcp_version: release, media_buy_ids: ['mb_1'] };
       const response = await call(adcpServer, args);
       assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));

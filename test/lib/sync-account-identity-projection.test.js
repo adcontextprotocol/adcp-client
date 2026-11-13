@@ -202,6 +202,19 @@ for (const version of ['3.0', '3.1']) {
   });
 }
 
+// AdCP 3.3.0-beta.6 opened the identity schemas (adcp#8866): an ordinary
+// extension member is a valid response member and passes through unchanged.
+test('identity objects keep ordinary extension members under the opened schemas', () => {
+  const row = identityRow();
+  const extended = {
+    ...row,
+    account: { ...row.account, seller_extension: { region: 'eu' } },
+    operator_unit: { ...row.operator_unit, seller_extension: { desk: 'emea' } },
+    identity_change: { ...row.identity_change, seller_extension: { ticket: 'chg-1' } },
+  };
+  assert.deepEqual(toWireSyncAccountRow(extended), extended);
+});
+
 test('nested identity objects cannot retain write-only or internal data even with response validation disabled', () => {
   const row = identityRow();
   const dirtyRows = [
@@ -222,6 +235,9 @@ test('nested identity objects cannot retain write-only or internal data even wit
       ...identityRow(true),
       identity_change_preview: { ...identityRow(true).identity_change_preview, authInfo: { token: 'must-not-echo' } },
     },
+    // Open from 3.3.0-beta.6 (adcp#8866), so these are refused by name rather than by closure.
+    { ...row, account: { ...row.account, billing_entity: { bank: { iban: 'must-not-echo' } } } },
+    { ...row, operator_unit: { ...row.operator_unit, clientSecret: 'must-not-echo' } },
   ];
   for (const dirty of dirtyRows) {
     for (const emit of [value => toWireSyncAccountRow(value), value => syncAccountsResponse({ accounts: [value] })]) {

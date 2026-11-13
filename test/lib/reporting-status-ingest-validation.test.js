@@ -256,17 +256,19 @@ describe('reporting consumer status validation', () => {
       ['oneOf', 'required', 'format']
     );
 
+    // AdCP 3.3.0-beta.6 opened the request envelope (adcp#8866), so an envelope
+    // failure here is a type error rather than an undeclared member.
     const envelopeResult = await handler(
       {
         account: { account_id: 'account-1' },
         idempotency_key: 'reporting-status-keywords-envelope',
         statuses: [consumerStatus()],
-        unsupported: true,
+        ext: 42,
       },
       context
     );
-    assert.equal(envelopeResult.results[0].errors[0].field, '$');
-    assert.equal(envelopeResult.results[0].errors[0].issues[0].keyword, 'additionalProperties');
+    assert.equal(envelopeResult.results[0].errors[0].field, 'ext');
+    assert.equal(envelopeResult.results[0].errors[0].issues[0].keyword, 'type');
   });
 
   test('omits an oversized malformed-property pointer from stored and returned diagnostics', async () => {

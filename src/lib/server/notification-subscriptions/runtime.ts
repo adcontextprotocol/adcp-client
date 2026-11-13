@@ -1043,7 +1043,41 @@ function assertEvent(
     throw new NotificationSubscriptionValidationError('anchor must be caller or account', 'anchor');
   }
   canonicalJsonSha256(event.payload);
+  const identifierFields = IDENTIFIERS_ONLY_PAYLOAD_FIELDS[event.notificationType];
+  const undeclared = identifierFields && Object.keys(event.payload).find(key => !identifierFields.has(key));
+  if (undeclared !== undefined) {
+    // Name the member only when it is a plain identifier, so payload-derived
+    // text never reaches the diagnostic.
+    const field = /^[a-z][a-z0-9_]{0,63}$/.test(undeclared) ? `payload.${undeclared}` : 'payload';
+    throw new NotificationSubscriptionValidationError(
+      `${event.notificationType} carries identifiers only; ${field === 'payload' ? 'a payload member' : field} is not one of its fields`,
+      field
+    );
+  }
 }
+
+/**
+ * Payload fields of identifiers-only notifications. `proposal.created` "cannot
+ * inject terms or instructions into a buyer agent"; its schema is open from AdCP
+ * 3.3.0-beta.6 (adcontextprotocol/adcp#8866), so the sender refuses any other
+ * member explicitly.
+ */
+const IDENTIFIERS_ONLY_PAYLOAD_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  'proposal.created': new Set([
+    'idempotency_key',
+    'notification_id',
+    'notification_type',
+    'fired_at',
+    'subscriber_id',
+    'account_id',
+    'proposal_id',
+    'opportunity_id',
+    'parent_proposal_id',
+    'later_reason',
+    'expires_at',
+    'ext',
+  ]),
+};
 
 function assertUniqueSubscribers(configs: readonly NotificationSubscriptionConfigInput[]): void {
   if (!Array.isArray(configs) || configs.length > 16) {
