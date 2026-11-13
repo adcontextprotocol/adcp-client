@@ -116,6 +116,9 @@ function ruleMatches(rule: HintRule, issue: ValidationIssue, toolName: string | 
 const KEY_VALUE_FLATNESS_HINT =
   "type='key_value' requires top-level `key` and `value` strings; do not nest under a `key_value` field.";
 
+const ACCOUNT_VARIANT_HINT =
+  "`account` is a discriminated union. Pick ONE variant: `{ account_id }` or `{ brand, operator }`. Don't merge fields across variants.";
+
 /**
  * Rules in order — first match wins. Order more-specific patterns first
  * so `activation_key` `key_value` lands before a generic `required` hint
@@ -175,11 +178,18 @@ const RULES: readonly HintRule[] = [
     pointerPattern: /\/brand\/domain$/,
     hint: '`brand` uses `domain` (not `brand_id`). Send `{ domain: "example.com" }`.',
   },
-  // 6. account — discriminator merging.
+  // 6. account — discriminator merging. Closed variants (through 3.3.0-beta.5)
+  // fail with additionalProperties; the open 3.3.0-beta.6 variants fail with
+  // oneOf on the account and `not` on each field borrowed from the other one.
   {
-    keyword: 'additionalProperties',
+    keyword: ['additionalProperties', 'oneOf'],
     pointerPattern: /(^|\/)account$/,
-    hint: "`account` is a discriminated union. Pick ONE variant: `{ account_id }` or `{ brand, operator }`. Don't merge fields across variants.",
+    hint: ACCOUNT_VARIANT_HINT,
+  },
+  {
+    keyword: 'not',
+    pointerPattern: /(^|\/)account\/(account_id|brand|operator)$/,
+    hint: ACCOUNT_VARIANT_HINT,
   },
   // 7. format_id — always an object.
   {

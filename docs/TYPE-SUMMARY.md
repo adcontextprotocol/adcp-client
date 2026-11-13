@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-11-12
+> Generated at: 2026-11-13
 > @adcp/sdk v17.0.0-beta.23
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -921,9 +921,7 @@ _Request:_
   required_overlay_support: Targeting Overlay Requirements
   required_media_buy_support: Media Buy Support Requirements
   property_list: Property List Ref
-  include_execution_readiness: boolean
   fields: ('product_id' | 'name' | 'description' | 'publisher_properties' | 'channels' | 'video_placement_types' | 'audio_distribution_types' | 'sponsored_placement_types' | 'social_placement_surfaces' | 'format_options' | 'placements' | 'delivery_type' | 'exclusivity' | 'pricing_options' | 'forecast' | 'reporting_capabilities' | 'measurement_terms' | 'performance_standards' | 'catalog_types' | 'signal_targeting_allowed' | 'signal_targeting_rules' | 'demographic_targeting' | 'overlay_support' | 'collections' | 'collection_targeting_allowed' | 'installments' | 'media_buy_support' | 'audience_evidence' | 'audience_evidence_selections' | 'max_optimization_goals' | 'catalog_match' | 'list_applications' | 'brief_relevance' | 'targeting_resolution' | 'acceptance_policy_profile_ids' | 'identity' | 'execution_requirements' | 'expires_at' | 'allowed_actions' | 'creative_policy' | 'format_ids' | 'outcome_measurement' | 'delivery_measurement' | 'creative_policy' | 'metric_optimization' | 'conversion_tracking' | 'data_provider_signals' | 'included_signals' | 'signal_targeting_options' | 'overlay_support' | 'media_buy_support' | 'installments' | 'is_custom' | 'product_card' | 'product_card_detailed' | 'enforced_policies' | 'trusted_match')[]
-  include_collections: boolean
   time_budget: Duration
   push_notification_config: Push Notification Config
   pagination: Pagination Request
@@ -938,7 +936,6 @@ _Response (success branch):_
 ```
 {
   products: Product[]
-  collections: Response Collection[]
   targeting_resolution: Get Products Targeting Resolution
   extensions: object
   proposals: Proposal[]
@@ -953,7 +950,6 @@ _Response (success branch):_
   pagination: Pagination Response
   wholesale_feed_version: string
   pricing_version: string
-  execution_readiness: object
   cache_scope: 'public' | 'account'
   unchanged: 'true'
   sandbox: boolean
@@ -983,6 +979,7 @@ _Request:_
   criteria: Product Discovery Criteria
   fields: Product Fields
   include_collections: boolean
+  include_execution_readiness: boolean
   cursor: string
   max_results: integer
   if_feed_version: string
@@ -998,6 +995,7 @@ _Response (success branch):_
   feed_version: string  // required
   cache_scope: 'public' | 'account'  // required
   collections: Response Collection[]
+  execution_readiness: object
   next_cursor: string
   pricing_version: string
   incomplete: object[]
@@ -1350,8 +1348,6 @@ _Request:_
   packages: Package Request[]
   advertiser_industry: Advertiser Industry
   invoice_recipient: Business Entity
-  predecessor_media_buy_id: string
-  lineage_reason: Media Buy Lineage Reason
   io_acceptance: object
   po_number: string
   name: string

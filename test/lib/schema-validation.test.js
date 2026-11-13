@@ -218,10 +218,16 @@ describe('schema-driven validation', () => {
     test('nested-body drift is still caught (relaxation does not recurse into properties)', () => {
       // get_property_list-response nests `list: { ... }` with its own
       // additionalProperties:false. Typos inside the body must still fail
-      // — envelope passthrough is a root-level concession only.
-      const outcome = validateResponse('get_property_list', {
-        list: { unknown_nested_field: 'typo' },
-      });
+      // — envelope passthrough is a root-level concession only. AdCP
+      // 3.3.0-beta.6 opened the 3.3 bodies (adcp#8866), so pin the maintained
+      // 3.2 release, where the body is still closed.
+      const outcome = validateResponse(
+        'get_property_list',
+        {
+          list: { unknown_nested_field: 'typo' },
+        },
+        '3.2.8'
+      );
       const nestedAdditional = outcome.issues.filter(
         i => i.keyword === 'additionalProperties' && i.pointer.startsWith('/list')
       );

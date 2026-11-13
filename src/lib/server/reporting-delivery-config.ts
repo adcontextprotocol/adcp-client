@@ -6,6 +6,7 @@
  */
 import type { ReportingDeliveryConfigurationState } from '../types/tools.generated';
 import { getSchemaValidatorByRef } from '../validation/schema-loader';
+import { retainsNonResponseAccountMember } from './account-response-identity';
 
 const MAX_REPORTING_DELIVERY_CONFIGS = 16;
 const CREDENTIAL_LIKE_URL_COMPONENT =
@@ -47,10 +48,12 @@ function assertSafeSetupUrl(value: unknown): void {
 /**
  * Validate resolved reporting delivery states before placing them in a wire
  * response. This remains necessary when an adopter disables whole-response
- * validation in production. The raw protocol schema rejects unknown fields,
- * including credentials accidentally retained by a handler or persistence
- * model, so failing closed prevents those values from reaching a buyer or an
- * idempotency/replay cache.
+ * validation in production. Credentials accidentally retained by a handler or
+ * persistence model fail closed, so they never reach a buyer or an
+ * idempotency/replay cache. AdCP 3.3.0-beta.6 opened these schemas
+ * (adcontextprotocol/adcp#8866), so schema validation alone no longer rejects
+ * an unknown member; a credential-shaped key or SDK-internal field anywhere in
+ * the record is refused explicitly.
  */
 export function projectReportingDeliveryConfigStates(
   states: readonly ReportingDeliveryConfigurationState[]
@@ -64,12 +67,15 @@ export function projectReportingDeliveryConfigStates(
     throw new Error('Bundled schema core/reporting-delivery-config-state.json is unavailable');
   }
 
-  for (const state of states) {
-    if (!validateState(state)) {
+  // Check and emit the same detached snapshots, so a later mutation (or a
+  // toJSON) cannot change what is sent after the check.
+  const snapshots = states.map(state => structuredClone(state));
+  for (const state of snapshots) {
+    if (!validateState(state) || retainsNonResponseAccountMember(state)) {
       throw new Error('reporting_delivery_configs contains a state that is not a valid secret-free protocol record');
     }
     assertSafeSetupUrl((state as { setup?: { url?: unknown } }).setup?.url);
   }
 
-  return [...states];
+  return snapshots;
 }

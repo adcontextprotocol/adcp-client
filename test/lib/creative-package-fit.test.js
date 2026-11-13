@@ -6,7 +6,7 @@ const {
   CreativeFormatProjectionError,
 } = require('../../dist/lib/v2/projection');
 const { vectors } = require('../fixtures/canonical-image-pixel-ratio.json');
-const VERSION = { adcpVersion: '3.3.0-beta.5' };
+const VERSION = { adcpVersion: '3.3.0-beta.6' };
 const OWNER = 'https://creative.adcontextprotocol.org';
 const image = (facts = { width: 300, height: 250 }) => ({
   creative_id: 'image',

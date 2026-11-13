@@ -5,7 +5,7 @@ const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
 const { AgentClient, ADCP_VERSION } = require('../../dist/lib/index.js');
 const { toReleasePrecisionVersion } = require('../../dist/lib/version.js');
 
-// The 3.3 preview the SDK advertises, at release precision ('3.3-beta.5').
+// The 3.3 preview the SDK advertises, at release precision ('3.3-beta.6').
 const WIRE = toReleasePrecisionVersion(ADCP_VERSION);
 const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server.js');
 const { InMemoryStateStore } = require('../../dist/lib/server/state-store.js');
@@ -126,16 +126,17 @@ test('stable 3.2 uses its own schemas and reports a dropped 3.3 discovery option
   assert.equal(releaseDefinesTool('list_proposals', ADCP_VERSION), true);
   assert.equal(releaseDefinesTool('list_collections', '3.2'), false);
   assert.equal(releaseDefinesTool('list_proposals', '3.2'), false);
+  // beta.6 withdrew get_products' 3.3 options (#8501); list_accounts keeps a 3.3 read flag.
   const translated = convertRequest(
-    'get_products',
-    { buying_mode: 'wholesale', include_collections: true },
+    'list_accounts',
+    { include_requests: true },
     {
       fromVersion: ADCP_VERSION,
       toVersion: '3.2',
     }
   );
-  assert.equal(translated.params.include_collections, undefined);
-  assert.ok(translated.drifts.some(drift => drift.strippedFields?.includes('include_collections')));
+  assert.equal(translated.params.include_requests, undefined);
+  assert.ok(translated.drifts.some(drift => drift.strippedFields?.includes('include_requests')));
 });
 
 test('proposal discovery enforces caller and account scope with request validation off', async () => {
@@ -220,7 +221,7 @@ test('a preview buyer discovers a stable seller without sending an unsupported p
 test('a buyer pinned to the 3.3 beta bundle negotiates its preview and sends typed request_account changes', async t => {
   const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
   const { z } = require('zod');
-  assert.equal(ADCP_VERSION, '3.3.0-beta.5');
+  assert.equal(ADCP_VERSION, '3.3.0-beta.6');
   const requests = [];
   const seller = new McpServer({ name: 'AdCP 3.3 beta seller', version: '1.0.0' });
   seller.registerTool('get_adcp_capabilities', { inputSchema: { adcp_version: z.string().optional() } }, async () => ({

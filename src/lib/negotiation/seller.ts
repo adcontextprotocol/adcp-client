@@ -10,6 +10,7 @@ import type {
   ProposalRefinementCapabilities,
   ProposalRefinementReason,
   ProposalRefinementResult,
+  ProposalUnsatisfiedInstallmentChange,
   RefineProposalsCompletedResponse,
   RefineProposalsRequest,
 } from './types';
@@ -17,6 +18,8 @@ import type {
 export interface ProposalFailureClassification {
   unsatisfied_constraints?: readonly string[];
   unsatisfied_product_changes?: Readonly<Record<string, 'include' | 'omit'>>;
+  /** Experimental, AdCP 3.3 (`media_buy.installment_refinement`). */
+  unsatisfied_installment_changes?: readonly ProposalUnsatisfiedInstallmentChange[];
   batch_aborted?: boolean;
   hold_unavailable?: boolean;
   source_unavailable?: boolean;
@@ -29,7 +32,8 @@ export interface ProposalFailureClassification {
 export function classifyProposalRefinementFailure(failure: ProposalFailureClassification): ProposalRefinementReason {
   if (
     (failure.unsatisfied_constraints?.length ?? 0) > 0 ||
-    Object.keys(failure.unsatisfied_product_changes ?? {}).length > 0
+    Object.keys(failure.unsatisfied_product_changes ?? {}).length > 0 ||
+    (failure.unsatisfied_installment_changes?.length ?? 0) > 0
   ) {
     return 'constraint_unsatisfiable';
   }

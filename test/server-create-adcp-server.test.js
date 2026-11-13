@@ -824,7 +824,7 @@ describe('createAdcpServer', () => {
       assert.equal(calls, 1);
     });
 
-    it('keeps the reporting status envelope closed when general request validation is off', async () => {
+    it('keeps the reporting status envelope strict when general request validation is off', async () => {
       let calls = 0;
       const server = createAdcpServer({
         name: 'Test',
@@ -844,17 +844,13 @@ describe('createAdcpServer', () => {
         idempotency_key: 'reporting-status-closed-envelope-0001',
         statuses: [{ reporting_status_id: 'reporting-status-valid-0001' }],
       };
+      // AdCP 3.3.0-beta.6 opened the envelope (adcp#8866), so undeclared members
+      // are valid; type, length and required-member violations still refuse.
       const invalidEnvelopes = [
-        { ...base, unexpected: true },
         { ...base, context: 42 },
         { ...base, ext: 42 },
-        {
-          ...base,
-          account: {
-            brand: { domain: 'buyer.example', brand_kit_override: { colors: { accent: '#123456' } } },
-            operator: 'operator.example',
-          },
-        },
+        { ...base, idempotency_key: 'short' },
+        { ...base, account: { brand: { domain: 'buyer.example' } } },
       ];
       for (const request of invalidEnvelopes) {
         const response = await callToolRaw(server, 'sync_reporting_status', request);

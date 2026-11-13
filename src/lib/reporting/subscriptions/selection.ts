@@ -209,6 +209,10 @@ export function reportingSubscriptionScopeIncludesV1(
   account: ReportingSubscriptionScopeAccountV1
 ): boolean {
   const scope = subscription.scope as { all_authorized_accounts?: true; account_ids?: string[] };
+  // A scope names exactly one selector (`maxProperties: 1`). From 3.3.0-beta.6 the
+  // object is open (adcp#8866), so an unknown future selector is valid: it selects
+  // nothing here, and a malformed multi-key scope never widens to every account.
+  if (scope === null || typeof scope !== 'object' || Object.keys(scope).length !== 1) return false;
   let selected: boolean;
   if (scope.account_ids !== undefined) selected = scope.account_ids.includes(account.account_id);
   else
