@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { canonicalJsonSha256 } from '../../utils/jcs';
+import { getSchemaDocumentByRef, getSchemaValidatorByRef } from '../../validation/schema-loader';
 import { isWebhookDeliveryTerminalError } from '../webhook-delivery/common';
 import { enforceSsrfPolicy, enforceSsrfPolicyResolved } from '../../substitution/observer/ssrf';
 import { WEBHOOK_SSRF_POLICY } from '../pin-and-bind-fetch';
@@ -1054,15 +1055,30 @@ function assertEvent(
       field
     );
   }
+  assertWebhookExclusions(event);
 }
 
 /**
- * Payload fields of identifiers-only notifications. `proposal.created` "cannot
- * inject terms or instructions into a buyer agent"; its schema is open from AdCP
- * 3.3.0-beta.6 (adcontextprotocol/adcp#8866), so the sender refuses any other
- * member explicitly.
+ * Payload fields of identifiers-only notifications. `proposal.created` and
+ * `proposal.offered` "cannot inject terms or instructions into a buyer agent";
+ * their schemas are open from AdCP 3.3.0-beta.6 (adcontextprotocol/adcp#8866),
+ * so the sender refuses any other member explicitly.
  */
 const IDENTIFIERS_ONLY_PAYLOAD_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  // AdCP 3.3 experimental media_buy.seller_offers: the same identifiers-only rule.
+  'proposal.offered': new Set([
+    'idempotency_key',
+    'notification_id',
+    'notification_type',
+    'fired_at',
+    'subscriber_id',
+    'account_id',
+    'media_buy_id',
+    'proposal_id',
+    'expires_at',
+    'offer_reason',
+    'ext',
+  ]),
   'proposal.created': new Set([
     'idempotency_key',
     'notification_id',
@@ -1078,6 +1094,112 @@ const IDENTIFIERS_ONLY_PAYLOAD_FIELDS: Readonly<Record<string, ReadonlySet<strin
     'ext',
   ]),
 };
+
+/**
+ * The webhook payload schema of each notification type the runtime emits.
+ * `test/lib/persistent-notification-runtime.test.js` checks this against every
+ * webhook schema in the pinned bundle.
+ */
+export const NOTIFICATION_WEBHOOK_SCHEMAS: Readonly<Record<string, string>> = Object.freeze({
+  'capabilities.changed': 'core/capabilities-changed-webhook.json',
+  'principal.changed': 'core/principal-changed-webhook.json',
+  'account_request.changed': 'core/account-request-changed-webhook.json',
+  'creative.status_changed': 'creative/creative-status-changed-webhook.json',
+  'creative.assignment_changed': 'creative/creative-assignment-changed-webhook.json',
+  'indicators.changed': 'core/indicators-changed-webhook.json',
+  'creative.purged': 'creative/creative-purged-webhook.json',
+  'creative.staged_update_changed': 'creative/creative-staged-update-changed-webhook.json',
+  'account.status_changed': 'core/account-status-changed-webhook.json',
+  'account.change_recorded': 'core/account-change-recorded-webhook.json',
+  'product.created': 'core/wholesale-feed-webhook.json',
+  'product.updated': 'core/wholesale-feed-webhook.json',
+  'product.priced': 'core/wholesale-feed-webhook.json',
+  'product.removed': 'core/wholesale-feed-webhook.json',
+  'signal.created': 'core/wholesale-feed-webhook.json',
+  'signal.updated': 'core/wholesale-feed-webhook.json',
+  'signal.priced': 'core/wholesale-feed-webhook.json',
+  'signal.removed': 'core/wholesale-feed-webhook.json',
+  'wholesale_feed.bulk_change': 'core/wholesale-feed-webhook.json',
+  'collection_card.updated': 'core/wholesale-feed-webhook.json',
+  'collection_card.removed': 'core/wholesale-feed-webhook.json',
+  'collection_catalog.bulk_change': 'core/wholesale-feed-webhook.json',
+  'proposal.created': 'core/proposal-created-webhook.json',
+  'proposal.offered': 'core/proposal-offered-webhook.json',
+  'reporting.delivery_ready': 'core/reporting-delivery-ready-webhook.json',
+  'reporting.status_changed': 'core/reporting-status-changed-webhook.json',
+  'reporting.ledger_changed': 'core/reporting-ledger-changed-webhook.json',
+});
+
+const PLAIN_MEMBER = /^[a-z][a-z0-9_]{0,63}$/;
+
+/**
+ * Refuse a payload that violates a `not` exclusion of its webhook schema, at any
+ * depth and including conditional ones: `access_token` on
+ * `reporting.delivery_ready`, `setup.url` on `account.status_changed`, signed
+ * terms on `proposal.offered`. The schemas are open from AdCP 3.3.0-beta.6
+ * (adcontextprotocol/adcp#8866), so these exclusions are what keep a credential,
+ * a setup link or terms out of a fanned-out payload. Other schema errors are
+ * left alone: adopters may emit partial payloads, and the emitter adds
+ * `idempotency_key`.
+ */
+function assertWebhookExclusions(event: Readonly<NotificationEvent>): void {
+  const ref = NOTIFICATION_WEBHOOK_SCHEMAS[event.notificationType];
+  if (!ref) return;
+  const validate = getSchemaValidatorByRef(ref, undefined, undefined, { allErrors: true });
+  // Fail closed: without the schema the exclusions cannot be checked.
+  if (!validate) throw new Error(`Webhook payload schema unavailable for ${event.notificationType}: ${ref}`);
+  const body: Record<string, unknown> = {
+    ...event.payload,
+    notification_type: event.notificationType,
+    notification_id: event.notificationId,
+    ...(event.accountId === undefined ? {} : { account_id: event.accountId }),
+  };
+  validate(body);
+  const exclusion = validate.errors?.find(error => error.keyword === 'not');
+  if (!exclusion) return;
+  // Name the location only from plain identifiers, and the excluded members
+  // only from the bundled schema, so payload-derived text never reaches the
+  // diagnostic.
+  const segments = exclusion.instancePath
+    .split('/')
+    .slice(1)
+    .map(segment => segment.replace(/~1/g, '/').replace(/~0/g, '~'));
+  const plain = segments.every(segment => PLAIN_MEMBER.test(segment) || /^\d+$/.test(segment));
+  const location = plain ? ['payload', ...segments].join('.') : 'payload';
+  let target: unknown = body;
+  for (const segment of plain ? segments : []) {
+    target = target && typeof target === 'object' ? (target as Record<string, unknown>)[segment] : undefined;
+  }
+  const present = excludedMembers(ref, exclusion.schemaPath).filter(
+    member => plain && target !== null && typeof target === 'object' && Object.hasOwn(target, member)
+  );
+  const field = present.length > 0 ? `${location}.${present[0]}` : location;
+  throw new NotificationSubscriptionValidationError(
+    `${event.notificationType} must not carry ${present.length > 0 ? present.map(member => `${location}.${member}`).join(' with ') : `what its webhook schema excludes at ${location}`}`,
+    field
+  );
+}
+
+/** The `required` members of the `not` clause at `schemaPath`, when it is local to the schema. */
+function excludedMembers(ref: string, schemaPath: string): string[] {
+  if (!schemaPath.startsWith('#/')) return [];
+  let node: unknown = getSchemaDocumentByRef(ref)?.schema;
+  for (const segment of schemaPath.slice(2).split('/')) {
+    if (!node || typeof node !== 'object') return [];
+    node = (node as Record<string, unknown>)[segment.replace(/~1/g, '/').replace(/~0/g, '~')];
+  }
+  const members = new Set<string>();
+  const collect = (value: unknown) => {
+    const required = value && typeof value === 'object' ? (value as { required?: unknown }).required : undefined;
+    if (Array.isArray(required)) for (const key of required) if (typeof key === 'string') members.add(key);
+  };
+  collect(node);
+  for (const keyword of ['anyOf', 'oneOf'] as const) {
+    const branches = node && typeof node === 'object' ? (node as Record<string, unknown>)[keyword] : undefined;
+    if (Array.isArray(branches)) branches.forEach(collect);
+  }
+  return [...members].filter(member => PLAIN_MEMBER.test(member));
+}
 
 function assertUniqueSubscribers(configs: readonly NotificationSubscriptionConfigInput[]): void {
   if (!Array.isArray(configs) || configs.length > 16) {

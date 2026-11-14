@@ -777,7 +777,7 @@ function boundedRecovery(value: unknown): ErrorRecovery | undefined {
 
 function boundedErrorField(value: unknown): string | undefined {
   return typeof value === 'string' &&
-    !value.includes('\u0000') &&
+    !CONTROL_CHARACTER.test(value) &&
     isWellFormedUnicodeString(value) &&
     Buffer.byteLength(value, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES
     ? value
@@ -845,14 +845,18 @@ function requestStatusIds(value: unknown): string[] {
     : ['invalid-reporting-status-id'];
 }
 
+/** C0 and C1 controls, DEL, and the Unicode line and paragraph separators. */
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
 function zodPathToPointer(path: PropertyKey[]): string | undefined {
   let pointer = '';
   for (const value of path) {
     const raw = String(value);
     // PostgreSQL jsonb rejects NUL and lone UTF-16 surrogates even though
-    // JSON.stringify can escape them. Omit the optional diagnostic rather
-    // than turning one malformed item into a transaction-wide failure.
-    if (raw.includes('\u0000') || !isWellFormedUnicodeString(raw)) return undefined;
+    // JSON.stringify can escape them, and CR, LF or ESC in a payload-derived
+    // key could forge a log line. Omit the optional diagnostic rather than
+    // turning one malformed item into a transaction-wide failure.
+    if (CONTROL_CHARACTER.test(raw) || !isWellFormedUnicodeString(raw)) return undefined;
     if (Buffer.byteLength(raw, 'utf8') > REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES) return undefined;
     const segment = raw.replace(/~/g, '~0').replace(/\//g, '~1');
     const next = `${pointer}/${segment}`;

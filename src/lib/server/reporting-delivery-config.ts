@@ -5,10 +5,13 @@
  * reach the delivery destination.
  */
 import type { ReportingDeliveryConfigurationState } from '../types/tools.generated';
+import { projectToDeclaredMembers } from '../adapters/version/schema-projection';
+import { exceedsJsonDepth } from '../utils/json-depth';
 import { getSchemaValidatorByRef } from '../validation/schema-loader';
 import { retainsNonResponseAccountMember } from './account-response-identity';
 
 const MAX_REPORTING_DELIVERY_CONFIGS = 16;
+const DELIVERY_CONFIG_STATE_SCHEMA = 'core/reporting-delivery-config-state.json';
 const CREDENTIAL_LIKE_URL_COMPONENT =
   /\b(?:access[_-]?token|api[_-]?key|assertion|authorization|bearer|code|credential|password|passwd|secret|session|signature|token|x-amz-credential|x-amz-security-token|x-amz-signature)\b/i;
 
@@ -52,8 +55,8 @@ function assertSafeSetupUrl(value: unknown): void {
  * persistence model fail closed, so they never reach a buyer or an
  * idempotency/replay cache. AdCP 3.3.0-beta.6 opened these schemas
  * (adcontextprotocol/adcp#8866), so schema validation alone no longer rejects
- * an unknown member; a credential-shaped key or SDK-internal field anywhere in
- * the record is refused explicitly.
+ * an unknown member: a credential-shaped key or SDK-internal field anywhere in
+ * the record is refused, and every other undeclared member is stripped.
  */
 export function projectReportingDeliveryConfigStates(
   states: readonly ReportingDeliveryConfigurationState[]
@@ -62,13 +65,16 @@ export function projectReportingDeliveryConfigStates(
     throw new Error(`reporting_delivery_configs must contain at most ${MAX_REPORTING_DELIVERY_CONFIGS} state records`);
   }
 
-  const validateState = getSchemaValidatorByRef('core/reporting-delivery-config-state.json');
+  const validateState = getSchemaValidatorByRef(DELIVERY_CONFIG_STATE_SCHEMA);
   if (!validateState) {
-    throw new Error('Bundled schema core/reporting-delivery-config-state.json is unavailable');
+    throw new Error(`Bundled schema ${DELIVERY_CONFIG_STATE_SCHEMA} is unavailable`);
   }
 
   // Check and emit the same detached snapshots, so a later mutation (or a
   // toJSON) cannot change what is sent after the check.
+  if (states.some(state => exceedsJsonDepth(state))) {
+    throw new Error('reporting_delivery_configs contains a state that exceeds the maximum JSON depth');
+  }
   const snapshots = states.map(state => structuredClone(state));
   for (const state of snapshots) {
     if (!validateState(state) || retainsNonResponseAccountMember(state)) {
@@ -77,5 +83,5 @@ export function projectReportingDeliveryConfigStates(
     assertSafeSetupUrl((state as { setup?: { url?: unknown } }).setup?.url);
   }
 
-  return snapshots;
+  return snapshots.map(state => projectToDeclaredMembers(DELIVERY_CONFIG_STATE_SCHEMA, state).value);
 }

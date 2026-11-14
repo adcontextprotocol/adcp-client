@@ -398,20 +398,34 @@ fields on beta.5 breaks.** The generated types no longer declare them, and a
     `secretAccessKey`, `accessKeyId`, `clientSecret`, `sasToken`,
     `connectionString`), `ctx_metadata`, `authInfo`, or the write-only
     `destination_billing_entity`, `billing_entity`, `bank` or
-    `invoice_recipient`. Other extension members pass, as the opened schemas
-    allow, so do not keep other secrets on these records. A declared-member
-    projection that restores the closed-schema guarantee in full is a separate
-    follow-up.
+    `invoice_recipient`. After 17.0.0-beta.24 every other undeclared member is
+    dropped, at any depth, so only declared members reach the wire; in
+    17.0.0-beta.24 they passed through. These schemas declare no extension
+    point, so keep extension data off these records. `notification_configs`
+    get the same treatment, including refusal of a retained `webhook_secret`
+    or `authentication.signing_secret`.
+  - `@adcp/reporting-storage` managed delivery refuses adapter evidence whose
+    resource, verification or nested evidence carries undeclared members
+    (after 17.0.0-beta.24), so an adapter that adds a vendor field fails the
+    delivery with `DELIVERY_FAILED`. `undeclaredReportingMaterializationMembers`
+    on `@adcp/sdk/reporting/ledger` lists the offending paths.
   - The reporting ledger's `sync_reporting_status` ingest still refuses
     undeclared status and period members, so the ledger stores exactly the
     fields it interprets.
-  - The notification runtime refuses a `proposal.created` payload carrying
-    anything but its identifier fields (and `ext`): the notification
-    "cannot inject terms or instructions into a buyer agent".
+  - The notification runtime refuses `proposal.created` and (after
+    17.0.0-beta.24) `proposal.offered` payloads carrying anything but their
+    identifier fields (and `ext`): the notifications "cannot inject terms or
+    instructions into a buyer agent". It also refuses a payload that violates
+    a `not` exclusion of its webhook schema at any depth, such as
+    `access_token` on `reporting.delivery_ready` or `setup.url` on
+    `account.status_changed`.
   - `parseAccountChangeNotification` accepts undeclared members and drops them
     from the normalized notification, including inside `resource`.
   - `reportingSubscriptionScopeIncludesV1` selects nothing for an unknown
-    selector or a scope with more than one key.
+    selector or a scope with more than one key. After 17.0.0-beta.24
+    `sync_principal` refuses a scope whose single member is an unknown
+    selector, and the coverage engine covers every account only for an
+    explicit `all_authorized_accounts: true`.
   - A request that merges both account variants now fails with `oneOf`; the
     validation hint still says to pick one variant.
 - **Smaller additions.** Video containers `3gp`, `m4v` and `mpeg`; canonical

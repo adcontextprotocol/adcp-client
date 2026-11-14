@@ -202,17 +202,22 @@ for (const version of ['3.0', '3.1']) {
   });
 }
 
-// AdCP 3.3.0-beta.6 opened the identity schemas (adcp#8866): an ordinary
-// extension member is a valid response member and passes through unchanged.
-test('identity objects keep ordinary extension members under the opened schemas', () => {
+// AdCP 3.3.0-beta.6 opened the identity schemas (adcp#8866). The projection
+// keeps only declared identity members, at any depth, so a retained DB column or
+// vendor member never reaches the wire.
+test('identity objects drop undeclared members under the opened schemas', () => {
   const row = identityRow();
   const extended = {
     ...row,
     account: { ...row.account, seller_extension: { region: 'eu' } },
     operator_unit: { ...row.operator_unit, seller_extension: { desk: 'emea' } },
-    identity_change: { ...row.identity_change, seller_extension: { ticket: 'chg-1' } },
+    identity_change: {
+      ...row.identity_change,
+      seller_extension: { ticket: 'chg-1' },
+      requested_operator_identity: { ...row.identity_change.requested_operator_identity, db_row_id: 42 },
+    },
   };
-  assert.deepEqual(toWireSyncAccountRow(extended), extended);
+  assert.deepEqual(toWireSyncAccountRow(extended), row);
 });
 
 test('nested identity objects cannot retain write-only or internal data even with response validation disabled', () => {
@@ -251,6 +256,17 @@ test('nested identity objects cannot retain write-only or internal data even wit
       );
     }
   }
+});
+
+test('a pathologically deep identity object fails with a typed error, not a stack overflow', () => {
+  const row = identityRow();
+  const deep = {};
+  let cursor = deep;
+  for (let depth = 0; depth < 200_000; depth++) cursor = cursor.a = {};
+  assert.throws(
+    () => toWireSyncAccountRow({ ...row, account: { ...row.account, retained: deep } }),
+    error => !(error instanceof RangeError) && /maximum JSON depth/.test(error.message)
+  );
 });
 
 test('strict commercial-contract failures preserve a settings-update account anchor', async () => {

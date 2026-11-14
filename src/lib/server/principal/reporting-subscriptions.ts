@@ -84,6 +84,8 @@ export interface ApplyReportingSubscriptionsResult {
   }>;
 }
 
+/** The scope selectors `reporting-subscription.json` defines. */
+const REPORTING_SUBSCRIPTION_SCOPE_SELECTORS: ReadonlySet<string> = new Set(['all_authorized_accounts', 'account_ids']);
 /** `reporting-subscription-state.json` `inactive_intervals` maxItems. */
 const MAX_INACTIVE_INTERVALS = 64;
 const SUBSCRIPTION_ID = /^(?!\.{1,2}$)[A-Za-z0-9_.:-]{1,64}$/;
@@ -182,7 +184,11 @@ export function validateReportingSubscription(
   if (typeof subscription.active !== 'boolean') fail('active is required');
   const scope = subscription.scope as { all_authorized_accounts?: unknown; account_ids?: unknown } | undefined;
   const scopeKeys = scope && typeof scope === 'object' ? Object.keys(scope) : [];
-  if (scopeKeys.length !== 1) fail('scope must name exactly one of all_authorized_accounts or account_ids');
+  // The coverage engine treats a scope without account_ids as every authorized
+  // account, so an unknown selector must not pass as the single member.
+  if (scopeKeys.length !== 1 || !REPORTING_SUBSCRIPTION_SCOPE_SELECTORS.has(scopeKeys[0]!)) {
+    fail('scope must name exactly one of all_authorized_accounts or account_ids');
+  }
   if (scope!.all_authorized_accounts !== undefined && scope!.all_authorized_accounts !== true) {
     fail('scope.all_authorized_accounts must be true when present');
   }

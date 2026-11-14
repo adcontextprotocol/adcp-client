@@ -320,6 +320,11 @@ function stripNestedCredentials(value: unknown, patterns?: CredentialPatternsCon
   // Identify credential-shaped paths via the L1 scanner.
   const hits = new Set(scanArgsForCredentials(value, patterns));
   if (hits.size === 0) return value;
+  // A subtree the scanner could not inspect (deeper than its bound, or an
+  // enumeration that threw) has no exact path to drop, so drop the container.
+  if ([...hits].some(hit => hit.endsWith('<too-deep>') || hit.endsWith('<unreadable>'))) {
+    return Array.isArray(value) ? [] : {};
+  }
 
   const seen = new WeakSet<object>();
   const walk = (node: unknown, path: readonly string[], depth: number): unknown => {
