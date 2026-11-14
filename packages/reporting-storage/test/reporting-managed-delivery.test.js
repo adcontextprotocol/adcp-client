@@ -968,6 +968,21 @@ describe('seller managed reporting runtime', () => {
     );
   });
 
+  // AdCP 3.3.0-beta.6 opened the materialization schemas (adcp#8866); undeclared
+  // adapter members would otherwise be stored and served by get_reporting_status.
+  test('refuses adapter evidence that carries members its schema does not declare', () => {
+    const withResourceExtra = outcome();
+    withResourceExtra.resource.provider_debug = { request_id: 'must-not-store' };
+    const withNestedExtra = outcome();
+    withNestedExtra.verification.physical_checksums[0].provider_note = 'must-not-store';
+    for (const carrying of [withResourceExtra, withNestedExtra]) {
+      assert.throws(
+        () => ledger.assertMaterializationOutcome(lease(), carrying, '2026-08-27T04:00:00.000Z'),
+        error => /does not declare/.test(error.message) && !error.message.includes('must-not-store')
+      );
+    }
+  });
+
   test('requires retained exact canonical evidence', () => {
     assert.doesNotThrow(() => ledger.assertMaterializationOutcome(lease(), outcome(), '2026-08-27T04:00:00.000Z'));
     assert.throws(

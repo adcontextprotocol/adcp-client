@@ -575,6 +575,91 @@ test('proposal.created carries identifiers only even though its schema is open',
   );
 });
 
+test('proposal.offered carries identifiers only and webhook schema exclusions are refused', async () => {
+  const { runtime } = makeRuntime({ fetch: scriptedFetch([204]) });
+  const event = (notificationType, payload) => ({
+    emissionId: `emit-${notificationType}-0001`,
+    notificationId: `${notificationType}-1`,
+    notificationType,
+    anchor: 'account',
+    tenantId: 'seller-us',
+    principalId: 'buyer-a',
+    accountId: 'account-1',
+    payload,
+  });
+  const offer = {
+    media_buy_id: 'media-buy-1',
+    proposal_id: 'proposal-2',
+    expires_at: '2026-12-01T00:00:00Z',
+    offer_reason: 'make_good',
+  };
+  assert.equal((await runtime.emit(event('proposal.offered', offer))).matched, 0);
+  await assert.rejects(
+    runtime.emit(event('proposal.offered', { ...offer, opportunity_id: 'opportunity-1' })),
+    error =>
+      error instanceof NotificationSubscriptionValidationError && error.message.includes('payload.opportunity_id')
+  );
+
+  // reporting-delivery-ready-webhook.json is open but declares `not: { required: ['access_token'] }`.
+  assert.equal((await runtime.emit(event('reporting.delivery_ready', { reporting_run_id: 'run-1' }))).matched, 0);
+  await assert.rejects(
+    runtime.emit(event('reporting.delivery_ready', { reporting_run_id: 'run-1', access_token: 'must-not-send' })),
+    error =>
+      error instanceof NotificationSubscriptionValidationError &&
+      error.field === 'payload.access_token' &&
+      !error.message.includes('must-not-send')
+  );
+  // A nested exclusion: a setup link is never fanned out to every account subscriber.
+  assert.equal(
+    (await runtime.emit(event('account.status_changed', { status: 'pending_approval', setup: { message: 'Sign' } })))
+      .matched,
+    0
+  );
+  await assert.rejects(
+    runtime.emit(
+      event('account.status_changed', {
+        status: 'pending_approval',
+        setup: { message: 'Sign', url: 'https://seller.example/setup/one-time-must-not-send' },
+      })
+    ),
+    error =>
+      error instanceof NotificationSubscriptionValidationError &&
+      error.field === 'payload.setup.url' &&
+      !error.message.includes('one-time-must-not-send')
+  );
+});
+
+test('every webhook payload schema in the pinned bundle is mapped for its notification types', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const {
+    ACCOUNT_NOTIFICATION_TYPES,
+    CALLER_NOTIFICATION_TYPES,
+    NOTIFICATION_WEBHOOK_SCHEMAS,
+  } = require('../../dist/lib/server/notification-subscriptions/runtime.js');
+  const { ADCP_VERSION } = require('../../dist/lib/version.js');
+  const root = path.join(__dirname, '..', '..', 'schemas', 'cache', ADCP_VERSION);
+  const emitted = new Set([...ACCOUNT_NOTIFICATION_TYPES, ...CALLER_NOTIFICATION_TYPES]);
+  const expected = {};
+  for (const directory of ['core', 'creative']) {
+    for (const file of fs.readdirSync(path.join(root, directory))) {
+      if (!file.endsWith('-webhook.json')) continue;
+      const schema = JSON.parse(fs.readFileSync(path.join(root, directory, file), 'utf8'));
+      const type = schema.properties?.notification_type;
+      for (const value of type?.const !== undefined ? [type.const] : (type?.enum ?? [])) {
+        if (emitted.has(value)) expected[value] = `${directory}/${file}`;
+      }
+    }
+  }
+  assert.ok(Object.keys(expected).length > 0);
+  assert.deepEqual({ ...NOTIFICATION_WEBHOOK_SCHEMAS }, expected);
+  // The runtime fails closed when a mapped schema cannot compile, so each must.
+  const { getSchemaValidatorByRef } = require('../../dist/lib/validation/schema-loader.js');
+  for (const ref of new Set(Object.values(NOTIFICATION_WEBHOOK_SCHEMAS))) {
+    assert.equal(typeof getSchemaValidatorByRef(ref, ADCP_VERSION, undefined, { allErrors: true }), 'function', ref);
+  }
+});
+
 test('legacy credentials remain write-only and resolve only after per-attempt authorization', async () => {
   const secret = 'secret-material-with-at-least-32-characters';
   const credentials = createVersionedCredentialAdapter();

@@ -308,7 +308,15 @@ describe('reporting consumer status validation', () => {
   });
 
   test('omits database-unsafe malformed-property pointers without failing valid siblings', async () => {
-    for (const unsafeProperty of ['unsafe\u0000key', `unsafe${String.fromCharCode(0xd800)}key`]) {
+    for (const unsafeProperty of [
+      'unsafe\u0000key',
+      `unsafe${String.fromCharCode(0xd800)}key`,
+      // A payload-derived CR, LF or ESC could forge a diagnostic or log line.
+      'unsafe\r\nINFO forged-line',
+      'unsafe\u001b[2Kkey',
+      'unsafe\u009b2Kkey',
+      'unsafe\u2028forged-line',
+    ]) {
       let storedField = 'not-called';
       const handler = createSyncReportingStatusHandler(
         {

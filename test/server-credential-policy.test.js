@@ -73,6 +73,17 @@ function callDelivery(server, args, dispatchOpts) {
   );
 }
 
+describe('scanArgsForCredentials depth bound', () => {
+  it('fails closed with a typed hit instead of overflowing the stack', () => {
+    const root = {};
+    let cursor = root;
+    for (let depth = 0; depth < 200_000; depth++) cursor = cursor.a = {};
+    const hits = scanArgsForCredentials(root);
+    assert.strictEqual(hits.length, 1);
+    assert.match(hits[0], /<too-deep>$/);
+  });
+});
+
 describe('scanArgsForCredentials', () => {
   it('returns empty for clean args', () => {
     assert.deepStrictEqual(scanArgsForCredentials({ media_buy_id: 'mb_1' }), []);

@@ -52,9 +52,9 @@ describe('account notification_configs projection', () => {
     assert.ok(!JSON.stringify(wire).includes('credentials'));
   });
 
-  // AdCP 3.3.0-beta.6 opened the state (adcp#8866): an extension member passes,
-  // while SDK-internal members are refused explicitly instead of by closure.
-  test('list_accounts projection keeps extension members and refuses retained internal members', () => {
+  // AdCP 3.3.0-beta.6 opened the state (adcp#8866): an undeclared member is
+  // stripped, while SDK-internal members are refused explicitly instead of by closure.
+  test('list_accounts projection strips undeclared members and refuses retained internal members', () => {
     const account = state => ({
       id: 'acc_acme',
       name: 'Acme',
@@ -62,8 +62,12 @@ describe('account notification_configs projection', () => {
       ctx_metadata: {},
       reporting_delivery_configs: [state],
     });
-    const extended = { ...reportingDeliveryState, seller_extension: { region: 'us' } };
-    assert.deepStrictEqual(toWireAccount(account(extended)).reporting_delivery_configs, [extended]);
+    const extended = {
+      ...reportingDeliveryState,
+      seller_extension: { region: 'us' },
+      configuration: { ...reportingDeliveryState.configuration, internal_queue: 'q-7' },
+    };
+    assert.deepStrictEqual(toWireAccount(account(extended)).reporting_delivery_configs, [reportingDeliveryState]);
     for (const retained of [
       { ...reportingDeliveryState, ctx_metadata: { upstream_id: 'must-not-echo' } },
       { ...reportingDeliveryState, configuration: { ...reportingDeliveryState.configuration, authInfo: {} } },
@@ -132,6 +136,38 @@ describe('account notification_configs projection', () => {
         active: true,
       },
     ]);
+  });
+
+  // notification-config.json was closed up to 3.3.0-beta.5 and is open from
+  // beta.6 (adcp#8866): retained secrets are refused, other undeclared members dropped.
+  test('notification_configs keep declared members only and refuse retained secrets', () => {
+    const config = {
+      subscriber_id: 'wholesale-feed-sync',
+      url: 'https://buyer.example/webhooks/adcp/wholesale-feed',
+      event_types: ['product.updated'],
+      authentication: { schemes: ['Bearer'], credentials: 'super-secret-token' },
+    };
+    const account = notificationConfig => ({
+      id: 'acc_acme',
+      name: 'Acme',
+      status: 'active',
+      ctx_metadata: {},
+      notification_configs: [notificationConfig],
+    });
+    const wire = toWireAccount(
+      account({ ...config, delivery_queue: 'q-7', authentication: { ...config.authentication, rotated: true } })
+    );
+    assert.deepStrictEqual(wire.notification_configs, [{ ...config, authentication: { schemes: ['Bearer'] } }]);
+    for (const retained of [
+      { ...config, webhook_secret: 'must-not-echo' },
+      { ...config, authentication: { ...config.authentication, signing_secret: 'must-not-echo' } },
+      { ...config, ctx_metadata: { upstream: 'must-not-echo' } },
+    ]) {
+      assert.throws(
+        () => toWireAccount(account(retained)),
+        error => /notification_configs/.test(error.message) && !error.message.includes('must-not-echo')
+      );
+    }
   });
 
   test('sync_accounts result projection echoes applied subscribers without credentials', () => {

@@ -1,4 +1,6 @@
 import type { SyncAccountsSuccess } from '../types/tools.generated';
+import { projectToDeclaredMembers } from '../adapters/version/schema-projection';
+import { exceedsJsonDepth, MAX_JSON_DEPTH } from '../utils/json-depth';
 import { getSchemaDocumentByRef, getSchemaValidatorByRef } from '../validation/schema-loader';
 import { scanArgsForCredentials } from './credential-policy';
 
@@ -85,11 +87,13 @@ export function retainsNonResponseAccountMember(value: unknown): boolean {
   return scanArgsForCredentials(value, RESPONSE_CREDENTIAL_PATTERNS).length > 0 || hasNonResponseMember(value);
 }
 
-function hasNonResponseMember(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(hasNonResponseMember);
+function hasNonResponseMember(value: unknown, depth = 0): boolean {
+  // Too deep to inspect counts as retained, rather than overflowing the stack.
+  if (depth > MAX_JSON_DEPTH) return true;
+  if (Array.isArray(value)) return value.some(member => hasNonResponseMember(member, depth + 1));
   if (value === null || typeof value !== 'object') return false;
   return Object.entries(value).some(
-    ([key, member]) => NON_RESPONSE_ACCOUNT_MEMBERS.has(key) || hasNonResponseMember(member)
+    ([key, member]) => NON_RESPONSE_ACCOUNT_MEMBERS.has(key) || hasNonResponseMember(member, depth + 1)
   );
 }
 
@@ -99,9 +103,10 @@ function hasNonResponseMember(value: unknown): boolean {
  * replay cache, even with whole-response validation off. These four core
  * contracts are shared by the maintained 3.2 and 3.3 bundles. Up to
  * 3.3.0-beta.5 their schemas were closed, so validation alone refused retained
- * fields; 3.3.0-beta.6 opened them (adcontextprotocol/adcp#8866), so
- * credential-shaped keys, SDK-internal fields and write-only members are
- * refused explicitly while ordinary extension members pass.
+ * fields; 3.3.0-beta.6 opened them (adcontextprotocol/adcp#8866). The
+ * projection now refuses credential-shaped keys, SDK-internal fields and
+ * write-only members outright, and strips every other member the schema does
+ * not declare, so only declared identity reaches the wire.
  */
 export function projectAccountResponseIdentityFields(account: object): IdentityFields {
   const fields = account as Record<string, unknown>;
@@ -109,6 +114,7 @@ export function projectAccountResponseIdentityFields(account: object): IdentityF
   for (const [field, schemaRef] of Object.entries(IDENTITY_RESPONSE_SCHEMAS)) {
     const value = fields[field];
     if (value === undefined) continue;
+    if (exceedsJsonDepth(value)) throw new Error(`Account response ${field} exceeds the maximum JSON depth.`);
     const snapshot: unknown = structuredClone(value);
     const validate = getSchemaValidatorByRef(schemaRef);
     if (!validate) throw new Error(`Account response identity schema unavailable: ${schemaRef}.`);
@@ -118,7 +124,7 @@ export function projectAccountResponseIdentityFields(account: object): IdentityF
         `Account response ${field} must match its canonical identity schema without retained internal fields.`
       );
     }
-    Object.assign(projected, { [field]: snapshot });
+    Object.assign(projected, { [field]: projectToDeclaredMembers(schemaRef, snapshot).value });
   }
   return projected;
 }
