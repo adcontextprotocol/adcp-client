@@ -158,7 +158,10 @@ At AdCP 3.3, an `authorized_agents[].url` whose canonical form has the root
 path and no query (`https://agent.example.com`) authorizes the agent at that
 origin whatever its path, so it matches an agent at
 `https://agent.example.com/mcp` ([Agent URL matching](https://adcontextprotocol.org/docs/governance/property/adagents#agent-url-matching),
-DR-0023). An entry with a path still matches only that canonical URL.
+DR-0023). An entry with a path still matches only that canonical URL. At 3.3
+the comparison also drops one trailing root-label dot from a DNS host
+(`https://agent.example.` matches `https://agent.example/mcp`) and matches
+nothing for a host ending in more than one dot.
 
 `resolveAgentProperties(adAgents, agentUrl, { adcpVersion })` and the new
 `agentUrlMatchesAuthorizedEntry(entryUrl, agentUrl, { adcpVersion })` apply

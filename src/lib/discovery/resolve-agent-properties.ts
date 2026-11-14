@@ -138,12 +138,18 @@ export function canonicalizeAgentUrl(raw: string): string | null {
 }
 
 interface CanonicalAgentUrl {
-  /** Full canonical URL, as {@link canonicalizeAgentUrl} returns it. */
+  /** Full canonical URL, as {@link canonicalizeAgentUrl} returns it. The 3.2 comparison key. */
   url: string;
-  /** Canonical origin: `scheme://authority`, no path, query or fragment. */
-  origin: string;
   /** Root path `/` and no query, empty query marker included. */
   originOnly: boolean;
+  /**
+   * The 3.3 comparison keys: `url` and its canonical origin with one trailing
+   * root-label dot removed from a DNS host (URL canonicalization step 2,
+   * `https://agent.example./mcp` → `https://agent.example/mcp`). `null` when
+   * the host ends in more than one dot (an empty label, which step 2 rejects),
+   * so at 3.3 such a URL matches nothing.
+   */
+  rootDotless: { url: string; origin: string } | null;
 }
 
 function canonicalAgentUrlParts(raw: string): CanonicalAgentUrl | null {
@@ -153,7 +159,23 @@ function canonicalAgentUrlParts(raw: string): CanonicalAgentUrl | null {
   // removal and unreserved percent-decoding, so `/./` and `/%2E/` read as `/`.
   const parsed = new URL(url);
   const origin = `${parsed.protocol}//${parsed.host}`;
-  return { url, origin, originOnly: url === `${origin}/` };
+  return { url, originOnly: url === `${origin}/`, rootDotless: stripRootDot(parsed, url, origin) };
+}
+
+/**
+ * Remove one trailing root-label dot from a DNS host, keeping the port, path
+ * and query. Returns `null` for a host of more than one trailing dot, or of
+ * only a dot. IPv6 literals are left alone; WHATWG parsing already drops the
+ * dot from an IPv4 host. Kept out of `canonicalizeAgentUrl` so that its other
+ * callers (format ids, supply-path identity, projections) and the 3.2 exact
+ * comparison are unchanged.
+ */
+function stripRootDot(parsed: URL, url: string, origin: string): { url: string; origin: string } | null {
+  const host = parsed.hostname;
+  if (host.startsWith('[') || !host.endsWith('.')) return { url, origin };
+  if (host.endsWith('..') || host === '.') return null;
+  const dotless = `${parsed.protocol}//${host.slice(0, -1)}${parsed.port ? `:${parsed.port}` : ''}`;
+  return { url: dotless + url.slice(origin.length), origin: dotless };
 }
 
 /**
@@ -170,7 +192,8 @@ export function usesOriginOnlyAgentMatching(adcpVersion: string = ADCP_VERSION):
  *
  * Both sides are canonicalized with {@link canonicalizeAgentUrl}, so scheme
  * and host case, default ports, unreserved percent-encoding and fragments
- * never matter, and the scheme, host and port always do. Then:
+ * never matter, and the scheme, host and port always do. A URL with userinfo
+ * never canonicalizes, so it matches nothing. Then:
  *
  * - **AdCP 3.3 or later** (DR-0023, adcp#8862): an origin-only entry, one
  *   whose canonical form has the root path and no query
@@ -178,7 +201,10 @@ export function usesOriginOnlyAgentMatching(adcpVersion: string = ADCP_VERSION):
  *   matches any agent URL with the same canonical origin, including
  *   `https://agent.example.com/mcp`. An entry with a path, or with a query
  *   (even an empty `?`), matches only the same canonical URL, so path case
- *   and a trailing slash (`/mcp` vs `/mcp/`) stay significant.
+ *   and a trailing slash (`/mcp` vs `/mcp/`) stay significant. Both sides
+ *   also drop one trailing root-label dot from a DNS host
+ *   (`https://agent.example.` matches `https://agent.example/mcp`), and a
+ *   host ending in more than one dot matches nothing.
  * - **AdCP 3.2 and earlier**: every entry matches only the same canonical
  *   URL, so an origin-only entry matches only an agent served at the root.
  *
@@ -202,8 +228,14 @@ function matchCanonicalAgentUrl(
   agent: CanonicalAgentUrl,
   originOnlyMatching: boolean
 ): AgentUrlMatchKind {
-  if (entry.url === agent.url) return 'exact';
-  if (originOnlyMatching && entry.originOnly && entry.origin === agent.origin) return 'origin';
+  // 3.2 and earlier: the exact canonical URL, byte-identical to the pre-3.3 rule.
+  if (!originOnlyMatching) return entry.url === agent.url ? 'exact' : 'none';
+  // 3.3 and later: compare with one DNS root dot removed; a malformed dotted host matches nothing.
+  const e = entry.rootDotless;
+  const a = agent.rootDotless;
+  if (!e || !a) return 'none';
+  if (e.url === a.url) return 'exact';
+  if (entry.originOnly && e.origin === a.origin) return 'origin';
   return 'none';
 }
 

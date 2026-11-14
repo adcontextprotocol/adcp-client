@@ -208,6 +208,77 @@ describe('agentUrlMatchesAuthorizedEntry — normalization', () => {
   });
 });
 
+describe('agentUrlMatchesAuthorizedEntry — trailing root dot on a DNS host (adcp#9011)', () => {
+  test('one trailing dot is removed on both sides at 3.3', () => {
+    assert.strictEqual(matches('https://a.example.', 'https://a.example/mcp', V33), true);
+    assert.strictEqual(matches('https://a.example', 'https://a.example./mcp', V33), true);
+    assert.strictEqual(matches('https://A.Example.:443/', 'https://a.example/mcp', V33), true);
+    assert.strictEqual(matches('https://a.example.:8443', 'https://a.example:8443/mcp', V33), true);
+    // Exact (path) entries compare dotless too.
+    assert.strictEqual(matches('https://a.example./mcp', 'https://a.example/mcp', V33), true);
+    assert.strictEqual(matches('https://a.example./mcp', 'https://a.example/a2a', V33), false);
+    // The dot never widens across origins.
+    assert.strictEqual(matches('https://a.example.', 'https://b.example/mcp', V33), false);
+    assert.strictEqual(matches('https://a.example.', 'https://a.example:8443/mcp', V33), false);
+  });
+
+  test('more than one trailing dot matches nothing at 3.3', () => {
+    for (const [entryUrl, agentUrl] of [
+      ['https://a.example..', 'https://a.example/mcp'],
+      ['https://a.example..', 'https://a.example../mcp'],
+      ['https://a.example..', 'https://a.example..'],
+      ['https://a.example', 'https://a.example../mcp'],
+      ['https://a.example../mcp', 'https://a.example../mcp'],
+    ]) {
+      assert.strictEqual(matches(entryUrl, agentUrl, V33), false, `${entryUrl} vs ${agentUrl}`);
+    }
+  });
+
+  test('3.2 stays exact on the canonical URL, dot included', () => {
+    // A dotted entry matches a dotted agent at the same URL and nothing else.
+    assert.strictEqual(matches('https://a.example./mcp', 'https://a.example./mcp', V32), true);
+    assert.strictEqual(matches('https://a.example.', 'https://a.example.', V32), true);
+    assert.strictEqual(matches('https://a.example./mcp', 'https://a.example/mcp', V32), false);
+    assert.strictEqual(matches('https://a.example.', 'https://a.example/', V32), false);
+    assert.strictEqual(matches('https://a.example.', 'https://a.example./mcp', V32), false);
+    // Pre-3.3 behaviour for a doubled dot is unchanged: same canonical URL, same answer.
+    assert.strictEqual(matches('https://a.example../mcp', 'https://a.example../mcp', V32), true);
+  });
+
+  test('IPv6 literals are untouched', () => {
+    assert.strictEqual(matches('https://[2001:db8::1]', 'https://[2001:DB8::1]/mcp', V33), true);
+    assert.strictEqual(matches('https://[2001:db8::1]/mcp', 'https://[2001:db8::1]/mcp', V32), true);
+  });
+});
+
+describe('userinfo is rejected, never stripped', () => {
+  for (const v of [V32, V33]) {
+    test(`an entry or agent with userinfo matches nothing at ${v}`, () => {
+      assert.strictEqual(matches('https://user@a.example', 'https://a.example/mcp', v), false);
+      assert.strictEqual(matches('https://user:pw@a.example/mcp', 'https://a.example/mcp', v), false);
+      assert.strictEqual(matches('https://a.example', 'https://user@a.example/mcp', v), false);
+      assert.strictEqual(matches('https://a.example/mcp', 'https://user:pw@a.example/mcp', v), false);
+      assert.strictEqual(matches('https://user@a.example/mcp', 'https://user@a.example/mcp', v), false);
+      assert.strictEqual(
+        resolveAgentProperties(
+          { properties: [property('home')], authorized_agents: [entry('https://user:pw@a.example', ['home'])] },
+          'https://a.example/mcp',
+          { adcpVersion: v }
+        ).unresolvable,
+        'agent_not_listed'
+      );
+      assert.strictEqual(
+        resolveAgentProperties(
+          { properties: [property('home')], authorized_agents: [entry('https://a.example', ['home'])] },
+          'https://user@a.example/mcp',
+          { adcpVersion: v }
+        ).unresolvable,
+        'agent_not_listed'
+      );
+    });
+  }
+});
+
 describe('resolveAgentProperties — origin-only entries', () => {
   const file = {
     properties: [property('home'), property('news')],
@@ -374,5 +445,41 @@ describe('supply-path verification stays exact (adcp#8943)', () => {
     const input = structuredClone(vector.input);
     input.ownerManifest.authorized_agents[0].url = input.agentUrl;
     assert.deepStrictEqual(evaluateSupplyPath(input).legs.owner_agent_declared, { ok: true });
+  });
+});
+
+describe('resolveAgentProperties — trailing root dot', () => {
+  test('a dotted origin-only entry authorizes an agent at a path at 3.3 only', () => {
+    const file = { properties: [property('home')], authorized_agents: [entry('https://a.example.', ['home'])] };
+    assert.strictEqual(
+      resolveAgentProperties(file, 'https://a.example/mcp', { adcpVersion: V33 }).properties.length,
+      1
+    );
+    assert.strictEqual(
+      resolveAgentProperties(file, 'https://a.example/mcp', { adcpVersion: V32 }).unresolvable,
+      'agent_not_listed'
+    );
+  });
+
+  test('a doubled dot authorizes nothing at 3.3', () => {
+    const file = { properties: [property('home')], authorized_agents: [entry('https://a.example..', ['home'])] };
+    for (const agentUrl of ['https://a.example/mcp', 'https://a.example../mcp', 'https://a.example..']) {
+      assert.strictEqual(
+        resolveAgentProperties(file, agentUrl, { adcpVersion: V33 }).unresolvable,
+        'agent_not_listed',
+        agentUrl
+      );
+    }
+  });
+
+  test('dotted and dotless spellings of one origin-only entry are ambiguous at 3.3', () => {
+    const file = {
+      properties: [property('home'), property('news')],
+      authorized_agents: [entry('https://a.example', ['home']), entry('https://a.example.', ['news'])],
+    };
+    assert.strictEqual(
+      resolveAgentProperties(file, 'https://a.example/mcp', { adcpVersion: V33 }).unresolvable,
+      'ambiguous_agent_url'
+    );
   });
 });
