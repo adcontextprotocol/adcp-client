@@ -12400,16 +12400,19 @@ function runCredentialValues(options: StoryboardRunOptions): string[] {
     const token = auth.tokens?.access_token;
     if (typeof token === 'string') pushHeaderToken(token);
   }
-  const kit = options.test_kit?.auth;
-  if (typeof kit?.api_key === 'string') pushHeaderToken(kit.api_key);
-  const basic = kit?.basic;
-  if (typeof basic?.password === 'string') values.push(basic.password);
-  if (typeof basic?.username === 'string' && typeof basic?.password === 'string') {
-    pushUserPass(`${basic.username}:${basic.password}`);
+  // An unresolved `test_kit_auth` is a credential this run holds as much as
+  // the kit's own `auth` is.
+  for (const kit of [options.test_kit?.auth, options.test_kit_auth]) {
+    if (typeof kit?.api_key === 'string') pushHeaderToken(kit.api_key);
+    const basic = kit?.basic;
+    if (typeof basic?.password === 'string') values.push(basic.password);
+    if (typeof basic?.username === 'string' && typeof basic?.password === 'string') {
+      pushUserPass(`${basic.username}:${basic.password}`);
+    }
+    // `basic.credentials` is validated as unencoded `username:password`
+    // (`normalizeBasicCredentials`), so it is a pair, not an opaque blob.
+    if (typeof basic?.credentials === 'string') pushUserPass(basic.credentials);
   }
-  // `basic.credentials` is validated as unencoded `username:password`
-  // (`normalizeBasicCredentials`), so it is a pair, not an opaque blob.
-  if (typeof basic?.credentials === 'string') pushUserPass(basic.credentials);
   // Custom `options.headers` values are credentials too whenever the header
   // name says so — an adopter's `x-gateway-token` is as much a secret as a
   // bearer, and it must be redactable even though the probe refuses to forward
@@ -13217,8 +13220,9 @@ function isCredentialHeaderName(name: string): boolean {
 
 /**
  * Create an isolated protocol client whose credential-bearing headers are exactly
- * the step override. Removing `test_kit` is load-bearing: createTestClient
- * otherwise promotes its API key back into `auth`, defeating `auth: none`.
+ * the step override. Removing `test_kit` and `test_kit_auth` is load-bearing:
+ * createTestClient otherwise promotes their API key back into `auth`, defeating
+ * `auth: none`.
  * Credential-looking custom headers are removed as well, while non-auth
  * routing headers remain intact. Functional request signing is deliberately
  * disabled to avoid mixing the suite's signing identity with a different
@@ -13283,6 +13287,7 @@ function createAuthOverrideClient(
     protocol,
     auth,
     test_kit: undefined,
+    test_kit_auth: undefined,
     _client: undefined,
     functional_request_signing: undefined,
     ...(signedFetch && { transport: { ...options.transport, trustedFetchFn: signedFetch } }),

@@ -318,7 +318,7 @@ export {
 // re-export here only if/when we promote it to a public API surface.
 
 // Test-kit schema validation
-export { validateTestKit, TestKitValidationError, PROBE_TASK_ALLOWLIST } from './test-kit';
+export { validateTestKit, validateTestKitAuthOverlay, TestKitValidationError, PROBE_TASK_ALLOWLIST } from './test-kit';
 
 // Sandbox entities
 export type { SandboxBrand, SandboxAgent, SandboxEntities, BrandJson } from './sandbox-entities';

@@ -270,6 +270,30 @@ Run-level `transport`, including a `trustedFetchFn` egress guard, applies to
 every routed agent. Version negotiation is done once, against the agent under
 test, and shared by the routed agents.
 
+**Grading with your own credential.** A run-level `test_kit` replaces every
+storyboard's declared kit (`prerequisites.test_kit`), so storyboards lose
+their own fixtures: asset files, `commercial_relationship`, creative build
+recipes and the other fields their phases and directives read. To present
+your credential and keep each declared kit, pass `test_kit_auth` instead:
+
+```ts
+await comply(agentUrl, {
+  auth: { type: 'bearer', token: ownerToken },
+  test_kit_auth: { api_key: ownerToken, probe_task: 'list_creatives' },
+});
+```
+
+Each storyboard loads its declared kit and gets `test_kit_auth` as that kit's
+whole `auth` block when the kit declares `sandbox: true` or carries no
+credential of its own (runner-contract kits). A kit that declares
+`sandbox: false`, or carries a credential without declaring `sandbox: true`,
+keeps its own credential: it may be the live-mode principal the storyboard
+tests. A storyboard with no declared kit gets `{ auth: test_kit_auth }`. A
+declared kit that is not in the compliance cache gets no overlay, so its
+`from_test_kit` steps fail as a configuration error, as they would without
+`test_kit_auth`. `probe_task` is required, as for `test_kit.auth`, and passing
+`test_kit` and `test_kit_auth` together throws `TestKitValidationError`.
+
 **OAuth-protected agents.** Storyboard runs reuse tokens saved under an alias. Two supported flows:
 
 ```bash

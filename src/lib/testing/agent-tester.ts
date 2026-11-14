@@ -26,6 +26,7 @@
 export type {
   TestScenario,
   TestOptions,
+  TestKitAuth,
   TestStepResult,
   AgentProfile,
   TestResult,
