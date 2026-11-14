@@ -3,8 +3,9 @@ process.env.NODE_ENV = 'test';
 // A scenario the agent's own declaration puts outside its surface must not cap
 // the agent's bundle (adcp-client#2945).
 //
-// Scope is AdCP 3.2 (the pinned compliance bundle), and the version boundary
-// is load-bearing, so it is pinned below rather than described.
+// Scope is AdCP 3.2 and the 3.1 releases that carry the same rule (3.1.24+),
+// and the version boundary is load-bearing, so it is pinned below rather than
+// described.
 //
 // AdCP 3.2 `media_buy_seller/governance_approved` and `.../governance_conditions`
 // declare `requires_capability` on `adcp.governance_enforcement.tasks`, plus
@@ -32,11 +33,11 @@ process.env.NODE_ENV = 'test';
 //       `requires: [multi_agent]`, and stays capped with no second tenant. A
 //       claimant is never credited for a capability it never exercised.
 //
-// AdCP 3.1.x is deliberately untouched: that bundle's copy of the scenario
-// declares no machine-readable capability predicate, so nothing distinguishes
-// a pure seller from a claimant without inferring intent from prose. Its
-// grades are pinned here as unchanged, and the declaration backport is an
-// upstream ask.
+// AdCP 3.1.0–3.1.23 are deliberately untouched: those bundles' copies of the
+// scenario declare no machine-readable capability predicate, so nothing
+// distinguishes a pure seller from a claimant without inferring intent from
+// prose. adcp#7625 (adcp#7584) backported the declarations and the
+// "Applicability order" rule to 3.1.24, so the rollup applies from there.
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -441,7 +442,11 @@ describe(
 // 2. Version scoping, pinned
 // ────────────────────────────────────────────────────────────
 
-const LEGACY_CACHE = path.join(__dirname, '..', '..', 'compliance', 'cache', '3.1.31');
+// The cached 3.1 schema line. It is post-backport; the pre-backport scenario
+// below is a fixture copy.
+const CACHE_3_1 = path.join(__dirname, '..', '..', 'compliance', 'cache', '3.1.31');
+// Last 3.1 release before the "Applicability order" backport (adcp#7625).
+const PRE_BACKPORT_3_1_RELEASE = '3.1.23';
 const LEGACY_STORYBOARD = path.join(
   __dirname,
   '..',
@@ -450,7 +455,7 @@ const LEGACY_STORYBOARD = path.join(
   'storyboards',
   'dbccbd1e7053-governance_approved.yaml'
 );
-const legacyAvailable = fs.existsSync(LEGACY_CACHE) && fs.existsSync(LEGACY_STORYBOARD);
+const legacyAvailable = fs.existsSync(CACHE_3_1) && fs.existsSync(LEGACY_STORYBOARD);
 
 // The headline release criterion and the census that backs the changeset's
 // scope claim both read the gitignored compliance cache. Locally a missing
@@ -490,15 +495,17 @@ describe('version scoping', { skip: !legacyAvailable }, () => {
       const ids = resolved.storyboards.map(s => s.id);
       // Documented, not endorsed: the media_buy baseline sweeps the scenario
       // in for an agent that never claimed governance, which is why the
-      // capability predicate (3.2) is what has to carry the distinction.
+      // capability predicate (3.2, and 3.1.24+) is what has to carry the
+      // distinction.
       assert.ok(ids.includes('media_buy_seller/governance_approved'), `${version} selects the scenario`);
     }
   });
 
-  test('no AdCP 3.1.31 capability-gated scenario is neutralized', () => {
+  test('every AdCP 3.1.31 capability-gated scenario is neutralized, and none stamped 3.1.23 is', () => {
     // Enumerated rather than three fixed ids, so the guard cannot rot if
-    // upstream renames one. 33 of these flipped partial -> passing before the
-    // version gate landed.
+    // upstream renames one. 3.1.31 carries the 3.1.24 backport of the
+    // "Applicability order" rule (adcp#7625); the same scenarios stamped with a
+    // pre-backport release keep capping.
     const caps = {
       supported_protocols: ['media_buy'],
       specialisms: ['sales-guaranteed'],
@@ -521,18 +528,22 @@ describe('version scoping', { skip: !legacyAvailable }, () => {
     assert.ok(gated.length > 0, 'the 3.1.31 bundle must still contain capability-gated scenarios');
     for (const storyboard of gated) {
       assert.equal(storyboard.adcp_version, '3.1.31', `${storyboard.id} carries the loader-stamped version`);
+      const results = [capabilityUnsupportedResult(storyboard.id), passingStub('seller')];
+      assert.equal(rollupOf([storyboard, 'seller'], results), 'passing', storyboard.id);
+      const preBackport = { ...storyboard, adcp_version: PRE_BACKPORT_3_1_RELEASE };
       assert.equal(
-        rollupOf([storyboard, 'seller'], [capabilityUnsupportedResult(storyboard.id), passingStub('seller')]),
+        rollupOf([preBackport, 'seller'], results),
         'partial',
-        storyboard.id
+        `${storyboard.id} at ${PRE_BACKPORT_3_1_RELEASE}`
       );
     }
   });
 
-  test('AdCP 3.1.x is untouched: the legacy scenario declares no capability predicate and still grades missing_tool', async () => {
+  test('a pre-backport 3.1 scenario declares no capability predicate and still grades missing_tool', async () => {
     const storyboard = loadStoryboardFile(LEGACY_STORYBOARD);
-    // The declaration gap that makes 3.1.x unfixable in the SDK without
-    // inferring intent: no capability predicate, no `requires`, no `agent:`.
+    // The declaration gap that makes pre-3.1.24 bundles unfixable in the SDK
+    // without inferring intent: no capability predicate, no `requires`, no
+    // `agent:`.
     assert.equal(storyboard.requires_capability, undefined);
     assert.equal(storyboard.requires, undefined);
     assert.ok(!(storyboard.required_tools ?? []).includes('sync_plans'));
@@ -544,9 +555,9 @@ describe('version scoping', { skip: !legacyAvailable }, () => {
         skip_controller_seeding: true,
         adcpVersion: '3.1.31',
       });
-      // Unchanged from before this PR: the governance row is an actionable
-      // `missing_tool` skip and the seller's own steps all execute and pass.
-      // Closing this needs the 3.2 declarations backported upstream.
+      // The governance row is an actionable `missing_tool` skip and the
+      // seller's own steps all execute and pass. 3.1.24 backported the 3.2
+      // declarations (adcp#7625); this copy predates them.
       assert.deepEqual(rows(result), [
         ['sync_plans', 'missing_tool'],
         ['sync_accounts', 'PASS'],
@@ -744,11 +755,16 @@ describe('rollup discrimination', () => {
     );
   });
 
-  test('fail-closed: the rule is version-scoped to AdCP 3.2+', () => {
+  test('fail-closed: the rule is version-scoped to AdCP 3.1.24+ and 3.2+', () => {
     for (const [label, adcp_version, expected] of [
       ['absent', undefined, 'partial'],
       ['3.0.25', '3.0.25', 'partial'],
-      ['3.1.24', '3.1.24', 'partial'],
+      ['3.1 line without a patch', '3.1', 'partial'],
+      ['3.1 prerelease', '3.1.0-rc.5', 'partial'],
+      ['v-prefixed 3.1', 'v3.1.24', 'partial'],
+      [PRE_BACKPORT_3_1_RELEASE, PRE_BACKPORT_3_1_RELEASE, 'partial'],
+      ['3.1.24', '3.1.24', 'passing'],
+      ['3.1.31', '3.1.31', 'passing'],
       ['3.2', '3.2', 'passing'],
       [ADCP_VERSION, ADCP_VERSION, 'passing'],
     ]) {

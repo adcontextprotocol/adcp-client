@@ -265,9 +265,16 @@ describe('capability-driven compliance keeps unrelated protocols out of required
     assert.equal(result.overall_status, 'failing');
   });
 
-  test('pre-3.2 capability skips retain their previous incomplete rollup', async () => {
-    const result = await assess({ protocols: ['media_buy'], version: '3.1.29' });
-    assert.ok(result.bundle_results.every(bundle => bundle.status === 'partial'));
+  test('3.1 capability skips roll up from the 3.1.24 applicability-order backport, not before', async () => {
+    // adcp#7625 backported the "Applicability order" rule to 3.1.24.
+    const preBackport = await assess({ protocols: ['media_buy'], version: '3.1.23' });
+    assert.ok(preBackport.bundle_results.every(bundle => bundle.status === 'partial'));
+
+    const backported = await assess({ protocols: ['media_buy'], version: '3.1.29' });
+    for (const [id, requiredProtocol] of PROTOCOL_CASES) {
+      const bundle = backported.bundle_results.find(entry => entry.id === id);
+      assert.equal(bundle.status, requiredProtocol === 'media_buy' ? 'partial' : 'not_applicable', id);
+    }
   });
 
   test('explicit storyboard selection keeps the same authoritative missing-tool behavior', async () => {
