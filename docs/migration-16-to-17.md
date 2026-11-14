@@ -168,8 +168,11 @@ nothing for a host ending in more than one dot.
 the rule at 3.3 or later. `adcpVersion` defaults to the SDK pin, so an SDK 16
 caller that relied on a bare-origin entry not matching a path-mounted agent
 now sees a match. Pass the release you negotiated (for example `'3.2'`) to keep
-exact canonical-URL matching. An entry naming the agent's exact URL takes
-precedence over an origin-only entry for the same agent. `PropertyCrawler`
+exact canonical-URL matching. At 3.3 every matching entry authorizes the
+agent, and its scope is the union of theirs: an exact entry and an origin-only
+entry for the same agent combine, so a narrower entry never removes scope
+another grants. `matched_entries` lists them all. Below 3.3, two exact matches
+still fail closed as `ambiguous_agent_url`. `PropertyCrawler`
 uses each agent's served release, else its new `adcpVersion` option.
 Supply-path verification keeps exact matching under semantics version 1
 ([adcp#8943](https://github.com/adcontextprotocol/adcp/issues/8943)).

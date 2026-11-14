@@ -84,8 +84,22 @@ export interface ResolvedAgentScope {
    * iterate this array, not `cross_publisher` — see adcp#4504.
    */
   cross_publisher_expanded: SinglePublisherPropertySelector[];
-  /** The matched agent entry, or `undefined` if no entry matched the agent URL. */
+  /**
+   * The matched agent entry, or `undefined` if no entry matched the agent URL.
+   * When several entries match (AdCP 3.3+), the first in document order; see
+   * {@link ResolvedAgentScope.matched_entries}.
+   */
   matched_entry?: AuthorizedAgent;
+  /**
+   * Every entry that matched the agent URL, in document order. At AdCP 3.3 or
+   * later more than one entry can match (an exact entry and an origin-only
+   * entry, say); the scope above is the union of theirs. Per-entry fields the
+   * resolver does not combine, such as `signing_keys`, are read from here: the
+   * AAO registry reports keys as pinned when any matching entry pins one
+   * (adcontextprotocol/adcp#9011). Set at AdCP 3.3 or later whenever an
+   * entry matched; omitted below 3.3, where at most one entry can resolve.
+   */
+  matched_entries?: AuthorizedAgent[];
   /** Why the resolution returned an empty result, when it did. */
   unresolvable?: ResolveUnresolvableReason;
 }
@@ -266,11 +280,15 @@ function parseAgentUrl(raw: string): URL | null {
  * an agent served at the root. An entry with a path always matches only
  * its canonical URL, trailing slash included.
  *
- * When entries match exactly, origin-only matches are not considered, so an
- * entry naming the agent's own URL keeps the scope it had under 3.2 even if
- * the file also lists the bare origin. More than one exact match, or more
- * than one origin-only match with no exact match, fails closed as
- * `ambiguous_agent_url`.
+ * At 3.3 or later every matching entry authorizes the agent, and the scope
+ * is the union of theirs: `properties`, `cross_publisher` and
+ * `cross_publisher_expanded` combine (duplicates removed), so a narrower
+ * entry never removes scope another matching entry grants
+ * (adcontextprotocol/adcp#9011). `unresolvable` is set only when the union
+ * is empty, and then carries the first matching entry's reason.
+ *
+ * Below 3.3 the behaviour is unchanged: only exact canonical matches count,
+ * and more than one fails closed as `ambiguous_agent_url`.
  *
  * Returns `{ properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: '...' }`
  * (never throws) when the agent isn't listed, when its entry is
@@ -288,27 +306,68 @@ export function resolveAgentProperties(
 
   const originOnlyMatching = usesOriginOnlyAgentMatching(options.adcpVersion);
   const entries = Array.isArray(adAgents.authorized_agents) ? adAgents.authorized_agents : [];
-  const exactMatches: AuthorizedAgent[] = [];
-  const originMatches: AuthorizedAgent[] = [];
+  const matches: AuthorizedAgent[] = [];
   for (const e of entries) {
     if (!e || typeof e.url !== 'string') continue;
     const canon = canonicalAgentUrlParts(e.url);
     if (!canon) continue;
-    const kind = matchCanonicalAgentUrl(canon, wanted, originOnlyMatching);
-    if (kind === 'exact') exactMatches.push(e);
-    else if (kind === 'origin') originMatches.push(e);
-  }
-  const matches = exactMatches.length > 0 ? exactMatches : originMatches;
-  if (matches.length > 1) {
-    return { properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: 'ambiguous_agent_url' };
+    if (matchCanonicalAgentUrl(canon, wanted, originOnlyMatching) !== 'none') matches.push(e);
   }
 
-  const entry = matches[0];
-  if (!entry) {
+  const first = matches[0];
+  if (!first) {
     return { properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: 'agent_not_listed' };
   }
+  // 3.2 and earlier: unchanged. One exact match resolves; more than one is ambiguous.
+  if (!originOnlyMatching) {
+    if (matches.length > 1) {
+      return { properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: 'ambiguous_agent_url' };
+    }
+    return resolveMatchedAgentProperties(adAgents, first);
+  }
+  if (matches.length === 1) {
+    return { ...resolveMatchedAgentProperties(adAgents, first), matched_entries: [first] };
+  }
+  return unionAgentScopes(
+    matches.map(entry => resolveMatchedAgentProperties(adAgents, entry)),
+    matches
+  );
+}
 
-  return resolveMatchedAgentProperties(adAgents, entry);
+/**
+ * Combine the scopes of every entry that authorizes one agent (AdCP 3.3+).
+ * Properties dedupe by identity, then by value, so a top-level property two
+ * selectors both pick appears once; selectors dedupe by value.
+ */
+function unionAgentScopes(scopes: ResolvedAgentScope[], entries: AuthorizedAgent[]): ResolvedAgentScope {
+  const properties = uniqueByValue(scopes.flatMap(s => s.properties));
+  const cross_publisher = uniqueByValue(scopes.flatMap(s => s.cross_publisher));
+  const cross_publisher_expanded = uniqueByValue(scopes.flatMap(s => s.cross_publisher_expanded));
+  const empty = properties.length === 0 && cross_publisher.length === 0;
+  const reason = scopes.find(s => s.unresolvable !== undefined)?.unresolvable;
+  return {
+    properties,
+    cross_publisher,
+    cross_publisher_expanded,
+    matched_entry: entries[0],
+    matched_entries: entries,
+    ...(empty && reason !== undefined ? { unresolvable: reason } : {}),
+  };
+}
+
+function uniqueByValue<T>(items: T[]): T[] {
+  const seenRefs = new Set<T>();
+  const seenValues = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    if (seenRefs.has(item)) continue;
+    seenRefs.add(item);
+    const value = JSON.stringify(item);
+    if (seenValues.has(value)) continue;
+    seenValues.add(value);
+    out.push(item);
+  }
+  return out;
 }
 
 function resolveMatchedAgentProperties(adAgents: AdAgentsJson, entry: AuthorizedAgent): ResolvedAgentScope {
@@ -462,8 +521,10 @@ function resolveMatchedAgentProperties(adAgents: AdAgentsJson, entry: Authorized
  *
  * The returned map is keyed by public canonical URL; if a file contains
  * canonical-equivalent entries, the later entry wins in this non-authoritative
- * inventory view. Use `resolveAgentProperties` for an authorization decision
- * for a specific agent URL because it fails closed on ambiguous matches.
+ * inventory view, and an origin-only entry is not applied to path-mounted
+ * agents. Use `resolveAgentProperties` for an authorization decision for a
+ * specific agent URL: it unions every matching entry at AdCP 3.3+ and fails
+ * closed on ambiguous matches below 3.3.
  */
 export function listAgentPropertyMap(adAgents: AdAgentsJson): {
   byAgent: Map<string, Property[]>;

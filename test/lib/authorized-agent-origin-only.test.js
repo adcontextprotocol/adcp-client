@@ -313,7 +313,40 @@ describe('resolveAgentProperties — origin-only entries', () => {
     }
   });
 
-  test('an exact entry wins over an origin-only entry for the same agent', () => {
+  test('an exact entry and an origin-only entry both authorize the agent at 3.3: the scope is their union', () => {
+    const both = {
+      properties: [property('home'), property('news'), property('sports')],
+      authorized_agents: [
+        entry('https://agent.example.com', ['home', 'sports']),
+        entry('https://agent.example.com/mcp', ['news', 'sports']),
+      ],
+    };
+    const scope = resolveAgentProperties(both, 'https://agent.example.com/mcp', { adcpVersion: V33 });
+    assert.deepStrictEqual(
+      scope.properties.map(p => p.property_id),
+      ['home', 'sports', 'news']
+    );
+    assert.strictEqual(scope.unresolvable, undefined);
+    assert.strictEqual(scope.matched_entry, both.authorized_agents[0]);
+    assert.deepStrictEqual(scope.matched_entries, both.authorized_agents);
+    // A narrower exact entry never removes scope the origin-only entry grants, whatever the order.
+    const reversed = { ...both, authorized_agents: [...both.authorized_agents].reverse() };
+    assert.deepStrictEqual(
+      resolveAgentProperties(reversed, 'https://agent.example.com/mcp', { adcpVersion: V33 })
+        .properties.map(p => p.property_id)
+        .sort(),
+      ['home', 'news', 'sports']
+    );
+    // A sibling path on the same origin gets only the origin-only entry's scope.
+    assert.deepStrictEqual(
+      resolveAgentProperties(both, 'https://agent.example.com/a2a', { adcpVersion: V33 }).properties.map(
+        p => p.property_id
+      ),
+      ['home', 'sports']
+    );
+  });
+
+  test('3.2 is unchanged: only the exact entry matches', () => {
     const both = {
       properties: [property('home'), property('news')],
       authorized_agents: [
@@ -321,28 +354,19 @@ describe('resolveAgentProperties — origin-only entries', () => {
         entry('https://agent.example.com/mcp', ['news']),
       ],
     };
-    for (const v of [V32, V33]) {
-      const scope = resolveAgentProperties(both, 'https://agent.example.com/mcp', { adcpVersion: v });
-      assert.deepStrictEqual(
-        scope.properties.map(p => p.property_id),
-        ['news'],
-        v
-      );
-    }
-    // A sibling path on the same origin falls back to the origin-only entry at 3.3 only.
+    const scope = resolveAgentProperties(both, 'https://agent.example.com/mcp', { adcpVersion: V32 });
     assert.deepStrictEqual(
-      resolveAgentProperties(both, 'https://agent.example.com/a2a', { adcpVersion: V33 }).properties.map(
-        p => p.property_id
-      ),
-      ['home']
+      scope.properties.map(p => p.property_id),
+      ['news']
     );
+    assert.strictEqual(scope.matched_entries, undefined);
     assert.strictEqual(
       resolveAgentProperties(both, 'https://agent.example.com/a2a', { adcpVersion: V32 }).unresolvable,
       'agent_not_listed'
     );
   });
 
-  test('two origin-only entries for the same origin fail closed', () => {
+  test('two origin-only entries for the same origin combine at 3.3', () => {
     const dup = {
       properties: [property('home'), property('news')],
       authorized_agents: [
@@ -351,8 +375,76 @@ describe('resolveAgentProperties — origin-only entries', () => {
       ],
     };
     const scope = resolveAgentProperties(dup, 'https://agent.example.com/mcp', { adcpVersion: V33 });
-    assert.strictEqual(scope.unresolvable, 'ambiguous_agent_url');
+    assert.strictEqual(scope.unresolvable, undefined);
+    assert.deepStrictEqual(
+      scope.properties.map(p => p.property_id),
+      ['home', 'news']
+    );
+    assert.strictEqual(scope.matched_entries.length, 2);
+  });
+
+  test('union combines different authorization types and cross-publisher selectors', () => {
+    const file = {
+      properties: [property('home')],
+      authorized_agents: [
+        entry('https://agent.example.com', ['home']),
+        {
+          url: 'https://agent.example.com/mcp',
+          authorized_for: 'inline',
+          authorization_type: 'inline_properties',
+          properties: [property('inline')],
+        },
+        {
+          url: 'https://agent.example.com/mcp',
+          authorized_for: 'network',
+          authorization_type: 'publisher_properties',
+          publisher_properties: [{ publisher_domain: 'other.example', selection_type: 'all' }],
+        },
+      ],
+    };
+    const scope = resolveAgentProperties(file, 'https://agent.example.com/mcp', { adcpVersion: V33 });
+    assert.deepStrictEqual(
+      scope.properties.map(p => p.property_id),
+      ['home', 'inline']
+    );
+    assert.deepStrictEqual(scope.cross_publisher, [{ publisher_domain: 'other.example', selection_type: 'all' }]);
+    assert.strictEqual(scope.cross_publisher_expanded.length, 1);
+    assert.strictEqual(scope.unresolvable, undefined);
+  });
+
+  test("an empty union reports the first matching entry's reason", () => {
+    const file = {
+      properties: [property('home')],
+      authorized_agents: [
+        entry('https://agent.example.com', ['ghost']),
+        {
+          url: 'https://agent.example.com/mcp',
+          authorized_for: 'signals',
+          authorization_type: 'signal_ids',
+          signal_ids: ['s1'],
+        },
+      ],
+    };
+    const scope = resolveAgentProperties(file, 'https://agent.example.com/mcp', { adcpVersion: V33 });
     assert.strictEqual(scope.properties.length, 0);
+    assert.strictEqual(scope.unresolvable, 'no_match');
+    assert.strictEqual(scope.matched_entries.length, 2);
+  });
+
+  test("a matching entry with a selector problem does not hide another entry's scope", () => {
+    const file = {
+      properties: [property('home')],
+      authorized_agents: [
+        { url: 'https://agent.example.com', authorized_for: 'broken', authorization_type: 'property_ids' },
+        entry('https://agent.example.com/mcp', ['home']),
+      ],
+    };
+    const scope = resolveAgentProperties(file, 'https://agent.example.com/mcp', { adcpVersion: V33 });
+    assert.deepStrictEqual(
+      scope.properties.map(p => p.property_id),
+      ['home']
+    );
+    assert.strictEqual(scope.unresolvable, undefined);
   });
 
   test('an entry with a path keeps exact matching under 3.3', () => {
@@ -380,17 +472,18 @@ describe('resolveAgentProperties — origin-only entries', () => {
 });
 
 describe('PropertyCrawler — origin-only matching follows the negotiated or targeted release', () => {
-  function crawlerFor(config, servedVersion) {
+  const ORIGIN_ONLY_FILE = {
+    properties: [property('home')],
+    authorized_agents: [entry('https://agent.example.com', ['home'])],
+  };
+
+  function crawlerFor(config, servedVersion, adAgents = ORIGIN_ONLY_FILE) {
     class TestCrawler extends PropertyCrawler {
       async crawlAgent(agentInfo) {
         if (servedVersion) this.servedVersions.set(agentInfo.agent_url, servedVersion);
         return ['publisher.example'];
       }
       async fetchPublisherProperties() {
-        const adAgents = {
-          properties: [property('home')],
-          authorized_agents: [entry('https://agent.example.com', ['home'])],
-        };
         return {
           properties: { 'publisher.example': adAgents.properties },
           adAgents: { 'publisher.example': adAgents },
@@ -427,6 +520,21 @@ describe('PropertyCrawler — origin-only matching follows the negotiated or tar
 
   test('a 3.3 release negotiated with the agent overrides a 3.2 target', async () => {
     assert.deepStrictEqual(await crawledProperties(crawlerFor({ adcpVersion: '3.2' }, '3.3-beta.6')), ['home']);
+  });
+
+  test('at 3.3 an agent matched by an exact and an origin-only entry is attributed their union', async () => {
+    const file = {
+      properties: [property('home'), property('news')],
+      authorized_agents: [
+        entry('https://agent.example.com', ['home']),
+        entry('https://agent.example.com/mcp', ['news']),
+      ],
+    };
+    assert.deepStrictEqual(
+      (await crawledProperties(crawlerFor({ adcpVersion: '3.3.0-beta.6' }, undefined, file))).sort(),
+      ['home', 'news']
+    );
+    assert.deepStrictEqual(await crawledProperties(crawlerFor({ adcpVersion: '3.2' }, undefined, file)), ['news']);
   });
 });
 
@@ -472,14 +580,14 @@ describe('resolveAgentProperties — trailing root dot', () => {
     }
   });
 
-  test('dotted and dotless spellings of one origin-only entry are ambiguous at 3.3', () => {
+  test('dotted and dotless spellings of one origin-only entry combine at 3.3', () => {
     const file = {
       properties: [property('home'), property('news')],
       authorized_agents: [entry('https://a.example', ['home']), entry('https://a.example.', ['news'])],
     };
-    assert.strictEqual(
-      resolveAgentProperties(file, 'https://a.example/mcp', { adcpVersion: V33 }).unresolvable,
-      'ambiguous_agent_url'
+    assert.deepStrictEqual(
+      resolveAgentProperties(file, 'https://a.example/mcp', { adcpVersion: V33 }).properties.map(p => p.property_id),
+      ['home', 'news']
     );
   });
 });
