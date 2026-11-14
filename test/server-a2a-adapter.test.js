@@ -619,6 +619,32 @@ describe('createA2AAdapter', () => {
   });
 
   describe('message/send routing', () => {
+    it('negotiates stable and exact preview pins through the executor', async () => {
+      const adcp = createAdcpServer({
+        name: 'Preview',
+        version: '1.0.0',
+        adcpVersion: '3.3.0-beta.5',
+        defaultAdcpVersion: '3.2.1',
+        capabilities: { supported_versions: ['3.2.1', '3.3.0-beta.5'] },
+        mediaBuy: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
+      });
+      const app = mountAdapter(createA2AAdapter({ server: adcp, agentCard: baseCard() }));
+      for (const [pin, expected] of [
+        ['3.4', '3.2'],
+        ['3.3.0-beta.5', '3.3-beta.5'],
+      ]) {
+        const res = await postJsonRpc(app, messageSend(dataPartMessage('get_products', { adcp_version: pin })));
+        assert.strictEqual(res.body.result.status.state, 'completed', JSON.stringify(res.body));
+        const data = res.body.result.artifacts[0].parts.find(part => part.kind === 'data').data;
+        assert.strictEqual(data.adcp_version, expected);
+      }
+      const refused = await postJsonRpc(
+        app,
+        messageSend(dataPartMessage('get_products', { adcp_version: '3.3.0-beta.4' }))
+      );
+      assert.match(JSON.stringify(refused.body), /VERSION_UNSUPPORTED/);
+    });
+
     it('Success arm → Task.state=completed + DataPart artifact', async () => {
       const adcp = createAdcpServer({
         mediaBuy: { getProducts: async () => ({ products: [{ product_id: 'p1' }] }) },

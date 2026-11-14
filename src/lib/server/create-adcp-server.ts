@@ -1,4 +1,5 @@
 import { isPre31AdcpVersion } from '../utils/adcp-version-config';
+import { parseAdcpRelease as parseFullAdcpRelease } from '../adapters/version/negotiate';
 import { assertWebBotAuthSigningKey, getWebBotAuthLegacyOriginGate } from '../signing/web-bot-auth';
 import {
   downgradeResponse,
@@ -82,6 +83,7 @@ import { IdentityAuthorizationError, TrustRecordUnavailableError } from '../iden
 
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import {
   COMPATIBLE_ADCP_VERSIONS,
   parseAdcpMajorVersion,
@@ -5333,7 +5335,16 @@ function selectServedAdcpRelease(
       });
     }
     selected = supported
-      .filter(candidate => candidate.major === requested.major && compareAdcpRelease(candidate, requested) <= 0)
+      .filter(candidate =>
+        requested.prerelease !== undefined
+          ? candidate.major === requested.major &&
+            candidate.minor === requested.minor &&
+            parseFullAdcpRelease(candidate.exactValue)?.patch === parseFullAdcpRelease(requested.exactValue)?.patch &&
+            candidate.prerelease === requested.prerelease
+          : candidate.major === requested.major &&
+            candidate.prerelease === undefined &&
+            compareAdcpRelease(candidate, requested) <= 0
+      )
       .sort((left, right) => compareAdcpRelease(right, left))[0];
   } else if (requestedMajor !== undefined && Number.isFinite(requestedMajor)) {
     // A major-only request may be a 3.0 buyer that cannot send
@@ -10117,9 +10128,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       adcpVersion,
       defaultAdcpVersion
     );
-    const listRelease: ServedAdcpRelease = isMcpToolResponse(selectedListRelease)
-      ? { validationVersion: selectedDefault.validationVersion }
-      : selectedListRelease;
+    if (isMcpToolResponse(selectedListRelease)) {
+      throw new McpError(ErrorCode.InvalidParams, 'VERSION_UNSUPPORTED', selectedListRelease.structuredContent);
+    }
+    const listRelease = selectedListRelease;
     const parsedListRelease = parseAdcpRelease(listRelease.validationVersion);
     const listServes32OrNewer =
       parsedListRelease !== undefined &&
@@ -10139,11 +10151,22 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       return listMcpToolProfile === 'all' || mediaBuyProfileTools.has(toolName);
     });
     const projectedTools = visibleTools.map(tool => {
-      if (listMcpToolProfile !== 'media-buy') return tool;
       const toolName = (tool as { name?: unknown } | null)?.name;
       if (typeof toolName !== 'string') return tool;
-      const inputSchema = getMcpProfileInputSchema(toolName, 'media-buy', listRelease.validationVersion);
-      return inputSchema ? { ...(tool as Record<string, unknown>), inputSchema } : tool;
+      const toolRecord = tool as Record<string, unknown>;
+      const meta = isPlainObject(toolRecord._meta) ? toolRecord._meta : undefined;
+      const frameworkAdcpTool = meta?.adcp_version === adcpVersion;
+      const inputSchema =
+        listMcpToolProfile === 'media-buy'
+          ? getMcpProfileInputSchema(toolName, 'media-buy', listRelease.validationVersion)
+          : undefined;
+      return {
+        ...toolRecord,
+        ...(frameworkAdcpTool && {
+          _meta: { ...meta, adcp_version: listRelease.advertisedVersion ?? listRelease.validationVersion },
+        }),
+        ...(inputSchema && { inputSchema }),
+      };
     });
 
     return {
@@ -10274,9 +10297,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       adcpVersion,
       defaultAdcpVersion
     );
-    return isMcpToolResponse(selected)
-      ? defaultAdcpVersion
-      : (selected.advertisedVersion ?? selected.validationVersion);
+    if (isMcpToolResponse(selected)) {
+      throw new McpError(ErrorCode.InvalidParams, 'VERSION_UNSUPPORTED', selected.structuredContent);
+    }
+    return selected.advertisedVersion ?? selected.validationVersion;
   });
   setMcpToolProfile(wrapped, activeMcpToolProfile);
   setMcpAppResources(wrapped, mcpAppResources);

@@ -129,6 +129,37 @@ describe('createAdcpServer with idempotency', () => {
     assert.notEqual(result.replayed, true, 'fresh execution must not set replayed:true');
   });
 
+  it('preserves the request hash when a preview ceiling serves a stable pin', async () => {
+    const idempotency = createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }), ttlSeconds: 86400 });
+    let calls = 0;
+    const makeVersioned = (ceiling, supported) =>
+      createAdcpServer({
+        name: 'Versioned',
+        version: '1.0.0',
+        adcpVersion: ceiling,
+        defaultAdcpVersion: '3.2.1',
+        capabilities: { supported_versions: supported },
+        idempotency,
+        resolveSessionKey: () => 'tenant_a',
+        mediaBuy: {
+          createMediaBuy: async () => {
+            calls++;
+            return { media_buy_id: 'mb_1', packages: [] };
+          },
+        },
+      });
+    const stable = makeVersioned('3.2.1', ['3.2.1']);
+    const preview = makeVersioned('3.3.0-beta.5', ['3.2.1', '3.3.0-beta.5']);
+    const request = { ...basePayload, adcp_version: '3.4', idempotency_key: 'version_hash_key_12345' };
+    const first = await callTool(stable, 'create_media_buy', request);
+    const retry = await callTool(preview, 'create_media_buy', request);
+    assert.equal(first.media_buy_id, 'mb_1');
+    assert.equal(retry.media_buy_id, 'mb_1');
+    assert.equal(retry.replayed, true);
+    assert.equal(calls, 1);
+    assert.equal(request.adcp_version, '3.4');
+  });
+
   it('replay with same key + equivalent payload returns cached response with replayed:true', async () => {
     const { server, calls } = makeServer();
     const key = 'replay_key_abcdefghij';

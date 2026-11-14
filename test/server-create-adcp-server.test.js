@@ -210,6 +210,63 @@ describe('createAdcpServer', () => {
     assert.ok(enhancedContexts.every(Object.isFrozen));
   });
 
+  it('selects only exact prereleases and never downshifts a stable pin to a preview', async () => {
+    const seen = [];
+    const server = createAdcpServer({
+      name: 'Preview seller',
+      version: '1.0.0',
+      adcpVersion: '3.3.0-beta.5',
+      defaultAdcpVersion: '3.2.1',
+      capabilities: { supported_versions: ['3.1.18', '3.2.1', '3.3.0-beta.5'] },
+      mediaBuy: {
+        getProducts: async (_params, ctx) => {
+          seen.push(ctx.servedAdcpVersion);
+          return { products: [], cache_scope: 'public' };
+        },
+      },
+    });
+    for (const [pin, expected] of [
+      ['3.3.0-beta.5', '3.3-beta.5'],
+      ['3.3', '3.2'],
+      ['3.4', '3.2'],
+      [undefined, '3.2'],
+    ]) {
+      const args = pin ? { adcp_version: pin } : {};
+      for (const result of [
+        await callToolRaw(server, 'get_products', args),
+        await server.invoke({ toolName: 'get_products', args }),
+      ]) {
+        assert.notEqual(result.isError, true, JSON.stringify(result));
+        assert.equal(result.structuredContent.adcp_version, expected);
+        assert.deepEqual(result.structuredContent.products, []);
+      }
+      for (const params of [{ adcp_version: pin }, { _meta: { adcp_version: pin } }]) {
+        const listed = await server.dispatchTestRequest({ method: 'tools/list', params });
+        const advertised = expected === '3.2' ? '3.2.1' : '3.3.0-beta.5';
+        assert.equal(listed._meta.adcp_version, advertised);
+        assert.equal(listed.tools.find(tool => tool.name === 'get_products')._meta.adcp_version, advertised);
+      }
+    }
+    assert.deepEqual(seen, ['3.3-beta.5', '3.3-beta.5', '3.2', '3.2', '3.2', '3.2', '3.2', '3.2']);
+    for (const pin of ['3.3.0-beta.4', '3.3.0-beta.6', '3.3.1-beta.5']) {
+      const result = await callToolRaw(server, 'get_products', { adcp_version: pin });
+      assert.equal(result.structuredContent.adcp_error.code, 'VERSION_UNSUPPORTED');
+      await assert.rejects(
+        server.dispatchTestRequest({ method: 'tools/list', params: { _meta: { adcp_version: pin } } }),
+        /VERSION_UNSUPPORTED/
+      );
+    }
+    const previewOnly = createAdcpServer({
+      name: 'Preview only',
+      version: '1.0.0',
+      adcpVersion: '3.3.0-beta.5',
+      capabilities: { supported_versions: ['3.3.0-beta.5'] },
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+    });
+    const unavailable = await callToolRaw(previewOnly, 'get_products', { adcp_version: '3.4' });
+    assert.equal(unavailable.structuredContent.adcp_error.code, 'VERSION_UNSUPPORTED');
+  });
+
   it('rejects an unadvertised or newer defaultAdcpVersion at construction', () => {
     assert.throws(
       () =>
