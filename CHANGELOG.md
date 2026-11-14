@@ -1,5 +1,24 @@
 # Changelog
 
+## 17.0.0-beta.26
+
+### Minor Changes
+
+- 2849dd6: Origin-only `authorized_agents[].url` entries authorize the agent at that origin under AdCP 3.3 (adcp-client#3695, the SDK side of adcontextprotocol/adcp#8943). adcontextprotocol/adcp#8939 documents the rule under DR-0023: an entry whose canonical form has the root path and no query, such as `https://agent.example.com`, matches any agent URL with the same canonical origin, including `https://agent.example.com/mcp`. An entry with a path still matches only that canonical URL, so a trailing slash, path case and the query stay significant for it. At 3.3 both sides also drop one trailing root-label dot from a DNS host (URL canonicalization step 2), so `https://agent.example.` matches `https://agent.example/mcp`, and a host ending in more than one dot matches nothing. A URL with userinfo still matches nothing. `canonicalizeAgentUrl` itself is unchanged.
+  - **`resolveAgentProperties(adAgents, agentUrl, { adcpVersion })`** applies the rule when `adcpVersion` is 3.3 or later (any 3.3 prerelease included). It defaults to the SDK's pinned `ADCP_VERSION`, which targets 3.3. Pass the negotiated release, for example `'3.2'`, to keep exact canonical-URL matching. An unparseable version also keeps exact matching. At 3.3 every matching entry authorizes the agent and the scope is the union of theirs (adcontextprotocol/adcp#9011): an exact entry and an origin-only entry, or two origin-only spellings of one origin, combine their `properties`, `cross_publisher` and `cross_publisher_expanded`, so a narrower entry never removes scope another matching entry grants. `unresolvable` is set only when the union is empty. The new `matched_entries` lists every matching entry; `matched_entry` stays the first. Below 3.3 nothing changes: more than one exact match still fails closed as `ambiguous_agent_url`.
+  - **New `agentUrlMatchesAuthorizedEntry(entryUrl, agentUrl, { adcpVersion })`** answers whether one entry matches an agent, with the same rule. **New `usesOriginOnlyAgentMatching(adcpVersion?)`** reports whether a release applies it. Both are exported from `@adcp/sdk` and `@adcp/sdk/discovery`.
+  - **`signing_keys`** are not read by the resolver. Read them from `matched_entries`; the AAO registry reports an agent's keys as pinned when any matching entry pins one.
+  - **`PropertyCrawler`** matches each agent under the release the agent served for `get_adcp_capabilities`, falling back to the new `adcpVersion` crawler option (default the SDK pin). The option is also passed to each agent's client.
+  - **Supply-path verification is unchanged.** Semantics version 1 keeps exact canonical-URL matching, origin-only entries included, until a new semantics version adopts the rule.
+  - `validateAdAgents` only locates and loads the file, so it has no matching to change. Its docs now point at `resolveAgentProperties` for the authorization check.
+
+- a824655: Storyboard capability gates accept `any_of`, and `contains` matches an object by a subset of its keys (adcontextprotocol/adcp#8998).
+  - `requires_capability`, `phases[].requires_capability` and each `requires_all_capabilities` entry may be an `any_of` group of two or more predicates, which passes when one of them passes. Groups nest, and each entry keeps its own schema-default and no-raw-capabilities rules. The loader validates every `any_of` group.
+  - `contains` and `not_contains` with an object value now match an array entry that carries every key of the value with an equal value; the entry may carry other keys. Scalars and arrays still match by structural equality, and governance task-mode matching is unchanged.
+  - New exports: `evaluateCapabilityPredicateAgainstCapabilities`, `isAnyOfCapabilityPredicate` and `capabilityPathPredicates`. `evaluateCapabilityPredicate` throws a `TypeError` for an `any_of` predicate.
+
+  An older runner reading an `any_of` gate throws while resolving its missing `path` when raw capabilities are available, and treats the gate as satisfied when they are not. Bundles that use either form need this release or later. See `docs/guides/STORYBOARD-CAPABILITY-GATES.md`.
+
 ## 17.0.0-beta.25
 
 ### Minor Changes
