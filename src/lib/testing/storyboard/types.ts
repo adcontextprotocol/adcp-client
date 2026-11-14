@@ -31,11 +31,24 @@ export type CapabilityPredicateValue =
   | CapabilityPredicateValue[]
   | { [key: string]: CapabilityPredicateValue };
 
-export type RequiresCapabilityPredicate =
+/** A capability predicate that tests one dotted path with one matcher. */
+export type CapabilityPathPredicate =
   | { path: string; equals: boolean | string | number | null }
   | { path: string; present: boolean }
   | { path: string; contains: CapabilityPredicateValue }
   | { path: string; not_contains: CapabilityPredicateValue };
+
+/**
+ * OR-composition of two or more capability predicates: the gate passes when
+ * at least one entry passes. Entries are path predicates or nested `any_of`
+ * groups. Supported by @adcp/sdk releases after 17.0.0-beta.25; see
+ * `Storyboard.requires_capability` for how older runners treat the key.
+ */
+export interface AnyOfCapabilityPredicate {
+  any_of: RequiresCapabilityPredicate[];
+}
+
+export type RequiresCapabilityPredicate = CapabilityPathPredicate | AnyOfCapabilityPredicate;
 
 export interface Storyboard {
   id: string;
@@ -204,19 +217,51 @@ export interface Storyboard {
    *   response schema declares a default for that exact path and the parent
    *   capability object is present. Like `present:`, absence is otherwise the
    *   load-bearing signal — a seller that doesn't advertise the array hasn't
-   *   opted into the variant this storyboard tests. For
+   *   opted into the variant this storyboard tests. When `V` is an object,
+   *   an array entry matches when it is an object that carries every key of
+   *   `V` with a structurally equal value; the entry MAY carry other keys
+   *   (`contains: { pattern: sync_audiences }` matches
+   *   `{ pattern: "sync_audiences", note: "x" }`). Scalars and arrays still
+   *   match by structural equality. For
    *   `adcp.governance_enforcement.tasks`, an entry matches when its task is
    *   equal and its declared modes include every mode in the predicate;
    *   sellers combine all modes for a task in one entry.
    *
    * - `not_contains: V` — negative array-membership matcher. The value at
-   *   `path` MUST be an array and MUST NOT include `V` (structural JSON equality,
-   *   except governance task-mode predicates match a subset; no coercion).
+   *   `path` MUST be an array and MUST NOT include `V` (the same entry match
+   *   as `contains`: structural JSON equality for scalars and arrays, a key
+   *   subset for objects, governance task-mode predicates match a subset; no
+   *   coercion).
    *   This is useful for rejection scenarios that apply only when
    *   an advertised allowlist omits a value. Missing and non-array values do
    *   not satisfy the predicate; a separate discovery validation should grade
    *   a required capability declaration. Schema defaults are materialized on
    *   the same terms as `contains`.
+   *
+   * In place of `path` and a matcher, a gate MAY declare `any_of`: a list of
+   * two or more predicates (path predicates or nested `any_of` groups). The
+   * gate passes when at least one entry passes, and each entry is evaluated
+   * by its own rules, including schema defaults and the no-raw-capabilities
+   * fallback below. `any_of` cannot be combined with `path` or a matcher on
+   * the same object. Example, "the field is absent, or it lists an entry
+   * whose `pattern` is `sync_audiences`":
+   *
+   * ```yaml
+   * requires_capability:
+   *   any_of:
+   *     - path: media_buy.audience_targeting.supported_activation_methods
+   *       present: false
+   *     - path: media_buy.audience_targeting.supported_activation_methods
+   *       contains: { pattern: sync_audiences }
+   * ```
+   *
+   * `any_of` and object-subset `contains` are supported by @adcp/sdk
+   * releases after 17.0.0-beta.25. A runner without `any_of` support reads a
+   * predicate that has no `path`: with raw capabilities available it throws
+   * while resolving the missing path, and without them it treats the gate as
+   * satisfied. A runner without object-subset `contains` matches object
+   * values by exact structural equality, so an entry with extra keys does
+   * not match. Bundles that use either form need a runner that supports it.
    *
    * When `raw_capabilities` is not available and the discovered profile does
    * not expose `get_adcp_capabilities`, `equals` gates are treated as
@@ -233,7 +278,9 @@ export interface Storyboard {
    * predicate skips the entire storyboard before runtime or tool gates.
    *
    * The loader rejects empty and single-entry arrays; use
-   * `requires_capability` for a singular gate.
+   * `requires_capability` for a singular gate. An entry MAY be an `any_of`
+   * group (see `requires_capability`), which passes when one of its entries
+   * passes.
    *
    * Compound gates fail closed when the raw capabilities payload is
    * unavailable: advertised or auto-registered tools are not capability
@@ -598,7 +645,7 @@ export interface StoryboardPhase {
    * Predicate evaluated against the agent's declared capabilities before this
    * phase is set up or any of its steps are dispatched. Uses the same matcher
    * dialect as `Storyboard.requires_capability` (`equals`, `present`,
-   * `contains`). When false, every step in the phase is emitted as a
+   * `contains`, `not_contains`, `any_of`). When false, every step in the phase is emitted as a
    * `not_applicable` skip and the runner continues with later phases.
    */
   requires_capability?: RequiresCapabilityPredicate;

@@ -227,6 +227,12 @@ function validatePhaseSkipIf(storyboardId: string, phase: Storyboard['phases'][n
 }
 
 function validateRequiresAllCapabilities(storyboard: Storyboard): void {
+  // A singular gate that uses `any_of` is validated strictly. Legacy singular
+  // path gates keep their historical, unvalidated loading behaviour.
+  validateAnyOfGate(storyboard.requires_capability, `[${storyboard.id}] requires_capability`);
+  for (const phase of storyboard.phases ?? []) {
+    validateAnyOfGate(phase.requires_capability, `[${storyboard.id}] phase '${phase.id}': requires_capability`);
+  }
   const predicates = storyboard.requires_all_capabilities;
   if (predicates === undefined) return;
   if (!Array.isArray(predicates) || predicates.length < 2) {
@@ -235,44 +241,66 @@ function validateRequiresAllCapabilities(storyboard: Storyboard): void {
     );
   }
   for (let index = 0; index < predicates.length; index++) {
-    const raw = predicates[index] as unknown;
-    const prefix = `[${storyboard.id}] requires_all_capabilities[${index}]`;
-    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-      throw new Error(`${prefix}: must be a capability predicate object`);
-    }
-    const predicate = raw as Record<string, unknown>;
-    if (typeof predicate.path !== 'string' || predicate.path.trim().length === 0) {
-      throw new Error(`${prefix}.path: must be a non-empty string`);
-    }
-    if (!CAPABILITY_PATH_PATTERN.test(predicate.path)) {
-      throw new Error(`${prefix}.path: must be a canonical dotted capability path`);
-    }
-    const matcherKeys = ['equals', 'present', 'contains', 'not_contains'].filter(key =>
-      Object.prototype.hasOwnProperty.call(predicate, key)
-    );
-    if (matcherKeys.length !== 1) {
-      throw new Error(`${prefix}: must declare exactly one of equals, present, contains, or not_contains`);
-    }
-    const unknownKeys = Object.keys(predicate).filter(key => key !== 'path' && !matcherKeys.includes(key));
+    validateCapabilityPredicateShape(predicates[index], `[${storyboard.id}] requires_all_capabilities[${index}]`);
+  }
+}
+
+function validateAnyOfGate(raw: unknown, prefix: string): void {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return;
+  if (!Object.prototype.hasOwnProperty.call(raw, 'any_of')) return;
+  validateCapabilityPredicateShape(raw, prefix);
+}
+
+function validateCapabilityPredicateShape(raw: unknown, prefix: string): void {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`${prefix}: must be a capability predicate object`);
+  }
+  const predicate = raw as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(predicate, 'any_of')) {
+    const unknownKeys = Object.keys(predicate).filter(key => key !== 'any_of');
     if (unknownKeys.length > 0) {
-      throw new Error(`${prefix}: unknown field${unknownKeys.length === 1 ? '' : 's'} ${unknownKeys.join(', ')}`);
+      throw new Error(`${prefix}: any_of cannot be combined with ${unknownKeys.join(', ')}`);
     }
-    if (matcherKeys[0] === 'present' && typeof predicate.present !== 'boolean') {
-      throw new Error(`${prefix}.present: must be a boolean`);
+    const entries = predicate.any_of;
+    if (!Array.isArray(entries) || entries.length < 2) {
+      throw new Error(`${prefix}.any_of: must list at least two predicates`);
     }
-    if (
-      matcherKeys[0] === 'equals' &&
-      predicate.equals !== null &&
-      !['boolean', 'string', 'number'].includes(typeof predicate.equals)
-    ) {
-      throw new Error(`${prefix}.equals: must be a boolean, string, number, or null`);
+    for (let index = 0; index < entries.length; index++) {
+      validateCapabilityPredicateShape(entries[index], `${prefix}.any_of[${index}]`);
     }
-    if (
-      (matcherKeys[0] === 'contains' || matcherKeys[0] === 'not_contains') &&
-      !isJsonCapabilityValue(predicate[matcherKeys[0]!])
-    ) {
-      throw new Error(`${prefix}.${matcherKeys[0]}: must be a JSON-compatible capability value`);
-    }
+    return;
+  }
+  if (typeof predicate.path !== 'string' || predicate.path.trim().length === 0) {
+    throw new Error(`${prefix}.path: must be a non-empty string`);
+  }
+  if (!CAPABILITY_PATH_PATTERN.test(predicate.path)) {
+    throw new Error(`${prefix}.path: must be a canonical dotted capability path`);
+  }
+  const matcherKeys = ['equals', 'present', 'contains', 'not_contains'].filter(key =>
+    Object.prototype.hasOwnProperty.call(predicate, key)
+  );
+  if (matcherKeys.length !== 1) {
+    throw new Error(`${prefix}: must declare exactly one of equals, present, contains, or not_contains`);
+  }
+  const unknownKeys = Object.keys(predicate).filter(key => key !== 'path' && !matcherKeys.includes(key));
+  if (unknownKeys.length > 0) {
+    throw new Error(`${prefix}: unknown field${unknownKeys.length === 1 ? '' : 's'} ${unknownKeys.join(', ')}`);
+  }
+  if (matcherKeys[0] === 'present' && typeof predicate.present !== 'boolean') {
+    throw new Error(`${prefix}.present: must be a boolean`);
+  }
+  if (
+    matcherKeys[0] === 'equals' &&
+    predicate.equals !== null &&
+    !['boolean', 'string', 'number'].includes(typeof predicate.equals)
+  ) {
+    throw new Error(`${prefix}.equals: must be a boolean, string, number, or null`);
+  }
+  if (
+    (matcherKeys[0] === 'contains' || matcherKeys[0] === 'not_contains') &&
+    !isJsonCapabilityValue(predicate[matcherKeys[0]!])
+  ) {
+    throw new Error(`${prefix}.${matcherKeys[0]}: must be a JSON-compatible capability value`);
   }
 }
 

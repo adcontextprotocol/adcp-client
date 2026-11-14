@@ -131,6 +131,9 @@ export {
   listStrictOnlyFailures,
   resolveCapabilityPath,
   evaluateCapabilityPredicate,
+  evaluateCapabilityPredicateAgainstCapabilities,
+  isAnyOfCapabilityPredicate,
+  capabilityPathPredicates,
   describeStoryboardCapabilityGates,
   buildDiscoveryFailedResult,
 } from './runner';
