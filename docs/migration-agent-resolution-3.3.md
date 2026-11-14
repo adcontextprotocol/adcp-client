@@ -93,14 +93,22 @@ the agent JWKS and match by RFC 7638 thumbprint. `kid`-only entries match nothin
 revoked entries cannot authorize delivery. `key_origins` remains enforced.
 
 Build `signingKeys` from the publisher's adagents.json with
-`resolvePublisherSigningKeyPin(resolveAgentProperties(adagents, agentUrl, { adcpVersion }))`.
-At AdCP 3.3 more than one `authorized_agents[]` entry can match one agent, such
-as an origin-only entry and the agent's full URL. The publisher pins the agent
-only if every matching entry carries `signing_keys`, and the pin is then the
-union of their keys; one matching entry without `signing_keys` means no pin
-([adcp#9016](https://github.com/adcontextprotocol/adcp/issues/9016)). The
-helper returns `undefined` for no pin and never `[]`. Use the same call in
-`refresh`, returning `null` when it gives `undefined`.
+`resolvePublisherSigningKeyPin(adagents, agentUrl, { adcpVersion, country, propertyIds, at })`,
+passing the scope of the signed message. At AdCP 3.3 more than one
+`authorized_agents[]` entry can match one agent, such as an origin-only entry
+and the agent's full URL. Only entries that match the agent and authorize the
+message's scope count. The publisher pins the agent only if every such entry
+carries `signing_keys`, and the pin is then the union of their keys. One such
+entry without `signing_keys` means no pin
+([adcp#9016](https://github.com/adcontextprotocol/adcp/issues/9016)). An entry
+that authorizes nothing for the message never pins or unpins it. A message
+about several properties gets one pin per property, and the key must satisfy
+each.
+
+The helper returns `undefined` for no pin, and `[]` (accept no key) when the
+agent is not authorized for the message, so being unauthorized never reads as
+unpinned. Use the same call in `refresh`, returning `null` when it gives
+`undefined`.
 
 ## Governance
 

@@ -69,8 +69,10 @@ export interface DirectoryPublisherEntry {
    * entry without them, such as an unpinned origin-only entry beside a pinned
    * full-URL entry, leaves the agent unpinned. When true, the agent's
    * sell-side signatures about this publisher's inventory are accepted only
-   * with a key in both the pin and the agent's own JWKS. Read the keys
-   * themselves with `resolvePublisherSigningKeyPin`.
+   * with a key in both the pin and the agent's own JWKS. This is a
+   * scope-agnostic summary (entries outside their effective window are
+   * ignored); a verifier computes the pin per message scope with
+   * `resolvePublisherSigningKeyPin`, so a pin can apply where this is false.
    */
   signing_keys_pinned?: boolean;
   status: DirectoryPublisherStatus;
