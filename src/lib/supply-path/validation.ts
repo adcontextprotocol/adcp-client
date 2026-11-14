@@ -18,6 +18,14 @@ export function domain(value: unknown): string | null {
   if (normalized.length > 253 || isIP(normalized) || !normalized.includes('.')) return null;
   return normalized.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) ? normalized : null;
 }
+/**
+ * Exact canonical agent URL used by every supply-path leg. Semantics version 1
+ * compares `authorized_agents[].url` by exact canonical URL, including an
+ * origin-only entry: the 3.3 rule that an origin-only entry authorizes the agent
+ * at any path on that origin (adcp#8862) does not apply here until a new
+ * supply-path semantics version adopts it, planned for 4.0. Do not swap this for
+ * `agentUrlMatchesAuthorizedEntry`. See adcontextprotocol/adcp#8943.
+ */
 export function agentIdentity(value: unknown): string | null {
   if (typeof value !== 'string' || /[\s\x00-\x1f\x7f]/.test(value)) return null;
   const canonical = canonicalizeAgentUrl(value);

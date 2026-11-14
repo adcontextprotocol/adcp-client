@@ -33,6 +33,29 @@ import type {
   SinglePublisherPropertySelector,
 } from './types';
 import { resolveInlinePublisherProperties } from './inline-publisher-properties';
+import { ADCP_VERSION } from '../version';
+import { isAdcpVersionAtLeast } from '../utils/adcp-version-config';
+
+/**
+ * First release whose `authorized_agents[].url` matching is origin-only
+ * aware (adcp#8862, documented by adcp#8939 under DR-0023). Every 3.3
+ * prerelease counts, the same threshold the SDK's other 3.3 gates use.
+ */
+const ORIGIN_ONLY_AGENT_MATCHING_SINCE = '3.3.0-beta.0';
+
+/** Options shared by the `authorized_agents[].url` matching helpers. */
+export interface AgentUrlMatchOptions {
+  /**
+   * AdCP release the caller negotiated or targets. Defaults to the SDK's
+   * pinned `ADCP_VERSION`.
+   *
+   * At 3.3 or later an origin-only entry (`https://agent.example.com`)
+   * authorizes the agent at that origin whatever its path. Below 3.3, or
+   * when the value is not a parseable AdCP version, every entry matches by
+   * exact canonical URL.
+   */
+  adcpVersion?: string;
+}
 
 /**
  * Result of resolving a single agent's authorization scope against an
@@ -114,6 +137,76 @@ export function canonicalizeAgentUrl(raw: string): string | null {
   return `${parsed.protocol}//${parsed.host}${path}${query}`;
 }
 
+interface CanonicalAgentUrl {
+  /** Full canonical URL, as {@link canonicalizeAgentUrl} returns it. */
+  url: string;
+  /** Canonical origin: `scheme://authority`, no path, query or fragment. */
+  origin: string;
+  /** Root path `/` and no query, empty query marker included. */
+  originOnly: boolean;
+}
+
+function canonicalAgentUrlParts(raw: string): CanonicalAgentUrl | null {
+  const url = canonicalizeAgentUrl(raw);
+  if (url === null) return null;
+  // Re-parse the canonical form: its path has already been through dot-segment
+  // removal and unreserved percent-decoding, so `/./` and `/%2E/` read as `/`.
+  const parsed = new URL(url);
+  const origin = `${parsed.protocol}//${parsed.host}`;
+  return { url, origin, originOnly: url === `${origin}/` };
+}
+
+/**
+ * Whether `adcpVersion` (default: the SDK's pinned `ADCP_VERSION`) applies
+ * the 3.3 origin-only rule to `authorized_agents[].url` (adcp#8862).
+ */
+export function usesOriginOnlyAgentMatching(adcpVersion: string = ADCP_VERSION): boolean {
+  return isAdcpVersionAtLeast(adcpVersion, ORIGIN_ONLY_AGENT_MATCHING_SINCE);
+}
+
+/**
+ * Whether `agentUrl` matches an `authorized_agents[].url` entry under
+ * [Agent URL matching](https://adcontextprotocol.org/docs/governance/property/adagents#agent-url-matching).
+ *
+ * Both sides are canonicalized with {@link canonicalizeAgentUrl}, so scheme
+ * and host case, default ports, unreserved percent-encoding and fragments
+ * never matter, and the scheme, host and port always do. Then:
+ *
+ * - **AdCP 3.3 or later** (DR-0023, adcp#8862): an origin-only entry, one
+ *   whose canonical form has the root path and no query
+ *   (`https://agent.example.com` or `https://agent.example.com/`),
+ *   matches any agent URL with the same canonical origin, including
+ *   `https://agent.example.com/mcp`. An entry with a path, or with a query
+ *   (even an empty `?`), matches only the same canonical URL, so path case
+ *   and a trailing slash (`/mcp` vs `/mcp/`) stay significant.
+ * - **AdCP 3.2 and earlier**: every entry matches only the same canonical
+ *   URL, so an origin-only entry matches only an agent served at the root.
+ *
+ * Returns `false` when either URL fails to canonicalize.
+ */
+export function agentUrlMatchesAuthorizedEntry(
+  entryUrl: string,
+  agentUrl: string,
+  options: AgentUrlMatchOptions = {}
+): boolean {
+  const entry = canonicalAgentUrlParts(entryUrl);
+  const agent = canonicalAgentUrlParts(agentUrl);
+  if (!entry || !agent) return false;
+  return matchCanonicalAgentUrl(entry, agent, usesOriginOnlyAgentMatching(options.adcpVersion)) !== 'none';
+}
+
+type AgentUrlMatchKind = 'exact' | 'origin' | 'none';
+
+function matchCanonicalAgentUrl(
+  entry: CanonicalAgentUrl,
+  agent: CanonicalAgentUrl,
+  originOnlyMatching: boolean
+): AgentUrlMatchKind {
+  if (entry.url === agent.url) return 'exact';
+  if (originOnlyMatching && entry.originOnly && entry.origin === agent.origin) return 'origin';
+  return 'none';
+}
+
 function parseAgentUrl(raw: string): URL | null {
   if (typeof raw !== 'string' || raw.length === 0) return null;
   let parsed: URL;
@@ -132,27 +225,48 @@ function parseAgentUrl(raw: string): URL | null {
 
 /**
  * Resolve `agentUrl`'s authorization scope against an `adagents.json`
- * file. The lookup uses canonicalized URL comparison — two URLs
- * differing only in host case, default port, percent-encoding of
- * unreserved chars, or fragment are the same agent. Scheme and trailing
- * slash differences remain distinct.
+ * file. Entries are matched with {@link agentUrlMatchesAuthorizedEntry}:
+ * two URLs differing only in host case, default port, percent-encoding
+ * of unreserved chars, or fragment are the same agent, and scheme
+ * differences remain distinct. At AdCP 3.3 or later (`options.adcpVersion`,
+ * default the SDK's pinned `ADCP_VERSION`) an origin-only entry also
+ * matches an agent at any path on that origin; below 3.3 it matches only
+ * an agent served at the root. An entry with a path always matches only
+ * its canonical URL, trailing slash included.
+ *
+ * When entries match exactly, origin-only matches are not considered, so an
+ * entry naming the agent's own URL keeps the scope it had under 3.2 even if
+ * the file also lists the bare origin. More than one exact match, or more
+ * than one origin-only match with no exact match, fails closed as
+ * `ambiguous_agent_url`.
  *
  * Returns `{ properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: '...' }`
  * (never throws) when the agent isn't listed, when its entry is
  * malformed, or when the agent uses a signals authorization type.
  */
-export function resolveAgentProperties(adAgents: AdAgentsJson, agentUrl: string): ResolvedAgentScope {
-  const wanted = canonicalizeAgentUrl(agentUrl);
+export function resolveAgentProperties(
+  adAgents: AdAgentsJson,
+  agentUrl: string,
+  options: AgentUrlMatchOptions = {}
+): ResolvedAgentScope {
+  const wanted = canonicalAgentUrlParts(agentUrl);
   if (!wanted) {
     return { properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: 'agent_not_listed' };
   }
 
+  const originOnlyMatching = usesOriginOnlyAgentMatching(options.adcpVersion);
   const entries = Array.isArray(adAgents.authorized_agents) ? adAgents.authorized_agents : [];
-  const matches = entries.filter(e => {
-    if (!e || typeof e.url !== 'string') return false;
-    const canon = canonicalizeAgentUrl(e.url);
-    return canon !== null && canon === wanted;
-  });
+  const exactMatches: AuthorizedAgent[] = [];
+  const originMatches: AuthorizedAgent[] = [];
+  for (const e of entries) {
+    if (!e || typeof e.url !== 'string') continue;
+    const canon = canonicalAgentUrlParts(e.url);
+    if (!canon) continue;
+    const kind = matchCanonicalAgentUrl(canon, wanted, originOnlyMatching);
+    if (kind === 'exact') exactMatches.push(e);
+    else if (kind === 'origin') originMatches.push(e);
+  }
+  const matches = exactMatches.length > 0 ? exactMatches : originMatches;
   if (matches.length > 1) {
     return { properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: 'ambiguous_agent_url' };
   }

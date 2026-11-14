@@ -17,6 +17,7 @@ import { SsrfRefusedError, SSRF_TRANSIENT_CODES, decodeBodyAsJsonOrText } from '
 import { isInternalProbesAllowed } from '../utils/probe-policy';
 import type { Property, AdAgentsJson } from './types';
 import { resolveAgentProperties } from './resolve-agent-properties';
+import { resolveAdcpVersion } from '../utils/adcp-version-config';
 import { AdAgentsRedirectRefusedError, ssrfSafeFetchAdAgents } from './adagents-redirects';
 
 /**
@@ -48,11 +49,22 @@ export interface PropertyCrawlerConfig {
   /** Custom identifier for outbound requests. Used as User-Agent for protocol
    *  calls to agents and included in the From header for direct property fetches. */
   userAgent?: string;
+  /**
+   * AdCP release the crawler targets. Passed to each agent's client and used
+   * to match the agent against `authorized_agents[].url` when the agent's
+   * capabilities response does not report the release it served. Defaults to
+   * the SDK's pinned `ADCP_VERSION`. At 3.3 or later an origin-only entry
+   * authorizes the agent at any path on that origin (adcp#8862).
+   */
+  adcpVersion?: string;
 }
 
 export class PropertyCrawler {
   private logger: ReturnType<typeof createLogger>;
   private userAgent?: string;
+  private adcpVersion?: string;
+  /** Release each crawled agent served for `get_adcp_capabilities`, keyed by `agent_url`. */
+  private servedVersions = new Map<string, string>();
 
   constructor(config?: PropertyCrawlerConfig) {
     this.logger = createLogger({
@@ -62,6 +74,9 @@ export class PropertyCrawler {
       validateUserAgent(config.userAgent);
     }
     this.userAgent = config?.userAgent;
+    if (config?.adcpVersion !== undefined) {
+      this.adcpVersion = resolveAdcpVersion(config.adcpVersion);
+    }
   }
   /**
    * Crawl multiple agents to discover their publisher domains and properties
@@ -78,6 +93,7 @@ export class PropertyCrawler {
 
     const index = getPropertyIndex();
     const allPublisherDomains = new Set<string>();
+    this.servedVersions.clear();
 
     // Step 1: Call listAuthorizedProperties on each agent
     for (const agentInfo of agents) {
@@ -142,7 +158,11 @@ export class PropertyCrawler {
       for (const agentUrl of claimingAgents) {
         let attributable: Property[];
         if (adAgentsFile) {
-          const scope = resolveAgentProperties(adAgentsFile, agentUrl);
+          // Match under the release the agent negotiated, else the one the
+          // crawler targets: origin-only entries widen only at 3.3+.
+          const scope = resolveAgentProperties(adAgentsFile, agentUrl, {
+            adcpVersion: this.servedVersions.get(agentUrl) ?? this.adcpVersion,
+          });
           attributable = scope.properties;
         } else {
           attributable = properties;
@@ -169,12 +189,15 @@ export class PropertyCrawler {
         protocol: agentInfo.protocol || 'mcp',
         ...(agentInfo.auth_token && { auth_token: agentInfo.auth_token }),
       },
-      { userAgent: this.userAgent }
+      { userAgent: this.userAgent, ...(this.adcpVersion !== undefined && { adcpVersion: this.adcpVersion }) }
     );
 
     try {
       // Use capabilities API which replaced list_authorized_properties
       const capabilities = await client.getCapabilities();
+      if (capabilities.servedVersion) {
+        this.servedVersions.set(agentInfo.agent_url, capabilities.servedVersion);
+      }
 
       if (!capabilities.publisherDomains) {
         // Agent may not report publisher domains in capabilities

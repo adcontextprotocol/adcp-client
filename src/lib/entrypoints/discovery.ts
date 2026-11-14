@@ -64,6 +64,9 @@ export {
   listAgentPropertyMap,
   getAllProperties,
   canonicalizeAgentUrl,
+  agentUrlMatchesAuthorizedEntry,
+  usesOriginOnlyAgentMatching,
+  type AgentUrlMatchOptions,
   type ResolvedAgentScope,
   type ResolveUnresolvableReason,
 } from '../discovery/resolve-agent-properties';

@@ -122,6 +122,13 @@ const FETCH_HEADERS = {
 /**
  * Validate `adagents.json` for a publisher domain. Implements the
  * ads.txt `MANAGERDOMAIN` one-hop fallback specified in adcp#4175.
+ *
+ * This locates and loads the file; it does not decide whether a given agent
+ * is authorized. Check an agent against `result.adagents` with
+ * `resolveAgentProperties` or `agentUrlMatchesAuthorizedEntry`, passing the
+ * negotiated or targeted `adcpVersion`: at AdCP 3.3 or later an origin-only
+ * `authorized_agents[].url` authorizes the agent at any path on that origin
+ * (adcp#8862).
  */
 export async function validateAdAgents(
   publisherDomain: string,
