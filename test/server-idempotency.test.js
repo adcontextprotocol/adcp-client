@@ -1,4 +1,5 @@
 const { describe, it, before, after } = require('node:test');
+const { ADCP_VERSION } = require('../dist/lib/version.js');
 const assert = require('node:assert/strict');
 
 const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/create-adcp-server');
@@ -149,7 +150,7 @@ describe('createAdcpServer with idempotency', () => {
         },
       });
     const stable = makeVersioned('3.2.1', ['3.2.1']);
-    const preview = makeVersioned('3.3.0-beta.5', ['3.2.1', '3.3.0-beta.5']);
+    const preview = makeVersioned(ADCP_VERSION, ['3.2.1', ADCP_VERSION]);
     const request = { ...basePayload, adcp_version: '3.4', idempotency_key: 'version_hash_key_12345' };
     const first = await callTool(stable, 'create_media_buy', request);
     const retry = await callTool(preview, 'create_media_buy', request);

@@ -10106,6 +10106,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       ? 'media-buy'
       : 'all';
   const mediaBuyProfileTools = new Set<string>(MEDIA_BUY_MCP_TOOL_PROFILE);
+  const discoveryFallback = (requestedVersion: unknown): ServedAdcpRelease | undefined => {
+    if (!parseAdcpRelease(requestedVersion)?.prerelease) return undefined;
+    if (!parseAdcpRelease(selectedDefault.validationVersion)?.prerelease) return selectedDefault;
+    const ceiling = parseAdcpRelease(adcpVersion)!;
+    const stable = selectServedAdcpRelease(
+      { adcp_version: `${ceiling.major}.${ceiling.minor}` },
+      capConfig,
+      adcpVersion,
+      defaultAdcpVersion
+    );
+    return isMcpToolResponse(stable) ? undefined : stable;
+  };
   const wrappedToolsList = wrapSdkRequestHandler(server, 'tools/list', async (original, request, extra) => {
     const response = await original(request, extra);
     if (response == null || typeof response !== 'object') return response;
@@ -10128,10 +10140,16 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       adcpVersion,
       defaultAdcpVersion
     );
-    if (isMcpToolResponse(selectedListRelease)) {
-      throw new McpError(ErrorCode.InvalidParams, 'VERSION_UNSUPPORTED', selectedListRelease.structuredContent);
+    const listRelease = isMcpToolResponse(selectedListRelease)
+      ? discoveryFallback(requestedListRelease)
+      : selectedListRelease;
+    if (!listRelease) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        'VERSION_UNSUPPORTED',
+        (selectedListRelease as McpToolResponse).structuredContent
+      );
     }
-    const listRelease = selectedListRelease;
     const parsedListRelease = parseAdcpRelease(listRelease.validationVersion);
     const listServes32OrNewer =
       parsedListRelease !== undefined &&
@@ -10298,6 +10316,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       defaultAdcpVersion
     );
     if (isMcpToolResponse(selected)) {
+      const fallback = discoveryFallback(requestedVersion);
+      if (fallback) return fallback.advertisedVersion ?? fallback.validationVersion;
       throw new McpError(ErrorCode.InvalidParams, 'VERSION_UNSUPPORTED', selected.structuredContent);
     }
     return selected.advertisedVersion ?? selected.validationVersion;

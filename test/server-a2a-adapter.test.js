@@ -1,4 +1,5 @@
 const { describe, it } = require('node:test');
+const { ADCP_VERSION, toReleasePrecisionVersion } = require('../dist/lib/version.js');
 const assert = require('node:assert');
 const express = require('express');
 const { Role, SendMessageRequest, TaskState } = require('@a2a-js/sdk');
@@ -623,15 +624,15 @@ describe('createA2AAdapter', () => {
       const adcp = createAdcpServer({
         name: 'Preview',
         version: '1.0.0',
-        adcpVersion: '3.3.0-beta.5',
+        adcpVersion: ADCP_VERSION,
         defaultAdcpVersion: '3.2.1',
-        capabilities: { supported_versions: ['3.2.1', '3.3.0-beta.5'] },
+        capabilities: { supported_versions: ['3.2.1', ADCP_VERSION] },
         mediaBuy: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
       });
       const app = mountAdapter(createA2AAdapter({ server: adcp, agentCard: baseCard() }));
       for (const [pin, expected] of [
         ['3.4', '3.2'],
-        ['3.3.0-beta.5', '3.3-beta.5'],
+        [ADCP_VERSION, toReleasePrecisionVersion(ADCP_VERSION)],
       ]) {
         const res = await postJsonRpc(app, messageSend(dataPartMessage('get_products', { adcp_version: pin })));
         assert.strictEqual(res.body.result.status.state, 'completed', JSON.stringify(res.body));
@@ -640,7 +641,11 @@ describe('createA2AAdapter', () => {
       }
       const refused = await postJsonRpc(
         app,
-        messageSend(dataPartMessage('get_products', { adcp_version: '3.3.0-beta.4' }))
+        messageSend(
+          dataPartMessage('get_products', {
+            adcp_version: ADCP_VERSION.replace(/(\d+)$/, (_, n) => String(Number(n) + 1)),
+          })
+        )
       );
       assert.match(JSON.stringify(refused.body), /VERSION_UNSUPPORTED/);
     });
