@@ -330,3 +330,92 @@ describe('issue #3665 end-to-end request shape', () => {
     );
   });
 });
+
+// AdCP 3.1 package requests also support the direct canonical selector (#3671).
+function directRequest() {
+  const request = createRequest([]);
+  delete request.packages[0].format_option_refs;
+  Object.assign(request.packages[0], { format_kind: 'image', params: { width: 300, height: 250 } });
+  return request;
+}
+
+describe('direct format selectors on AdCP 3.1 package requests (#3671)', () => {
+  test('unmapped direct selector survives projection without mutating the request', () => {
+    const request = directRequest();
+    const before = structuredClone(request);
+    const result = project(request, true, resolveNothing);
+    assert.equal(result.packages[0].format_kind, 'image');
+    assert.deepStrictEqual(result.packages[0].params, { width: 300, height: 250 });
+    assert.equal(Object.hasOwn(result.packages[0], 'format_ids'), false);
+    assert.deepStrictEqual(request, before);
+  });
+
+  test('explicit legacy resolver still wins over the 3.1 direct selector', () => {
+    const result = project(directRequest(), true, () => [LEGACY_REF]);
+    assert.deepStrictEqual(result.packages[0].format_ids, [LEGACY_REF]);
+    assert.equal(Object.hasOwn(result.packages[0], 'format_kind'), false);
+    assert.equal(Object.hasOwn(result.packages[0], 'params'), false);
+  });
+
+  test('ambiguous explicit legacy references still refuse instead of bypassing selection', () => {
+    const request = directRequest();
+    request.packages[0].format_ids = [LEGACY_REF, { ...LEGACY_REF, id: 'display_728x90_image' }];
+    assert.throws(() => project(request, true, resolveNothing), CreativeFormatProjectionError);
+  });
+
+  test('3.0 and unproven release projection still refuse an unmapped selector', () => {
+    assert.throws(() => project(directRequest(), false, resolveNothing), CreativeFormatProjectionError);
+  });
+
+  test('only new_packages can use direct selectors during an update', () => {
+    const packages = directRequest().packages;
+    const result = project({ new_packages: packages }, true, resolveNothing, 'update_media_buy');
+    assert.equal(result.new_packages[0].format_kind, 'image');
+    assert.deepStrictEqual(result.new_packages[0].params, packages[0].params);
+    assert.throws(() => project({ packages }, true, resolveNothing, 'update_media_buy'), CreativeFormatProjectionError);
+  });
+
+  for (const Client of [SingleAgentClient, AgentClient]) {
+    for (const config of [undefined, { wireAdcpVersion: '3.1' }]) {
+      test(`${Client.name}: proven 3.1 dispatch preserves the direct selector (${config ? 'explicit pin' : 'default pin'})`, async () => {
+        const { client, calls } = stubbed(Client, ['3.0', '3.1'], config);
+        await client.createMediaBuy(directRequest());
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0].packages[0].format_kind, 'image');
+        assert.deepStrictEqual(calls[0].packages[0].params, { width: 300, height: 250 });
+        assert.equal(Object.hasOwn(calls[0].packages[0], 'format_ids'), false);
+      });
+    }
+
+    test(`${Client.name}: 3.0 refuses before dispatch`, async () => {
+      const { client, calls } = stubbed(Client, ['3.0']);
+      await assert.rejects(() => client.createMediaBuy(directRequest()), CreativeFormatProjectionError);
+      assert.equal(calls.length, 0);
+    });
+
+    test(`${Client.name}: 3.1 new package dispatch preserves the direct selector`, async () => {
+      const { client, calls } = stubbed(Client, ['3.0', '3.1']);
+      await client.updateMediaBuy({
+        idempotency_key: 'direct-selector-update-0001',
+        media_buy_id: 'mb-1',
+        new_packages: directRequest().packages,
+      });
+      assert.equal(calls[0].new_packages[0].format_kind, 'image');
+      assert.deepStrictEqual(calls[0].new_packages[0].params, { width: 300, height: 250 });
+    });
+  }
+
+  test('3.1 conversion retains the selector and satisfies its package schema', () => {
+    const projected = project(directRequest(), true, resolveNothing);
+    const converted = convertRequest('create_media_buy', projected, {
+      fromVersion: '3.3.0-beta.5',
+      toVersion: '3.1',
+    });
+    assert.deepStrictEqual(converted.refusedFields ?? [], []);
+    assert.equal(converted.params.packages[0].format_kind, 'image');
+    assert.deepStrictEqual(converted.params.packages[0].params, { width: 300, height: 250 });
+    const validate = getSchemaValidatorByRef('media-buy/package-request.json', '3.1');
+    assert.ok(validate);
+    assert.equal(validate(converted.params.packages[0]), true, JSON.stringify(validate.errors));
+  });
+});
