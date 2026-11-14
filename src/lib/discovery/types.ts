@@ -162,6 +162,14 @@ export interface AuthorizedAgent {
   signal_ids?: string[];
   /** Selector for `authorization_type: 'signal_tags'` (signals agents). */
   signal_tags?: string[];
+  /**
+   * Publisher-attested public keys that narrow the keys this agent may sign
+   * with for the publisher's inventory. When several entries match one agent
+   * (AdCP 3.3+), combine them with `resolvePublisherSigningKeyPin`: pinned
+   * only if every matching entry pins, and then the union of their keys
+   * (adcontextprotocol/adcp#9016).
+   */
+  signing_keys?: Record<string, unknown>[];
 }
 
 /**

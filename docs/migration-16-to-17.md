@@ -171,7 +171,11 @@ now sees a match. Pass the release you negotiated (for example `'3.2'`) to keep
 exact canonical-URL matching. At 3.3 every matching entry authorizes the
 agent, and its scope is the union of theirs: an exact entry and an origin-only
 entry for the same agent combine, so a narrower entry never removes scope
-another grants. `matched_entries` lists them all. Below 3.3, two exact matches
+another grants. `matched_entries` lists them all. Their `signing_keys` combine
+by the same reasoning: the agent is pinned only if every matching entry pins,
+and may then sign with any of their keys. The new
+`resolvePublisherSigningKeyPin(scope)` applies that rule
+([adcp#9016](https://github.com/adcontextprotocol/adcp/issues/9016)). Below 3.3, two exact matches
 still fail closed as `ambiguous_agent_url`. `PropertyCrawler`
 uses each agent's served release, else its new `adcpVersion` option.
 Supply-path verification keeps exact matching under semantics version 1

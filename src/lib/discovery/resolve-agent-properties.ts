@@ -93,11 +93,23 @@ export interface ResolvedAgentScope {
   /**
    * Every entry that matched the agent URL, in document order. At AdCP 3.3 or
    * later more than one entry can match (an exact entry and an origin-only
-   * entry, say); the scope above is the union of theirs. Per-entry fields the
-   * resolver does not combine, such as `signing_keys`, are read from here: the
-   * AAO registry reports keys as pinned when any matching entry pins one
-   * (adcontextprotocol/adcp#9011). Set at AdCP 3.3 or later whenever an
-   * entry matched; omitted below 3.3, where at most one entry can resolve.
+   * entry, say); the scope above is the union of theirs. Set at AdCP 3.3 or
+   * later whenever an entry matched; omitted below 3.3, where at most one
+   * entry can resolve.
+   *
+   * Per-entry fields the resolver does not combine are read from here.
+   * `signing_keys` combines by the rule in adcontextprotocol/adcp#9016, which
+   * {@link resolvePublisherSigningKeyPin} applies:
+   *
+   * - **Pinned only if every matching entry pins.** If any matching entry has
+   *   no `signing_keys` (absent or empty), the agent is unpinned for this
+   *   publisher: that entry already authorizes it with any key.
+   * - **The allowed keys are the union.** When every matching entry pins, the
+   *   agent may sign with a key pinned by any of them.
+   *
+   * The AAO registry's `signing_keys_pinned` follows the same rule. A pin
+   * from a different publisher still has to match too; pins intersect across
+   * publishers, not across one publisher's entries.
    */
   matched_entries?: AuthorizedAgent[];
   /** Why the resolution returned an empty result, when it did. */
@@ -332,6 +344,69 @@ export function resolveAgentProperties(
     matches.map(entry => resolveMatchedAgentProperties(adAgents, entry)),
     matches
   );
+}
+
+/**
+ * The publisher's `signing_keys` pin for one agent, from the entries in its
+ * `adagents.json` that matched the agent (adcontextprotocol/adcp#9016).
+ *
+ * Pass a {@link ResolvedAgentScope} from {@link resolveAgentProperties}, or
+ * the matching entries themselves. A scope contributes `matched_entries` at
+ * AdCP 3.3 or later and its single `matched_entry` below 3.3.
+ *
+ * - Returns `undefined` (the publisher does not pin the agent) when no entry
+ *   matched, or when ANY matching entry has no `signing_keys` (absent or
+ *   empty). An unpinned entry already authorizes the agent with any key, so
+ *   another entry's pin restricts nothing.
+ * - Otherwise returns the union of the matching entries' keys in document
+ *   order. A key repeated identically appears once; two copies that differ in
+ *   any member, such as a `revoked_at` on one, are both kept, so a revocation
+ *   is never dropped.
+ *
+ * With one matching entry, as below 3.3, the result is that entry's own pin.
+ * The result is never `[]`, so it fits `PublisherSigningKeyPin.signingKeys`
+ * directly, where `undefined` means no pin. A pin applies to sell-side
+ * signatures about this publisher's inventory; for a message about several
+ * publishers' inventory, pass one `PublisherSigningKeyPin` per publisher, and
+ * the key must match each.
+ *
+ * Below 3.3 an agent with more than one exact match resolves as
+ * `ambiguous_agent_url` with no `matched_entry`, so this returns `undefined`.
+ * Authorization has already failed closed there; do not read it as "no pin".
+ *
+ * ```ts
+ * const scope = resolveAgentProperties(adagents, sellerAgentUrl, { adcpVersion });
+ * const pin: PublisherSigningKeyPin = {
+ *   publisher: 'publisher.example',
+ *   signingKeys: resolvePublisherSigningKeyPin(scope),
+ *   refresh: async () => {
+ *     // Your own uncached adagents.json fetch.
+ *     const fresh = resolveAgentProperties(await fetchAdagentsUncached(), sellerAgentUrl, { adcpVersion });
+ *     if (fresh.unresolvable === 'agent_not_listed' || fresh.unresolvable === 'ambiguous_agent_url') {
+ *       throw new Error('Agent is no longer authorized by this publisher');
+ *     }
+ *     return resolvePublisherSigningKeyPin(fresh) ?? null; // null: the publisher no longer pins
+ *   },
+ * };
+ * ```
+ */
+export function resolvePublisherSigningKeyPin(
+  matched: Pick<ResolvedAgentScope, 'matched_entry' | 'matched_entries'> | readonly AuthorizedAgent[]
+): Record<string, unknown>[] | undefined {
+  const entries: readonly AuthorizedAgent[] = isEntryList(matched)
+    ? matched
+    : (matched.matched_entries ?? (matched.matched_entry ? [matched.matched_entry] : []));
+  if (entries.length === 0) return undefined;
+  if (!entries.every(entry => Array.isArray(entry?.signing_keys) && entry.signing_keys.length > 0)) {
+    return undefined;
+  }
+  return uniqueByValue(entries.flatMap(entry => entry.signing_keys!));
+}
+
+function isEntryList(
+  value: Pick<ResolvedAgentScope, 'matched_entry' | 'matched_entries'> | readonly AuthorizedAgent[]
+): value is readonly AuthorizedAgent[] {
+  return Array.isArray(value);
 }
 
 /**

@@ -252,6 +252,7 @@ export {
   canonicalizeAgentUrl,
   agentUrlMatchesAuthorizedEntry,
   usesOriginOnlyAgentMatching,
+  resolvePublisherSigningKeyPin,
   type AgentUrlMatchOptions,
   type ResolvedAgentScope,
   type ResolveUnresolvableReason,
