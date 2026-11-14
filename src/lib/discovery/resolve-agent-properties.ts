@@ -93,11 +93,28 @@ export interface ResolvedAgentScope {
   /**
    * Every entry that matched the agent URL, in document order. At AdCP 3.3 or
    * later more than one entry can match (an exact entry and an origin-only
-   * entry, say); the scope above is the union of theirs. Per-entry fields the
-   * resolver does not combine, such as `signing_keys`, are read from here: the
-   * AAO registry reports keys as pinned when any matching entry pins one
-   * (adcontextprotocol/adcp#9011). Set at AdCP 3.3 or later whenever an
-   * entry matched; omitted below 3.3, where at most one entry can resolve.
+   * entry, say); the scope above is the union of theirs. Set at AdCP 3.3 or
+   * later whenever an entry matched; omitted below 3.3, where at most one
+   * entry can resolve.
+   *
+   * Per-entry fields the resolver does not combine are read from here.
+   * `signing_keys` combines by the rule in adcontextprotocol/adcp#9016, over
+   * the entries that match the agent AND authorize the signed message's scope
+   * (they resolve, are in their effective window, cover the country and the
+   * property). Use {@link resolvePublisherSigningKeyPin}, which takes that
+   * scope; this list alone is not scope-filtered.
+   *
+   * - **Pinned only if every such entry pins.** If any of them has no
+   *   `signing_keys` (absent or empty), the publisher does not pin the agent
+   *   for that message. An entry that authorizes nothing for the message
+   *   never pins or unpins it.
+   * - **The allowed keys are the union.** When every such entry pins, the
+   *   agent may sign with a key pinned by any of them.
+   * - **Per property.** A message about several properties must satisfy each
+   *   property's pin, as it must satisfy each publisher's.
+   *
+   * The AAO directory's `signing_keys_pinned` is a scope-agnostic summary of
+   * the same rule.
    */
   matched_entries?: AuthorizedAgent[];
   /** Why the resolution returned an empty result, when it did. */
@@ -332,6 +349,164 @@ export function resolveAgentProperties(
     matches.map(entry => resolveMatchedAgentProperties(adAgents, entry)),
     matches
   );
+}
+
+/**
+ * The message a publisher pin is computed for (adcontextprotocol/adcp#9016).
+ * Pass the scope of the signed message: the pin comes only from entries that
+ * authorize it.
+ */
+export interface PublisherSigningKeyPinOptions extends AgentUrlMatchOptions {
+  /**
+   * When the message applies, for `effective_from` / `effective_until`.
+   * Defaults to now. An entry outside its window authorizes nothing.
+   */
+  at?: Date | string | number;
+  /**
+   * ISO 3166-1 alpha-2 country the message concerns. An entry with
+   * `countries` authorizes the message only when this is one of them; with no
+   * country given, such an entry authorizes nothing.
+   */
+  country?: string;
+  /**
+   * The publisher's `property_id`s the message concerns. Each gets its own
+   * pin, and the result is the keys every one of them allows (a key must
+   * satisfy each property's pin). Omit to combine across every entry that
+   * authorizes the agent for anything.
+   */
+  propertyIds?: readonly string[];
+}
+
+/**
+ * The publisher's `signing_keys` pin for a message from `agentUrl`, read from
+ * the publisher's `adagents.json` (adcontextprotocol/adcp#9016). Use it as
+ * `PublisherSigningKeyPin.signingKeys`.
+ *
+ * Only entries that BOTH match `agentUrl` (with
+ * {@link agentUrlMatchesAuthorizedEntry}, so origin-only entries count at
+ * 3.3+) AND authorize the message's scope count. Such an entry:
+ * - resolves to something, so an unresolvable or signals-only entry does not count;
+ * - is inside its effective window at `at`;
+ * - covers `country`, and each property in `propertyIds`.
+ *
+ * An entry that authorizes nothing for the message never pins or unpins it,
+ * so callers MUST pass the message's scope.
+ *
+ * Among the entries that count:
+ * - The publisher pins the agent only if every one carries `signing_keys`. If
+ *   any has none (absent or empty), the result is `undefined`: no pin, so use
+ *   the agent's JWKS alone.
+ * - Otherwise the result is the union of their keys. Identical keys appear
+ *   once. Copies that differ in `revoked_at` are all kept, so the earliest
+ *   revocation applies whatever the entry order.
+ * - With `propertyIds`, each property gets its own pin, and the result keeps
+ *   only the keys every pinned property allows.
+ *
+ * Returns `[]`, which `PublisherSigningKeyPin` reads as "accept no key", when
+ * the agent is NOT authorized for the message:
+ * - it is not listed;
+ * - below 3.3 it matches more than one exact entry (`ambiguous_agent_url`);
+ * - no entry authorizes the scope;
+ * - no entry authorizes one of `propertyIds`;
+ * - the pinned properties share no key.
+ *
+ * Not being authorized is never reported as "no pin".
+ *
+ * ```ts
+ * const pinFor = (adagents: AdAgentsJson) =>
+ *   resolvePublisherSigningKeyPin(adagents, sellerAgentUrl, { adcpVersion, country, propertyIds });
+ * const pin: PublisherSigningKeyPin = {
+ *   publisher: 'publisher.example',
+ *   signingKeys: pinFor(adagents),
+ *   // Your own uncached adagents.json fetch; null means the publisher no longer pins.
+ *   refresh: async () => pinFor(await fetchAdagentsUncached()) ?? null,
+ * };
+ * ```
+ */
+export function resolvePublisherSigningKeyPin(
+  adAgents: AdAgentsJson,
+  agentUrl: string,
+  options: PublisherSigningKeyPinOptions = {}
+): Record<string, unknown>[] | undefined {
+  const NOT_AUTHORIZED: Record<string, unknown>[] = [];
+  const wanted = canonicalAgentUrlParts(agentUrl);
+  if (!wanted) return NOT_AUTHORIZED;
+  const originOnlyMatching = usesOriginOnlyAgentMatching(options.adcpVersion);
+  const entries = Array.isArray(adAgents.authorized_agents) ? adAgents.authorized_agents : [];
+  const matching = entries.filter(entry => {
+    if (!entry || typeof entry !== 'object' || typeof entry.url !== 'string') return false;
+    const canon = canonicalAgentUrlParts(entry.url);
+    return canon !== null && matchCanonicalAgentUrl(canon, wanted, originOnlyMatching) !== 'none';
+  });
+  // Below 3.3 more than one exact match is ambiguous and fails closed.
+  if (!originOnlyMatching && matching.length > 1) return NOT_AUTHORIZED;
+
+  const at = options.at === undefined ? Date.now() : new Date(options.at).getTime();
+  const country = options.country?.toUpperCase();
+  const authorizing = matching
+    .filter(entry => withinEffectiveWindow(entry, at) && coversCountry(entry, country))
+    .map(entry => ({ entry, scope: resolveMatchedAgentProperties(adAgents, entry) }))
+    .filter(({ scope }) => scope.properties.length > 0 || scope.cross_publisher.length > 0);
+  if (authorizing.length === 0) return NOT_AUTHORIZED;
+
+  if (!options.propertyIds?.length) {
+    return combineEntryPins(authorizing.map(({ entry }) => entry));
+  }
+  const perProperty: Array<Record<string, unknown>[] | undefined> = [];
+  for (const propertyId of new Set(options.propertyIds)) {
+    const covering = authorizing.filter(({ scope }) => scope.properties.some(p => p.property_id === propertyId));
+    if (covering.length === 0) return NOT_AUTHORIZED;
+    perProperty.push(combineEntryPins(covering.map(({ entry }) => entry)));
+  }
+  return intersectPins(perProperty);
+}
+
+/** Pinned only if every entry pins; then the union of their keys. */
+function combineEntryPins(entries: readonly AuthorizedAgent[]): Record<string, unknown>[] | undefined {
+  if (!entries.every(entry => Array.isArray(entry.signing_keys) && entry.signing_keys.length > 0)) return undefined;
+  return uniqueByValue(entries.flatMap(entry => entry.signing_keys!));
+}
+
+/**
+ * Keys every pinned property allows, matched by public material (every member
+ * but `revoked_at`); every copy of a surviving key is kept. `undefined` when
+ * no property is pinned, `[]` when the pinned properties share no key.
+ */
+function intersectPins(
+  pins: ReadonlyArray<Record<string, unknown>[] | undefined>
+): Record<string, unknown>[] | undefined {
+  const pinned = pins.filter((pin): pin is Record<string, unknown>[] => pin !== undefined);
+  if (pinned.length === 0) return undefined;
+  const identity = (key: Record<string, unknown>) => {
+    const { revoked_at: _revokedAt, ...rest } = key ?? {};
+    return JSON.stringify(
+      Object.keys(rest)
+        .sort()
+        .map(name => [name, rest[name]])
+    );
+  };
+  const shared = pinned
+    .map(pin => new Set(pin.map(identity)))
+    .reduce((acc, ids) => new Set([...acc].filter(id => ids.has(id))));
+  return uniqueByValue(pinned.flatMap(pin => pin.filter(key => shared.has(identity(key)))));
+}
+
+function withinEffectiveWindow(entry: AuthorizedAgent, at: number): boolean {
+  if (Number.isNaN(at)) return false;
+  if (entry.effective_from !== undefined) {
+    const from = Date.parse(entry.effective_from);
+    if (Number.isNaN(from) || at < from) return false;
+  }
+  if (entry.effective_until !== undefined) {
+    const until = Date.parse(entry.effective_until);
+    if (Number.isNaN(until) || at > until) return false;
+  }
+  return true;
+}
+
+function coversCountry(entry: AuthorizedAgent, country: string | undefined): boolean {
+  if (!Array.isArray(entry.countries) || entry.countries.length === 0) return true;
+  return country !== undefined && entry.countries.some(c => typeof c === 'string' && c.toUpperCase() === country);
 }
 
 /**

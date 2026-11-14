@@ -63,9 +63,16 @@ export interface DirectoryPublisherEntry {
    */
   properties_total: number;
   /**
-   * Whether the publisher's adagents.json entry for this agent pins
-   * `signing_keys[]`. When true, signed responses MUST verify against
-   * the pinned key set regardless of the agent's own JWKS.
+   * Whether the publisher's adagents.json pins `signing_keys[]` for this
+   * agent: true only when every `authorized_agents[]` entry that matches the
+   * agent carries `signing_keys` (adcontextprotocol/adcp#9016). One matching
+   * entry without them, such as an unpinned origin-only entry beside a pinned
+   * full-URL entry, leaves the agent unpinned. When true, the agent's
+   * sell-side signatures about this publisher's inventory are accepted only
+   * with a key in both the pin and the agent's own JWKS. This is a
+   * scope-agnostic summary (entries outside their effective window are
+   * ignored); a verifier computes the pin per message scope with
+   * `resolvePublisherSigningKeyPin`, so a pin can apply where this is false.
    */
   signing_keys_pinned?: boolean;
   status: DirectoryPublisherStatus;

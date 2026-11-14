@@ -66,6 +66,8 @@ export {
   canonicalizeAgentUrl,
   agentUrlMatchesAuthorizedEntry,
   usesOriginOnlyAgentMatching,
+  resolvePublisherSigningKeyPin,
+  type PublisherSigningKeyPinOptions,
   type AgentUrlMatchOptions,
   type ResolvedAgentScope,
   type ResolveUnresolvableReason,
