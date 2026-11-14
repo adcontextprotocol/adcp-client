@@ -33,6 +33,29 @@ import type {
   SinglePublisherPropertySelector,
 } from './types';
 import { resolveInlinePublisherProperties } from './inline-publisher-properties';
+import { ADCP_VERSION } from '../version';
+import { isAdcpVersionAtLeast } from '../utils/adcp-version-config';
+
+/**
+ * First release whose `authorized_agents[].url` matching is origin-only
+ * aware (adcp#8862, documented by adcp#8939 under DR-0023). Every 3.3
+ * prerelease counts, the same threshold the SDK's other 3.3 gates use.
+ */
+const ORIGIN_ONLY_AGENT_MATCHING_SINCE = '3.3.0-beta.0';
+
+/** Options shared by the `authorized_agents[].url` matching helpers. */
+export interface AgentUrlMatchOptions {
+  /**
+   * AdCP release the caller negotiated or targets. Defaults to the SDK's
+   * pinned `ADCP_VERSION`.
+   *
+   * At 3.3 or later an origin-only entry (`https://agent.example.com`)
+   * authorizes the agent at that origin whatever its path. Below 3.3, or
+   * when the value is not a parseable AdCP version, every entry matches by
+   * exact canonical URL.
+   */
+  adcpVersion?: string;
+}
 
 /**
  * Result of resolving a single agent's authorization scope against an
@@ -61,8 +84,22 @@ export interface ResolvedAgentScope {
    * iterate this array, not `cross_publisher` — see adcp#4504.
    */
   cross_publisher_expanded: SinglePublisherPropertySelector[];
-  /** The matched agent entry, or `undefined` if no entry matched the agent URL. */
+  /**
+   * The matched agent entry, or `undefined` if no entry matched the agent URL.
+   * When several entries match (AdCP 3.3+), the first in document order; see
+   * {@link ResolvedAgentScope.matched_entries}.
+   */
   matched_entry?: AuthorizedAgent;
+  /**
+   * Every entry that matched the agent URL, in document order. At AdCP 3.3 or
+   * later more than one entry can match (an exact entry and an origin-only
+   * entry, say); the scope above is the union of theirs. Per-entry fields the
+   * resolver does not combine, such as `signing_keys`, are read from here: the
+   * AAO registry reports keys as pinned when any matching entry pins one
+   * (adcontextprotocol/adcp#9011). Set at AdCP 3.3 or later whenever an
+   * entry matched; omitted below 3.3, where at most one entry can resolve.
+   */
+  matched_entries?: AuthorizedAgent[];
   /** Why the resolution returned an empty result, when it did. */
   unresolvable?: ResolveUnresolvableReason;
 }
@@ -114,6 +151,108 @@ export function canonicalizeAgentUrl(raw: string): string | null {
   return `${parsed.protocol}//${parsed.host}${path}${query}`;
 }
 
+interface CanonicalAgentUrl {
+  /** Full canonical URL, as {@link canonicalizeAgentUrl} returns it. The 3.2 comparison key. */
+  url: string;
+  /** Root path `/` and no query, empty query marker included. */
+  originOnly: boolean;
+  /**
+   * The 3.3 comparison keys: `url` and its canonical origin with one trailing
+   * root-label dot removed from a DNS host (URL canonicalization step 2,
+   * `https://agent.example./mcp` → `https://agent.example/mcp`). `null` when
+   * the host ends in more than one dot (an empty label, which step 2 rejects),
+   * so at 3.3 such a URL matches nothing.
+   */
+  rootDotless: { url: string; origin: string } | null;
+}
+
+function canonicalAgentUrlParts(raw: string): CanonicalAgentUrl | null {
+  const url = canonicalizeAgentUrl(raw);
+  if (url === null) return null;
+  // Re-parse the canonical form: its path has already been through dot-segment
+  // removal and unreserved percent-decoding, so `/./` and `/%2E/` read as `/`.
+  const parsed = new URL(url);
+  const origin = `${parsed.protocol}//${parsed.host}`;
+  return { url, originOnly: url === `${origin}/`, rootDotless: stripRootDot(parsed, url, origin) };
+}
+
+/**
+ * Remove one trailing root-label dot from a DNS host, keeping the port, path
+ * and query. Returns `null` for a host of more than one trailing dot, or of
+ * only a dot. IPv6 literals are left alone; WHATWG parsing already drops the
+ * dot from an IPv4 host. Kept out of `canonicalizeAgentUrl` so that its other
+ * callers (format ids, supply-path identity, projections) and the 3.2 exact
+ * comparison are unchanged.
+ */
+function stripRootDot(parsed: URL, url: string, origin: string): { url: string; origin: string } | null {
+  const host = parsed.hostname;
+  if (host.startsWith('[') || !host.endsWith('.')) return { url, origin };
+  if (host.endsWith('..') || host === '.') return null;
+  const dotless = `${parsed.protocol}//${host.slice(0, -1)}${parsed.port ? `:${parsed.port}` : ''}`;
+  return { url: dotless + url.slice(origin.length), origin: dotless };
+}
+
+/**
+ * Whether `adcpVersion` (default: the SDK's pinned `ADCP_VERSION`) applies
+ * the 3.3 origin-only rule to `authorized_agents[].url` (adcp#8862).
+ */
+export function usesOriginOnlyAgentMatching(adcpVersion: string = ADCP_VERSION): boolean {
+  return isAdcpVersionAtLeast(adcpVersion, ORIGIN_ONLY_AGENT_MATCHING_SINCE);
+}
+
+/**
+ * Whether `agentUrl` matches an `authorized_agents[].url` entry under
+ * [Agent URL matching](https://adcontextprotocol.org/docs/governance/property/adagents#agent-url-matching).
+ *
+ * Both sides are canonicalized with {@link canonicalizeAgentUrl}, so scheme
+ * and host case, default ports, unreserved percent-encoding and fragments
+ * never matter, and the scheme, host and port always do. A URL with userinfo
+ * never canonicalizes, so it matches nothing. Then:
+ *
+ * - **AdCP 3.3 or later** (DR-0023, adcp#8862): an origin-only entry, one
+ *   whose canonical form has the root path and no query
+ *   (`https://agent.example.com` or `https://agent.example.com/`),
+ *   matches any agent URL with the same canonical origin, including
+ *   `https://agent.example.com/mcp`. An entry with a path, or with a query
+ *   (even an empty `?`), matches only the same canonical URL, so path case
+ *   and a trailing slash (`/mcp` vs `/mcp/`) stay significant. Both sides
+ *   also drop one trailing root-label dot from a DNS host
+ *   (`https://agent.example.` matches `https://agent.example/mcp`), and a
+ *   host ending in more than one dot matches nothing.
+ * - **AdCP 3.2 and earlier**: every entry matches only the same canonical
+ *   URL, so an origin-only entry matches only an agent served at the root.
+ *
+ * Returns `false` when either URL fails to canonicalize.
+ */
+export function agentUrlMatchesAuthorizedEntry(
+  entryUrl: string,
+  agentUrl: string,
+  options: AgentUrlMatchOptions = {}
+): boolean {
+  const entry = canonicalAgentUrlParts(entryUrl);
+  const agent = canonicalAgentUrlParts(agentUrl);
+  if (!entry || !agent) return false;
+  return matchCanonicalAgentUrl(entry, agent, usesOriginOnlyAgentMatching(options.adcpVersion)) !== 'none';
+}
+
+type AgentUrlMatchKind = 'exact' | 'origin' | 'none';
+
+function matchCanonicalAgentUrl(
+  entry: CanonicalAgentUrl,
+  agent: CanonicalAgentUrl,
+  originOnlyMatching: boolean
+): AgentUrlMatchKind {
+  // 3.2 and earlier: the exact canonical URL, byte-identical to the pre-3.3 rule.
+  if (!originOnlyMatching) return entry.url === agent.url ? 'exact' : 'none';
+  // 3.3 and later: compare with one DNS root dot removed; a malformed dotted host matches nothing.
+  const e = entry.rootDotless;
+  const a = agent.rootDotless;
+  if (!e || !a) return 'none';
+  if (e.url === a.url) return 'exact';
+  if (entry.originOnly && e.origin === a.origin) return 'origin';
+  return 'none';
+}
+
 function parseAgentUrl(raw: string): URL | null {
   if (typeof raw !== 'string' || raw.length === 0) return null;
   let parsed: URL;
@@ -132,37 +271,103 @@ function parseAgentUrl(raw: string): URL | null {
 
 /**
  * Resolve `agentUrl`'s authorization scope against an `adagents.json`
- * file. The lookup uses canonicalized URL comparison — two URLs
- * differing only in host case, default port, percent-encoding of
- * unreserved chars, or fragment are the same agent. Scheme and trailing
- * slash differences remain distinct.
+ * file. Entries are matched with {@link agentUrlMatchesAuthorizedEntry}:
+ * two URLs differing only in host case, default port, percent-encoding
+ * of unreserved chars, or fragment are the same agent, and scheme
+ * differences remain distinct. At AdCP 3.3 or later (`options.adcpVersion`,
+ * default the SDK's pinned `ADCP_VERSION`) an origin-only entry also
+ * matches an agent at any path on that origin; below 3.3 it matches only
+ * an agent served at the root. An entry with a path always matches only
+ * its canonical URL, trailing slash included.
+ *
+ * At 3.3 or later every matching entry authorizes the agent, and the scope
+ * is the union of theirs: `properties`, `cross_publisher` and
+ * `cross_publisher_expanded` combine (duplicates removed), so a narrower
+ * entry never removes scope another matching entry grants
+ * (adcontextprotocol/adcp#9011). `unresolvable` is set only when the union
+ * is empty, and then carries the first matching entry's reason.
+ *
+ * Below 3.3 the behaviour is unchanged: only exact canonical matches count,
+ * and more than one fails closed as `ambiguous_agent_url`.
  *
  * Returns `{ properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: '...' }`
  * (never throws) when the agent isn't listed, when its entry is
  * malformed, or when the agent uses a signals authorization type.
  */
-export function resolveAgentProperties(adAgents: AdAgentsJson, agentUrl: string): ResolvedAgentScope {
-  const wanted = canonicalizeAgentUrl(agentUrl);
+export function resolveAgentProperties(
+  adAgents: AdAgentsJson,
+  agentUrl: string,
+  options: AgentUrlMatchOptions = {}
+): ResolvedAgentScope {
+  const wanted = canonicalAgentUrlParts(agentUrl);
   if (!wanted) {
     return { properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: 'agent_not_listed' };
   }
 
+  const originOnlyMatching = usesOriginOnlyAgentMatching(options.adcpVersion);
   const entries = Array.isArray(adAgents.authorized_agents) ? adAgents.authorized_agents : [];
-  const matches = entries.filter(e => {
-    if (!e || typeof e.url !== 'string') return false;
-    const canon = canonicalizeAgentUrl(e.url);
-    return canon !== null && canon === wanted;
-  });
-  if (matches.length > 1) {
-    return { properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: 'ambiguous_agent_url' };
+  const matches: AuthorizedAgent[] = [];
+  for (const e of entries) {
+    if (!e || typeof e.url !== 'string') continue;
+    const canon = canonicalAgentUrlParts(e.url);
+    if (!canon) continue;
+    if (matchCanonicalAgentUrl(canon, wanted, originOnlyMatching) !== 'none') matches.push(e);
   }
 
-  const entry = matches[0];
-  if (!entry) {
+  const first = matches[0];
+  if (!first) {
     return { properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: 'agent_not_listed' };
   }
+  // 3.2 and earlier: unchanged. One exact match resolves; more than one is ambiguous.
+  if (!originOnlyMatching) {
+    if (matches.length > 1) {
+      return { properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: 'ambiguous_agent_url' };
+    }
+    return resolveMatchedAgentProperties(adAgents, first);
+  }
+  if (matches.length === 1) {
+    return { ...resolveMatchedAgentProperties(adAgents, first), matched_entries: [first] };
+  }
+  return unionAgentScopes(
+    matches.map(entry => resolveMatchedAgentProperties(adAgents, entry)),
+    matches
+  );
+}
 
-  return resolveMatchedAgentProperties(adAgents, entry);
+/**
+ * Combine the scopes of every entry that authorizes one agent (AdCP 3.3+).
+ * Properties dedupe by identity, then by value, so a top-level property two
+ * selectors both pick appears once; selectors dedupe by value.
+ */
+function unionAgentScopes(scopes: ResolvedAgentScope[], entries: AuthorizedAgent[]): ResolvedAgentScope {
+  const properties = uniqueByValue(scopes.flatMap(s => s.properties));
+  const cross_publisher = uniqueByValue(scopes.flatMap(s => s.cross_publisher));
+  const cross_publisher_expanded = uniqueByValue(scopes.flatMap(s => s.cross_publisher_expanded));
+  const empty = properties.length === 0 && cross_publisher.length === 0;
+  const reason = scopes.find(s => s.unresolvable !== undefined)?.unresolvable;
+  return {
+    properties,
+    cross_publisher,
+    cross_publisher_expanded,
+    matched_entry: entries[0],
+    matched_entries: entries,
+    ...(empty && reason !== undefined ? { unresolvable: reason } : {}),
+  };
+}
+
+function uniqueByValue<T>(items: T[]): T[] {
+  const seenRefs = new Set<T>();
+  const seenValues = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    if (seenRefs.has(item)) continue;
+    seenRefs.add(item);
+    const value = JSON.stringify(item);
+    if (seenValues.has(value)) continue;
+    seenValues.add(value);
+    out.push(item);
+  }
+  return out;
 }
 
 function resolveMatchedAgentProperties(adAgents: AdAgentsJson, entry: AuthorizedAgent): ResolvedAgentScope {
@@ -316,8 +521,10 @@ function resolveMatchedAgentProperties(adAgents: AdAgentsJson, entry: Authorized
  *
  * The returned map is keyed by public canonical URL; if a file contains
  * canonical-equivalent entries, the later entry wins in this non-authoritative
- * inventory view. Use `resolveAgentProperties` for an authorization decision
- * for a specific agent URL because it fails closed on ambiguous matches.
+ * inventory view, and an origin-only entry is not applied to path-mounted
+ * agents. Use `resolveAgentProperties` for an authorization decision for a
+ * specific agent URL: it unions every matching entry at AdCP 3.3+ and fails
+ * closed on ambiguous matches below 3.3.
  */
 export function listAgentPropertyMap(adAgents: AdAgentsJson): {
   byAgent: Map<string, Property[]>;

@@ -204,6 +204,9 @@ function propertyScope(
     (!Array.isArray(entry.properties) || !entry.properties.every(record))
   )
     return new Set();
+  // The entry was already matched by exact canonical URL (`agentIdentity`, kept
+  // exact for supply-path semantics v1, adcontextprotocol/adcp#8943). Resolving it
+  // as the only entry against its own URL is an exact match at any AdCP version.
   const result = resolveAgentProperties(
     { ...manifest, authorized_agents: [entry as unknown as AuthorizedAgent] } as AdAgentsJson,
     String(entry.url)
@@ -423,6 +426,8 @@ export function evaluateSupplyPath(input: SupplyPathInput): SupplyPathVerdict {
       if (!carriage.ok) carriage.failure = 'property_ids_unresolved';
     }
   }
+  // Owner and host legs match the agent by exact canonical URL, not by the 3.3
+  // origin-only rule: supply-path semantics v1 stays exact (adcontextprotocol/adcp#8943).
   const ownerAgent: SupplyPathLegs['owner_agent_declared'] = !ownerManifest
     ? { ok: false, failure: 'manifest_not_found' }
     : agent &&
