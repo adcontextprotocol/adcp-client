@@ -78,6 +78,11 @@ npx @adcp/sdk@15.9 storyboard run http://localhost:3001/mcp --file ./my-wip.yaml
 npx @adcp/sdk@15.9 storyboard run http://localhost:3001/mcp --json > report.json
 ```
 
+Writing a storyboard that applies only to agents declaring a capability? See
+[STORYBOARD-CAPABILITY-GATES.md](./STORYBOARD-CAPABILITY-GATES.md) for the
+`requires_capability` matchers, `any_of` groups and how older runners treat
+them.
+
 For a publisher split across sales, signals, governance, or creative tenants,
 provide an agents map and omit the storyboard ID to assess the whole topology:
 

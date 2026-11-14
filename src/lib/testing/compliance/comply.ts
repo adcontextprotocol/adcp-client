@@ -27,6 +27,7 @@ import {
   storyboardRequiresCapabilityEvidence,
   storyboardAllowsCapabilityDiagnostic,
   storyboardCapabilityPredicates,
+  capabilityPathPredicates,
 } from '../storyboard/runner';
 import { applyNativeA2AComplianceTransportOptions } from '../storyboard/native-a2a-compliance';
 import { validateTestKit } from '../storyboard/test-kit';
@@ -1174,7 +1175,11 @@ function isCapabilityUnsupportedSkip(storyboard: Storyboard, result: StoryboardR
   // surface. Neutralizing it would let an agent drop one scenario string from
   // its own list and flip the bundle to `passing` at no cost, which is the
   // asymmetry this rule exists to avoid. Those storyboards stay coverage gaps.
-  if (predicates.some(predicate => capabilityPathSegments(predicate.path).includes('compliance_testing'))) {
+  if (
+    predicates
+      .flatMap(capabilityPathPredicates)
+      .some(predicate => capabilityPathSegments(predicate.path).includes('compliance_testing'))
+  ) {
     return false;
   }
 
