@@ -175,7 +175,7 @@ can see passed or was skipped. Every failing result says why:
 
 | `verdict_reason` | What happened | What to do |
 |---|---|---|
-| `step_failed` | A counted step failed. | Read that step's `error` and `validations`. |
+| `step_failed` | A step failed. Usually a counted failure; on a storyboard with only optional phases, a failed optional step. | Read that step's `error` and `validations`. |
 | `assertion_failed` | A storyboard-level invariant (for example `status.monotonic`) failed, or an assertion failed on a skipped step. | Read the assertion row's `message`. |
 | `controller_prerequisite_unmet` | Required steps needed `comply_test_controller` or its pre-flight seeding, and it was absent or seeding failed. | Implement the controller scenarios the storyboard names, or fix the seeding error. |
 | `required_phase_not_executed` | A required phase did not pass because its steps were skipped (`prerequisite_failed`, `missing_tool`, `unsatisfied_contract`, `requirement_unmet`, a capability gate). | Follow each row's `skip_reason`. |

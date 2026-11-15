@@ -106,9 +106,12 @@ export function explainStoryboardVerdict(
 ): StoryboardVerdictExplanation | undefined {
   if (result.overall_passed) return undefined;
 
-  const optionalPhaseIds = new Set(
-    (options.storyboard?.phases ?? []).filter(phase => phase.optional === true).map(phase => phase.id)
-  );
+  const knownPhases = options.storyboard?.phases ?? [];
+  const optionalPhaseIds = new Set(knownPhases.filter(phase => phase.optional === true).map(phase => phase.id));
+  // With no required phase, the runner grades the optional phases themselves
+  // (`optionalOnlyHasExecutedPass`), so they can carry the verdict.
+  const optionalOnly = knownPhases.length > 0 && knownPhases.every(phase => phase.optional === true);
+  const isOptionalPhase = (phaseId: string): boolean => optionalPhaseIds.has(phaseId);
   const phaseViews: PhaseView[] = result.passes?.length
     ? result.passes.flatMap(pass => pass.phases.map(phase => ({ phase, passIndex: pass.pass_index })))
     : result.phases.map(phase => ({ phase }));
@@ -118,11 +121,20 @@ export function explainStoryboardVerdict(
     contributors.push(row);
   };
 
-  // 1. Executed failures, split by who owns them.
+  // 1. Executed failures, split by who owns them. A failure in an optional
+  // phase, or one marked `counts_toward_failure: false`, is not in
+  // `failed_count`; it is held back and named below only when nothing more
+  // specific (an assertion) carries it.
   const countedFailures = new Set<StoryboardStepResult>();
-  for (const { phase, passIndex } of phaseViews) {
+  const uncountedFailures: Array<{ view: PhaseView; step: StoryboardStepResult }> = [];
+  for (const view of phaseViews) {
+    const { phase, passIndex } = view;
     for (const step of phase.steps) {
-      if (step.passed || step.skipped || step.counts_toward_failure === false) continue;
+      if (step.passed || step.skipped) continue;
+      if (step.counts_toward_failure === false || isOptionalPhase(phase.phase_id)) {
+        uncountedFailures.push({ view, step });
+        continue;
+      }
       countedFailures.add(step);
       add({
         kind: 'step',
@@ -137,9 +149,11 @@ export function explainStoryboardVerdict(
   }
 
   // 2. Assertions no counted step carries.
+  const assertionOwners = new Set<StoryboardStepResult>();
   for (const assertion of result.assertions ?? []) {
     if (assertion.passed) continue;
     const owner = assertion.scope === 'step' ? findOwningStep(result, phaseViews, assertion) : undefined;
+    if (owner) assertionOwners.add(owner);
     if (owner && countedFailures.has(owner)) continue;
     add({
       kind: 'assertion',
@@ -152,18 +166,52 @@ export function explainStoryboardVerdict(
     });
   }
 
-  // 3. Required phases that did not pass without a counted failure inside.
+  // 2b. Uncounted failures in a phase that did not pass, when no assertion
+  // already names them: the visible failed step is the cause. An optional
+  // phase next to required ones is not graded, so its failures are named only
+  // when nothing else explains the verdict (step 6).
+  const namedUncounted = new Set<StoryboardStepResult>();
+  const ungradedUncounted: Array<{ view: PhaseView; step: StoryboardStepResult }> = [];
+  const uncountedRow = ({
+    view,
+    step,
+  }: {
+    view: PhaseView;
+    step: StoryboardStepResult;
+  }): StoryboardVerdictContributor => ({
+    kind: 'step',
+    id: step.step_id,
+    reason: 'step_failed',
+    status: 'failed',
+    phase_id: view.phase.phase_id,
+    ...(view.passIndex !== undefined && { pass_index: view.passIndex }),
+    ...messageOf(step.error ?? firstFailedValidationMessage(step)),
+  });
+  for (const failure of uncountedFailures) {
+    if (failure.view.phase.passed || assertionOwners.has(failure.step)) continue;
+    if (isOptionalPhase(failure.view.phase.phase_id) && !optionalOnly) {
+      ungradedUncounted.push(failure);
+      continue;
+    }
+    namedUncounted.add(failure.step);
+    add(uncountedRow(failure));
+  }
+
+  // 3. Graded phases that did not pass without a named failure inside.
+  // Optional phases are graded only when the storyboard has no required one.
   let requiredPhaseHasExecutedPass = false;
   const vacuousSkips: Array<{ view: PhaseView; step: StoryboardStepResult }> = [];
   for (const view of phaseViews) {
     const { phase, passIndex } = view;
-    if (isSyntheticPhase(phase.phase_id) || optionalPhaseIds.has(phase.phase_id)) continue;
+    if (isSyntheticPhase(phase.phase_id) || (isOptionalPhase(phase.phase_id) && !optionalOnly)) continue;
     if (phase.passed) {
       if (phase.steps.some(step => !step.skipped && step.passed)) requiredPhaseHasExecutedPass = true;
       for (const step of phase.steps) if (step.skipped) vacuousSkips.push({ view, step });
       continue;
     }
-    if (phase.steps.some(step => countedFailures.has(step))) continue;
+    if (phase.steps.some(step => countedFailures.has(step) || namedUncounted.has(step) || assertionOwners.has(step))) {
+      continue;
+    }
     const skipped = phase.steps.filter(step => step.skipped);
     const causal = skipped.filter(step => !NEUTRAL_SKIP_REASONS.has(detailedSkipReason(step) ?? ''));
     const named = causal.length > 0 ? causal : skipped;
@@ -175,7 +223,7 @@ export function explainStoryboardVerdict(
         status: 'not_passed',
         phase_id: phase.phase_id,
         ...(passIndex !== undefined && { pass_index: passIndex }),
-        message: `Required phase '${phase.phase_id}' did not pass.`,
+        message: `Phase '${phase.phase_id}' did not pass`,
       });
       continue;
     }
@@ -186,7 +234,10 @@ export function explainStoryboardVerdict(
   if (contributors.length === 0 && !requiredPhaseHasExecutedPass) {
     const named = vacuousSkips.filter(({ step }) => !NEUTRAL_SKIP_REASONS.has(detailedSkipReason(step) ?? ''));
     for (const { view, step } of named.length > 0 ? named : vacuousSkips) {
-      add({ ...skippedStepContributor(view.phase, step, view.passIndex), reason: 'no_executed_steps' });
+      const row = skippedStepContributor(view.phase, step, view.passIndex);
+      // A controller gap stays a controller gap: the seller lacking
+      // comply_test_controller is why nothing ran.
+      add(row.reason === 'required_phase_not_executed' ? { ...row, reason: 'no_executed_steps' } : row);
     }
     if (contributors.length === 0 && !options.coverageUnverified) {
       add({
@@ -194,7 +245,7 @@ export function explainStoryboardVerdict(
         id: 'storyboard',
         reason: 'no_executed_steps',
         status: 'not_passed',
-        message: 'No required step executed and passed.',
+        message: 'No required step executed and passed',
       });
     }
   }
@@ -210,13 +261,16 @@ export function explainStoryboardVerdict(
         id: 'storyboard',
         reason: 'coverage_unverified',
         status: 'not_passed',
-        message: 'No request-signing probe reached the agent.',
+        message: 'No request-signing probe reached the agent',
       });
     }
     for (const { phase, step, passIndex } of probes) {
       add({ ...skippedStepContributor(phase, step, passIndex), reason: 'coverage_unverified' });
     }
   }
+
+  // 6. Last resort before `unexplained`: a failed optional step.
+  if (contributors.length === 0) for (const failure of ungradedUncounted) add(uncountedRow(failure));
 
   const reason =
     REASON_PRECEDENCE.find(candidate => contributors.some(row => row.reason === candidate)) ?? 'unexplained';
@@ -349,7 +403,13 @@ function buildDetail(reason: StoryboardVerdictReason, contributors: readonly Sto
   if (contributors.length > MAX_CONTRIBUTORS) {
     parts.push(`${contributors.length - MAX_CONTRIBUTORS} contributor(s) omitted`);
   }
-  return truncate(`${parts.join('. ')}.`, MAX_DETAIL_LENGTH);
+  return truncate(`${parts.map(stripTrailingPeriods).join('. ')}.`, MAX_DETAIL_LENGTH);
+}
+
+function stripTrailingPeriods(text: string): string {
+  let out = text.trimEnd();
+  while (out.endsWith('.')) out = out.slice(0, -1).trimEnd();
+  return out;
 }
 
 function describeContributor(row: StoryboardVerdictContributor): string {

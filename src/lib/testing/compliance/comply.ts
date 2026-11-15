@@ -3497,7 +3497,7 @@ export function formatComplianceResults(result: ComplianceResult): string {
           // A storyboard-level verdict has no failed step to show; say why
           // instead of printing a bare ❌ (adcp#8576).
           if (failedSteps.length === 0 && scenario.verdict_detail) {
-            output += `      Why: ${sanitizeAgentText(scenario.verdict_detail, 600)}\n`;
+            output += `      Why: ${fenceAgentText(scenario.verdict_detail, 600)}\n`;
           }
         }
       }
@@ -3554,7 +3554,7 @@ export function formatComplianceResults(result: ComplianceResult): string {
     output += `${'─'.repeat(50)}\n`;
     for (const explanation of storyboardLevel.slice(0, 5)) {
       output += `❌ ${explanation.storyboard_id} (${explanation.verdict_reason})\n`;
-      output += `   Why: ${sanitizeAgentText(explanation.verdict_detail, 600)}\n`;
+      output += `   Why: ${fenceAgentText(explanation.verdict_detail, 600)}\n`;
       output += `   Debug: ${explanation.fix_command}\n`;
     }
     if (storyboardLevel.length > 5) {

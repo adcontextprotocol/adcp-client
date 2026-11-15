@@ -3734,7 +3734,9 @@ export interface StoryboardResult {
  * Primary cause of a failing storyboard verdict. See
  * `StoryboardResult.verdict_reason`.
  *
- * - `step_failed` — a counted step failed. The failure is visible on the step.
+ * - `step_failed` — a step failed and its failure is visible on the step. Usually
+ *   a counted failure; on a storyboard with no required phase it can be a
+ *   failed optional step that `failed_count` does not include.
  * - `assertion_failed` — a storyboard-scoped invariant failed, or an
  *   assertion failed on a step that was skipped, so no counted step carries it.
  * - `controller_prerequisite_unmet` — the storyboard needed
