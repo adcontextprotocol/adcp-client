@@ -46,6 +46,7 @@ export type {
   TrackStatus,
   OverallStatus,
   ComplianceFailure,
+  ComplianceVerdictExplanation,
   ComplianceBundleResult,
   ComplianceBundleStatus,
   ComplianceResult,

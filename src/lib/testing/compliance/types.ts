@@ -5,7 +5,13 @@
 import type { AgentProfile, TestResult, TestScenario } from '../types';
 import type { AdcpErrorInfo } from '../../core/ConversationTypes';
 import type { BundleKind } from '../storyboard/compliance';
-import type { RunnerNotice, RunnerSelectionReason, RunnerSkipReason } from '../storyboard/types';
+import type {
+  RunnerNotice,
+  RunnerSelectionReason,
+  RunnerSkipReason,
+  StoryboardVerdictContributor,
+  StoryboardVerdictReason,
+} from '../storyboard/types';
 
 // ============================================================
 // COMPLY: Capability Tracks
@@ -130,6 +136,31 @@ export interface ComplianceFailure {
   };
 }
 
+/**
+ * Why one storyboard's verdict failed (adcp#8576). One entry per failing
+ * storyboard. Explanatory only: it never changes a track, bundle or overall
+ * grade, and it is not a `failures[]` row.
+ */
+export interface ComplianceVerdictExplanation {
+  track: ComplianceTrack;
+  storyboard_id: string;
+  /** Primary cause. See `StoryboardVerdictReason`. */
+  verdict_reason: StoryboardVerdictReason;
+  /** One-line human-readable explanation. */
+  verdict_detail: string;
+  /** The steps, assertions, phases and requirements behind the verdict. */
+  verdict_contributing: StoryboardVerdictContributor[];
+  /**
+   * True when no `failures[]` row explains this storyboard: every visible
+   * step passed or was skipped, and the verdict comes from a storyboard-level
+   * condition. These are the verdicts that used to read only
+   * "storyboard-level verdict failed".
+   */
+  storyboard_level: boolean;
+  /** CLI command to re-run this storyboard for debugging. */
+  fix_command: string;
+}
+
 export interface ComplianceResult {
   agent_url: string;
   /** AdCP compliance cache version used for this assessment. */
@@ -156,6 +187,11 @@ export interface ComplianceResult {
   observations: AdvisoryObservation[];
   /** Flat list of all failed steps for quick agent iteration */
   failures?: ComplianceFailure[];
+  /**
+   * Why each failing storyboard failed, including verdicts no failed step
+   * explains (adcp#8576). Absent when no storyboard failed.
+   */
+  verdict_explanations?: ComplianceVerdictExplanation[];
   /** Storyboard IDs that were resolved and executed */
   storyboards_executed?: string[];
   /**

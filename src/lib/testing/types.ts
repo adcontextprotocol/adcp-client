@@ -8,7 +8,13 @@ import type { WebhookReceiver } from './storyboard/webhook-receiver';
 import type { AdcpVersion } from '../version';
 import type { TransportOptions, VersionEnvelopeMode } from '../protocols';
 import type { AgentRequestSigningConfig } from '../types/adcp';
-import type { RunnerRequestRecord, RunnerResponseRecord, RunnerExtractionRecord } from './storyboard/types';
+import type {
+  RunnerRequestRecord,
+  RunnerResponseRecord,
+  RunnerExtractionRecord,
+  StoryboardVerdictContributor,
+  StoryboardVerdictReason,
+} from './storyboard/types';
 import type { AuthorizationRequirements } from '../auth/oauth/authorization-required';
 
 // Test scenarios that can be run
@@ -516,6 +522,16 @@ export interface TestResult {
   tested_at: string;
   // Agent profile discovered during testing
   agent_profile?: AgentProfile;
+  /**
+   * Storyboard-level verdict explanation (adcp#8576). Set only on the
+   * synthetic `<storyboard_id>/storyboard` scenario that `comply()` emits
+   * when a storyboard fails without a counted failed step. Mirrors
+   * `StoryboardResult.verdict_reason` / `verdict_detail` /
+   * `verdict_contributing`.
+   */
+  verdict_reason?: StoryboardVerdictReason;
+  verdict_detail?: string;
+  verdict_contributing?: StoryboardVerdictContributor[];
 }
 
 export interface SuiteResult {

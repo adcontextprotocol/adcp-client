@@ -18,9 +18,15 @@ import {
   withTestClientScope,
 } from '../client';
 import type { TestOptions, TestResult, AgentProfile, TestStepResult } from '../types';
-import { collectDetachedAssertionFailures, mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
+import {
+  collectDetachedAssertionFailures,
+  mapStoryboardResultsToTrackResult,
+  storyboardVerdictExplanation,
+  TRACK_LABELS,
+} from './storyboard-tracks';
 import {
   applyAdcpVersionRunOptions,
+  attachStoryboardVerdictExplanation,
   collectCapabilityNotices,
   runStoryboard,
   storyboardCapabilityGateUnmet,
@@ -73,6 +79,7 @@ import type {
   ComplianceBundleResult,
   ComplianceTrack,
   ComplianceFailure,
+  ComplianceVerdictExplanation,
   TrackResult,
   TestedTrackEntry,
   ComplianceResult,
@@ -1751,7 +1758,11 @@ async function runComplyStoryboard(
   const routed = buildRoutedStoryboardRun(agentUrl, storyboard, runOptions, routing);
   if ('refused' in routed) return buildRouteSkippedStoryboardResult(agentUrl, storyboard, routed.refused, runOptions);
   const result = await runStoryboard('', routed.storyboard, routed.options);
-  return gradeRoutedResultForAgentUnderTest(result, routed.agentUnderTestIndexes, routed.keyByIndex);
+  // The downgrade can flip the verdict, so re-explain against the final one.
+  return attachStoryboardVerdictExplanation(
+    gradeRoutedResultForAgentUnderTest(result, routed.agentUnderTestIndexes, routed.keyByIndex),
+    routed.storyboard
+  );
 }
 
 function sameAgentUrl(a: string, b: string): boolean {
@@ -2269,6 +2280,36 @@ export function extractFailures(
   return failures;
 }
 
+/**
+ * One explanation per failing storyboard (adcp#8576), with a `fix_command`
+ * that re-runs the whole storyboard. `storyboard_level` marks the verdicts no
+ * `failures[]` row explains — the ones that used to surface only as
+ * "storyboard-level verdict failed".
+ */
+export function extractVerdictExplanations(
+  results: StoryboardResult[],
+  storyboards: Storyboard[],
+  agentRef: string,
+  failures: readonly ComplianceFailure[],
+  fixOptions: Parameters<typeof buildFixCommand>[3] = {}
+): ComplianceVerdictExplanation[] {
+  const trackById = new Map(storyboards.map(sb => [sb.id, (sb.track as ComplianceTrack) ?? 'core']));
+  const explained = new Set(failures.map(failure => failure.storyboard_id));
+  const explanations: ComplianceVerdictExplanation[] = [];
+  for (const result of results) {
+    const explanation = storyboardVerdictExplanation(result);
+    if (!explanation) continue;
+    explanations.push({
+      track: trackById.get(result.storyboard_id) ?? 'core',
+      storyboard_id: result.storyboard_id,
+      ...explanation,
+      storyboard_level: !explained.has(result.storyboard_id),
+      fix_command: buildFixCommand(agentRef, result.storyboard_id, undefined, fixOptions),
+    });
+  }
+  return explanations;
+}
+
 function findStoryboardStepExpected(storyboard: Storyboard | undefined, stepId: string): string | undefined {
   if (!storyboard) return undefined;
   for (const phase of storyboard.phases) {
@@ -2749,13 +2790,21 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
 
     const safeAgentUrl = redactOAuthUrlForOutput(agentUrl);
     const agentRef = options.agent_alias || safeAgentUrl;
-    const failures = extractFailures(storyboardResults, runnableStoryboards, agentRef, {
+    const fixOptions = {
       complianceVersion: complianceIndex.adcp_version,
       ...(complianceDir !== undefined && { complianceDir }),
       ...(schemaRoot !== undefined && { schemaRoot }),
       ...(hostedStableLineAlias !== undefined && { hostedStableLineAlias }),
       ...(options.testKitPath !== undefined && { testKitPath: options.testKitPath }),
-    });
+    };
+    const failures = extractFailures(storyboardResults, runnableStoryboards, agentRef, fixOptions);
+    const verdictExplanations = extractVerdictExplanations(
+      storyboardResults,
+      runnableStoryboards,
+      agentRef,
+      failures,
+      fixOptions
+    );
 
     // Aggregate notices from all storyboard runs. Dedup is by `code`, or by
     // (`code`, `capability_pointer`) for schema-validation notices, while the per-occurrence
@@ -2794,6 +2843,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       summary,
       observations: allObservations,
       failures: failures.length > 0 ? failures : undefined,
+      ...(verdictExplanations.length > 0 && { verdict_explanations: verdictExplanations }),
       storyboards_executed: executedStoryboards.map(sb => sb.id),
       ...(resolvedBundles !== undefined && {
         bundle_results: buildComplianceBundleResults(resolvedBundles, storyboardResults, {
@@ -3075,13 +3125,21 @@ async function runWithDegradedProfile(
   const overallStatus: OverallStatus = stoppedForTimeoutBudget ? 'partial' : computeOverallStatus(summary);
   const safeAgentUrl = redactOAuthUrlForOutput(agentUrl);
   const agentRef = options.agent_alias || safeAgentUrl;
-  const failures = extractFailures(storyboardResults, storyboards, agentRef, {
+  const fixOptions = {
     complianceVersion: adcpVersion,
     ...(options.complianceDir !== undefined && { complianceDir: options.complianceDir }),
     ...(options.schemaRoot !== undefined && { schemaRoot: options.schemaRoot }),
     ...(options.hostedStableLineAlias !== undefined && { hostedStableLineAlias: options.hostedStableLineAlias }),
     ...(options.testKitPath !== undefined && { testKitPath: options.testKitPath }),
-  });
+  };
+  const failures = extractFailures(storyboardResults, storyboards, agentRef, fixOptions);
+  const verdictExplanations = extractVerdictExplanations(
+    storyboardResults,
+    storyboards,
+    agentRef,
+    failures,
+    fixOptions
+  );
 
   // Scenario detail is canonical under `tracks`; `tested_tracks` is a
   // reference-only projection so full JSON output contains each scenario once.
@@ -3108,6 +3166,7 @@ async function runWithDegradedProfile(
     summary,
     observations: allObservations,
     failures: failures.length > 0 ? failures : undefined,
+    ...(verdictExplanations.length > 0 && { verdict_explanations: verdictExplanations }),
     storyboards_executed: executedStoryboards.map(sb => sb.id),
     controller_detected: false,
     tested_at: new Date().toISOString(),
@@ -3435,6 +3494,11 @@ export function formatComplianceResults(result: ComplianceResult): string {
           if (failedSteps.length > 3) {
             output += `      ... and ${failedSteps.length - 3} more\n`;
           }
+          // A storyboard-level verdict has no failed step to show; say why
+          // instead of printing a bare ❌ (adcp#8576).
+          if (failedSteps.length === 0 && scenario.verdict_detail) {
+            output += `      Why: ${fenceAgentText(scenario.verdict_detail, 600)}\n`;
+          }
         }
       }
 
@@ -3480,6 +3544,21 @@ export function formatComplianceResults(result: ComplianceResult): string {
     }
     if (failuresWithExpected.length > 5) {
       output += `   ... and ${failuresWithExpected.length - 5} more (use --json for all)\n`;
+    }
+  }
+
+  // Storyboards that failed with no failed step to fix (adcp#8576).
+  const storyboardLevel = (result.verdict_explanations ?? []).filter(explanation => explanation.storyboard_level);
+  if (storyboardLevel.length > 0) {
+    output += `\nStoryboard-level Verdicts\n`;
+    output += `${'─'.repeat(50)}\n`;
+    for (const explanation of storyboardLevel.slice(0, 5)) {
+      output += `❌ ${explanation.storyboard_id} (${explanation.verdict_reason})\n`;
+      output += `   Why: ${fenceAgentText(explanation.verdict_detail, 600)}\n`;
+      output += `   Debug: ${explanation.fix_command}\n`;
+    }
+    if (storyboardLevel.length > 5) {
+      output += `   ... and ${storyboardLevel.length - 5} more (use --json for all)\n`;
     }
   }
 
