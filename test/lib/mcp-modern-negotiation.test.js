@@ -862,6 +862,7 @@ test('modern discovery and direct calls apply the requested per-tool version ava
   assert.ok(names30.includes('get_products'));
   assert.ok(!names30.includes('get_signals'));
   assert.equal(listed30._meta.adcp_version, '3.0.25');
+  assert.equal(listed30.tools.find(tool => tool.name === 'get_products')._meta.adcp_version, '3.0.25');
 
   const rejected = await client.callTool({ name: 'get_signals', arguments: { adcp_version: '3.0.25' } });
   assert.equal(rejected.isError, true);
