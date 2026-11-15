@@ -10,6 +10,7 @@ import type { TestResult, TestStepResult, AgentProfile } from '../types';
 import type { ComplianceTrack, TrackResult, TrackStatus, AdvisoryObservation } from './types';
 import type { AssertionResult, StoryboardResult, StoryboardStepResult } from '../storyboard/types';
 import { signingCoverageUnverified } from '../storyboard/runner';
+import { explainStoryboardVerdict, type StoryboardVerdictExplanation } from '../storyboard/verdict-explanation';
 
 export interface DetachedAssertionFailure {
   assertion: AssertionResult;
@@ -35,6 +36,23 @@ export function collectDetachedAssertionFailures(result: StoryboardResult): Deta
     }
   }
   return failures;
+}
+
+/**
+ * The verdict explanation the runner attached, or one derived from the result
+ * when it carries none. `undefined` for a passing result.
+ */
+export function storyboardVerdictExplanation(result: StoryboardResult): StoryboardVerdictExplanation | undefined {
+  if (result.overall_passed) return undefined;
+  if (result.verdict_reason !== undefined && result.verdict_detail !== undefined) {
+    return {
+      verdict_reason: result.verdict_reason,
+      verdict_detail: result.verdict_detail,
+      verdict_contributing: result.verdict_contributing ?? [],
+    };
+  }
+  const steps = (result.passes?.flatMap(pass => pass.phases) ?? result.phases).flatMap(phase => phase.steps);
+  return explainStoryboardVerdict(result, { coverageUnverified: signingCoverageUnverified(steps) });
 }
 
 /** Labels for each compliance track. */
@@ -144,6 +162,10 @@ export function mapStoryboardResultsToTrackResult(
       (sbResult.failed_count === 0 ||
         ((sbResult.passed_count > 0 || assertionFailures.length > 0) && sbResult.phases.every(phase => phase.passed)))
     ) {
+      // Say WHY (adcp#8576). The runner attaches the explanation; a result
+      // from an older runner or a hand-built fixture is explained here.
+      const explanation = storyboardVerdictExplanation(sbResult);
+      const why = explanation ? `: ${explanation.verdict_detail}` : '';
       scenarios.push({
         agent_url: sbResult.agent_url,
         scenario: `${sbResult.storyboard_id}/storyboard` as any,
@@ -151,10 +173,15 @@ export function mapStoryboardResultsToTrackResult(
         steps: [],
         summary:
           assertionFailures.length > 0
-            ? `${sbResult.storyboard_title}: ${assertionFailures.length} assertion(s) failed`
-            : `${sbResult.storyboard_title}: storyboard-level verdict failed`,
+            ? `${sbResult.storyboard_title}: ${assertionFailures.length} assertion(s) failed${why}`
+            : `${sbResult.storyboard_title}: storyboard-level verdict failed${why}`,
         total_duration_ms: 0,
         tested_at: sbResult.tested_at,
+        ...(explanation && {
+          verdict_reason: explanation.verdict_reason,
+          verdict_detail: explanation.verdict_detail,
+          verdict_contributing: explanation.verdict_contributing,
+        }),
       });
     }
   }

@@ -3702,6 +3702,92 @@ export interface StoryboardResult {
    * Spec: adcp-client#1367.
    */
   discovery_failures?: Array<{ agent_key: string; url: string; error: string }>;
+  /**
+   * Why `overall_passed` is false (adcp#8576). Present only on a failing
+   * result; absent on a passing one. A storyboard can fail without any
+   * visible failed step: a storyboard-scoped invariant broke, a required
+   * phase never executed (`missing_test_controller`, `prerequisite_failed`,
+   * a capability gate), controller seeding could not run, or the runner
+   * itself could not proceed. This code names the primary cause; the
+   * `verdict_contributing` rows name every cause the runner found.
+   *
+   * Explanatory only. It never changes `overall_passed`, the counts, or any
+   * track or bundle grade.
+   */
+  verdict_reason?: StoryboardVerdictReason;
+  /**
+   * One-line human-readable explanation of `verdict_reason`, bounded to 600
+   * characters. Runner-authored: it names failed steps without quoting their
+   * errors, but quotes skip details and assertion errors, which can echo
+   * observed values.
+   */
+  verdict_detail?: string;
+  /**
+   * The steps, assertions, phases and requirements behind the verdict, in
+   * the order the runner found them. Bounded; `verdict_detail` says when
+   * rows were omitted.
+   */
+  verdict_contributing?: StoryboardVerdictContributor[];
+}
+
+/**
+ * Primary cause of a failing storyboard verdict. See
+ * `StoryboardResult.verdict_reason`.
+ *
+ * - `step_failed` — a counted step failed. The failure is visible on the step.
+ * - `assertion_failed` — a storyboard-scoped invariant failed, or an
+ *   assertion failed on a step that was skipped, so no counted step carries it.
+ * - `controller_prerequisite_unmet` — the storyboard needed
+ *   `comply_test_controller` or controller seeding, and it was absent or
+ *   seeding failed, so required steps never ran.
+ * - `required_phase_not_executed` — a required phase did not pass because its
+ *   steps were skipped (`prerequisite_failed`, `missing_tool`,
+ *   `unsatisfied_contract`, `requirement_unmet`, a capability gate, …).
+ * - `no_executed_steps` — no required phase failed, but none executed a
+ *   passing step either, so the run proves nothing and cannot pass.
+ * - `fixture_error` — fixture resolution or preparation failed before the
+ *   seller behavior under test could run.
+ * - `coverage_unverified` — the storyboard exists to verify coverage (request
+ *   signing) and no probe reached the agent.
+ * - `runner_error` — the runner or host could not proceed (for example a
+ *   prepared-fixture authorization refusal). Not an agent failure.
+ * - `unexplained` — the runner could not attribute the verdict. Report it as
+ *   a runner bug.
+ */
+export type StoryboardVerdictReason =
+  | 'step_failed'
+  | 'assertion_failed'
+  | 'controller_prerequisite_unmet'
+  | 'required_phase_not_executed'
+  | 'no_executed_steps'
+  | 'fixture_error'
+  | 'coverage_unverified'
+  | 'runner_error'
+  | 'unexplained';
+
+/** One cause behind a failing storyboard verdict. */
+export interface StoryboardVerdictContributor {
+  /** What contributed: a step, an assertion or invariant, a phase, or an unmet requirement. */
+  kind: 'step' | 'assertion' | 'phase' | 'requirement';
+  /** Step id, assertion id, phase id, or requirement name. */
+  id: string;
+  /** The cause this row supports. */
+  reason: StoryboardVerdictReason;
+  /** `failed` for an executed failure, `skipped` for an unexecuted step, `not_passed` for a phase. */
+  status: 'failed' | 'skipped' | 'not_passed';
+  phase_id?: string;
+  /** 1-based pass index in multi-pass mode. */
+  pass_index?: number;
+  /** Detailed runner skip reason, when `status === 'skipped'`. */
+  skip_reason?: string;
+  /** Unmet requirement named by the skip, when any. */
+  requirement?: string;
+  /**
+   * Bounded message: the skip detail, assertion error, or step error. A
+   * failed step's error can quote the agent's response, so treat it as
+   * untrusted text when templating it into prompts or HTML.
+   */
+  message?: string;
 }
 
 export interface StrictValidationSummary {

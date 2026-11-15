@@ -147,7 +147,53 @@ function buildStoryboardSummaryMarkdown(results, agentUrl, overallPassed) {
     }
     lines.push('');
   }
+  // Failing storyboards no failed step explains (adcp#8576).
+  const storyboardLevel = results.filter(
+    r => r.overall_passed === false && r.verdict_detail && !failures.some(f => f.storyboard === (r.storyboard_id || ''))
+  );
+  if (storyboardLevel.length > 0) {
+    lines.push('## Storyboard-level verdicts');
+    lines.push('');
+    lines.push('| Storyboard | Reason | Detail |');
+    lines.push('|---|---|---|');
+    for (const r of storyboardLevel) {
+      lines.push(
+        `| ${escapeMarkdownCell(r.storyboard_id || '')} | ${escapeMarkdownCell(r.verdict_reason || 'unexplained')} | ${escapeMarkdownCell(r.verdict_detail)} |`
+      );
+    }
+    lines.push('');
+  }
   return lines.join('\n');
+}
+
+const VERDICT_CONTRIBUTOR_LIMIT = 8;
+
+/**
+ * Console lines explaining a failing storyboard verdict (adcp#8576): the
+ * runner's `verdict_reason`, `verdict_detail`, and the contributing steps,
+ * assertions and phases. Empty for a passing result or one from a runner
+ * that predates the fields. Every runner- or agent-sourced string is
+ * terminal-escaped.
+ */
+function formatStoryboardVerdictLines(result, indent = '   ') {
+  if (!result || result.overall_passed !== false || !result.verdict_reason) return [];
+  const lines = [
+    `${indent}Why: [${escapeTerminalControlChars(result.verdict_reason)}] ${escapeTerminalControlChars(result.verdict_detail ?? '')}`,
+  ];
+  const rows = Array.isArray(result.verdict_contributing) ? result.verdict_contributing : [];
+  for (const row of rows.slice(0, VERDICT_CONTRIBUTOR_LIMIT)) {
+    const where = [row.phase_id && `phase ${row.phase_id}`, row.pass_index !== undefined && `pass ${row.pass_index}`]
+      .filter(Boolean)
+      .join(', ');
+    const skip = row.skip_reason ? ` ${row.skip_reason}${row.requirement ? `:${row.requirement}` : ''}` : '';
+    const head = `${row.kind} ${row.id} ${row.status}${skip}${where ? ` (${where})` : ''}`;
+    const message = row.message ? ` — ${row.message}` : '';
+    lines.push(`${indent}  - ${escapeTerminalControlChars(head + message)}`);
+  }
+  if (rows.length > VERDICT_CONTRIBUTOR_LIMIT) {
+    lines.push(`${indent}  … ${rows.length - VERDICT_CONTRIBUTOR_LIMIT} more (use --json for all)`);
+  }
+  return lines;
 }
 
 /**
@@ -474,6 +520,7 @@ module.exports = {
   formatJwtExpClaim,
   formatStepSkipLines,
   formatStepVerdictLines,
+  formatStoryboardVerdictLines,
   isCoverageGapRow,
   isCoverageUnavailableStep,
   unverifiedSigningCoverage,

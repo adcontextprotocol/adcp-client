@@ -265,6 +265,8 @@ export {
   // Runner
   runStoryboard,
   runStoryboardStep,
+  attachStoryboardVerdictExplanation,
+  explainStoryboardVerdict,
   applyAdcpVersionRunOptions,
   applyStoryboardVersionOptions,
   getFirstStepPreview,
@@ -381,6 +383,9 @@ export {
   type ContextProvenanceEntry,
   type StoryboardPhaseResult,
   type StoryboardResult,
+  type StoryboardVerdictReason,
+  type StoryboardVerdictContributor,
+  type StoryboardVerdictExplanation,
   type RunnerNotice,
   type NoticeCode,
   type NoticeSeverity,

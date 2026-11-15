@@ -75,6 +75,8 @@ export type {
   StoryboardStepHintBase,
   StoryboardPhaseResult,
   StoryboardResult,
+  StoryboardVerdictReason,
+  StoryboardVerdictContributor,
   AssertionResult,
   StrictValidationSummary,
   StrictValidationVerdict,
@@ -136,7 +138,10 @@ export {
   capabilityPathPredicates,
   describeStoryboardCapabilityGates,
   buildDiscoveryFailedResult,
+  attachStoryboardVerdictExplanation,
 } from './runner';
+export { explainStoryboardVerdict, applyStoryboardVerdictExplanation } from './verdict-explanation';
+export type { StoryboardVerdictExplanation, ExplainStoryboardVerdictOptions } from './verdict-explanation';
 
 // Parser (single-file load for spec evolution / targeted testing)
 export { parseStoryboard, loadStoryboardFile, normalizeValidationOnlyTasks, VALIDATION_ONLY_TASK } from './loader';

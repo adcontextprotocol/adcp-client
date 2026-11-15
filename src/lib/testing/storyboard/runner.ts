@@ -7,6 +7,7 @@
  */
 
 import { prefetchOwedPeriods } from './owed-periods-match';
+import { applyStoryboardVerdictExplanation } from './verdict-explanation';
 import { createStoryboardWebBotAuthFetch } from './web-bot-auth';
 import { jwkThumbprint } from '../../signing/web-bot-auth';
 import { createAgentTransportFetch } from '../../net/agent-transport-fetch';
@@ -1757,6 +1758,37 @@ export async function runStoryboard(
     _allowCapabilityDiagnostic: storyboardAllowsCapabilityDiagnostic(storyboard),
   };
   if (hasTestClientScope() && !options._discoveryPass) options = { ...options, _discoveryPass: {} };
+  const result = await runStoryboardGated(agentUrlOrUrls, storyboard, options);
+  // Every path out of the runner — full runs, multi-pass, and the synthetic
+  // discovery / refusal / requirement builders — explains a failing verdict
+  // the same way (adcp#8576). The storyboard is passed so optional phases are
+  // not blamed.
+  return attachStoryboardVerdictExplanation(result, storyboard);
+}
+
+/**
+ * Set `verdict_reason` / `verdict_detail` / `verdict_contributing` on a
+ * failing result (and clear them on a passing one), using the runner's own
+ * signing-coverage rule. Exported for consumers that regrade a result after
+ * the runner returns it, so the explanation tracks the final verdict.
+ */
+export function attachStoryboardVerdictExplanation<T extends StoryboardResult>(
+  result: T,
+  storyboard?: Pick<Storyboard, 'phases'>
+): T {
+  if (result.overall_passed) return applyStoryboardVerdictExplanation(result);
+  const steps = (result.passes?.flatMap(pass => pass.phases) ?? result.phases).flatMap(phase => phase.steps);
+  return applyStoryboardVerdictExplanation(result, {
+    ...(storyboard && { storyboard }),
+    coverageUnverified: signingCoverageUnverified(steps),
+  });
+}
+
+async function runStoryboardGated(
+  agentUrlOrUrls: string | string[],
+  storyboard: Storyboard,
+  options: StoryboardRunOptions
+): Promise<StoryboardResult> {
   return withPropertyListCredentialRedaction(() =>
     withMCPConnectionScope(
       async () => {

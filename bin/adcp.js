@@ -52,6 +52,7 @@ const {
   formatJwtExpClaim,
   formatStepSkipLines,
   formatStepVerdictLines,
+  formatStoryboardVerdictLines,
   isCoverageUnavailableStep,
   unverifiedSigningCoverage,
   parseRequestSigningFlags,
@@ -3158,6 +3159,8 @@ async function handleStoryboardRun(args) {
     console.log(
       `${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped (${result.total_duration_ms}ms)${hintTail}`
     );
+    // A storyboard can fail with every visible step green; say why (adcp#8576).
+    for (const line of formatStoryboardVerdictLines(result)) console.log(line);
     printStrictSummary(result.strict_validation_summary);
     printNotices(result.notices);
   }
@@ -4164,6 +4167,7 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
     console.log(
       `${icon} ${sb.storyboard_title} (${sb.storyboard_id}) — ${sb.passed_count} passed, ${sb.failed_count} failed, ${sb.skipped_count} skipped`
     );
+    for (const line of formatStoryboardVerdictLines(sb)) console.log(line);
   }
   if (result.not_applicable.length > 0) {
     console.log(`\n${result.not_applicable.length} storyboard(s) not applicable (out of scope):`);

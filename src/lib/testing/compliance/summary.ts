@@ -24,7 +24,7 @@ import type {
   ComplianceTrack,
   OverallStatus,
 } from './types';
-import type { RunnerSelectionReason, RunnerSkipReason } from '../storyboard/types';
+import type { RunnerSelectionReason, RunnerSkipReason, StoryboardVerdictReason } from '../storyboard/types';
 import { DETAILED_SKIP_TO_CANONICAL, type RunnerDetailedSkipReason } from '../storyboard/types';
 
 const SUMMARY_SCHEMA_VERSION = 2;
@@ -100,6 +100,8 @@ export interface ComplianceSummaryIncompleteStoryboard {
   track: ComplianceTrack;
   storyboard_id: string;
   reason: string;
+  /** Machine-readable cause of the verdict (adcp#8576). Absent on artifacts from older runners. */
+  verdict_reason?: StoryboardVerdictReason;
 }
 
 export interface BuildSummaryOptions {
@@ -160,6 +162,7 @@ function collectIncompleteStoryboardVerdicts(result: ComplianceResult): Complian
         track: track.track,
         storyboard_id: id,
         reason: truncate(scenario.summary || 'Storyboard verdict failed without a failed step.', REASON_MAX_CHARS),
+        ...(scenario.verdict_reason !== undefined && { verdict_reason: scenario.verdict_reason }),
       });
     }
   }
