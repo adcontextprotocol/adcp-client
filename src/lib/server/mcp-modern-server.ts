@@ -368,7 +368,9 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
                     }) as unknown as ModernTool['inputSchema'],
                   ...(registered.outputSchemaJson !== undefined && { outputSchema: registered.outputSchemaJson }),
                   ...(tool.annotations !== undefined && { annotations: tool.annotations as ToolAnnotations }),
-                  ...(tool._meta !== undefined && { _meta: tool._meta }),
+                  ...(tool._meta !== undefined && {
+                    _meta: frameworkAdcpTool ? { ...tool._meta, adcp_version: discoveryVersion } : tool._meta,
+                  }),
                 };
               }),
             _meta: {
