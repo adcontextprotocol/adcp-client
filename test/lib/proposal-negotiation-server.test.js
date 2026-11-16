@@ -297,6 +297,60 @@ describe('refine_proposals server integration', () => {
     assert.equal(calls, 0);
   });
 
+  test('passes ext on the request and on finalize and revise refinements through to the handler (#3724)', async () => {
+    const seen = [];
+    const server = negotiationServer(params => seen.push(params));
+    const ext = { vendor: { trace: 'abc' } };
+
+    const finalize = await call(
+      server,
+      'refine_proposals',
+      {
+        ...request('ext-finalize-key-0001'),
+        ext,
+        refinements: [{ proposal_id: 'source-1', action: 'finalize', ext }],
+      },
+      'buyer-a'
+    );
+    assert.equal(finalize.isError, undefined, JSON.stringify(finalize.structuredContent));
+
+    const revise = await call(
+      server,
+      'refine_proposals',
+      {
+        ...request('ext-revise-key-0001'),
+        refinements: [
+          {
+            proposal_id: 'source-1',
+            action: 'revise',
+            constraints: { total_budget: { currency: 'USD', max: 1000 } },
+            ext,
+          },
+        ],
+      },
+      'buyer-a'
+    );
+    assert.equal(revise.isError, undefined, JSON.stringify(revise.structuredContent));
+
+    assert.equal(seen.length, 2);
+    assert.deepEqual(seen[0].ext, ext);
+    assert.deepEqual(seen[0].refinements[0].ext, ext);
+    assert.deepEqual(seen[1].refinements[0].ext, ext);
+
+    const unknown = await call(
+      server,
+      'refine_proposals',
+      {
+        ...request('ext-unknown-key-0001'),
+        refinements: [{ proposal_id: 'source-1', action: 'finalize', ext, vendor_field: true }],
+      },
+      'buyer-a'
+    );
+    assert.equal(unknown.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+    assert.match(unknown.structuredContent.adcp_error.message, /vendor_field is not allowed/);
+    assert.equal(seen.length, 2);
+  });
+
   test('accepts the compact submitted response arm in strict mode', async () => {
     const server = negotiationServer(undefined, {
       capabilities: { supported_dimensions: [] },

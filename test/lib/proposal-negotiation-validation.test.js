@@ -507,6 +507,105 @@ test('buyer validation fails closed on malformed union arms, non-finite values, 
   );
 });
 
+test('request validation accepts the ext extension point on the envelope and every refinement (#3724)', () => {
+  const ext = { vendor: { trace: 'abc' } };
+  const finalize = {
+    ...request([{ proposal_id: 'source-1', action: 'finalize', ext }]),
+    context: { correlation_id: 'c-1' },
+    ext,
+  };
+  assert.doesNotThrow(() => validateRefineProposalsRequest(finalize));
+  assert.doesNotThrow(() =>
+    validateRefineProposalsRequest(request([{ proposal_id: 'source-1', action: 'revise', ask: 'Lower CPM', ext }]))
+  );
+  assert.doesNotThrow(() =>
+    validateRefineProposalsRequest({
+      ...request([{ proposal_id: 'source-1', action: 'revise', criteria: { ext } }]),
+      ext,
+    })
+  );
+  const built = buildRefineProposalsRequest({
+    ext,
+    refinements: [{ proposal_id: 'source-1', action: 'finalize', ext }],
+  });
+  assert.deepEqual(built.ext, ext);
+  assert.deepEqual(built.refinements[0].ext, ext);
+});
+
+test('request validation keeps ext typed and every non-extension key strict (#3724)', () => {
+  const rejects = (payload, pattern, field) =>
+    assert.throws(
+      () => validateRefineProposalsRequest(payload),
+      error =>
+        error instanceof ProposalRefinementValidationError && pattern.test(error.message) && error.field === field
+    );
+
+  for (const bad of ['vendor', ['vendor'], null, 1]) {
+    rejects({ ...request(), ext: bad }, /ext must be an object/, 'ext');
+    rejects(
+      request([{ proposal_id: 'source-1', action: 'finalize', ext: bad }]),
+      /ext must be an object/,
+      'refinements[0].ext'
+    );
+    rejects(
+      request([{ proposal_id: 'source-1', action: 'revise', ask: 'Lower CPM', ext: bad }]),
+      /ext must be an object/,
+      'refinements[0].ext'
+    );
+  }
+
+  rejects({ ...request(), vendor_field: true }, /vendor_field is not allowed/, 'request.vendor_field');
+  rejects(
+    request([{ proposal_id: 'source-1', action: 'finalize', ext: {}, vendor_field: true }]),
+    /vendor_field is not allowed/,
+    'refinements[0].vendor_field'
+  );
+  rejects(
+    request([{ proposal_id: 'source-1', action: 'revise', ask: 'Lower CPM', ext: {}, vendor_field: true }]),
+    /vendor_field is not allowed/,
+    'refinements[0].vendor_field'
+  );
+  // Finalize still forbids the revise-only fields, and ext alone is not a revision.
+  rejects(
+    request([{ proposal_id: 'source-1', action: 'finalize', ext: {}, ask: 'forbidden' }]),
+    /ask is not allowed/,
+    'refinements[0].ask'
+  );
+  assert.throws(
+    () => validateRefineProposalsRequest(request([{ proposal_id: 'source-1', action: 'revise', ext: {} }])),
+    /revise requires/
+  );
+  // Closed sub-objects do not gain the extension point.
+  rejects(
+    request([
+      { proposal_id: 'source-1', action: 'revise', constraints: { cpm: { max: 5, currency: 'USD', ext: {} } } },
+    ]),
+    /ext is not allowed/,
+    'refinements[0].constraints.cpm.ext'
+  );
+  rejects(
+    request([{ proposal_id: 'source-1', action: 'revise', alternatives: { count: 2, ext: {} } }]),
+    /ext is not allowed/,
+    'refinements[0].alternatives.ext'
+  );
+});
+
+test('response verification accepts ext on result items and still types it (#3724)', () => {
+  const req = request();
+  const withExt = response();
+  withExt.results[0].ext = { vendor: { trace: 'abc' } };
+  withExt.ext = { vendor: { trace: 'envelope' } };
+  assert.deepEqual(shapeIssues(req, withExt), []);
+
+  const badExt = response();
+  badExt.results[0].ext = 'vendor';
+  assert.ok(shapeIssues(req, badExt).some(issue => issue.path === 'results[0].ext'));
+
+  const unknown = response();
+  unknown.results[0].vendor_field = true;
+  assert.ok(shapeIssues(req, unknown).some(issue => issue.path === 'results[0].vendor_field'));
+});
+
 test('builder pins the 3.2 wire envelope and returns an immutable deep snapshot for exact retry', () => {
   const input = {
     context: { planning: { attempt: 1 } },
