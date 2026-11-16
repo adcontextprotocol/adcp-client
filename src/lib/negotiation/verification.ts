@@ -651,6 +651,7 @@ function validateResultShape(
 ): boolean {
   if (!isRecord(value)) return shape(issues, path, 'result must be an object');
   let valid = allowedKeys(value, RESULT_KEYS, path, issues);
+  if (value.ext !== undefined && !isRecord(value.ext)) valid = shape(issues, `${path}.ext`, 'ext must be an object');
   if (!nonempty(value.source_proposal_id))
     valid = shape(issues, `${path}.source_proposal_id`, 'source_proposal_id is required');
   if (!OUTCOMES.has(value.outcome as string)) {
@@ -1439,6 +1440,8 @@ const RESULT_KEYS = new Set([
   'unsatisfied_installment_changes',
   'suggestions',
   'targeting_resolution',
+  // Result items are open in the schema; accept the vendor extension point.
+  'ext',
 ]);
 const PRICING_KEYS = new Set([
   'pricing_option_id',

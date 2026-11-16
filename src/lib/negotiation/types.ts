@@ -147,11 +147,15 @@ export interface ReviseProposalRefinement {
   ask?: string;
   criteria?: ProposalDiscoveryCriteria;
   remove_media_buy_frequency_cap?: true;
+  /** Vendor extension point; opaque to the protocol. */
+  ext?: Record<string, unknown>;
 }
 
 export interface FinalizeProposalRefinement {
   proposal_id: string;
   action: 'finalize';
+  /** Vendor extension point; opaque to the protocol. */
+  ext?: Record<string, unknown>;
 }
 
 export type ProposalRefinement = ReviseProposalRefinement | FinalizeProposalRefinement;
@@ -168,6 +172,8 @@ export interface RefineProposalsRequest {
   context?: Record<string, unknown>;
   governance_context?: string;
   push_notification_config?: Record<string, unknown>;
+  /** Vendor extension point; opaque to the protocol. */
+  ext?: Record<string, unknown>;
   adcp_version: ProposalRefinementVersion;
   adcp_major_version: 3;
 }
@@ -246,6 +252,7 @@ export interface RefinedProposalResult<TProposal extends CanonicalProposal = Can
   source_proposal_id: string;
   outcome: 'revised';
   proposals: TProposal[];
+  ext?: Record<string, unknown>;
 }
 
 export interface PartialProposalResult<TProposal extends CanonicalProposal = CanonicalProposal> {
@@ -259,6 +266,7 @@ export interface PartialProposalResult<TProposal extends CanonicalProposal = Can
   unsatisfied_installment_changes?: ProposalUnsatisfiedInstallmentChange[];
   suggestions?: string[];
   targeting_resolution?: Record<string, unknown>;
+  ext?: Record<string, unknown>;
 }
 
 export interface UnableProposalResult {
@@ -270,12 +278,14 @@ export interface UnableProposalResult {
   unsatisfied_product_changes?: ProposalProductChanges;
   unsatisfied_installment_changes?: ProposalUnsatisfiedInstallmentChange[];
   suggestions?: string[];
+  ext?: Record<string, unknown>;
 }
 
 export interface FinalizedProposalResult<TProposal extends CanonicalProposal = CanonicalProposal> {
   source_proposal_id: string;
   outcome: 'finalized';
   proposal: TProposal;
+  ext?: Record<string, unknown>;
 }
 
 export type ProposalRefinementResult<TProposal extends CanonicalProposal = CanonicalProposal> =
