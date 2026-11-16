@@ -115,6 +115,7 @@ export function validateRefineProposalsRequest(
     fail('governance_context must be a non-empty string of at most 4096 characters', 'governance_context');
   }
   if (request.context !== undefined && !isRecord(request.context)) fail('context must be an object', 'context');
+  if (request.ext !== undefined && !isRecord(request.ext)) fail('ext must be an object', 'ext');
   if (request.push_notification_config !== undefined && !isRecord(request.push_notification_config)) {
     fail('push_notification_config must be an object', 'push_notification_config');
   }
@@ -155,6 +156,7 @@ export function validateRefineProposalsRequest(
     } else {
       assertAllowedKeys(refinement, REVISE_KEYS, base);
     }
+    if (refinement.ext !== undefined && !isRecord(refinement.ext)) fail('ext must be an object', `${base}.ext`);
     if (hasFinalize && refinement.action !== 'finalize') {
       throw new ProposalRefinementValidationError(
         'a batch containing finalize may contain only finalize entries',
@@ -417,7 +419,19 @@ export function buildRefineProposalsRequest(
   return deepFreeze(request);
 }
 
-const REQUEST_KEYS = new Set([
+/**
+ * The request envelope and each refinement entry are open objects in the
+ * refine_proposals schemas (`additionalProperties: true`), so the strict key
+ * checks below must still admit AdCP's vendor extension point. `context` is the
+ * request-level echo object and is listed explicitly; closed sub-objects
+ * (constraints and their bounds, alternatives) stay closed and never accept
+ * `ext`. Criteria declares `ext` itself in CRITERIA_KEYS.
+ */
+function withExtensionPoint(keys: readonly string[]): ReadonlySet<string> {
+  return new Set([...keys, 'ext']);
+}
+
+const REQUEST_KEYS = withExtensionPoint([
   'adcp_version',
   'adcp_major_version',
   'context_id',
@@ -427,8 +441,8 @@ const REQUEST_KEYS = new Set([
   'idempotency_key',
   'refinements',
 ]);
-const FINALIZE_KEYS = new Set(['proposal_id', 'action']);
-const REVISE_KEYS = new Set([
+const FINALIZE_KEYS = withExtensionPoint(['proposal_id', 'action']);
+const REVISE_KEYS = withExtensionPoint([
   'proposal_id',
   'action',
   'change_kind',
