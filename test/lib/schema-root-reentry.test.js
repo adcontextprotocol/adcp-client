@@ -10,14 +10,20 @@
 //   - Anything else starts a fresh epoch, as every entry did before: a
 //     rewritten or freshly written document, another root for the version, an
 //     unregister. Validators then reflect the files on disk.
+//   - With ADCP_VALIDATOR_CACHE_DIR set, a root check persists what it read,
+//     so the first check of a settled root in a later process parses no
+//     schema document. A persisted record applies only while its document's
+//     stat key is unchanged.
 //
-// Observed through the public loader functions and Ajv.prototype.compile on
-// the SDK's own `ajv`. No SDK internals are replaced.
+// Observed through the public loader functions, Ajv.prototype.compile on the
+// SDK's own `ajv`, fs.readFileSync calls on the root, and child processes for
+// the cross-process cases. No SDK internals are replaced.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const {
   registerExternalSchemaRoot,
   unregisterExternalSchemaRoot,
@@ -26,6 +32,7 @@ const {
 const { getValidator, getSchemaLoaderGeneration } = require('../../dist/lib/validation/schema-loader');
 
 const SDK_ROOT = path.resolve(__dirname, '../..');
+const CACHE_MODULE = path.join(SDK_ROOT, 'dist/lib/validation/validator-cache.js');
 const VERSION = '9.1.0';
 const SETTLE_MARGIN_MS = 3500;
 const RESPONSE_REL = 'bundled/media-buy/get-products-response.json';
@@ -126,11 +133,55 @@ function enterAndValidate(root) {
   });
 }
 
+const CHILD = String.raw`
+const fs = require('node:fs');
+const path = require('node:path');
+const { root, version, steps } = JSON.parse(process.env.PLAN);
+const prefix = root + path.sep;
+let documentReads = 0;
+const original = fs.readFileSync;
+fs.readFileSync = function countingReadFileSync(file, ...rest) {
+  if (typeof file === 'string') {
+    const resolved = path.resolve(file);
+    if (resolved.startsWith(prefix) && resolved.endsWith('.json') && resolved !== path.join(root, 'index.json')) {
+      documentReads++;
+    }
+  }
+  return original.call(this, file, ...rest);
+};
+const testing = require(path.join(process.env.SDK_ROOT, 'dist/lib/testing'));
+const out = [];
+for (const step of steps) {
+  const before = documentReads;
+  let outcome;
+  try {
+    if (step === 'register') testing.registerExternalSchemaRoot(version, root);
+    else testing.withExternalSchemaRoot(version, root, () => {});
+    outcome = 'ok';
+  } catch (error) {
+    outcome = String(error.message);
+  }
+  out.push({ step, outcome, documentReads: documentReads - before });
+}
+const cacheModuleLoaded = Object.prototype.hasOwnProperty.call(require.cache, process.env.CACHE_MODULE);
+process.stdout.write('@@RESULT@@' + JSON.stringify({ out, cacheModuleLoaded }) + '\n');
+`;
+
+function runChild(root, steps, cacheDir) {
+  const env = { ...process.env, SDK_ROOT, CACHE_MODULE, PLAN: JSON.stringify({ root, version: VERSION, steps }) };
+  delete env.ADCP_VALIDATOR_CACHE_DIR;
+  if (cacheDir !== undefined) env.ADCP_VALIDATOR_CACHE_DIR = cacheDir;
+  const result = spawnSync(process.execPath, ['-e', CHILD], { env, encoding: 'utf8', timeout: 120_000 });
+  const line = result.stdout.split('\n').find(l => l.startsWith('@@RESULT@@'));
+  assert.ok(result.status === 0 && line, `child failed (${result.status}): ${result.stderr}`);
+  return JSON.parse(line.slice('@@RESULT@@'.length));
+}
+
 // ---------------------------------------------------------------- fixtures
 
 const settled = {};
 before(async () => {
-  for (const label of ['scoped', 'registered', 'rewritten', 'changed', 'other-a', 'other-b']) {
+  for (const label of ['scoped', 'registered', 'rewritten', 'changed', 'other-a', 'other-b', 'persist', 'stale']) {
     settled[label] = writeRoot(label);
   }
   await waitUntilSettled(Object.values(settled));
@@ -198,4 +249,41 @@ test('entering another root for the version starts a fresh epoch, and so does re
   assert.ok(back.generation > other.generation);
   // Within one root the epoch then holds again.
   assert.strictEqual(enterAndValidate(a).validate, back.validate);
+});
+
+// ---------------------------------------------------------------- persisted identities
+
+test('with ADCP_VALIDATOR_CACHE_DIR, a later process checks a settled root without parsing its documents', () => {
+  const root = settled.persist;
+  const cacheDir = path.join(tempDir('cache'), 'cache');
+  const off = runChild(root, ['scope', 'register'], undefined);
+  assert.equal(off.cacheModuleLoaded, false, 'the cache module stays unloaded with the variable unset');
+  assert.ok(off.out[0].documentReads > 0, 'without the cache the first check parses the documents');
+
+  const cold = runChild(root, ['scope', 'register'], cacheDir);
+  const warm = runChild(root, ['scope', 'register'], cacheDir);
+  assert.deepEqual(
+    warm.out.map(s => s.outcome),
+    off.out.map(s => s.outcome)
+  );
+  assert.deepEqual(
+    cold.out.map(s => s.outcome),
+    off.out.map(s => s.outcome)
+  );
+  assert.ok(cold.out[0].documentReads > 0, 'the first process parses and persists');
+  assert.equal(warm.out[0].documentReads, 0, 'the next process parses no schema document');
+  assert.equal(warm.out[1].documentReads, 0);
+});
+
+test('a persisted record is not used once its document changes: the changed version is rejected as before', () => {
+  const root = settled.stale;
+  const cacheDir = path.join(tempDir('cache-stale'), 'cache');
+  assert.equal(runChild(root, ['register'], cacheDir).out[0].outcome, 'ok');
+  // Same size, other release: only a re-read catches it.
+  writeFile(root, RESPONSE_REL, responseSchema(['a'], '9.2.0'));
+  const off = runChild(root, ['register'], undefined);
+  const cached = runChild(root, ['register'], cacheDir);
+  assert.match(off.out[0].outcome, /does not match/);
+  assert.equal(cached.out[0].outcome, off.out[0].outcome);
+  assert.ok(cached.out[0].documentReads > 0, 'the changed document is read');
 });

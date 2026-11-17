@@ -515,10 +515,87 @@ interface RootCheckReads {
    * archive entry, or a missing or unsettled file.
    */
   stats: Map<string, CachedRootDocumentIdentity> | undefined;
+  /** The root being checked; keys the persisted identities. */
+  root: string;
+  /**
+   * Identities a previous process persisted for this root (opt-in, see
+   * {@link persistRootCheck}), by document path. `undefined` until first
+   * needed, `null` when the cache is off or holds nothing for the root.
+   */
+  persisted?: Map<string, CachedRootDocumentIdentity> | null;
 }
 
-function newRootCheckReads(): RootCheckReads {
-  return { identities: new Map(), stats: new Map() };
+function newRootCheckReads(root: string): RootCheckReads {
+  return { identities: new Map(), stats: new Map(), root };
+}
+
+/** Persisted identity records: [document path, stat key, kind, $id, $schema]. */
+type PersistedRootIdentity = [string, string, 'object' | 'null' | 'unparseable', string | null, string | null];
+
+function persistedRootIdentityKey(root: string): string {
+  const { validatorCacheKey } = require('./validator-cache') as typeof import('./validator-cache');
+  return validatorCacheKey(['schema-root-identities', ...bundledValidatorCacheStaticKey(), path.resolve(root)]);
+}
+
+/**
+ * Identities persisted for the check's root by an earlier process, loaded on
+ * the first document the in-process cache does not know. Only with
+ * ADCP_VALIDATOR_CACHE_DIR set.
+ */
+function persistedRootIdentities(reads: RootCheckReads): Map<string, CachedRootDocumentIdentity> | null {
+  if (reads.persisted !== undefined) return reads.persisted;
+  reads.persisted = null;
+  const cache = openRootIdentityCache();
+  if (!cache) return null;
+  const value = cache.readData(persistedRootIdentityKey(reads.root)) as
+    | { root?: unknown; documents?: unknown }
+    | undefined;
+  if (!value || value.root !== path.resolve(reads.root) || !Array.isArray(value.documents)) return null;
+  const identities = new Map<string, CachedRootDocumentIdentity>();
+  for (const record of value.documents as PersistedRootIdentity[]) {
+    if (!Array.isArray(record) || typeof record[0] !== 'string' || typeof record[1] !== 'string') return null;
+    const [file, stat, kind, $id, $schema] = record;
+    const identity: RootDocumentIdentity | undefined =
+      kind === 'null'
+        ? null
+        : kind === 'object'
+          ? {
+              ...(typeof $id === 'string' && { $id }),
+              ...(typeof $schema === 'string' && { $schema }),
+            }
+          : undefined;
+    identities.set(file, { stat, identity });
+  }
+  reads.persisted = identities;
+  return identities;
+}
+
+/**
+ * Persist what a successful root check learned, so the next process skips
+ * parsing every document: one record per document, written only when every
+ * document had a settled stat and the stored records differ. A later process
+ * uses a record only while the document's stat key is unchanged, the same
+ * rule as the in-process cache. Only with ADCP_VALIDATOR_CACHE_DIR set.
+ */
+function persistRootCheck(reads: RootCheckReads): void {
+  if (!reads.stats || reads.stats.size === 0) return;
+  const cache = openRootIdentityCache();
+  if (!cache) return;
+  const stored = persistedRootIdentities(reads);
+  let changed = stored === null || stored.size !== reads.stats.size;
+  const documents: PersistedRootIdentity[] = [];
+  for (const [file, { stat, identity }] of reads.stats) {
+    documents.push([
+      file,
+      stat,
+      identity === undefined ? 'unparseable' : identity === null ? 'null' : 'object',
+      identity?.$id ?? null,
+      identity?.$schema ?? null,
+    ]);
+    const previous = stored?.get(file);
+    if (!changed && (previous?.stat !== stat || !isDeepStrictEqual(previous.identity, identity))) changed = true;
+  }
+  if (changed) cache.writeData(persistedRootIdentityKey(reads.root), { root: path.resolve(reads.root), documents });
 }
 
 /**
@@ -626,9 +703,14 @@ function readRootDocumentUncached(file: string, reads: RootCheckReads): RootDocu
   const cache = rootDocumentIdentityCache();
   const cacheKey = path.resolve(file);
   const statKey = `${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
-  // Only settled stats are cached, so an unchanged one is still settled.
-  const known = cache.get(cacheKey);
-  if (known?.stat === statKey) {
+  // Only settled stats are cached or persisted, so an unchanged one is still settled.
+  let known = cache.get(cacheKey);
+  if (known?.stat !== statKey) {
+    const persisted = persistedRootIdentities(reads)?.get(cacheKey);
+    known = persisted?.stat === statKey ? persisted : undefined;
+    if (known) rememberRootDocumentIdentity(cache, cacheKey, known);
+  }
+  if (known) {
     reads.stats?.set(cacheKey, known);
     if (known.identity === undefined) throw new Error(`Schema document does not parse: ${file}`);
     return known.identity;
@@ -653,7 +735,7 @@ function readRootDocumentUncached(file: string, reads: RootCheckReads): RootDocu
   return identity;
 }
 
-function hasSchemaRootShape(root: string, reads: RootCheckReads = newRootCheckReads()): boolean {
+function hasSchemaRootShape(root: string, reads: RootCheckReads = newRootCheckReads(root)): boolean {
   if (!existsSync(root)) return false;
   const bundledRoot = path.join(root, 'bundled');
   const files = hasBundledSchemaStore(bundledRoot) ? walkJsonFiles(bundledRoot) : walkJsonFiles(root);
@@ -742,7 +824,7 @@ function readSchemaRootDeclaredVersion(root: string): string | undefined {
 function assertSchemaRootMatchesVersion(
   version: string,
   root: string,
-  reads: RootCheckReads = newRootCheckReads()
+  reads: RootCheckReads = newRootCheckReads(root)
 ): Set<string> {
   const expectedAliases = schemaRootVersionAliases(version);
   const rootGroups = collectSchemaRootVersionAliasGroups(root, reads);
@@ -787,11 +869,12 @@ const externalSchemaRootAliases: Map<string, Set<string>> = new Map();
 export function registerExternalSchemaRoot(version: string, root: string): void {
   const key = resolveBundleKey(version);
   clearBundledSchemaStoreCache(path.join(root, 'bundled'));
-  const reads = newRootCheckReads();
+  const reads = newRootCheckReads(root);
   if (!hasSchemaRootShape(root, reads)) {
     throw new Error(`External AdCP schema root for version "${version}" not found or empty at ${root}`);
   }
   const aliases = assertSchemaRootMatchesVersion(version, root, reads);
+  persistRootCheck(reads);
   externalSchemaRootAliases.set(key, aliases);
   for (const alias of aliases) externalSchemaRoots.set(alias, root);
   enterSchemaRootEpoch(aliases, root, rootFingerprint(root, reads));
@@ -825,11 +908,12 @@ export function unregisterExternalSchemaRoot(version: string): void {
 export function withExternalSchemaRoot<T>(version: string, root: string | undefined, fn: () => T): T {
   if (root === undefined) return fn();
   clearBundledSchemaStoreCache(path.join(root, 'bundled'));
-  const reads = newRootCheckReads();
+  const reads = newRootCheckReads(root);
   if (!hasSchemaRootShape(root, reads)) {
     throw new Error(`External AdCP schema root for version "${version}" not found or empty at ${root}`);
   }
   const aliases = assertSchemaRootMatchesVersion(version, root, reads);
+  persistRootCheck(reads);
   const parent = scopedExternalSchemaRoots.getStore();
   const next = new Map(parent);
   for (const alias of aliases) next.set(alias, root);
@@ -1395,11 +1479,30 @@ let validatorCacheStaticKey: unknown[] | undefined;
  * unsafe. Only an enabled cache loads the cache module.
  */
 function openBundledValidatorCache(): BundledValidatorCacheState | undefined {
-  const dir = process.env.ADCP_VALIDATOR_CACHE_DIR;
-  if (!dir || !path.isAbsolute(dir)) return undefined;
+  const dir = validatorCacheDir();
+  if (dir === undefined) return undefined;
   const { openValidatorCache } = require('./validator-cache') as typeof import('./validator-cache');
   const cache = openValidatorCache(dir, path.join(__dirname, 'schema-loader.js'));
   return cache ? { cache, compileLog: undefined, byId: new Map() } : undefined;
+}
+
+/** ADCP_VALIDATOR_CACHE_DIR when it is a non-empty absolute path; otherwise the cache is off. */
+function validatorCacheDir(): string | undefined {
+  const dir = process.env.ADCP_VALIDATOR_CACHE_DIR;
+  return dir && path.isAbsolute(dir) ? dir : undefined;
+}
+
+let rootIdentityCache: { dir: string; cache: import('./validator-cache').ValidatorCache | undefined } | undefined;
+
+/** The cache that persists schema-root document identities, opened once per directory. */
+function openRootIdentityCache(): import('./validator-cache').ValidatorCache | undefined {
+  const dir = validatorCacheDir();
+  if (dir === undefined) return undefined;
+  if (rootIdentityCache?.dir !== dir) {
+    const { openValidatorCache } = require('./validator-cache') as typeof import('./validator-cache');
+    rootIdentityCache = { dir, cache: openValidatorCache(dir, path.join(__dirname, 'schema-loader.js')) };
+  }
+  return rootIdentityCache.cache;
 }
 
 /**
@@ -2068,11 +2171,12 @@ export function withServedReleaseSchemaRoots<T>(roots: Readonly<Record<string, s
     const memoKey = `${version}\0${root}`;
     let aliases = servedReleaseRootAliases.get(memoKey);
     if (!aliases) {
-      const reads = newRootCheckReads();
+      const reads = newRootCheckReads(root);
       if (!hasSchemaRootShape(root, reads)) {
         throw new Error(`Served-release AdCP schema root for version "${version}" not found or empty at ${root}`);
       }
       aliases = assertSchemaRootMatchesVersion(version, root, reads);
+      persistRootCheck(reads);
       servedReleaseRootAliases.set(memoKey, aliases);
     }
     const conflict = entries.find(entry => entry.root !== root && [...aliases].some(alias => entry.aliases.has(alias)));

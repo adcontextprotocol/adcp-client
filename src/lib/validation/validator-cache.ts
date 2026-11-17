@@ -12,6 +12,9 @@
  * atomically, and each body is checked against the SHA-256 in its header
  * before it is evaluated. Any doubt (wrong owner or mode, symlink, digest
  * mismatch, truncation, evaluation error) means the caller compiles live.
+ *
+ * The same directory also holds JSON data entries under the same rules
+ * (schema-root document identities, see schema-loader's persistRootCheck).
  */
 
 import { createHash, randomBytes } from 'node:crypto';
@@ -37,6 +40,7 @@ import { runInThisContext } from 'node:vm';
 const FORMAT = 1;
 const HEADER_PREFIX = '// adcp-validator-cache ';
 const ENTRY_SUFFIX = '.js';
+const DATA_SUFFIX = '.json';
 const TMP_SUFFIX = '.tmp';
 const ORPHAN_TMP_AGE_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_BYTES = 512 * 1024 * 1024;
@@ -51,6 +55,10 @@ export interface CachedValidatorEntry {
 export interface ValidatorCache {
   read(key: string): CachedValidatorEntry | undefined;
   write(key: string, moduleCode: string, rootSchemaId: string | undefined): void;
+  /** The JSON value stored under `key` by {@link ValidatorCache.writeData}, or `undefined`. */
+  readData(key: string): unknown;
+  /** Store a JSON value under `key`, with the same integrity and ownership rules as validators. */
+  writeData(key: string, value: unknown): void;
 }
 
 interface EntryHeader {
@@ -245,6 +253,26 @@ export function openValidatorCache(dir: string, requireFrom: string): ValidatorC
     write(key, moduleCode, rootSchemaId) {
       const header: EntryHeader = { format: FORMAT, sha256: sha256(moduleCode), rootSchemaId: rootSchemaId ?? null };
       if (writeAtomic(key, entryPath(key), header, moduleCode)) prune();
+    },
+
+    readData(key) {
+      const file = path.join(entries, `${key}${DATA_SUFFIX}`);
+      const entry = readVerified(file);
+      if (!entry) return undefined;
+      try {
+        const value = JSON.parse(entry.body) as unknown;
+        touch(file);
+        return value;
+      } catch {
+        discard(file);
+        return undefined;
+      }
+    },
+
+    writeData(key, value) {
+      const body = JSON.stringify(value);
+      const header: EntryHeader = { format: FORMAT, sha256: sha256(body), rootSchemaId: null };
+      if (writeAtomic(key, path.join(entries, `${key}${DATA_SUFFIX}`), header, body)) prune();
     },
   };
 }
