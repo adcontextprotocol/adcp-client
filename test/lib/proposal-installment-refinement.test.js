@@ -24,7 +24,7 @@ function change(overrides = {}) {
   return { product_id: 'product-1', installment_ref: ref(), action: 'omit', ...overrides };
 }
 
-function request(installment_changes = [change()], adcp_version = '3.3-beta.6') {
+function request(installment_changes = [change()], adcp_version = '3.3-rc.0') {
   return {
     adcp_version,
     adcp_major_version: 3,

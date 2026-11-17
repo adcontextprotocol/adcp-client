@@ -180,6 +180,27 @@ describe('projectToolPayload', () => {
     assert.equal(result.value, request);
     assert.deepEqual(result.dropped, []);
   });
+
+  // adcp#8915: a 3.3 replacement goes to an older release as the deprecated
+  // value it supersedes, never dropped (`x-superseded-by` in enumMetadata).
+  test('maps a reserved-word-safe replacement back to the value it supersedes', () => {
+    const response = {
+      status: 'completed',
+      summary: { total_records: 2, passed_records: 1, failed_records: 1 },
+      results: [
+        { record_id: 'r1', verdict: 'passed' },
+        { record_id: 'r2', verdict: 'fail' },
+      ],
+    };
+    const { value, dropped } = projectToolPayload('validate_content_delivery', 'sync', response, BETA_PIN, '3.2.8');
+    assert.deepEqual(
+      value.results.map(result => result.verdict),
+      ['pass', 'fail']
+    );
+    assert.deepEqual(dropped, []);
+    // A 3.3 receiver keeps the replacement.
+    assert.equal(projectToolPayload('validate_content_delivery', 'sync', response, BETA_PIN, BETA_PIN).value, response);
+  });
 });
 
 describe('convertRequest', () => {

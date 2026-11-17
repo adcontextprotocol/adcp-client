@@ -1,7 +1,7 @@
 /**
  * Reviewed non-JSON-Schema semantics from the 3.2 beta.8 / rc.2 / rc.3 / rc.4 / rc.6 / rc.7 / 3.2.1 / 3.2.3 /
  * 3.2.4 / 3.2.5 / 3.2.6 / 3.2.7 / 3.2.8 / 3.3.0-beta.0 / 3.3.0-beta.1 / 3.3.0-beta.2 / 3.3.0-beta.3 /
- * 3.3.0-beta.4 / 3.3.0-beta.5 / 3.3.0-beta.6 bundles.
+ * 3.3.0-beta.4 / 3.3.0-beta.5 / 3.3.0-beta.6 / 3.3.0-rc.0 bundles.
  * These are semantic contracts, NOT a binding-field allowlist: properties and
  * comparison always come from the selected runtime schema. Additions to these
  * annotations require a deliberate implementation/review instead of AJV silently
@@ -413,6 +413,8 @@ export const COMMERCIAL_SEMANTIC_OVERRIDES_BY_RELEASE: Readonly<Record<string, R
   '3.3.0-beta.4': SEMANTICS_3_3_BETA_2,
   '3.3.0-beta.5': SEMANTICS_3_3_BETA_2,
   '3.3.0-beta.6': SEMANTICS_3_3_BETA_6,
+  // rc.0 changes no commercial-terms annotation from beta.6.
+  '3.3.0-rc.0': SEMANTICS_3_3_BETA_6,
 };
 
 /** Binding snapshots keep JSON Schema enum membership even for extensible taxonomies. */

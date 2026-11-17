@@ -163,7 +163,17 @@ export interface CreativeCapabilities {
   supportsGeneration: boolean;
   /** Agent can adapt an existing creative to a new format */
   supportsTransformation: boolean;
+  /**
+   * The `sync_creatives` assignment operations the seller accepts (AdCP 3.3,
+   * adcontextprotocol/adcp#8997). Absent means undeclared. A compact seller
+   * that has a creative library must list `assign` at 3.3.
+   */
+  assignmentOperations?: readonly CreativeAssignmentOperation[];
 }
+
+export type CreativeAssignmentOperation = 'assign' | 'unassign' | 'replace' | 'merge';
+
+const CREATIVE_ASSIGNMENT_OPERATIONS: ReadonlySet<string> = new Set(['assign', 'unassign', 'replace', 'merge']);
 
 /**
  * Idempotency capabilities declared by the seller.
@@ -732,6 +742,13 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
       supportsGeneration: response.creative.supports_generation ?? false,
       supportsTransformation: response.creative.supports_transformation ?? false,
     };
+    const operations = (response.creative as { assignment_operations?: unknown }).assignment_operations;
+    if (Array.isArray(operations)) {
+      creative.assignmentOperations = operations.filter(
+        (operation): operation is CreativeAssignmentOperation =>
+          typeof operation === 'string' && CREATIVE_ASSIGNMENT_OPERATIONS.has(operation)
+      );
+    }
   }
 
   // adcp.idempotency.replay_ttl_seconds is REQUIRED per spec when the seller

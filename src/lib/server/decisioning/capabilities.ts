@@ -302,7 +302,9 @@ export interface DecisioningCapabilities<TConfig = unknown> {
   /**
    * Creative-protocol capabilities forwarded into `get_adcp_capabilities.creative`.
    * Use to declare `supportsCompliance`, `hasCreativeLibrary`,
-   * `supportsGeneration`, and `supportsTransformation` from `definePlatform`.
+   * `supportsGeneration`, `supportsTransformation`, and (AdCP 3.3)
+   * `assignmentOperations` from `definePlatform`. A compact seller with a
+   * creative library must list `assign` in `assignmentOperations`.
    * Adopters that don't run a provenance-verification pipeline should
    * declare the relevant fields as `false` so creative storyboards gate
    * cleanly.

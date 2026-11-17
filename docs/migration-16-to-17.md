@@ -1,6 +1,6 @@
 # Migrating from SDK 16 to 17
 
-SDK 17 beta pins the signed AdCP `3.3.0-beta.6` release. Use the beta in
+SDK 17 beta pins the signed AdCP `3.3.0-rc.0` release. Use the beta in
 development and staging; production remains on SDK 16 and AdCP 3.2.
 
 ## Companion packages
@@ -106,7 +106,7 @@ request release. Existing cursor, account identity, and acknowledgement checks
 still apply.
 
 A `3.3.0` or `3.3` configuration pin does not select a beta. Use the exact
-`3.3.0-beta.6` bundle (wire alias `3.3-beta.6`); unavailable pins now produce a
+`3.3.0-rc.0` bundle (wire alias `3.3-rc.0`); unavailable pins now produce a
 short list of bundled release lines instead of every compatible patch.
 
 ## pnpm peer resolution
@@ -140,7 +140,7 @@ and [peer-dependency settings](https://pnpm.io/settings#dedupepeerdependents).
 
 The SDK packages the exact 3.3 beta schema and compliance bundle alongside
 maintained AdCP 3.2.8, 3.1.31 and 3.0.25 bundles. A seller must advertise
-`3.3-beta.6` (or its full bundle version, `3.3.0-beta.6`) before the buyer
+`3.3-rc.0` (or its full bundle version, `3.3.0-rc.0`) before the buyer
 selects that preview. A different beta, a moving `3.3-beta` alias, or a
 served-version echo alone does not establish support. The buyer can negotiate
 an older stable release the seller advertises. Missing or synthetic capability
@@ -279,7 +279,7 @@ the MCP SDK's bare `-32602` text result, with no `structuredContent` and no
   },
   "context": { "trace": "tr-1" },
   "status": "failed",
-  "adcp_version": "3.3-beta.6"
+  "adcp_version": "3.3-rc.0"
 }
 ```
 
@@ -329,10 +329,49 @@ Rejections on these tools echo the caller's `context` even when the schema
 strips it: validation, version, authorization, and errors your handler returns
 or throws.
 
+## AdCP 3.3.0-rc.0
+
+SDK 17 now pins AdCP `3.3.0-rc.0`, the first 3.3 release candidate, and no
+longer packages or advertises `3.3.0-beta.6`. Preview negotiation is exact, so a
+beta.6 peer and an rc.0 peer settle on a stable release they share, and an
+explicit `adcpVersion: '3.3.0-beta.6'` pin fails with a configuration error.
+
+- **Renamed experimental values, with no alias (adcontextprotocol/adcp#8989).**
+  `list_products` execution readiness `input_required` is now `input-required`,
+  creative change kind `click_through` is now `clickthrough`, and delivery
+  projection end state `underdelivery` is now `under_delivery`. **Code that
+  sends or compares the old spellings breaks**; the generated types follow.
+- **Reserved-word-safe replacements (adcp#8915).** `passed` replaces `pass` in
+  the content-standards binary verdict, `get_media_buy_artifacts`
+  `local_verdict` and registry feed compliance tracks; `all` replaces `global`
+  in the `RATE_LIMITED` error scope; and `full_name` replaces `name` in signal
+  onboarder `match_keys`. The originals stay valid and deprecated through 3.x.
+  Send the replacements only to 3.3 peers. The SDK's version projection now
+  does this for you: converting a 3.3 payload for a 3.2 seller or caller maps a
+  replacement back to the value it supersedes (`passed` to `pass`) instead of
+  dropping it.
+- **Additions.** Instagram, Facebook, Snapchat and X distribution identifier
+  types (adcp#8995); `creative.assignment_operations`, the `sync_creatives`
+  assignment operations a seller accepts (adcp#8997), which a seller declares
+  through the `creative.assignmentOperations` capability option. A compact
+  seller (`buy_products`) with a creative library must list `assign`; the
+  compact direct-buy storyboard now checks it. Also audience targeting
+  without inline member push (adcp#8996) and `image_carousel` `cta_values`
+  (adcp#9001).
+- **Clarifications.** `get_media_buy_delivery` `by_package` should carry at
+  least one row (adcp#8970); inline `submitted` branches match their published
+  async status files (adcp#8934); `sync_plans` accepts an omitted
+  `human_review_required` (adcp#9007). The SDK already resolves several
+  matching `authorized_agents` entries by origin and treats a publisher as
+  pinning an agent's `signing_keys` only when every matching entry pins
+  (adcp#9011, adcp#9017).
+- **Unchanged.** The proposal-terms review table, the canonical storyboard
+  fixtures and the reporting-subscription vectors are the same as beta.6.
+
 ## AdCP 3.3.0-beta.6
 
-SDK 17 now pins AdCP `3.3.0-beta.6` and no longer packages or advertises
-`3.3.0-beta.5`. Preview negotiation is exact, so a beta.5 peer and a beta.6
+From 17.0.0-beta.24 to 17.0.0-beta.28, SDK 17 pinned AdCP `3.3.0-beta.6` and
+no longer packaged or advertised `3.3.0-beta.5`. Preview negotiation is exact, so a beta.5 peer and a beta.6
 peer settle on a stable release they share, and an explicit
 `adcpVersion: '3.3.0-beta.5'` pin fails with a configuration error.
 
