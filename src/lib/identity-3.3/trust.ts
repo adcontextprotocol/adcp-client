@@ -7,11 +7,22 @@ import { parseStrictJson } from '../signing/agent-resolver/strict-json';
 import { parse as parseDomain } from 'tldts';
 import schemas from './schemas.draft';
 import type { TrustRecord, TrustAgent, TrustGrant, AgentGrantDeniedDetails } from './types';
-const ajv = new Ajv({ inlineRefs: false, strict: false, allErrors: false });
-addFormats(ajv);
-for (const schema of schemas) ajv.addSchema(schema);
+let identityAjv: Ajv | undefined;
+/**
+ * The draft identity schemas, registered on first validation. Every SDK barrel
+ * reaches this module, and registering the schemas checks each one against the
+ * JSON Schema meta-schema, so doing it at import cost every importer.
+ */
+function identitySchemas(): Ajv {
+  if (identityAjv) return identityAjv;
+  const ajv = new Ajv({ inlineRefs: false, strict: false, allErrors: false });
+  addFormats(ajv);
+  for (const schema of schemas) ajv.addSchema(schema);
+  identityAjv = ajv;
+  return ajv;
+}
 export function validateIdentity33Schema(id: string, value: unknown): boolean {
-  return ajv.getSchema(`/schemas/${id}.json`)?.(value) === true;
+  return identitySchemas().getSchema(`/schemas/${id}.json`)?.(value) === true;
 }
 export class IdentityAuthorizationError extends Error {
   readonly code = 'PERMISSION_DENIED';
