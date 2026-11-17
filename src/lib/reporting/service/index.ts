@@ -131,6 +131,7 @@ export interface ReliableReportingAdapterV1 {
  */
 export interface ReliableReportingCoverageV1 {
   constituents: ReportingLedgerConfigurationV1['constituents'];
+  packageBindings?: ReportingLedgerConfigurationV1['packageBindings'];
 }
 
 export interface ReliableReportingSourceRouteV1 {
@@ -159,6 +160,7 @@ type LedgerInstallInput = Omit<
   | 'contract'
   | 'constituents'
   | 'mediaBuyIds'
+  | 'packageBindings'
 >;
 
 /**
@@ -587,6 +589,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   positiveInteger(options.automatedRecoveryWindowSeconds, 'automatedRecoveryWindowSeconds');
 
   const sources = new Map<string, ReportingSourceWithReaderV1>();
+  const inlineAdapterIds = new Set<string>();
   const adapterOfferings = new Map<string, ReportingSourceOfferingV1>();
   const offerings = new Map<string, ReportingSourceOfferingV1>();
   const deliveryOfferings: ReportingDeliveryOffering[] = [];
@@ -600,6 +603,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     if ((adapter.fetchSlice === undefined) === (adapter.executor === undefined)) {
       throw new TypeError('Each reporting adapter requires exactly one of fetchSlice or executor');
     }
+    if (adapter.fetchSlice !== undefined) inlineAdapterIds.add(adapterId);
     const source =
       adapter.executor ??
       createInlineReportingSourceExecutor(adapter.fetchSlice!, sourceOffering, {
@@ -976,7 +980,14 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     if (ownership === 'account') {
       assertSupportedScheduleSemantics(frozenInput.schedule, deliveryOffering, normalizedTimezone, offering);
     }
-    const { constituents, mediaBuyIds } = trustedCoverage(coverage, frozenInput.requestedMetrics);
+    const { constituents, mediaBuyIds, packageBindings } = trustedCoverage(coverage, frozenInput.requestedMetrics);
+    if (
+      inlineAdapterIds.has(route.adapterId) &&
+      packageBindings.length > 0 &&
+      !frozenInput.requestedDimensions.includes('package_id')
+    ) {
+      throw new TypeError('Inline package reporting requires package_id in requestedDimensions');
+    }
     if (
       configuration.expectedMediaBuyIds !== undefined &&
       !sameIdMembers(configuration.expectedMediaBuyIds, mediaBuyIds)
@@ -1033,6 +1044,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         contract: structuredClone(offering.contract),
         constituents,
         mediaBuyIds,
+        ...(packageBindings.length ? { packageBindings } : {}),
       },
       requestedMetrics: frozenInput.requestedMetrics,
     };
@@ -1122,7 +1134,13 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       const owedBuys = new Set(owed.media_buy_ids);
       // Each obligation freezes its own denominator: the host-authorized constituents of exactly
       // the media buys owed for that period.
-      const constituents = generation.pool.filter(value => value.mediaBuyId && owedBuys.has(value.mediaBuyId));
+      const packageBindings = generation.packageBindings.filter(value => owedBuys.has(value.mediaBuyId));
+      const packageConstituentIds = new Set(packageBindings.map(value => value.constituentId));
+      const constituents = generation.pool.filter(value =>
+        value.constituentKind === 'package_item'
+          ? packageConstituentIds.has(value.constituentId)
+          : Boolean(value.mediaBuyId && owedBuys.has(value.mediaBuyId))
+      );
       const covered = new Set(constituents.map(value => value.mediaBuyId));
       if (owed.media_buy_ids.some(mediaBuyId => !covered.has(mediaBuyId))) {
         throw new TypeError('resolveCoverage did not authorize every media buy the subscription owes');
@@ -1139,6 +1157,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         period: { start: owed.period_start, end: owed.period_end },
         mediaBuyIds: [...owed.media_buy_ids],
         constituents: structuredClone(constituents),
+        ...(packageBindings.length ? { packageBindings: structuredClone(packageBindings) } : {}),
         ...(owed.stub === true ? { stub: true as const } : {}),
       });
     }
@@ -1186,6 +1205,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   ): Promise<{
     input: ReportingSubscriptionConfigurationInputV1;
     pool: ReportingLedgerConfigurationV1['constituents'];
+    packageBindings: NonNullable<ReportingLedgerConfigurationV1['packageBindings']>;
     /** The resolved offering when it is managed, so the generation needs a managed binding. */
     managedOffering?: ReportingDeliveryOffering;
     version: ReportingSubscriptionFrozenOwedSetV1['versions'][number];
@@ -1246,7 +1266,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       sourceSettings: structuredClone(policy.sourceSettings),
     };
     const { input } = await prepareGeneration(configuration, account, 'owed_set');
-    const { constituents, mediaBuyIds: _mediaBuyIds, ...generation } = input;
+    const { constituents, mediaBuyIds: _mediaBuyIds, packageBindings, ...generation } = input;
     void _mediaBuyIds;
     return {
       input: {
@@ -1260,6 +1280,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         },
       },
       pool: constituents,
+      packageBindings: packageBindings ?? [],
       ...(managed ? { managedOffering: structuredClone(deliveryOffering) } : {}),
       version,
     };
@@ -1969,6 +1990,7 @@ function trustedCoverage(
 ): {
   constituents: ReportingLedgerConfigurationV1['constituents'];
   mediaBuyIds: string[];
+  packageBindings: NonNullable<ReportingLedgerConfigurationV1['packageBindings']>;
 } {
   if (!coverage || typeof coverage !== 'object' || !Array.isArray(coverage.constituents)) {
     throw new TypeError('resolveCoverage must return an authorized constituent denominator');
@@ -2011,7 +2033,32 @@ function trustedCoverage(
   const mediaBuyIds = [
     ...new Set(constituents.map(value => value.mediaBuyId).filter((value): value is string => Boolean(value))),
   ].sort();
-  return { constituents, mediaBuyIds };
+  const rawBindings = coverage.packageBindings ?? [];
+  if (!Array.isArray(rawBindings)) throw new TypeError('resolveCoverage packageBindings must be an array');
+  const packageConstituents = constituents.filter(value => value.constituentKind === 'package_item');
+  if (rawBindings.length !== packageConstituents.length) {
+    throw new TypeError('resolveCoverage must bind every package_item constituent to one media buy');
+  }
+  const packageConstituentIds = new Set(packageConstituents.map(value => value.constituentId));
+  const packageBindings = rawBindings.map(binding => {
+    if (
+      !binding ||
+      typeof binding.constituentId !== 'string' ||
+      typeof binding.mediaBuyId !== 'string' ||
+      !packageConstituentIds.has(binding.constituentId) ||
+      !mediaBuyIds.includes(binding.mediaBuyId)
+    ) {
+      throw new TypeError('resolveCoverage package binding is outside its authorized constituents');
+    }
+    return { constituentId: binding.constituentId, mediaBuyId: binding.mediaBuyId };
+  });
+  if (new Set(packageBindings.map(value => value.constituentId)).size !== packageBindings.length) {
+    throw new TypeError('resolveCoverage package bindings must name unique constituents');
+  }
+  packageBindings.sort((left, right) =>
+    left.constituentId < right.constituentId ? -1 : left.constituentId > right.constituentId ? 1 : 0
+  );
+  return { constituents, mediaBuyIds, packageBindings };
 }
 
 function sameIdMembers(left: readonly string[], right: readonly string[]): boolean {
@@ -2261,6 +2308,7 @@ function assertNoUntrustedLineageFields(configuration: Record<string, unknown>):
     'ctx_metadata',
     'constituents',
     'mediaBuyIds',
+    'packageBindings',
     'applicability',
     'products',
     'productIds',

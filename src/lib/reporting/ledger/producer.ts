@@ -737,6 +737,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
             obligation,
             await readManifestRows(options.source, obligation, manifest, executionSignal, settlementGrace)
           );
+          assertRowsWithinFrozenPackageCoverage(obligation, rows);
           validateManifestFinalityForObligation(obligation, manifest);
           if (previous.some(value => value.finality === 'official')) {
             const official = previous.find(value => value.finality === 'official')!;
@@ -941,6 +942,7 @@ function planObligation(
     periodOrdinal,
     period: { start: new Date(start).toISOString(), end: new Date(end).toISOString() },
     constituents: configuration.constituents,
+    ...(configuration.packageBindings?.length ? { packageBindings: configuration.packageBindings } : {}),
     coverageRequirement: 'full',
   };
   const semanticFingerprint = prefixedDigest(semantic);
@@ -977,11 +979,26 @@ function planObligation(
       partiallyCoveredMediaBuyIds: [],
       unsupportedMediaBuyIds: [],
       unknownMediaBuyIds: [],
+      ...(configuration.packageBindings?.length
+        ? {
+            packageIds: [
+              ...new Set(configuration.constituents.flatMap(value => (value.packageId ? [value.packageId] : []))),
+            ].sort(),
+            coveredPackageIds: [
+              ...new Set(configuration.constituents.flatMap(value => (value.packageId ? [value.packageId] : []))),
+            ].sort(),
+            unsupportedPackageIds: [],
+            unknownPackageIds: [],
+          }
+        : {}),
     },
     requestedMetrics: [...configuration.requestedMetrics],
     requestedDimensions: [...configuration.requestedDimensions],
     constituents: structuredClone(configuration.constituents),
     mediaBuyIds: [...configuration.mediaBuyIds].sort(),
+    ...(configuration.packageBindings?.length
+      ? { packageBindings: structuredClone(configuration.packageBindings) }
+      : {}),
     sourceSettings: structuredClone(configuration.sourceSettings),
     contract: structuredClone(configuration.contract),
     expectedAt: new Date(expectedAt).toISOString(),
@@ -1014,6 +1031,7 @@ function subscriptionConfiguration(
     'owedSet',
     'constituents',
     'mediaBuyIds',
+    'packageBindings',
   ]) {
     if (Object.hasOwn(input, field)) {
       throw new TypeError(`Subscription configuration input must not supply ${field}`);
@@ -1109,6 +1127,19 @@ function planOwedSetObligation(
   ) {
     throw new Error('Subscription obligation media buys must equal its constituent denominator');
   }
+  const packageBindings = structuredClone(input.packageBindings ?? []);
+  const packageConstituentIds = new Set(
+    constituents.filter(value => value.constituentKind === 'package_item').map(value => value.constituentId)
+  );
+  if (
+    packageBindings.length !== packageConstituentIds.size ||
+    new Set(packageBindings.map(value => value.constituentId)).size !== packageBindings.length ||
+    packageBindings.some(
+      value => !packageConstituentIds.has(value.constituentId) || !mediaBuyIds.includes(value.mediaBuyId)
+    )
+  ) {
+    throw new TypeError('Subscription obligation package bindings must match its authorized constituents');
+  }
   const listedProducts = listedReportingSourceProductIdsV1(offering.applicability);
   if (listedProducts !== undefined && constituents.some(value => !listedProducts.includes(value.productId))) {
     throw new Error('Reporting constituent product is outside its offering applicability');
@@ -1130,6 +1161,7 @@ function planOwedSetObligation(
     period: { start: periodStart, end: periodEnd },
     constituents,
     mediaBuyIds,
+    ...(packageBindings.length ? { packageBindings } : {}),
     coverageRequirement: 'full',
   };
   return {
@@ -1159,11 +1191,22 @@ function planOwedSetObligation(
       partiallyCoveredMediaBuyIds: [],
       unsupportedMediaBuyIds: [],
       unknownMediaBuyIds: [],
+      ...(packageBindings.length
+        ? {
+            packageIds: [...new Set(constituents.flatMap(value => (value.packageId ? [value.packageId] : [])))].sort(),
+            coveredPackageIds: [
+              ...new Set(constituents.flatMap(value => (value.packageId ? [value.packageId] : []))),
+            ].sort(),
+            unsupportedPackageIds: [],
+            unknownPackageIds: [],
+          }
+        : {}),
     },
     requestedMetrics: [...configuration.requestedMetrics],
     requestedDimensions: [...configuration.requestedDimensions],
     constituents,
     mediaBuyIds,
+    ...(packageBindings.length ? { packageBindings } : {}),
     sourceSettings: structuredClone(configuration.sourceSettings),
     contract: structuredClone(configuration.contract),
     expectedAt: new Date(expectedAt).toISOString(),
@@ -1201,6 +1244,40 @@ function withSubscriptionAccountId(
   });
 }
 
+function assertRowsWithinFrozenPackageCoverage(
+  obligation: ReportingLedgerObligationV1,
+  rows: readonly Record<string, unknown>[]
+): void {
+  const coveredPackageIds = new Set(obligation.coverage.coveredPackageIds ?? []);
+  const packageBindings = obligation.packageBindings ?? [];
+  if (coveredPackageIds.size === 0 && packageBindings.length === 0) {
+    if (rows.some(row => row.package_id !== undefined)) {
+      throw new ReportingSourceConfigurationError('Reporting source row is outside frozen package coverage');
+    }
+    return;
+  }
+  const packagesByConstituent = new Map(
+    obligation.constituents
+      .filter(constituent => constituent.constituentKind === 'package_item')
+      .map(constituent => [constituent.constituentId, constituent.packageId] as const)
+  );
+  const coveredPairs = new Set(
+    packageBindings.map(binding =>
+      JSON.stringify([binding.mediaBuyId, packagesByConstituent.get(binding.constituentId)])
+    )
+  );
+  for (const row of rows) {
+    if (
+      typeof row.media_buy_id !== 'string' ||
+      typeof row.package_id !== 'string' ||
+      !coveredPackageIds.has(row.package_id) ||
+      !coveredPairs.has(JSON.stringify([row.media_buy_id, row.package_id]))
+    ) {
+      throw new ReportingSourceConfigurationError('Reporting source row is outside frozen package coverage');
+    }
+  }
+}
+
 function boundedId(value: unknown, field: string): void {
   if (typeof value !== 'string' || value.length === 0 || value.length > 255) {
     throw new TypeError(`${field} must be a bounded non-empty string`);
@@ -1220,6 +1297,9 @@ function sourceRequest(
   const periodEnd = instant(obligation.period.end, 'period.end');
   const cutoff = new Date(Math.min(now.getTime(), periodEnd)).toISOString();
   const productIds = [...new Set(obligation.constituents.map(value => value.productId))].sort();
+  const packageIds = [
+    ...new Set(obligation.constituents.flatMap(value => (value.packageId ? [value.packageId] : []))),
+  ].sort();
   return {
     contractVersion: REPORTING_SOURCE_CONTRACT_VERSION_V1,
     identity: {
@@ -1261,7 +1341,8 @@ function sourceRequest(
       constituents: structuredClone(obligation.constituents),
       productIds,
       mediaBuyIds: [...obligation.mediaBuyIds],
-      packageIds: [],
+      packageIds,
+      ...(obligation.packageBindings?.length ? { packageBindings: structuredClone(obligation.packageBindings) } : {}),
       denominatorFingerprint: reportingCoverageDenominatorFingerprintV1(obligation.constituents),
     },
     requestedMetrics: [...obligation.requestedMetrics],
@@ -1575,7 +1656,7 @@ function buildAdjustment(
             name: total.name,
             value: subtractDecimal(total.value, prior.value),
             value_type: total.value_type === 'decimal' || prior.value_type === 'decimal' ? 'decimal' : 'integer',
-            ...(total.unit ? { unit: total.unit } : {}),
+            ...(prior.unit !== undefined ? { unit: prior.unit } : {}),
           },
         ]
       : [];
@@ -1643,7 +1724,13 @@ function reportingControlTotals(
       if (parsed.scale > 0) valueType = 'decimal';
       sum = addDecimal(sum, parsed);
     }
-    return [{ name, value: formatDecimal(sum), value_type: valueType } as ReportingControlTotal];
+    return [
+      {
+        name,
+        value: formatDecimal(sum),
+        value_type: valueType,
+      } as ReportingControlTotal,
+    ];
   });
 }
 
@@ -1783,10 +1870,10 @@ function wireCoverage(obligation: ReportingLedgerObligationV1) {
     partially_covered_media_buy_ids: obligation.coverage.partiallyCoveredMediaBuyIds,
     unsupported_media_buy_ids: obligation.coverage.unsupportedMediaBuyIds,
     unknown_media_buy_ids: obligation.coverage.unknownMediaBuyIds,
-    package_ids: [],
-    covered_package_ids: [],
-    unsupported_package_ids: [],
-    unknown_package_ids: [],
+    package_ids: obligation.coverage.packageIds ?? [],
+    covered_package_ids: obligation.coverage.coveredPackageIds ?? [],
+    unsupported_package_ids: obligation.coverage.unsupportedPackageIds ?? [],
+    unknown_package_ids: obligation.coverage.unknownPackageIds ?? [],
     limitations: [],
   };
 }
@@ -2149,6 +2236,26 @@ function validateConfigurationAgainstOffering(
     ])
   ) {
     throw new Error('Reporting configuration media-buy scope must equal its constituent denominator');
+  }
+  const packageConstituents = configuration.constituents.filter(value => value.constituentKind === 'package_item');
+  const packageConstituentIds = new Set(packageConstituents.map(value => value.constituentId));
+  const packageBindings = configuration.packageBindings ?? [];
+  const mediaBuyIds = new Set(configuration.mediaBuyIds);
+  if (
+    !Array.isArray(packageBindings) ||
+    packageConstituentIds.size !== packageConstituents.length ||
+    packageBindings.length !== packageConstituents.length ||
+    packageBindings.some(
+      value =>
+        !value ||
+        typeof value.constituentId !== 'string' ||
+        typeof value.mediaBuyId !== 'string' ||
+        !packageConstituentIds.has(value.constituentId) ||
+        !mediaBuyIds.has(value.mediaBuyId)
+    ) ||
+    new Set(packageBindings.map(value => value.constituentId)).size !== packageBindings.length
+  ) {
+    throw new TypeError('Reporting configuration package bindings must match its authorized constituents');
   }
 }
 

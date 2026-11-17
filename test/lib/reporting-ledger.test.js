@@ -20,10 +20,14 @@ const {
   reportingLedgerScopeClosed,
 } = require('../../dist/lib/reporting/ledger/index.js');
 const {
+  buildReportingSourceManifestV1,
   canonicalJsonV1,
+  completedReportingSourceResponseV1,
   createInlineReportingSourceExecutor,
   redactedReportingSourceOfferingV1,
   redactedReportingSourceRequestV1,
+  redactedReportingSourceResultV1,
+  reportingSourceCapabilitiesV1,
 } = require('../../dist/lib/reporting/source/index.js');
 const { AdcpError } = require('../../dist/lib/server/decisioning/async-outcome.js');
 const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server.js');
@@ -201,6 +205,303 @@ async function withdrawnHistoryBudgetFixture(t) {
 }
 
 describe('seller reporting ledger', () => {
+  test('direct installs require each package binding to name an authorized media buy', async () => {
+    const request = redactedReportingSourceRequestV1();
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.applicability.constituentKinds.push('package_item');
+    offering.dimensions.push({ name: 'package_id', support: 'exact' });
+    const mediaBuy = request.coverage.constituents[0];
+    const packageItem = {
+      constituentId: 'direct-package-constituent',
+      constituentKind: 'package_item',
+      productId: mediaBuy.productId,
+      packageId: 'direct-package',
+      productBinding: {
+        bindingKind: 'package_item_product',
+        bindingId: 'direct-package-binding',
+        bindingVersion: 1,
+        bindingSha256: 'a'.repeat(64),
+        owner: 'caller',
+        productId: mediaBuy.productId,
+        packageId: 'direct-package',
+      },
+    };
+    const store = new MemoryLedgerStore();
+    const producer = createReportingProducer({
+      store,
+      source: createInlineReportingSourceExecutor(() => [], offering),
+      offerings: [offering],
+      contact: { name: 'Reporting operations' },
+    });
+    const input = {
+      account: request.account,
+      sourceScope: request.sourceScope,
+      delivery_config_id: request.delivery_config_id,
+      delivery_config_version: request.delivery_config_version,
+      offeringId: offering.offeringId,
+      report_definition_id: request.report_definition_id,
+      feedPurpose: 'analytics',
+      requiredFinality: 'snapshot',
+      requestedMetrics: request.requestedMetrics,
+      requestedDimensions: [...request.requestedDimensions, 'package_id'],
+      constituents: [mediaBuy, packageItem],
+      mediaBuyIds: [mediaBuy.mediaBuyId],
+      sourceTimezone: 'UTC',
+      schedule: {
+        anchor: '2026-09-01T00:00:00.000Z',
+        periodMilliseconds: 86_400_000,
+        deliverySlaMilliseconds: 0,
+        recoveryWindowMilliseconds: 86_400_000,
+      },
+      sourceSettings: request.sourceSettings,
+      contract: request.contract,
+    };
+    await assert.rejects(producer.installConfiguration(input), /package bindings/);
+    await assert.rejects(
+      producer.installConfiguration({
+        ...input,
+        packageBindings: [{ constituentId: packageItem.constituentId, mediaBuyId: 'other-media-buy' }],
+      }),
+      /package bindings/
+    );
+    assert.deepEqual(await store.listConfigurations(), []);
+  });
+
+  test('refuses custom source rows outside frozen package coverage before committing a revision', async () => {
+    const request = redactedReportingSourceRequestV1();
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.applicability.constituentKinds.push('package_item');
+    offering.dimensions.push({ name: 'package_id', support: 'exact' });
+    const mediaBuy = request.coverage.constituents[0];
+    const packageItem = {
+      constituentId: 'bound-package-constituent',
+      constituentKind: 'package_item',
+      productId: mediaBuy.productId,
+      packageId: 'bound-package',
+      productBinding: {
+        bindingKind: 'package_item_product',
+        bindingId: 'bound-package-binding',
+        bindingVersion: 1,
+        bindingSha256: 'a'.repeat(64),
+        owner: 'caller',
+        productId: mediaBuy.productId,
+        packageId: 'bound-package',
+      },
+    };
+    const store = new MemoryLedgerStore();
+    let stagedBytes;
+    let reportedPackageId = 'unbound-package';
+    let sourceExecutionFinished = false;
+    const source = {
+      capabilities: reportingSourceCapabilitiesV1([offering]),
+      async execute(slice) {
+        stagedBytes = Buffer.from(
+          `${JSON.stringify({ media_buy_id: mediaBuy.mediaBuyId, package_id: reportedPackageId, impressions: 10, spend: '1.25' })}\n`
+        );
+        const object = {
+          ordinal: 0,
+          objectRef: 'custom-package-rows',
+          objectGeneration: 'generation-1',
+          mediaType: 'application/x-ndjson',
+          compression: 'none',
+          sha256: createHash('sha256').update(stagedBytes).digest('hex'),
+          byteCount: stagedBytes.length,
+          rowCount: 1,
+        };
+        const built = buildReportingSourceManifestV1({
+          level: 'basic',
+          request: slice,
+          stagedCommitRef: 'custom-package-manifest',
+          objects: [object],
+          metricAvailability: slice.coverage.constituents.flatMap(constituent =>
+            slice.requestedMetrics.map(metric => {
+              const declaration = offering.metrics.find(item => item.name === metric);
+              return {
+                constituentId: constituent.constituentId,
+                metric,
+                semanticContractId: declaration.semanticContractId,
+                semanticContractVersion: declaration.semanticContractVersion,
+                semanticContractSha256: declaration.semanticContractSha256,
+                status: 'present',
+                dataThrough: slice.period.end,
+              };
+            })
+          ),
+          coverage: {
+            status: 'full',
+            constituents: slice.coverage.constituents.map(constituent => ({
+              ...constituent,
+              status: 'present',
+              dataThrough: slice.period.end,
+            })),
+          },
+          observedAt: slice.period.end,
+          dataThrough: slice.period.end,
+          finalityEvidence: { owner: 'adapter', basis: 'provisional_observation', observedAt: slice.period.end },
+          acquiredAt: slice.period.end,
+          explicitZero: false,
+          eventTimeRange: { start: slice.period.start, end: slice.period.end },
+          completeness: { terminal: true, rowsComplete: true, requestedGroupsComplete: true },
+        });
+        sourceExecutionFinished = true;
+        return {
+          ok: true,
+          response: completedReportingSourceResponseV1({ request: slice, manifest: built.reference }),
+          manifestBytes: built.manifestBytes,
+        };
+      },
+      async read() {
+        return stagedBytes;
+      },
+    };
+    const producer = createReportingProducer({
+      store,
+      source,
+      offerings: [offering],
+      contact: { name: 'Reporting operations' },
+    });
+    const anchor = Date.parse(request.period.start);
+    await producer.installConfiguration({
+      account: request.account,
+      sourceScope: request.sourceScope,
+      delivery_config_id: request.delivery_config_id,
+      delivery_config_version: request.delivery_config_version,
+      offeringId: offering.offeringId,
+      report_definition_id: request.report_definition_id,
+      feedPurpose: 'analytics',
+      requiredFinality: 'snapshot',
+      requestedMetrics: request.requestedMetrics,
+      requestedDimensions: [...request.requestedDimensions, 'package_id'],
+      constituents: [mediaBuy, packageItem],
+      mediaBuyIds: [mediaBuy.mediaBuyId],
+      packageBindings: [{ constituentId: packageItem.constituentId, mediaBuyId: mediaBuy.mediaBuyId }],
+      sourceTimezone: 'UTC',
+      schedule: {
+        anchor: request.period.start,
+        periodMilliseconds: 86_400_000,
+        deliverySlaMilliseconds: 0,
+        recoveryWindowMilliseconds: 86_400_000,
+      },
+      sourceSettings: request.sourceSettings,
+      contract: request.contract,
+    });
+    [...store.configurations.values()][0].installedAt = new Date(anchor).toISOString();
+    const [obligation] = await producer.planObligations(new Date(anchor + 86_400_000).toISOString());
+    const outcome = await producer.runWorker({ now: () => new Date(anchor + 86_400_001), maxIterations: 1 });
+    assert.equal(sourceExecutionFinished, true);
+    assert.equal(outcome.failed, 1);
+    assert.equal(outcome.revisionsCommitted, 0);
+    assert.deepEqual(await store.listRevisions(obligation.reporting_obligation_id), []);
+    assert.ok(
+      (await store.listIssues(obligation.reporting_obligation_id)).some(
+        issue => issue.code === 'CONFIGURATION_REQUIRED'
+      )
+    );
+    reportedPackageId = packageItem.packageId;
+    const corrected = await producer.runWorker({ now: () => new Date(anchor + 86_431_000), maxIterations: 1 });
+    assert.equal(corrected.revisionsCommitted, 1);
+    assert.equal(
+      (await store.listRevisions(obligation.reporting_obligation_id))[0].rows[0].package_id,
+      packageItem.packageId
+    );
+  });
+
+  test('refuses custom package rows when no packages are covered but still admits buy-level rows', async () => {
+    const request = redactedReportingSourceRequestV1();
+    const store = new MemoryLedgerStore();
+    let statedPackageId = 'uncovered-package';
+    let stagedBytes;
+    const source = {
+      capabilities: reportingSourceCapabilitiesV1([redactedReportingSourceOfferingV1]),
+      async execute(slice) {
+        const fixture = redactedReportingSourceResultV1('basic', slice);
+        const row = {
+          media_buy_id: slice.coverage.mediaBuyIds[0],
+          ...(statedPackageId ? { package_id: statedPackageId } : {}),
+          impressions: 10,
+          spend: '1.25',
+        };
+        stagedBytes = Buffer.from(`${JSON.stringify(row)}\n`);
+        const objects = fixture.manifest.objects.map(object => ({
+          ...object,
+          sha256: createHash('sha256').update(stagedBytes).digest('hex'),
+          byteCount: stagedBytes.length,
+        }));
+        const built = buildReportingSourceManifestV1({
+          level: 'basic',
+          request: slice,
+          stagedCommitRef: fixture.result.response.manifest.stagedCommitRef,
+          objects,
+          controlTotals: fixture.manifest.controlTotals,
+          metricAvailability: fixture.manifest.metricAvailability,
+          coverage: fixture.manifest.coverage,
+          observedAt: fixture.manifest.period.observedAt,
+          dataThrough: fixture.manifest.period.dataThrough,
+          finalityEvidence: fixture.manifest.finality.evidence,
+          acquiredAt: fixture.manifest.acquiredAt,
+          explicitZero: fixture.manifest.explicitZero,
+          eventTimeRange: fixture.manifest.eventTimeRange,
+          completeness: fixture.manifest.completeness,
+        });
+        return {
+          ok: true,
+          response: completedReportingSourceResponseV1({ request: slice, manifest: built.reference }),
+          manifestBytes: built.manifestBytes,
+        };
+      },
+      async read() {
+        return stagedBytes;
+      },
+    };
+    const producer = createReportingProducer({
+      store,
+      source,
+      offerings: [redactedReportingSourceOfferingV1],
+      contact: { name: 'Reporting operations' },
+    });
+    const anchor = Date.parse(request.period.start);
+    await producer.installConfiguration({
+      account: request.account,
+      sourceScope: request.sourceScope,
+      delivery_config_id: request.delivery_config_id,
+      delivery_config_version: request.delivery_config_version,
+      offeringId: request.offeringId,
+      report_definition_id: request.report_definition_id,
+      feedPurpose: 'analytics',
+      requiredFinality: 'snapshot',
+      requestedMetrics: request.requestedMetrics,
+      requestedDimensions: request.requestedDimensions,
+      constituents: request.coverage.constituents,
+      mediaBuyIds: request.coverage.mediaBuyIds,
+      sourceTimezone: 'UTC',
+      schedule: {
+        anchor: request.period.start,
+        periodMilliseconds: 86_400_000,
+        deliverySlaMilliseconds: 0,
+        recoveryWindowMilliseconds: 86_400_000,
+      },
+      sourceSettings: request.sourceSettings,
+      contract: request.contract,
+    });
+    [...store.configurations.values()][0].installedAt = new Date(anchor).toISOString();
+    const [obligation] = await producer.planObligations(new Date(anchor + 86_400_000).toISOString());
+    const rejected = await producer.runWorker({ now: () => new Date(anchor + 86_400_001), maxIterations: 1 });
+    assert.equal(rejected.failed, 1);
+    assert.deepEqual(await store.listRevisions(obligation.reporting_obligation_id), []);
+    assert.ok(
+      (await store.listIssues(obligation.reporting_obligation_id)).some(
+        issue => issue.code === 'CONFIGURATION_REQUIRED'
+      )
+    );
+    statedPackageId = undefined;
+    const accepted = await producer.runWorker({ now: () => new Date(anchor + 86_431_000), maxIterations: 1 });
+    assert.equal(accepted.revisionsCommitted, 1);
+    assert.equal(
+      Object.hasOwn((await store.listRevisions(obligation.reporting_obligation_id))[0].rows[0], 'package_id'),
+      false
+    );
+  });
+
   test('projects all five reporting health states including zero-row satisfaction', () => {
     const obligation = healthObligation();
     assert.equal(projectReportingObligationHealthV1(obligation, [], '2026-09-02T00:30:00Z').health, 'waiting');
@@ -1688,6 +1989,14 @@ describe('seller reporting ledger', () => {
     assert.equal(revisions[0].binding.rowCount, 2);
     assert.equal(revisions[0].rows[0].impressions, 3);
     assert.equal(revisions[0].wireRevision.control_totals.find(value => value.name === 'spend').value, '1.25');
+    assert.equal(
+      Object.hasOwn(
+        revisions[0].wireRevision.control_totals.find(value => value.name === 'spend'),
+        'unit'
+      ),
+      false
+    );
+    assert.equal(revisions[0].wireRevision.control_totals.find(value => value.name === 'impressions').unit, undefined);
     assert.equal(completeNotificationAttempts, 2);
     assert.equal((await store.listPendingTransitions()).length, 0);
 
@@ -2184,6 +2493,13 @@ describe('seller reporting ledger', () => {
     const adjustments = await store.listAdjustments(obligation.reporting_obligation_id);
     assert.equal(revisions.length, 1);
     assert.equal(revisions[0].finality, 'official');
+    assert.equal(
+      Object.hasOwn(
+        revisions[0].wireRevision.control_totals.find(value => value.name === 'spend'),
+        'unit'
+      ),
+      false
+    );
     assert.equal(revisions[0].supersedes_reporting_revision_id, undefined);
     const canonicalRowsDigest = createHash('sha256').update(canonicalJsonV1(revisions[0].rows)).digest('hex');
     assert.equal(revisions[0].wireRevision.canonical_content_digest.value, canonicalRowsDigest);
@@ -2191,6 +2507,13 @@ describe('seller reporting ledger', () => {
     assert.equal(adjustments.length, 1);
     assert.equal(adjustments[0].adjusts_reporting_revision_id, revisions[0].reporting_revision_id);
     assert.equal(adjustments[0].binding.rowCount, 1);
+    assert.equal(
+      Object.hasOwn(
+        adjustments[0].wireAdjustment.control_total_deltas.find(value => value.name === 'spend'),
+        'unit'
+      ),
+      false
+    );
     const { canonical_adjustment_sha256: adjustmentDigest, ...unsignedAdjustment } = adjustments[0].wireAdjustment;
     assert.equal(adjustmentDigest, sha(unsignedAdjustment));
     assert.equal(
@@ -2247,5 +2570,112 @@ describe('seller reporting ledger', () => {
     const parsedExact = GetReportingStatusResponseSchema.safeParse(exact);
     assert.equal(parsedExact.success, true, parsedExact.success ? undefined : JSON.stringify(parsedExact.error.issues));
     assert.equal(validateResponse('get_reporting_status', exact, '3.2.1').valid, true);
+  });
+
+  test('correction deltas retain the unit of an immutable earlier official revision', async () => {
+    const store = new MemoryLedgerStore();
+    const request = redactedReportingSourceRequestV1();
+    const { cadence, ...base } = redactedReportingSourceOfferingV1;
+    const offering = {
+      ...base,
+      publicationClass: 'AUTHORITATIVE',
+      revisionSemantics: 'official_with_declared_correction_policy',
+      finalization: {
+        schedule: { sourceLocalReadyTime: '00:00', daysAfterPeriodEnd: 0 },
+        expectedAvailabilityLag: 'PT0S',
+        worstCaseAvailabilityLag: 'P1D',
+        triggerSupport: cadence.triggerSupport,
+        correctionWindow: 'P3D',
+        correctionPolicy: 'immutable_correction',
+      },
+    };
+    const anchor = Date.parse(request.period.start);
+    let publication = 0;
+    const source = createInlineReportingSourceExecutor(input => {
+      publication += 1;
+      return {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        media_buy_deliveries: [
+          {
+            media_buy_id: request.coverage.mediaBuyIds[0],
+            totals: { impressions: publication, spend: `0.${publication}0` },
+          },
+        ],
+        data_through: input.end_date,
+        observed_at: publication === 1 ? input.end_date : new Date(anchor + 3 * 86_400_000 + 1).toISOString(),
+        is_final: true,
+        notification_type: publication === 1 ? 'final' : 'adjusted',
+      };
+    }, offering);
+    const producer = createReportingProducer({
+      store,
+      source,
+      offerings: [offering],
+      contact: { name: 'Reporting operations' },
+    });
+    await producer.installConfiguration({
+      account: request.account,
+      sourceScope: request.sourceScope,
+      delivery_config_id: request.delivery_config_id,
+      delivery_config_version: request.delivery_config_version,
+      offeringId: offering.offeringId,
+      report_definition_id: request.report_definition_id,
+      feedPurpose: 'billing',
+      requiredFinality: 'official',
+      finalityPolicy: {
+        policyId: 'fixture-source-final-v1',
+        basis: 'source_final',
+        sourceSignal: 'get_media_buy_delivery.is_final',
+      },
+      canonicalization: {
+        id: 'fixture-jcs-v1',
+        uri: request.contract.schemaUri,
+        sha256: request.contract.schemaSha256,
+        primaryKeys: ['media_buy_id'],
+      },
+      requestedMetrics: request.requestedMetrics,
+      requestedDimensions: request.requestedDimensions,
+      constituents: request.coverage.constituents,
+      mediaBuyIds: request.coverage.mediaBuyIds,
+      sourceTimezone: 'UTC',
+      schedule: {
+        anchor: request.period.start,
+        periodMilliseconds: 86_400_000,
+        deliverySlaMilliseconds: 0,
+        recoveryWindowMilliseconds: 3 * 86_400_000,
+        officialAfterMilliseconds: 0,
+        restatementMilliseconds: [2 * 86_400_000],
+      },
+      sourceSettings: request.sourceSettings,
+      contract: request.contract,
+    });
+    [...store.configurations.values()][0].installedAt = new Date(anchor).toISOString();
+    const [obligation] = await producer.planObligations(new Date(anchor + 86_400_000).toISOString());
+    const officialOutcome = await producer.runWorker({ now: () => new Date(anchor + 86_400_001), maxIterations: 2 });
+    assert.equal(officialOutcome.revisionsCommitted, 1);
+
+    // The persisted official revision defines the correction unit. Its EUR
+    // value also proves the source's USD currency is not substituted.
+    const official = [...store.revisions.values()][0];
+    official.wireRevision.control_totals.find(total => total.name === 'spend').unit = 'EUR';
+    const content = canonicalJsonV1({
+      reporting_revision_id: official.reporting_revision_id,
+      row_count: official.rows.length,
+      control_totals: official.wireRevision.control_totals,
+      reporting_rows: official.rows,
+    });
+    const digest = createHash('sha256').update(content).digest('hex');
+    official.binding.sha256 = digest;
+    official.binding.byteCount = Buffer.byteLength(content);
+    official.wireRevision.revision_content_sha256 = digest;
+
+    const correctionOutcome = await producer.runWorker({
+      now: () => new Date(anchor + 3 * 86_400_000),
+      maxIterations: 2,
+    });
+    assert.equal(correctionOutcome.revisionsCommitted, 1);
+    const [adjustment] = await store.listAdjustments(obligation.reporting_obligation_id);
+    assert.equal(adjustment.wireAdjustment.control_total_deltas.find(total => total.name === 'spend').unit, 'EUR');
   });
 });
