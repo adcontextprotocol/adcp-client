@@ -201,6 +201,68 @@ async function withdrawnHistoryBudgetFixture(t) {
 }
 
 describe('seller reporting ledger', () => {
+  test('direct installs require each package binding to name an authorized media buy', async () => {
+    const request = redactedReportingSourceRequestV1();
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.applicability.constituentKinds.push('package_item');
+    offering.dimensions.push({ name: 'package_id', support: 'exact' });
+    const mediaBuy = request.coverage.constituents[0];
+    const packageItem = {
+      constituentId: 'direct-package-constituent',
+      constituentKind: 'package_item',
+      productId: mediaBuy.productId,
+      packageId: 'direct-package',
+      productBinding: {
+        bindingKind: 'package_item_product',
+        bindingId: 'direct-package-binding',
+        bindingVersion: 1,
+        bindingSha256: 'a'.repeat(64),
+        owner: 'caller',
+        productId: mediaBuy.productId,
+        packageId: 'direct-package',
+      },
+    };
+    const store = new MemoryLedgerStore();
+    const producer = createReportingProducer({
+      store,
+      source: createInlineReportingSourceExecutor(() => [], offering),
+      offerings: [offering],
+      contact: { name: 'Reporting operations' },
+    });
+    const input = {
+      account: request.account,
+      sourceScope: request.sourceScope,
+      delivery_config_id: request.delivery_config_id,
+      delivery_config_version: request.delivery_config_version,
+      offeringId: offering.offeringId,
+      report_definition_id: request.report_definition_id,
+      feedPurpose: 'analytics',
+      requiredFinality: 'snapshot',
+      requestedMetrics: request.requestedMetrics,
+      requestedDimensions: [...request.requestedDimensions, 'package_id'],
+      constituents: [mediaBuy, packageItem],
+      mediaBuyIds: [mediaBuy.mediaBuyId],
+      sourceTimezone: 'UTC',
+      schedule: {
+        anchor: '2026-09-01T00:00:00.000Z',
+        periodMilliseconds: 86_400_000,
+        deliverySlaMilliseconds: 0,
+        recoveryWindowMilliseconds: 86_400_000,
+      },
+      sourceSettings: request.sourceSettings,
+      contract: request.contract,
+    };
+    await assert.rejects(producer.installConfiguration(input), /package bindings/);
+    await assert.rejects(
+      producer.installConfiguration({
+        ...input,
+        packageBindings: [{ constituentId: packageItem.constituentId, mediaBuyId: 'other-media-buy' }],
+      }),
+      /package bindings/
+    );
+    assert.deepEqual(await store.listConfigurations(), []);
+  });
+
   test('projects all five reporting health states including zero-row satisfaction', () => {
     const obligation = healthObligation();
     assert.equal(projectReportingObligationHealthV1(obligation, [], '2026-09-02T00:30:00Z').health, 'waiting');
@@ -1688,6 +1750,8 @@ describe('seller reporting ledger', () => {
     assert.equal(revisions[0].binding.rowCount, 2);
     assert.equal(revisions[0].rows[0].impressions, 3);
     assert.equal(revisions[0].wireRevision.control_totals.find(value => value.name === 'spend').value, '1.25');
+    assert.equal(revisions[0].wireRevision.control_totals.find(value => value.name === 'spend').unit, 'USD');
+    assert.equal(revisions[0].wireRevision.control_totals.find(value => value.name === 'impressions').unit, undefined);
     assert.equal(completeNotificationAttempts, 2);
     assert.equal((await store.listPendingTransitions()).length, 0);
 
@@ -2184,6 +2248,7 @@ describe('seller reporting ledger', () => {
     const adjustments = await store.listAdjustments(obligation.reporting_obligation_id);
     assert.equal(revisions.length, 1);
     assert.equal(revisions[0].finality, 'official');
+    assert.equal(revisions[0].wireRevision.control_totals.find(value => value.name === 'spend').unit, 'USD');
     assert.equal(revisions[0].supersedes_reporting_revision_id, undefined);
     const canonicalRowsDigest = createHash('sha256').update(canonicalJsonV1(revisions[0].rows)).digest('hex');
     assert.equal(revisions[0].wireRevision.canonical_content_digest.value, canonicalRowsDigest);
@@ -2191,6 +2256,7 @@ describe('seller reporting ledger', () => {
     assert.equal(adjustments.length, 1);
     assert.equal(adjustments[0].adjusts_reporting_revision_id, revisions[0].reporting_revision_id);
     assert.equal(adjustments[0].binding.rowCount, 1);
+    assert.equal(adjustments[0].wireAdjustment.control_total_deltas.find(value => value.name === 'spend').unit, 'USD');
     const { canonical_adjustment_sha256: adjustmentDigest, ...unsignedAdjustment } = adjustments[0].wireAdjustment;
     assert.equal(adjustmentDigest, sha(unsignedAdjustment));
     assert.equal(

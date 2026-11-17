@@ -682,7 +682,7 @@
     "revisions": [
       {
         "reporting_revision_id": "rrev_328f2ee75243aed6f8ca8417885718a4",
-        "revision_content_sha256": "6d7b9b012026385b00138b6c82bdf99fa36c8d4606bde5b23da833605f9d1576",
+        "revision_content_sha256": "b65420fe284c3d7b2fa6e071d7f6623fa4b6fd2383bef2ecf19211f385837fdb",
         "report_definition_id": "delivery-daily-v1",
         "report_definition_uri": "https://contracts.example/reporting/delivery-daily-v1",
         "report_definition_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -727,14 +727,15 @@
           {
             "name": "spend",
             "value": "2.5",
-            "value_type": "decimal"
+            "value_type": "decimal",
+            "unit": "USD"
           }
         ],
         "created_at": "<wall-clock>"
       },
       {
         "reporting_revision_id": "rrev_8fd3b428b979ed1ad5230e992e85fb24",
-        "revision_content_sha256": "3ca917826f0c945b31ec1042f65e378c8800d700cc4d61787203345f971f9a73",
+        "revision_content_sha256": "d1b5800744d7ce3401ddeeb0778b20549ff9eadc9af446989d278a7674436b20",
         "report_definition_id": "delivery-daily-v1",
         "report_definition_uri": "https://contracts.example/reporting/delivery-daily-v1",
         "report_definition_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -779,14 +780,15 @@
           {
             "name": "spend",
             "value": "2.5",
-            "value_type": "decimal"
+            "value_type": "decimal",
+            "unit": "USD"
           }
         ],
         "created_at": "<wall-clock>"
       },
       {
         "reporting_revision_id": "rrev_7ec1110de85e1d68bc48ffbbd489e4c1",
-        "revision_content_sha256": "ee4e7e62d7644ffad1aa416a47ea66aada4566220eb6a40dd8a49e3a23a2f40b",
+        "revision_content_sha256": "fb734e76eb4520decece762d383876b93558bb5366014e81c38968129c0b91e2",
         "report_definition_id": "delivery-daily-v1",
         "report_definition_uri": "https://contracts.example/reporting/delivery-daily-v1",
         "report_definition_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -831,7 +833,8 @@
           {
             "name": "spend",
             "value": "2.5",
-            "value_type": "decimal"
+            "value_type": "decimal",
+            "unit": "USD"
           }
         ],
         "created_at": "<wall-clock>"
@@ -866,7 +869,7 @@
     "sequence_number": 1,
     "reporting_revision_binding": {
       "reporting_revision_id": "rrev_328f2ee75243aed6f8ca8417885718a4",
-      "content_sha256": "6d7b9b012026385b00138b6c82bdf99fa36c8d4606bde5b23da833605f9d1576",
+      "content_sha256": "b65420fe284c3d7b2fa6e071d7f6623fa4b6fd2383bef2ecf19211f385837fdb",
       "row_count": 1,
       "control_totals": [
         {
@@ -877,13 +880,14 @@
         {
           "name": "spend",
           "value": "2.5",
-          "value_type": "decimal"
+          "value_type": "decimal",
+          "unit": "USD"
         }
       ]
     },
     "reporting_revision": {
       "reporting_revision_id": "rrev_328f2ee75243aed6f8ca8417885718a4",
-      "revision_content_sha256": "6d7b9b012026385b00138b6c82bdf99fa36c8d4606bde5b23da833605f9d1576",
+      "revision_content_sha256": "b65420fe284c3d7b2fa6e071d7f6623fa4b6fd2383bef2ecf19211f385837fdb",
       "report_definition_id": "delivery-daily-v1",
       "report_definition_uri": "https://contracts.example/reporting/delivery-daily-v1",
       "report_definition_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -928,7 +932,8 @@
         {
           "name": "spend",
           "value": "2.5",
-          "value_type": "decimal"
+          "value_type": "decimal",
+          "unit": "USD"
         }
       ],
       "created_at": "<wall-clock>"
@@ -959,7 +964,7 @@
           },
           "reporting_obligation_id": "robl_e09e4257780e4c490e74060ae367cc4b",
           "reporting_revision_id": "rrev_328f2ee75243aed6f8ca8417885718a4",
-          "observed_revision_content_sha256": "6d7b9b012026385b00138b6c82bdf99fa36c8d4606bde5b23da833605f9d1576",
+          "observed_revision_content_sha256": "b65420fe284c3d7b2fa6e071d7f6623fa4b6fd2383bef2ecf19211f385837fdb",
           "consumer_status": "received",
           "status_as_of": "2026-09-04T00:01:00.000Z",
           "recorded_at": "<wall-clock>"

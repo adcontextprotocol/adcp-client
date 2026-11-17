@@ -941,6 +941,7 @@ function planObligation(
     periodOrdinal,
     period: { start: new Date(start).toISOString(), end: new Date(end).toISOString() },
     constituents: configuration.constituents,
+    ...(configuration.packageBindings?.length ? { packageBindings: configuration.packageBindings } : {}),
     coverageRequirement: 'full',
   };
   const semanticFingerprint = prefixedDigest(semantic);
@@ -977,11 +978,26 @@ function planObligation(
       partiallyCoveredMediaBuyIds: [],
       unsupportedMediaBuyIds: [],
       unknownMediaBuyIds: [],
+      ...(configuration.packageBindings?.length
+        ? {
+            packageIds: [
+              ...new Set(configuration.constituents.flatMap(value => (value.packageId ? [value.packageId] : []))),
+            ].sort(),
+            coveredPackageIds: [
+              ...new Set(configuration.constituents.flatMap(value => (value.packageId ? [value.packageId] : []))),
+            ].sort(),
+            unsupportedPackageIds: [],
+            unknownPackageIds: [],
+          }
+        : {}),
     },
     requestedMetrics: [...configuration.requestedMetrics],
     requestedDimensions: [...configuration.requestedDimensions],
     constituents: structuredClone(configuration.constituents),
     mediaBuyIds: [...configuration.mediaBuyIds].sort(),
+    ...(configuration.packageBindings?.length
+      ? { packageBindings: structuredClone(configuration.packageBindings) }
+      : {}),
     sourceSettings: structuredClone(configuration.sourceSettings),
     contract: structuredClone(configuration.contract),
     expectedAt: new Date(expectedAt).toISOString(),
@@ -1014,6 +1030,7 @@ function subscriptionConfiguration(
     'owedSet',
     'constituents',
     'mediaBuyIds',
+    'packageBindings',
   ]) {
     if (Object.hasOwn(input, field)) {
       throw new TypeError(`Subscription configuration input must not supply ${field}`);
@@ -1109,6 +1126,19 @@ function planOwedSetObligation(
   ) {
     throw new Error('Subscription obligation media buys must equal its constituent denominator');
   }
+  const packageBindings = structuredClone(input.packageBindings ?? []);
+  const packageConstituentIds = new Set(
+    constituents.filter(value => value.constituentKind === 'package_item').map(value => value.constituentId)
+  );
+  if (
+    packageBindings.length !== packageConstituentIds.size ||
+    new Set(packageBindings.map(value => value.constituentId)).size !== packageBindings.length ||
+    packageBindings.some(
+      value => !packageConstituentIds.has(value.constituentId) || !mediaBuyIds.includes(value.mediaBuyId)
+    )
+  ) {
+    throw new TypeError('Subscription obligation package bindings must match its authorized constituents');
+  }
   const listedProducts = listedReportingSourceProductIdsV1(offering.applicability);
   if (listedProducts !== undefined && constituents.some(value => !listedProducts.includes(value.productId))) {
     throw new Error('Reporting constituent product is outside its offering applicability');
@@ -1130,6 +1160,7 @@ function planOwedSetObligation(
     period: { start: periodStart, end: periodEnd },
     constituents,
     mediaBuyIds,
+    ...(packageBindings.length ? { packageBindings } : {}),
     coverageRequirement: 'full',
   };
   return {
@@ -1159,11 +1190,22 @@ function planOwedSetObligation(
       partiallyCoveredMediaBuyIds: [],
       unsupportedMediaBuyIds: [],
       unknownMediaBuyIds: [],
+      ...(packageBindings.length
+        ? {
+            packageIds: [...new Set(constituents.flatMap(value => (value.packageId ? [value.packageId] : [])))].sort(),
+            coveredPackageIds: [
+              ...new Set(constituents.flatMap(value => (value.packageId ? [value.packageId] : []))),
+            ].sort(),
+            unsupportedPackageIds: [],
+            unknownPackageIds: [],
+          }
+        : {}),
     },
     requestedMetrics: [...configuration.requestedMetrics],
     requestedDimensions: [...configuration.requestedDimensions],
     constituents,
     mediaBuyIds,
+    ...(packageBindings.length ? { packageBindings } : {}),
     sourceSettings: structuredClone(configuration.sourceSettings),
     contract: structuredClone(configuration.contract),
     expectedAt: new Date(expectedAt).toISOString(),
@@ -1220,6 +1262,9 @@ function sourceRequest(
   const periodEnd = instant(obligation.period.end, 'period.end');
   const cutoff = new Date(Math.min(now.getTime(), periodEnd)).toISOString();
   const productIds = [...new Set(obligation.constituents.map(value => value.productId))].sort();
+  const packageIds = [
+    ...new Set(obligation.constituents.flatMap(value => (value.packageId ? [value.packageId] : []))),
+  ].sort();
   return {
     contractVersion: REPORTING_SOURCE_CONTRACT_VERSION_V1,
     identity: {
@@ -1261,7 +1306,8 @@ function sourceRequest(
       constituents: structuredClone(obligation.constituents),
       productIds,
       mediaBuyIds: [...obligation.mediaBuyIds],
-      packageIds: [],
+      packageIds,
+      ...(obligation.packageBindings?.length ? { packageBindings: structuredClone(obligation.packageBindings) } : {}),
       denominatorFingerprint: reportingCoverageDenominatorFingerprintV1(obligation.constituents),
     },
     requestedMetrics: [...obligation.requestedMetrics],
@@ -1381,7 +1427,8 @@ function buildRevision(
     manifest.publication.namespace,
     manifest.publication.publicationId,
   ]).slice(0, 32)}`;
-  const controlTotals = reportingControlTotals(rows, obligation.requestedMetrics);
+  // Source conformance already bound the manifest's currency to the frozen obligation.
+  const controlTotals = reportingControlTotals(rows, obligation.requestedMetrics, manifest.sourceSettings.currency);
   const contentBytes = Buffer.from(
     canonicalize({
       reporting_revision_id: revisionId,
@@ -1564,7 +1611,7 @@ function buildAdjustment(
     throw new Error('Reporting correction creation predates its source observation');
   }
   const createdAt = createdAtValue.toISOString();
-  const correctedTotals = reportingControlTotals(rows, obligation.requestedMetrics);
+  const correctedTotals = reportingControlTotals(rows, obligation.requestedMetrics, manifest.sourceSettings.currency);
   const effectiveTotals = effectiveControlTotals(official, previous);
   const controlTotalDeltas = correctedTotals.flatMap(total => {
     if (total.name === 'row_count') return [];
@@ -1630,7 +1677,8 @@ type Decimal = { coefficient: bigint; scale: number };
 
 function reportingControlTotals(
   rows: readonly Record<string, unknown>[],
-  metrics: readonly string[]
+  metrics: readonly string[],
+  currency: string
 ): ReportingControlTotal[] {
   return [...new Set(metrics)].sort().flatMap(name => {
     let sum: Decimal = { coefficient: 0n, scale: 0 };
@@ -1643,7 +1691,14 @@ function reportingControlTotals(
       if (parsed.scale > 0) valueType = 'decimal';
       sum = addDecimal(sum, parsed);
     }
-    return [{ name, value: formatDecimal(sum), value_type: valueType } as ReportingControlTotal];
+    return [
+      {
+        name,
+        value: formatDecimal(sum),
+        value_type: valueType,
+        ...(name === 'spend' ? { unit: currency } : {}),
+      } as ReportingControlTotal,
+    ];
   });
 }
 
@@ -1783,10 +1838,10 @@ function wireCoverage(obligation: ReportingLedgerObligationV1) {
     partially_covered_media_buy_ids: obligation.coverage.partiallyCoveredMediaBuyIds,
     unsupported_media_buy_ids: obligation.coverage.unsupportedMediaBuyIds,
     unknown_media_buy_ids: obligation.coverage.unknownMediaBuyIds,
-    package_ids: [],
-    covered_package_ids: [],
-    unsupported_package_ids: [],
-    unknown_package_ids: [],
+    package_ids: obligation.coverage.packageIds ?? [],
+    covered_package_ids: obligation.coverage.coveredPackageIds ?? [],
+    unsupported_package_ids: obligation.coverage.unsupportedPackageIds ?? [],
+    unknown_package_ids: obligation.coverage.unknownPackageIds ?? [],
     limitations: [],
   };
 }
@@ -2149,6 +2204,26 @@ function validateConfigurationAgainstOffering(
     ])
   ) {
     throw new Error('Reporting configuration media-buy scope must equal its constituent denominator');
+  }
+  const packageConstituents = configuration.constituents.filter(value => value.constituentKind === 'package_item');
+  const packageConstituentIds = new Set(packageConstituents.map(value => value.constituentId));
+  const packageBindings = configuration.packageBindings ?? [];
+  const mediaBuyIds = new Set(configuration.mediaBuyIds);
+  if (
+    !Array.isArray(packageBindings) ||
+    packageConstituentIds.size !== packageConstituents.length ||
+    packageBindings.length !== packageConstituents.length ||
+    packageBindings.some(
+      value =>
+        !value ||
+        typeof value.constituentId !== 'string' ||
+        typeof value.mediaBuyId !== 'string' ||
+        !packageConstituentIds.has(value.constituentId) ||
+        !mediaBuyIds.has(value.mediaBuyId)
+    ) ||
+    new Set(packageBindings.map(value => value.constituentId)).size !== packageBindings.length
+  ) {
+    throw new TypeError('Reporting configuration package bindings must match its authorized constituents');
   }
 }
 

@@ -1925,21 +1925,34 @@ describe('ReliableReportingService', () => {
     }
   });
 
-  test('refuses package_item coverage the inline executor can never produce', async () => {
-    // The inline executor narrows applicability to media_buy, so the routed
-    // offering must advertise that narrowing too: otherwise a package_item
-    // denominator installs against the declared applicability and then fails
-    // every execute forever.
-    // The adapter *declares* both kinds; only the executor's narrowing removes
-    // package_item, so this fixture is what makes the narrowing load-bearing.
+  test('installs package items bound to authorized media buys', async () => {
     const broad = adapter();
     broad.sourceOffering.applicability = {
       ...broad.sourceOffering.applicability,
       constituentKinds: ['media_buy', 'package_item'],
     };
-    assert.deepEqual(serviceFixture({ adapters: { fixture: broad } }).service.producer !== undefined, true);
-
+    broad.sourceOffering.dimensions.push({ name: 'package_id', support: 'exact' });
+    broad.deliveryOffering.reporting_profile.primary_keys.push('package_id');
+    broad.fetchSlice = (request, context) => ({
+      reporting_period: { start: request.start_date, end: request.end_date },
+      currency: context.sourceSettings.currency,
+      reporting_rows: [
+        { media_buy_id: 'media-buy-account-a', package_id: 'package-1', impressions: 10, spend: '1.25' },
+      ],
+      availability_evidence: {
+        version: '1.0',
+        cells: request.constituents.flatMap(constituent =>
+          request.requested_metrics.map(metric => ({
+            constituent_id: constituent.constituent_id,
+            metric,
+            status: 'present',
+            data_through: request.end_date,
+          }))
+        ),
+      },
+    });
     const [template] = redactedReportingSourceRequestV1().coverage.constituents;
+    const mediaBuyConstituent = authorizedConstituent('account-a');
     const packageConstituent = {
       constituentId: 'constituent-package',
       constituentKind: 'package_item',
@@ -1954,14 +1967,115 @@ describe('ReliableReportingService', () => {
     };
     delete packageConstituent.productBinding.mediaBuyId;
 
+    const trustedPackageBindings = [
+      { constituentId: packageConstituent.constituentId, mediaBuyId: mediaBuyConstituent.mediaBuyId },
+    ];
+    let resolvedPackageBindings = [];
     const packaged = serviceFixture({
       adapters: { fixture: broad },
-      resolveCoverage: () => ({ constituents: [packageConstituent] }),
+      resolveCoverage: () => ({
+        constituents: [mediaBuyConstituent, packageConstituent],
+        packageBindings: resolvedPackageBindings,
+      }),
     });
+    const input = configuration({ requestedDimensions: ['media_buy_id', 'package_id'] });
+    const now = new Date();
+    const boundary = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const anchor = new Date(boundary - 86_400_000).toISOString();
+    input.schedule.anchor = anchor;
+    const callerContext = { account: { id: 'account-a', ctx_metadata: {} } };
     await assert.rejects(
-      packaged.service.installConfiguration(configuration(), { account: { id: 'account-a', ctx_metadata: {} } }),
-      /constituent kind is outside its offering applicability/
+      packaged.service.installConfiguration(input, callerContext),
+      /bind every package_item constituent/
     );
+    resolvedPackageBindings = trustedPackageBindings;
+    await assert.rejects(
+      packaged.service.installConfiguration({ ...input, packageBindings: trustedPackageBindings }, callerContext),
+      /packageBindings/
+    );
+    await assert.rejects(
+      packaged.service.installConfiguration({ ...input, requestedDimensions: ['media_buy_id'] }, callerContext),
+      /package_id/
+    );
+    const installed = await packaged.service.installConfiguration(input, {
+      account: { id: 'account-a', ctx_metadata: {} },
+    });
+    assert.deepEqual(installed.packageBindings, [
+      { constituentId: packageConstituent.constituentId, mediaBuyId: mediaBuyConstituent.mediaBuyId },
+    ]);
+    packaged.store.configurations.get(installed.configurationId).installedAt = anchor;
+    const cycle = await packaged.service.runCycle({
+      accountId: 'account-a',
+      maxObligations: 1,
+      maxWorkerIterations: 1,
+    });
+    assert.equal(cycle.revisionsCommitted, 1);
+    const [obligation] = await packaged.store.listObligations('account-a');
+    assert.deepEqual(obligation.packageBindings, installed.packageBindings);
+    const [revision] = await packaged.store.listRevisions(obligation.reporting_obligation_id);
+    assert.deepEqual(revision.wireRevision.coverage.package_ids, ['package-1']);
+    assert.deepEqual(revision.wireRevision.coverage.covered_package_ids, ['package-1']);
+    const status = await packaged.service.platform.getReportingStatus(
+      { account: { account_id: 'account-a' }, view: 'periods' },
+      { account: { id: 'account-a' }, agent: { agent_url: 'https://buyer.example' } }
+    );
+    assert.deepEqual(status.periods[0].coverage.covered_package_ids, ['package-1']);
+    const summary = await packaged.service.platform.getReportingStatus(
+      { account: { account_id: 'account-a' }, view: 'summary' },
+      { account: { id: 'account-a' }, agent: { agent_url: 'https://buyer.example' } }
+    );
+    assert.deepEqual(summary.coverage.covered_package_ids, ['package-1']);
+  });
+
+  test('accepts the same package ID bound separately to two media buys', async () => {
+    const broad = adapter();
+    broad.sourceOffering.applicability = {
+      ...broad.sourceOffering.applicability,
+      constituentKinds: ['media_buy', 'package_item'],
+    };
+    broad.sourceOffering.dimensions.push({ name: 'package_id', support: 'exact' });
+    broad.deliveryOffering.reporting_profile.primary_keys.push('package_id');
+    const [template] = redactedReportingSourceRequestV1().coverage.constituents;
+    const firstBuy = authorizedConstituent('account-a');
+    const secondBuy = structuredClone(firstBuy);
+    secondBuy.constituentId = 'constituent-second-buy';
+    secondBuy.mediaBuyId = 'media-buy-account-b';
+    secondBuy.productBinding.mediaBuyId = secondBuy.mediaBuyId;
+    const packageFor = (constituentId, bindingId) => ({
+      constituentId,
+      constituentKind: 'package_item',
+      productId: template.productId,
+      packageId: 'shared-package',
+      productBinding: {
+        bindingKind: 'package_item_product',
+        bindingId,
+        bindingVersion: 1,
+        bindingSha256: 'a'.repeat(64),
+        owner: 'caller',
+        productId: template.productId,
+        packageId: 'shared-package',
+      },
+    });
+    const firstPackage = packageFor('a-package-constituent', 'binding-first-package');
+    const secondPackage = packageFor('B-package-constituent', 'binding-second-package');
+    const packaged = serviceFixture({
+      adapters: { fixture: broad },
+      resolveCoverage: () => ({
+        constituents: [firstBuy, secondBuy, firstPackage, secondPackage],
+        packageBindings: [
+          { constituentId: firstPackage.constituentId, mediaBuyId: firstBuy.mediaBuyId },
+          { constituentId: secondPackage.constituentId, mediaBuyId: secondBuy.mediaBuyId },
+        ],
+      }),
+    });
+    const installed = await packaged.service.installConfiguration(
+      configuration({ requestedDimensions: ['media_buy_id', 'package_id'] }),
+      { account: { id: 'account-a', ctx_metadata: {} } }
+    );
+    assert.deepEqual(installed.packageBindings, [
+      { constituentId: secondPackage.constituentId, mediaBuyId: secondBuy.mediaBuyId },
+      { constituentId: firstPackage.constituentId, mediaBuyId: firstBuy.mediaBuyId },
+    ]);
   });
 
   test('still checks offset behavior for an anchor beyond the forward horizon', async () => {

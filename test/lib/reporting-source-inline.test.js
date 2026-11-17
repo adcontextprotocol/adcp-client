@@ -66,7 +66,233 @@ function sharedMediaBuyCells(input, overrides = []) {
   };
 }
 
+function packageSlice(sourceExecutionKey) {
+  const slice = request(sourceExecutionKey);
+  const mediaBuy = slice.coverage.constituents[0];
+  const packageItem = {
+    constituentId: 'fixture-package-constituent',
+    constituentKind: 'package_item',
+    productId: mediaBuy.productId,
+    packageId: 'fixture-package',
+    productBinding: {
+      bindingKind: 'package_item_product',
+      packageId: 'fixture-package',
+      owner: 'caller',
+      bindingId: 'fixture-package-binding',
+      bindingVersion: 1,
+      bindingSha256: 'a'.repeat(64),
+      productId: mediaBuy.productId,
+    },
+  };
+  slice.coverage.constituents.push(packageItem);
+  slice.coverage.packageIds = [packageItem.packageId];
+  slice.coverage.packageBindings = [{ constituentId: packageItem.constituentId, mediaBuyId: mediaBuy.mediaBuyId }];
+  slice.coverage.denominatorFingerprint = reportingCoverageDenominatorFingerprintV1(slice.coverage.constituents);
+  slice.requestedDimensions.push('package_id');
+  return slice;
+}
+
 describe('createInlineReportingSourceExecutor', () => {
+  test('seals a package row against its frozen media-buy binding', async () => {
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.applicability.constituentKinds.push('package_item');
+    offering.dimensions.push({ name: 'package_id', support: 'exact' });
+    let fetched;
+    const source = createInlineReportingSourceExecutor(input => {
+      fetched = structuredClone(input);
+      return {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          { media_buy_id: 'fixture-media-buy', package_id: 'fixture-package', impressions: 10, spend: '1.25' },
+        ],
+        availability_evidence: presentAvailability(input),
+      };
+    }, offering);
+    const slice = packageSlice('fixture-inline-package-row');
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.coverage.status, 'full');
+    assert.deepEqual(fetched.constituents, [
+      { constituent_id: 'fixture-constituent', media_buy_id: 'fixture-media-buy' },
+      {
+        constituent_id: 'fixture-package-constituent',
+        media_buy_id: 'fixture-media-buy',
+        package_id: 'fixture-package',
+      },
+    ]);
+    assert.equal(manifest.coverage.constituents[1].status, 'present');
+  });
+
+  test('refuses a package row attached to another admitted media buy', async () => {
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.applicability.constituentKinds.push('package_item');
+    offering.dimensions.push({ name: 'package_id', support: 'exact' });
+    const slice = packageSlice('fixture-inline-wrong-package-buy');
+    const otherBuy = structuredClone(slice.coverage.constituents[0]);
+    otherBuy.constituentId = 'fixture-other-buy-constituent';
+    otherBuy.mediaBuyId = 'fixture-other-buy';
+    otherBuy.productBinding.mediaBuyId = otherBuy.mediaBuyId;
+    slice.coverage.constituents.push(otherBuy);
+    slice.coverage.mediaBuyIds.push(otherBuy.mediaBuyId);
+    const otherPackage = structuredClone(slice.coverage.constituents[1]);
+    otherPackage.constituentId = 'fixture-other-package-constituent';
+    otherPackage.packageId = 'fixture-other-package';
+    otherPackage.productBinding.packageId = otherPackage.packageId;
+    otherPackage.productBinding.bindingId = 'fixture-other-package-binding';
+    slice.coverage.constituents.push(otherPackage);
+    slice.coverage.packageIds.push(otherPackage.packageId);
+    slice.coverage.packageBindings.push({ constituentId: otherPackage.constituentId, mediaBuyId: otherBuy.mediaBuyId });
+    slice.coverage.denominatorFingerprint = reportingCoverageDenominatorFingerprintV1(slice.coverage.constituents);
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          { media_buy_id: otherBuy.mediaBuyId, package_id: 'fixture-package', impressions: 10, spend: '1.25' },
+        ],
+        availability_evidence: presentAvailability(input),
+      }),
+      offering
+    );
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'INTEGRITY_FAILED');
+    assert.match(result.error.safeMessage, /out-of-scope package row/);
+  });
+
+  test('allows package rows for authorized media buys without package constituents', async () => {
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.applicability.constituentKinds.push('package_item');
+    offering.dimensions.push({ name: 'package_id', support: 'exact' });
+    const slice = packageSlice('fixture-inline-mixed-buy-and-package');
+    const otherBuy = structuredClone(slice.coverage.constituents[0]);
+    otherBuy.constituentId = 'fixture-other-buy-constituent';
+    otherBuy.mediaBuyId = 'fixture-other-buy';
+    otherBuy.productBinding.mediaBuyId = otherBuy.mediaBuyId;
+    slice.coverage.constituents.push(otherBuy);
+    slice.coverage.mediaBuyIds.push(otherBuy.mediaBuyId);
+    slice.coverage.denominatorFingerprint = reportingCoverageDenominatorFingerprintV1(slice.coverage.constituents);
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          { media_buy_id: 'fixture-media-buy', package_id: 'fixture-package', impressions: 10, spend: '1.25' },
+          { media_buy_id: otherBuy.mediaBuyId, package_id: 'unlisted-package', impressions: 20, spend: '2.50' },
+        ],
+        availability_evidence: presentAvailability(input),
+      }),
+      offering
+    );
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, true, JSON.stringify(result));
+  });
+
+  test('requires a new generation before a package-scoped buy can publish another package', async () => {
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.applicability.constituentKinds.push('package_item');
+    offering.dimensions.push({ name: 'package_id', support: 'exact' });
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          { media_buy_id: 'fixture-media-buy', package_id: 'fixture-package', impressions: 10, spend: '1.25' },
+          { media_buy_id: 'fixture-media-buy', package_id: 'new-package', impressions: 20, spend: '2.50' },
+        ],
+        availability_evidence: presentAvailability(input),
+      }),
+      offering
+    );
+    const result = await source.execute(packageSlice('fixture-inline-new-package'), context());
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'INTEGRITY_FAILED');
+    assert.match(result.error.safeMessage, /out-of-scope package row/);
+  });
+
+  test('fails terminally when package rows lack exact availability evidence', async () => {
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.applicability.constituentKinds.push('package_item');
+    offering.dimensions.push({ name: 'package_id', support: 'exact' });
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          { media_buy_id: 'fixture-media-buy', package_id: 'fixture-package', impressions: 10, spend: '1.25' },
+        ],
+      }),
+      offering
+    );
+    const result = await source.execute(packageSlice('fixture-inline-package-no-evidence'), context());
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'UNSUPPORTED_OFFERING');
+    assert.equal(result.error.retry, 'terminal');
+    assert.match(result.error.safeMessage, /object response with availability_evidence/);
+    const bare = createInlineReportingSourceExecutor(() => [], offering);
+    const bareResult = await bare.execute(packageSlice('fixture-inline-package-bare-zero'), context());
+    assert.equal(bareResult.ok, false);
+    assert.equal(bareResult.error.code, 'UNSUPPORTED_OFFERING');
+    assert.equal(bareResult.error.retry, 'terminal');
+  });
+
+  test('keeps the same package ID isolated across two media buys', async () => {
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.applicability.constituentKinds.push('package_item');
+    offering.dimensions.push({ name: 'package_id', support: 'exact' });
+    const slice = packageSlice('fixture-inline-reused-package-id');
+    const otherBuy = structuredClone(slice.coverage.constituents[0]);
+    otherBuy.constituentId = 'fixture-other-buy-constituent';
+    otherBuy.mediaBuyId = 'fixture-other-buy';
+    otherBuy.productBinding.mediaBuyId = otherBuy.mediaBuyId;
+    const otherPackage = structuredClone(slice.coverage.constituents[1]);
+    otherPackage.constituentId = 'fixture-other-package-constituent';
+    otherPackage.productBinding.bindingId = 'fixture-other-package-binding';
+    slice.coverage.constituents.push(otherBuy, otherPackage);
+    slice.coverage.mediaBuyIds.push(otherBuy.mediaBuyId);
+    slice.coverage.packageBindings.push({ constituentId: otherPackage.constituentId, mediaBuyId: otherBuy.mediaBuyId });
+    slice.coverage.denominatorFingerprint = reportingCoverageDenominatorFingerprintV1(slice.coverage.constituents);
+    let fetched;
+    const source = createInlineReportingSourceExecutor(input => {
+      fetched = structuredClone(input);
+      return {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          { media_buy_id: 'fixture-media-buy', package_id: 'fixture-package', impressions: 10, spend: '1.25' },
+          { media_buy_id: otherBuy.mediaBuyId, package_id: 'fixture-package', impressions: 20, spend: '2.50' },
+        ],
+        availability_evidence: presentAvailability(input),
+      };
+    }, offering);
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.coverage.status, 'full');
+    assert.equal(manifest.coverage.constituents.length, 4);
+    assert.deepEqual(
+      fetched.constituents.filter(value => value.package_id),
+      [
+        {
+          constituent_id: 'fixture-package-constituent',
+          media_buy_id: 'fixture-media-buy',
+          package_id: 'fixture-package',
+        },
+        {
+          constituent_id: 'fixture-other-package-constituent',
+          media_buy_id: otherBuy.mediaBuyId,
+          package_id: 'fixture-package',
+        },
+      ]
+    );
+    assert.equal(
+      manifest.coverage.constituents.every(item => item.status === 'present'),
+      true
+    );
+  });
+
   test('wraps a synchronous delivery fetch and passes basic replay conformance', async () => {
     const calls = [];
     const source = createInlineReportingSourceExecutor((input, fetchContext) => {
