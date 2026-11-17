@@ -162,7 +162,7 @@ describe('createInlineReportingSourceExecutor', () => {
     assert.match(result.error.safeMessage, /out-of-scope package row/);
   });
 
-  test('allows package rows for authorized media buys without package constituents', async () => {
+  test('refuses package rows outside frozen package coverage on an otherwise admitted media buy', async () => {
     const offering = structuredClone(redactedReportingSourceOfferingV1);
     offering.applicability.constituentKinds.push('package_item');
     offering.dimensions.push({ name: 'package_id', support: 'exact' });
@@ -187,7 +187,30 @@ describe('createInlineReportingSourceExecutor', () => {
       offering
     );
     const result = await source.execute(slice, context());
-    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'INTEGRITY_FAILED');
+    assert.match(result.error.safeMessage, /out-of-scope package row/);
+  });
+
+  test('refuses a requested package dimension when no package is covered', async () => {
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.dimensions.push({ name: 'package_id', support: 'exact' });
+    const slice = request('fixture-inline-package-without-coverage');
+    slice.requestedDimensions.push('package_id');
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          { media_buy_id: 'fixture-media-buy', package_id: 'uncovered-package', impressions: 10, spend: '1.25' },
+        ],
+      }),
+      offering
+    );
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'INTEGRITY_FAILED');
+    assert.match(result.error.safeMessage, /out-of-scope package row/);
   });
 
   test('requires a new generation before a package-scoped buy can publish another package', async () => {

@@ -737,6 +737,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
             obligation,
             await readManifestRows(options.source, obligation, manifest, executionSignal, settlementGrace)
           );
+          assertRowsWithinFrozenPackageCoverage(obligation, rows);
           validateManifestFinalityForObligation(obligation, manifest);
           if (previous.some(value => value.finality === 'official')) {
             const official = previous.find(value => value.finality === 'official')!;
@@ -1243,6 +1244,40 @@ function withSubscriptionAccountId(
   });
 }
 
+function assertRowsWithinFrozenPackageCoverage(
+  obligation: ReportingLedgerObligationV1,
+  rows: readonly Record<string, unknown>[]
+): void {
+  const coveredPackageIds = new Set(obligation.coverage.coveredPackageIds ?? []);
+  const packageBindings = obligation.packageBindings ?? [];
+  if (coveredPackageIds.size === 0 && packageBindings.length === 0) {
+    if (rows.some(row => row.package_id !== undefined)) {
+      throw new ReportingSourceConfigurationError('Reporting source row is outside frozen package coverage');
+    }
+    return;
+  }
+  const packagesByConstituent = new Map(
+    obligation.constituents
+      .filter(constituent => constituent.constituentKind === 'package_item')
+      .map(constituent => [constituent.constituentId, constituent.packageId] as const)
+  );
+  const coveredPairs = new Set(
+    packageBindings.map(binding =>
+      JSON.stringify([binding.mediaBuyId, packagesByConstituent.get(binding.constituentId)])
+    )
+  );
+  for (const row of rows) {
+    if (
+      typeof row.media_buy_id !== 'string' ||
+      typeof row.package_id !== 'string' ||
+      !coveredPackageIds.has(row.package_id) ||
+      !coveredPairs.has(JSON.stringify([row.media_buy_id, row.package_id]))
+    ) {
+      throw new ReportingSourceConfigurationError('Reporting source row is outside frozen package coverage');
+    }
+  }
+}
+
 function boundedId(value: unknown, field: string): void {
   if (typeof value !== 'string' || value.length === 0 || value.length > 255) {
     throw new TypeError(`${field} must be a bounded non-empty string`);
@@ -1427,8 +1462,7 @@ function buildRevision(
     manifest.publication.namespace,
     manifest.publication.publicationId,
   ]).slice(0, 32)}`;
-  // Source conformance already bound the manifest's currency to the frozen obligation.
-  const controlTotals = reportingControlTotals(rows, obligation.requestedMetrics, manifest.sourceSettings.currency);
+  const controlTotals = reportingControlTotals(rows, obligation.requestedMetrics);
   const contentBytes = Buffer.from(
     canonicalize({
       reporting_revision_id: revisionId,
@@ -1611,7 +1645,7 @@ function buildAdjustment(
     throw new Error('Reporting correction creation predates its source observation');
   }
   const createdAt = createdAtValue.toISOString();
-  const correctedTotals = reportingControlTotals(rows, obligation.requestedMetrics, manifest.sourceSettings.currency);
+  const correctedTotals = reportingControlTotals(rows, obligation.requestedMetrics);
   const effectiveTotals = effectiveControlTotals(official, previous);
   const controlTotalDeltas = correctedTotals.flatMap(total => {
     if (total.name === 'row_count') return [];
@@ -1622,7 +1656,7 @@ function buildAdjustment(
             name: total.name,
             value: subtractDecimal(total.value, prior.value),
             value_type: total.value_type === 'decimal' || prior.value_type === 'decimal' ? 'decimal' : 'integer',
-            ...(total.unit ? { unit: total.unit } : {}),
+            ...(prior.unit !== undefined ? { unit: prior.unit } : {}),
           },
         ]
       : [];
@@ -1677,8 +1711,7 @@ type Decimal = { coefficient: bigint; scale: number };
 
 function reportingControlTotals(
   rows: readonly Record<string, unknown>[],
-  metrics: readonly string[],
-  currency: string
+  metrics: readonly string[]
 ): ReportingControlTotal[] {
   return [...new Set(metrics)].sort().flatMap(name => {
     let sum: Decimal = { coefficient: 0n, scale: 0 };
@@ -1696,7 +1729,6 @@ function reportingControlTotals(
         name,
         value: formatDecimal(sum),
         value_type: valueType,
-        ...(name === 'spend' ? { unit: currency } : {}),
       } as ReportingControlTotal,
     ];
   });

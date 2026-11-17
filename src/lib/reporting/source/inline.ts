@@ -1024,7 +1024,6 @@ async function executeAndSeal(
   );
   const sourceSnapshotsByMediaBuyId = groupSnapshotsByMediaBuyId(sourceSnapshots, admittedMediaBuyIds);
   const auxiliarySnapshotsByMediaBuyId = groupSnapshotsByMediaBuyId(auxiliarySnapshots, admittedMediaBuyIds);
-  const packageScopedMediaBuyIds = new Set(packageMediaBuyByConstituentId.values());
   const admittedPackagePairs = new Set(
     request.coverage.constituents
       .filter(constituent => constituent.constituentKind === 'package_item')
@@ -1039,7 +1038,7 @@ async function executeAndSeal(
       return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery fetch returned an out-of-scope row');
     }
     if (
-      admittedPackagePairs.size > 0 &&
+      captureLayout.indexOf.has('package_id') &&
       allSnapshots.some(snapshot => {
         if (!snapshot) return false;
         const packageId = snapshotFieldValue(snapshot, 'package_id');
@@ -1047,8 +1046,7 @@ async function executeAndSeal(
           packageId !== undefined &&
           (typeof packageId !== 'string' ||
             snapshot.mediaBuyId === undefined ||
-            (packageScopedMediaBuyIds.has(snapshot.mediaBuyId) &&
-              !admittedPackagePairs.has(packagePairKey(snapshot.mediaBuyId, packageId))))
+            !admittedPackagePairs.has(packagePairKey(snapshot.mediaBuyId, packageId)))
         );
       })
     ) {
