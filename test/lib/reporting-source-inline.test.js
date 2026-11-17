@@ -192,6 +192,36 @@ describe('createInlineReportingSourceExecutor', () => {
     assert.match(result.error.safeMessage, /out-of-scope package row/);
   });
 
+  test('requires package_id on a plain-buy row in a mixed package-grain slice', async () => {
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.applicability.constituentKinds.push('package_item');
+    offering.dimensions.push({ name: 'package_id', support: 'exact' });
+    const slice = packageSlice('fixture-inline-mixed-plain-buy-row');
+    const otherBuy = structuredClone(slice.coverage.constituents[0]);
+    otherBuy.constituentId = 'fixture-other-buy-constituent';
+    otherBuy.mediaBuyId = 'fixture-other-buy';
+    otherBuy.productBinding.mediaBuyId = otherBuy.mediaBuyId;
+    slice.coverage.constituents.push(otherBuy);
+    slice.coverage.mediaBuyIds.push(otherBuy.mediaBuyId);
+    slice.coverage.denominatorFingerprint = reportingCoverageDenominatorFingerprintV1(slice.coverage.constituents);
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          { media_buy_id: 'fixture-media-buy', package_id: 'fixture-package', impressions: 10, spend: '1.25' },
+          { media_buy_id: otherBuy.mediaBuyId, impressions: 20, spend: '2.50' },
+        ],
+        availability_evidence: presentAvailability(input),
+      }),
+      offering
+    );
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'PARTIAL_RESULT');
+    assert.match(result.error.safeMessage, /did not prove every requested constituent-metric cell/);
+  });
+
   test('refuses a requested package dimension when no package is covered', async () => {
     const offering = structuredClone(redactedReportingSourceOfferingV1);
     offering.dimensions.push({ name: 'package_id', support: 'exact' });
