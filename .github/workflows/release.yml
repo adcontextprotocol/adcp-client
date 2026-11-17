@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - 16.x
+      - 17.x-esa
 
 permissions:
   contents: read
@@ -27,6 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ADCP_REQUIRE_SIGNATURE: '1'
+      ADCP_NPM_TAG: ${{ github.ref_name == '17.x-esa' && 'adcp-3.3-esa' || '' }}
     permissions:
       contents: write
       pull-requests: write

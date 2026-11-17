@@ -140,6 +140,8 @@ Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to 
 
 `.changeset/pre.json` puts `main` into pre-mode with the `beta` tag. Every release from `main` publishes as `17.0.0-beta.N` under the npm `beta` dist-tag, and `latest` stays on SDK 16, which is maintained from the `16.x` branch (see [`docs/development/NPM-DIST-TAGS.md`](./docs/development/NPM-DIST-TAGS.md)). This repo uses `@changesets/cli` 3.x, whose `pre.json` holds only `mode` and `tag` (3.x drops the 2.x `initialVersions`/`changesets` fields). Don't add them back. Leaving pre-mode with `npx changeset pre exit` is a release-owner decision, so don't run it unprompted.
 
+The `17.x-esa` maintenance branch uses a separate `esa` prerelease identifier and publishes under the `adcp-3.3-esa` npm dist-tag. It starts from SDK beta.22 and retains the exact AdCP beta.5 pin while adding beta.6 support for ESA reporting. Its release process is documented in [`docs/development/NPM-DIST-TAGS.md`](./docs/development/NPM-DIST-TAGS.md).
+
 ### 📦 When to Create a Changeset
 
 **ALWAYS create a changeset for:**
