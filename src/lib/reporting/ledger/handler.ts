@@ -1297,10 +1297,10 @@ function wireCoverage(coverage: ReportingLedgerCoverageV1) {
     partially_covered_media_buy_ids: coverage.partiallyCoveredMediaBuyIds,
     unsupported_media_buy_ids: coverage.unsupportedMediaBuyIds,
     unknown_media_buy_ids: coverage.unknownMediaBuyIds,
-    package_ids: [],
-    covered_package_ids: [],
-    unsupported_package_ids: [],
-    unknown_package_ids: [],
+    package_ids: coverage.packageIds ?? [],
+    covered_package_ids: coverage.coveredPackageIds ?? [],
+    unsupported_package_ids: coverage.unsupportedPackageIds ?? [],
+    unknown_package_ids: coverage.unknownPackageIds ?? [],
     limitations: [],
   };
 }
@@ -1349,6 +1349,20 @@ export function aggregateReportingCoverageV1(values: ReportingLedgerCoverageV1[]
   const full = ids.filter(id => isCovered(id) && !isUncovered(id));
   const unknown = ids.filter(id => !isCovered(id) && unknownCandidates.has(id));
   const unsupported = ids.filter(id => !isCovered(id) && !unknownCandidates.has(id) && unsupportedCandidates.has(id));
+  const packageIds = [...new Set(values.flatMap(value => value.packageIds ?? []))].sort();
+  const coveredPackageCandidates = new Set(values.flatMap(value => value.coveredPackageIds ?? []));
+  const unsupportedPackageCandidates = new Set(values.flatMap(value => value.unsupportedPackageIds ?? []));
+  const unknownPackageCandidates = new Set(values.flatMap(value => value.unknownPackageIds ?? []));
+  const coveredPackageIds = packageIds.filter(
+    id => coveredPackageCandidates.has(id) && !unsupportedPackageCandidates.has(id) && !unknownPackageCandidates.has(id)
+  );
+  const unsupportedPackageIds = packageIds.filter(
+    id => !coveredPackageCandidates.has(id) && unsupportedPackageCandidates.has(id) && !unknownPackageCandidates.has(id)
+  );
+  const coveredPackageSet = new Set(coveredPackageIds);
+  const unsupportedPackageSet = new Set(unsupportedPackageIds);
+  // Wire coverage has no partially-covered package list. Conflicting periods remain unknown.
+  const unknownPackageIds = packageIds.filter(id => !coveredPackageSet.has(id) && !unsupportedPackageSet.has(id));
   const status = values.every(value => value.status === 'full')
     ? 'full'
     : full.length || partial.length
@@ -1364,6 +1378,10 @@ export function aggregateReportingCoverageV1(values: ReportingLedgerCoverageV1[]
     partiallyCoveredMediaBuyIds: partial,
     unsupportedMediaBuyIds: unsupported,
     unknownMediaBuyIds: unknown,
+    packageIds,
+    coveredPackageIds,
+    unsupportedPackageIds,
+    unknownPackageIds,
   });
 }
 

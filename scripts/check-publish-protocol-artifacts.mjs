@@ -31,7 +31,19 @@ export function assertPublishProtocolArtifacts({ packageInfo, manifest, currentP
     throw new Error('npm pack did not return package file metadata');
   }
 
-  const allowedSchemaRoots = new Set(['3.0', '3.1', '3.2', currentBundleKey(currentProtocolVersion)]);
+  const secondaryReportingPreview = currentProtocolVersion === '3.3.0-beta.5' ? '3.3.0-beta.6' : undefined;
+  const allowedSchemaRoots = new Set([
+    '3.0',
+    '3.1',
+    '3.2',
+    currentBundleKey(currentProtocolVersion),
+    ...(secondaryReportingPreview ? [secondaryReportingPreview] : []),
+  ]);
+  const allowedComplianceRoots = new Set([
+    ...MAINTAINED_COMPLIANCE_ROOTS,
+    currentProtocolVersion,
+    ...(secondaryReportingPreview ? [secondaryReportingPreview] : []),
+  ]);
   const violations = [];
   const schemaRoots = new Set();
   const complianceRoots = new Set();
@@ -47,8 +59,7 @@ export function assertPublishProtocolArtifacts({ packageInfo, manifest, currentP
     if (complianceRoot) complianceRoots.add(complianceRoot);
     if (
       complianceRoot &&
-      complianceRoot !== currentProtocolVersion &&
-      !MAINTAINED_COMPLIANCE_ROOTS.includes(complianceRoot)
+      !allowedComplianceRoots.has(complianceRoot)
     ) {
       violations.push(`${file.path} (unsupported compliance bundle ${complianceRoot})`);
     }
@@ -65,7 +76,7 @@ export function assertPublishProtocolArtifacts({ packageInfo, manifest, currentP
     }
   }
 
-  for (const requiredRoot of [...MAINTAINED_COMPLIANCE_ROOTS, currentProtocolVersion]) {
+  for (const requiredRoot of allowedComplianceRoots) {
     if (!complianceRoots.has(requiredRoot)) {
       violations.push(`${requiredRoot} (required compliance bundle is missing)`);
     }
@@ -129,7 +140,7 @@ export function checkPublishProtocolArtifacts(repoRoot) {
     currentProtocolVersion,
     compatibleVersions: COMPATIBLE_ADCP_VERSIONS,
   });
-  console.log(`✅ Published protocol artifacts are limited to ${currentProtocolVersion} and stable legacy bundles.`);
+  console.log(`✅ Published protocol artifacts match the allowed bundle inventory for ${currentProtocolVersion}.`);
   return packageInfo;
 }
 

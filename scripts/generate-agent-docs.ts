@@ -2231,9 +2231,9 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  version: '1.0';`);
   ln(`  cells: readonly InlineReportingMetricEvidenceV1[];`);
   ln(`}`);
-  ln(
-    `// Inline callback requests include constituents: { constituent_id, media_buy_id }[]; evidence-bearing responses add availability_evidence.`
-  );
+  ln(`// Inline callback constituents carry { constituent_id, media_buy_id } for media buys or`);
+  ln(`// { constituent_id, media_buy_id, package_id } for package items. Trusted resolveCoverage also supplies`);
+  ln(`// packageBindings: { constituentId, mediaBuyId }[] for package items.`);
   ln(`// validateReportingSourceExecutionV1({ level, capabilities, request, result, objectReader })`);
   ln(`// runReportingSourceReplayConformanceV1({ level, executor, request, objectReader })`);
   ln(`// validateReportingRevisionSequenceV1(manifests, { crossFinalityBridge })`);
@@ -2360,7 +2360,9 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  statusRetentionDays, // enforce this commitment in the ledger database`);
   ln(`  resolveSource: account => ({ adapterId, sourceScope, sourceTimezone }),`);
   ln(`  resolveCurrency: account => currency,`);
-  ln(`  resolveCoverage: account => ({ constituents }), // authorized media-buy/package denominator`);
+  ln(
+    `  resolveCoverage: account => ({ constituents, packageBindings }), // authorized denominator and package-to-buy bindings`
+  );
   ln(`  resolveConsumerId, // optional; controls consumer-status handler/capability`);
   ln(
     `  maintenance: reportingLedgerMaintenance({ retention: { enabled: true } }), // optional factory from @adcp/reporting-storage`

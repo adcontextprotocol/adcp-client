@@ -422,6 +422,12 @@ describe('subscription obligations in the reporting ledger', () => {
 
   test('refuses unsafe plans', async () => {
     const { producer } = setup();
+    const injectedBindings = generation(PRINCIPAL_A);
+    injectedBindings.packageBindings = [{ constituentId: 'constituent-mb-a', mediaBuyId: 'mb-a' }];
+    await assert.rejects(
+      producer.planSubscriptionObligations(plan(PRINCIPAL_A, [owed(1, ['mb-a'])], 3, [injectedBindings])),
+      /must not supply packageBindings/
+    );
     await producer.planSubscriptionObligations(plan(PRINCIPAL_A, [owed(1, ['mb-a'])], 3));
     // A generation is immutable.
     const changed = generation(PRINCIPAL_A);
