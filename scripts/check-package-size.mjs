@@ -45,6 +45,9 @@ const GROWTH_METRICS = ['packedBytes', 'files'];
 // MiB). The ceiling leaves room for a protocol-version swap while still
 // failing loudly if expanded bundles return.
 const MAX_BUNDLED_SCHEMA_BYTES = 2_200_000;
+// The exact beta.6 side bundle adds one compact archive to this maintenance
+// line. Keep the existing budget for all other archives and cap this one too.
+const MAX_SECONDARY_PREVIEW_ARCHIVE_BYTES = 900_000;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 // Declarations whose `.d.mts` is a one-line facade over the CJS declaration
 // (see scripts/generate-dmts-declarations.ts). Copying the generated ones would
@@ -256,8 +259,16 @@ function checkSdkContents(repoRoot, packageInfo) {
   const bundledSchemaBytes = packageInfo.files
     .filter(file => file.path.endsWith('/bundled.schemas.br'))
     .reduce((sum, file) => sum + file.size, 0);
-  assertAtMost('bundled schema data', bundledSchemaBytes, MAX_BUNDLED_SCHEMA_BYTES);
   const currentProtocolVersion = readFileSync(path.join(repoRoot, 'ADCP_VERSION'), 'utf8').trim();
+  const secondaryPreviewArchiveBytes =
+    currentProtocolVersion === '3.3.0-beta.5'
+      ? (packageInfo.files.find(file => file.path === 'dist/lib/schemas-data/3.3.0-beta.6/bundled.schemas.br')?.size ??
+        0)
+      : 0;
+  assertAtMost('bundled schema data', bundledSchemaBytes - secondaryPreviewArchiveBytes, MAX_BUNDLED_SCHEMA_BYTES);
+  if (secondaryPreviewArchiveBytes > 0) {
+    assertAtMost('3.3.0-beta.6 bundled schema data', secondaryPreviewArchiveBytes, MAX_SECONDARY_PREVIEW_ARCHIVE_BYTES);
+  }
   const currentBundleKey = currentProtocolVersion.includes('-')
     ? currentProtocolVersion
     : currentProtocolVersion.split('.').slice(0, 2).join('.');
