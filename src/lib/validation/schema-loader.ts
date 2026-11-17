@@ -19,6 +19,7 @@ import addFormats from 'ajv-formats';
 import { AsyncLocalStorage } from 'async_hooks';
 import { readdirSync, readFileSync, existsSync, statSync } from 'fs';
 import path from 'path';
+import { createRequire } from 'module';
 import { isDeepStrictEqual } from 'node:util';
 import { ADCP_VERSION, LIBRARY_VERSION } from '../version';
 import { ConfigurationError } from '../errors';
@@ -392,13 +393,39 @@ interface LoaderState {
   root: string;
   coreLoaded: boolean;
   version: string;
+  /** Present only when ADCP_VALIDATOR_CACHE_DIR enabled the bundled-validator cache for this state. */
+  bundledCache?: BundledValidatorCacheState;
+}
+
+/** Per-state bookkeeping for the opt-in cross-process cache of bundled validators. */
+interface BundledValidatorCacheState {
+  cache: import('./validator-cache').ValidatorCache;
+  /** code.process input and output per SchemaEnv while a compile is being recorded. */
+  compileLog:
+    | Array<{
+        env: { validate?: ValidateFunction & { source?: { validateCode: string } } };
+        source: string;
+        output: string;
+      }>
+    | undefined;
+  /** The bundled validator this state resolved for each root $id (stock: bundledAjv.getSchema). */
+  byId: Map<string, ValidateFunction>;
 }
 
 const states: Map<string, LoaderState> = new Map();
 const validatorDiagnosticOrigins = new WeakMap<ValidateFunction, SchemaDiagnosticOrigins>();
+/**
+ * Validators loaded from the cache register their diagnostic origins only
+ * when a lookup needs them, by compiling their retained schema live into the
+ * same Ajv instance. Bundled origin prefixes start with the root's own $id,
+ * so registering them later does not change any other validator's lookups.
+ */
+const pendingDiagnosticOrigins = new WeakMap<ValidateFunction, () => void>();
+const cachedValidatorRootSchemaIds = new WeakMap<ValidateFunction, string | undefined>();
 
 /** @internal Resolve the exact function origin retained during compilation. */
 export function resolveValidatorDiagnosticPath(validator: ValidateFunction, schemaPath: string): unknown {
+  pendingDiagnosticOrigins.get(validator)?.();
   return validatorDiagnosticOrigins.get(validator)?.resolve(schemaPath);
 }
 /** @internal Resource identity and the original public AJV path for a failure. */
@@ -406,7 +433,20 @@ export function getValidatorDiagnosticOrigin(
   validator: ValidateFunction,
   schemaPath: string
 ): SchemaDiagnosticOrigin | undefined {
+  pendingDiagnosticOrigins.get(validator)?.();
   return validatorDiagnosticOrigins.get(validator)?.origin(schemaPath);
+}
+/**
+ * @internal The string root `$id` of a validator's schema, as
+ * `validator.schema.$id` would give it, without building the schema object of
+ * a validator loaded from the cross-process cache.
+ */
+export function getValidatorRootSchemaId(validator: ValidateFunction): string | undefined {
+  if (cachedValidatorRootSchemaIds.has(validator)) return cachedValidatorRootSchemaIds.get(validator);
+  const root = (validator as { schema?: unknown }).schema;
+  return root && typeof root === 'object' && typeof (root as { $id?: unknown }).$id === 'string'
+    ? (root as { $id: string }).$id
+    : undefined;
 }
 const schemaRefValidators = new Map<string, ValidateFunction>();
 const keywordSchemaRefValidators = new WeakMap<
@@ -1063,12 +1103,31 @@ function ensureInit(version: string): LoaderState {
   // modular documents registered in `ajv`. Keep them in a separate registry
   // so getValidator compiles the file selected by fileIndex rather than
   // accidentally reusing a modular validator with the same public id.
+  const bundledCache = openBundledValidatorCache();
   const bundledAjv = new Ajv({
     inlineRefs: false,
     strict: false,
     allErrors: true,
     allowUnionTypes: true,
-    code: { process: bundledDiagnosticOrigins.process },
+    code: bundledCache
+      ? {
+          // Ajv keeps the code from before code.process; the cache records
+          // the processed code so stored modules carry the origin rewrite.
+          source: true,
+          process: (source: string, environment?: unknown) => {
+            const output = bundledDiagnosticOrigins.process(
+              source,
+              environment as Parameters<SchemaDiagnosticOrigins['process']>[1]
+            );
+            bundledCache.compileLog?.push({
+              env: environment as NonNullable<BundledValidatorCacheState['compileLog']>[number]['env'],
+              source,
+              output,
+            });
+            return output;
+          },
+        }
+      : { process: bundledDiagnosticOrigins.process },
   });
   addFormats(bundledAjv);
 
@@ -1085,6 +1144,7 @@ function ensureInit(version: string): LoaderState {
     root,
     coreLoaded: false,
     version: key,
+    ...(bundledCache && { bundledCache }),
   };
   states.set(cacheKey, state);
   return state;
@@ -1216,12 +1276,224 @@ export function getValidator(
   // Relax the authored composition before factoring can move a closed arm
   // behind a private ref. Canonical validators deliberately skip it.
   const envelope = direction === 'request' ? prepared : acceptEnvelopeOnClosedResponseRoot(prepared, s.root);
+  if (fromBundled && s.bundledCache) {
+    const resolved = resolveBundledValidatorWithCache(s, s.bundledCache, cacheKey, envelope);
+    s.validators.set(cacheKey, resolved);
+    validatorDiagnosticOrigins.set(resolved, s.bundledDiagnosticOrigins);
+    return resolved;
+  }
   const schema = fromBundled ? compactSchemaForValidation(envelope) : envelope;
   const ajv = fromBundled ? s.bundledAjv : s.ajv;
   const existing = typeof schema.$id === 'string' ? ajv.getSchema(schema.$id) : undefined;
   const compiled = existing ?? ajv.compile(schema);
   s.validators.set(cacheKey, compiled);
   validatorDiagnosticOrigins.set(compiled, fromBundled ? s.bundledDiagnosticOrigins : s.diagnosticOrigins);
+  return compiled;
+}
+
+/** Loader modules whose code shapes a compiled bundled validator. */
+const VALIDATOR_CACHE_CODE_FILES = [
+  'schema-loader',
+  'compact-schema',
+  'schema-diagnostic-origins',
+  'bundled-schema-store',
+  'validator-cache',
+] as const;
+/** The bundledAjv options and plugins, as the cache key records them. */
+const BUNDLED_AJV_KEY = {
+  inlineRefs: false,
+  strict: false,
+  allErrors: true,
+  allowUnionTypes: true,
+  formats: 'ajv-formats',
+};
+
+let validatorCacheStaticKey: unknown[] | undefined;
+
+/**
+ * The bundled-validator cache for a new loader state, or `undefined` when
+ * ADCP_VALIDATOR_CACHE_DIR is unset, empty or relative, or the directory is
+ * unsafe. Only an enabled cache loads the cache module.
+ */
+function openBundledValidatorCache(): BundledValidatorCacheState | undefined {
+  const dir = process.env.ADCP_VALIDATOR_CACHE_DIR;
+  if (!dir || !path.isAbsolute(dir)) return undefined;
+  const { openValidatorCache } = require('./validator-cache') as typeof import('./validator-cache');
+  const cache = openValidatorCache(dir, path.join(__dirname, 'schema-loader.js'));
+  return cache ? { cache, compileLog: undefined, byId: new Map() } : undefined;
+}
+
+/**
+ * Inputs that change generated validator code without changing the prepared
+ * schema: this SDK build's loader code, Ajv, ajv-formats and the libraries
+ * Ajv compiles with, resolved the way this loader resolves them.
+ */
+function bundledValidatorCacheStaticKey(): unknown[] {
+  if (validatorCacheStaticKey) return validatorCacheStaticKey;
+  const { filesDigest } = require('./validator-cache') as typeof import('./validator-cache');
+  const loaderRequire = createRequire(path.join(__dirname, 'schema-loader.js'));
+  const packageVersion = (name: string, from: NodeRequire): string | null => {
+    try {
+      return (from(`${name}/package.json`) as { version?: string }).version ?? null;
+    } catch {
+      return null;
+    }
+  };
+  let ajvRequire: NodeRequire = loaderRequire;
+  try {
+    ajvRequire = createRequire(loaderRequire.resolve('ajv'));
+  } catch {
+    // Versions below then come from the loader's own resolution.
+  }
+  validatorCacheStaticKey = [
+    LIBRARY_VERSION,
+    filesDigest(
+      VALIDATOR_CACHE_CODE_FILES.flatMap(name => [`${name}.js`, `${name}.mjs`]).map(file => path.join(__dirname, file))
+    ),
+    packageVersion('ajv', loaderRequire),
+    packageVersion('ajv-formats', loaderRequire),
+    packageVersion('fast-uri', ajvRequire),
+    packageVersion('json-schema-traverse', ajvRequire),
+    packageVersion('fast-deep-equal', ajvRequire),
+    BUNDLED_AJV_KEY,
+  ];
+  return validatorCacheStaticKey;
+}
+
+type SourcedValidateFunction = ValidateFunction & { source?: { validateCode: string } };
+
+/**
+ * Compile `schema` into the state's bundledAjv while recording code.process
+ * output, then drop the per-function `.source` that code.source adds (stock
+ * validators carry none). Returns the compiled validator and, when it can be
+ * stored exactly, its standalone module code.
+ */
+function compileBundledRecorded(
+  s: LoaderState,
+  bc: BundledValidatorCacheState,
+  schema: LoadedSchema,
+  wantModule: boolean
+): { compiled: ValidateFunction; moduleCode?: string } {
+  const log: NonNullable<BundledValidatorCacheState['compileLog']> = [];
+  bc.compileLog = log;
+  let compiled: ValidateFunction;
+  try {
+    compiled = s.bundledAjv.compile(schema);
+  } finally {
+    bc.compileLog = undefined;
+  }
+  let moduleCode: string | undefined;
+  try {
+    let exact = wantModule && !(compiled as { $async?: unknown }).$async && log.length > 0;
+    for (const entry of log) {
+      const fn = entry.env.validate as SourcedValidateFunction | undefined;
+      const validateCode = fn?.source?.validateCode;
+      if (!fn || typeof validateCode !== 'string' || !entry.source.endsWith(validateCode)) {
+        exact = false;
+        continue;
+      }
+      // Ajv emits `<scope refs>return <validateCode>`; code.process rewrites
+      // only schemaPath literals inside the function body.
+      const prefixLength = entry.source.length - validateCode.length;
+      if (
+        !entry.source.slice(0, prefixLength).endsWith('return ') ||
+        entry.output.slice(0, prefixLength) !== entry.source.slice(0, prefixLength)
+      ) {
+        exact = false;
+        continue;
+      }
+      fn.source!.validateCode = entry.output.slice(prefixLength);
+    }
+    if (exact) {
+      const standaloneCode = (require('ajv/dist/standalone') as typeof import('ajv/dist/standalone')).default;
+      const code = standaloneCode(s.bundledAjv, compiled);
+      // Anonymous origin ids are numbered by compile order within a state.
+      if (!code.includes('urn:adcp:schema-origin:')) moduleCode = code;
+    }
+  } catch {
+    moduleCode = undefined;
+  } finally {
+    for (const entry of log) delete (entry.env.validate as SourcedValidateFunction | undefined)?.source;
+  }
+  return { compiled, ...(moduleCode !== undefined && { moduleCode }) };
+}
+
+/**
+ * getValidator's bundled branch with the cache enabled. A cache hit returns
+ * the stored validator without compacting or compiling; its `.schema` and
+ * `.schemaEnv` resolve on first read, and a diagnostic-origin lookup compiles
+ * the retained schema live once. A miss compiles exactly as stock and stores
+ * the result.
+ */
+function resolveBundledValidatorWithCache(
+  s: LoaderState,
+  bc: BundledValidatorCacheState,
+  toolKey: string,
+  envelope: LoadedSchema
+): ValidateFunction {
+  const id = typeof envelope.$id === 'string' ? envelope.$id : undefined;
+  const known = id !== undefined ? bc.byId.get(id) : undefined;
+  if (known) return known;
+
+  const { validatorCacheKey } = require('./validator-cache') as typeof import('./validator-cache');
+  const key = validatorCacheKey([...bundledValidatorCacheStaticKey(), s.version, toolKey, envelope]);
+  const entry = bc.cache.read(key);
+  if (entry) {
+    const fn = entry.validate as unknown as ValidateFunction;
+    let compacted: LoadedSchema | undefined;
+    const compactedSchema = (): LoadedSchema => (compacted ??= compactSchemaForValidation(envelope));
+    const materialize = (): ValidateFunction | undefined => {
+      pendingDiagnosticOrigins.delete(fn);
+      try {
+        const schema = compactedSchema();
+        const existing = typeof schema.$id === 'string' ? s.bundledAjv.getSchema(schema.$id) : undefined;
+        return existing ?? compileBundledRecorded(s, bc, schema, false).compiled;
+      } catch {
+        return undefined;
+      }
+    };
+    pendingDiagnosticOrigins.set(fn, () => void materialize());
+    Object.defineProperty(fn, 'schema', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        const value = compactedSchema();
+        Object.defineProperty(fn, 'schema', { value, writable: true, enumerable: true, configurable: true });
+        return value;
+      },
+    });
+    Object.defineProperty(fn, 'schemaEnv', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        const live =
+          (pendingDiagnosticOrigins.has(fn) ? materialize() : undefined) ??
+          (typeof compactedSchema().$id === 'string'
+            ? s.bundledAjv.getSchema(compactedSchema().$id as string)
+            : undefined);
+        const value = live?.schemaEnv;
+        Object.defineProperty(fn, 'schemaEnv', { value, writable: true, enumerable: true, configurable: true });
+        return value;
+      },
+    });
+    cachedValidatorRootSchemaIds.set(fn, entry.rootSchemaId);
+    if (id !== undefined) bc.byId.set(id, fn);
+    return fn;
+  }
+
+  const schema = compactSchemaForValidation(envelope);
+  const existing = typeof schema.$id === 'string' ? s.bundledAjv.getSchema(schema.$id) : undefined;
+  let compiled: ValidateFunction;
+  if (existing) {
+    compiled = existing;
+  } else {
+    const result = compileBundledRecorded(s, bc, schema, true);
+    compiled = result.compiled;
+    if (result.moduleCode !== undefined) {
+      bc.cache.write(key, result.moduleCode, typeof schema.$id === 'string' ? schema.$id : undefined);
+    }
+  }
+  if (id !== undefined) bc.byId.set(id, compiled);
   return compiled;
 }
 
