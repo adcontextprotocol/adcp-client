@@ -164,9 +164,10 @@ function writeFixtureRoot(label, files) {
 }
 
 /**
- * Epoch steps: register a root, get its validator, register the same root
- * again (a fresh loader state and generation), get the validator again. Then
- * a root whose two bundled tools share one root $id.
+ * Epoch steps: register a root, get its validator, rewrite one of its files
+ * with the same bytes and register the root again (a fresh loader state and
+ * generation, since the file is no longer settled), get the validator again.
+ * Then a root whose two bundled tools share one root $id.
  */
 function epochPlan(epochRoot, sharedRoot) {
   const v = FIXTURE_VERSION;
@@ -175,6 +176,7 @@ function epochPlan(epochRoot, sharedRoot) {
     { op: 'generation', label: 'gen1' },
     { op: 'getValidator', label: 'epoch:v1', tool: 'get_products', direction: 'sync', version: v },
     { op: 'validateResponse', label: 'epoch:v1:fail', tool: 'get_products', payload: 'fixtureInvalid', version: v },
+    { op: 'rewrite', path: path.join(epochRoot, 'bundled/media-buy/get-products-response.json') },
     { op: 'register', version: v, root: epochRoot },
     { op: 'generation', label: 'gen2' },
     { op: 'getValidator', label: 'epoch:v2', tool: 'get_products', direction: 'sync', version: v },
@@ -279,6 +281,9 @@ for (const step of plan) {
       break;
     case 'touch':
       fs.writeFileSync(step.path, 'x');
+      break;
+    case 'rewrite':
+      fs.writeFileSync(step.path, fs.readFileSync(step.path));
       break;
     default:
       throw new Error('unknown op ' + step.op);
@@ -644,7 +649,7 @@ test('a symlinked entry is not followed: stock compile and outcome, link target 
 
 // ---------------------------------------------------------------- epoch and shared $id
 
-test('re-registering the same root yields a new validator and a generation bump, cache off, cold and warm', async () => {
+test('re-registering a rewritten root yields a new validator and a generation bump, cache off, cold and warm', async () => {
   const { off, cold, warm } = await scenario.epoch;
   for (const [mode, run] of Object.entries({ off, cold, warm })) {
     assert.equal(run.byLabel['epoch:v1'].value.defined, true, mode);

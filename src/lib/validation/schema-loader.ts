@@ -20,6 +20,7 @@ import { AsyncLocalStorage } from 'async_hooks';
 import { readdirSync, readFileSync, existsSync, statSync } from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
+import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { ADCP_VERSION, LIBRARY_VERSION } from '../version';
 import { ConfigurationError } from '../errors';
@@ -466,8 +467,15 @@ function stateCacheKey(bundleKey: string, root: string): string {
   return `${bundleKey}\0${root}`;
 }
 
+/**
+ * Fingerprints of the external roots entered for each bundle key since its
+ * loader states were last cleared (see {@link rootFingerprint}).
+ */
+const epochRootFingerprints: Map<string, Map<string, string>> = new Map();
+
 function clearStatesForBundle(bundleKey: string): void {
   keywordCacheGeneration++;
+  epochRootFingerprints.delete(bundleKey);
   for (const [stateKey, state] of states) {
     if (state.version === bundleKey) states.delete(stateKey);
   }
@@ -476,8 +484,58 @@ function clearStatesForBundle(bundleKey: string): void {
   }
 }
 
+/**
+ * Start a new loader epoch for each alias of `root`, unless `root` was already
+ * entered for that alias in the current epoch with the same fingerprint.
+ *
+ * A changed, unsettled or unfingerprinted root clears the alias's loader states
+ * and bumps the generation, as every entry did before. An unchanged root keeps
+ * them, so the validators compiled from it are reused instead of recompiled on
+ * every `withExternalSchemaRoot` or `registerExternalSchemaRoot` call.
+ */
+function enterSchemaRootEpoch(aliases: Iterable<string>, root: string, fingerprint: string | undefined): void {
+  for (const alias of aliases) {
+    if (fingerprint !== undefined && epochRootFingerprints.get(alias)?.get(root) === fingerprint) continue;
+    clearStatesForBundle(alias);
+    if (fingerprint !== undefined) epochRootFingerprints.set(alias, new Map([[root, fingerprint]]));
+  }
+}
+
 /** The top-level fields a schema-root check reads from one document. */
 type RootDocumentIdentity = { $id?: string; $schema?: string } | null;
+
+/** What one schema-root check read. */
+interface RootCheckReads {
+  /** Identity (or read error) per document, so the check reads each document once. */
+  identities: Map<string, RootDocumentIdentity | Error>;
+  /**
+   * Settled stat key and identity per on-disk document, by absolute path: the
+   * document's inode, size, mtime and ctime are older than the settle margin.
+   * `undefined` once the check read a document it cannot record this way: an
+   * archive entry, or a missing or unsettled file.
+   */
+  stats: Map<string, CachedRootDocumentIdentity> | undefined;
+}
+
+function newRootCheckReads(): RootCheckReads {
+  return { identities: new Map(), stats: new Map() };
+}
+
+/**
+ * A digest of every document a root check read, by path and settled stat key,
+ * or `undefined` when one of them has no settled stat. Equal fingerprints mean
+ * the same document set with unchanged files, which is everything the loader
+ * reads from a raw root. Roots named `bundled` also read the parent's
+ * index.json, which the walk does not cover, so they get no fingerprint.
+ */
+function rootFingerprint(root: string, reads: RootCheckReads): string | undefined {
+  if (!reads.stats || reads.stats.size === 0 || path.basename(root) === 'bundled') return undefined;
+  const hash = createHash('sha256');
+  for (const [file, { stat }] of [...reads.stats].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    hash.update(file).update('\0').update(stat).update('\0');
+  }
+  return hash.digest('hex');
+}
 
 interface CachedRootDocumentIdentity {
   stat: string;
@@ -524,21 +582,34 @@ function rootDocumentIdentity(schema: unknown): RootDocumentIdentity {
  * overflow the stack in the recursive rewrite is skipped by `loadJson` and
  * read here.
  */
-function readRootDocument(file: string, reads: Map<string, RootDocumentIdentity | Error>): RootDocumentIdentity {
-  let identity = reads.get(file);
+function readRootDocument(file: string, reads: RootCheckReads): RootDocumentIdentity {
+  let identity = reads.identities.get(file);
   if (identity === undefined) {
     try {
-      identity = readRootDocumentUncached(file);
+      identity = readRootDocumentUncached(file, reads);
     } catch (error) {
       identity = error instanceof Error ? error : new Error(String(error));
     }
-    reads.set(file, identity);
+    reads.identities.set(file, identity);
   }
   if (identity instanceof Error) throw identity;
   return identity;
 }
 
-function readRootDocumentUncached(file: string): RootDocumentIdentity {
+function rememberRootDocumentIdentity(
+  cache: Map<string, CachedRootDocumentIdentity>,
+  file: string,
+  entry: CachedRootDocumentIdentity
+): void {
+  cache.delete(file);
+  cache.set(file, entry);
+  if (cache.size > ROOT_DOCUMENT_CACHE_LIMIT) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+}
+
+function readRootDocumentUncached(file: string, reads: RootCheckReads): RootDocumentIdentity {
   const bundled = file.includes(`${path.sep}bundled${path.sep}`);
   const nowNs = BigInt(Date.now()) * 1_000_000n;
   let stat;
@@ -547,15 +618,20 @@ function readRootDocumentUncached(file: string): RootDocumentIdentity {
   } catch {
     stat = undefined;
   }
-  if (!stat?.isFile()) return rootDocumentIdentity(loadJson(file));
+  if (!stat?.isFile()) {
+    reads.stats = undefined;
+    return rootDocumentIdentity(loadJson(file));
+  }
 
   const cache = rootDocumentIdentityCache();
   const cacheKey = path.resolve(file);
   const statKey = `${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
-  const cached = cache.get(cacheKey);
-  if (cached?.stat === statKey) {
-    if (cached.identity === undefined) throw new Error(`Schema document does not parse: ${file}`);
-    return cached.identity;
+  // Only settled stats are cached, so an unchanged one is still settled.
+  const known = cache.get(cacheKey);
+  if (known?.stat === statKey) {
+    reads.stats?.set(cacheKey, known);
+    if (known.identity === undefined) throw new Error(`Schema document does not parse: ${file}`);
+    return known.identity;
   }
 
   let identity: RootDocumentIdentity | undefined;
@@ -567,18 +643,17 @@ function readRootDocumentUncached(file: string): RootDocumentIdentity {
   }
   const settled = stat.mtimeNs < nowNs - ROOT_DOCUMENT_SETTLE_NS && stat.ctimeNs < nowNs - ROOT_DOCUMENT_SETTLE_NS;
   if (settled) {
-    cache.delete(cacheKey);
-    cache.set(cacheKey, { stat: statKey, identity });
-    if (cache.size > ROOT_DOCUMENT_CACHE_LIMIT) {
-      const oldest = cache.keys().next().value;
-      if (oldest !== undefined) cache.delete(oldest);
-    }
+    const entry = { stat: statKey, identity };
+    reads.stats?.set(cacheKey, entry);
+    rememberRootDocumentIdentity(cache, cacheKey, entry);
+  } else {
+    reads.stats = undefined;
   }
   if (identity === undefined) throw new Error(`Schema document does not parse: ${file}`);
   return identity;
 }
 
-function hasSchemaRootShape(root: string, reads: Map<string, RootDocumentIdentity | Error> = new Map()): boolean {
+function hasSchemaRootShape(root: string, reads: RootCheckReads = newRootCheckReads()): boolean {
   if (!existsSync(root)) return false;
   const bundledRoot = path.join(root, 'bundled');
   const files = hasBundledSchemaStore(bundledRoot) ? walkJsonFiles(bundledRoot) : walkJsonFiles(root);
@@ -620,9 +695,12 @@ function prereleaseFamilyAlias(releasePrecisionVersion: string): string | undefi
 
 function collectSchemaRootVersionAliasGroups(
   root: string,
-  reads: Map<string, RootDocumentIdentity | Error>
+  reads: RootCheckReads
 ): Array<{ hint: string; aliases: Set<string> }> {
   const groups: Array<{ hint: string; aliases: Set<string> }> = [];
+  // A release root has a handful of distinct hints across ~1,700 documents,
+  // and alias resolution throws (with a stack) for hints such as `latest`.
+  const aliasesByHint = new Map<string, Set<string>>();
   for (const file of walkJsonFiles(root)) {
     let schema: RootDocumentIdentity;
     try {
@@ -634,7 +712,12 @@ function collectSchemaRootVersionAliasGroups(
     if (typeof schema!.$id !== 'string') continue;
     const hint = schemaIdVersionHint(schema!.$id);
     if (!hint) continue;
-    groups.push({ hint, aliases: schemaRootVersionAliases(hint) });
+    let aliases = aliasesByHint.get(hint);
+    if (!aliases) {
+      aliases = schemaRootVersionAliases(hint);
+      aliasesByHint.set(hint, aliases);
+    }
+    groups.push({ hint, aliases });
   }
   return groups;
 }
@@ -659,7 +742,7 @@ function readSchemaRootDeclaredVersion(root: string): string | undefined {
 function assertSchemaRootMatchesVersion(
   version: string,
   root: string,
-  reads: Map<string, RootDocumentIdentity | Error> = new Map()
+  reads: RootCheckReads = newRootCheckReads()
 ): Set<string> {
   const expectedAliases = schemaRootVersionAliases(version);
   const rootGroups = collectSchemaRootVersionAliasGroups(root, reads);
@@ -704,16 +787,14 @@ const externalSchemaRootAliases: Map<string, Set<string>> = new Map();
 export function registerExternalSchemaRoot(version: string, root: string): void {
   const key = resolveBundleKey(version);
   clearBundledSchemaStoreCache(path.join(root, 'bundled'));
-  const reads = new Map<string, RootDocumentIdentity | Error>();
+  const reads = newRootCheckReads();
   if (!hasSchemaRootShape(root, reads)) {
     throw new Error(`External AdCP schema root for version "${version}" not found or empty at ${root}`);
   }
   const aliases = assertSchemaRootMatchesVersion(version, root, reads);
   externalSchemaRootAliases.set(key, aliases);
-  for (const alias of aliases) {
-    externalSchemaRoots.set(alias, root);
-    clearStatesForBundle(alias);
-  }
+  for (const alias of aliases) externalSchemaRoots.set(alias, root);
+  enterSchemaRootEpoch(aliases, root, rootFingerprint(root, reads));
 }
 
 /** Test/helper hook for unregistering an external schema bundle. */
@@ -744,17 +825,15 @@ export function unregisterExternalSchemaRoot(version: string): void {
 export function withExternalSchemaRoot<T>(version: string, root: string | undefined, fn: () => T): T {
   if (root === undefined) return fn();
   clearBundledSchemaStoreCache(path.join(root, 'bundled'));
-  const reads = new Map<string, RootDocumentIdentity | Error>();
+  const reads = newRootCheckReads();
   if (!hasSchemaRootShape(root, reads)) {
     throw new Error(`External AdCP schema root for version "${version}" not found or empty at ${root}`);
   }
   const aliases = assertSchemaRootMatchesVersion(version, root, reads);
   const parent = scopedExternalSchemaRoots.getStore();
   const next = new Map(parent);
-  for (const alias of aliases) {
-    next.set(alias, root);
-    clearStatesForBundle(alias);
-  }
+  for (const alias of aliases) next.set(alias, root);
+  enterSchemaRootEpoch(aliases, root, rootFingerprint(root, reads));
   return scopedExternalSchemaRoots.run(next, fn);
 }
 
@@ -1989,7 +2068,7 @@ export function withServedReleaseSchemaRoots<T>(roots: Readonly<Record<string, s
     const memoKey = `${version}\0${root}`;
     let aliases = servedReleaseRootAliases.get(memoKey);
     if (!aliases) {
-      const reads = new Map<string, RootDocumentIdentity | Error>();
+      const reads = newRootCheckReads();
       if (!hasSchemaRootShape(root, reads)) {
         throw new Error(`Served-release AdCP schema root for version "${version}" not found or empty at ${root}`);
       }
@@ -2280,6 +2359,7 @@ export function _resetValidationLoader(version?: string): void {
   if (version === undefined) {
     states.clear();
     schemaRefValidators.clear();
+    epochRootFingerprints.clear();
     rootDocumentIdentityCache().clear();
     keywordCacheGeneration++;
   } else {
