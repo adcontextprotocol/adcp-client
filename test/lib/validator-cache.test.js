@@ -84,6 +84,7 @@ const PAYLOADS = {
   },
   fixtureValid: { kind: 'a', items: [{ type: 'x', x: 's' }] },
   fixtureInvalid: { kind: 'c', items: [{ type: 'y' }] },
+  fixtureKindC: { kind: 'c' },
 };
 
 /**
@@ -675,4 +676,46 @@ test('warm run serves both epochs and the shared-$id keys without an Ajv compile
   }
   assert.equal(warm.byLabel['epoch:v1===v2'].value, false, 'each state gets its own function object');
   assert.equal(warm.byLabel['shared:sync===request'].value, true);
+});
+
+// ---------------------------------------------------------------- key coverage
+//
+// The key digests the prepared schema itself (plus the SDK version, the loader
+// code, the Ajv / ajv-formats / Ajv runtime dependency versions and the Ajv
+// options), not the root path, so a schema edited in place at the same path
+// is a different key: the next process compiles the new schema rather than
+// loading the old validator.
+
+test('a schema edited in place is a cache miss: the next process validates against the new schema, never the stored one', async () => {
+  const id = `${FIXTURE_BASE}media-buy/get-products-response.json`;
+  const rel = 'bundled/media-buy/get-products-response.json';
+  const root = writeFixtureRoot('edited', { [rel]: fixtureSchema(id) });
+  const dir = privateDir('edited-cache');
+  const plan = [
+    { op: 'register', version: FIXTURE_VERSION, root },
+    { op: 'getValidator', label: 'v', tool: 'get_products', direction: 'sync', version: FIXTURE_VERSION },
+    {
+      op: 'validateResponse',
+      label: 'kind-c',
+      tool: 'get_products',
+      payload: 'fixtureKindC',
+      version: FIXTURE_VERSION,
+    },
+  ];
+  const before = await runChild(plan, { cacheDir: dir });
+  assert.equal(before.byLabel['kind-c'].value.valid, false, 'the original schema rejects kind c');
+  const storedBefore = entryFiles(dir).length;
+  assert.ok(storedBefore >= 1, 'the first run stored the validator');
+
+  // Same path, same root, same $id: only the enum changes.
+  const edited = fixtureSchema(id);
+  edited.properties.kind.enum = ['a', 'b', 'c'];
+  fs.writeFileSync(path.join(root, ...rel.split('/')), JSON.stringify(edited));
+
+  const off = await runChild(plan);
+  const after = await runChild(plan, { cacheDir: dir });
+  assert.equal(off.byLabel['kind-c'].value.valid, true, 'stock accepts kind c under the edited schema');
+  assert.deepEqual(values(after), values(off), 'the cached run matches stock on the edited schema');
+  assert.ok(after.byLabel.v.compile > 0, 'the edited schema is compiled, not loaded');
+  assert.equal(entryFiles(dir).length, storedBefore + 1, 'the edited schema is stored under a new key');
 });
