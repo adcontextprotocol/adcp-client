@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [main, 16.x]
+    branches: [main, 16.x, 17.x-esa]
   pull_request:
-    branches: [main, 16.x]
+    branches: [main, 16.x, 17.x-esa]
 
 permissions:
   contents: read
@@ -128,7 +128,12 @@ jobs:
             npm run generate-types
             npm run generate-wellknown-schemas
           fi
-          npm run generate-registry-types -- --sync
+          if [[ "$GITHUB_BASE_REF" == "17.x-esa" || "$GITHUB_REF" == "refs/heads/17.x-esa" ]]; then
+            # This maintenance branch pins the registry spec from its beta.22 base.
+            npm run generate-registry-types
+          else
+            npm run generate-registry-types -- --sync
+          fi
 
           if ! git diff --exit-code -I '// Generated at:' -- "${generated_paths[@]}" 2>/dev/null; then
             echo ""

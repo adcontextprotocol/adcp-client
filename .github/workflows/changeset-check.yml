@@ -2,7 +2,7 @@ name: changeset-check
 
 on:
   pull_request:
-    branches: [main, 16.x]
+    branches: [main, 16.x, 17.x-esa]
 
 permissions:
   contents: read
@@ -32,7 +32,7 @@ jobs:
           changed_files="$(git diff --name-only "origin/${BASE_REF:-main}...HEAD")"
           package_changes="$(
             printf '%s\n' "$changed_files" |
-              grep -Ev '^(\.changeset/(pre\.json|(pre/)?[^/]+\.md)|CHANGELOG\.md|README\.md|package(-lock)?\.json|packages/[^/]+/(CHANGELOG\.md|package\.json)|src/lib/version\.ts|docs/.*|test/release-version-docs\.test\.js|\.github/workflows/(changeset-check|release)\.yml)$' ||
+              grep -Ev '^(\.changeset/(pre\.json|(pre/)?[^/]+\.md)|CHANGELOG\.md|README\.md|package(-lock)?\.json|packages/[^/]+/(CHANGELOG\.md|package\.json)|src/lib/version\.ts|docs/.*|test/release-version-docs\.test\.js|\.github/workflows/(changeset-check|release|ci|codeql|interop-python)\.yml)$' ||
               true
           )"
 

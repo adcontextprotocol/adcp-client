@@ -29,10 +29,12 @@ function fixture(overrides = {}) {
         { path: 'dist/lib/schemas-data/3.1/bundled.schemas.br' },
         { path: 'dist/lib/schemas-data/3.2/bundled.schemas.br' },
         { path: `dist/lib/schemas-data/${currentProtocolVersion}/bundled.schemas.br` },
+        { path: 'dist/lib/schemas-data/3.3.0-beta.6/bundled.schemas.br' },
         { path: 'compliance/cache/3.0.25/index.json' },
         { path: 'compliance/cache/3.1.31/index.json' },
         { path: 'compliance/cache/3.2.8/index.json' },
         { path: `compliance/cache/${currentProtocolVersion}/index.json` },
+        { path: 'compliance/cache/3.3.0-beta.6/index.json' },
         { path: 'docs/releases/14.0.0-beta.0.md' },
       ],
     },
@@ -46,6 +48,21 @@ function fixture(overrides = {}) {
 test('allows the current release, stable compatibility bundles, and historical beta release notes', async () => {
   const { assertPublishProtocolArtifacts } = await modulePromise;
   assert.doesNotThrow(() => assertPublishProtocolArtifacts(fixture()));
+});
+
+test('allows only exact beta.6 schema and compliance side bundles beside beta.5', async () => {
+  const { assertPublishProtocolArtifacts } = await modulePromise;
+  const value = fixture();
+  assert.doesNotThrow(() => assertPublishProtocolArtifacts(value));
+
+  for (const missingPath of [
+    'dist/lib/schemas-data/3.3.0-beta.6/bundled.schemas.br',
+    'compliance/cache/3.3.0-beta.6/index.json',
+  ]) {
+    const missing = fixture();
+    missing.packageInfo.files = value.packageInfo.files.filter(file => file.path !== missingPath);
+    assert.throws(() => assertPublishProtocolArtifacts(missing), /3\.3\.0-beta\.6.*required/);
+  }
 });
 
 test('rejects retired AdCP 2 schemas, type exports, and advertised versions', async () => {
@@ -171,7 +188,8 @@ test('allows a beta only when it is the exact current primary pin', async () => 
 
 test('release scripts do not sync or export the retired 3.1 beta bundle', () => {
   const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf8'));
-  assert.doesNotMatch(manifest.scripts['sync-schemas:all'], /beta/);
+  assert.match(manifest.scripts['sync-schemas:all'], /3\.3\.0-beta\.6/);
+  assert.doesNotMatch(manifest.scripts['sync-schemas:all'], /3\.1\.0-beta/);
   assert.doesNotMatch(manifest.scripts['generate-types:all'], /beta/);
   assert.match(manifest.scripts.prepublishOnly, /check:publish-protocol-artifacts/);
   assert.equal(manifest.exports['./types/v3-1-beta'], undefined);

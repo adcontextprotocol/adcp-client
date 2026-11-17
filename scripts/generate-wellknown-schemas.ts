@@ -8,7 +8,7 @@
  * json-schema-to-zod dep and dereferencing strategy as generate-zod-schemas.ts.
  */
 
-import { writeFileSync, readFileSync, existsSync, readdirSync, statSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, statSync } from 'fs';
 import { jsonSchemaToZod } from 'json-schema-to-zod';
 import path from 'path';
 import { resolveSchemaRefInCache } from './schema-cache-ref';
@@ -24,42 +24,14 @@ const WELLKNOWN_SCHEMAS: Record<string, string> = {
 };
 
 function getLatestCacheDir(): string {
-  if (!existsSync(SCHEMA_CACHE_DIR)) {
-    throw new Error('Schema cache directory not found. Run "npm run sync-schemas" first.');
+  // Schema sync keeps `latest` on ADCP_VERSION, even when exact side bundles
+  // are also cached. Choosing the highest version would generate beta.6 types
+  // on the beta.5 maintenance line.
+  const latestCacheDir = path.join(SCHEMA_CACHE_DIR, 'latest');
+  if (!existsSync(latestCacheDir) || !statSync(latestCacheDir).isDirectory()) {
+    throw new Error('Primary schema cache not found. Run "npm run sync-schemas" first.');
   }
-  // Restrict to MAJOR.MINOR.PATCH-shaped directories. Legacy aliases
-  // (`v2.5`, `v2.6`) and the `latest` symlink would otherwise win the
-  // descending alphabetical sort because `v` > `3` lexically — well-known
-  // schemas (`brand.json`, `adagents.json`) live only in the primary AdCP
-  // version cache, so picking the v2.5 bundle would fail with "brand.json
-  // not found." Sort by major/minor/patch numerically; the newest stable
-  // (or prerelease) wins.
-  const semverDirs = readdirSync(SCHEMA_CACHE_DIR)
-    .filter(f => /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(f))
-    .filter(f => statSync(path.join(SCHEMA_CACHE_DIR, f)).isDirectory())
-    .map(name => {
-      const m = name.match(/^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/)!;
-      return {
-        name,
-        major: parseInt(m[1]!, 10),
-        minor: parseInt(m[2]!, 10),
-        patch: parseInt(m[3]!, 10),
-        prerelease: m[4] ?? '',
-      };
-    })
-    .sort((a, b) => {
-      if (a.major !== b.major) return b.major - a.major;
-      if (a.minor !== b.minor) return b.minor - a.minor;
-      if (a.patch !== b.patch) return b.patch - a.patch;
-      // Stable beats prerelease at the same numeric version.
-      if (a.prerelease === '' && b.prerelease !== '') return -1;
-      if (a.prerelease !== '' && b.prerelease === '') return 1;
-      return b.prerelease.localeCompare(a.prerelease);
-    });
-  if (semverDirs.length === 0) {
-    throw new Error('No semver-shaped schema versions found in cache.');
-  }
-  return path.join(SCHEMA_CACHE_DIR, semverDirs[0]!.name);
+  return latestCacheDir;
 }
 
 function loadCachedSchema(schemaRef: string): any {

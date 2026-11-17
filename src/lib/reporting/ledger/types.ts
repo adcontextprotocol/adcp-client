@@ -40,6 +40,11 @@ export type ReportingObservedFinalityV1 = 'none' | ReportingFinalityV1;
 
 export type ReportingLedgerAccountV1 = Readonly<{ account_id: string }>;
 
+export interface ReportingPackageBindingV1 {
+  constituentId: string;
+  mediaBuyId: string;
+}
+
 export interface ReportingLedgerCoverageV1 {
   status: 'full' | 'partial' | 'none' | 'unknown';
   evaluatedAt: string;
@@ -48,6 +53,10 @@ export interface ReportingLedgerCoverageV1 {
   partiallyCoveredMediaBuyIds: string[];
   unsupportedMediaBuyIds: string[];
   unknownMediaBuyIds: string[];
+  packageIds?: string[];
+  coveredPackageIds?: string[];
+  unsupportedPackageIds?: string[];
+  unknownPackageIds?: string[];
 }
 
 /** Runtime timezone rules frozen into a source-calendar configuration generation. */
@@ -104,6 +113,7 @@ export interface ReportingLedgerConfigurationV1 {
   requestedDimensions: string[];
   constituents: ReportingSourceSliceRequestV1['coverage']['constituents'];
   mediaBuyIds: string[];
+  packageBindings?: ReportingPackageBindingV1[];
   sourceTimezone: string;
   /**
    * Host rule-set identity used to resolve calendar boundaries. Calendar
@@ -273,6 +283,7 @@ export interface ReportingLedgerObligationV1 {
   requestedDimensions: string[];
   constituents: ReportingSourceSliceRequestV1['coverage']['constituents'];
   mediaBuyIds: string[];
+  packageBindings?: ReportingPackageBindingV1[];
   sourceSettings: ReportingSourceSliceRequestV1['sourceSettings'];
   contract: ReportingSourceSliceRequestV1['contract'];
   expectedAt: string;
@@ -1399,6 +1410,7 @@ export type ReportingSubscriptionConfigurationInputV1 = Omit<
   | 'owedSet'
   | 'constituents'
   | 'mediaBuyIds'
+  | 'packageBindings'
   | 'subscription'
 > & { subscription: ReportingLedgerSubscriptionV1 };
 
@@ -1415,6 +1427,7 @@ export interface ReportingSubscriptionLedgerObligationInputV1 {
   /** Frozen at the period end (`scope_resolved_at`). Must equal the constituents' media buys. */
   mediaBuyIds: string[];
   constituents: ReportingSourceSliceRequestV1['coverage']['constituents'];
+  packageBindings?: ReportingPackageBindingV1[];
   /** A billing cutover stub (adcp#8617): `period` is [E, first incoming boundary). */
   stub?: true;
 }

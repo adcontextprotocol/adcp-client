@@ -19,7 +19,7 @@
  * Skipped from copy:
  *   - `latest` symlink — duplicates a real version directory
  *   - `*.previous` backup snapshots from `sync-schemas` replaceTree
- *   - superseded prerelease bundles that are not the current ADCP_VERSION
+ *   - prerelease bundles outside the primary pin and exact reporting side preview
  *   - older patch versions of stable releases — collapsed into the
  *     highest-patch sibling
  *   - `tmp/` and most transport-projection (`mcp/`) subtrees. The active MCP
@@ -57,12 +57,12 @@ function escapeRegExp(value: string): string {
 /**
  * The `compliance/` files to copy for one source bundle: the two controller entry points plus the
  * sibling documents they `$ref`, transitively. 3.0.25 and 3.1.31 need only the entry points;
- * 3.2.8 and 3.3.0-beta.5 publish a request schema that `$ref`s `compliance/task-completion-data.json`,
+ * 3.2.8 and both 3.3.0-beta.5 and 3.3.0-beta.6 publish a request schema that `$ref`s `compliance/task-completion-data.json`,
  * which in turn `$ref`s `compliance/get-creative-features-completion.json` — without them AJV
  * cannot compile the controller validator at all ("can't resolve reference …/task-completion-data.json").
  * Seeding from the entry points rather than hardcoding a file list keeps the set minimal by
  * construction and correct when a release adds or drops a sibling. Be honest about what that buys
- * today: on all four currently published caches the reachable closure IS the entire `compliance/`
+ * today: on all five currently published caches the reachable closure IS the entire `compliance/`
  * directory, so this filter trims nothing right now — it is forward-looking, not presently
  * selective. Only absolute or root-relative same-version refs are followed; a bare-relative
  * `"./x.json"` form would be missed, and none exists in any published cache. The per-version
@@ -437,12 +437,14 @@ function main(): void {
   }
 
   const currentProtocolVersion = readFileSync(path.join(repoRoot, 'ADCP_VERSION'), 'utf8').trim();
+  const secondaryReportingPreview = currentProtocolVersion === '3.3.0-beta.5' ? '3.3.0-beta.6' : undefined;
   const publishableCandidates = candidates.filter(
     candidate =>
       candidate.major >= 3 &&
       (candidate.prerelease === undefined ||
         candidate.prerelease === 'legacy' ||
-        candidate.version === currentProtocolVersion)
+        candidate.version === currentProtocolVersion ||
+        candidate.version === secondaryReportingPreview)
   );
   const selected = selectVersionsToCopy(publishableCandidates);
   const collapsed = candidates.filter(c => !selected.some(s => s.source.version === c.version));

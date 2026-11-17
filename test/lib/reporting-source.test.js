@@ -48,6 +48,21 @@ describe('reporting source contract V1', () => {
     );
   });
 
+  test('accepts package-only custom source requests without media-buy bindings', () => {
+    const request = structuredClone(redactedReportingSourceRequestV1());
+    const constituent = request.coverage.constituents[0];
+    delete constituent.mediaBuyId;
+    delete constituent.productBinding.mediaBuyId;
+    constituent.constituentKind = 'package_item';
+    constituent.packageId = 'fixture-package';
+    constituent.productBinding.bindingKind = 'package_item_product';
+    constituent.productBinding.packageId = 'fixture-package';
+    request.coverage.mediaBuyIds = [];
+    request.coverage.packageIds = ['fixture-package'];
+    request.coverage.denominatorFingerprint = reportingCoverageDenominatorFingerprintV1(request.coverage.constituents);
+    assert.equal(ReportingSourceSliceRequestV1Schema.safeParse(request).success, true);
+  });
+
   test('publishes strict listed and host-attested applicability alternatives', async () => {
     const Ajv = require('ajv/dist/2020');
     const schema = JSON.parse(

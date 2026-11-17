@@ -3077,7 +3077,9 @@ interface InlineReportingAvailabilityEvidenceV1 {
   version: '1.0';
   cells: readonly InlineReportingMetricEvidenceV1[];
 }
-// Inline callback requests include constituents: { constituent_id, media_buy_id }[]; evidence-bearing responses add availability_evidence.
+// Inline callback constituents carry { constituent_id, media_buy_id } for media buys or
+// { constituent_id, media_buy_id, package_id } for package items. Trusted resolveCoverage also supplies
+// packageBindings: { constituentId, mediaBuyId }[] for package items.
 // validateReportingSourceExecutionV1({ level, capabilities, request, result, objectReader })
 // runReportingSourceReplayConformanceV1({ level, executor, request, objectReader })
 // validateReportingRevisionSequenceV1(manifests, { crossFinalityBridge })
@@ -3190,7 +3192,7 @@ const reporting = createReliableReportingService({
   statusRetentionDays, // enforce this commitment in the ledger database
   resolveSource: account => ({ adapterId, sourceScope, sourceTimezone }),
   resolveCurrency: account => currency,
-  resolveCoverage: account => ({ constituents }), // authorized media-buy/package denominator
+  resolveCoverage: account => ({ constituents, packageBindings }), // authorized denominator and package-to-buy bindings
   resolveConsumerId, // optional; controls consumer-status handler/capability
   maintenance: reportingLedgerMaintenance({ retention: { enabled: true } }), // optional factory from @adcp/reporting-storage
 });
