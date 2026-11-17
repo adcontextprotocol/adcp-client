@@ -9750,6 +9750,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       has_creative_library: capConfig.creative.hasCreativeLibrary ?? false,
       supports_generation: capConfig.creative.supportsGeneration ?? false,
       supports_transformation: capConfig.creative.supportsTransformation ?? false,
+      ...(capConfig.creative.assignmentOperations !== undefined && {
+        assignment_operations: [...capConfig.creative.assignmentOperations],
+      }),
     };
   }
 

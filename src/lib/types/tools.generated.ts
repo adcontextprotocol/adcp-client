@@ -5834,7 +5834,7 @@ export interface Error {
    */
   field?: string;
   /**
-   * Suggested fix for the error
+   * Suggested fix for the error. A suggestion, and the recovery a correctable error's code documents, SHOULD name only operations and fields the agent declares it accepts or the schema requires it to accept, so a buyer agent can follow a correctable refusal without risking a second refusal. A recovery that depends on a declared capability names the capability, for example an assignment_operations replace only where creative.assignment_operations lists replace.
    */
   suggestion?: string;
   /**
@@ -15347,7 +15347,7 @@ export interface CardAsset {
    */
   description?: string;
   /**
-   * Optional per-card call-to-action label (e.g., 'SHOP_NOW', 'LEARN_MORE'). When the parent format declares `cta_values` (allowed CTA labels), the per-card `cta` MUST be one of those values. Lets a Meta or TikTok carousel show different CTAs per card.
+   * Optional per-card call-to-action label (e.g., 'SHOP_NOW', 'LEARN_MORE'). When the parent format declares `cta_values` (allowed CTA labels; for `image_carousel`, its `cta_values` parameter), the per-card `cta` MUST be one of those values; a seller refuses any other value with `CREATIVE_VALUE_NOT_ALLOWED`, with `error.field` pointing at the card's `cta`. When the parent format declares no `cta_values`, the card's `cta` takes free text. Lets a Meta or TikTok carousel show different CTAs per card.
    */
   cta?: string;
   landing_page_url?: URLAsset1;
@@ -20705,7 +20705,7 @@ export interface GetMediaBuyDeliveryResponse {
       effective_rate?: number;
     };
     /**
-     * Metrics broken down by package
+     * Metrics broken down by package. Every media buy has at least one package, so sellers SHOULD return at least one row, one per package in the media buy. A seller that cannot report a buy SHOULD omit its delivery row and return an error rather than return an empty array. AdCP 4.0 is expected to require at least one row (adcp#8973).
      */
     by_package: (DeliveryMetrics & {
       /**
@@ -23413,7 +23413,7 @@ export type AudienceMember = {
   ext?: ExtensionObject;
 };
 /**
- * Request parameters for managing CRM-based audiences on an account with upsert semantics. Existing audiences matched by audience_id are updated, new ones are created. Members are specified as delta operations: add appends new members, remove drops existing ones. Recommend no more than 100,000 members per call; for larger lists, chunk and call incrementally using add/remove deltas. When delete_missing is true, buyer-managed audiences on the account not in this request are removed — do not combine with omitted audiences or all buyer-managed audiences will be deleted. When audiences is omitted, the call is discovery-only: it returns all audiences on the account without modification.
+ * Request parameters for managing CRM-based audiences on an account with upsert semantics. Existing audiences matched by audience_id are updated, new ones are created. Members are specified as delta operations: add appends new members, remove drops existing ones. Recommend no more than 100,000 members per call; for larger lists, chunk and call incrementally using add/remove deltas. When delete_missing is true, buyer-managed audiences on the account not in this request are removed — do not combine with omitted audiences or all buyer-managed audiences will be deleted. When audiences is omitted, the call is discovery-only: it returns all audiences on the account without modification. Every seller that declares media_buy.audience_targeting in get_adcp_capabilities answers discovery-only calls; inline member push is declared separately (see media_buy.audience_targeting.supported_activation_methods).
  */
 export interface SyncAudiencesRequest {
   /**
@@ -23434,7 +23434,7 @@ export interface SyncAudiencesRequest {
   idempotency_key: string;
   account: AccountReference;
   /**
-   * Audiences to sync (create or update). When omitted, the call is discovery-only and returns all existing audiences on the account without modification.
+   * Audiences to sync (create or update). When omitted, the call is discovery-only and returns all existing audiences on the account without modification; every seller that declares media_buy.audience_targeting answers it. A seller whose media_buy.audience_targeting.supported_activation_methods omits the sync_audiences pattern does not accept inline member push: it rejects, with UNSUPPORTED_FEATURE, an entry that carries add or remove or that would create a new audience without a source reference.
    */
   audiences?: {
     /**
@@ -27487,7 +27487,7 @@ export interface SyncCreativesRequest {
     placement_ids?: string[];
   }[];
   /**
-   * Explicit, ordered assignment mutations. These operations may be sent without creatives to traffic existing creative IDs independently from MediaBuy commercial control. The entire request is atomic under idempotency_key and therefore requires strict validation; lenient partial processing is not permitted. A pending_review or rejected library creative MAY be assigned if the reference and other assignment constraints are valid; sellers MUST NOT reject or remove an assignment solely for its review status. Only package-approved eligible creatives may serve. See the package start_requires_all_creatives_approved policy and docs/media-buy/specification.mdx#starting-with-assigned-creatives-under-review.
+   * Explicit, ordered assignment mutations. These operations may be sent without creatives to traffic existing creative IDs independently from MediaBuy commercial control. The entire request is atomic under idempotency_key and therefore requires strict validation; lenient partial processing is not permitted. A pending_review or rejected library creative MAY be assigned if the reference and other assignment constraints are valid; sellers MUST NOT reject or remove an assignment solely for its review status. Only package-approved eligible creatives may serve. See the package start_requires_all_creatives_approved policy and docs/media-buy/specification.mdx#starting-with-assigned-creatives-under-review. Buyers MUST NOT send an operation the seller does not list in get_adcp_capabilities creative.assignment_operations; a seller rejects an unlisted operation with UNSUPPORTED_FEATURE and applies nothing.
    * @maxItems 500
    */
   assignment_operations?: (AssignOrUpdate | Unassign | ReplaceAssignment | MergeSellerCopy)[];
@@ -27644,7 +27644,7 @@ export interface ReplaceAssignment {
   installment_refs?: CanonicalInstallmentReference[];
 }
 /**
- * Declares that merged_creative_id, a seller-assigned creative currently assigned to package_id, is the same creative as creative_id. On success the seller moves that assignment's serving object, approval, weight, placement routing, and installment scope to (creative_id, package_id) without re-trafficking it, and merged_creative_id no longer has an assignment on the package. Unlike replace, which traffics creative_id as a new object, merge preserves delivery continuity. Requires creative.supports_assignment_merge.
+ * Declares that merged_creative_id, a seller-assigned creative currently assigned to package_id, is the same creative as creative_id. On success the seller moves that assignment's serving object, approval, weight, placement routing, and installment scope to (creative_id, package_id) without re-trafficking it, and merged_creative_id no longer has an assignment on the package. Unlike replace, which traffics creative_id as a new object, merge preserves delivery continuity. Requires merge in creative.assignment_operations.
  */
 export interface MergeSellerCopy {
   operation: 'merge';
@@ -28548,6 +28548,9 @@ export interface GetSignalsResponse {
       | 'bi_annually'
       | 'annually';
     onboarder?: {
+      /**
+       * Identifiers the onboarder matched on. `full_name` replaces `name`, which is deprecated in 3.3 and removed in 4.0; receivers treat the two as the same key.
+       */
       match_keys: (
         | 'name'
         | 'address'
@@ -28559,6 +28562,7 @@ export interface GetSignalsResponse {
         | 'ip'
         | 'customer_id'
         | 'phone'
+        | 'full_name'
       )[];
       pre_onboarding_audience_expansion?: boolean;
       pre_onboarding_device_expansion?: boolean;
@@ -31786,9 +31790,9 @@ export type GetMediaBuyArtifactsResponse = {
           sku_id?: string;
         };
         /**
-         * Seller's local model verdict for this artifact
+         * Seller's local model verdict for this artifact. `passed` replaces `pass`, which is deprecated in 3.3 and removed in 4.0; buyers treat the two as the same verdict.
          */
-        local_verdict?: 'pass' | 'fail' | 'unevaluated';
+        local_verdict?: 'pass' | 'fail' | 'unevaluated' | 'passed';
       }[];
       /**
        * Information about artifact collection for this media buy. Sampling is configured at buy creation time — this reports what was actually collected.
@@ -32245,7 +32249,7 @@ export interface SyncPlansRequest {
        */
       start: string;
       /**
-       * Flight end (ISO 8601).
+       * Flight end (ISO 8601). MUST be later than `start`.
        * @format date-time
        */
       end: string;
@@ -32259,7 +32263,7 @@ export interface SyncPlansRequest {
      */
     regions?: string[];
     /**
-     * Registry policy IDs to enforce for this plan. The governance agent resolves full policy definitions from the registry and evaluates actions against them. Intersected with the plan's countries/regions to activate only geographically relevant policies.
+     * Registry policy IDs to enforce for this plan. Each ID MUST appear at most once. The governance agent resolves full policy definitions from the registry and evaluates actions against them. Intersected with the plan's countries/regions to activate only geographically relevant policies.
      */
     policy_ids?: string[];
     /**
@@ -32282,11 +32286,11 @@ export interface SyncPlansRequest {
      */
     min_audience_size?: number;
     /**
-     * When true, the governance agent MUST escalate any action on this plan for human review before execution — regardless of budget. Required by regulations that prohibit solely automated decisions affecting data subjects (GDPR Art 22, EU AI Act Annex III): credit, insurance pricing, recruitment, housing allocation. Governance agents MUST set this to true automatically when any resolved policy or policy_category has requires_human_review: true. Distinct from budget.reallocation_threshold, which only governs budget reallocation autonomy — human_review_required covers decisions affecting individuals (targeting, creative, delivery).
+     * When true, the governance agent MUST escalate any action on this plan for human review before execution — regardless of budget. Required by regulations that prohibit solely automated decisions affecting data subjects (GDPR Art 22, EU AI Act Annex III): credit, insurance pricing, recruitment, housing allocation. Governance agents MUST set this to true automatically when any resolved policy or policy_category has requires_human_review: true. When a plan omits this field, the governance agent derives it from the plan's resolved policies and policy categories; a caller-supplied false is rejected when any of them requires human review. Distinct from budget.reallocation_threshold, which only governs budget reallocation autonomy — human_review_required covers decisions affecting individuals (targeting, creative, delivery).
      */
     human_review_required?: boolean;
     /**
-     * Bespoke policies specific to this campaign, using the same shape as registry entries. Each policy has a policy_id, enforcement (must|should), and natural-language policy text. Governance findings reference policy_id to identify which policy triggered. For quick authoring, omit version/name/category — servers default them.
+     * Bespoke policies specific to this campaign, using the same shape as registry entries. Each policy has a policy_id, enforcement (must|should), and natural-language policy text. A policy_id MUST NOT equal an ID in policy_ids. Governance findings reference policy_id to identify which policy triggered. For quick authoring, omit version/name/category — servers default them.
      */
     custom_policies?: PolicyEntry[];
     /**
@@ -37059,13 +37063,13 @@ export interface GetAdCPCapabilitiesResponse {
       requirement: 'optional' | 'required';
     };
     /**
-     * Audience targeting capabilities. Presence of this object indicates the seller supports audience targeting, including sync_audiences and audience_include/audience_exclude in targeting overlays.
+     * Audience targeting capabilities. Presence of this object indicates the seller supports audience_include and audience_exclude in targeting overlays, and discovery-only sync_audiences (called without audiences), which lists the audiences on the account and the audience_id values those overlays reference. A seller that declares this object MUST answer discovery-only sync_audiences. Presence alone does not promise inline member push: the sync_audiences pattern in supported_activation_methods declares it, and when supported_activation_methods is absent inline member push is supported, as in 3.2. A seller whose supported_activation_methods omits the sync_audiences pattern MUST reject, with UNSUPPORTED_FEATURE, an audiences entry that carries add or remove member deltas or that would create a new audience without a source reference. supported_identifier_types and minimum_audience_size are required only when the seller accepts inline member push.
      */
     audience_targeting?: {
       /**
-       * PII-derived identifier types accepted for audience matching. Buyers should only send identifiers the seller supports.
+       * PII-derived identifier types accepted for audience matching. Buyers should only send identifiers the seller supports. Required when the seller accepts inline member push, that is when supported_activation_methods is absent or includes the sync_audiences pattern.
        */
-      supported_identifier_types: ('hashed_email' | 'hashed_phone')[];
+      supported_identifier_types?: ('hashed_email' | 'hashed_phone')[];
       /**
        * Whether the seller accepts the buyer's CRM/loyalty ID as a matchable identifier. Only applicable when the seller operates a closed ecosystem with a shared ID namespace (e.g., a retailer matching against their loyalty program). When true, buyers can include platform_customer_id values in AudienceMember.identifiers for matching against the seller's identity graph. Reporting on matched platform_customer_ids typically requires a clean room or the seller's own reporting surface.
        */
@@ -37075,13 +37079,13 @@ export interface GetAdCPCapabilitiesResponse {
        */
       supported_uid_types?: UIDType[];
       /**
-       * Minimum matched audience size required for targeting. Audiences below this threshold will have status: too_small. Varies by platform (100–1000 is typical).
+       * Minimum matched audience size required for targeting. Audiences below this threshold will have status: too_small. Varies by platform (100–1000 is typical). Required when the seller accepts inline member push, that is when supported_activation_methods is absent or includes the sync_audiences pattern. A seller without inline member push MAY still declare it.
        * @minimum 1
        * @format int
        */
-      minimum_audience_size: number;
+      minimum_audience_size?: number;
       /**
-       * Union of audience_activation.methods across the seller's products. Fast-fail discovery: a buyer reads this once and skips the catalog walk when nothing overlaps its pipeline. Per-product declarations are the source of truth; sellers MUST keep this consistent with the catalog. Operational coordinates are account-scoped: the union MAY omit consumer_identities and destination_ref until bilateral account setup establishes them, and MUST NOT expose another account's coordinates. Absence of this field with media_buy.audience_activation listed in experimental_features means walk the catalog; only a present, non-overlapping union is a fast-fail signal. Experimental (x-status: experimental): sellers implementing audience activation declarations MUST list media_buy.audience_activation in experimental_features. Per docs/reference/experimental-status, this surface MAY change between 3.x releases with notice.
+       * Union of audience_activation.methods across the seller's products. Fast-fail discovery: a buyer reads this once and skips the catalog walk when nothing overlaps its pipeline. Per-product declarations are the source of truth; sellers MUST keep this consistent with the catalog. Operational coordinates are account-scoped: the union MAY omit consumer_identities and destination_ref until bilateral account setup establishes them, and MUST NOT expose another account's coordinates. Absence of this field with media_buy.audience_activation listed in experimental_features means walk the catalog; only a present, non-overlapping union is a fast-fail signal. When present, the field also declares inline member push: the seller accepts add and remove member deltas on sync_audiences only when the union includes the sync_audiences pattern. Experimental (x-status: experimental): sellers implementing audience activation declarations MUST list media_buy.audience_activation in experimental_features. Per docs/reference/experimental-status, this surface MAY change between 3.x releases with notice.
        * @maxItems 16
        */
       supported_activation_methods?: AudienceActivationMethod[];
@@ -37521,11 +37525,15 @@ export interface GetAdCPCapabilitiesResponse {
      */
     supports_revisions?: boolean;
     /**
-     * When true, this agent accepts the merge operation in sync_creatives assignment_operations: a buyer declares that a seller-assigned creative assigned to a package is the same creative as its own, and the seller moves that assignment's serving object, approval, and delivery continuity to the buyer's creative_id. Requires has_creative_library: true and stable_creative_ids: true. When false or absent, the agent rejects merge with UNSUPPORTED_FEATURE and buyers MUST NOT send it.
+     * The sync_creatives assignment_operations this agent accepts. The list is exact: the agent accepts every listed operation and rejects any other with UNSUPPORTED_FEATURE, applying nothing, since the request is atomic. Buyers MUST NOT send an operation that is not listed. Absent from a response served at 3.3 or later: the agent accepts none, and buyers MUST NOT send assignment_operations. A response served at an earlier release cannot carry this field, so there its absence declares nothing. An agent that declares live_updates MUST list replace, the swap its CREATIVE_LIVE_UPDATE_UNSUPPORTED recovery relies on. A seller that exposes buy_products or accept_proposal (lists either in media_buy.lifecycle_tools) and declares has_creative_library: true MUST list assign in a response served at 3.3 or later, because the compact lifecycle assigns creatives only through assignment_operations. Listing merge requires has_creative_library: true and stable_creative_ids: true. supports_assignment_merge: true requires merge in this list; a seller that lists merge SHOULD also set that flag, and where they disagree, this list governs.
+     */
+    assignment_operations?: ('assign' | 'unassign' | 'replace' | 'merge')[];
+    /**
+     * When true, this agent accepts the merge operation in sync_creatives assignment_operations: a buyer declares that a seller-assigned creative assigned to a package is the same creative as its own, and the seller moves that assignment's serving object, approval, and delivery continuity to the buyer's creative_id. Requires has_creative_library: true and stable_creative_ids: true. Kept for compatibility: assignment_operations is the authoritative declaration. When this flag is true, assignment_operations MUST list merge, and an agent that lists merge SHOULD set this flag. Buyers MUST NOT send merge unless assignment_operations lists it; an agent that does not list it rejects merge with UNSUPPORTED_FEATURE.
      */
     supports_assignment_merge?: boolean;
     /**
-     * Which kinds of change this agent applies in place to a live creative through sync_creatives under the same creative_id, and how the creative serves while each is decided. A creative is live when its status is approved and it has at least one assignment on a package that is not canceled, whose flight has not ended, and whose media buy is not in a terminal state; a paused package still counts. This declaration is a floor: every listed kind is accepted on every live creative in the listed serving mode or a less disruptive one (uninterrupted < staged < paused_for_review). An unlisted kind may still be accepted for some creatives; a sync_creatives dry_run returns the exact outcome of one change. A declaring agent MUST refuse a change it does not apply in place with CREATIVE_LIVE_UPDATE_UNSUPPORTED (not INVALID_STATE), and MUST always accept changes to name and tags. Requires has_creative_library: true. Omitted: the agent makes no claim about live creatives.
+     * Which kinds of change this agent applies in place to a live creative through sync_creatives under the same creative_id, and how the creative serves while each is decided. A creative is live when its status is approved and it has at least one assignment on a package that is not canceled, whose flight has not ended, and whose media buy is not in a terminal state; a paused package still counts. This declaration is a floor: every listed kind is accepted on every live creative in the listed serving mode or a less disruptive one (uninterrupted < staged < paused_for_review). An unlisted kind may still be accepted for some creatives; a sync_creatives dry_run returns the exact outcome of one change. A declaring agent MUST refuse a change it does not apply in place with CREATIVE_LIVE_UPDATE_UNSUPPORTED (not INVALID_STATE), and MUST always accept changes to name and tags. Requires has_creative_library: true and an assignment_operations list that includes replace. Omitted: the agent makes no claim about live creatives.
      */
     live_updates?: {
       /**

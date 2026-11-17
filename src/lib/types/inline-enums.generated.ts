@@ -1542,7 +1542,7 @@ export const PublisherTagsSource_SelectionTypeValues = ["publisher_tags"] as con
 // ====== RateLimitedDetails ======
 
 /** single | RateLimitedDetails.scope */
-export const RateLimitedDetails_ScopeValues = ["account", "tool", "global"] as const;
+export const RateLimitedDetails_ScopeValues = ["account", "tool", "global", "all"] as const;
 
 // ====== RawAttestation ======
 

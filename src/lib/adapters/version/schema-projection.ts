@@ -180,6 +180,17 @@ function allowedScalars(nodes: SchemaNode[]): unknown[] | undefined {
   return values;
 }
 
+/** The deprecated enum value that `value` supersedes, per the schema's `enumMetadata`. */
+function supersededOriginal(nodes: SchemaNode[], value: unknown): string | undefined {
+  for (const { schema } of nodes) {
+    if (!isObject(schema.enumMetadata)) continue;
+    for (const [original, metadata] of Object.entries(schema.enumMetadata)) {
+      if (isObject(metadata) && Object.is(metadata['x-superseded-by'], value)) return original;
+    }
+  }
+  return undefined;
+}
+
 function hasScalarConstraint(nodes: SchemaNode[]): boolean {
   return nodes.some(({ schema }) => Array.isArray(schema.enum) || Object.hasOwn(schema, 'const'));
 }
@@ -288,6 +299,10 @@ function project(
     // Only remove values the newer release defines. A value neither release
     // allows is the caller's error and is left for validation to report.
     if (sourceAllowed?.some(allowed => Object.is(allowed, value))) {
+      // A replacement for a deprecated value goes to an older release as the
+      // original it supersedes (`pass` for `passed`, adcontextprotocol/adcp#8915).
+      const original = supersededOriginal(sourceNodes, value);
+      if (original !== undefined && targetAllowed.some(allowed => Object.is(allowed, original))) return original;
       dropped.push({ path, kind: 'enum_value' });
       return OMIT;
     }

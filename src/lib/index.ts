@@ -2061,6 +2061,8 @@ export type {
   AdcpProtocol,
   AccountCapabilities,
   BuyingMode,
+  CreativeAssignmentOperation,
+  CreativeCapabilities,
   MediaBuyFeatures,
   ToolInfo,
   FeatureName,

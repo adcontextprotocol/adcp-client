@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.3.0-beta.6
-// Generated at: 2026-11-13T19:22:28.958Z
+// Generated AdCP core types from official schemas v3.3.0-rc.0
+// Generated at: 2026-11-17T01:53:15.545Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -398,9 +398,9 @@ export type BillingParty = 'operator' | 'agent' | 'advertiser';
 
 // BINARYVERDICT CANONICAL ENUM
 /**
- * Strictly two-outcome evaluation result used for overall record-level verdicts in content standards tasks. For per-feature breakdowns that include warning and unevaluated states, see feature-check-status.
+ * Strictly two-outcome evaluation result used for overall record-level verdicts in content standards tasks. For per-feature breakdowns that include warning and unevaluated states, see feature-check-status. `passed` replaces `pass`, which is deprecated in 3.3 and removed in 4.0 (see `x-deprecated-enum-values`).
  */
-export type BinaryVerdict = 'pass' | 'fail';
+export type BinaryVerdict = 'pass' | 'fail' | 'passed';
 
 // BRANDAGENTTYPE CANONICAL ENUM
 /**
@@ -654,7 +654,7 @@ export type CreativeApprovalStatus = 'pending_review' | 'approved' | 'partially_
 /**
  * A kind of change a sync_creatives item makes to a creative, classified from the item's diff against the version of the creative that serves. Buyer and seller compute the same classification, so a buyer can tell before it sends a change which live-update rules apply. Fields excluded from canonical revision content (name, tags, status, weight, placement_refs, placement_ids) are not a change kind.
  */
-export type CreativeChangeKind = 'click_through' | 'trackers' | 'asset_content' | 'format';
+export type CreativeChangeKind = 'clickthrough' | 'trackers' | 'asset_content' | 'format';
 
 // CREATIVEEVENTREASONCODE CANONICAL ENUM
 /**
@@ -800,7 +800,7 @@ export type DeliveryProjectionBasis =
 /**
  * Where a package is projected to land when its delivery ends, judged against the package's binding constraint (whichever of its goal or budget it would reach first). Tolerance and materiality are the seller's own thresholds. `complete` is a projected early finish, unrelated to `delivery_status: completed`. Clients on an older schema version SHOULD tolerate an unrecognized value.
  */
-export type DeliveryProjectionEndState = 'on_pace' | 'complete' | 'underdelivery' | 'early_exhaustion';
+export type DeliveryProjectionEndState = 'on_pace' | 'complete' | 'under_delivery' | 'early_exhaustion';
 
 // DELIVERYRECIPIENTCLOUD CANONICAL ENUM
 /**
@@ -920,7 +920,7 @@ export type DistanceUnit = 'km' | 'mi' | 'm';
 
 // DISTRIBUTIONIDENTIFIERTYPE CANONICAL ENUM
 /**
- * Platform-specific identifier types for collection distribution. Maps a collection to its presence on specific platforms, enabling cross-seller matching.
+ * Platform-specific identifier types for collection distribution. Maps a collection to its presence on specific platforms, enabling cross-seller matching. The `instagram_account_id`, `instagram_handle`, `facebook_page_id`, `facebook_page_handle`, `snapchat_profile_id`, `snapchat_handle`, `x_user_id` and `x_handle` values were added in AdCP 3.3.
  */
 export type DistributionIdentifierType =
   | 'apple_podcast_id'
@@ -942,6 +942,14 @@ export type DistributionIdentifierType =
   | 'peacock_id'
   | 'tiktok_id'
   | 'twitch_channel'
+  | 'instagram_account_id'
+  | 'instagram_handle'
+  | 'facebook_page_id'
+  | 'facebook_page_handle'
+  | 'snapchat_profile_id'
+  | 'snapchat_handle'
+  | 'x_user_id'
+  | 'x_handle'
   | 'imdb_id'
   | 'gracenote_id'
   | 'eidr_id'
@@ -1150,7 +1158,7 @@ export type Exclusivity = 'none' | 'category' | 'exclusive';
 /**
  * Experimental (`media_buy.execution_readiness`). Whether the account can satisfy one execution requirement of a product, and the product rollup. `unknown` means the seller could not check: never evidence the account lacks the resource, never a reason to treat the product as not runnable.
  */
-export type ExecutionReadinessStatus = 'ready' | 'setup_required' | 'selection_required' | 'input_required' | 'unknown';
+export type ExecutionReadinessStatus = 'ready' | 'setup_required' | 'selection_required' | 'input-required' | 'unknown';
 
 // FEATURECHECKSTATUS CANONICAL ENUM
 /**
@@ -9612,7 +9620,7 @@ export interface CardAsset {
    */
   description?: string;
   /**
-   * Optional per-card call-to-action label (e.g., 'SHOP_NOW', 'LEARN_MORE'). When the parent format declares `cta_values` (allowed CTA labels), the per-card `cta` MUST be one of those values. Lets a Meta or TikTok carousel show different CTAs per card.
+   * Optional per-card call-to-action label (e.g., 'SHOP_NOW', 'LEARN_MORE'). When the parent format declares `cta_values` (allowed CTA labels; for `image_carousel`, its `cta_values` parameter), the per-card `cta` MUST be one of those values; a seller refuses any other value with `CREATIVE_VALUE_NOT_ALLOWED`, with `error.field` pointing at the card's `cta`. When the parent format declares no `cta_values`, the card's `cta` takes free text. Lets a Meta or TikTok carousel show different CTAs per card.
    */
   cta?: string;
   landing_page_url?: URLAsset;
@@ -10885,6 +10893,10 @@ export interface CanonicalFormatImageCarousel {
    * @format int
    */
   card_description_max_chars?: number;
+  /**
+   * Permitted values for each card's `cta` (e.g., ['SHOP_NOW', 'LEARN_MORE']). When set, every card's `cta` MUST be one of these values, and a seller refuses any other value with `CREATIVE_VALUE_NOT_ALLOWED`, with `error.field` pointing at that card's `cta`. When absent, a card's `cta` takes free text, and a seller does not refuse it as `CREATIVE_VALUE_NOT_ALLOWED`.
+   */
+  cta_values?: string[];
   ssl_required?: boolean;
 }
 // CANONICALFORMATHOSTEDVIDEO PRIORITY CANONICAL SCHEMA
@@ -14173,7 +14185,7 @@ export interface Error {
    */
   field?: string;
   /**
-   * Suggested fix for the error
+   * Suggested fix for the error. A suggestion, and the recovery a correctable error's code documents, SHOULD name only operations and fields the agent declares it accepts or the schema requires it to accept, so a buyer agent can follow a correctable refusal without risking a second refusal. A recovery that depends on a declared capability names the capability, for example an assignment_operations replace only where creative.assignment_operations lists replace.
    */
   suggestion?: string;
   /**
@@ -23128,10 +23140,24 @@ export type SignalDefinitionEnrichment = {
     | 'annually';
   onboarder?: {
     /**
+     * Identifiers the onboarder matched on. `full_name` replaces `name`, which is deprecated in 3.3 and removed in 4.0; receivers treat the two as the same key.
+     *
      * @minItems 1
      */
     match_keys: [
-      'name' | 'address' | 'email' | 'postal' | 'lat_long' | 'mobile_id' | 'cookie_id' | 'ip' | 'customer_id' | 'phone',
+      (
+        | 'name'
+        | 'address'
+        | 'email'
+        | 'postal'
+        | 'lat_long'
+        | 'mobile_id'
+        | 'cookie_id'
+        | 'ip'
+        | 'customer_id'
+        | 'phone'
+        | 'full_name'
+      ),
       ...(
         | 'name'
         | 'address'
@@ -23143,6 +23169,7 @@ export type SignalDefinitionEnrichment = {
         | 'ip'
         | 'customer_id'
         | 'phone'
+        | 'full_name'
       )[]
     ];
     pre_onboarding_audience_expansion?: boolean;
@@ -26186,7 +26213,7 @@ export interface PublisherEntry {
    */
   property_ids?: string[];
   /**
-   * Whether the publisher's adagents.json entry for this agent pins `signing_keys[]`. When true, the agent's sell-side signatures about this publisher's inventory (such as webhooks) are accepted only with a key that is in both the pin and the agent's own JWKS. Operators should treat true as a signal that their published JWKS and the publisher's pin must stay in step.
+   * Whether the publisher's adagents.json pins `signing_keys[]` for this agent: true only when every in-window `authorized_agents[]` entry that matches the agent carries `signing_keys`. One matching entry without them leaves the agent unpinned. This is a scope-agnostic summary: verifiers compute the pin per message from the entries that match the agent and authorize the message's scope, so a pin can apply where this reads false (docs/governance/property/adagents.mdx#agent-url-matching). When true, the agent's sell-side signatures about this publisher's inventory (such as webhooks) are accepted only with a key that is in both the pin and the agent's own JWKS. Operators should treat true as a signal that their published JWKS and the publisher's pin must stay in step.
    */
   signing_keys_pinned?: boolean;
   /**
@@ -30842,7 +30869,7 @@ export interface AuthorizedAgentBaseFields {
    */
   authorized_for: string;
   /**
-   * Optional publisher-attested public signing keys for this agent. They narrow the keys a verifier accepts for signatures the agent makes in its sell-side role about this publisher's inventory, such as webhooks about a media buy: a key MUST appear both here and in the JWKS of the agent's brand.json `agents[]` entry. A pin never adds a key and does not apply to the agent's other traffic. See docs/building/by-layer/L1/security.mdx#agent-resolution.
+   * Optional publisher-attested public signing keys for this agent. They narrow the keys a verifier accepts for signatures the agent makes in its sell-side role about this publisher's inventory, such as webhooks about a media buy: a key MUST appear both here and in the JWKS of the agent's brand.json `agents[]` entry. A pin never adds a key and does not apply to the agent's other traffic. When more than one entry matches the agent and authorizes a message's scope, the agent is pinned for that message only if every such entry carries signing_keys, and the accepted keys are the union of their pins; an entry that authorizes nothing for the message neither pins nor unpins it (docs/governance/property/adagents.mdx#signing_keys). See docs/building/by-layer/L1/security.mdx#agent-resolution.
    */
   signing_keys?: AgentSigningKey[];
   /**
@@ -37348,10 +37375,12 @@ export interface CompliancePayload {
   current_status: ComplianceStatus;
   headline?: string | null;
   /**
-   * Map of compliance track id to track status.
+   * Map of compliance track id to track status. `passed` replaces `pass`, which is deprecated in 3.3 and removed in 4.0; consumers treat the two as the same status.
    */
   tracks: {
-    [k: string]: ('pass' | 'fail' | 'partial' | 'skip' | 'silent' | 'warning' | 'unknown' | 'skipped') | undefined;
+    [k: string]:
+      | ('pass' | 'fail' | 'partial' | 'skip' | 'silent' | 'warning' | 'unknown' | 'skipped' | 'passed')
+      | undefined;
   };
   /**
    * @minimum 0
@@ -40299,6 +40328,9 @@ export interface SignalDefinition {
    * Onboarder disclosure. Required when data_sources includes an offline_* or public_record_* source.
    */
   onboarder?: {
+    /**
+     * Identifiers the onboarder matched on. `full_name` replaces `name`, which is deprecated in 3.3 and removed in 4.0; receivers treat the two as the same key.
+     */
     match_keys: (
       | 'name'
       | 'address'
@@ -40310,6 +40342,7 @@ export interface SignalDefinition {
       | 'ip'
       | 'customer_id'
       | 'phone'
+      | 'full_name'
     )[];
     pre_onboarding_audience_expansion?: boolean;
     pre_onboarding_device_expansion?: boolean;
@@ -42484,7 +42517,7 @@ export interface ConflictDetails {
 
 // error-details/creative-live-update-unsupported.json
 /**
- * Typed details for CREATIVE_LIVE_UPDATE_UNSUPPORTED. Names the kinds of change the seller refused on a live creative and the packages that make it live, so the buyer can sync the change as a new creative_id and replace it on those packages.
+ * Typed details for CREATIVE_LIVE_UPDATE_UNSUPPORTED. Names the kinds of change the seller refused on a live creative and the packages that make it live, so the buyer can sync the change as a new creative_id and replace it on those packages. A seller declaring creative.live_updates lists replace in creative.assignment_operations.
  */
 export interface CreativeLiveUpdateUnsupportedDetails {
   /**
@@ -42756,7 +42789,7 @@ export interface RateLimitedDetails {
   /**
    * What the limit applies to
    */
-  scope?: 'account' | 'tool' | 'global';
+  scope?: 'account' | 'tool' | 'global' | 'all';
 }
 
 
