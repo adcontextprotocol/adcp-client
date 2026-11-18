@@ -1229,7 +1229,8 @@ export class AgentClient {
   }
 
   /**
-   * Revise or atomically finalize compact AdCP proposals.
+   * Revise, atomically finalize, or (AdCP 3.3, experimental) extend the hold on
+   * compact AdCP proposals.
    *
    * The SDK validates batch/cardinality rules and any explicit seller
    * capability declaration before transport, and auto-generates the

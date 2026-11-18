@@ -1,6 +1,6 @@
 import type { TaskResult } from '../core/ConversationTypes';
 import { buildRefineProposalsRequest, unwrapVerifiedRefineProposals } from './buyer';
-import { isStrictDateTime } from './verification';
+import { ProposalResponseVerificationError, isStrictDateTime, verifyHoldExtension } from './verification';
 import type {
   CanonicalProposal,
   ProposalRefinement,
@@ -90,6 +90,28 @@ export class ProposalNegotiator {
     }
     this.assertLiveHold(finalized.proposal);
     return finalized.proposal;
+  }
+
+  /**
+   * Extend the hold on a committed proposal (experimental, AdCP 3.3
+   * `media_buy.hold_extension`). Pass the committed proposal itself, not just
+   * its ID: the successor is checked against it for unchanged terms,
+   * `hold_policy` and `hold_placed_at`, and a later `expires_at`.
+   */
+  async extendHold(source: CanonicalProposal): Promise<CanonicalProposal> {
+    if (source.proposal_status !== 'committed') throw new Error('only a committed proposal hold can be extended');
+    const { response } = await this.execute({
+      refinements: [{ proposal_id: source.proposal_id, action: 'extend_hold' }],
+    });
+    const extended = response.results[0];
+    if (!extended || extended.outcome !== 'finalized') {
+      const reason = extended && extended.outcome === 'unable' ? `: ${extended.reason_code}` : '';
+      throw new Error(`seller could not extend proposal hold${reason}`);
+    }
+    const check = verifyHoldExtension(source, extended.proposal);
+    if (!check.ok) throw new ProposalResponseVerificationError(check.issues);
+    this.assertLiveHold(extended.proposal);
+    return extended.proposal;
   }
 
   async accept<T>(proposal: CanonicalProposal, accept: (proposal: CanonicalProposal) => Promise<T>): Promise<T> {

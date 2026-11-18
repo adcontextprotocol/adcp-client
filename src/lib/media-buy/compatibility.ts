@@ -1252,17 +1252,26 @@ function projectRefineProposals(
   adcpVersion: string,
   requestedVersion: RefineProposalsInput['adcp_version'],
   servedAdcpVersion: string | undefined,
-  discoveryCeiling: string
+  discoveryCeiling: string,
+  includeCollections?: boolean
 ): CompatibleRefineProposalsResponse {
   const source = compactWirePayload(data);
   const proposalIds = refinements.map(refinement => refinement.proposal_id);
   if (lifecycle === 'compact') {
     // Verify the complete response root before following any seller-controlled
     // proposal container or result branch.
-    assertRefineProposalsResponse({ refinements, adcp_version: requestedVersion }, source, {
-      adcpVersion,
-      servedAdcpVersion: applicableRefinementServedVersion(servedAdcpVersion, requestedVersion, discoveryCeiling),
-    });
+    assertRefineProposalsResponse(
+      {
+        refinements,
+        adcp_version: requestedVersion,
+        ...(includeCollections !== undefined && { include_collections: includeCollections }),
+      },
+      source,
+      {
+        adcpVersion,
+        servedAdcpVersion: applicableRefinementServedVersion(servedAdcpVersion, requestedVersion, discoveryCeiling),
+      }
+    );
   }
   const base = proposalResponseBase(source);
   const sourceResults = array(source.results);
@@ -8453,7 +8462,8 @@ export class MediaBuyLifecycleCoordinator {
           params.adcp_version ??
             (toReleasePrecisionVersion(this.agent.getWireAdcpVersion()) as RefineProposalsInput['adcp_version']),
           this.refinementServedVersion,
-          toReleasePrecisionVersion(this.agent.getWireAdcpVersion())
+          toReleasePrecisionVersion(this.agent.getWireAdcpVersion()),
+          params.include_collections
         );
       const projectAndSettle = (data: CompatibleRefineProposalsWireResponse) => {
         try {

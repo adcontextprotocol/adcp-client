@@ -8,6 +8,7 @@ import type {
   OutcomeTarget,
   ProductMediaBuySupportRequirements,
   ProductPurchase as GeneratedProductPurchase,
+  ResponseCollection,
 } from '../types/core.generated';
 
 export type {
@@ -35,6 +36,13 @@ export type ProposalRefinementDimension = (typeof PROPOSAL_REFINEMENT_DIMENSIONS
 export interface ProposalRefinementCapabilities {
   supported_dimensions: readonly ProposalRefinementDimension[];
   max_alternatives?: number;
+  /**
+   * Experimental, AdCP 3.3 only (`media_buy.hold_extension`). Whether the
+   * seller accepts `action: "extend_hold"`. Buyers must not send it unless this
+   * is `true`. A seller that sets it must also list `media_buy.hold_extension`
+   * in `experimental_features`. It is not projected to AdCP 3.2 callers.
+   */
+  hold_extension?: boolean;
 }
 
 /** Typed view of the seller's compact proposal-lifecycle discovery fields. */
@@ -158,7 +166,22 @@ export interface FinalizeProposalRefinement {
   ext?: Record<string, unknown>;
 }
 
-export type ProposalRefinement = ReviseProposalRefinement | FinalizeProposalRefinement;
+/**
+ * Experimental, AdCP 3.3 only (`media_buy.hold_extension`). Extends the hold
+ * on a committed, unexpired proposal. A successful extension returns
+ * `outcome: "finalized"` with a new committed successor that keeps the
+ * source's `commercial_terms`, `terms_digest`, `hold_policy` and
+ * `hold_placed_at`, and carries a later `expires_at`. Like finalize, it changes
+ * no terms, and a batch containing it contains only `extend_hold` entries.
+ */
+export interface ExtendHoldProposalRefinement {
+  proposal_id: string;
+  action: 'extend_hold';
+  /** Vendor extension point; opaque to the protocol. */
+  ext?: Record<string, unknown>;
+}
+
+export type ProposalRefinement = ReviseProposalRefinement | FinalizeProposalRefinement | ExtendHoldProposalRefinement;
 
 export type Adcp32Version = '3.2' | `3.2-${string}`;
 
@@ -172,6 +195,12 @@ export interface RefineProposalsRequest {
   context?: Record<string, unknown>;
   governance_context?: string;
   push_notification_config?: Record<string, unknown>;
+  /**
+   * Experimental, AdCP 3.3 only (`media_buy.collection_cards`). Asks the seller
+   * to return the response-level `collections` array. Send it only to a seller
+   * that lists `media_buy.collection_cards` in `experimental_features`.
+   */
+  include_collections?: boolean;
   /** Vendor extension point; opaque to the protocol. */
   ext?: Record<string, unknown>;
   adcp_version: ProposalRefinementVersion;
@@ -315,6 +344,13 @@ export interface RefineProposalsCompletedResponse<
   status?: 'completed';
   results: ProposalRefinementResult<TProposal>[];
   products: TProduct[];
+  /**
+   * Experimental, AdCP 3.3 only (`media_buy.collection_cards`). Full collection
+   * objects for collections the returned products reference. Present only when
+   * the request set `include_collections: true`. Convenience copies, never
+   * authorization evidence.
+   */
+  collections?: ResponseCollection[];
   message?: string;
 }
 
@@ -322,6 +358,12 @@ export interface RefineProposalsCompletedResponse<
 export interface RefineProposalsSubmittedResponse extends RefineProposalsResponseEnvelope {
   status: 'submitted';
   task_id: string;
+  /**
+   * AdCP 3.3 only. Seller's estimate of when a finalize-only or
+   * extend_hold-only request resolves. An estimate, not an expiry: schedule a
+   * status check for it and do not treat a passed timestamp as failure.
+   */
+  expected_confirmation_at?: string;
   message?: string;
 }
 
@@ -346,6 +388,7 @@ export interface ProposalVerificationIssue {
     | 'proposal_identity'
     | 'proposal_status'
     | 'hold_expired'
+    | 'hold_extension'
     | 'alternative_count'
     | 'duplicate_terms'
     | 'duplicate_digest'
