@@ -1063,17 +1063,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test scoped audit gate
+        run: node --test .github/scripts/verify-scoped-audit-exception.test.cjs
+
       - name: Run security audit
         run: |
-          npm audit || true
-
-          if npm audit --audit-level=high 2>/dev/null; then
-            echo "✅ No high or critical vulnerabilities found"
-          else
-            echo "❌ High or critical vulnerabilities found"
-            npm audit --audit-level=high
-            exit 1
-          fi
+          npm audit --json > "$RUNNER_TEMP/audit-full.json" || true
+          npm audit --omit=dev --json > "$RUNNER_TEMP/audit-production.json" || true
+          npm ls picomatch --workspace @adcp/sdk --omit=dev --json > "$RUNNER_TEMP/sdk-picomatch-tree.json" || true
+          npm ls picomatch --all --workspaces --include-workspace-root --json > "$RUNNER_TEMP/full-picomatch-tree.json" || true
+          npm ls picomatch --omit=dev --all --workspaces --include-workspace-root --json > "$RUNNER_TEMP/production-picomatch-tree.json" || true
+          npm view picomatch versions --json > "$RUNNER_TEMP/picomatch-versions.json"
+          cp package-lock.json "$RUNNER_TEMP/package-lock.json"
+          node .github/scripts/verify-scoped-audit-exception.cjs "$RUNNER_TEMP"
 
   # Separate package and network matrices: job-level needs cannot vary by
   # matrix.mode. Node-floor builds must start without waiting on the producer.
