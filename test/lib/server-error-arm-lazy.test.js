@@ -121,3 +121,56 @@ test('building a server reads no schema document of the active root', () =>
     });
     assert.deepEqual(reads, []);
   }));
+
+async function call(srv, name, args = {}) {
+  return srv.dispatchTestRequest(
+    { method: 'tools/call', params: { name, arguments: { adcp_version: WIRE, media_buy_id: 'mb1', ...args } } },
+    { authInfo: { credential: { kind: 'api_key', key_id: 'lazy-error-arm-test' } } }
+  );
+}
+
+const responseReads = reads => reads.filter(file => file.endsWith('-response.json'));
+
+test('a success response reads no response schema', () =>
+  withRoot(async root => {
+    const srv = createAdcpServer({
+      name: 'Lazy error-arm seller',
+      version: '1.0.0',
+      adcpVersion: VERSION,
+      validation: { requests: 'off', responses: 'off' },
+      mediaBuy: { updateMediaBuy: async () => ({ media_buy_id: 'mb1', status: 'completed' }) },
+    });
+    const reads = await readsUnder(root, async () => {
+      const response = await call(srv, 'update_media_buy');
+      assert.notEqual(response.isError, true, JSON.stringify(response.structuredContent));
+    });
+    assert.deepEqual(responseReads(reads), []);
+  }));
+
+test("a failing call reads only its own tool's response schema, once", () =>
+  withRoot(async root => {
+    const srv = server();
+    const reads = await readsUnder(root, async () => {
+      for (let i = 0; i < 2; i++) {
+        const response = await call(srv, 'control_media_buy', { action: 'pause' });
+        assert.equal(response.isError, true);
+        assert.equal(response.structuredContent.errors[0].code, 'ACTION_NOT_ALLOWED');
+        assert.equal(response.structuredContent.status, 'failed', 'the Error arm discriminator is applied');
+      }
+    });
+    assert.deepEqual(responseReads(reads), ['bundled/media-buy/control-media-buy-response.json']);
+  }));
+
+test('per-tool descriptors equal the full-inventory scan for every packaged bundle', () => {
+  const { getErrorArmDescriptor } = require('../../dist/lib/server/error-arm-tools');
+  const expected = require('../fixtures/error-arm-descriptors.json');
+  const dataRoot = path.join(__dirname, '../../dist/lib/schemas-data');
+  for (const [version, descriptors] of Object.entries(expected)) {
+    const manifest = JSON.parse(fs.readFileSync(path.join(dataRoot, version, 'manifest.json'), 'utf8'));
+    for (const tool of Object.keys(manifest.tools)) {
+      const actual = getErrorArmDescriptor(tool, version);
+      if (tool in descriptors) assert.deepEqual(actual?.extraRequired, descriptors[tool], `${version} ${tool}`);
+      else assert.equal(actual, undefined, `${version} ${tool} has no Error arm`);
+    }
+  }
+});

@@ -116,7 +116,7 @@ import {
 import { TOOL_INPUT_SHAPES } from '../schemas';
 import { TaskTypeValues } from '../types/enums.generated';
 import { bundleSupportsAdcpVersionField } from '../protocols';
-import { getToolsWithErrorArm, type ErrorArmDescriptor } from './error-arm-tools';
+import { getErrorArmDescriptor, type ErrorArmDescriptor } from './error-arm-tools';
 import type { BaseToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShapeCompat, AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
@@ -4346,20 +4346,16 @@ function projectPayloadErrorToEnvelope(payloadError: Record<string, unknown>): R
  * adopter used. Idempotent on already-two-layer payloads (presence of
  * both `adcp_error` and `errors[]` is a no-op).
  *
- * Gated on `toolsWithErrorArm` derived from the bundled schema cache:
- * tools whose schema doesn't define `errors[]` (`get_adcp_capabilities`,
- * `tasks/get`, `get_products`, etc.) are left unchanged.
+ * Gated on the tool's Error-arm descriptor, read from its response schema
+ * in the active schema root: tools whose schema doesn't define `errors[]`
+ * (`get_adcp_capabilities`, `tasks/get`, `get_products`, etc.) are left
+ * unchanged.
  *
  * Scope is the failure path only — early returns when neither layer is
- * present. Success-arm responses pass through untouched.
+ * present, before the descriptor is looked up, so a success response
+ * reads no schema.
  */
-function enrichErrorTwoLayer(
-  response: McpToolResponse,
-  toolName: string,
-  toolsWithErrorArm: ReadonlyMap<string, ErrorArmDescriptor>
-): void {
-  const descriptor = toolsWithErrorArm.get(toolName);
-  if (!descriptor) return;
+function enrichErrorTwoLayer(response: McpToolResponse, toolName: string, version: string): void {
   const sc = response.structuredContent as Record<string, unknown> | undefined;
   if (!sc || typeof sc !== 'object') return;
 
@@ -4367,6 +4363,9 @@ function enrichErrorTwoLayer(
   const envValid = env != null && typeof env === 'object' && typeof env.code === 'string';
   const payloadList = sc.errors;
   const payloadValid = Array.isArray(payloadList) && payloadList.length > 0;
+  if (!envValid && !payloadValid) return;
+  const descriptor = getErrorArmDescriptor(toolName, version);
+  if (!descriptor) return;
   const mirrorsBeforePayloadSanitization = contentTextMirrorsStructuredContent(response, sc);
   if (payloadValid && sanitizePayloadErrors(sc)) {
     syncContentJsonText(response, sc, mirrorsBeforePayloadSanitization);
@@ -6333,7 +6332,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       ...(servedAdcpVersion !== undefined && { wireVersion: servedAdcpVersion }),
     };
     sanitizeAdcpErrorEnvelope(response);
-    enrichErrorTwoLayer(response, toolName, getToolsWithErrorArm(release.validationVersion));
+    enrichErrorTwoLayer(response, toolName, release.validationVersion);
     if (!isErrorResponse(response)) {
       response = downgradeTaskStatusResult(toolName, response, release.validationVersion);
       normalizeMediaBuyStatusCollision(response, toolName, release.validationVersion);
@@ -6776,7 +6775,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         } else {
           requestRelease = releaseSelection;
         }
-        const requestErrorArms = getToolsWithErrorArm(requestRelease.validationVersion);
         // A buyer on an older release than the server's: handlers see requests
         // and return responses in the server's release, and the framework
         // converts between it and the served release. Capabilities keep their
@@ -6832,7 +6830,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // present on the wire. Order: AFTER sanitize so we project
           // the allowlist-filtered envelope; BEFORE context/version
           // injection so those run on the final two-layer payload.
-          enrichErrorTwoLayer(response, toolName, requestErrorArms);
+          enrichErrorTwoLayer(response, toolName, requestRelease.validationVersion);
           normalizeMediaBuyStatusCollision(response, toolName, requestRelease.validationVersion);
           injectEnvelopeStatusIntoResponse(response, toolName, requestRelease.validationVersion);
           injectContextIntoResponse(response, params.context);
