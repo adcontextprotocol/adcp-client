@@ -587,9 +587,9 @@ function generateLlmsTxt(
   const groups = groupByDomain(tools);
   const version = getLibraryVersion();
   // Match this reference's release train without steering beta APIs to stable.
-  const installVersion = version.includes('-')
-    ? version.split('-')[1].split('.')[0]
-    : version.split('.').slice(0, 2).join('.');
+  const prereleaseTag = version.includes('-') ? version.split('-')[1].split('.')[0] : undefined;
+  const installVersion =
+    prereleaseTag === 'esa' ? 'adcp-3.3-esa' : (prereleaseTag ?? version.split('.').slice(0, 2).join('.'));
   const now = new Date().toISOString().split('T')[0];
 
   const lines: string[] = [];
