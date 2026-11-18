@@ -466,7 +466,7 @@ test('commercial-terms verifier rejects values that cannot appear on the JSON wi
 test('buyer validation fails closed on malformed union arms, non-finite values, and non-RFC3339 dates', () => {
   assert.throws(
     () => buildRefineProposalsRequest({ refinements: [{ proposal_id: 'source-1', action: 'unknown' }] }),
-    /action must be revise or finalize/
+    /action must be revise, finalize, or extend_hold/
   );
   assert.throws(
     () =>
