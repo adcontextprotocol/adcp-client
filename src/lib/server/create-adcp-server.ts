@@ -1994,6 +1994,17 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * construction. Per-request schema and wire selection never exceeds this
    * value.
    *
+   * Handlers run in this release for every caller: requests are converted up
+   * to it, and handler responses are read in its shape and converted down to
+   * the served release (`ctx.servedAdcpVersion`). Raising the ceiling, for
+   * example to enable a prerelease preview, therefore changes the shape every
+   * handler returns for older pins too, stable pins included. Negotiation is
+   * unaffected: a release pin never selects a prerelease, a prerelease pin
+   * matches only an advertised prerelease exactly, and when this value is a
+   * prerelease and `capabilities.supported_versions` is unset, the derived
+   * window holds the stable releases plus this preview, never another preview
+   * the SDK packages.
+   *
    * Typed as `AdcpVersion | (string & {})` so editors autocomplete
    * canonical values from {@link COMPATIBLE_ADCP_VERSIONS} while still
    * accepting forward-compatible strings.
@@ -5293,6 +5304,10 @@ function bundledReleasesForMajors(majors: readonly number[], configured: ParsedA
   });
   for (const parsed of bundledCompatibleReleases) {
     if (!acceptedMajors.has(parsed.major) || compareAdcpRelease(parsed, configured) > 0) continue;
+    // A preview ceiling is an explicit opt-in to that one preview. The SDK's
+    // own packaged prerelease is not one the seller chose, so leave it out;
+    // the configured preview is added below.
+    if (parsed.prerelease !== undefined && configured.prerelease !== undefined) continue;
     const key = `${parsed.major}.${parsed.minor}${parsed.prerelease ? `-${parsed.prerelease}` : ''}`;
     const existing = releases.get(key);
     if (!existing || parsed.value.startsWith('v')) releases.set(key, parsed);

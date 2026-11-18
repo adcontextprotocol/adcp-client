@@ -1,12 +1,18 @@
-const { ADCP_VERSION, toReleasePrecisionVersion } = require('../dist/lib/version.js');
-const { responseSchemaComposesEnvelope } = require('../dist/lib/validation/schema-loader.js');
+const { ADCP_VERSION, COMPATIBLE_ADCP_VERSIONS, toReleasePrecisionVersion } = require('../dist/lib/version.js');
+const {
+  responseSchemaComposesEnvelope,
+  registerExternalSchemaRoot,
+  unregisterExternalSchemaRoot,
+} = require('../dist/lib/validation/schema-loader.js');
 const { describe, it, mock } = require('node:test');
 const assert = require('node:assert');
 const {
   createAdcpServer: _createAdcpServer,
   MEDIA_BUY_MCP_TOOL_PROFILE,
 } = require('../dist/lib/server/create-adcp-server');
-const { readFileSync } = require('node:fs');
+const { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { getSdkServer } = require('../dist/lib/server/adcp-server');
 const { InMemoryStateStore } = require('../dist/lib/server/state-store');
 const { InMemoryTaskStore } = require('../dist/lib/server/tasks');
@@ -274,6 +280,71 @@ describe('createAdcpServer', () => {
       previewOnly.dispatchTestRequest({ method: 'tools/list', params: { _meta: { adcp_version: '3.4' } } }),
       /VERSION_UNSUPPORTED/
     );
+  });
+
+  it('derives supported releases without a bundled preview the seller did not configure (#3597)', async () => {
+    // A seller can enable a preview that the SDK does not bundle by
+    // registering its schema root. Without `supported_versions`, the derived
+    // window must hold that preview and the stable releases, never a
+    // different preview the SDK happens to package.
+    const preview = '3.99.0-beta.0';
+    const previewWire = toReleasePrecisionVersion(preview);
+    const sdkPreviews = COMPATIBLE_ADCP_VERSIONS.filter(version => /^\d+\.\d+(\.\d+)?-/.test(version));
+    const root = mkdtempSync(path.join(os.tmpdir(), 'adcp-external-preview-'));
+    const domain = path.join(root, 'bundled', 'media-buy');
+    mkdirSync(domain, { recursive: true });
+    writeFileSync(path.join(root, 'index.json'), JSON.stringify({ adcp_version: preview }));
+    writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({ tools: { get_products: {} } }));
+    for (const kind of ['request', 'response']) {
+      writeFileSync(
+        path.join(domain, `get-products-${kind}.json`),
+        JSON.stringify({
+          $id: `https://adcontextprotocol.org/schemas/${preview}/media-buy/get-products-${kind}.json`,
+          type: 'object',
+        })
+      );
+    }
+    registerExternalSchemaRoot(preview, root);
+    try {
+      for (const capabilities of [undefined, { major_versions: [3] }, { supported_versions: ['3', previewWire] }]) {
+        const server = createAdcpServer({
+          name: 'External preview seller',
+          version: '1.0.0',
+          adcpVersion: preview,
+          ...(capabilities && { capabilities }),
+          mediaBuy: { getProducts: async () => ({ products: [] }) },
+        });
+        const label = JSON.stringify(capabilities ?? null);
+        const caps = await callTool(server, 'get_adcp_capabilities', { adcp_version: '3.2' });
+        if (capabilities?.supported_versions === undefined) {
+          assert.deepEqual(
+            caps.adcp.supported_versions.filter(version => version.includes('-')),
+            [previewWire],
+            `${label}: advertised ${JSON.stringify(caps.adcp.supported_versions)}`
+          );
+        }
+        for (const pin of sdkPreviews) {
+          const result = await callTool(server, 'get_products', { adcp_version: toReleasePrecisionVersion(pin) });
+          assert.equal(
+            result.adcp_error?.code,
+            'VERSION_UNSUPPORTED',
+            `${label}: ${pin} served ${result.adcp_version}`
+          );
+        }
+        for (const [pin, expected] of [
+          ['3.2', '3.2'],
+          [previewWire, previewWire],
+        ]) {
+          const result = await callTool(server, 'get_products', { adcp_version: pin });
+          assert.equal(result.adcp_version, expected, `${label}: ${pin}`);
+        }
+        const stable = await callTool(server, 'get_products', { adcp_version: '3.99' });
+        assert.match(stable.adcp_version, /^3\.\d+$/, `${label}: 3.99 served ${stable.adcp_version}`);
+      }
+    } finally {
+      unregisterExternalSchemaRoot(preview);
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('rejects an unadvertised or newer defaultAdcpVersion at construction', () => {
