@@ -9835,8 +9835,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       ? 'media-buy'
       : 'all';
   const mediaBuyProfileTools = new Set<string>(MEDIA_BUY_MCP_TOOL_PROFILE);
-  const discoveryFallback = (requestedVersion: unknown): ServedAdcpRelease | undefined => {
-    if (!parseAdcpRelease(requestedVersion)?.prerelease) return undefined;
+  // SDK 16 discovery stays lenient for every unsupported pin, as it was before
+  // prerelease-aware selection: list the default release. When the default is
+  // a preview, list the newest stable release instead, so discovery never
+  // moves a caller onto a preview it did not pin.
+  const discoveryFallback = (): ServedAdcpRelease | undefined => {
     if (!parseAdcpRelease(selectedDefault.validationVersion)?.prerelease) return selectedDefault;
     const ceiling = parseAdcpRelease(adcpVersion)!;
     const stable = selectServedAdcpRelease(
@@ -9869,9 +9872,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       adcpVersion,
       defaultAdcpVersion
     );
-    const listRelease = isMcpToolResponse(selectedListRelease)
-      ? discoveryFallback(requestedListRelease)
-      : selectedListRelease;
+    const listRelease = isMcpToolResponse(selectedListRelease) ? discoveryFallback() : selectedListRelease;
     if (!listRelease) {
       throw new McpError(
         ErrorCode.InvalidParams,
@@ -10045,7 +10046,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       defaultAdcpVersion
     );
     if (isMcpToolResponse(selected)) {
-      const fallback = discoveryFallback(requestedVersion);
+      const fallback = discoveryFallback();
       if (fallback) return fallback.advertisedVersion ?? fallback.validationVersion;
       throw new McpError(ErrorCode.InvalidParams, 'VERSION_UNSUPPORTED', selected.structuredContent);
     }

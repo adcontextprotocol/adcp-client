@@ -276,6 +276,23 @@ describe('createAdcpServer', () => {
       );
     }));
 
+  it('keeps tools/list lenient for an unsupported stable pin', async () => {
+    const stableOnly = createAdcpServer({
+      name: 'Stable seller',
+      version: '1.0.0',
+      adcpVersion: '3.2.1',
+      capabilities: { supported_versions: ['3.1.18', '3.2.1'] },
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+    });
+    const call = await callToolRaw(stableOnly, 'get_products', { adcp_version: '3.0' });
+    assert.equal(call.structuredContent.adcp_error.code, 'VERSION_UNSUPPORTED');
+    for (const params of [{ adcp_version: '3.0' }, { _meta: { adcp_version: '3.0' } }]) {
+      const listed = await stableOnly.dispatchTestRequest({ method: 'tools/list', params });
+      assert.equal(listed._meta.adcp_version, '3.2.1');
+      assert.equal(listed.tools.find(tool => tool.name === 'get_products')._meta.adcp_version, '3.2.1');
+    }
+  });
+
   it('rejects an unadvertised or newer defaultAdcpVersion at construction', () => {
     assert.throws(
       () =>
