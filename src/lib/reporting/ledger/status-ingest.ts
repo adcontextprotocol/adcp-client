@@ -54,6 +54,33 @@ const statusId = z
   .regex(/^[A-Za-z0-9_.:-]+$/);
 const INVALID_REPORTING_STATUS_ID = 'invalid-reporting-status-id';
 
+/**
+ * Members a consumer status may carry. AdCP 3.3.0-beta.6 opened the status
+ * object (adcontextprotocol/adcp#8866), but the ledger keeps exactly the fields
+ * it interprets and stores, as `period` already does: an undeclared member is
+ * refused rather than persisted or silently dropped.
+ */
+const CONSUMER_STATUS_FIELDS: ReadonlySet<string> = new Set([
+  'reporting_status_id',
+  'supersedes_reporting_status_id',
+  'delivery_config_id',
+  'delivery_config_version',
+  'report_definition_id',
+  'offering_id',
+  'period',
+  'reporting_obligation_id',
+  'reporting_revision_id',
+  'observed_revision_content_sha256',
+  'consumer_status',
+  'status_as_of',
+  'mismatch_code',
+  'failure_code',
+  'consumer_commit_ref',
+  'seller_ledger_snapshot_id',
+  'seller_ledger_as_of',
+  'recorded_at',
+]);
+
 /** Pinned AdCP consumer status schema with request-only instant bounds. */
 export const ReportingConsumerStatusV1Schema = ReportingConsumerStatusSchema.superRefine((value, context) => {
   if (value.recorded_at !== undefined) {
@@ -93,6 +120,15 @@ export const ReportingConsumerStatusV1Schema = ReportingConsumerStatusSchema.sup
       path: ['period', 'end'],
       message: 'period must be a non-empty half-open interval',
     });
+  }
+  for (const key of Object.keys(value)) {
+    if (!CONSUMER_STATUS_FIELDS.has(key)) {
+      context.addIssue({
+        code: 'custom',
+        path: [key],
+        message: 'consumer status contains an unsupported field',
+      });
+    }
   }
   for (const key of Object.keys(value.period)) {
     if (!['start', 'end', 'source_timezone'].includes(key)) {
@@ -741,7 +777,7 @@ function boundedRecovery(value: unknown): ErrorRecovery | undefined {
 
 function boundedErrorField(value: unknown): string | undefined {
   return typeof value === 'string' &&
-    !value.includes('\u0000') &&
+    !CONTROL_CHARACTER.test(value) &&
     isWellFormedUnicodeString(value) &&
     Buffer.byteLength(value, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES
     ? value
@@ -809,14 +845,18 @@ function requestStatusIds(value: unknown): string[] {
     : ['invalid-reporting-status-id'];
 }
 
+/** C0 and C1 controls, DEL, and the Unicode line and paragraph separators. */
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
 function zodPathToPointer(path: PropertyKey[]): string | undefined {
   let pointer = '';
   for (const value of path) {
     const raw = String(value);
     // PostgreSQL jsonb rejects NUL and lone UTF-16 surrogates even though
-    // JSON.stringify can escape them. Omit the optional diagnostic rather
-    // than turning one malformed item into a transaction-wide failure.
-    if (raw.includes('\u0000') || !isWellFormedUnicodeString(raw)) return undefined;
+    // JSON.stringify can escape them, and CR, LF or ESC in a payload-derived
+    // key could forge a log line. Omit the optional diagnostic rather than
+    // turning one malformed item into a transaction-wide failure.
+    if (CONTROL_CHARACTER.test(raw) || !isWellFormedUnicodeString(raw)) return undefined;
     if (Buffer.byteLength(raw, 'utf8') > REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES) return undefined;
     const segment = raw.replace(/~/g, '~0').replace(/\//g, '~1');
     const next = `${pointer}/${segment}`;

@@ -190,8 +190,9 @@ const EXPLICIT_CODE_POLICY: Partial<Record<ErrorCode, CodePolicy>> = {
   PROPOSAL_EXPIRED: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
   PRODUCT_UNAVAILABLE: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
 
-  // Capability mismatch — drop the unsupported field and retry.
+  // Capability mismatch — drop the unsupported (or, for signed terms, unrecognized) field and retry.
   UNSUPPORTED_FEATURE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability', baseDelayMs: 250 },
+  UNRECOGNIZED_TERMS: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability', baseDelayMs: 250 },
   VERSION_UNSUPPORTED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability', baseDelayMs: 250 },
 
   // Re-quote — go back to get_products in 'refine' mode against the proposal.

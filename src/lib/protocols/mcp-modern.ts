@@ -336,23 +336,40 @@ function isNegotiationAuthFailure(error: unknown): boolean {
 }
 
 /**
- * Were we already presenting a static credential on the probe?
+ * May a `401`/`403` on the `server/discover` probe fall back to legacy `initialize`?
  *
- * This is the line between "the server is challenging us to authenticate" and
- * "the server refused this method". With no credential, a `401` is a real
- * challenge and the caller wants it: `discoverMCPEndpoint` walks the
- * `WWW-Authenticate` / RFC 9728 chain and reports how to authenticate. With an
- * OAuth provider, a `401` is the provider's cue to refresh, so it must reach
- * the OAuth machinery untouched. Only a static token/header credential that the
- * server rejected *on the probe alone* tells us nothing about the credential,
- * and that is the case worth retrying on the legacy transport.
+ * A refusal of the probe alone is a verdict on the modern discovery method, not
+ * on the caller: sellers that gate `server/discover` still serve `initialize`
+ * and `get_adcp_capabilities` with the same credential, or with none, since
+ * AdCP capability discovery is meant to work anonymously. So a static
+ * token/header credential and no credential at all both get one legacy
+ * attempt. When that attempt is refused too, its `401` reaches
+ * `discoverMCPEndpoint`, which walks the `WWW-Authenticate` / RFC 9728 chain
+ * and reports how to authenticate. With an OAuth provider, a `401` is the
+ * provider's cue to refresh, so it must reach the OAuth machinery untouched.
  */
-function presentedStaticCredential(authHeaders: Record<string, string>, authProvider?: object): boolean {
-  if (authProvider) return false;
+function mayRetryProbeRefusalOnLegacy(authProvider?: object): boolean {
+  return !authProvider;
+}
+
+/** Were we presenting a static token/header credential on the probe? */
+function presentedStaticCredential(authHeaders: Record<string, string>): boolean {
   return Object.keys(authHeaders).some(key => {
     const lower = key.toLowerCase();
     return lower === 'authorization' || lower === 'x-adcp-auth';
   });
+}
+
+/**
+ * Does a failed legacy attempt answer for itself? A throttle must reach the
+ * caller as a rate limit, and a cancellation belongs to the caller. Anything
+ * else, including a second auth refusal, says no more than the probe's own
+ * challenge, which is what an uncredentialed caller has always received.
+ */
+function legacyFailureSupersedesProbe(error: unknown): boolean {
+  if (isAbortOrTimeoutError(error)) return true;
+  const status = httpStatusOf(error);
+  return status === 429 || (status === 503 && retryAfterOf(error) !== undefined);
 }
 
 async function createNegotiatedClient(
@@ -477,17 +494,27 @@ async function createNegotiatedClient(
     // Era negotiation is meant to be automatic: `mode: 'auto'` documents that
     // "definitive legacy signals (and anything unrecognized) fall back to the
     // plain legacy `initialize` handshake". 401/403 are the sole exception in
-    // the MCP client's classifier (`classifyHttpError`), which is right when we
-    // hold no credential — then a 401 IS the server's challenge and the caller
-    // needs it — and wrong when we already presented one the server accepts on
-    // other methods. In that case the refusal is a verdict on
-    // `server/discover`, not on the credential, and the automatic fallback
-    // should have run. Do it here: skip the probe and `initialize` directly,
-    // the escape hatch the SDK documents for a server known to be legacy. If
-    // the credential really is bad, that connect fails on its own and surfaces
-    // the server's 401.
-    if (isNegotiationAuthFailure(error) && !skipProbe && presentedStaticCredential(authHeaders, options.authProvider)) {
-      return createNegotiatedClient(cacheKey, options, authHeaders, useCachedDiscovery, true);
+    // the MCP client's classifier (`classifyHttpError`). That is wrong for a
+    // seller that refuses only `server/discover`: the refusal is a verdict on
+    // the method, not on the credential (or on its absence), and the automatic
+    // fallback should have run. Do it here: skip the probe and `initialize`
+    // directly, the escape hatch the SDK documents for a server known to be
+    // legacy. If the seller rejects the credential the caller sent, that
+    // connect fails on its own and surfaces the server's 401. Without a
+    // credential, a failed legacy attempt surfaces the probe's original 401.
+    if (isNegotiationAuthFailure(error) && !skipProbe && mayRetryProbeRefusalOnLegacy(options.authProvider)) {
+      options.debugLogs.push({
+        type: 'info',
+        message: `MCP: server/discover was refused (HTTP ${httpStatusOf(error) ?? 401}); retrying with legacy initialize`,
+        timestamp: new Date().toISOString(),
+      });
+      const legacy = createNegotiatedClient(cacheKey, options, authHeaders, useCachedDiscovery, true);
+      if (presentedStaticCredential(authHeaders)) return legacy;
+      // With no credential the probe's refusal was the seller's challenge. Only
+      // a throttle or a cancellation on the legacy attempt replaces it.
+      return legacy.catch(legacyError => {
+        throw legacyFailureSupersedesProbe(legacyError) ? legacyError : withRetryAfter(error, throttleRetryAfter);
+      });
     }
     throw withRetryAfter(error, throttleRetryAfter);
   }

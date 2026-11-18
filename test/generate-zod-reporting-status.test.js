@@ -490,7 +490,7 @@ test('rc.4 permits a frozen future expectation with complete health without weak
   assert.deepEqual(currentResponseOutcomes(cases), authoritative);
 });
 
-test('generated reporting-status Zod matches authoritative required and closed evidence boundaries for every view', async () => {
+test('generated reporting-status Zod matches authoritative required-evidence and extension boundaries for every view', async () => {
   const valid = response();
   const missingMaterializations = response();
   delete missingMaterializations.materializations;
@@ -594,16 +594,19 @@ test('generated reporting-status Zod matches authoritative required and closed e
   const authoritative = cases.map(value => validate(value));
   const generated = generatedOutcomes(cases);
 
+  // AdCP 3.3.0-beta.6 (adcp#8866) opens these evidence objects, so extension members validate;
+  // missing required evidence still fails.
   assert.deepEqual(authoritative, [
     true,
-    ...Array(9).fill(false),
-    true,
+    ...Array(5).fill(false),
+    ...Array(5).fill(true),
     false,
     true,
     false,
-    ...Array(14).fill(false),
-    true,
+    ...Array(4).fill(true),
     false,
+    false,
+    ...Array(10).fill(true),
   ]);
   assert.deepEqual(generated, authoritative);
 });

@@ -2811,6 +2811,43 @@ test('rejects ambiguous metric definitions and declared control-total unit confl
   );
 });
 
+test('accepts report definitions at contract_version 1.1 and 1.2 and enforces their version rules', async () => {
+  const adjustmentsOnly = definition => {
+    definition.restatement_policy.official_correction_mode = 'adjustments_only';
+  };
+  await inspectWithOverrides({}, definition => {
+    definition.contract_version = '1.1';
+    adjustmentsOnly(definition);
+  });
+  await inspectWithOverrides({}, definition => {
+    definition.contract_version = '1.2';
+    definition.dimensions.push('package_id');
+    adjustmentsOnly(definition);
+  });
+
+  const invalid = [
+    // 1.1 and 1.2 require adjustments-only official closes.
+    definition => {
+      definition.contract_version = '1.1';
+    },
+    // A 1.2 media-buy definition must also carry package_id.
+    definition => {
+      definition.contract_version = '1.2';
+      adjustmentsOnly(definition);
+    },
+    definition => {
+      definition.restatement_policy.official_correction_mode = 'supersede';
+    },
+    definition => {
+      definition.contract_version = '1.3';
+      adjustmentsOnly(definition);
+    },
+  ];
+  for (const mutate of invalid) {
+    await assert.rejects(inspectWithOverrides({}, mutate), error => error.code === 'REPORT_DEFINITION_INVALID');
+  }
+});
+
 test('rejects a synchronous calculator overrun before calling the consumer commit callback', async () => {
   const realNow = Date.now;
   let clock = realNow();

@@ -15,6 +15,7 @@ import { generateIdempotencyKey } from '../../utils/idempotency';
 import { BUILD_ASSETS_FROM_FORMAT_DIRECTIVE, findUnresolvedCreativeAssetDirectives } from './creative-assets';
 import type { MediaBuyLifecycleCoordinatorOptions } from '../../media-buy/compatibility';
 import { ConfigurationError } from '../../errors';
+import { storyboardCapabilityStepEnvelope } from '../client';
 
 /**
  * Map of AdCP task names to SingleAgentClient method names.
@@ -398,15 +399,19 @@ export async function executeStoryboardTask(
   // A storyboard tests the seller: it sends sync_principal exactly as written, including the
   // deliberate deactivation and revocation by omission the client's raw-write guard refuses.
   const unguardedPrincipalWrite = taskName === 'sync_principal';
+  const capabilityStepEnvelope =
+    taskName === 'get_adcp_capabilities' ? storyboardCapabilityStepEnvelope(client) : undefined;
   const taskOptions =
     opts.skipIdempotencyAutoInject ||
     opts.skipAccountValidation ||
     opts.skipRequestValidation ||
     opts.preserveGovernedPayload ||
     opts.signal ||
-    unguardedPrincipalWrite
+    unguardedPrincipalWrite ||
+    capabilityStepEnvelope
       ? {
           ...(unguardedPrincipalWrite && { allowDeactivation: true, allowRevocation: true }),
+          ...(capabilityStepEnvelope && { versionEnvelope: capabilityStepEnvelope }),
           ...(opts.skipIdempotencyAutoInject && { skipIdempotencyAutoInject: true }),
           ...(opts.skipAccountValidation && { skipAccountValidation: true }),
           ...(opts.skipRequestValidation && { skipRequestValidation: true }),

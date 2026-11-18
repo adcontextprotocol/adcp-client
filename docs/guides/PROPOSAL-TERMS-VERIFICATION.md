@@ -193,7 +193,7 @@ keep its external root registered throughout client creation and the workflow:
 import { ADCPMultiAgentClient } from '@adcp/sdk';
 import { withExternalSchemaRoot } from '@adcp/sdk/testing';
 
-const candidateVersion = '3.3.0-beta.5';
+const candidateVersion = '3.3.0-beta.6';
 const candidateSchemaRoot = '/absolute/path/to/extracted/candidate/schemas';
 
 await withExternalSchemaRoot(candidateVersion, candidateSchemaRoot, async () => {

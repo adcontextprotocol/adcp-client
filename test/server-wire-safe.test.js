@@ -265,6 +265,20 @@ describe('pickWireSpecFields', () => {
 });
 
 describe('scrubExtensions', () => {
+  it('drops an ext too deep to scan rather than forwarding an unscanned credential', () => {
+    const deep = {};
+    let cursor = deep;
+    for (let depth = 0; depth < 300; depth++) cursor = cursor.nested = {};
+    cursor.x_access_token = 'must-not-forward';
+    const safe = pickWireSpecFields(
+      { media_buy_id: 'mb_1', idempotency_key: 'uuid-1', ext: { deep, partner_request_id: 'req-1' } },
+      'UpdateMediaBuyRequest'
+    );
+    const scrubbed = scrubExtensions(safe, {});
+    assert.ok(!JSON.stringify(scrubbed).includes('must-not-forward'));
+    assert.deepStrictEqual(scrubbed.ext, {});
+  });
+
   it('filters ext and context to allowedExtKeys', () => {
     const safe = pickWireSpecFields(
       {

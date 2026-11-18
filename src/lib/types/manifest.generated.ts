@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.3.0-beta.5/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.3.0-beta.6/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.3.0-beta.5.
+ * Manifest-derived constants for AdCP 3.3.0-beta.6.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.3.0-beta.5/manifest.json` (adcp_version: 3.3.0-beta.5, generated_at:
- * 2026-11-07T22:40:40.149Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.3.0-beta.6/manifest.json` (adcp_version: 3.3.0-beta.6, generated_at:
+ * 2026-11-13T18:57:23.284Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -274,7 +274,7 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "correct the buyer-visible validation problem and resubmit the creative"
   },
   "CREATIVE_VALUE_NOT_ALLOWED": {
-    description: "A submitted text-asset value is not in the format's declared `allowed_values` list. Distinct from `CREATIVE_REJECTED` (generic creative-review failure) by being a closed-set constraint violation that the buyer can resolve mechanically without policy interpretation — the seller has published the complete list of acceptable values on the format, and any value outside that list is rejected by definition. The seller MUST set `error.field` to the offending asset's path within the manifest (e.g., `creatives[0].creative_manifest.assets[0].value` or the field name declared by the format) and SHOULD include the format's `allowed_values` array in `error.details.allowed_values` so the buyer agent can re-prompt its LLM with constrained sampling.",
+    description: "A submitted text-asset value is not in the closed set the targeted format option declares: its `allowed_values` list, or a canonical closed-set parameter such as native_in_feed `cta_values`. Sellers MUST NOT return this code for a slot whose option declares no such set; that slot takes free text. Distinct from `CREATIVE_REJECTED` (generic creative-review failure) by being a closed-set constraint violation that the buyer can resolve mechanically without policy interpretation — the seller has published the complete list of acceptable values on the format, and any value outside that list is rejected by definition. The seller MUST set `error.field` to the offending asset's path within the manifest (e.g., `creatives[0].creative_manifest.assets[0].value` or the field name declared by the format) and SHOULD include the format's `allowed_values` array in `error.details.allowed_values` so the buyer agent can re-prompt its LLM with constrained sampling.",
     recovery: "correctable",
     suggestion: "pick a value from error.details.allowed_values (or re-fetch the format) and resubmit"
   },
@@ -622,6 +622,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     description: "A creative transformer build targets an output capability that no pricing option covers — no transformer.pricing_options entry has a matching applies_to_output_capability_ids and none is unscoped. The build is rejected rather than billed at a guessed rate.",
     recovery: "correctable",
     suggestion: "target an output format the transformer prices, or have the seller add a pricing option covering it"
+  },
+  "UNRECOGNIZED_TERMS": {
+    description: "The request carries commercial terms the seller would record and be bound by, such as a buy_products purchase, and at least one member of them, at any depth and including ext, is one the seller cannot interpret. Accepting signed terms binds the accepting party to every member, so the seller MUST reject the request instead of accepting it, dropping the member, or carrying it without interpreting it. A member whose schema defines it as opaque, such as context, is interpreted by that definition. The seller SHOULD set error.field to the path of the first such member. Distinct from UNSUPPORTED_FEATURE (a field the seller recognizes but does not support) and INVALID_REQUEST (a request that fails the schema).",
+    recovery: "correctable",
+    suggestion: "remove the member the seller cannot interpret, or send it only to sellers that interpret it"
   },
   "UNSUPPORTED_FEATURE": {
     description: "A requested feature or field is not supported by this seller. When rejecting a `refine_proposals` request that uses a typed dimension omitted from an explicit `proposal_refinement.supported_dimensions` declaration, the error details SHOULD follow `error-details/unsupported-refinement-dimension.json` — `unsupported_dimension` names the offending dimension and `supported_dimensions` echoes the seller's declaration so the buyer can remove or translate the field without another capability round trip. When rejecting a targeting dimension that is unsupported for the product or seller, or has been removed, the error details SHOULD follow `error-details/unsupported-targeting-dimension.json` (`unsupported_dimension`, optional `supported_dimensions`, `deprecated`, `replacement_dimension`) and `error.field` SHOULD point at the targeting path.",

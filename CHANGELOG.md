@@ -1,5 +1,55 @@
 # Changelog
 
+## 17.0.0-beta.25
+
+### Minor Changes
+
+- 3408d45: Restore the closed-schema guarantees that AdCP 3.3.0-beta.6 removed when it opened schemas (adcontextprotocol/adcp#8866). This follows up on the 3.3.0-beta.6 adoption.
+  - **Account projections keep declared members only.** `list_accounts`/`sync_accounts` identity objects (`account`, `operator_unit`, `identity_change`, `identity_change_preview`), reporting delivery states and `notification_configs` now drop every member their schema does not declare, at any depth. Credential-shaped keys, `ctx_metadata`, `authInfo` and write-only billing members are still refused outright; on `notification_configs` that newly includes a retained `webhook_secret` or `authentication.signing_secret`. These schemas declare no extension point, so in 17.0.0-beta.24 extension members passed through and now they are dropped.
+  - **Managed reporting delivery** (`@adcp/reporting-storage`): `assertMaterializationOutcome` refuses adapter evidence whose resource, verification or nested evidence carries undeclared members, as it did while the schemas were closed, so an adapter that adds a vendor field fails the delivery with `DELIVERY_FAILED`. Its invalid-evidence message now names the Zod issue code rather than quoting the adapter's value. New `undeclaredReportingMaterializationMembers` on `@adcp/sdk/reporting/ledger` lists the offending paths.
+  - **Notifications:** the runtime validates each payload against its webhook schema and refuses one that violates a `not` exclusion at any depth, including conditional ones: `access_token` on `reporting.delivery_ready`, `setup.url` on `account.status_changed`, `staged_update` on `creative.status_changed`. Other schema errors are not enforced, so partial payloads still emit. `proposal.offered` now carries identifier fields only, like `proposal.created`.
+  - **Reporting subscriptions:** `sync_principal` refuses a subscription scope whose single member is an unknown selector. Before, such a scope passed validation and the coverage engine treated it as every authorized account. The engine now covers all accounts only for an explicit `all_authorized_accounts: true`.
+  - **Bounded walks:** credential scanning records a `<too-deep>` hit instead of overflowing the stack, and `scrubExtensions` then drops the whole `ext` or `context` it could not inspect. The account projections fail with a typed error on values deeper than 256 levels. Reporting-status ingest omits diagnostics whose payload-derived pointer contains a control character (C0 and C1 controls, including CR, LF and ESC, and U+2028/U+2029).
+
+## 17.0.0-beta.24
+
+### Minor Changes
+
+- 0d8379a: **Beta-channel break for beta.5 pins:** this SDK advertises and negotiates only the AdCP `3.3-beta.6` preview and no longer packages or advertises `3.3-beta.5`. A buyer or seller still on beta.5 will not select the 3.3 preview with this release; the pair negotiates a shared stable release (3.2.8, 3.1.31 or 3.0.25) instead. Upgrade both sides together to keep exercising 3.3 preview features. An explicit `adcpVersion: '3.3.0-beta.5'` (or `'3.3-beta.5'`) pin now fails with a configuration error.
+
+  Adopt the signed AdCP 3.3.0-beta.6 bundle (tag commit bf4aa6dbb3b1, sha256 99c0ba47f42c..., cosign-verified), replacing 3.3.0-beta.5. Public types, Zod schemas, tool metadata and the packaged compliance corpus are regenerated from the beta.6 release.
+  - **Withdrawn 3.3 fields (adcp#8501):** beta.6 removes 3.3 additions from the deprecated tasks and withdraws others until 4.0. `get_products` loses `include_collections`/`collections` and `include_execution_readiness`/`execution_readiness` (now on `list_products`), the `target_audiences` filter, the `refine` package action and `refinement_applied` resolved times. `sync_creatives` assignments lose `landing_page_url` and `trackers`. `create_media_buy`/`update_media_buy` lose lineage (now on `buy_products`/`accept_proposal`), package `start_requires_all_creatives_approved` (set it through `control_media_buy`), package `target_audiences` and `artifact_webhook.signing_profile`. `price_adjustments` leaves every pricing option. `core/sla-window.json` returns to its 3.2 shape; business-time SLAs move to `core/creative-review-sla.json`. `available_installment_statuses` moves to the canonical reporting capabilities, and `billing_measurement.counting_mechanisms` is withdrawn. The generated types follow the schemas.
+  - **Signed terms bind every member (adcp#8884):** new error code `UNRECOGNIZED_TERMS` and `decline_proposals` reason `unrecognized_terms`. The buyer retry policy treats `UNRECOGNIZED_TERMS` like `UNSUPPORTED_FEATURE`; sellers must refuse members they do not interpret themselves.
+  - **Additions:** `media_buy.supported_delivery_types` in `get_adcp_capabilities` (adcp#8458); the experimental `https_put` reporting transport (adcp#8793); `installment_refs` on creative assignments (experimental `media_buy.installment_creative_assignment`, adcp#8972); geo display labels `geo_value_labels` and metro `value_labels` (adcp#8966; non-authoritative, now in `TargetingOverlayKeys`); video containers `3gp`, `m4v`, `mpeg`; `image_carousel` `card_image_sizes`; `supports_registry_policy_enforcement`. Schemas closed by accident in 3.3 accept additional properties again (adcp#8866).
+  - **Installment refinement (adcp#8974, experimental `media_buy.installment_refinement`):** the refinement helpers accept the `installment_changes` dimension in capability discovery, `validateRefineProposalsRequest` accepts `installment_changes` on 3.3 requests (closed `installment_ref`, 1-500 entries unique by product and installment) and refuses it on 3.2, `classifyProposalRefinementFailure` counts `unsatisfied_installment_changes`, and the response verifier requires each unsatisfied entry to repeat a requested one. New types `ProposalInstallmentChange` and `ProposalUnsatisfiedInstallmentChange`.
+  - **Report definitions (adcp#8983, experimental Reliable Reporting):** the reporting manifest inspector accepts report definitions at `contract_version` 1.0, 1.1 and 1.2. Before this release it accepted only 1.0. It requires `official_correction_mode: 'adjustments_only'` on 1.1 and 1.2 and, at 1.2, `package_id` alongside `media_buy_id`. Sellers must serve callers pinned below 3.3 only 1.0 or 1.1 definitions.
+  - **Opened schemas (adcp#8866):** where the SDK relied on a closed schema, it now refuses the known cases by name. Account projections refuse credential-shaped keys (including cloud-storage and client-secret names), `ctx_metadata`, `authInfo` and write-only billing members (`destination_billing_entity`, `billing_entity`, `bank`, `invoice_recipient`) in identity objects and reporting delivery states; other extension members pass, as the opened schemas allow. Reporting-status ingest still refuses undeclared status members. `proposal.created` notifications carry identifier fields only. `parseAccountChangeNotification` drops undeclared members. Reporting-subscription scope membership selects nothing for an unknown selector or a multi-key scope.
+  - **Proposal-terms verification:** the beta.6 review table drops the withdrawn `price_adjustments_resolution` and `sla-window` business-calendar contracts and reviews the geo display-label key-membership annotations.
+  - The vendored 3.3 ↔ 3.2 version-translation vectors drop the `get_products` and `create_media_buy` cases that no longer have a 3.3 surface. The canonical storyboard fixtures and reporting-subscription vectors are pinned to v3.3.0-beta.6; both are byte-identical to beta.5.
+
+### Patch Changes
+
+- 0d8379a: Refresh the registry OpenAPI snapshot and generated types: compliance results gain `incomplete_bundle_ids`, the relevant bundles (as `kind:id`) that keep Strict Spec partial because their evidence is incomplete, and the not-offered bundle description now covers agents that do not advertise request signing for `signed_requests`. The change is additive.
+
+## 17.0.0-beta.23
+
+### Patch Changes
+
+- 992716d: Capability discovery reaches sellers that do not advertise the client's preview release, or that gate the MCP `server/discover` probe.
+  - `getAdcpCapabilities()` no longer sends a preview pin such as `3.3-beta.5`. A preview pin is sent only to a seller that advertises that exact release, so preview discovery goes out unpinned, as the internal capability probe already did. A stable pin the seller refuses with `VERSION_UNSUPPORTED` is retried once unpinned. That covers a stable `wireAdcpVersion` on a preview client too. A pin you choose yourself is sent as-is: `adcp_version` or `adcp_major_version` in params, or an explicit `versionEnvelope`. The seller's refusal then comes back with its `supported_versions` in `adcpError.details`. A call with its own `operationId` is not retried either.
+  - Testing and storyboard profile discovery follow the same rule. A 3.0-only seller tested on a preview pin is now profiled. `comply()` then fails with `CapabilityResolutionError` (`code: 'unsupported_adcp_version'`) naming the seller's `supported_versions`, instead of reporting "Agent unreachable — VERSION_UNSUPPORTED".
+  - `applyAdcpVersionRunOptions()` and `applyStoryboardVersionOptions()` now leave `versionEnvelope` unset for AdCP 3 runs, which is the SDK default. Ordinary calls still send the full envelope, and authored `get_adcp_capabilities` storyboard steps still send the configured pin. Tests that set `versionEnvelope` keep their pinned discovery probe.
+  - A client with no credential now falls back to legacy MCP `initialize` when a seller answers `401`/`403` on `server/discover` alone, as a client with a static credential already did. AdCP capability discovery is anonymous, so the seller is discovered. If `initialize` is refused too, or fails for an unrelated reason, the seller's `401` and `WWW-Authenticate` challenge reach the caller as before. OAuth-provider clients are unchanged.
+
+- 992716d: Refresh the registry OpenAPI snapshot and generated types for the published brand logo endpoints:
+  - `GET /assets/brands/{domain}/{logoId}.{ext}` (`getBrandLogoAsset`) downloads an AgenticAdvertising.org-hosted brand logo, with optional `format=png` and `w` rendition parameters.
+  - `GET /logos/brands/{domain}/{logoId}` (`getBrandLogoLegacy`) is the legacy extension-less form.
+  - Brand manifest and brand entry logos document their `background` field.
+
+  All changes are additive.
+
+- ccfc06c: Translate requests and responses for older served releases when identity33 is enabled, including stored task results.
+
 ## 17.0.0-beta.22
 
 ### Minor Changes

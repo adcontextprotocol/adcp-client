@@ -51,8 +51,11 @@ import {
   ACCOUNT_REQUEST_RESULT_KEYS,
   projectAccountRequestResultFields,
   projectAccountResponseIdentityFields,
+  retainsNonResponseAccountMember,
   type AccountRequestResultFields,
 } from '../account-response-identity';
+import { projectToDeclaredMembers } from '../../adapters/version/schema-projection';
+import { exceedsJsonDepth } from '../../utils/json-depth';
 import type { CursorPage } from './pagination';
 import type { AccountMode } from '../account-mode';
 import type { AdcpStructuredError } from './async-outcome';
@@ -1355,11 +1358,28 @@ export function toWireSyncAccountRow(row: SyncAccountsResultRow): WireSyncAccoun
   return wire;
 }
 
+/**
+ * `authentication.credentials` is write-only and always stripped.
+ * `core/notification-config.json` and its `authentication` were closed up to
+ * AdCP 3.3.0-beta.5 and are open from 3.3.0-beta.6
+ * (adcontextprotocol/adcp#8866). A retained secret or SDK-internal member is
+ * therefore refused, and any other undeclared member is dropped, so the record
+ * every account principal can read carries declared members only.
+ */
 function projectNotificationConfig(config: NotificationConfig): WireNotificationConfig {
   const { authentication, ...rest } = config;
-  if (!authentication) return rest;
-  const { credentials: _credentials, ...authenticationWithoutCredentials } = authentication;
-  return { ...rest, authentication: authenticationWithoutCredentials };
+  let wire: WireNotificationConfig = rest;
+  if (authentication) {
+    const { credentials: _credentials, ...authenticationWithoutCredentials } = authentication;
+    wire = { ...rest, authentication: authenticationWithoutCredentials };
+  }
+  if (exceedsJsonDepth(wire))
+    throw new Error('notification_configs contains a config that exceeds the maximum JSON depth');
+  const snapshot = structuredClone(wire);
+  if (retainsNonResponseAccountMember(snapshot)) {
+    throw new Error('notification_configs contains a config that retains credential or internal fields');
+  }
+  return projectToDeclaredMembers('core/notification-config.json', snapshot).value;
 }
 
 export type WireSyncGovernanceRow = SyncGovernanceSuccess['accounts'][number];

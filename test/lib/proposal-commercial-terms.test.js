@@ -643,7 +643,7 @@ test('3.3 beta.2 withdrew definition pins: a pin is an unknown term and publishe
   });
 });
 
-test('3.3 beta.2 snapshot verification rejects withdrawn installment selections and refuses business-calendar SLAs', () => {
+test('3.3 snapshot verification rejects withdrawn installment selections and SLA clock fields', () => {
   const installments = structuredClone(current);
   installments.purchases[0].installments = [
     { collection_ref: { publisher_domain: 'publisher.example', collection_id: 'show-1' }, installment_id: 'ep-1' },
@@ -652,6 +652,8 @@ test('3.3 beta.2 snapshot verification rejects withdrawn installment selections 
   assert.equal(refusedInstallments.ok, false);
   assert.ok(!refusedInstallments.mismatches.some(m => m.message.includes('installment membership')));
 
+  // beta.6 returns sla-window to its 3.2 shape (adcp#8762): business time moved to
+  // the creative review SLA, so clock and business_calendar_id are not terms here.
   const business = structuredClone(current);
   business.change_terms[0].processing_sla = {
     clock: 'business',
@@ -661,9 +663,9 @@ test('3.3 beta.2 snapshot verification rejects withdrawn installment selections 
   };
   const refusedCalendar = verify(candidate(business), business);
   assert.equal(refusedCalendar.ok, false);
-  assert.ok(refusedCalendar.mismatches.some(m => m.message.includes('capability calendar')));
+  assert.ok(refusedCalendar.mismatches.length > 0);
 
-  const elapsed = structuredClone(current);
-  elapsed.change_terms[0].processing_sla = { clock: 'elapsed', response_max: 'PT5M', completion_max: 'PT1H' };
-  assert.deepEqual(verify(candidate(elapsed), elapsed), { ok: true, schemaVersion: ADCP_VERSION, mismatches: [] });
+  const window = structuredClone(current);
+  window.change_terms[0].processing_sla = { response_max: 'PT5M', completion_max: 'PT1H' };
+  assert.deepEqual(verify(candidate(window), window), { ok: true, schemaVersion: ADCP_VERSION, mismatches: [] });
 });

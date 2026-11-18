@@ -205,12 +205,12 @@ describe('projectMediaBuyCreativesForDelivery — format_option_refs on AdCP 3.1
 
 describe('releaseCarriesPackageFormatOptionRefs', () => {
   test('true when a mutually served release is 3.1+', () => {
-    assert.equal(releaseCarriesPackageFormatOptionRefs(caps(['3.0', '3.1']), '3.3.0-beta.5'), true);
+    assert.equal(releaseCarriesPackageFormatOptionRefs(caps(['3.0', '3.1']), '3.3.0-beta.6'), true);
     assert.equal(releaseCarriesPackageFormatOptionRefs(caps(['3.1']), '3.1'), true);
   });
 
   test('false for a 3.0-only seller', () => {
-    assert.equal(releaseCarriesPackageFormatOptionRefs(caps(['3.0']), '3.3.0-beta.5'), false);
+    assert.equal(releaseCarriesPackageFormatOptionRefs(caps(['3.0']), '3.3.0-beta.6'), false);
     assert.equal(releaseCarriesPackageFormatOptionRefs(caps(['3.0', '3.1']), '3.0'), false);
   });
 
@@ -313,7 +313,7 @@ describe('issue #3665 end-to-end request shape', () => {
     await client.createMediaBuy(createRequest([NATIVE_REF]));
     const sent = calls[0];
 
-    const converted = convertRequest('create_media_buy', sent, { fromVersion: '3.3.0-beta.5', toVersion: '3.1' });
+    const converted = convertRequest('create_media_buy', sent, { fromVersion: '3.3.0-beta.6', toVersion: '3.1' });
     assert.deepStrictEqual(converted.refusedFields ?? [], []);
     assert.deepStrictEqual(converted.params.packages[0].format_option_refs, [NATIVE_REF]);
 
@@ -323,7 +323,7 @@ describe('issue #3665 end-to-end request shape', () => {
     assert.equal(ok, true, JSON.stringify(validate.errors));
 
     // 3.0 does not define the field, so the adapter refuses it.
-    const to30 = convertRequest('create_media_buy', sent, { fromVersion: '3.3.0-beta.5', toVersion: '3.0' });
+    const to30 = convertRequest('create_media_buy', sent, { fromVersion: '3.3.0-beta.6', toVersion: '3.0' });
     assert.ok(
       to30.refusedFields.some(field => field.path === 'packages[0].format_option_refs'),
       JSON.stringify(to30.refusedFields)

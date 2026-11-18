@@ -96,7 +96,15 @@ export function parseAccountChangeNotification(
   if (!/^[a-z][a-z0-9_.-]{0,99}$/.test(wire.action)) {
     throw new AccountChangeNotificationError('account_change_schema_invalid', 'action');
   }
-  const resource = { ...wire.resource, account_id: wire.account_id } as AccountChange['resource'];
+  // The schemas are open from 3.3.0-beta.6 (adcp#8866). Carry only the declared
+  // resource identifiers, as the root projection does, so an undeclared member
+  // never reaches the receiver's code.
+  const resource = {
+    type: wire.resource.type,
+    resource_id: wire.resource.resource_id,
+    account_id: wire.account_id,
+    ...(wire.resource.parent_ids !== undefined && { parent_ids: wire.resource.parent_ids }),
+  } as AccountChange['resource'];
   const normalized: NormalizedAccountChangeNotification = {
     notificationType: wire.notification_type,
     notificationId: wire.notification_id,

@@ -1,7 +1,7 @@
 /**
  * Reviewed non-JSON-Schema semantics from the 3.2 beta.8 / rc.2 / rc.3 / rc.4 / rc.6 / rc.7 / 3.2.1 / 3.2.3 /
  * 3.2.4 / 3.2.5 / 3.2.6 / 3.2.7 / 3.2.8 / 3.3.0-beta.0 / 3.3.0-beta.1 / 3.3.0-beta.2 / 3.3.0-beta.3 /
- * 3.3.0-beta.4 / 3.3.0-beta.5 bundles.
+ * 3.3.0-beta.4 / 3.3.0-beta.5 / 3.3.0-beta.6 bundles.
  * These are semantic contracts, NOT a binding-field allowlist: properties and
  * comparison always come from the selected runtime schema. Additions to these
  * annotations require a deliberate implementation/review instead of AJV silently
@@ -38,6 +38,45 @@ const SEMANTICS_3_3_BETA_2: Readonly<Record<string, unknown>> = {
       // schema validity and pricing identity; callers holding the table resolve it.
       price_adjustments_resolution:
         "When the option identified by pricing_option_id declares price_adjustments, pricing.fixed_price MUST equal the resolution of that option's table over this purchase's format_option_refs, placement selection and flight, and pricing.price_breakdown MUST record the declared adjustments followed by each fired row in declared order (a rate row as its rate when below 1, otherwise and for an amount row as its currency amount). The table itself is not embedded in the snapshot: pricing_option_id, covered by terms_digest, identifies exactly one immutable table.",
+      pricing_identity: {
+        pricing_option_id: 'equals_pricing.pricing_option_id_when_pricing_present',
+        on_violation: 'reject_before_commitment',
+      },
+    },
+  },
+};
+
+// beta.6 returns sla-window to its 3.2 shape: business-time SLAs and their calendar contract
+// move to the creative review SLA, outside the commercial-term graph (adcp#8762). Withdrawing
+// price_adjustments (adcp#8758) takes product-purchase's price_adjustments_resolution with it.
+const GEO_METRO_VALUE_LABELS = {
+  map_keys_subset_of_array: {
+    map_field: 'value_labels',
+    array_field: 'values',
+  },
+  description:
+    'Every value_labels key MUST also appear in values. JSON Schema draft-07 cannot express this sibling-field key membership constraint, so conformance tooling must enforce it.',
+};
+
+const SEMANTICS_3_3_BETA_6: Readonly<Record<string, unknown>> = {
+  'core/targeting.json/properties/collection_lists':
+    SEMANTICS_3_3_BETA_2['core/targeting.json/properties/collection_lists'],
+  'core/targeting.json/properties/collection_lists_exclude':
+    SEMANTICS_3_3_BETA_2['core/targeting.json/properties/collection_lists_exclude'],
+  // adcp#8966 display labels are non-authoritative and excluded from targeting equality and readback.
+  'core/targeting.json/properties/geo_value_labels': {
+    map_keys_subset_of_arrays: {
+      array_fields: ['geo_countries', 'geo_countries_exclude', 'geo_regions', 'geo_regions_exclude'],
+    },
+    description:
+      'Every geo_value_labels key MUST appear in at least one of the listed sibling arrays. JSON Schema draft-07 cannot express this sibling-field key membership constraint, so conformance tooling must enforce it.',
+  },
+  'core/geo-metro.json': GEO_METRO_VALUE_LABELS,
+  'core/targeting.json/properties/geo_metros_exclude/items': GEO_METRO_VALUE_LABELS,
+  'media-buy/product-purchase.json': {
+    verifier_constraints: {
+      accepted_snapshot_terms:
+        'Inside canonical-proposal.commercial_terms, each purchase MUST carry resolved start_time and end_time and MUST preserve every applicable measurement term and performance standard. Omission of measurement_terms or performance_standards means the accepted offer declared none.',
       pricing_identity: {
         pricing_option_id: 'equals_pricing.pricing_option_id_when_pricing_present',
         on_violation: 'reject_before_commitment',
@@ -373,6 +412,7 @@ export const COMMERCIAL_SEMANTIC_OVERRIDES_BY_RELEASE: Readonly<Record<string, R
   '3.3.0-beta.3': SEMANTICS_3_3_BETA_2,
   '3.3.0-beta.4': SEMANTICS_3_3_BETA_2,
   '3.3.0-beta.5': SEMANTICS_3_3_BETA_2,
+  '3.3.0-beta.6': SEMANTICS_3_3_BETA_6,
 };
 
 /** Binding snapshots keep JSON Schema enum membership even for extensible taxonomies. */

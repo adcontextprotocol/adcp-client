@@ -12,7 +12,7 @@ dist-tag:
 | `latest` | 16.x | 3.2 | `16.x` |
 | `adcp-3.2` | 16.x | 3.2 (stable line) | `16.x`; moved manually after each release (see below) |
 | `beta` | 17.x beta | 3.3 beta | `main`, in Changesets pre-mode |
-| `adcp-3.3-esa` | 17.x ESA maintenance prerelease | 3.3.0-beta.5 and exact 3.3.0-beta.6 | `17.x-esa`, in Changesets pre-mode |
+| `adcp-3.3-esa` | 17.x ESA maintenance prerelease | 3.3.0-beta.6 | `17.x-esa`, in Changesets pre-mode |
 | `adcp-3.1` | 13.x | 3.1 (maintenance line) | `13.x` branch, with `ADCP_NPM_TAG=adcp-3.1` |
 | `adcp-3.0` | 7.11.x | 3.0 | 7.x maintenance releases, with `ADCP_NPM_TAG=adcp-3.0` |
 
@@ -32,9 +32,9 @@ The release workflow runs on `main`, `16.x` and `17.x-esa`. SDK 16 releases publ
 `npm run release`; `main` publishes SDK 17 prereleases under `beta` while Changesets pre-mode is active. The ESA maintenance branch publishes under `adcp-3.3-esa`, leaving `beta` and `latest` on their existing lines. `latest` intentionally tracks the default stable SDK release,
 not a branch name.
 
-The `17.x-esa` branch starts at `@adcp/sdk@17.0.0-beta.22`. Its primary AdCP release stays at `3.3.0-beta.5` for existing pinned buyers. The branch also ships the exact `3.3.0-beta.6` schema used by ESA reporting and Core package coverage. Its Changesets prerelease identifier is `esa`, so its package versions cannot collide with `beta` releases from `main`. Consumers must pin an exact maintenance package version; the dist-tag identifies the release channel.
+The `17.x-esa` branch uses the published `@adcp/sdk@17.0.0-beta.25` package as its baseline. Its primary AdCP release and static schemas remain `3.3.0-beta.6`; the ESA release adds trusted package coverage for Core reporting. Its Changesets prerelease identifier is `esa`, so its package versions cannot collide with `beta` releases from `main`. Consumers must pin an exact maintenance package version; the dist-tag identifies the release channel.
 
-When this release setup is merged, the release workflow first runs reference-seller interop. If that passes, the pending SDK changeset makes Changesets open a version PR. A maintainer reviews its generated version, lockfile, changelog, and package contents before merging it. The release workflow publishes only after that release PR is merged.
+When changes to the ESA lane are merged, the release workflow first runs reference-seller interop. If that passes, the pending SDK changeset makes Changesets open a version PR. A maintainer reviews its generated version, lockfile, changelog, and package contents before merging it. The release workflow publishes only after that release PR is merged.
 
 Set `ADCP_NPM_TAG` only when intentionally publishing a maintenance or alternate
 channel, for example `ADCP_NPM_TAG=adcp-3.1 npm run release` from the `13.x`
