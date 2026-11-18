@@ -5802,7 +5802,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   if (config.webhooks?.webBotAuth && !config.identity33)
     throw new Error('Web Bot Auth webhook signing requires the identity33 experiment');
   if (config.webhooks?.webBotAuth?.key) assertWebBotAuthSigningKey(config.webhooks.webBotAuth.key);
-  const toolsWithErrorArm = getToolsWithErrorArm(adcpVersion);
 
   // Defaults gated on `process.env.NODE_ENV`:
   //   - Production → both sides `'off'` (zero AJV overhead; trust the
