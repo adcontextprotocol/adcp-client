@@ -107,7 +107,7 @@ import {
 } from '../media-buy/creative-start-policy';
 import { ConfigurationError } from '../errors';
 import {
-  getValidator,
+  definesToolRequest,
   getToolSchemaDocument,
   hasSchemaBundle,
   resolveBundleKey,
@@ -6312,10 +6312,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     }
   };
 
+  // A release defines a tool when its request schema for the tool compiles.
+  // A release whose schema data cannot be resolved defines no tool.
   const releaseDefinesTool = (toolName: string, release: ServedAdcpRelease): boolean => {
     if (toolName === 'refine_proposals') return true;
     try {
-      return getValidator(toolName, 'request', release.validationVersion) !== undefined;
+      return definesToolRequest(toolName, release.validationVersion);
     } catch {
       return false;
     }

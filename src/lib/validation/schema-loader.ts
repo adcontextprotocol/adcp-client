@@ -393,9 +393,22 @@ interface LoaderState {
   schemaIdFiles?: Map<string, string>;
   root: string;
   coreLoaded: boolean;
+  /** Set when registering the core documents threw; see {@link ensureCoreLoaded}. */
+  coreLoadFailed?: boolean;
   version: string;
   /** Present only when ADCP_VALIDATOR_CACHE_DIR enabled the bundled-validator cache for this state. */
   bundledCache?: BundledValidatorCacheState;
+  /** Request validators {@link definesToolRequest} found recorded as compiling, by `tool::request`. */
+  cachedCompiles?: Set<string>;
+  /**
+   * The same validators, in call order, until they are compiled before the
+   * state's diagnostics are read (see {@link flushDeferredCompiles}).
+   */
+  deferredCompiles?: Set<string>;
+  /** {@link stateContentDigest}: the digest, or `null` when the state cannot use the cache. */
+  contentDigest?: string | null;
+  /** Whether {@link contentUnchangedSinceDigest} has checked the digest. */
+  contentDigestChecked?: boolean;
 }
 
 /** Per-state bookkeeping for the opt-in cross-process cache of bundled validators. */
@@ -423,19 +436,28 @@ const validatorDiagnosticOrigins = new WeakMap<ValidateFunction, SchemaDiagnosti
  */
 const pendingDiagnosticOrigins = new WeakMap<ValidateFunction, () => void>();
 const cachedValidatorRootSchemaIds = new WeakMap<ValidateFunction, string | undefined>();
+/** The loader state whose modular Ajv registers origins into each modular origin map. */
+const modularOriginStates = new WeakMap<SchemaDiagnosticOrigins, LoaderState>();
+
+/** The validator's origins, after its state compiled every deferred request validator. */
+function diagnosticOriginsFor(validator: ValidateFunction): SchemaDiagnosticOrigins | undefined {
+  pendingDiagnosticOrigins.get(validator)?.();
+  const origins = validatorDiagnosticOrigins.get(validator);
+  const state = origins && modularOriginStates.get(origins);
+  if (state) flushDeferredCompiles(state);
+  return origins;
+}
 
 /** @internal Resolve the exact function origin retained during compilation. */
 export function resolveValidatorDiagnosticPath(validator: ValidateFunction, schemaPath: string): unknown {
-  pendingDiagnosticOrigins.get(validator)?.();
-  return validatorDiagnosticOrigins.get(validator)?.resolve(schemaPath);
+  return diagnosticOriginsFor(validator)?.resolve(schemaPath);
 }
 /** @internal Resource identity and the original public AJV path for a failure. */
 export function getValidatorDiagnosticOrigin(
   validator: ValidateFunction,
   schemaPath: string
 ): SchemaDiagnosticOrigin | undefined {
-  pendingDiagnosticOrigins.get(validator)?.();
-  return validatorDiagnosticOrigins.get(validator)?.origin(schemaPath);
+  return diagnosticOriginsFor(validator)?.origin(schemaPath);
 }
 /**
  * @internal The string root `$id` of a validator's schema, as
@@ -545,7 +567,7 @@ function persistedRootIdentityKey(root: string): string {
 function persistedRootIdentities(reads: RootCheckReads): Map<string, CachedRootDocumentIdentity> | null {
   if (reads.persisted !== undefined) return reads.persisted;
   reads.persisted = null;
-  const cache = openRootIdentityCache();
+  const cache = openLoaderDataCache();
   if (!cache) return null;
   const value = cache.readData(persistedRootIdentityKey(reads.root)) as
     | { root?: unknown; documents?: unknown }
@@ -579,7 +601,7 @@ function persistedRootIdentities(reads: RootCheckReads): Map<string, CachedRootD
  */
 function persistRootCheck(reads: RootCheckReads): void {
   if (!reads.stats || reads.stats.size === 0) return;
-  const cache = openRootIdentityCache();
+  const cache = openLoaderDataCache();
   if (!cache) return;
   const stored = persistedRootIdentities(reads);
   let changed = stored === null || stored.size !== reads.stats.size;
@@ -1309,6 +1331,7 @@ function ensureInit(version: string): LoaderState {
     version: key,
     ...(bundledCache && { bundledCache }),
   };
+  modularOriginStates.set(diagnosticOrigins, state);
   states.set(cacheKey, state);
   return state;
 }
@@ -1338,6 +1361,18 @@ function ensureInit(version: string): LoaderState {
  */
 function ensureCoreLoaded(s: LoaderState): void {
   if (s.coreLoaded) return;
+  try {
+    registerCoreDocuments(s);
+  } catch (error) {
+    // Ajv keeps a document it then rejects, so a later attempt can succeed
+    // where this one failed: outcomes in this state depend on call order.
+    s.coreLoadFailed = true;
+    throw error;
+  }
+  s.coreLoaded = true;
+}
+
+function registerCoreDocuments(s: LoaderState): void {
   // Tool response files are pre-registered with the same response-root
   // envelope handling `getValidator` would apply. This matters for the async response
   // union: `core/async-response-data.json` can `$ref` both async variants and
@@ -1386,7 +1421,6 @@ function ensureCoreLoaded(s: LoaderState): void {
       }
     }
   }
-  s.coreLoaded = true;
 }
 
 /**
@@ -1404,7 +1438,11 @@ export function getValidator(
   direction: Direction,
   version: string = ADCP_VERSION
 ): ValidateFunction | undefined {
-  const s = ensureInit(version);
+  return validatorForState(ensureInit(version), toolName, direction);
+}
+
+/** {@link getValidator} against one loader state. */
+function validatorForState(s: LoaderState, toolName: string, direction: Direction): ValidateFunction | undefined {
   const cacheKey = `${toolName}::${direction}`;
   const cached = s.validators.get(cacheKey);
   if (cached) return cached;
@@ -1454,6 +1492,153 @@ export function getValidator(
   return compiled;
 }
 
+/**
+ * @internal Whether the version's request schema for the tool compiles:
+ * `getValidator(toolName, 'request', version) !== undefined`, and `false`
+ * where that compile throws. Throws when the version has no schema data, as
+ * {@link getValidator} does.
+ *
+ * With ADCP_VALIDATOR_CACHE_DIR set, a modular request schema that compiled
+ * is recorded under a key over the root's content (see
+ * {@link rootContentDigest}), the loader code, the Ajv and JS engine versions
+ * and the tool, and later processes read that instead of compiling. The state
+ * compiles those validators before its diagnostics are read (see
+ * {@link flushDeferredCompiles}), so validation issues are the same as if this
+ * call had compiled them. A schema that fails is never recorded and compiles
+ * here every time, as do bundled request schemas and every schema with the
+ * cache off.
+ */
+export function definesToolRequest(toolName: string, version: string = ADCP_VERSION): boolean {
+  const s = ensureInit(version);
+  const key = `${toolName}::request`;
+  if (s.validators.has(key) || s.cachedCompiles?.has(key)) return true;
+  const indexedFile = s.fileIndex.get(key);
+  if (!indexedFile) return false;
+  const modular = !runtimeToolSchemaFile(s, indexedFile, 'request').includes(`${path.sep}bundled${path.sep}`);
+  const cache = modular ? openLoaderDataCache() : undefined;
+  const digest = cache ? stateContentDigest(s) : undefined;
+  // Records come only from states whose first registration succeeded, where
+  // a compile's outcome depends on the root's content alone.
+  if (!cache || digest === undefined || s.coreLoadFailed) return compilesForState(s, toolName, 'request');
+
+  const { validatorCacheKey } = require('./validator-cache') as typeof import('./validator-cache');
+  const outcomeKey = validatorCacheKey([
+    'modular-request-compiles',
+    ...bundledValidatorCacheStaticKey(),
+    process.versions.v8,
+    process.versions.unicode ?? null,
+    s.version,
+    digest,
+    toolName,
+  ]);
+  if ((cache.readData(outcomeKey) as { compiles?: unknown } | undefined)?.compiles === true) {
+    (s.cachedCompiles ??= new Set()).add(key);
+    (s.deferredCompiles ??= new Set()).add(key);
+    return true;
+  }
+  const compiles = compilesForState(s, toolName, 'request');
+  if (compiles && !s.coreLoadFailed && contentUnchangedSinceDigest(s)) {
+    cache.writeData(outcomeKey, { compiles: true });
+  }
+  return compiles;
+}
+
+function compilesForState(s: LoaderState, toolName: string, direction: Direction): boolean {
+  try {
+    return validatorForState(s, toolName, direction) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Compile the request validators whose compile {@link definesToolRequest}
+ * answered from the cache, against `s` itself and in call order. Compiling
+ * adds the origins and registered ids that request and response diagnostics
+ * read, so the state's compiled set is what it would have been.
+ */
+function flushDeferredCompiles(s: LoaderState): void {
+  const deferred = s.deferredCompiles;
+  if (!deferred) return;
+  s.deferredCompiles = undefined;
+  for (const key of deferred) {
+    if (!s.validators.has(key)) compilesForState(s, key.slice(0, -'::request'.length), 'request');
+  }
+}
+
+/**
+ * The state's root content digest, computed once, or `undefined` when the
+ * state registered its documents before the digest was taken: those bytes
+ * may differ from what the digest would read now.
+ */
+function stateContentDigest(s: LoaderState): string | undefined {
+  if (s.contentDigest === undefined) s.contentDigest = s.coreLoaded ? null : rootContentDigest(s);
+  return s.contentDigest ?? undefined;
+}
+
+/**
+ * Whether the root still has the content the state's digest was taken from,
+ * checked once, at the first outcome the state records; by then the state has
+ * registered its documents. A changed root stops the state using the cache.
+ */
+function contentUnchangedSinceDigest(s: LoaderState): boolean {
+  if (!s.contentDigestChecked) {
+    s.contentDigestChecked = true;
+    if (rootContentDigest(s) !== s.contentDigest) s.contentDigest = null;
+  }
+  return typeof s.contentDigest === 'string';
+}
+
+/**
+ * SHA-256 over every document a modular compile in `s` can read, by
+ * root-relative path and bytes: JSON files at the root and in its runtime
+ * directories (what ensureCoreLoaded registers and getValidator reads), the
+ * index entries, and each indexed file the loader reads in place of a missing
+ * authored one. Content, not stat: a byte-identical copy of a root has the
+ * same digest.
+ */
+function rootContentDigest(s: LoaderState): string {
+  const files = new Set<string>();
+  for (const entry of readdirSync(s.root, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (isRuntimeSchemaDirectory(entry.name)) {
+        for (const file of walkJsonFiles(path.join(s.root, entry.name))) files.add(file);
+      }
+    } else if (entry.isFile() && entry.name.endsWith('.json')) {
+      files.add(path.join(s.root, entry.name));
+    }
+  }
+  for (const indexedFile of s.fileIndex.values()) files.add(authoredToolSchemaFile(s, indexedFile));
+  const byPath = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+  const hash = createHash('sha256');
+  for (const [key, file] of [...s.fileIndex].sort(([a], [b]) => byPath(a, b))) {
+    hash.update(`index\0${key}\0${path.relative(s.root, file)}\0`);
+  }
+  for (const file of [...files].sort(byPath)) {
+    hash.update(`file\0${path.relative(s.root, file)}\0`);
+    hash.update(documentBytes(file));
+    hash.update('\0');
+  }
+  return hash.digest('hex');
+}
+
+/** A document's bytes, an archive entry's JSON, or a marker for an unreadable file. */
+function documentBytes(file: string): Buffer | string {
+  try {
+    return readFileSync(file);
+  } catch (error) {
+    if (file.includes(`${path.sep}bundled${path.sep}`)) {
+      try {
+        const entry = loadBundledSchemaFile(file);
+        if (entry) return `archive\0${JSON.stringify(entry)}`;
+      } catch {
+        // Recorded as unreadable below.
+      }
+    }
+    return `unreadable\0${(error as NodeJS.ErrnoException).code ?? ''}`;
+  }
+}
+
 /** Loader modules whose code shapes a compiled bundled validator. */
 const VALIDATOR_CACHE_CODE_FILES = [
   'schema-loader',
@@ -1492,17 +1677,20 @@ function validatorCacheDir(): string | undefined {
   return dir && path.isAbsolute(dir) ? dir : undefined;
 }
 
-let rootIdentityCache: { dir: string; cache: import('./validator-cache').ValidatorCache | undefined } | undefined;
+let loaderDataCache: { dir: string; cache: import('./validator-cache').ValidatorCache | undefined } | undefined;
 
-/** The cache that persists schema-root document identities, opened once per directory. */
-function openRootIdentityCache(): import('./validator-cache').ValidatorCache | undefined {
+/**
+ * The cache for the loader's data entries (schema-root document identities,
+ * modular request compile outcomes), opened once per directory.
+ */
+function openLoaderDataCache(): import('./validator-cache').ValidatorCache | undefined {
   const dir = validatorCacheDir();
   if (dir === undefined) return undefined;
-  if (rootIdentityCache?.dir !== dir) {
+  if (loaderDataCache?.dir !== dir) {
     const { openValidatorCache } = require('./validator-cache') as typeof import('./validator-cache');
-    rootIdentityCache = { dir, cache: openValidatorCache(dir, path.join(__dirname, 'schema-loader.js')) };
+    loaderDataCache = { dir, cache: openValidatorCache(dir, path.join(__dirname, 'schema-loader.js')) };
   }
-  return rootIdentityCache.cache;
+  return loaderDataCache.cache;
 }
 
 /**
@@ -2069,6 +2257,7 @@ export function listValidatorKeys(version: string = ADCP_VERSION): string[] {
  */
 export function getRegisteredSchemaIds(version: string = ADCP_VERSION): readonly string[] {
   const s = ensureInit(version);
+  flushDeferredCompiles(s);
   // Ajv 8 keeps registered schemas at `ajv.schemas` (URI → SchemaEnv). Returning
   // the keys is enough for prefix matching; we don't expose the SchemaEnv values.
   const registry = (s.ajv as unknown as { schemas?: Record<string, unknown> }).schemas;
