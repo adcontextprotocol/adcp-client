@@ -1026,16 +1026,12 @@ jobs:
         run: npm ci
 
       - name: Run security audit
+        # Fails on any high or critical advisory except the unpatchable ones
+        # listed, with their justification, in scripts/security-audit.mjs.
         run: |
           npm audit || true
 
-          if npm audit --audit-level=high 2>/dev/null; then
-            echo "✅ No high or critical vulnerabilities found"
-          else
-            echo "❌ High or critical vulnerabilities found"
-            npm audit --audit-level=high
-            exit 1
-          fi
+          node scripts/security-audit.mjs
 
   # Separate package and network matrices: job-level needs cannot vary by
   # matrix.mode. Node-floor builds must start without waiting on the producer.
