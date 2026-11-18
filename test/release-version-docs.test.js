@@ -135,10 +135,17 @@ test('the release version workflow leaves generated agent docs current', { timeo
     mkdirSync(path.join(worktree, 'compliance'), { recursive: true });
     symlinkSync(path.join(ROOT, 'compliance', 'cache'), path.join(worktree, 'compliance', 'cache'), 'dir');
 
-    run('npm', ['run', 'generate-agent-docs']);
-    assert.match(readFileSync(path.join(worktree, 'docs', 'llms.txt'), 'utf8'), /npm install @adcp\/sdk@beta\b/);
-
     const originalVersion = JSON.parse(readFileSync(path.join(worktree, 'package.json'), 'utf8')).version;
+    run('npm', ['run', 'generate-agent-docs']);
+    if (originalVersion.includes('-beta.')) {
+      assert.match(readFileSync(path.join(worktree, 'docs', 'llms.txt'), 'utf8'), /npm install @adcp\/sdk@beta\b/);
+    } else if (originalVersion.includes('-esa.')) {
+      assert.match(
+        readFileSync(path.join(worktree, 'docs', 'llms.txt'), 'utf8'),
+        /npm install @adcp\/sdk@adcp-3\.3-esa\b/
+      );
+    }
+
     run(path.join(worktree, 'node_modules', '.bin', 'changeset'), ['version']);
     run('npm', ['run', 'sync-version']);
     run('npm', ['run', 'generate-agent-docs']);
